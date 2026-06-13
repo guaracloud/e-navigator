@@ -1,0 +1,14 @@
+[package]
+name = "e-navigator-ebpf-programs"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+
+[[bin]]
+name = "e-navigator-ebpf-programs"
+path = "src/main.rs"

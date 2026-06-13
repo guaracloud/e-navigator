@@ -5,6 +5,7 @@ use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::{ModuleRegistry, Runner};
 use e_navigator_signals::{ExecEvent, SignalEnvelope};
 use e_navigator_sinks::JsonStdoutSink;
+use e_navigator_sources_ebpf_aya::AyaExecSource;
 use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
 
@@ -12,12 +13,13 @@ use tracing_subscriber::EnvFilter;
 #[command(name = "e-navigator")]
 #[command(about = "E-Navigator node agent")]
 struct Args {
-    #[arg(long, value_enum, default_value_t = SourceMode::Synthetic)]
+    #[arg(long, value_enum, default_value_t = SourceMode::AyaExec)]
     source: SourceMode,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum SourceMode {
+    AyaExec,
     Synthetic,
 }
 
@@ -30,6 +32,9 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let registry = match args.source {
+        SourceMode::AyaExec => {
+            ModuleRegistry::new().with_source(Box::new(AyaExecSource::new(None)))
+        }
         SourceMode::Synthetic => ModuleRegistry::new().with_source(Box::new(SyntheticExecSource)),
     }
     .with_processor(Box::new(ContainerAttributionProcessor))

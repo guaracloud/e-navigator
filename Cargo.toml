@@ -5,8 +5,10 @@ members = [
   "crates/e-navigator-cli",
   "crates/e-navigator-processors",
   "crates/e-navigator-runner",
+  "crates/e-navigator-ebpf-programs",
   "crates/e-navigator-signals",
   "crates/e-navigator-sinks",
+  "crates/e-navigator-sources-ebpf-aya",
 ]
 default-members = [
   "crates/e-navigator-core",
@@ -15,6 +17,7 @@ default-members = [
   "crates/e-navigator-runner",
   "crates/e-navigator-signals",
   "crates/e-navigator-sinks",
+  "crates/e-navigator-sources-ebpf-aya",
 ]
 
 [workspace.package]

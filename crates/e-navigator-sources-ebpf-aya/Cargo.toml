@@ -1,0 +1,21 @@
+[package]
+name = "e-navigator-sources-ebpf-aya"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+bytes = { workspace = true }
+e-navigator-core = { path = "../e-navigator-core" }
+e-navigator-signals = { path = "../e-navigator-signals" }
+tokio = { workspace = true, features = ["io-util"] }
+tracing = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = { workspace = true }
+libc = { workspace = true }
+
+[build-dependencies]
+anyhow = { workspace = true }
+aya-build = { workspace = true }
