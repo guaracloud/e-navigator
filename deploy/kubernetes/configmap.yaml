@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: e-navigator-config
+  namespace: e-navigator-system
+  labels:
+    app.kubernetes.io/name: e-navigator
+data:
+  e-navigator.toml: |
+    log_level = "info"
+    queue_capacity = 1024
+
+    [[modules]]
+    name = "source.aya_exec"
+    enabled = true
+
+    [[modules]]
+    name = "processor.container_attribution"
+    enabled = true
+
+    [[modules]]
+    name = "sink.json_stdout"
+    enabled = true

@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: e-navigator
+  namespace: e-navigator-system
+  labels:
+    app.kubernetes.io/name: e-navigator
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: e-navigator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: e-navigator
+    spec:
+      serviceAccountName: e-navigator
+      hostPID: true
+      containers:
+        - name: e-navigator
+          image: ghcr.io/victorbona/e-navigator:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--source"
+            - "aya-exec"
+          env:
+            - name: RUST_LOG
+              value: "info"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            privileged: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/e-navigator
+              readOnly: true
+            - name: sys-kernel-debug
+              mountPath: /sys/kernel/debug
+            - name: sys-kernel-tracing
+              mountPath: /sys/kernel/tracing
+      volumes:
+        - name: config
+          configMap:
+            name: e-navigator-config
+        - name: sys-kernel-debug
+          hostPath:
+            path: /sys/kernel/debug
+            type: DirectoryOrCreate
+        - name: sys-kernel-tracing
+          hostPath:
+            path: /sys/kernel/tracing
+            type: DirectoryOrCreate

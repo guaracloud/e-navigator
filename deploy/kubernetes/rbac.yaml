@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: e-navigator
+  namespace: e-navigator-system
+  labels:
+    app.kubernetes.io/name: e-navigator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: e-navigator
+  labels:
+    app.kubernetes.io/name: e-navigator
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods", "namespaces"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: e-navigator
+  labels:
+    app.kubernetes.io/name: e-navigator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: e-navigator
+subjects:
+  - kind: ServiceAccount
+    name: e-navigator
+    namespace: e-navigator-system
