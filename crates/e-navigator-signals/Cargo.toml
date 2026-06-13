@@ -1,0 +1,10 @@
+[package]
+name = "e-navigator-signals"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+e-navigator-core = { path = "../e-navigator-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }

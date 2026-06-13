@@ -2,9 +2,11 @@
 resolver = "2"
 members = [
   "crates/e-navigator-core",
+  "crates/e-navigator-signals",
 ]
 default-members = [
   "crates/e-navigator-core",
+  "crates/e-navigator-signals",
 ]
 
 [workspace.package]
