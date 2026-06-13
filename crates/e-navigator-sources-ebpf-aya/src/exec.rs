@@ -2,10 +2,11 @@
 mod platform {
     use async_trait::async_trait;
     use aya::{
-        Ebpf, include_bytes_aligned, maps::perf::AsyncPerfEventArray, programs::TracePoint,
+        Ebpf, include_bytes_aligned,
+        maps::perf::{PerfEvent, PerfEventArray},
+        programs::TracePoint,
         util::online_cpus,
     };
-    use bytes::BytesMut;
     use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Source};
     use e_navigator_signals::{ExecEvent, SignalEnvelope};
     use tokio::sync::mpsc;
@@ -71,7 +72,7 @@ mod platform {
                 })?;
 
             let mut perf_array =
-                AsyncPerfEventArray::try_from(ebpf.take_map("EXEC_EVENTS").ok_or_else(|| {
+                PerfEventArray::try_from(ebpf.take_map("EXEC_EVENTS").ok_or_else(|| {
                     CoreError::ModuleFailed {
                         module: "source.aya_exec".to_string(),
                         message: "missing EXEC_EVENTS map".to_string(),
@@ -96,26 +97,39 @@ mod platform {
                 let cpu_tx = tx.clone();
                 let host = self.host.clone();
 
-                tokio::spawn(async move {
-                    let mut buffers = (0..16)
-                        .map(|_| BytesMut::with_capacity(core::mem::size_of::<RawExecEvent>()))
-                        .collect::<Vec<_>>();
+                tokio::task::spawn_blocking(move || {
+                    let mut closed = false;
 
                     loop {
-                        match buffer.read_events(&mut buffers).await {
-                            Ok(events) => {
-                                for index in 0..events.read {
-                                    if let Some(signal) =
-                                        raw_to_signal(&buffers[index], host.clone())
-                                    {
-                                        if cpu_tx.send(signal).await.is_err() {
-                                            return;
+                        buffer.for_each(|event| {
+                            if closed {
+                                return;
+                            }
+
+                            match event {
+                                PerfEvent::Sample { head, tail } => {
+                                    if !tail.is_empty() {
+                                        warn!("dropped wrapped exec perf event sample");
+                                        return;
+                                    }
+
+                                    if let Some(signal) = raw_to_signal(head, host.clone()) {
+                                        if cpu_tx.blocking_send(signal).is_err() {
+                                            closed = true;
                                         }
                                     }
                                 }
+                                PerfEvent::Lost { count } => {
+                                    warn!(count, "lost exec perf events");
+                                }
                             }
-                            Err(err) => warn!(error = %err, "failed to read exec perf events"),
+                        });
+
+                        if closed {
+                            return;
                         }
+
+                        std::thread::sleep(std::time::Duration::from_millis(100));
                     }
                 });
             }

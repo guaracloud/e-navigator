@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  rust:
+    name: Rust checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Install eBPF build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm
+          rustup toolchain install nightly --component rust-src
+          cargo install bpf-linker
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --exclude e-navigator-ebpf-programs
+
+      - name: Build
+        run: cargo build --workspace --exclude e-navigator-ebpf-programs
+
+  manifests:
+    name: Kubernetes manifest checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Validate manifests
+        run: |
+          kubectl apply --dry-run=client -f deploy/kubernetes/namespace.yaml
+          kubectl apply --dry-run=client -f deploy/kubernetes/rbac.yaml
+          kubectl apply --dry-run=client -f deploy/kubernetes/configmap.yaml
+          kubectl apply --dry-run=client -f deploy/kubernetes/daemonset.yaml
