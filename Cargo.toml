@@ -2,10 +2,12 @@
 resolver = "2"
 members = [
   "crates/e-navigator-core",
+  "crates/e-navigator-runner",
   "crates/e-navigator-signals",
 ]
 default-members = [
   "crates/e-navigator-core",
+  "crates/e-navigator-runner",
   "crates/e-navigator-signals",
 ]
 
