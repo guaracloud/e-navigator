@@ -14,6 +14,7 @@ impl Default for RuntimeConfig {
             queue_capacity: 1024,
             modules: vec![
                 ModuleConfig::enabled("source.aya_exec"),
+                ModuleConfig::enabled("source.synthetic_exec"),
                 ModuleConfig::enabled("processor.container_attribution"),
                 ModuleConfig::enabled("sink.json_stdout"),
             ],
@@ -32,6 +33,13 @@ impl RuntimeConfig {
         }
 
         Ok(())
+    }
+
+    pub fn module_enabled(&self, name: &str) -> bool {
+        self.modules
+            .iter()
+            .find(|module| module.name == name)
+            .is_some_and(|module| module.enabled)
     }
 }
 
@@ -56,7 +64,13 @@ mod tests {
 
     #[test]
     fn default_config_is_valid() {
-        assert!(RuntimeConfig::default().validate().is_ok());
+        let config = RuntimeConfig::default();
+
+        assert!(config.validate().is_ok());
+        assert!(config.module_enabled("source.aya_exec"));
+        assert!(config.module_enabled("source.synthetic_exec"));
+        assert!(config.module_enabled("processor.container_attribution"));
+        assert!(config.module_enabled("sink.json_stdout"));
     }
 
     #[test]
@@ -69,6 +83,22 @@ mod tests {
         assert_eq!(
             config.validate(),
             Err("queue_capacity must be greater than zero".to_string())
+        );
+    }
+
+    #[test]
+    fn config_with_no_enabled_modules_is_invalid() {
+        let config = RuntimeConfig {
+            modules: vec![ModuleConfig {
+                name: "sink.json_stdout".to_string(),
+                enabled: false,
+            }],
+            ..RuntimeConfig::default()
+        };
+
+        assert_eq!(
+            config.validate(),
+            Err("at least one module must be enabled".to_string())
         );
     }
 }

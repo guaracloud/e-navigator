@@ -9,8 +9,15 @@ mod platform {
     };
     use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Source};
     use e_navigator_signals::{ExecEvent, SignalEnvelope};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
     use tokio::sync::mpsc;
+    use tokio::task::JoinHandle;
     use tracing::{debug, warn};
+
+    const EXECUTABLE_LEN: usize = 256;
 
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -18,6 +25,7 @@ mod platform {
         pid: u32,
         uid: u32,
         command: [u8; 16],
+        executable: [u8; EXECUTABLE_LEN],
     }
 
     #[derive(Debug, Default)]
@@ -39,6 +47,8 @@ mod platform {
 
         async fn run(self: Box<Self>, tx: mpsc::Sender<SignalEnvelope>) -> CoreResult<()> {
             bump_memlock_rlimit();
+            let shutdown = ReaderShutdown::new();
+            let mut reader_handles = Vec::new();
 
             let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
                 env!("OUT_DIR"),
@@ -96,11 +106,12 @@ mod platform {
                         })?;
                 let cpu_tx = tx.clone();
                 let host = self.host.clone();
+                let reader_shutdown = shutdown.clone();
 
-                tokio::task::spawn_blocking(move || {
+                reader_handles.push(tokio::task::spawn_blocking(move || {
                     let mut closed = false;
 
-                    loop {
+                    while !reader_shutdown.is_stopped() {
                         buffer.for_each(|event| {
                             if closed {
                                 return;
@@ -131,7 +142,7 @@ mod platform {
 
                         std::thread::sleep(std::time::Duration::from_millis(100));
                     }
-                });
+                }));
             }
 
             debug!("aya exec source attached");
@@ -140,7 +151,9 @@ mod platform {
                 .map_err(|err| CoreError::ModuleFailed {
                     module: "source.aya_exec".to_string(),
                     message: err.to_string(),
-                })
+                })?;
+            shutdown.stop();
+            join_reader_handles(reader_handles).await
         }
     }
 
@@ -150,7 +163,13 @@ mod platform {
         }
 
         let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawExecEvent>()) };
-        let command = super::command_to_string(&raw.command);
+        let task_comm = super::bytes_to_string(&raw.command);
+        let executable = super::bytes_to_string(&raw.executable);
+        let command = if executable.is_empty() {
+            task_comm
+        } else {
+            executable.clone()
+        };
 
         Some(SignalEnvelope::exec(
             "source.aya_exec",
@@ -160,14 +179,52 @@ mod platform {
                 ppid: None,
                 uid: Some(raw.uid),
                 command,
-                executable: None,
+                executable: (!executable.is_empty()).then_some(executable),
                 arguments: vec![],
                 cgroup_id: None,
-                timestamp_unix_nanos: 0,
+                timestamp_unix_nanos: now_unix_nanos(),
                 container: None,
                 kubernetes: None,
             },
         ))
+    }
+
+    #[derive(Clone)]
+    struct ReaderShutdown {
+        stopped: Arc<AtomicBool>,
+    }
+
+    impl ReaderShutdown {
+        fn new() -> Self {
+            Self {
+                stopped: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        fn stop(&self) {
+            self.stopped.store(true, Ordering::SeqCst);
+        }
+
+        fn is_stopped(&self) -> bool {
+            self.stopped.load(Ordering::SeqCst)
+        }
+    }
+
+    impl Drop for ReaderShutdown {
+        fn drop(&mut self) {
+            self.stop();
+        }
+    }
+
+    async fn join_reader_handles(handles: Vec<JoinHandle<()>>) -> CoreResult<()> {
+        for handle in handles {
+            handle.await.map_err(|err| CoreError::ModuleFailed {
+                module: "source.aya_exec".to_string(),
+                message: err.to_string(),
+            })?;
+        }
+
+        Ok(())
     }
 
     fn bump_memlock_rlimit() {
@@ -221,12 +278,20 @@ mod platform {
 pub use platform::AyaExecSource;
 
 #[cfg(any(target_os = "linux", test))]
-fn command_to_string(command: &[u8; 16]) -> String {
-    let end = command
+fn now_unix_nanos() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn bytes_to_string(bytes: &[u8]) -> String {
+    let end = bytes
         .iter()
         .position(|byte| *byte == 0)
-        .unwrap_or(command.len());
-    String::from_utf8_lossy(&command[..end]).to_string()
+        .unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).to_string()
 }
 
 #[cfg(test)]
@@ -237,6 +302,11 @@ mod tests {
     fn command_bytes_convert_to_string() {
         let mut command = [0_u8; 16];
         command[..4].copy_from_slice(b"bash");
-        assert_eq!(command_to_string(&command), "bash");
+        assert_eq!(bytes_to_string(&command), "bash");
+    }
+
+    #[test]
+    fn unix_timestamp_is_not_epoch_placeholder() {
+        assert!(now_unix_nanos() > 0);
     }
 }

@@ -17,9 +17,9 @@ Run non-privileged checks:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings
-cargo test --workspace --exclude e-navigator-ebpf-programs
-cargo build --workspace --exclude e-navigator-ebpf-programs
+cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings
+cargo test --locked --workspace --exclude e-navigator-ebpf-programs
+cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 ```
 
 Aya/eBPF development also requires the nightly Rust toolchain with `rust-src`, `bpf-linker`, and `bpftool`.
@@ -35,14 +35,14 @@ Non-privileged checks:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings
-cargo test --workspace --exclude e-navigator-ebpf-programs
-cargo build --workspace --exclude e-navigator-ebpf-programs
+cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings
+cargo test --locked --workspace --exclude e-navigator-ebpf-programs
+cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 cargo run -p e-navigator-cli -- --source synthetic
 ```
 
 Privileged eBPF smoke test on Linux:
 
 ```bash
-cargo run -p e-navigator-cli --release -- --source aya-exec
+sudo -E cargo run -p e-navigator-cli --release -- --source aya-exec
 ```

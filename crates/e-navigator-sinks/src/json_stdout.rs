@@ -14,23 +14,29 @@ impl Sink<SignalEnvelope> for JsonStdoutSink {
 
     async fn write(&self, signal: &SignalEnvelope) -> CoreResult<()> {
         let line = serialize_signal_line(signal)?;
-        io::stdout()
+        let mut stdout = io::stdout();
+        stdout
             .write_all(&line)
             .await
-            .map_err(|err| CoreError::ModuleFailed {
-                module: "sink.json_stdout".to_string(),
-                message: err.to_string(),
-            })
+            .map_err(|err| module_error(err.to_string()))?;
+        stdout
+            .flush()
+            .await
+            .map_err(|err| module_error(err.to_string()))
     }
 }
 
 fn serialize_signal_line(signal: &SignalEnvelope) -> CoreResult<Vec<u8>> {
-    let mut line = serde_json::to_vec(signal).map_err(|err| CoreError::ModuleFailed {
-        module: "sink.json_stdout".to_string(),
-        message: err.to_string(),
-    })?;
+    let mut line = serde_json::to_vec(signal).map_err(|err| module_error(err.to_string()))?;
     line.push(b'\n');
     Ok(line)
+}
+
+fn module_error(message: String) -> CoreError {
+    CoreError::ModuleFailed {
+        module: "sink.json_stdout".to_string(),
+        message,
+    }
 }
 
 #[cfg(test)]
@@ -59,8 +65,13 @@ mod tests {
         );
 
         let line = serialize_signal_line(&signal).expect("signal serializes");
+        let value: serde_json::Value =
+            serde_json::from_slice(&line[..line.len() - 1]).expect("line is valid JSON");
 
         assert!(line.ends_with(b"\n"));
         assert_eq!(line.iter().filter(|byte| **byte == b'\n').count(), 1);
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["kind"], "exec");
+        assert_eq!(value["payload"]["command"], "true");
     }
 }

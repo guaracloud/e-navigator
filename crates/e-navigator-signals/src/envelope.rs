@@ -5,8 +5,14 @@ use crate::ExecEvent;
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignalKind {
+    Exec,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
+#[serde(untagged)]
 pub enum SignalPayload {
     Exec(ExecEvent),
 }
@@ -14,6 +20,7 @@ pub enum SignalPayload {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignalEnvelope {
     pub schema_version: u16,
+    kind: SignalKind,
     pub source: String,
     pub host: Option<String>,
     pub payload: SignalPayload,
@@ -23,17 +30,22 @@ impl SignalEnvelope {
     pub fn exec(source: impl Into<String>, host: Option<String>, event: ExecEvent) -> Self {
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::Exec,
             source: source.into(),
             host,
             payload: SignalPayload::Exec(event),
         }
     }
+
+    pub fn signal_kind(&self) -> SignalKind {
+        self.kind
+    }
 }
 
 impl Signal for SignalEnvelope {
     fn kind(&self) -> &'static str {
-        match self.payload {
-            SignalPayload::Exec(_) => "exec",
+        match self.kind {
+            SignalKind::Exec => "exec",
         }
     }
 }
@@ -61,9 +73,17 @@ mod tests {
             },
         );
 
-        let json = serde_json::to_string(&signal).expect("signal serializes");
-        assert!(json.contains("\"schema_version\":1"));
-        assert!(json.contains("\"kind\":\"exec\""));
-        assert!(json.contains("\"command\":\"bash\""));
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+
+        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["kind"], "exec");
+        assert_eq!(json["source"], "source.test");
+        assert_eq!(json["host"], "node-a");
+        assert_eq!(json["payload"]["pid"], 42);
+        assert_eq!(json["payload"]["uid"], 1000);
+        assert_eq!(json["payload"]["command"], "bash");
+        assert_eq!(json["payload"]["executable"], "/usr/bin/bash");
+        assert_eq!(json["payload"]["timestamp_unix_nanos"], 123);
+        assert!(json["payload"].get("kind").is_none());
     }
 }

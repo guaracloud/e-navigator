@@ -16,6 +16,10 @@ spec:
     spec:
       serviceAccountName: e-navigator
       hostPID: true
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        - operator: Exists
       containers:
         - name: e-navigator
           image: ghcr.io/victorbona/e-navigator:dev
@@ -23,6 +27,8 @@ spec:
           args:
             - "--source"
             - "aya-exec"
+            - "--config"
+            - "/etc/e-navigator/e-navigator.toml"
           env:
             - name: RUST_LOG
               value: "info"
@@ -40,8 +46,10 @@ spec:
               readOnly: true
             - name: sys-kernel-debug
               mountPath: /sys/kernel/debug
+              readOnly: true
             - name: sys-kernel-tracing
               mountPath: /sys/kernel/tracing
+              readOnly: true
       volumes:
         - name: config
           configMap:
@@ -49,8 +57,8 @@ spec:
         - name: sys-kernel-debug
           hostPath:
             path: /sys/kernel/debug
-            type: DirectoryOrCreate
+            type: Directory
         - name: sys-kernel-tracing
           hostPath:
             path: /sys/kernel/tracing
-            type: DirectoryOrCreate
+            type: Directory

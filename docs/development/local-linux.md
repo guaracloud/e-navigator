@@ -4,9 +4,9 @@
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --exclude e-navigator-ebpf-programs
-cargo build --workspace --exclude e-navigator-ebpf-programs
+cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings
+cargo test --locked --workspace --exclude e-navigator-ebpf-programs
+cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 ```
 
 ## Aya Prerequisites
@@ -15,7 +15,7 @@ Install the Rust nightly toolchain with `rust-src`, `bpf-linker`, and `bpftool`:
 
 ```bash
 rustup toolchain install nightly --component rust-src
-cargo install bpf-linker
+cargo install bpf-linker --version 0.10.3 --locked
 ```
 
 Install `bpftool` from the Linux distribution package manager.
@@ -31,7 +31,7 @@ Expected result: one newline-delimited JSON exec signal is printed to stdout.
 ## Privileged Aya Exec Smoke Test
 
 ```bash
-cargo run -p e-navigator-cli --release -- --source aya-exec
+sudo -E cargo run -p e-navigator-cli --release -- --source aya-exec
 ```
 
 In another shell:
@@ -41,3 +41,4 @@ In another shell:
 ```
 
 Expected result: the runner prints JSON exec signals from `source.aya_exec`.
+The smoke test must run as root or with the Linux capabilities and rlimits required to load and attach eBPF programs.
