@@ -30,6 +30,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "e-navigator-processors"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "e-navigator-core",
+ "e-navigator-signals",
+ "tokio",
+]
+
+[[package]]
 name = "e-navigator-runner"
 version = "0.1.0"
 dependencies = [

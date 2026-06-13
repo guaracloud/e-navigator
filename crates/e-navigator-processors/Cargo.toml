@@ -1,0 +1,11 @@
+[package]
+name = "e-navigator-processors"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+e-navigator-core = { path = "../e-navigator-core" }
+e-navigator-signals = { path = "../e-navigator-signals" }
+tokio = { workspace = true }
