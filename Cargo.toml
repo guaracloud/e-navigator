@@ -1,7 +1,11 @@
 [workspace]
 resolver = "2"
-members = []
-default-members = []
+members = [
+  "crates/e-navigator-core",
+]
+default-members = [
+  "crates/e-navigator-core",
+]
 
 [workspace.package]
 edition = "2024"
