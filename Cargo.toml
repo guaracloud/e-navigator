@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/e-navigator-core",
+  "crates/e-navigator-cli",
   "crates/e-navigator-processors",
   "crates/e-navigator-runner",
   "crates/e-navigator-signals",
@@ -9,6 +10,7 @@ members = [
 ]
 default-members = [
   "crates/e-navigator-core",
+  "crates/e-navigator-cli",
   "crates/e-navigator-processors",
   "crates/e-navigator-runner",
   "crates/e-navigator-signals",

@@ -112,7 +112,7 @@ mod tests {
     use async_trait::async_trait;
     use e_navigator_core::{CoreResult, ModuleKind, ModuleMetadata, Sink, Source};
     use e_navigator_signals::{ExecEvent, SignalEnvelope};
-    use tokio::sync::{mpsc, Mutex};
+    use tokio::sync::{Mutex, mpsc};
 
     use super::*;
     use std::sync::Arc;
@@ -170,7 +170,10 @@ mod tests {
             .with_sink(Box::new(MemorySink { seen: seen.clone() }));
         let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
 
-        runner.run().await.expect("runner exits after source closes");
+        runner
+            .run()
+            .await
+            .expect("runner exits after source closes");
 
         assert_eq!(seen.lock().await.len(), 1);
     }
