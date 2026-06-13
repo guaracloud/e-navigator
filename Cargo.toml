@@ -4,11 +4,13 @@ members = [
   "crates/e-navigator-core",
   "crates/e-navigator-runner",
   "crates/e-navigator-signals",
+  "crates/e-navigator-sinks",
 ]
 default-members = [
   "crates/e-navigator-core",
   "crates/e-navigator-runner",
   "crates/e-navigator-signals",
+  "crates/e-navigator-sinks",
 ]
 
 [workspace.package]
@@ -31,7 +33,7 @@ libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-stream = "0.1"
 toml = "0.9"
 tracing = "0.1"
