@@ -1,13 +1,89 @@
+#[cfg(any(target_os = "linux", test))]
+use e_navigator_core::ArgvCaptureConfig;
+
+#[cfg(any(target_os = "linux", test))]
+const RAW_MAX_ARGS: usize = ArgvCaptureConfig::MAX_ARGS_LIMIT;
+#[cfg(any(target_os = "linux", test))]
+const RAW_ARG_LEN: usize = 64;
+#[cfg(any(target_os = "linux", test))]
+const RAW_ARG_BYTES: usize = RAW_MAX_ARGS * RAW_ARG_LEN;
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapturedArguments {
+    arguments: Vec<String>,
+    truncated: bool,
+    bytes: usize,
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn captured_arguments_from_raw(
+    raw_arguments: &[[u8; RAW_ARG_LEN]; RAW_MAX_ARGS],
+    raw_count: u32,
+    config: &ArgvCaptureConfig,
+) -> CapturedArguments {
+    if !config.enabled {
+        return CapturedArguments {
+            arguments: Vec::new(),
+            truncated: false,
+            bytes: 0,
+        };
+    }
+
+    let mut arguments = Vec::new();
+    let raw_count = raw_count as usize;
+    let requested_count = raw_count.min(RAW_MAX_ARGS).min(config.max_args);
+    let max_bytes = config.max_bytes.min(RAW_ARG_BYTES);
+    let mut bytes = 0;
+    let mut truncated = raw_count > requested_count;
+
+    for raw in raw_arguments.iter().take(requested_count) {
+        if bytes >= max_bytes {
+            truncated = true;
+            break;
+        }
+
+        let value = bytes_to_string(raw);
+        if value.is_empty() {
+            continue;
+        }
+
+        let remaining = max_bytes - bytes;
+        if value.len() > remaining {
+            let mut end = remaining;
+            while !value.is_char_boundary(end) {
+                end -= 1;
+            }
+            arguments.push(value[..end].to_string());
+            bytes += end;
+            truncated = true;
+            break;
+        }
+
+        bytes += value.len();
+        arguments.push(value);
+    }
+
+    CapturedArguments {
+        arguments,
+        truncated,
+        bytes,
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod platform {
     use async_trait::async_trait;
     use aya::{
         Ebpf, include_bytes_aligned,
+        maps::Array,
         maps::perf::{PerfEvent, PerfEventArray},
         programs::TracePoint,
         util::online_cpus,
     };
-    use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Source};
+    use e_navigator_core::{
+        ArgvCaptureConfig, CoreError, CoreResult, ModuleKind, ModuleMetadata, Source,
+    };
     use e_navigator_signals::{ExecEvent, SignalEnvelope};
     use std::sync::{
         Arc,
@@ -24,18 +100,21 @@ mod platform {
     struct RawExecEvent {
         pid: u32,
         uid: u32,
+        argument_count: u32,
         command: [u8; 16],
         executable: [u8; EXECUTABLE_LEN],
+        arguments: [[u8; super::RAW_ARG_LEN]; super::RAW_MAX_ARGS],
     }
 
     #[derive(Debug, Default)]
     pub struct AyaExecSource {
         host: Option<String>,
+        argv_capture: ArgvCaptureConfig,
     }
 
     impl AyaExecSource {
-        pub fn new(host: Option<String>) -> Self {
-            Self { host }
+        pub fn new(host: Option<String>, argv_capture: ArgvCaptureConfig) -> Self {
+            Self { host, argv_capture }
         }
     }
 
@@ -49,6 +128,7 @@ mod platform {
             bump_memlock_rlimit();
             let shutdown = ReaderShutdown::new();
             let mut reader_handles = Vec::new();
+            let argv_capture = self.argv_capture.clone();
 
             let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
                 env!("OUT_DIR"),
@@ -58,6 +138,8 @@ mod platform {
                 module: "source.aya_exec".to_string(),
                 message: err.to_string(),
             })?;
+
+            configure_argv_capture(&mut ebpf, argv_capture.enabled)?;
 
             let program: &mut TracePoint = ebpf
                 .program_mut("tracepoint_execve")
@@ -106,6 +188,7 @@ mod platform {
                         })?;
                 let cpu_tx = tx.clone();
                 let host = self.host.clone();
+                let argv_capture = argv_capture.clone();
                 let reader_shutdown = shutdown.clone();
 
                 reader_handles.push(tokio::task::spawn_blocking(move || {
@@ -124,7 +207,9 @@ mod platform {
                                         return;
                                     }
 
-                                    if let Some(signal) = raw_to_signal(head, host.clone()) {
+                                    if let Some(signal) =
+                                        raw_to_signal(head, host.clone(), &argv_capture)
+                                    {
                                         if cpu_tx.blocking_send(signal).is_err() {
                                             closed = true;
                                         }
@@ -157,7 +242,30 @@ mod platform {
         }
     }
 
-    fn raw_to_signal(bytes: &[u8], host: Option<String>) -> Option<SignalEnvelope> {
+    fn configure_argv_capture(ebpf: &mut Ebpf, enabled: bool) -> CoreResult<()> {
+        let mut map = Array::try_from(ebpf.map_mut("ARGV_CAPTURE_ENABLED").ok_or_else(|| {
+            CoreError::ModuleFailed {
+                module: "source.aya_exec".to_string(),
+                message: "missing ARGV_CAPTURE_ENABLED map".to_string(),
+            }
+        })?)
+        .map_err(|err| CoreError::ModuleFailed {
+            module: "source.aya_exec".to_string(),
+            message: err.to_string(),
+        })?;
+
+        map.set(0, u32::from(enabled), 0)
+            .map_err(|err| CoreError::ModuleFailed {
+                module: "source.aya_exec".to_string(),
+                message: err.to_string(),
+            })
+    }
+
+    fn raw_to_signal(
+        bytes: &[u8],
+        host: Option<String>,
+        argv_capture: &ArgvCaptureConfig,
+    ) -> Option<SignalEnvelope> {
         if bytes.len() < core::mem::size_of::<RawExecEvent>() {
             return None;
         }
@@ -165,6 +273,8 @@ mod platform {
         let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawExecEvent>()) };
         let task_comm = super::bytes_to_string(&raw.command);
         let executable = super::bytes_to_string(&raw.executable);
+        let captured =
+            super::captured_arguments_from_raw(&raw.arguments, raw.argument_count, argv_capture);
         let command = if executable.is_empty() {
             task_comm
         } else {
@@ -180,7 +290,7 @@ mod platform {
                 uid: Some(raw.uid),
                 command,
                 executable: (!executable.is_empty()).then_some(executable),
-                arguments: vec![],
+                arguments: captured.arguments,
                 cgroup_id: None,
                 timestamp_unix_nanos: super::now_unix_nanos(),
                 container: None,
@@ -242,18 +352,24 @@ mod platform {
 #[cfg(not(target_os = "linux"))]
 mod platform {
     use async_trait::async_trait;
-    use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Source};
+    use e_navigator_core::{
+        ArgvCaptureConfig, CoreError, CoreResult, ModuleKind, ModuleMetadata, Source,
+    };
     use e_navigator_signals::SignalEnvelope;
     use tokio::sync::mpsc;
 
     #[derive(Debug, Default)]
     pub struct AyaExecSource {
         host: Option<String>,
+        _argv_capture: ArgvCaptureConfig,
     }
 
     impl AyaExecSource {
-        pub fn new(host: Option<String>) -> Self {
-            Self { host }
+        pub fn new(host: Option<String>, argv_capture: ArgvCaptureConfig) -> Self {
+            Self {
+                host,
+                _argv_capture: argv_capture,
+            }
         }
     }
 
@@ -297,6 +413,7 @@ fn bytes_to_string(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use e_navigator_core::ArgvCaptureConfig;
 
     #[test]
     fn command_bytes_convert_to_string() {
@@ -306,7 +423,52 @@ mod tests {
     }
 
     #[test]
+    fn argv_capture_can_be_disabled() {
+        let raw = raw_argument_slots(["/bin/sh", "-c", "echo hello"]);
+        let config = ArgvCaptureConfig {
+            enabled: false,
+            max_args: 8,
+            max_bytes: 512,
+        };
+
+        let captured = captured_arguments_from_raw(&raw, 3, &config);
+
+        assert!(captured.arguments.is_empty());
+        assert!(!captured.truncated);
+        assert_eq!(captured.bytes, 0);
+    }
+
+    #[test]
+    fn argv_capture_is_bounded_by_count_and_bytes() {
+        let raw = raw_argument_slots(["/bin/bash", "-lc", "curl http://example.invalid"]);
+        let config = ArgvCaptureConfig {
+            enabled: true,
+            max_args: 2,
+            max_bytes: 12,
+        };
+
+        let captured = captured_arguments_from_raw(&raw, 3, &config);
+
+        assert_eq!(
+            captured.arguments,
+            vec!["/bin/bash".to_string(), "-lc".to_string()]
+        );
+        assert!(captured.truncated);
+        assert_eq!(captured.bytes, 12);
+    }
+
+    #[test]
     fn unix_timestamp_is_not_epoch_placeholder() {
         assert!(now_unix_nanos() > 0);
+    }
+
+    fn raw_argument_slots<const N: usize>(values: [&str; N]) -> [[u8; RAW_ARG_LEN]; RAW_MAX_ARGS] {
+        let mut slots = [[0_u8; RAW_ARG_LEN]; RAW_MAX_ARGS];
+        for (slot, value) in slots.iter_mut().zip(values) {
+            let bytes = value.as_bytes();
+            let copy_len = bytes.len().min(RAW_ARG_LEN.saturating_sub(1));
+            slot[..copy_len].copy_from_slice(&bytes[..copy_len]);
+        }
+        slots
     }
 }

@@ -65,7 +65,10 @@ fn build_registry(
 
     match source {
         SourceMode::AyaExec if config.module_enabled("source.aya_exec") => {
-            registry = registry.with_source(Box::new(AyaExecSource::new(host)));
+            registry = registry.with_source(Box::new(AyaExecSource::new(
+                host,
+                config.argv_capture.clone(),
+            )));
         }
         SourceMode::Synthetic if config.module_enabled("source.synthetic_exec") => {
             registry = registry.with_source(Box::new(SyntheticExecSource { host }));
