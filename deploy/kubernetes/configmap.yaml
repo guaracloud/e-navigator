@@ -10,12 +10,29 @@ data:
     log_level = "info"
     queue_capacity = 1024
 
+    [argv_capture]
+    enabled = true
+    max_args = 8
+    max_bytes = 512
+
+    [attribution]
+    procfs_root = "/proc"
+
+    [attribution.kubernetes]
+    enabled = true
+    token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    ca_cert_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
     [[modules]]
     name = "source.aya_exec"
     enabled = true
 
     [[modules]]
     name = "processor.container_attribution"
+    enabled = true
+
+    [[modules]]
+    name = "generator.runtime_security"
     enabled = true
 
     [[modules]]

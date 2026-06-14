@@ -15,7 +15,9 @@ spec:
         app.kubernetes.io/name: e-navigator
     spec:
       serviceAccountName: e-navigator
+      automountServiceAccountToken: true
       hostPID: true
+      terminationGracePeriodSeconds: 10
       nodeSelector:
         kubernetes.io/os: linux
       tolerations:
