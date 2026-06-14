@@ -89,10 +89,28 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                         .and_then(|container| self.kubernetes_cache.get(&container.container_id));
                 }
             }
-            SignalPayload::NetworkConnectionOpen(_)
-            | SignalPayload::NetworkConnectionClose(_)
-            | SignalPayload::NetworkConnectionFailure(_)
-            | SignalPayload::DependencyEdge(_) => {}
+            SignalPayload::NetworkConnectionOpen(event) => {
+                self.enrich_context(
+                    event.process.pid,
+                    &mut event.container,
+                    &mut event.kubernetes,
+                );
+            }
+            SignalPayload::NetworkConnectionClose(event) => {
+                self.enrich_context(
+                    event.process.pid,
+                    &mut event.container,
+                    &mut event.kubernetes,
+                );
+            }
+            SignalPayload::NetworkConnectionFailure(event) => {
+                self.enrich_context(
+                    event.process.pid,
+                    &mut event.container,
+                    &mut event.kubernetes,
+                );
+            }
+            SignalPayload::DependencyEdge(_) => {}
             SignalPayload::RuntimeSecurityFinding(_) => {}
         }
 
@@ -101,6 +119,22 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
 }
 
 impl ContainerAttributionProcessor {
+    fn enrich_context(
+        &self,
+        pid: u32,
+        container: &mut Option<ContainerContext>,
+        kubernetes: &mut Option<KubernetesContext>,
+    ) {
+        if container.is_none() {
+            *container = self.container_for_pid(pid);
+        }
+        if kubernetes.is_none() {
+            *kubernetes = container
+                .as_ref()
+                .and_then(|container| self.kubernetes_cache.get(&container.container_id));
+        }
+    }
+
     fn container_for_pid(&self, pid: u32) -> Option<ContainerContext> {
         let path = self.config.procfs_root.join(pid.to_string()).join("cgroup");
         match read_bounded_to_string(&path, MAX_CGROUP_BYTES) {
@@ -291,7 +325,10 @@ struct ContainerStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e_navigator_signals::{ContainerContext, ExecEvent, KubernetesContext};
+    use e_navigator_signals::{
+        ContainerContext, ExecEvent, KubernetesContext, NetworkAddressFamily,
+        NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol,
+    };
     use std::{collections::BTreeMap, fs};
 
     #[tokio::test]
@@ -470,6 +507,94 @@ mod tests {
                 .labels
                 .get("app"),
             Some(&"api".to_string())
+        );
+
+        fs::remove_dir_all(root).expect("fixture cleanup succeeds");
+    }
+
+    #[tokio::test]
+    async fn enriches_network_connection_from_existing_attribution_path() {
+        let root = std::env::temp_dir().join(format!(
+            "e-navigator-network-attribution-test-{}",
+            std::process::id()
+        ));
+        let pid_dir = root.join("77");
+        fs::create_dir_all(&pid_dir).expect("pid dir is created");
+        fs::write(
+            pid_dir.join("cgroup"),
+            "0::/kubepods.slice/cri-containerd-fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210.scope\n",
+        )
+        .expect("cgroup fixture is written");
+
+        let mut labels = BTreeMap::new();
+        labels.insert("app".to_string(), "worker".to_string());
+        let cache = KubernetesMetadataCache::from_contexts([(
+            "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210".to_string(),
+            KubernetesContext {
+                namespace: "jobs".to_string(),
+                pod_name: "worker-123".to_string(),
+                pod_uid: Some("worker-pod-uid".to_string()),
+                container_name: Some("worker".to_string()),
+                node_name: Some("node-a".to_string()),
+                labels,
+            },
+        )]);
+        let processor = ContainerAttributionProcessor::with_cache(
+            AttributionConfig {
+                procfs_root: root.clone(),
+                kubernetes: KubernetesAttributionConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+            },
+            cache,
+        );
+        let signal = SignalEnvelope::network_connection_open(
+            "source.test",
+            Some("node-a".to_string()),
+            NetworkConnectionOpenEvent {
+                process: NetworkProcessIdentity {
+                    pid: 77,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "worker".to_string(),
+                    executable: Some("/app/worker".to_string()),
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.0.0.5".to_string()),
+                local_port: Some(43512),
+                remote_address: "203.0.113.10".to_string(),
+                remote_port: 443,
+                fd: Some(9),
+                timestamp_unix_nanos: 99,
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let processed = processor
+            .process(signal)
+            .await
+            .expect("processor succeeds")
+            .expect("signal remains");
+
+        let e_navigator_signals::SignalPayload::NetworkConnectionOpen(event) = processed.payload
+        else {
+            panic!("expected network open payload");
+        };
+        assert_eq!(
+            event
+                .container
+                .as_ref()
+                .expect("container")
+                .runtime
+                .as_deref(),
+            Some("containerd")
+        );
+        assert_eq!(
+            event.kubernetes.as_ref().expect("kubernetes").pod_name,
+            "worker-123"
         );
 
         fs::remove_dir_all(root).expect("fixture cleanup succeeds");
