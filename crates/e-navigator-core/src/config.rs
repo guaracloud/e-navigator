@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeConfig {
@@ -10,6 +11,8 @@ pub struct RuntimeConfig {
     pub modules: Vec<ModuleConfig>,
     #[serde(default)]
     pub argv_capture: ArgvCaptureConfig,
+    #[serde(default)]
+    pub attribution: AttributionConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -19,6 +22,7 @@ impl Default for RuntimeConfig {
             queue_capacity: default_queue_capacity(),
             modules: default_modules(),
             argv_capture: ArgvCaptureConfig::default(),
+            attribution: AttributionConfig::default(),
         }
     }
 }
@@ -34,6 +38,7 @@ impl RuntimeConfig {
         }
 
         self.argv_capture.validate()?;
+        self.attribution.validate()?;
 
         Ok(())
     }
@@ -89,6 +94,53 @@ impl ArgvCaptureConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttributionConfig {
+    #[serde(default = "default_procfs_root")]
+    pub procfs_root: PathBuf,
+    #[serde(default)]
+    pub kubernetes: KubernetesAttributionConfig,
+}
+
+impl Default for AttributionConfig {
+    fn default() -> Self {
+        Self {
+            procfs_root: default_procfs_root(),
+            kubernetes: KubernetesAttributionConfig::default(),
+        }
+    }
+}
+
+impl AttributionConfig {
+    fn validate(&self) -> Result<(), String> {
+        if self.procfs_root.as_os_str().is_empty() {
+            return Err("attribution.procfs_root must not be empty".to_string());
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KubernetesAttributionConfig {
+    #[serde(default = "default_kubernetes_attribution_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_service_account_token_path")]
+    pub token_path: PathBuf,
+    #[serde(default = "default_service_account_ca_path")]
+    pub ca_cert_path: PathBuf,
+}
+
+impl Default for KubernetesAttributionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_kubernetes_attribution_enabled(),
+            token_path: default_service_account_token_path(),
+            ca_cert_path: default_service_account_ca_path(),
+        }
+    }
+}
+
 fn default_log_level() -> String {
     "info".to_string()
 }
@@ -116,6 +168,22 @@ fn default_argv_capture_max_args() -> usize {
 
 fn default_argv_capture_max_bytes() -> usize {
     ArgvCaptureConfig::MAX_BYTES_LIMIT
+}
+
+fn default_procfs_root() -> PathBuf {
+    PathBuf::from("/proc")
+}
+
+fn default_kubernetes_attribution_enabled() -> bool {
+    true
+}
+
+fn default_service_account_token_path() -> PathBuf {
+    PathBuf::from("/var/run/secrets/kubernetes.io/serviceaccount/token")
+}
+
+fn default_service_account_ca_path() -> PathBuf {
+    PathBuf::from("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

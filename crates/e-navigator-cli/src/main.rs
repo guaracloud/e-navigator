@@ -77,7 +77,9 @@ fn build_registry(
     }
 
     if config.module_enabled("processor.container_attribution") {
-        registry = registry.with_processor(Box::new(ContainerAttributionProcessor));
+        registry = registry.with_processor(Box::new(ContainerAttributionProcessor::new(
+            config.attribution.clone(),
+        )));
     }
 
     if config.module_enabled("sink.json_stdout") {

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecEvent {
@@ -48,6 +49,8 @@ pub struct ContainerContext {
 pub struct KubernetesContext {
     pub namespace: String,
     pub pod_name: String,
+    pub pod_uid: Option<String>,
     pub container_name: Option<String>,
     pub node_name: Option<String>,
+    pub labels: BTreeMap<String, String>,
 }
