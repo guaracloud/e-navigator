@@ -4,9 +4,12 @@ use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Runtim
 use e_navigator_generators::RuntimeSecurityGenerator;
 use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::{ModuleRegistry, Runner};
-use e_navigator_signals::{ExecEvent, SignalEnvelope};
+use e_navigator_signals::{
+    ContainerContext, ExecEvent, KubernetesContext, ProcessExitEvent, SignalEnvelope,
+};
 use e_navigator_sinks::JsonStdoutSink;
 use e_navigator_sources_ebpf_aya::AyaExecSource;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
@@ -111,25 +114,73 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
     }
 
     async fn run(self: Box<Self>, tx: mpsc::Sender<SignalEnvelope>) -> CoreResult<()> {
+        let (container, kubernetes) = synthetic_attribution();
         let signal = SignalEnvelope::exec(
             "source.synthetic_exec",
-            self.host,
+            self.host.clone(),
             ExecEvent {
                 pid: std::process::id(),
                 ppid: None,
                 uid: None,
-                command: "e-navigator".to_string(),
-                executable: None,
-                arguments: vec!["synthetic".to_string()],
+                command: "sh".to_string(),
+                executable: Some("/bin/sh".to_string()),
+                arguments: vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    "echo synthetic".to_string(),
+                ],
                 cgroup_id: None,
                 timestamp_unix_nanos: now_unix_nanos(),
-                container: None,
-                kubernetes: None,
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
             },
         );
 
-        tx.send(signal).await.map_err(|_| CoreError::PipelineClosed)
+        tx.send(signal)
+            .await
+            .map_err(|_| CoreError::PipelineClosed)?;
+
+        let exit = SignalEnvelope::process_exit(
+            "source.synthetic_exec",
+            self.host,
+            ProcessExitEvent {
+                pid: std::process::id(),
+                ppid: None,
+                uid: None,
+                command: "sh".to_string(),
+                exit_code: Some(0),
+                runtime_nanos: Some(1_000_000),
+                timestamp_unix_nanos: now_unix_nanos(),
+                container: Some(container),
+                kubernetes: Some(kubernetes),
+            },
+        );
+
+        tx.send(exit).await.map_err(|_| CoreError::PipelineClosed)
     }
+}
+
+fn synthetic_attribution() -> (ContainerContext, KubernetesContext) {
+    let mut labels = BTreeMap::new();
+    labels.insert(
+        "app.kubernetes.io/name".to_string(),
+        "e-navigator-smoke".to_string(),
+    );
+
+    (
+        ContainerContext {
+            container_id: "synthetic-container".to_string(),
+            runtime: Some("synthetic".to_string()),
+        },
+        KubernetesContext {
+            namespace: "e-navigator-system".to_string(),
+            pod_name: "e-navigator-synthetic".to_string(),
+            pod_uid: Some("synthetic-pod-uid".to_string()),
+            container_name: Some("e-navigator".to_string()),
+            node_name: node_name().or_else(|| Some("synthetic-node".to_string())),
+            labels,
+        },
+    )
 }
 
 fn now_unix_nanos() -> u64 {
@@ -142,6 +193,9 @@ fn now_unix_nanos() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use e_navigator_core::Source;
+    use e_navigator_signals::SignalPayload;
+    use tokio::sync::mpsc;
 
     #[test]
     fn config_controls_static_module_registration() {
@@ -181,5 +235,34 @@ mod tests {
         assert_eq!(config.queue_capacity, 64);
         assert!(config.module_enabled("source.synthetic_exec"));
         assert!(!config.module_enabled("processor.container_attribution"));
+    }
+
+    #[tokio::test]
+    async fn synthetic_source_emits_attributed_exec_and_exit_fixtures() {
+        let (tx, mut rx) = mpsc::channel(4);
+        Box::new(SyntheticExecSource {
+            host: Some("node-a".to_string()),
+        })
+        .run(tx)
+        .await
+        .expect("synthetic source succeeds");
+
+        let mut signals = Vec::new();
+        while let Some(signal) = rx.recv().await {
+            signals.push(signal);
+        }
+
+        assert_eq!(signals.len(), 2);
+        let SignalPayload::Exec(exec) = &signals[0].payload else {
+            panic!("expected exec fixture");
+        };
+        assert!(exec.container.is_some());
+        assert!(exec.kubernetes.is_some());
+
+        let SignalPayload::ProcessExit(exit) = &signals[1].payload else {
+            panic!("expected process exit fixture");
+        };
+        assert!(exit.container.is_some());
+        assert!(exit.kubernetes.is_some());
     }
 }
