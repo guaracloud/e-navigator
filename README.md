@@ -2,16 +2,18 @@
 
 E-Navigator is a Rust and eBPF observability, security, profiling, and diagnostics platform for Linux and Kubernetes workloads.
 
-Phase 2 builds Kubernetes runtime intelligence on the Phase 1 foundation:
+Phase 3 builds network and service dependency intelligence on the runtime foundation:
 
 - A layered Rust workspace.
 - A statically registered signal pipeline.
 - A local Linux runner.
 - Kubernetes DaemonSet packaging.
 - An Aya process exec and process exit source.
+- An Aya TCP-oriented network connect/failure and fd-close duration source.
 - Bounded, configurable argv capture.
 - Best-effort container and Kubernetes attribution.
-- A narrow runtime security generator for shell-in-container and network-tool execution.
+- A dependency graph generator for observed network edges.
+- A narrow runtime security generator for process and network findings.
 - JSON stdout output.
 
 ## Development
@@ -57,4 +59,4 @@ Privileged eBPF smoke test on Linux:
 sudo -E cargo run -p e-navigator-cli --release -- --source aya-exec
 ```
 
-Do not treat privileged Aya or Kubernetes runtime tests as passed unless they run on a real Linux host or Kubernetes cluster with tracefs/eBPF support and the documented privileges.
+The `aya-exec` source mode registers the statically compiled Aya exec and network sources when both modules are enabled. Do not treat privileged Aya or Kubernetes runtime tests as passed unless they run on a real Linux host or Kubernetes cluster with tracefs/eBPF support and the documented privileges.

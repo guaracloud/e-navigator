@@ -27,7 +27,7 @@ Install `bpftool` from the Linux distribution package manager.
 cargo run --locked -p e-navigator-cli -- --source synthetic
 ```
 
-Expected result: newline-delimited JSON is printed to stdout, including attributed synthetic exec and process exit fixtures. With the default generator enabled, the synthetic shell execution also emits a runtime security finding.
+Expected result: newline-delimited JSON is printed to stdout, including attributed synthetic exec, process exit, network connection, dependency edge, and runtime security finding fixtures.
 
 ## Docker Smoke Tests
 
@@ -49,7 +49,7 @@ Exec argv capture is bounded and configurable:
 
 Arguments can contain sensitive data. Disable argv capture or lower limits when running in environments where command-line arguments may include secrets.
 
-## Privileged Aya Exec Smoke Test
+## Privileged Aya Exec And Network Smoke Test
 
 ```bash
 sudo -E cargo run -p e-navigator-cli --release -- --source aya-exec
@@ -62,5 +62,8 @@ In another shell:
 ```
 
 Expected result: the runner prints JSON exec signals from `source.aya_exec`.
+To exercise network visibility, open a TCP connection from the same host while the runner is active.
+Expected network result: the runner prints JSON network connection signals from `source.aya_network`.
+
 The smoke test must run as root or with the Linux capabilities and rlimits required to load and attach eBPF programs.
 Do not claim this test passed unless it ran on a Linux host with tracefs/eBPF support.
