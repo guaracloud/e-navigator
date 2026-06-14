@@ -1,7 +1,7 @@
 use e_navigator_core::Signal;
 use serde::{Deserialize, Serialize};
 
-use crate::{ExecEvent, ProcessExitEvent, ProcessLifecycleDurationEvent};
+use crate::{ExecEvent, ProcessExitEvent, ProcessLifecycleDurationEvent, RuntimeSecurityFinding};
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
 
@@ -11,6 +11,7 @@ pub enum SignalKind {
     Exec,
     ProcessExit,
     ProcessLifecycleDuration,
+    RuntimeSecurityFinding,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,6 +20,7 @@ pub enum SignalPayload {
     Exec(ExecEvent),
     ProcessExit(ProcessExitEvent),
     ProcessLifecycleDuration(ProcessLifecycleDurationEvent),
+    RuntimeSecurityFinding(RuntimeSecurityFinding),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +71,20 @@ impl SignalEnvelope {
         }
     }
 
+    pub fn runtime_security_finding(
+        source: impl Into<String>,
+        host: Option<String>,
+        finding: RuntimeSecurityFinding,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::RuntimeSecurityFinding,
+            source: source.into(),
+            host,
+            payload: SignalPayload::RuntimeSecurityFinding(finding),
+        }
+    }
+
     pub fn signal_kind(&self) -> SignalKind {
         self.kind
     }
@@ -80,6 +96,7 @@ impl Signal for SignalEnvelope {
             SignalKind::Exec => "exec",
             SignalKind::ProcessExit => "process_exit",
             SignalKind::ProcessLifecycleDuration => "process_lifecycle_duration",
+            SignalKind::RuntimeSecurityFinding => "runtime_security_finding",
         }
     }
 }

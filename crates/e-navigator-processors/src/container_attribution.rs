@@ -89,6 +89,7 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                         .and_then(|container| self.kubernetes_cache.get(&container.container_id));
                 }
             }
+            SignalPayload::RuntimeSecurityFinding(_) => {}
         }
 
         Ok(Some(signal))

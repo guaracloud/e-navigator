@@ -154,6 +154,7 @@ fn default_modules() -> Vec<ModuleConfig> {
         ModuleConfig::enabled("source.aya_exec"),
         ModuleConfig::enabled("source.synthetic_exec"),
         ModuleConfig::enabled("processor.container_attribution"),
+        ModuleConfig::enabled("generator.runtime_security"),
         ModuleConfig::enabled("sink.json_stdout"),
     ]
 }
@@ -264,6 +265,7 @@ mod tests {
         assert!(config.module_enabled("source.aya_exec"));
         assert!(config.module_enabled("source.synthetic_exec"));
         assert!(config.module_enabled("processor.container_attribution"));
+        assert!(config.module_enabled("generator.runtime_security"));
         assert!(config.module_enabled("sink.json_stdout"));
     }
 

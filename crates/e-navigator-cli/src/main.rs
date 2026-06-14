@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use clap::{Parser, ValueEnum};
 use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, RuntimeConfig, Source};
+use e_navigator_generators::RuntimeSecurityGenerator;
 use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::{ModuleRegistry, Runner};
 use e_navigator_signals::{ExecEvent, SignalEnvelope};
@@ -80,6 +81,10 @@ fn build_registry(
         registry = registry.with_processor(Box::new(ContainerAttributionProcessor::new(
             config.attribution.clone(),
         )));
+    }
+
+    if config.module_enabled("generator.runtime_security") {
+        registry = registry.with_generator(Box::new(RuntimeSecurityGenerator));
     }
 
     if config.module_enabled("sink.json_stdout") {

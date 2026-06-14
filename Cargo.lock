@@ -360,6 +360,7 @@ dependencies = [
  "async-trait",
  "clap",
  "e-navigator-core",
+ "e-navigator-generators",
  "e-navigator-processors",
  "e-navigator-runner",
  "e-navigator-signals",
@@ -387,6 +388,16 @@ version = "0.1.0"
 dependencies = [
  "aya-ebpf",
  "aya-log-ebpf",
+]
+
+[[package]]
+name = "e-navigator-generators"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "e-navigator-core",
+ "e-navigator-signals",
+ "tokio",
 ]
 
 [[package]]

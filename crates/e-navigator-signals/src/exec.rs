@@ -40,6 +40,31 @@ pub struct ProcessLifecycleDurationEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeSecurityFinding {
+    pub rule_id: String,
+    pub severity: RuntimeSecuritySeverity,
+    pub matched_process: MatchedProcess,
+    pub container: Option<ContainerContext>,
+    pub kubernetes: Option<KubernetesContext>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeSecuritySeverity {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MatchedProcess {
+    pub pid: u32,
+    pub command: String,
+    pub executable: Option<String>,
+    pub arguments: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContainerContext {
     pub container_id: String,
     pub runtime: Option<String>,
