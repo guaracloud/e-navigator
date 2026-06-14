@@ -182,7 +182,7 @@ mod platform {
                 executable: (!executable.is_empty()).then_some(executable),
                 arguments: vec![],
                 cgroup_id: None,
-                timestamp_unix_nanos: now_unix_nanos(),
+                timestamp_unix_nanos: super::now_unix_nanos(),
                 container: None,
                 kubernetes: None,
             },

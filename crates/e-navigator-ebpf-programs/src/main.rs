@@ -7,7 +7,7 @@ use aya_ebpf::{
         bpf_probe_read_user_str_bytes,
     },
     macros::{map, tracepoint},
-    maps::PerfEventArray,
+    maps::{PerCpuArray, PerfEventArray},
     programs::TracePointContext,
 };
 
@@ -25,6 +25,9 @@ pub struct RawExecEvent {
 #[map]
 static EXEC_EVENTS: PerfEventArray<RawExecEvent> = PerfEventArray::new(0);
 
+#[map]
+static EXEC_EVENT_SCRATCH: PerCpuArray<RawExecEvent> = PerCpuArray::with_max_entries(1, 0);
+
 #[tracepoint]
 pub fn tracepoint_execve(ctx: TracePointContext) -> u32 {
     match try_tracepoint_execve(ctx) {
@@ -36,23 +39,29 @@ pub fn tracepoint_execve(ctx: TracePointContext) -> u32 {
 fn try_tracepoint_execve(ctx: TracePointContext) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let uid_gid = bpf_get_current_uid_gid();
-    let event = RawExecEvent {
-        pid: (pid_tgid >> 32) as u32,
-        uid: uid_gid as u32,
-        command: bpf_get_current_comm().map_err(|err| err as i64)?,
-        executable: read_exec_filename(&ctx).unwrap_or([0; EXECUTABLE_LEN]),
+    let event = unsafe {
+        let ptr = EXEC_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+        &mut *ptr
     };
 
-    EXEC_EVENTS.output(&ctx, &event, 0);
+    event.pid = (pid_tgid >> 32) as u32;
+    event.uid = uid_gid as u32;
+    event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
+    event.executable = [0; EXECUTABLE_LEN];
+    let _ = read_exec_filename(&ctx, &mut event.executable);
+
+    EXEC_EVENTS.output(&ctx, &*event, 0);
     Ok(0)
 }
 
-fn read_exec_filename(ctx: &TracePointContext) -> Result<[u8; EXECUTABLE_LEN], i64> {
+fn read_exec_filename(
+    ctx: &TracePointContext,
+    executable: &mut [u8; EXECUTABLE_LEN],
+) -> Result<(), i64> {
     let filename_ptr = unsafe { ctx.read_at::<*const u8>(16) }.map_err(|err| err as i64)?;
-    let mut executable = [0_u8; EXECUTABLE_LEN];
-    let _ = unsafe { bpf_probe_read_user_str_bytes(filename_ptr, &mut executable) }
+    let _ = unsafe { bpf_probe_read_user_str_bytes(filename_ptr, executable) }
         .map_err(|err| err as i64)?;
-    Ok(executable)
+    Ok(())
 }
 
 #[cfg(not(test))]
