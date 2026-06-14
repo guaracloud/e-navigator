@@ -191,9 +191,9 @@ fn with_module_context(metadata: ModuleMetadata, err: CoreError) -> CoreError {
 mod tests {
     use async_trait::async_trait;
     use e_navigator_core::{
-        CoreResult, Generator, ModuleKind, ModuleMetadata, Processor, Sink, Source,
+        CoreResult, Generator, ModuleKind, ModuleMetadata, Processor, Signal, Sink, Source,
     };
-    use e_navigator_signals::{ExecEvent, SignalEnvelope};
+    use e_navigator_signals::{ExecEvent, ProcessExitEvent, SignalEnvelope};
     use tokio::{
         sync::{Mutex, mpsc},
         time::{Duration, timeout},
@@ -223,6 +223,34 @@ mod tests {
                     arguments: vec![],
                     cgroup_id: None,
                     timestamp_unix_nanos: 1,
+                    container: None,
+                    kubernetes: None,
+                },
+            );
+            tx.send(signal).await.map_err(|_| CoreError::PipelineClosed)
+        }
+    }
+
+    struct OneExitSignalSource;
+
+    #[async_trait]
+    impl Source<SignalEnvelope> for OneExitSignalSource {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("source.test_exit", ModuleKind::Source)
+        }
+
+        async fn run(self: Box<Self>, tx: mpsc::Sender<SignalEnvelope>) -> CoreResult<()> {
+            let signal = SignalEnvelope::process_exit(
+                "source.test_exit",
+                None,
+                ProcessExitEvent {
+                    pid: 1,
+                    ppid: Some(0),
+                    uid: None,
+                    command: "true".to_string(),
+                    exit_code: Some(0),
+                    runtime_nanos: Some(10),
+                    timestamp_unix_nanos: 11,
                     container: None,
                     kubernetes: None,
                 },
@@ -317,6 +345,24 @@ mod tests {
             .expect("runner exits after source closes");
 
         assert_eq!(seen.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn runner_routes_process_exit_signal_to_sink() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(OneExitSignalSource))
+            .with_sink(Box::new(MemorySink { seen: seen.clone() }));
+        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
+
+        runner
+            .run()
+            .await
+            .expect("runner exits after source closes");
+
+        let seen = seen.lock().await;
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].kind(), "process_exit");
     }
 
     #[tokio::test]

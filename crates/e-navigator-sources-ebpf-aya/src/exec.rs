@@ -84,7 +84,7 @@ mod platform {
     use e_navigator_core::{
         ArgvCaptureConfig, CoreError, CoreResult, ModuleKind, ModuleMetadata, Source,
     };
-    use e_navigator_signals::{ExecEvent, SignalEnvelope};
+    use e_navigator_signals::{ExecEvent, ProcessExitEvent, SignalEnvelope};
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -104,6 +104,14 @@ mod platform {
         command: [u8; 16],
         executable: [u8; EXECUTABLE_LEN],
         arguments: [[u8; super::RAW_ARG_LEN]; super::RAW_MAX_ARGS],
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct RawExitEvent {
+        pid: u32,
+        uid: u32,
+        command: [u8; 16],
     }
 
     #[derive(Debug, Default)]
@@ -163,6 +171,28 @@ mod platform {
                     message: err.to_string(),
                 })?;
 
+            let exit_program: &mut TracePoint = ebpf
+                .program_mut("tracepoint_process_exit")
+                .ok_or_else(|| CoreError::ModuleFailed {
+                    module: "source.aya_exec".to_string(),
+                    message: "missing tracepoint_process_exit program".to_string(),
+                })?
+                .try_into()
+                .map_err(|err: aya::programs::ProgramError| CoreError::ModuleFailed {
+                    module: "source.aya_exec".to_string(),
+                    message: err.to_string(),
+                })?;
+            exit_program.load().map_err(|err| CoreError::ModuleFailed {
+                module: "source.aya_exec".to_string(),
+                message: err.to_string(),
+            })?;
+            exit_program
+                .attach("sched", "sched_process_exit")
+                .map_err(|err| CoreError::ModuleFailed {
+                    module: "source.aya_exec".to_string(),
+                    message: err.to_string(),
+                })?;
+
             let mut perf_array =
                 PerfEventArray::try_from(ebpf.take_map("EXEC_EVENTS").ok_or_else(|| {
                     CoreError::ModuleFailed {
@@ -175,13 +205,27 @@ mod platform {
                     message: err.to_string(),
                 })?;
 
-            for cpu_id in online_cpus().map_err(|(_, err)| CoreError::ModuleFailed {
+            let mut exit_perf_array =
+                PerfEventArray::try_from(ebpf.take_map("EXIT_EVENTS").ok_or_else(|| {
+                    CoreError::ModuleFailed {
+                        module: "source.aya_exec".to_string(),
+                        message: "missing EXIT_EVENTS map".to_string(),
+                    }
+                })?)
+                .map_err(|err| CoreError::ModuleFailed {
+                    module: "source.aya_exec".to_string(),
+                    message: err.to_string(),
+                })?;
+
+            let cpus = online_cpus().map_err(|(_, err)| CoreError::ModuleFailed {
                 module: "source.aya_exec".to_string(),
                 message: err.to_string(),
-            })? {
+            })?;
+
+            for cpu_id in &cpus {
                 let mut buffer =
                     perf_array
-                        .open(cpu_id, None)
+                        .open(*cpu_id, None)
                         .map_err(|err| CoreError::ModuleFailed {
                             module: "source.aya_exec".to_string(),
                             message: err.to_string(),
@@ -230,6 +274,55 @@ mod platform {
                 }));
             }
 
+            for cpu_id in &cpus {
+                let mut buffer =
+                    exit_perf_array
+                        .open(*cpu_id, None)
+                        .map_err(|err| CoreError::ModuleFailed {
+                            module: "source.aya_exec".to_string(),
+                            message: err.to_string(),
+                        })?;
+                let cpu_tx = tx.clone();
+                let host = self.host.clone();
+                let reader_shutdown = shutdown.clone();
+
+                reader_handles.push(tokio::task::spawn_blocking(move || {
+                    let mut closed = false;
+
+                    while !reader_shutdown.is_stopped() {
+                        buffer.for_each(|event| {
+                            if closed {
+                                return;
+                            }
+
+                            match event {
+                                PerfEvent::Sample { head, tail } => {
+                                    if !tail.is_empty() {
+                                        warn!("dropped wrapped process exit perf event sample");
+                                        return;
+                                    }
+
+                                    if let Some(signal) = raw_exit_to_signal(head, host.clone()) {
+                                        if cpu_tx.blocking_send(signal).is_err() {
+                                            closed = true;
+                                        }
+                                    }
+                                }
+                                PerfEvent::Lost { count } => {
+                                    warn!(count, "lost process exit perf events");
+                                }
+                            }
+                        });
+
+                        if closed {
+                            return;
+                        }
+
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                }));
+            }
+
             debug!("aya exec source attached");
             tokio::signal::ctrl_c()
                 .await
@@ -240,6 +333,31 @@ mod platform {
             shutdown.stop();
             join_reader_handles(reader_handles).await
         }
+    }
+
+    fn raw_exit_to_signal(bytes: &[u8], host: Option<String>) -> Option<SignalEnvelope> {
+        if bytes.len() < core::mem::size_of::<RawExitEvent>() {
+            return None;
+        }
+
+        let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawExitEvent>()) };
+        let command = super::bytes_to_string(&raw.command);
+
+        Some(SignalEnvelope::process_exit(
+            "source.aya_exec",
+            host,
+            ProcessExitEvent {
+                pid: raw.pid,
+                ppid: None,
+                uid: Some(raw.uid),
+                command,
+                exit_code: None,
+                runtime_nanos: None,
+                timestamp_unix_nanos: super::now_unix_nanos(),
+                container: None,
+                kubernetes: None,
+            },
+        ))
     }
 
     fn configure_argv_capture(ebpf: &mut Ebpf, enabled: bool) -> CoreResult<()> {

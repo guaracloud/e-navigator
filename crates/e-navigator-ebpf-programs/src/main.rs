@@ -26,11 +26,25 @@ pub struct RawExecEvent {
     pub arguments: [[u8; ARG_LEN]; MAX_ARGS],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RawExitEvent {
+    pub pid: u32,
+    pub uid: u32,
+    pub command: [u8; 16],
+}
+
 #[map]
 static EXEC_EVENTS: PerfEventArray<RawExecEvent> = PerfEventArray::new(0);
 
 #[map]
+static EXIT_EVENTS: PerfEventArray<RawExitEvent> = PerfEventArray::new(0);
+
+#[map]
 static EXEC_EVENT_SCRATCH: PerCpuArray<RawExecEvent> = PerCpuArray::with_max_entries(1, 0);
+
+#[map]
+static EXIT_EVENT_SCRATCH: PerCpuArray<RawExitEvent> = PerCpuArray::with_max_entries(1, 0);
 
 #[map]
 static ARGV_CAPTURE_ENABLED: Array<u32> = Array::with_max_entries(1, 0);
@@ -38,6 +52,14 @@ static ARGV_CAPTURE_ENABLED: Array<u32> = Array::with_max_entries(1, 0);
 #[tracepoint]
 pub fn tracepoint_execve(ctx: TracePointContext) -> u32 {
     match try_tracepoint_execve(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_process_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_process_exit(ctx) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
@@ -61,6 +83,22 @@ fn try_tracepoint_execve(ctx: TracePointContext) -> Result<u32, i64> {
     let _ = read_exec_arguments(&ctx, event);
 
     EXEC_EVENTS.output(&ctx, &*event, 0);
+    Ok(0)
+}
+
+fn try_tracepoint_process_exit(ctx: TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let uid_gid = bpf_get_current_uid_gid();
+    let event = unsafe {
+        let ptr = EXIT_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+        &mut *ptr
+    };
+
+    event.pid = (pid_tgid >> 32) as u32;
+    event.uid = uid_gid as u32;
+    event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
+
+    EXIT_EVENTS.output(&ctx, &*event, 0);
     Ok(0)
 }
 

@@ -15,6 +15,30 @@ pub struct ExecEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessExitEvent {
+    pub pid: u32,
+    pub ppid: Option<u32>,
+    pub uid: Option<u32>,
+    pub command: String,
+    pub exit_code: Option<i32>,
+    pub runtime_nanos: Option<u64>,
+    pub timestamp_unix_nanos: u64,
+    pub container: Option<ContainerContext>,
+    pub kubernetes: Option<KubernetesContext>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessLifecycleDurationEvent {
+    pub pid: u32,
+    pub command: String,
+    pub started_at_unix_nanos: u64,
+    pub exited_at_unix_nanos: u64,
+    pub duration_nanos: u64,
+    pub container: Option<ContainerContext>,
+    pub kubernetes: Option<KubernetesContext>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContainerContext {
     pub container_id: String,
     pub runtime: Option<String>,
