@@ -211,7 +211,7 @@ fn try_tracepoint_connect_enter(ctx: TracePointContext) -> Result<u32, i64> {
         local_addr_v4: 0,
         remote_addr_v6: [0; 16],
         local_addr_v6: [0; 16],
-        started_at_nanos: bpf_ktime_get_ns(),
+        started_at_nanos: unsafe { bpf_ktime_get_ns() },
         command: bpf_get_current_comm().map_err(|err| err as i64)?,
     };
 
@@ -232,7 +232,7 @@ fn try_tracepoint_connect_enter(ctx: TracePointContext) -> Result<u32, i64> {
 fn try_tracepoint_connect_exit(ctx: TracePointContext) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let retval = unsafe { ctx.read_at::<i64>(16) }.map_err(|err| err as i64)?;
-    let pending = match PENDING_CONNECTS.get(&pid_tgid) {
+    let pending = match unsafe { PENDING_CONNECTS.get(&pid_tgid) } {
         Some(value) => *value,
         None => return Ok(0),
     };
@@ -240,7 +240,7 @@ fn try_tracepoint_connect_exit(ctx: TracePointContext) -> Result<u32, i64> {
 
     let event = network_event_scratch()?;
     copy_pending_to_event(&pending, event);
-    event.timestamp_unix_nanos = bpf_ktime_get_ns();
+    event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
 
     if retval < 0 {
         event.event_type = NETWORK_EVENT_FAILURE;
@@ -269,13 +269,13 @@ fn try_tracepoint_close_enter(ctx: TracePointContext) -> Result<u32, i64> {
         tgid: (pid_tgid >> 32) as u32,
         fd,
     };
-    let pending = match ACTIVE_CONNECTIONS.get(&key) {
+    let pending = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
         Some(value) => *value,
         None => return Ok(0),
     };
     ACTIVE_CONNECTIONS.remove(&key).ok();
 
-    let now = bpf_ktime_get_ns();
+    let now = unsafe { bpf_ktime_get_ns() };
     let event = network_event_scratch()?;
     copy_pending_to_event(&pending, event);
     event.event_type = NETWORK_EVENT_CLOSE;

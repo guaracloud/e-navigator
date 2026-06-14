@@ -320,7 +320,8 @@ mod platform {
             .try_into()
             .map_err(module_error)?;
         program.load().map_err(module_error)?;
-        program.attach(category, name).map_err(module_error)
+        program.attach(category, name).map_err(module_error)?;
+        Ok(())
     }
 
     #[derive(Clone)]
