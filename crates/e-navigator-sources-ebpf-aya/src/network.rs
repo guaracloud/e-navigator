@@ -442,7 +442,7 @@ mod tests {
             command: fixed_command("api"),
         };
 
-        let signal = raw_network_to_signal(&raw_as_bytes(&raw), Some("node-a".to_string()))
+        let signal = raw_network_to_signal(raw_as_bytes(&raw), Some("node-a".to_string()))
             .expect("raw event decodes");
 
         assert_eq!(signal.kind(), "network_connection_open");
@@ -483,7 +483,7 @@ mod tests {
             command: fixed_command("worker"),
         };
 
-        let signal = raw_network_to_signal(&raw_as_bytes(&raw), Some("node-a".to_string()))
+        let signal = raw_network_to_signal(raw_as_bytes(&raw), Some("node-a".to_string()))
             .expect("raw event decodes");
 
         assert_eq!(signal.kind(), "network_connection_failure");
@@ -517,7 +517,7 @@ mod tests {
             command: fixed_command("api"),
         };
 
-        let signal = raw_network_to_signal(&raw_as_bytes(&raw), Some("node-a".to_string()))
+        let signal = raw_network_to_signal(raw_as_bytes(&raw), Some("node-a".to_string()))
             .expect("raw event decodes");
 
         assert_eq!(signal.kind(), "network_connection_close");
