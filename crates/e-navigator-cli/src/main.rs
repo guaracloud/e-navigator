@@ -1,14 +1,16 @@
 use async_trait::async_trait;
 use clap::{Parser, ValueEnum};
 use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, RuntimeConfig, Source};
-use e_navigator_generators::RuntimeSecurityGenerator;
+use e_navigator_generators::{DependencyGraphGenerator, RuntimeSecurityGenerator};
 use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::{ModuleRegistry, Runner};
 use e_navigator_signals::{
-    ContainerContext, ExecEvent, KubernetesContext, ProcessExitEvent, SignalEnvelope,
+    ContainerContext, ExecEvent, KubernetesContext, NetworkAddressFamily,
+    NetworkConnectionCloseEvent, NetworkConnectionOpenEvent, NetworkProcessIdentity,
+    NetworkProtocol, ProcessExitEvent, SignalEnvelope,
 };
 use e_navigator_sinks::JsonStdoutSink;
-use e_navigator_sources_ebpf_aya::AyaExecSource;
+use e_navigator_sources_ebpf_aya::{AyaExecSource, AyaNetworkSource};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
@@ -70,20 +72,28 @@ fn build_registry(
     match source {
         SourceMode::AyaExec if config.module_enabled("source.aya_exec") => {
             registry = registry.with_source(Box::new(AyaExecSource::new(
-                host,
+                host.clone(),
                 config.argv_capture.clone(),
             )));
         }
         SourceMode::Synthetic if config.module_enabled("source.synthetic_exec") => {
-            registry = registry.with_source(Box::new(SyntheticExecSource { host }));
+            registry = registry.with_source(Box::new(SyntheticExecSource { host: host.clone() }));
         }
         _ => {}
+    }
+
+    if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.aya_network") {
+        registry = registry.with_source(Box::new(AyaNetworkSource::new(host.clone())));
     }
 
     if config.module_enabled("processor.container_attribution") {
         registry = registry.with_processor(Box::new(ContainerAttributionProcessor::new(
             config.attribution.clone(),
         )));
+    }
+
+    if config.module_enabled("generator.dependency_graph") {
+        registry = registry.with_generator(Box::new(DependencyGraphGenerator::default()));
     }
 
     if config.module_enabled("generator.runtime_security") {
@@ -142,7 +152,7 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
 
         let exit = SignalEnvelope::process_exit(
             "source.synthetic_exec",
-            self.host,
+            self.host.clone(),
             ProcessExitEvent {
                 pid: std::process::id(),
                 ppid: None,
@@ -151,12 +161,66 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
                 exit_code: Some(0),
                 runtime_nanos: Some(1_000_000),
                 timestamp_unix_nanos: now_unix_nanos(),
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
+            },
+        );
+
+        tx.send(exit).await.map_err(|_| CoreError::PipelineClosed)?;
+
+        let opened_at = now_unix_nanos();
+        let open = SignalEnvelope::network_connection_open(
+            "source.synthetic_exec",
+            self.host.clone(),
+            NetworkConnectionOpenEvent {
+                process: NetworkProcessIdentity {
+                    pid: std::process::id(),
+                    ppid: None,
+                    uid: None,
+                    command: "synthetic-api".to_string(),
+                    executable: Some("/app/synthetic-api".to_string()),
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.0.0.5".to_string()),
+                local_port: Some(43512),
+                remote_address: "203.0.113.10".to_string(),
+                remote_port: 443,
+                fd: Some(7),
+                timestamp_unix_nanos: opened_at,
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
+            },
+        );
+        tx.send(open).await.map_err(|_| CoreError::PipelineClosed)?;
+
+        let duration_nanos = 2_000_000;
+        let close = SignalEnvelope::network_connection_close(
+            "source.synthetic_exec",
+            self.host,
+            NetworkConnectionCloseEvent {
+                process: NetworkProcessIdentity {
+                    pid: std::process::id(),
+                    ppid: None,
+                    uid: None,
+                    command: "synthetic-api".to_string(),
+                    executable: Some("/app/synthetic-api".to_string()),
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.0.0.5".to_string()),
+                local_port: Some(43512),
+                remote_address: "203.0.113.10".to_string(),
+                remote_port: 443,
+                fd: Some(7),
+                opened_at_unix_nanos: Some(opened_at),
+                closed_at_unix_nanos: opened_at.saturating_add(duration_nanos),
+                duration_nanos: Some(duration_nanos),
                 container: Some(container),
                 kubernetes: Some(kubernetes),
             },
         );
-
-        tx.send(exit).await.map_err(|_| CoreError::PipelineClosed)
+        tx.send(close).await.map_err(|_| CoreError::PipelineClosed)
     }
 }
 
@@ -210,6 +274,7 @@ mod tests {
 
         assert_eq!(registry.sources.len(), 1);
         assert_eq!(registry.processors.len(), 0);
+        assert_eq!(registry.generators.len(), 2);
         assert_eq!(registry.sinks.len(), 1);
     }
 
@@ -238,8 +303,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn synthetic_source_emits_attributed_exec_and_exit_fixtures() {
-        let (tx, mut rx) = mpsc::channel(4);
+    async fn synthetic_source_emits_attributed_runtime_and_network_fixtures() {
+        let (tx, mut rx) = mpsc::channel(8);
         Box::new(SyntheticExecSource {
             host: Some("node-a".to_string()),
         })
@@ -252,7 +317,7 @@ mod tests {
             signals.push(signal);
         }
 
-        assert_eq!(signals.len(), 2);
+        assert_eq!(signals.len(), 4);
         let SignalPayload::Exec(exec) = &signals[0].payload else {
             panic!("expected exec fixture");
         };
@@ -264,5 +329,18 @@ mod tests {
         };
         assert!(exit.container.is_some());
         assert!(exit.kubernetes.is_some());
+
+        let SignalPayload::NetworkConnectionOpen(open) = &signals[2].payload else {
+            panic!("expected network open fixture");
+        };
+        assert_eq!(open.remote_address, "203.0.113.10");
+        assert!(open.container.is_some());
+        assert!(open.kubernetes.is_some());
+
+        let SignalPayload::NetworkConnectionClose(close) = &signals[3].payload else {
+            panic!("expected network close fixture");
+        };
+        assert_eq!(close.remote_port, 443);
+        assert_eq!(close.duration_nanos, Some(2_000_000));
     }
 }

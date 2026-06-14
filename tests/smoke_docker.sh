@@ -13,6 +13,9 @@ docker run --rm "$image" --source synthetic >"$default_output"
 test "$(wc -l <"$default_output" | tr -d ' ')" -ge 2
 grep -q '"kind":"exec"' "$default_output"
 grep -q '"kind":"process_exit"' "$default_output"
+grep -q '"kind":"network_connection_open"' "$default_output"
+grep -q '"kind":"dependency_edge"' "$default_output"
+grep -q '"kind":"runtime_security_finding"' "$default_output"
 
 cat >"$config_file" <<'CONFIG'
 log_level = "info"
@@ -42,6 +45,10 @@ name = "generator.runtime_security"
 enabled = true
 
 [[modules]]
+name = "generator.dependency_graph"
+enabled = true
+
+[[modules]]
 name = "sink.json_stdout"
 enabled = true
 CONFIG
@@ -55,3 +62,6 @@ docker run --rm \
 test "$(wc -l <"$config_output" | tr -d ' ')" -ge 2
 grep -q '"kind":"exec"' "$config_output"
 grep -q '"kind":"process_exit"' "$config_output"
+grep -q '"kind":"network_connection_open"' "$config_output"
+grep -q '"kind":"dependency_edge"' "$config_output"
+grep -q '"kind":"runtime_security_finding"' "$config_output"
