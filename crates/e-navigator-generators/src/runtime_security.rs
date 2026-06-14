@@ -1,13 +1,24 @@
 use async_trait::async_trait;
 use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata};
 use e_navigator_signals::{
-    ExecEvent, MatchedProcess, RuntimeSecurityFinding, RuntimeSecuritySeverity, SignalEnvelope,
-    SignalPayload,
+    ExecEvent, MatchedNetworkConnection, MatchedProcess, NetworkConnectionOpenEvent,
+    RuntimeSecurityFinding, RuntimeSecuritySeverity, SignalEnvelope, SignalPayload,
 };
+use std::{collections::BTreeSet, net::IpAddr};
 use tokio::sync::mpsc;
 
 #[derive(Debug, Default)]
-pub struct RuntimeSecurityGenerator;
+pub struct RuntimeSecurityGenerator {
+    kubernetes_api_addresses: BTreeSet<String>,
+}
+
+impl RuntimeSecurityGenerator {
+    pub fn with_kubernetes_api_addresses(addresses: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            kubernetes_api_addresses: addresses.into_iter().collect(),
+        }
+    }
+}
 
 #[async_trait]
 impl Generator<SignalEnvelope> for RuntimeSecurityGenerator {
@@ -20,11 +31,13 @@ impl Generator<SignalEnvelope> for RuntimeSecurityGenerator {
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
-        let SignalPayload::Exec(event) = &signal.payload else {
-            return Ok(());
+        let finding = match &signal.payload {
+            SignalPayload::Exec(event) => finding_for_exec(event),
+            SignalPayload::NetworkConnectionOpen(event) => self.finding_for_network_open(event),
+            _ => None,
         };
 
-        let Some(finding) = finding_for_exec(event) else {
+        let Some(finding) = finding else {
             return Ok(());
         };
 
@@ -52,6 +65,7 @@ fn finding_for_exec(event: &ExecEvent) -> Option<RuntimeSecurityFinding> {
             rule_id: "runtime.shell_in_container".to_string(),
             severity: RuntimeSecuritySeverity::Medium,
             matched_process,
+            matched_connection: None,
             container: event.container.clone(),
             kubernetes: event.kubernetes.clone(),
         });
@@ -62,12 +76,113 @@ fn finding_for_exec(event: &ExecEvent) -> Option<RuntimeSecurityFinding> {
             rule_id: "runtime.network_tool_exec".to_string(),
             severity: RuntimeSecuritySeverity::Medium,
             matched_process,
+            matched_connection: None,
             container: event.container.clone(),
             kubernetes: event.kubernetes.clone(),
         });
     }
 
     None
+}
+
+impl RuntimeSecurityGenerator {
+    fn finding_for_network_open(
+        &self,
+        event: &NetworkConnectionOpenEvent,
+    ) -> Option<RuntimeSecurityFinding> {
+        if self
+            .kubernetes_api_addresses
+            .contains(&event.remote_address)
+            && !is_control_plane_workload(event)
+        {
+            return Some(network_finding(
+                "network.kubernetes_api_from_workload",
+                RuntimeSecuritySeverity::High,
+                event,
+            ));
+        }
+
+        if event.container.is_some() && is_external_address(&event.remote_address) {
+            return Some(network_finding(
+                "network.unexpected_external_connection",
+                RuntimeSecuritySeverity::Medium,
+                event,
+            ));
+        }
+
+        None
+    }
+}
+
+fn network_finding(
+    rule_id: &str,
+    severity: RuntimeSecuritySeverity,
+    event: &NetworkConnectionOpenEvent,
+) -> RuntimeSecurityFinding {
+    RuntimeSecurityFinding {
+        rule_id: rule_id.to_string(),
+        severity,
+        matched_process: MatchedProcess {
+            pid: event.process.pid,
+            command: event.process.command.clone(),
+            executable: event.process.executable.clone(),
+            arguments: Vec::new(),
+        },
+        matched_connection: Some(MatchedNetworkConnection {
+            protocol: event.protocol,
+            remote_address: event.remote_address.clone(),
+            remote_port: event.remote_port,
+            local_address: event.local_address.clone(),
+            local_port: event.local_port,
+            fd: event.fd,
+        }),
+        container: event.container.clone(),
+        kubernetes: event.kubernetes.clone(),
+    }
+}
+
+fn is_external_address(address: &str) -> bool {
+    let Ok(address) = address.parse::<IpAddr>() else {
+        return false;
+    };
+
+    match address {
+        IpAddr::V4(address) => {
+            !(address.is_private()
+                || address.is_loopback()
+                || address.is_link_local()
+                || address.is_multicast()
+                || address.is_broadcast()
+                || address.is_unspecified())
+        }
+        IpAddr::V6(address) => {
+            !(address.is_loopback()
+                || address.is_unspecified()
+                || address.is_multicast()
+                || ((address.segments()[0] & 0xfe00) == 0xfc00)
+                || ((address.segments()[0] & 0xffc0) == 0xfe80))
+        }
+    }
+}
+
+fn is_control_plane_workload(event: &NetworkConnectionOpenEvent) -> bool {
+    let Some(context) = &event.kubernetes else {
+        return false;
+    };
+
+    if context.namespace == "kube-system" {
+        return true;
+    }
+
+    context.labels.iter().any(|(key, value)| {
+        matches!(
+            key.as_str(),
+            "component" | "k8s-app" | "app.kubernetes.io/component"
+        ) && matches!(
+            value.as_str(),
+            "kube-apiserver" | "kube-controller-manager" | "kube-scheduler" | "control-plane"
+        )
+    })
 }
 
 fn process_basename(event: &ExecEvent) -> &str {
@@ -93,8 +208,11 @@ fn is_network_tool(value: &str) -> bool {
 mod tests {
     use e_navigator_core::Generator;
     use e_navigator_signals::{
-        ContainerContext, ExecEvent, RuntimeSecuritySeverity, SignalEnvelope, SignalPayload,
+        ContainerContext, ExecEvent, KubernetesContext, NetworkAddressFamily,
+        NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol,
+        RuntimeSecuritySeverity, SignalEnvelope, SignalPayload,
     };
+    use std::collections::BTreeMap;
     use tokio::sync::mpsc;
 
     use super::*;
@@ -176,8 +294,78 @@ mod tests {
         assert_eq!(first, second);
     }
 
+    #[tokio::test]
+    async fn emits_external_outbound_connection_finding_for_container() {
+        let findings = observe(network_open_signal(
+            "203.0.113.10",
+            443,
+            kubernetes_context(),
+        ))
+        .await;
+
+        assert_eq!(findings.len(), 1);
+        let SignalPayload::RuntimeSecurityFinding(finding) = &findings[0].payload else {
+            panic!("expected runtime security finding");
+        };
+        assert_eq!(finding.rule_id, "network.unexpected_external_connection");
+        assert_eq!(finding.severity, RuntimeSecuritySeverity::Medium);
+        assert_eq!(
+            finding
+                .matched_connection
+                .as_ref()
+                .expect("matched connection")
+                .remote_address,
+            "203.0.113.10"
+        );
+    }
+
+    #[tokio::test]
+    async fn emits_kubernetes_api_connection_finding_for_non_control_plane_workload() {
+        let generator =
+            RuntimeSecurityGenerator::with_kubernetes_api_addresses(["10.96.0.1".to_string()]);
+        let signal = network_open_signal("10.96.0.1", 443, kubernetes_context());
+
+        let findings = observe_with(&generator, signal).await;
+
+        assert_eq!(findings.len(), 1);
+        let SignalPayload::RuntimeSecurityFinding(finding) = &findings[0].payload else {
+            panic!("expected runtime security finding");
+        };
+        assert_eq!(finding.rule_id, "network.kubernetes_api_from_workload");
+        assert_eq!(finding.severity, RuntimeSecuritySeverity::High);
+    }
+
+    #[tokio::test]
+    async fn suppresses_network_findings_for_internal_or_control_plane_connections() {
+        assert!(
+            observe(network_open_signal("10.0.0.20", 5432, kubernetes_context()))
+                .await
+                .is_empty()
+        );
+
+        let mut context = kubernetes_context();
+        context
+            .labels
+            .insert("component".to_string(), "kube-apiserver".to_string());
+        let generator =
+            RuntimeSecurityGenerator::with_kubernetes_api_addresses(["10.96.0.1".to_string()]);
+
+        assert!(
+            observe_with(&generator, network_open_signal("10.96.0.1", 443, context))
+                .await
+                .is_empty()
+        );
+    }
+
     async fn observe(signal: SignalEnvelope) -> Vec<SignalEnvelope> {
-        let generator = RuntimeSecurityGenerator;
+        let generator = RuntimeSecurityGenerator::default();
+        observe_with(&generator, signal).await
+    }
+
+    async fn observe_with(
+        generator: &RuntimeSecurityGenerator,
+        signal: SignalEnvelope,
+    ) -> Vec<SignalEnvelope> {
         let (tx, mut rx) = mpsc::channel(4);
         generator
             .observe(&signal, &tx)
@@ -214,5 +402,52 @@ mod tests {
                 kubernetes: None,
             },
         )
+    }
+
+    fn network_open_signal(
+        remote_address: &str,
+        remote_port: u16,
+        kubernetes: KubernetesContext,
+    ) -> SignalEnvelope {
+        SignalEnvelope::network_connection_open(
+            "source.test",
+            Some("node-a".to_string()),
+            NetworkConnectionOpenEvent {
+                process: NetworkProcessIdentity {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "api".to_string(),
+                    executable: Some("/app/api".to_string()),
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.0.0.5".to_string()),
+                local_port: Some(43512),
+                remote_address: remote_address.to_string(),
+                remote_port,
+                fd: Some(7),
+                timestamp_unix_nanos: 123,
+                container: Some(ContainerContext {
+                    container_id: "container-a".to_string(),
+                    runtime: Some("containerd".to_string()),
+                }),
+                kubernetes: Some(kubernetes),
+            },
+        )
+    }
+
+    fn kubernetes_context() -> KubernetesContext {
+        let mut labels = BTreeMap::new();
+        labels.insert("app".to_string(), "api".to_string());
+
+        KubernetesContext {
+            namespace: "default".to_string(),
+            pod_name: "api-123".to_string(),
+            pod_uid: Some("pod-uid".to_string()),
+            container_name: Some("api".to_string()),
+            node_name: Some("node-a".to_string()),
+            labels,
+        }
     }
 }

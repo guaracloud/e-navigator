@@ -4,8 +4,9 @@ pub mod network;
 
 pub use envelope::{SignalEnvelope, SignalKind, SignalPayload};
 pub use exec::{
-    ContainerContext, ExecEvent, KubernetesContext, MatchedProcess, ProcessExitEvent,
-    ProcessLifecycleDurationEvent, RuntimeSecurityFinding, RuntimeSecuritySeverity,
+    ContainerContext, ExecEvent, KubernetesContext, MatchedNetworkConnection, MatchedProcess,
+    ProcessExitEvent, ProcessLifecycleDurationEvent, RuntimeSecurityFinding,
+    RuntimeSecuritySeverity,
 };
 pub use network::{
     DependencyEdgeEvent, DependencyEndpoint, NetworkAddressFamily, NetworkConnectionCloseEvent,

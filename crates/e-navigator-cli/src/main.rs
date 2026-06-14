@@ -87,7 +87,7 @@ fn build_registry(
     }
 
     if config.module_enabled("generator.runtime_security") {
-        registry = registry.with_generator(Box::new(RuntimeSecurityGenerator));
+        registry = registry.with_generator(Box::new(RuntimeSecurityGenerator::default()));
     }
 
     if config.module_enabled("sink.json_stdout") {

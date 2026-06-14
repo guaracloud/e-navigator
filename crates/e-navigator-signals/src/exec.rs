@@ -44,6 +44,8 @@ pub struct RuntimeSecurityFinding {
     pub rule_id: String,
     pub severity: RuntimeSecuritySeverity,
     pub matched_process: MatchedProcess,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched_connection: Option<MatchedNetworkConnection>,
     pub container: Option<ContainerContext>,
     pub kubernetes: Option<KubernetesContext>,
 }
@@ -62,6 +64,16 @@ pub struct MatchedProcess {
     pub command: String,
     pub executable: Option<String>,
     pub arguments: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MatchedNetworkConnection {
+    pub protocol: crate::NetworkProtocol,
+    pub remote_address: String,
+    pub remote_port: u16,
+    pub local_address: Option<String>,
+    pub local_port: Option<u16>,
+    pub fd: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
