@@ -89,6 +89,10 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                         .and_then(|container| self.kubernetes_cache.get(&container.container_id));
                 }
             }
+            SignalPayload::NetworkConnectionOpen(_)
+            | SignalPayload::NetworkConnectionClose(_)
+            | SignalPayload::NetworkConnectionFailure(_)
+            | SignalPayload::DependencyEdge(_) => {}
             SignalPayload::RuntimeSecurityFinding(_) => {}
         }
 

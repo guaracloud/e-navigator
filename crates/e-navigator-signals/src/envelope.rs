@@ -1,7 +1,11 @@
 use e_navigator_core::Signal;
 use serde::{Deserialize, Serialize};
 
-use crate::{ExecEvent, ProcessExitEvent, ProcessLifecycleDurationEvent, RuntimeSecurityFinding};
+use crate::{
+    DependencyEdgeEvent, ExecEvent, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
+    NetworkConnectionOpenEvent, ProcessExitEvent, ProcessLifecycleDurationEvent,
+    RuntimeSecurityFinding,
+};
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
 
@@ -11,6 +15,10 @@ pub enum SignalKind {
     Exec,
     ProcessExit,
     ProcessLifecycleDuration,
+    NetworkConnectionOpen,
+    NetworkConnectionClose,
+    NetworkConnectionFailure,
+    DependencyEdge,
     RuntimeSecurityFinding,
 }
 
@@ -20,6 +28,10 @@ pub enum SignalPayload {
     Exec(ExecEvent),
     ProcessExit(ProcessExitEvent),
     ProcessLifecycleDuration(ProcessLifecycleDurationEvent),
+    NetworkConnectionOpen(NetworkConnectionOpenEvent),
+    NetworkConnectionClose(NetworkConnectionCloseEvent),
+    NetworkConnectionFailure(NetworkConnectionFailureEvent),
+    DependencyEdge(DependencyEdgeEvent),
     RuntimeSecurityFinding(RuntimeSecurityFinding),
 }
 
@@ -85,6 +97,62 @@ impl SignalEnvelope {
         }
     }
 
+    pub fn network_connection_open(
+        source: impl Into<String>,
+        host: Option<String>,
+        event: NetworkConnectionOpenEvent,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::NetworkConnectionOpen,
+            source: source.into(),
+            host,
+            payload: SignalPayload::NetworkConnectionOpen(event),
+        }
+    }
+
+    pub fn network_connection_close(
+        source: impl Into<String>,
+        host: Option<String>,
+        event: NetworkConnectionCloseEvent,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::NetworkConnectionClose,
+            source: source.into(),
+            host,
+            payload: SignalPayload::NetworkConnectionClose(event),
+        }
+    }
+
+    pub fn network_connection_failure(
+        source: impl Into<String>,
+        host: Option<String>,
+        event: NetworkConnectionFailureEvent,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::NetworkConnectionFailure,
+            source: source.into(),
+            host,
+            payload: SignalPayload::NetworkConnectionFailure(event),
+        }
+    }
+
+    pub fn dependency_edge(
+        source: impl Into<String>,
+        host: Option<String>,
+        event: DependencyEdgeEvent,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::DependencyEdge,
+            source: source.into(),
+            host,
+            payload: SignalPayload::DependencyEdge(event),
+        }
+    }
+
     pub fn signal_kind(&self) -> SignalKind {
         self.kind
     }
@@ -96,6 +164,10 @@ impl Signal for SignalEnvelope {
             SignalKind::Exec => "exec",
             SignalKind::ProcessExit => "process_exit",
             SignalKind::ProcessLifecycleDuration => "process_lifecycle_duration",
+            SignalKind::NetworkConnectionOpen => "network_connection_open",
+            SignalKind::NetworkConnectionClose => "network_connection_close",
+            SignalKind::NetworkConnectionFailure => "network_connection_failure",
+            SignalKind::DependencyEdge => "dependency_edge",
             SignalKind::RuntimeSecurityFinding => "runtime_security_finding",
         }
     }
@@ -104,6 +176,9 @@ impl Signal for SignalEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        DependencyEndpoint, NetworkAddressFamily, NetworkProcessIdentity, NetworkProtocol,
+    };
 
     #[test]
     fn serializes_exec_signal_with_version() {
@@ -187,5 +262,144 @@ mod tests {
         assert_eq!(json["kind"], "process_lifecycle_duration");
         assert_eq!(json["payload"]["pid"], 42);
         assert_eq!(json["payload"]["duration_nanos"], 150);
+    }
+
+    #[test]
+    fn serializes_network_connection_open_signal_with_version() {
+        let signal = SignalEnvelope::network_connection_open(
+            "source.test",
+            Some("node-a".to_string()),
+            NetworkConnectionOpenEvent {
+                process: NetworkProcessIdentity {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "api".to_string(),
+                    executable: Some("/usr/bin/api".to_string()),
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.0.0.10".to_string()),
+                local_port: Some(43512),
+                remote_address: "10.0.0.20".to_string(),
+                remote_port: 5432,
+                fd: Some(7),
+                timestamp_unix_nanos: 300,
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+
+        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["kind"], "network_connection_open");
+        assert_eq!(json["payload"]["protocol"], "tcp");
+        assert_eq!(json["payload"]["address_family"], "ipv4");
+        assert_eq!(json["payload"]["process"]["pid"], 42);
+        assert_eq!(json["payload"]["remote_address"], "10.0.0.20");
+        assert_eq!(json["payload"]["remote_port"], 5432);
+    }
+
+    #[test]
+    fn serializes_network_connection_close_signal_with_duration() {
+        let signal = SignalEnvelope::network_connection_close(
+            "source.test",
+            Some("node-a".to_string()),
+            NetworkConnectionCloseEvent {
+                process: NetworkProcessIdentity {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "api".to_string(),
+                    executable: Some("/usr/bin/api".to_string()),
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.0.0.10".to_string()),
+                local_port: Some(43512),
+                remote_address: "10.0.0.20".to_string(),
+                remote_port: 5432,
+                fd: Some(7),
+                opened_at_unix_nanos: Some(300),
+                closed_at_unix_nanos: 900,
+                duration_nanos: Some(600),
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+
+        assert_eq!(json["kind"], "network_connection_close");
+        assert_eq!(json["payload"]["duration_nanos"], 600);
+        assert_eq!(json["payload"]["closed_at_unix_nanos"], 900);
+    }
+
+    #[test]
+    fn serializes_network_connection_failure_signal_with_errno() {
+        let signal = SignalEnvelope::network_connection_failure(
+            "source.test",
+            Some("node-a".to_string()),
+            NetworkConnectionFailureEvent {
+                process: NetworkProcessIdentity {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "api".to_string(),
+                    executable: Some("/usr/bin/api".to_string()),
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                remote_address: "203.0.113.10".to_string(),
+                remote_port: 443,
+                fd: Some(7),
+                errno: 111,
+                timestamp_unix_nanos: 350,
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+
+        assert_eq!(json["kind"], "network_connection_failure");
+        assert_eq!(json["payload"]["errno"], 111);
+        assert_eq!(json["payload"]["remote_address"], "203.0.113.10");
+    }
+
+    #[test]
+    fn serializes_dependency_edge_signal_with_observation_bounds() {
+        let signal = SignalEnvelope::dependency_edge(
+            "generator.test",
+            Some("node-a".to_string()),
+            DependencyEdgeEvent {
+                source: DependencyEndpoint {
+                    workload: None,
+                    container: None,
+                    address: None,
+                    port: None,
+                    domain: None,
+                },
+                destination: DependencyEndpoint {
+                    workload: None,
+                    container: None,
+                    address: Some("203.0.113.10".to_string()),
+                    port: Some(443),
+                    domain: None,
+                },
+                protocol: NetworkProtocol::Tcp,
+                observations: 2,
+                first_seen_unix_nanos: 300,
+                last_seen_unix_nanos: 350,
+            },
+        );
+
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+
+        assert_eq!(json["kind"], "dependency_edge");
+        assert_eq!(json["payload"]["observations"], 2);
+        assert_eq!(json["payload"]["first_seen_unix_nanos"], 300);
+        assert_eq!(json["payload"]["last_seen_unix_nanos"], 350);
     }
 }
