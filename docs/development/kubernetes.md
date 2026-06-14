@@ -10,6 +10,13 @@ Before applying the DaemonSet, build and publish or load an image that contains 
 docker build -f Containerfile -t ghcr.io/victorbona/e-navigator:dev .
 ```
 
+The Phase 2 ConfigMap enables:
+
+- bounded argv capture,
+- procfs cgroup attribution,
+- Kubernetes pod/node metadata attribution,
+- runtime security findings for shell-in-container and exact network-tool execution.
+
 ## Apply Manifests
 
 ```bash
@@ -42,3 +49,9 @@ kubectl -n e-navigator-system logs -l app.kubernetes.io/name=e-navigator --tail=
 ```
 
 Expected result: JSON exec signals are visible in the DaemonSet logs.
+
+## Privilege Boundary
+
+Kubernetes manifest dry-run validation and Docker synthetic checks are non-privileged CI checks. They do not prove real Aya/eBPF load or tracepoint attachment.
+
+The DaemonSet is configured for privileged eBPF testing with `hostPID: true` and one `e-navigator` container per pod. Treat the Kubernetes smoke test as passed only after running it in a real Linux cluster where the pod can access tracefs/eBPF facilities and the logs show real process exec or process exit signals from `source.aya_exec`.
