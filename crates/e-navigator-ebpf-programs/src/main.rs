@@ -103,7 +103,7 @@ fn try_tracepoint_process_exit(ctx: TracePointContext) -> Result<u32, i64> {
 }
 
 fn read_exec_arguments(ctx: &TracePointContext, event: &mut RawExecEvent) -> Result<(), i64> {
-    let enabled = unsafe { ARGV_CAPTURE_ENABLED.get(0).copied().unwrap_or(0) };
+    let enabled = ARGV_CAPTURE_ENABLED.get(0).copied().unwrap_or(0);
     if enabled == 0 {
         return Ok(());
     }
