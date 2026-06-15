@@ -5,7 +5,11 @@ use e_navigator_signals::{ProfilingConfidence, ProfilingCorrelationKind, Profili
 
 #[test]
 fn bounded_stack_truncation_limits_frame_count() {
-    let sample = raw_sample((0..6).map(|index| frame(Some(format!("fn{index}")))).collect());
+    let sample = raw_sample(
+        (0..6)
+            .map(|index| frame(Some(format!("fn{index}"))))
+            .collect(),
+    );
     let normalized = sample
         .normalize(&NormalizationLimits {
             max_frames_per_stack: 3,

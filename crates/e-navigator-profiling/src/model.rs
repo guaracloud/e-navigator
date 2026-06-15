@@ -109,7 +109,8 @@ pub fn parse_profile_fixture(
     contents: &str,
     limits: &NormalizationLimits,
 ) -> Result<ProfileSampleObservation, String> {
-    let value = serde_json::from_str::<serde_json::Value>(contents).map_err(|err| err.to_string())?;
+    let value =
+        serde_json::from_str::<serde_json::Value>(contents).map_err(|err| err.to_string())?;
     if value.get("sample_count").is_none() {
         return Err("sample_count is required".to_string());
     }

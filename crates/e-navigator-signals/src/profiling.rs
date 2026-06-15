@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkProcessIdentity,
-};
+use crate::{ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkProcessIdentity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

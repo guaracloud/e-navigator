@@ -378,15 +378,13 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
                         ))
                     })?
             }
-            SignalKind::ProfileSampleObservation => {
-                serde_json::from_value::<ProfileSampleObservation>(raw.payload)
-                    .map(SignalPayload::ProfileSampleObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid profile_sample_observation payload: {err}"
-                        ))
-                    })?
-            }
+            SignalKind::ProfileSampleObservation => serde_json::from_value::<
+                ProfileSampleObservation,
+            >(raw.payload)
+            .map(SignalPayload::ProfileSampleObservation)
+            .map_err(|err| {
+                D::Error::custom(format!("invalid profile_sample_observation payload: {err}"))
+            })?,
             SignalKind::ProfilingStackTraceObservation => {
                 serde_json::from_value::<ProfilingStackTraceObservation>(raw.payload)
                     .map(SignalPayload::ProfilingStackTraceObservation)

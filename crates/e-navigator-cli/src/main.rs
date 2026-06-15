@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use clap::{Parser, ValueEnum};
 use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, RuntimeConfig, Source};
 use e_navigator_generators::{
-    DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator,
+    DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator, ProfilingGenerator,
     RequestCorrelationGenerator, ResourceMetricsGenerator, RuntimeSecurityGenerator,
     TraceCorrelationGenerator,
 };
@@ -146,6 +146,15 @@ fn build_registry(
         registry = registry.with_generator(Box::new(RequestCorrelationGenerator::with_limits(
             config.request_correlation.max_seen_requests,
             config.request_correlation.max_warnings,
+        )));
+    }
+
+    if config.module_enabled("generator.profiling") {
+        registry = registry.with_generator(Box::new(ProfilingGenerator::with_limits(
+            config.profiling.max_windows,
+            config.profiling.max_seen_samples,
+            config.profiling.max_warnings,
+            config.profiling.window_nanos,
         )));
     }
 

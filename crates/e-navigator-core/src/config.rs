@@ -27,6 +27,8 @@ pub struct RuntimeConfig {
     pub trace_correlation: TraceCorrelationConfig,
     #[serde(default)]
     pub request_correlation: RequestCorrelationConfig,
+    #[serde(default)]
+    pub profiling: ProfilingConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -44,6 +46,7 @@ impl Default for RuntimeConfig {
             dns_metrics: DnsMetricsConfig::default(),
             trace_correlation: TraceCorrelationConfig::default(),
             request_correlation: RequestCorrelationConfig::default(),
+            profiling: ProfilingConfig::default(),
         }
     }
 }
@@ -67,6 +70,7 @@ impl RuntimeConfig {
         self.dns_metrics.validate()?;
         self.trace_correlation.validate()?;
         self.request_correlation.validate()?;
+        self.profiling.validate()?;
 
         Ok(())
     }
@@ -229,6 +233,18 @@ pub struct RequestCorrelationConfig {
     pub max_warnings: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfilingConfig {
+    #[serde(default = "default_profiling_max_windows")]
+    pub max_windows: usize,
+    #[serde(default = "default_profiling_max_seen_samples")]
+    pub max_seen_samples: usize,
+    #[serde(default = "default_profiling_max_warnings")]
+    pub max_warnings: usize,
+    #[serde(default = "default_profiling_window_nanos")]
+    pub window_nanos: u64,
+}
+
 impl Default for DnsMetricsConfig {
     fn default() -> Self {
         Self {
@@ -262,6 +278,17 @@ impl Default for RequestCorrelationConfig {
         Self {
             max_seen_requests: default_request_correlation_max_seen_requests(),
             max_warnings: default_request_correlation_max_warnings(),
+        }
+    }
+}
+
+impl Default for ProfilingConfig {
+    fn default() -> Self {
+        Self {
+            max_windows: default_profiling_max_windows(),
+            max_seen_samples: default_profiling_max_seen_samples(),
+            max_warnings: default_profiling_max_warnings(),
+            window_nanos: default_profiling_window_nanos(),
         }
     }
 }
@@ -310,6 +337,37 @@ impl RequestCorrelationConfig {
                 "request_correlation.max_warnings must be between 1 and {}",
                 Self::MAX_WARNINGS_LIMIT
             ));
+        }
+        Ok(())
+    }
+}
+
+impl ProfilingConfig {
+    pub const MAX_WINDOWS_LIMIT: usize = 65_536;
+    pub const MAX_SEEN_SAMPLES_LIMIT: usize = 131_072;
+    pub const MAX_WARNINGS_LIMIT: usize = 16_384;
+
+    fn validate(&self) -> Result<(), String> {
+        if !(1..=Self::MAX_WINDOWS_LIMIT).contains(&self.max_windows) {
+            return Err(format!(
+                "profiling.max_windows must be between 1 and {}",
+                Self::MAX_WINDOWS_LIMIT
+            ));
+        }
+        if !(1..=Self::MAX_SEEN_SAMPLES_LIMIT).contains(&self.max_seen_samples) {
+            return Err(format!(
+                "profiling.max_seen_samples must be between 1 and {}",
+                Self::MAX_SEEN_SAMPLES_LIMIT
+            ));
+        }
+        if !(1..=Self::MAX_WARNINGS_LIMIT).contains(&self.max_warnings) {
+            return Err(format!(
+                "profiling.max_warnings must be between 1 and {}",
+                Self::MAX_WARNINGS_LIMIT
+            ));
+        }
+        if self.window_nanos == 0 {
+            return Err("profiling.window_nanos must be greater than zero".to_string());
         }
         Ok(())
     }
@@ -458,6 +516,7 @@ fn default_modules() -> Vec<ModuleConfig> {
         ModuleConfig::enabled("generator.dns_metrics"),
         ModuleConfig::enabled("generator.trace_correlation"),
         ModuleConfig::enabled("generator.request_correlation"),
+        ModuleConfig::enabled("generator.profiling"),
         ModuleConfig::enabled("generator.dependency_graph"),
         ModuleConfig::enabled("generator.runtime_security"),
         ModuleConfig::enabled("sink.json_stdout"),
@@ -530,6 +589,22 @@ fn default_request_correlation_max_seen_requests() -> usize {
 
 fn default_request_correlation_max_warnings() -> usize {
     1024
+}
+
+fn default_profiling_max_windows() -> usize {
+    4096
+}
+
+fn default_profiling_max_seen_samples() -> usize {
+    8192
+}
+
+fn default_profiling_max_warnings() -> usize {
+    1024
+}
+
+fn default_profiling_window_nanos() -> u64 {
+    30_000_000_000
 }
 
 fn default_resource_sample_interval_millis() -> u64 {
@@ -641,6 +716,7 @@ mod tests {
         assert!(config.module_enabled("generator.dns_metrics"));
         assert!(config.module_enabled("generator.trace_correlation"));
         assert!(config.module_enabled("generator.request_correlation"));
+        assert!(config.module_enabled("generator.profiling"));
         assert!(config.module_enabled("generator.dependency_graph"));
         assert!(config.module_enabled("generator.runtime_security"));
         assert!(config.module_enabled("sink.json_stdout"));
@@ -815,6 +891,57 @@ mod tests {
                 "request_correlation.max_warnings must be between 1 and {}",
                 RequestCorrelationConfig::MAX_WARNINGS_LIMIT
             ))
+        );
+    }
+
+    #[test]
+    fn profiling_limits_are_validated() {
+        let invalid_windows = RuntimeConfig {
+            profiling: ProfilingConfig {
+                max_windows: 0,
+                max_seen_samples: 128,
+                max_warnings: 128,
+                window_nanos: 1_000_000_000,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_windows.validate(),
+            Err(format!(
+                "profiling.max_windows must be between 1 and {}",
+                ProfilingConfig::MAX_WINDOWS_LIMIT
+            ))
+        );
+
+        let invalid_seen = RuntimeConfig {
+            profiling: ProfilingConfig {
+                max_windows: 128,
+                max_seen_samples: 0,
+                max_warnings: 128,
+                window_nanos: 1_000_000_000,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_seen.validate(),
+            Err(format!(
+                "profiling.max_seen_samples must be between 1 and {}",
+                ProfilingConfig::MAX_SEEN_SAMPLES_LIMIT
+            ))
+        );
+
+        let invalid_window = RuntimeConfig {
+            profiling: ProfilingConfig {
+                max_windows: 128,
+                max_seen_samples: 128,
+                max_warnings: 128,
+                window_nanos: 0,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_window.validate(),
+            Err("profiling.window_nanos must be greater than zero".to_string())
         );
     }
 

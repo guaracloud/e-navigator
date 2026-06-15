@@ -47,7 +47,10 @@ fn serializes_cpu_profile_sample_with_bounded_stack_and_context() {
     assert_eq!(json["payload"]["confidence"], "high");
     assert_eq!(json["payload"]["sample_count"], 3);
     assert_eq!(json["payload"]["sampling_period_nanos"], 10_000_000);
-    assert_eq!(json["payload"]["stack_frames"][0]["symbol"], "checkout::handler");
+    assert_eq!(
+        json["payload"]["stack_frames"][0]["symbol"],
+        "checkout::handler"
+    );
     assert_eq!(json["payload"]["process"]["pid"], 42);
     assert_eq!(json["payload"]["thread_id"], 7);
     assert!(matches!(
@@ -84,8 +87,14 @@ fn serializes_stack_trace_observation_with_optional_missing_symbols() {
     let decoded: SignalEnvelope = serde_json::from_value(json.clone()).expect("round trips");
 
     assert_eq!(json["kind"], "profiling_stack_trace_observation");
-    assert_eq!(json["payload"]["stack_frames"][0]["symbol"], serde_json::Value::Null);
-    assert_eq!(json["payload"]["stack_frames"][0]["module"], "libunknown.so");
+    assert_eq!(
+        json["payload"]["stack_frames"][0]["symbol"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        json["payload"]["stack_frames"][0]["module"],
+        "libunknown.so"
+    );
     assert!(matches!(
         decoded.payload,
         SignalPayload::ProfilingStackTraceObservation(_)
@@ -205,7 +214,10 @@ fn direct_payload_deserialization_keeps_profile_payloads_unambiguous() {
         serde_json::from_value(session_payload).expect("session payload deserializes");
 
     assert!(matches!(sample, SignalPayload::ProfileSampleObservation(_)));
-    assert!(matches!(session, SignalPayload::ProfilingSessionObservation(_)));
+    assert!(matches!(
+        session,
+        SignalPayload::ProfilingSessionObservation(_)
+    ));
 }
 
 fn process() -> NetworkProcessIdentity {
