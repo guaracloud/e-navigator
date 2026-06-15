@@ -237,9 +237,10 @@ pub struct CpuProfileSourceConfig {
     pub backpressure: CpuProfileBackpressure,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CpuProfileBackpressure {
+    #[default]
     DropNewest,
     Wait,
 }
@@ -450,12 +451,6 @@ impl Default for CpuProfileSourceConfig {
             max_file_bytes: default_cpu_profile_max_file_bytes(),
             backpressure: CpuProfileBackpressure::default(),
         }
-    }
-}
-
-impl Default for CpuProfileBackpressure {
-    fn default() -> Self {
-        Self::DropNewest
     }
 }
 
