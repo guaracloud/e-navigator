@@ -11,7 +11,7 @@ Phase 4 introduced an internal OTEL-compatible metric formatter. Phase 5 needs r
 
 The internal formatter maps `resource_gauge_metric` and `resource_counter_metric` envelopes to stable metric records with name, unit, kind, value, window, resource attributes, and metric attributes.
 
-JSON stdout remains newline-delimited `SignalEnvelope` JSON. No OTLP network exporter, storage backend, UI, profiling export, capacity planning export, or cost-attribution export is added in Phase 5.
+JSON stdout remains newline-delimited `SignalEnvelope` JSON. No OTLP network exporter, storage backend, UI, or profiling export is added in Phase 5.
 
 ## Consequences
 

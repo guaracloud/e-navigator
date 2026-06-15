@@ -5,7 +5,7 @@ Status: Accepted
 
 ## Context
 
-Phase 5 needs node, process, and container resource observability without forcing future storage, UI, cost attribution, profiling, or OTLP exporters to parse ad hoc payloads.
+Phase 5 needs node, process, and container resource observability without forcing future storage, UI, profiling, or OTLP exporters to parse ad hoc payloads.
 
 ## Decision
 

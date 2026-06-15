@@ -7,7 +7,7 @@ Status: Approved for planning review
 
 E-Navigator is a Rust-based observability, profiling, security, and diagnostics platform intended to provide zero-configuration visibility for Linux and Kubernetes workloads through eBPF and related system data sources.
 
-The long-term vision includes infrastructure metrics, runtime observability, service discovery, dependency mapping, distributed tracing, continuous profiling, runtime security, cost attribution, and capacity planning. Phase 1 must not attempt to build all of that. Its purpose is to establish a production-grade foundation that can support those capabilities as incremental modules.
+The long-term vision includes infrastructure metrics, runtime observability, service discovery, dependency mapping, distributed tracing, continuous profiling, and runtime security. Phase 1 must not attempt to build all of that. Its purpose is to establish a production-grade foundation that can support those capabilities as incremental modules.
 
 ## Phase 1 Goal
 
@@ -144,7 +144,7 @@ The sink interface should be shaped so future OTLP, file, Prometheus, or storage
 
 The generator trait and registration path should exist in phase 1. A production generator is not required in this phase unless it remains trivial and does not expand scope.
 
-Examples of future generators include dependency graph generation, suspicious process detection, capacity recommendations, and service health summaries.
+Examples of future generators include dependency graph generation, suspicious process detection, and service health summaries.
 
 ## Configuration
 

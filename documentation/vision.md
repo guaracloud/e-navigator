@@ -265,36 +265,6 @@ Detect indicators:
 - Mining protocols
 - Known mining binaries
 
-### 8. Cost Attribution
-
-Per project, namespace, tenant, or workload:
-
-Track:
-
-- CPU hours
-- Memory GB-hours
-- Storage consumption
-- Network egress
-- Database utilization
-
-Provide:
-
-- Cost breakdown
-- Resource utilization efficiency
-- Optimization opportunities
-
-### 9. Capacity Planning
-
-Predict:
-
-- Disk exhaustion
-- Memory exhaustion
-- CPU saturation
-- Storage growth
-- Traffic growth
-
-Provide estimated timelines and recommendations.
-
 ## Tech stack
 
 - Rust

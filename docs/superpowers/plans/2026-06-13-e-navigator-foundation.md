@@ -2283,6 +2283,6 @@ git commit -m "docs: add foundation verification commands"
 ## Self-Review Checklist
 
 - Spec coverage: Tasks 1, 10, and 11 cover developer foundation, ADRs, docs, and CI. Tasks 2 through 7 cover core contracts, signal schemas, pipeline runtime, sink, processor, and local runner. Task 8 covers Aya process exec. Task 9 covers Kubernetes packaging. Task 12 covers final verification.
-- Scope control: The plan does not include OTLP, UI, storage, network mapping, DNS, tracing, profiling, cost attribution, capacity planning, or runtime-loaded plugins.
+- Scope control: The plan does not include OTLP, UI, storage, network mapping, DNS, tracing, profiling, or runtime-loaded plugins.
 - Type consistency: The plan consistently uses `SignalEnvelope`, `ExecEvent`, `Source`, `Processor`, `Generator`, `Sink`, `ModuleRegistry`, `Runner`, `AyaExecSource`, `ContainerAttributionProcessor`, and `JsonStdoutSink`.
 - Privileged boundaries: Non-privileged checks exclude `e-navigator-ebpf-programs`; privileged eBPF and Kubernetes tests are separate documented verification steps.
