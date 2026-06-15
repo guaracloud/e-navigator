@@ -4,7 +4,8 @@ pub mod module;
 pub mod pipeline;
 
 pub use config::{
-    ArgvCaptureConfig, AttributionConfig, KubernetesAttributionConfig, ModuleConfig, RuntimeConfig,
+    ArgvCaptureConfig, AttributionConfig, KubernetesAttributionConfig, ModuleConfig,
+    NetworkEndpointConfig, RuntimeConfig, RuntimeSecurityConfig,
 };
 pub use error::{CoreError, CoreResult};
 pub use module::{ModuleKind, ModuleMetadata};

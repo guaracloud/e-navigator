@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{net::IpAddr, path::PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeConfig {
@@ -13,6 +13,8 @@ pub struct RuntimeConfig {
     pub argv_capture: ArgvCaptureConfig,
     #[serde(default)]
     pub attribution: AttributionConfig,
+    #[serde(default)]
+    pub runtime_security: RuntimeSecurityConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -23,6 +25,7 @@ impl Default for RuntimeConfig {
             modules: default_modules(),
             argv_capture: ArgvCaptureConfig::default(),
             attribution: AttributionConfig::default(),
+            runtime_security: RuntimeSecurityConfig::default(),
         }
     }
 }
@@ -39,6 +42,7 @@ impl RuntimeConfig {
 
         self.argv_capture.validate()?;
         self.attribution.validate()?;
+        self.runtime_security.validate()?;
 
         Ok(())
     }
@@ -115,6 +119,45 @@ impl AttributionConfig {
     fn validate(&self) -> Result<(), String> {
         if self.procfs_root.as_os_str().is_empty() {
             return Err("attribution.procfs_root must not be empty".to_string());
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct RuntimeSecurityConfig {
+    #[serde(default)]
+    pub kubernetes_api_endpoints: Vec<NetworkEndpointConfig>,
+}
+
+impl RuntimeSecurityConfig {
+    fn validate(&self) -> Result<(), String> {
+        for endpoint in &self.kubernetes_api_endpoints {
+            endpoint.validate()?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkEndpointConfig {
+    pub address: String,
+    pub port: u16,
+}
+
+impl NetworkEndpointConfig {
+    fn validate(&self) -> Result<(), String> {
+        self.address.parse::<IpAddr>().map_err(|_| {
+            "runtime_security.kubernetes_api_endpoints.address must be an IP address".to_string()
+        })?;
+
+        if self.port == 0 {
+            return Err(
+                "runtime_security.kubernetes_api_endpoints.port must be greater than zero"
+                    .to_string(),
+            );
         }
 
         Ok(())
@@ -271,6 +314,43 @@ mod tests {
         assert!(config.module_enabled("generator.dependency_graph"));
         assert!(config.module_enabled("generator.runtime_security"));
         assert!(config.module_enabled("sink.json_stdout"));
+    }
+
+    #[test]
+    fn runtime_security_kubernetes_api_endpoints_are_validated() {
+        let invalid_address = RuntimeConfig {
+            runtime_security: RuntimeSecurityConfig {
+                kubernetes_api_endpoints: vec![NetworkEndpointConfig {
+                    address: "kubernetes.default.svc".to_string(),
+                    port: 443,
+                }],
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_address.validate(),
+            Err(
+                "runtime_security.kubernetes_api_endpoints.address must be an IP address"
+                    .to_string()
+            )
+        );
+
+        let invalid_port = RuntimeConfig {
+            runtime_security: RuntimeSecurityConfig {
+                kubernetes_api_endpoints: vec![NetworkEndpointConfig {
+                    address: "10.96.0.1".to_string(),
+                    port: 0,
+                }],
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_port.validate(),
+            Err(
+                "runtime_security.kubernetes_api_endpoints.port must be greater than zero"
+                    .to_string()
+            )
+        );
     }
 
     #[test]

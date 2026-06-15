@@ -69,6 +69,7 @@ pub struct NetworkProcessIdentity {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum NetworkProtocol {
     Tcp,
     Udp,
@@ -76,6 +77,7 @@ pub enum NetworkProtocol {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum NetworkAddressFamily {
     Ipv4,
     Ipv6,

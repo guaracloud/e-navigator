@@ -18,10 +18,6 @@ impl Sink<SignalEnvelope> for JsonStdoutSink {
         stdout
             .write_all(&line)
             .await
-            .map_err(|err| module_error(err.to_string()))?;
-        stdout
-            .flush()
-            .await
             .map_err(|err| module_error(err.to_string()))
     }
 }

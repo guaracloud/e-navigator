@@ -14,8 +14,12 @@ test "$(wc -l <"$default_output" | tr -d ' ')" -ge 2
 grep -q '"kind":"exec"' "$default_output"
 grep -q '"kind":"process_exit"' "$default_output"
 grep -q '"kind":"network_connection_open"' "$default_output"
+grep -q '"kind":"network_connection_close"' "$default_output"
 grep -q '"kind":"dependency_edge"' "$default_output"
 grep -q '"kind":"runtime_security_finding"' "$default_output"
+grep -q '"rule_id":"runtime.shell_in_container"' "$default_output"
+grep -q '"rule_id":"network.unexpected_external_connection"' "$default_output"
+grep -q '"duration_nanos":2000000' "$default_output"
 
 cat >"$config_file" <<'CONFIG'
 log_level = "info"
@@ -63,5 +67,9 @@ test "$(wc -l <"$config_output" | tr -d ' ')" -ge 2
 grep -q '"kind":"exec"' "$config_output"
 grep -q '"kind":"process_exit"' "$config_output"
 grep -q '"kind":"network_connection_open"' "$config_output"
+grep -q '"kind":"network_connection_close"' "$config_output"
 grep -q '"kind":"dependency_edge"' "$config_output"
 grep -q '"kind":"runtime_security_finding"' "$config_output"
+grep -q '"rule_id":"runtime.shell_in_container"' "$config_output"
+grep -q '"rule_id":"network.unexpected_external_connection"' "$config_output"
+grep -q '"duration_nanos":2000000' "$config_output"

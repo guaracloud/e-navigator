@@ -52,17 +52,31 @@ impl Generator<SignalEnvelope> for DependencyGraphGenerator {
         let edge = {
             let mut edges = self.edges()?;
             if let Some(existing) = edges.get_mut(&observation.key) {
-                existing.observations = existing.observations.saturating_add(1);
-                existing.last_seen_unix_nanos = observation.timestamp_unix_nanos;
-                None
+                let first_seen = existing
+                    .first_seen_unix_nanos
+                    .min(observation.first_seen_candidate_unix_nanos);
+                let last_seen = existing
+                    .last_seen_unix_nanos
+                    .max(observation.last_seen_candidate_unix_nanos);
+
+                if first_seen == existing.first_seen_unix_nanos
+                    && last_seen == existing.last_seen_unix_nanos
+                {
+                    None
+                } else {
+                    existing.observations = existing.observations.saturating_add(1);
+                    existing.first_seen_unix_nanos = first_seen;
+                    existing.last_seen_unix_nanos = last_seen;
+                    Some(existing.to_signal(signal.host.clone()))
+                }
             } else if edges.len() >= self.max_edges {
                 None
             } else {
                 let state = EdgeState {
                     edge: observation.edge,
                     observations: 1,
-                    first_seen_unix_nanos: observation.timestamp_unix_nanos,
-                    last_seen_unix_nanos: observation.timestamp_unix_nanos,
+                    first_seen_unix_nanos: observation.first_seen_candidate_unix_nanos,
+                    last_seen_unix_nanos: observation.last_seen_candidate_unix_nanos,
                 };
                 let signal = state.to_signal(signal.host.clone());
                 edges.insert(observation.key, state);
@@ -91,7 +105,8 @@ impl DependencyGraphGenerator {
 struct EdgeObservation {
     key: EdgeKey,
     edge: EdgeTemplate,
-    timestamp_unix_nanos: u64,
+    first_seen_candidate_unix_nanos: u64,
+    last_seen_candidate_unix_nanos: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -151,6 +166,7 @@ fn observation_from_open(event: &NetworkConnectionOpenEvent) -> EdgeObservation 
         event.remote_port,
         event.protocol,
         event.timestamp_unix_nanos,
+        event.timestamp_unix_nanos,
     )
 }
 
@@ -161,6 +177,9 @@ fn observation_from_close(event: &NetworkConnectionCloseEvent) -> EdgeObservatio
         event.remote_address.clone(),
         event.remote_port,
         event.protocol,
+        event
+            .opened_at_unix_nanos
+            .unwrap_or(event.closed_at_unix_nanos),
         event.closed_at_unix_nanos,
     )
 }
@@ -171,7 +190,8 @@ fn observation(
     remote_address: String,
     remote_port: u16,
     protocol: NetworkProtocol,
-    timestamp_unix_nanos: u64,
+    first_seen_candidate_unix_nanos: u64,
+    last_seen_candidate_unix_nanos: u64,
 ) -> EdgeObservation {
     let key = EdgeKey {
         source_workload: kubernetes.as_ref().map(workload_key),
@@ -203,7 +223,8 @@ fn observation(
     EdgeObservation {
         key,
         edge,
-        timestamp_unix_nanos,
+        first_seen_candidate_unix_nanos,
+        last_seen_candidate_unix_nanos,
     }
 }
 
@@ -278,6 +299,40 @@ mod tests {
         assert!(second.is_empty());
     }
 
+    #[tokio::test]
+    async fn emits_updated_edge_for_open_and_close_observations() {
+        let generator = DependencyGraphGenerator::default();
+        let open = network_open_signal("203.0.113.10", 443, 1_000);
+        let close = network_close_signal("203.0.113.10", 443, 1_000, 2_000);
+
+        let first = observe(&generator, &open).await;
+        let second = observe(&generator, &close).await;
+
+        assert_eq!(first.len(), 1);
+        assert_eq!(second.len(), 1);
+        let SignalPayload::DependencyEdge(edge) = &second[0].payload else {
+            panic!("expected dependency edge");
+        };
+        assert_eq!(edge.observations, 2);
+        assert_eq!(edge.first_seen_unix_nanos, 1_000);
+        assert_eq!(edge.last_seen_unix_nanos, 2_000);
+    }
+
+    #[tokio::test]
+    async fn close_first_observation_preserves_opened_and_closed_bounds() {
+        let generator = DependencyGraphGenerator::default();
+        let close = network_close_signal("203.0.113.10", 443, 1_000, 2_000);
+
+        let edges = observe(&generator, &close).await;
+
+        assert_eq!(edges.len(), 1);
+        let SignalPayload::DependencyEdge(edge) = &edges[0].payload else {
+            panic!("expected dependency edge");
+        };
+        assert_eq!(edge.first_seen_unix_nanos, 1_000);
+        assert_eq!(edge.last_seen_unix_nanos, 2_000);
+    }
+
     async fn observe(
         generator: &DependencyGraphGenerator,
         signal: &SignalEnvelope,
@@ -320,6 +375,39 @@ mod tests {
                 remote_port,
                 fd: Some(7),
                 timestamp_unix_nanos: timestamp,
+                container: Some(container_context()),
+                kubernetes: Some(kubernetes_context()),
+            },
+        )
+    }
+
+    fn network_close_signal(
+        remote_address: &str,
+        remote_port: u16,
+        opened_at: u64,
+        closed_at: u64,
+    ) -> SignalEnvelope {
+        SignalEnvelope::network_connection_close(
+            "source.test",
+            Some("node-a".to_string()),
+            e_navigator_signals::NetworkConnectionCloseEvent {
+                process: NetworkProcessIdentity {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "api".to_string(),
+                    executable: Some("/app/api".to_string()),
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.0.0.5".to_string()),
+                local_port: Some(43512),
+                remote_address: remote_address.to_string(),
+                remote_port,
+                fd: Some(7),
+                opened_at_unix_nanos: Some(opened_at),
+                closed_at_unix_nanos: closed_at,
+                duration_nanos: Some(closed_at.saturating_sub(opened_at)),
                 container: Some(container_context()),
                 kubernetes: Some(kubernetes_context()),
             },

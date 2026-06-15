@@ -112,6 +112,7 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
             }
             SignalPayload::DependencyEdge(_) => {}
             SignalPayload::RuntimeSecurityFinding(_) => {}
+            _ => {}
         }
 
         Ok(Some(signal))

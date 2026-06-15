@@ -23,6 +23,10 @@ data:
     token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
     ca_cert_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 
+    [runtime_security]
+    # Kubernetes API endpoints are also discovered from
+    # KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT inside the pod.
+
     [[modules]]
     name = "source.aya_exec"
     enabled = true

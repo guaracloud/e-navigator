@@ -9,13 +9,30 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Default)]
 pub struct RuntimeSecurityGenerator {
-    kubernetes_api_addresses: BTreeSet<String>,
+    kubernetes_api_endpoints: BTreeSet<KubernetesApiEndpoint>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct KubernetesApiEndpoint {
+    address: IpAddr,
+    port: u16,
 }
 
 impl RuntimeSecurityGenerator {
     pub fn with_kubernetes_api_addresses(addresses: impl IntoIterator<Item = String>) -> Self {
+        Self::with_kubernetes_api_endpoints(addresses.into_iter().map(|address| (address, 443)))
+    }
+
+    pub fn with_kubernetes_api_endpoints(
+        endpoints: impl IntoIterator<Item = (String, u16)>,
+    ) -> Self {
         Self {
-            kubernetes_api_addresses: addresses.into_iter().collect(),
+            kubernetes_api_endpoints: endpoints
+                .into_iter()
+                .filter_map(|(address, port)| {
+                    normalize_ip(&address).map(|address| KubernetesApiEndpoint { address, port })
+                })
+                .collect(),
         }
     }
 }
@@ -90,11 +107,7 @@ impl RuntimeSecurityGenerator {
         &self,
         event: &NetworkConnectionOpenEvent,
     ) -> Option<RuntimeSecurityFinding> {
-        if self
-            .kubernetes_api_addresses
-            .contains(&event.remote_address)
-            && !is_control_plane_workload(event)
-        {
+        if self.matches_kubernetes_api_endpoint(event) && !is_control_plane_workload(event) {
             return Some(network_finding(
                 "network.kubernetes_api_from_workload",
                 RuntimeSecuritySeverity::High,
@@ -111,6 +124,18 @@ impl RuntimeSecurityGenerator {
         }
 
         None
+    }
+
+    fn matches_kubernetes_api_endpoint(&self, event: &NetworkConnectionOpenEvent) -> bool {
+        let Some(address) = normalize_ip(&event.remote_address) else {
+            return false;
+        };
+
+        self.kubernetes_api_endpoints
+            .contains(&KubernetesApiEndpoint {
+                address,
+                port: event.remote_port,
+            })
     }
 }
 
@@ -142,7 +167,7 @@ fn network_finding(
 }
 
 fn is_external_address(address: &str) -> bool {
-    let Ok(address) = address.parse::<IpAddr>() else {
+    let Some(address) = normalize_ip(address) else {
         return false;
     };
 
@@ -163,6 +188,18 @@ fn is_external_address(address: &str) -> bool {
                 || ((address.segments()[0] & 0xffc0) == 0xfe80))
         }
     }
+}
+
+fn normalize_ip(address: &str) -> Option<IpAddr> {
+    let address = address.parse::<IpAddr>().ok()?;
+
+    Some(match address {
+        IpAddr::V6(address) => address
+            .to_ipv4_mapped()
+            .map(IpAddr::V4)
+            .unwrap_or(IpAddr::V6(address)),
+        IpAddr::V4(_) => address,
+    })
 }
 
 fn is_control_plane_workload(event: &NetworkConnectionOpenEvent) -> bool {
@@ -321,8 +358,10 @@ mod tests {
 
     #[tokio::test]
     async fn emits_kubernetes_api_connection_finding_for_non_control_plane_workload() {
-        let generator =
-            RuntimeSecurityGenerator::with_kubernetes_api_addresses(["10.96.0.1".to_string()]);
+        let generator = RuntimeSecurityGenerator::with_kubernetes_api_endpoints([(
+            "10.96.0.1".to_string(),
+            443,
+        )]);
         let signal = network_open_signal("10.96.0.1", 443, kubernetes_context());
 
         let findings = observe_with(&generator, signal).await;
@@ -333,6 +372,49 @@ mod tests {
         };
         assert_eq!(finding.rule_id, "network.kubernetes_api_from_workload");
         assert_eq!(finding.severity, RuntimeSecuritySeverity::High);
+    }
+
+    #[tokio::test]
+    async fn suppresses_kubernetes_api_finding_for_unconfigured_port() {
+        let generator = RuntimeSecurityGenerator::with_kubernetes_api_endpoints([(
+            "10.96.0.1".to_string(),
+            443,
+        )]);
+
+        assert!(
+            observe_with(
+                &generator,
+                network_open_signal("10.96.0.1", 6443, kubernetes_context())
+            )
+            .await
+            .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn handles_ipv4_mapped_ipv6_external_classification() {
+        assert!(
+            observe(network_open_signal(
+                "::ffff:10.0.0.20",
+                5432,
+                kubernetes_context()
+            ))
+            .await
+            .is_empty()
+        );
+
+        let findings = observe(network_open_signal(
+            "::ffff:203.0.113.10",
+            443,
+            kubernetes_context(),
+        ))
+        .await;
+
+        assert_eq!(findings.len(), 1);
+        let SignalPayload::RuntimeSecurityFinding(finding) = &findings[0].payload else {
+            panic!("expected runtime security finding");
+        };
+        assert_eq!(finding.rule_id, "network.unexpected_external_connection");
     }
 
     #[tokio::test]
@@ -347,8 +429,10 @@ mod tests {
         context
             .labels
             .insert("component".to_string(), "kube-apiserver".to_string());
-        let generator =
-            RuntimeSecurityGenerator::with_kubernetes_api_addresses(["10.96.0.1".to_string()]);
+        let generator = RuntimeSecurityGenerator::with_kubernetes_api_endpoints([(
+            "10.96.0.1".to_string(),
+            443,
+        )]);
 
         assert!(
             observe_with(&generator, network_open_signal("10.96.0.1", 443, context))

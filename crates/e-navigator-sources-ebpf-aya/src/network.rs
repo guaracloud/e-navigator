@@ -40,7 +40,17 @@ pub(crate) struct RawNetworkEvent {
 }
 
 #[cfg(any(target_os = "linux", test))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn raw_network_to_signal(bytes: &[u8], host: Option<String>) -> Option<SignalEnvelope> {
+    raw_network_to_signal_with_clock(bytes, host, now_unix_nanos())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn raw_network_to_signal_with_clock(
+    bytes: &[u8],
+    host: Option<String>,
+    observed_unix_nanos: u64,
+) -> Option<SignalEnvelope> {
     if bytes.len() < core::mem::size_of::<RawNetworkEvent>() {
         return None;
     }
@@ -74,7 +84,7 @@ fn raw_network_to_signal(bytes: &[u8], host: Option<String>) -> Option<SignalEnv
                 remote_address,
                 remote_port,
                 fd,
-                timestamp_unix_nanos: raw.timestamp_unix_nanos,
+                timestamp_unix_nanos: observed_unix_nanos,
                 container: None,
                 kubernetes: None,
             },
@@ -91,11 +101,10 @@ fn raw_network_to_signal(bytes: &[u8], host: Option<String>) -> Option<SignalEnv
                 remote_address,
                 remote_port,
                 fd,
-                opened_at_unix_nanos: raw
-                    .timestamp_unix_nanos
+                opened_at_unix_nanos: observed_unix_nanos
                     .checked_sub(raw.duration_nanos)
                     .filter(|_| raw.duration_nanos != 0),
-                closed_at_unix_nanos: raw.timestamp_unix_nanos,
+                closed_at_unix_nanos: observed_unix_nanos,
                 duration_nanos: (raw.duration_nanos != 0).then_some(raw.duration_nanos),
                 container: None,
                 kubernetes: None,
@@ -112,7 +121,7 @@ fn raw_network_to_signal(bytes: &[u8], host: Option<String>) -> Option<SignalEnv
                 remote_port,
                 fd,
                 errno: raw.errno,
-                timestamp_unix_nanos: raw.timestamp_unix_nanos,
+                timestamp_unix_nanos: observed_unix_nanos,
                 container: None,
                 kubernetes: None,
             },
@@ -143,6 +152,7 @@ fn remote_address(raw: &RawNetworkEvent, family: NetworkAddressFamily) -> String
     match family {
         NetworkAddressFamily::Ipv4 => ipv4_to_string(raw.remote_addr_v4),
         NetworkAddressFamily::Ipv6 => ipv6_to_string(raw.remote_addr_v6),
+        _ => String::new(),
     }
 }
 
@@ -161,7 +171,7 @@ fn local_address(raw: &RawNetworkEvent, family: NetworkAddressFamily) -> Option<
 
 #[cfg(any(target_os = "linux", test))]
 fn ipv4_to_string(value: u32) -> String {
-    let octets = value.to_be_bytes();
+    let octets = value.to_ne_bytes();
     format!("{}.{}.{}.{}", octets[0], octets[1], octets[2], octets[3])
 }
 
@@ -177,6 +187,15 @@ fn bytes_to_string(bytes: &[u8]) -> String {
         .position(|byte| *byte == 0)
         .unwrap_or(bytes.len());
     String::from_utf8_lossy(&bytes[..end]).to_string()
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn now_unix_nanos() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
 }
 
 #[cfg(target_os = "linux")]
@@ -434,8 +453,8 @@ mod tests {
             protocol: RAW_PROTO_TCP,
             remote_port_be: 443_u16.to_be(),
             local_port_be: 43512_u16.to_be(),
-            remote_addr_v4: u32::from_be_bytes([203, 0, 113, 10]),
-            local_addr_v4: u32::from_be_bytes([10, 0, 0, 5]),
+            remote_addr_v4: u32::from_ne_bytes([203, 0, 113, 10]),
+            local_addr_v4: u32::from_ne_bytes([10, 0, 0, 5]),
             remote_addr_v6: [0; 16],
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 1_000,
@@ -443,8 +462,9 @@ mod tests {
             command: fixed_command("api"),
         };
 
-        let signal = raw_network_to_signal(raw_as_bytes(&raw), Some("node-a".to_string()))
-            .expect("raw event decodes");
+        let signal =
+            raw_network_to_signal_with_clock(raw_as_bytes(&raw), Some("node-a".to_string()), 1_000)
+                .expect("raw event decodes");
 
         assert_eq!(signal.kind(), "network_connection_open");
         let SignalPayload::NetworkConnectionOpen(event) = signal.payload else {
@@ -464,6 +484,74 @@ mod tests {
     }
 
     #[test]
+    fn decodes_linux_little_endian_ipv4_bytes_in_network_order() {
+        let raw = RawNetworkEvent {
+            event_type: RAW_NETWORK_EVENT_OPEN,
+            pid: 42,
+            uid: 1000,
+            fd: 7,
+            errno: 0,
+            family: RAW_AF_INET,
+            protocol: RAW_PROTO_TCP,
+            remote_port_be: 443_u16.to_be(),
+            local_port_be: 43512_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([203, 0, 113, 10]),
+            local_addr_v4: u32::from_ne_bytes([10, 0, 0, 5]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 1_000,
+            duration_nanos: 0,
+            command: fixed_command("api"),
+        };
+
+        let signal =
+            raw_network_to_signal_with_clock(raw_as_bytes(&raw), Some("node-a".to_string()), 2_000)
+                .expect("raw event decodes");
+
+        let SignalPayload::NetworkConnectionOpen(event) = signal.payload else {
+            panic!("expected network open payload");
+        };
+        assert_eq!(event.remote_address, "203.0.113.10");
+        assert_eq!(event.local_address.as_deref(), Some("10.0.0.5"));
+    }
+
+    #[test]
+    fn converts_raw_monotonic_time_to_unix_time_during_decode() {
+        let raw = RawNetworkEvent {
+            event_type: RAW_NETWORK_EVENT_CLOSE,
+            pid: 42,
+            uid: 1000,
+            fd: 7,
+            errno: 0,
+            family: RAW_AF_INET,
+            protocol: RAW_PROTO_TCP,
+            remote_port_be: 443_u16.to_be(),
+            local_port_be: 43512_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([203, 0, 113, 10]),
+            local_addr_v4: u32::from_ne_bytes([10, 0, 0, 5]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 1_000,
+            duration_nanos: 200,
+            command: fixed_command("api"),
+        };
+
+        let signal = raw_network_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            Some("node-a".to_string()),
+            10_000,
+        )
+        .expect("raw event decodes");
+
+        let SignalPayload::NetworkConnectionClose(event) = signal.payload else {
+            panic!("expected network close payload");
+        };
+        assert_eq!(event.closed_at_unix_nanos, 10_000);
+        assert_eq!(event.opened_at_unix_nanos, Some(9_800));
+        assert_eq!(event.duration_nanos, Some(200));
+    }
+
+    #[test]
     fn decodes_raw_failed_connect_to_failure_signal() {
         let raw = RawNetworkEvent {
             event_type: RAW_NETWORK_EVENT_FAILURE,
@@ -475,7 +563,7 @@ mod tests {
             protocol: RAW_PROTO_TCP,
             remote_port_be: 5432_u16.to_be(),
             local_port_be: 0,
-            remote_addr_v4: u32::from_be_bytes([10, 0, 0, 20]),
+            remote_addr_v4: u32::from_ne_bytes([10, 0, 0, 20]),
             local_addr_v4: 0,
             remote_addr_v6: [0; 16],
             local_addr_v6: [0; 16],
@@ -484,8 +572,9 @@ mod tests {
             command: fixed_command("worker"),
         };
 
-        let signal = raw_network_to_signal(raw_as_bytes(&raw), Some("node-a".to_string()))
-            .expect("raw event decodes");
+        let signal =
+            raw_network_to_signal_with_clock(raw_as_bytes(&raw), Some("node-a".to_string()), 2_000)
+                .expect("raw event decodes");
 
         assert_eq!(signal.kind(), "network_connection_failure");
         let SignalPayload::NetworkConnectionFailure(event) = signal.payload else {
@@ -509,8 +598,8 @@ mod tests {
             protocol: RAW_PROTO_TCP,
             remote_port_be: 5432_u16.to_be(),
             local_port_be: 43512_u16.to_be(),
-            remote_addr_v4: u32::from_be_bytes([10, 0, 0, 20]),
-            local_addr_v4: u32::from_be_bytes([10, 0, 0, 5]),
+            remote_addr_v4: u32::from_ne_bytes([10, 0, 0, 20]),
+            local_addr_v4: u32::from_ne_bytes([10, 0, 0, 5]),
             remote_addr_v6: [0; 16],
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 3_000,
@@ -518,8 +607,9 @@ mod tests {
             command: fixed_command("api"),
         };
 
-        let signal = raw_network_to_signal(raw_as_bytes(&raw), Some("node-a".to_string()))
-            .expect("raw event decodes");
+        let signal =
+            raw_network_to_signal_with_clock(raw_as_bytes(&raw), Some("node-a".to_string()), 3_000)
+                .expect("raw event decodes");
 
         assert_eq!(signal.kind(), "network_connection_close");
         let SignalPayload::NetworkConnectionClose(event) = signal.payload else {

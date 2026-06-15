@@ -97,7 +97,11 @@ fn build_registry(
     }
 
     if config.module_enabled("generator.runtime_security") {
-        registry = registry.with_generator(Box::new(RuntimeSecurityGenerator::default()));
+        registry = registry.with_generator(Box::new(
+            RuntimeSecurityGenerator::with_kubernetes_api_endpoints(kubernetes_api_endpoints(
+                config,
+            )),
+        ));
     }
 
     if config.module_enabled("sink.json_stdout") {
@@ -111,6 +115,29 @@ fn node_name() -> Option<String> {
     std::env::var("NODE_NAME")
         .ok()
         .filter(|value| !value.is_empty())
+}
+
+fn kubernetes_api_endpoints(config: &RuntimeConfig) -> Vec<(String, u16)> {
+    let mut endpoints: Vec<(String, u16)> = config
+        .runtime_security
+        .kubernetes_api_endpoints
+        .iter()
+        .map(|endpoint| (endpoint.address.clone(), endpoint.port))
+        .collect();
+
+    if let Some(host) = std::env::var("KUBERNETES_SERVICE_HOST")
+        .ok()
+        .filter(|value| !value.is_empty())
+    {
+        let port = std::env::var("KUBERNETES_SERVICE_PORT")
+            .ok()
+            .and_then(|value| value.parse::<u16>().ok())
+            .filter(|port| *port != 0)
+            .unwrap_or(443);
+        endpoints.push((host, port));
+    }
+
+    endpoints
 }
 
 struct SyntheticExecSource {
@@ -257,7 +284,7 @@ fn now_unix_nanos() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e_navigator_core::Source;
+    use e_navigator_core::{NetworkEndpointConfig, RuntimeSecurityConfig, Source};
     use e_navigator_signals::SignalPayload;
     use tokio::sync::mpsc;
 
@@ -300,6 +327,21 @@ mod tests {
         assert_eq!(config.queue_capacity, 64);
         assert!(config.module_enabled("source.synthetic_exec"));
         assert!(!config.module_enabled("processor.container_attribution"));
+    }
+
+    #[test]
+    fn configured_kubernetes_api_endpoints_feed_runtime_security_generator() {
+        let config = RuntimeConfig {
+            runtime_security: RuntimeSecurityConfig {
+                kubernetes_api_endpoints: vec![NetworkEndpointConfig {
+                    address: "10.96.0.1".to_string(),
+                    port: 443,
+                }],
+            },
+            ..RuntimeConfig::default()
+        };
+
+        assert!(kubernetes_api_endpoints(&config).contains(&("10.96.0.1".to_string(), 443)));
     }
 
     #[tokio::test]

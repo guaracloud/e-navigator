@@ -1,5 +1,5 @@
 use e_navigator_core::Signal;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 
 use crate::{
     DependencyEdgeEvent, ExecEvent, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
@@ -11,6 +11,7 @@ pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SignalKind {
     Exec,
     ProcessExit,
@@ -24,6 +25,7 @@ pub enum SignalKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum SignalPayload {
     Exec(ExecEvent),
     ProcessExit(ProcessExitEvent),
@@ -35,13 +37,89 @@ pub enum SignalPayload {
     RuntimeSecurityFinding(RuntimeSecurityFinding),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SignalEnvelope {
     pub schema_version: u16,
     kind: SignalKind,
     pub source: String,
     pub host: Option<String>,
     pub payload: SignalPayload,
+}
+
+impl<'de> Deserialize<'de> for SignalEnvelope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawSignalEnvelope {
+            schema_version: u16,
+            kind: SignalKind,
+            source: String,
+            host: Option<String>,
+            payload: serde_json::Value,
+        }
+
+        let raw = RawSignalEnvelope::deserialize(deserializer)?;
+        let payload = match raw.kind {
+            SignalKind::Exec => serde_json::from_value::<ExecEvent>(raw.payload)
+                .map(SignalPayload::Exec)
+                .map_err(|err| D::Error::custom(format!("invalid exec payload: {err}")))?,
+            SignalKind::ProcessExit => serde_json::from_value::<ProcessExitEvent>(raw.payload)
+                .map(SignalPayload::ProcessExit)
+                .map_err(|err| D::Error::custom(format!("invalid process_exit payload: {err}")))?,
+            SignalKind::ProcessLifecycleDuration => serde_json::from_value::<
+                ProcessLifecycleDurationEvent,
+            >(raw.payload)
+            .map(SignalPayload::ProcessLifecycleDuration)
+            .map_err(|err| {
+                D::Error::custom(format!("invalid process_lifecycle_duration payload: {err}"))
+            })?,
+            SignalKind::NetworkConnectionOpen => {
+                serde_json::from_value::<NetworkConnectionOpenEvent>(raw.payload)
+                    .map(SignalPayload::NetworkConnectionOpen)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid network_connection_open payload: {err}"))
+                    })?
+            }
+            SignalKind::NetworkConnectionClose => {
+                serde_json::from_value::<NetworkConnectionCloseEvent>(raw.payload)
+                    .map(SignalPayload::NetworkConnectionClose)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid network_connection_close payload: {err}"))
+                    })?
+            }
+            SignalKind::NetworkConnectionFailure => serde_json::from_value::<
+                NetworkConnectionFailureEvent,
+            >(raw.payload)
+            .map(SignalPayload::NetworkConnectionFailure)
+            .map_err(|err| {
+                D::Error::custom(format!("invalid network_connection_failure payload: {err}"))
+            })?,
+            SignalKind::DependencyEdge => {
+                serde_json::from_value::<DependencyEdgeEvent>(raw.payload)
+                    .map(SignalPayload::DependencyEdge)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid dependency_edge payload: {err}"))
+                    })?
+            }
+            SignalKind::RuntimeSecurityFinding => {
+                serde_json::from_value::<RuntimeSecurityFinding>(raw.payload)
+                    .map(SignalPayload::RuntimeSecurityFinding)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid runtime_security_finding payload: {err}"))
+                    })?
+            }
+        };
+
+        Ok(Self {
+            schema_version: raw.schema_version,
+            kind: raw.kind,
+            source: raw.source,
+            host: raw.host,
+            payload,
+        })
+    }
 }
 
 impl SignalEnvelope {
@@ -401,5 +479,39 @@ mod tests {
         assert_eq!(json["payload"]["observations"], 2);
         assert_eq!(json["payload"]["first_seen_unix_nanos"], 300);
         assert_eq!(json["payload"]["last_seen_unix_nanos"], 350);
+    }
+
+    #[test]
+    fn rejects_deserializing_mismatched_kind_and_payload() {
+        let json = serde_json::json!({
+            "schema_version": 1,
+            "kind": "network_connection_failure",
+            "source": "source.test",
+            "host": null,
+            "payload": {
+                "process": {
+                    "pid": 42,
+                    "ppid": null,
+                    "uid": 1000,
+                    "command": "api",
+                    "executable": "/usr/bin/api"
+                },
+                "protocol": "tcp",
+                "address_family": "ipv4",
+                "local_address": "10.0.0.10",
+                "local_port": 43512,
+                "remote_address": "10.0.0.20",
+                "remote_port": 5432,
+                "fd": 7,
+                "timestamp_unix_nanos": 300,
+                "container": null,
+                "kubernetes": null
+            }
+        });
+
+        let err = serde_json::from_value::<SignalEnvelope>(json)
+            .expect_err("mismatched kind and payload must be rejected");
+
+        assert!(err.to_string().contains("payload"));
     }
 }

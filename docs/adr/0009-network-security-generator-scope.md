@@ -14,7 +14,9 @@ The existing `generator.runtime_security` observes network connection open signa
 Phase 3 adds two network finding families:
 
 - `network.unexpected_external_connection`: a container opens a connection to an address outside common local, private, link-local, multicast, broadcast, or unspecified ranges.
-- `network.kubernetes_api_from_workload`: a non-control-plane workload connects to a configured Kubernetes API address.
+- `network.kubernetes_api_from_workload`: a non-control-plane workload connects to a configured Kubernetes API endpoint.
+
+Kubernetes API endpoints are matched by normalized IP address and port. The CLI passes explicit `runtime_security.kubernetes_api_endpoints` config and also discovers the in-cluster Kubernetes service endpoint from `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT` when those environment variables are present.
 
 Findings include rule ID, severity, matched process details, matched connection details, and available container and Kubernetes attribution.
 
