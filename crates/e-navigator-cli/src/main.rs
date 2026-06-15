@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use clap::{Parser, ValueEnum};
 use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, RuntimeConfig, Source};
-use e_navigator_generators::{DependencyGraphGenerator, RuntimeSecurityGenerator};
+use e_navigator_generators::{
+    DependencyGraphGenerator, NetworkMetricsGenerator, RuntimeSecurityGenerator,
+};
 use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::{ModuleRegistry, Runner};
 use e_navigator_signals::{
@@ -94,6 +96,13 @@ fn build_registry(
 
     if config.module_enabled("generator.dependency_graph") {
         registry = registry.with_generator(Box::new(DependencyGraphGenerator::default()));
+    }
+
+    if config.module_enabled("generator.network_metrics") {
+        registry = registry.with_generator(Box::new(NetworkMetricsGenerator::with_limits(
+            config.network_metrics.max_metric_keys,
+            config.network_metrics.max_active_connections,
+        )));
     }
 
     if config.module_enabled("generator.runtime_security") {
@@ -301,7 +310,7 @@ mod tests {
 
         assert_eq!(registry.sources.len(), 1);
         assert_eq!(registry.processors.len(), 0);
-        assert_eq!(registry.generators.len(), 2);
+        assert_eq!(registry.generators.len(), 3);
         assert_eq!(registry.sinks.len(), 1);
     }
 

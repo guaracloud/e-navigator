@@ -15,6 +15,8 @@ pub struct RuntimeConfig {
     pub attribution: AttributionConfig,
     #[serde(default)]
     pub runtime_security: RuntimeSecurityConfig,
+    #[serde(default)]
+    pub network_metrics: NetworkMetricsConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -26,6 +28,7 @@ impl Default for RuntimeConfig {
             argv_capture: ArgvCaptureConfig::default(),
             attribution: AttributionConfig::default(),
             runtime_security: RuntimeSecurityConfig::default(),
+            network_metrics: NetworkMetricsConfig::default(),
         }
     }
 }
@@ -43,6 +46,7 @@ impl RuntimeConfig {
         self.argv_capture.validate()?;
         self.attribution.validate()?;
         self.runtime_security.validate()?;
+        self.network_metrics.validate()?;
 
         Ok(())
     }
@@ -147,6 +151,39 @@ pub struct NetworkEndpointConfig {
     pub port: u16,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkMetricsConfig {
+    #[serde(default = "default_network_metrics_max_metric_keys")]
+    pub max_metric_keys: usize,
+    #[serde(default = "default_network_metrics_max_active_connections")]
+    pub max_active_connections: usize,
+}
+
+impl Default for NetworkMetricsConfig {
+    fn default() -> Self {
+        Self {
+            max_metric_keys: default_network_metrics_max_metric_keys(),
+            max_active_connections: default_network_metrics_max_active_connections(),
+        }
+    }
+}
+
+impl NetworkMetricsConfig {
+    fn validate(&self) -> Result<(), String> {
+        if self.max_metric_keys == 0 {
+            return Err("network_metrics.max_metric_keys must be greater than zero".to_string());
+        }
+
+        if self.max_active_connections == 0 {
+            return Err(
+                "network_metrics.max_active_connections must be greater than zero".to_string(),
+            );
+        }
+
+        Ok(())
+    }
+}
+
 impl NetworkEndpointConfig {
     fn validate(&self) -> Result<(), String> {
         self.address.parse::<IpAddr>().map_err(|_| {
@@ -198,6 +235,7 @@ fn default_modules() -> Vec<ModuleConfig> {
         ModuleConfig::enabled("source.aya_network"),
         ModuleConfig::enabled("source.synthetic_exec"),
         ModuleConfig::enabled("processor.container_attribution"),
+        ModuleConfig::enabled("generator.network_metrics"),
         ModuleConfig::enabled("generator.dependency_graph"),
         ModuleConfig::enabled("generator.runtime_security"),
         ModuleConfig::enabled("sink.json_stdout"),
@@ -230,6 +268,14 @@ fn default_service_account_token_path() -> PathBuf {
 
 fn default_service_account_ca_path() -> PathBuf {
     PathBuf::from("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+}
+
+fn default_network_metrics_max_metric_keys() -> usize {
+    4096
+}
+
+fn default_network_metrics_max_active_connections() -> usize {
+    8192
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -311,9 +357,37 @@ mod tests {
         assert!(config.module_enabled("source.aya_network"));
         assert!(config.module_enabled("source.synthetic_exec"));
         assert!(config.module_enabled("processor.container_attribution"));
+        assert!(config.module_enabled("generator.network_metrics"));
         assert!(config.module_enabled("generator.dependency_graph"));
         assert!(config.module_enabled("generator.runtime_security"));
         assert!(config.module_enabled("sink.json_stdout"));
+    }
+
+    #[test]
+    fn network_metrics_limits_are_validated() {
+        let invalid_metric_keys = RuntimeConfig {
+            network_metrics: NetworkMetricsConfig {
+                max_metric_keys: 0,
+                max_active_connections: 128,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_metric_keys.validate(),
+            Err("network_metrics.max_metric_keys must be greater than zero".to_string())
+        );
+
+        let invalid_active_connections = RuntimeConfig {
+            network_metrics: NetworkMetricsConfig {
+                max_metric_keys: 128,
+                max_active_connections: 0,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_active_connections.validate(),
+            Err("network_metrics.max_active_connections must be greater than zero".to_string())
+        );
     }
 
     #[test]
