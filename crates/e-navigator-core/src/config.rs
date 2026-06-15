@@ -248,7 +248,9 @@ impl Default for TraceCorrelationConfig {
 impl TraceCorrelationConfig {
     fn validate(&self) -> Result<(), String> {
         if self.max_service_paths == 0 {
-            return Err("trace_correlation.max_service_paths must be greater than zero".to_string());
+            return Err(
+                "trace_correlation.max_service_paths must be greater than zero".to_string(),
+            );
         }
         if self.max_seen_interactions == 0 {
             return Err(

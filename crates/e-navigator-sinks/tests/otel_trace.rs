@@ -1,12 +1,10 @@
-use e_navigator_sinks::{
-    OtelTraceRecordKind, format_otel_trace_record,
-};
 use e_navigator_signals::{
     ContainerContext, DependencyEndpoint, KubernetesContext, NetworkProcessIdentity,
     NetworkProtocol, ServiceInteractionSpanObservation, SignalEnvelope, TraceAttribute,
     TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext,
     TraceServicePathObservation, TraceSpanObservation,
 };
+use e_navigator_sinks::{OtelTraceRecordKind, format_otel_trace_record};
 use std::collections::BTreeMap;
 
 #[test]
@@ -139,10 +137,16 @@ fn formats_service_path_and_warning_trace_foundation_records() {
         path_record.attributes["trace.service.path.key"],
         "default/api-123/api->api.example.com:unknown/udp"
     );
-    assert_eq!(path_record.attributes["dns.question.name"], "api.example.com");
+    assert_eq!(
+        path_record.attributes["dns.question.name"],
+        "api.example.com"
+    );
     assert_eq!(warning_record.kind, OtelTraceRecordKind::CorrelationWarning);
     assert_eq!(warning_record.name, "trace.correlation.warning");
-    assert_eq!(warning_record.attributes["warning.type"], "missing_attribution");
+    assert_eq!(
+        warning_record.attributes["warning.type"],
+        "missing_attribution"
+    );
     assert_eq!(
         warning_record.attributes["trace.source.signal.kind"],
         "network_connection_close"

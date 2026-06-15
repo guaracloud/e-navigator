@@ -70,7 +70,10 @@ async fn dependency_edge_generates_service_path_observation() {
     assert_eq!(path.observations, 2);
     assert_eq!(path.first_seen_unix_nanos, 1_000);
     assert_eq!(path.last_seen_unix_nanos, 2_000);
-    assert_eq!(path.correlation_kind, TraceCorrelationKind::DependencyInferred);
+    assert_eq!(
+        path.correlation_kind,
+        TraceCorrelationKind::DependencyInferred
+    );
     assert_eq!(path.confidence, TraceConfidence::Low);
 }
 
@@ -85,11 +88,17 @@ async fn dns_response_generates_domain_service_path_when_successful() {
     let SignalPayload::TraceServicePathObservation(path) = &outputs[0].payload else {
         panic!("expected trace service path");
     };
-    assert_eq!(path.path_key, "default/api-123/api->api.example.com:unknown/udp");
+    assert_eq!(
+        path.path_key,
+        "default/api-123/api->api.example.com:unknown/udp"
+    );
     assert_eq!(path.destination.domain, Some("api.example.com".to_string()));
     assert_eq!(path.destination.address, None);
     assert_eq!(path.protocol, NetworkProtocol::Udp);
-    assert_eq!(path.correlation_kind, TraceCorrelationKind::DependencyInferred);
+    assert_eq!(
+        path.correlation_kind,
+        TraceCorrelationKind::DependencyInferred
+    );
 }
 
 #[tokio::test]

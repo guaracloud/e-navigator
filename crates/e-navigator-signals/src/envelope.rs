@@ -298,15 +298,15 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
                         D::Error::custom(format!("invalid trace_span_observation payload: {err}"))
                     })?
             }
-            SignalKind::ServiceInteractionSpanObservation => serde_json::from_value::<
-                ServiceInteractionSpanObservation,
-            >(raw.payload)
-            .map(SignalPayload::ServiceInteractionSpanObservation)
-            .map_err(|err| {
-                D::Error::custom(format!(
-                    "invalid service_interaction_span_observation payload: {err}"
-                ))
-            })?,
+            SignalKind::ServiceInteractionSpanObservation => {
+                serde_json::from_value::<ServiceInteractionSpanObservation>(raw.payload)
+                    .map(SignalPayload::ServiceInteractionSpanObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid service_interaction_span_observation payload: {err}"
+                        ))
+                    })?
+            }
             SignalKind::TraceServicePathObservation => {
                 serde_json::from_value::<TraceServicePathObservation>(raw.payload)
                     .map(SignalPayload::TraceServicePathObservation)
@@ -320,7 +320,9 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
                 serde_json::from_value::<TraceCorrelationWarning>(raw.payload)
                     .map(SignalPayload::TraceCorrelationWarning)
                     .map_err(|err| {
-                        D::Error::custom(format!("invalid trace_correlation_warning payload: {err}"))
+                        D::Error::custom(format!(
+                            "invalid trace_correlation_warning payload: {err}"
+                        ))
                     })?
             }
         };
@@ -1081,7 +1083,10 @@ mod tests {
 
         assert_eq!(json["schema_version"], 1);
         assert_eq!(json["kind"], "trace_span_observation");
-        assert_eq!(json["payload"]["trace_id"], "4bf92f3577b34da6a3ce929d0e0e4736");
+        assert_eq!(
+            json["payload"]["trace_id"],
+            "4bf92f3577b34da6a3ce929d0e0e4736"
+        );
         assert_eq!(json["payload"]["duration_nanos"], 2_000);
         assert_eq!(json["payload"]["correlation_kind"], "synthetic");
         assert_eq!(json["payload"]["confidence"], "high");
@@ -1174,10 +1179,16 @@ mod tests {
             serde_json::from_value::<SignalEnvelope>(json.clone()).expect("signal deserializes");
 
         assert_eq!(json["kind"], "trace_service_path_observation");
-        assert_eq!(json["payload"]["path_key"], "default/api->203.0.113.10:443/tcp");
+        assert_eq!(
+            json["payload"]["path_key"],
+            "default/api->203.0.113.10:443/tcp"
+        );
         assert_eq!(json["payload"]["observations"], 2);
         assert_eq!(json["payload"]["correlation_kind"], "dependency_inferred");
-        assert_eq!(decoded.signal_kind(), SignalKind::TraceServicePathObservation);
+        assert_eq!(
+            decoded.signal_kind(),
+            SignalKind::TraceServicePathObservation
+        );
     }
 
     #[test]

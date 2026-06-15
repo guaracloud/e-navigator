@@ -779,11 +779,7 @@ mod tests {
             .expect("trace interaction span exists");
 
         assert_eq!(
-            span.source
-                .workload
-                .as_ref()
-                .expect("kubernetes")
-                .pod_name,
+            span.source.workload.as_ref().expect("kubernetes").pod_name,
             "trace-client-123"
         );
         assert_eq!(

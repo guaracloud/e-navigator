@@ -254,7 +254,12 @@ impl TraceCorrelationGenerator {
             return Ok(Vec::new());
         };
         let observation = PathObservation {
-            source: source_endpoint(event.kubernetes.clone(), event.container.clone(), None, None),
+            source: source_endpoint(
+                event.kubernetes.clone(),
+                event.container.clone(),
+                None,
+                None,
+            ),
             destination: DependencyEndpoint {
                 workload: None,
                 container: None,
@@ -668,10 +673,7 @@ fn address_family_name(address_family: NetworkAddressFamily) -> &'static str {
 }
 
 fn normalize_domain(raw_domain: &str) -> Option<String> {
-    let domain = raw_domain
-        .trim()
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
+    let domain = raw_domain.trim().trim_end_matches('.').to_ascii_lowercase();
     if domain.is_empty() {
         None
     } else {
