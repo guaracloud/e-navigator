@@ -10,10 +10,10 @@ Profiling data can become high-cardinality quickly because stacks, symbols, thre
 
 ## Decision
 
-Use a statically registered `generator.profiling` module that only derives profiling session/window observations from explicit profile sample signals. It does not infer hot functions, allocation rates, lock contention, or workload bottlenecks from CPU/resource metrics.
+Use a statically registered `generator.profiling` module that only derives profiling session/window observations from explicit profile sample signals. It consumes synthetic samples and observed CPU samples from `source.aya_cpu_profile` through the same `SignalEnvelope` contract. It does not infer hot functions, allocation rates, lock contention, or workload bottlenecks from CPU/resource metrics.
 
-The generator uses bounded maps for active windows, seen sample fingerprints, and warning fingerprints. Duplicate samples are suppressed. Window/profile keys are deterministic and opaque.
+The generator uses bounded maps for active windows, seen sample fingerprints, and warning fingerprints. Duplicate samples are suppressed. Window/profile keys are deterministic and opaque. Raw stack strings are not used as metric labels or aggregation keys.
 
 ## Consequences
 
-The generator provides deterministic, low-cardinality profiling foundation output. It evicts the oldest retained window when the configured window bound is reached rather than buffering unbounded data.
+The generator provides deterministic, low-cardinality profiling foundation output. It evicts the oldest retained window when the configured window bound is reached rather than buffering unbounded data. Source batching and generator fan-out remain bounded and acyclic.

@@ -6,7 +6,7 @@ Accepted.
 
 ## Context
 
-Phase 8 adds a continuous profiling foundation without claiming live CPU profiling, allocation profiling, lock profiling, pprof export, OTLP profile export, storage, UI, or Pyroscope replacement behavior.
+Phase 8 added a continuous profiling foundation. Phase 9 adds an explicit privileged CPU profiling source foundation without claiming allocation profiling, lock profiling, pprof export, OTLP profile export, storage, UI, trace/profile correlation, bottleneck analysis, or Pyroscope replacement behavior.
 
 ## Decision
 
@@ -23,4 +23,4 @@ Stack frames and attributes are bounded. Raw full stacks are not used as metric 
 
 ## Consequences
 
-Synthetic and fixture-backed profile signals are available for non-privileged validation. Live eBPF/perf-event profiling remains future work.
+Synthetic, fixture-backed, and observed CPU profile sample signals share the same versioned payloads. Non-privileged validation covers synthetic output and Aya CPU profile event decode fixtures. Live CPU profiling may only be claimed when the explicit privileged source observes samples in a real Linux environment.

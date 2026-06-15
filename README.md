@@ -2,7 +2,7 @@
 
 E-Navigator is a Rust and eBPF observability, security, profiling, and diagnostics platform for Linux and Kubernetes workloads.
 
-Phase 8 builds a continuous profiling foundation on the bounded runtime, network, DNS, dependency, security, resource, trace-correlation, request-correlation, and export-boundary foundations:
+Phase 9 builds a live CPU profiling source foundation on the bounded runtime, network, DNS, dependency, security, resource, trace-correlation, request-correlation, profiling, and export-boundary foundations:
 
 - A layered Rust workspace.
 - A statically registered signal pipeline.
@@ -28,13 +28,14 @@ Phase 8 builds a continuous profiling foundation on the bounded runtime, network
 - An internal OTEL-compatible trace formatter boundary for future exporters.
 - Versioned profiling schemas for profile sample observations, stack trace observations, profiling session/window observations, and profiling warning observations.
 - An Aya-free profiling model boundary for synthetic and fixture-backed profile normalization with bounded stack frames, bounded symbol/module/file bytes, bounded attributes, and deterministic stack IDs.
+- A statically registered, opt-in `source.aya_cpu_profile` source mode that attaches a Linux perf-event CPU clock sampler and emits bounded observed CPU profile sample envelopes when run with the required privileges.
 - A bounded profiling generator that summarizes explicit observed or synthetic profile sample signals into profiling session/window observations without inferring profiles from raw CPU or resource metrics.
 - Existing processor-based profile attribution for host, process, container, and Kubernetes context where available, with structured warning signals for missing attribution.
 - An internal profile-compatible formatter boundary for future pprof or OTLP profile exporters.
-- Synthetic profiling fixtures for CPU samples, missing symbols, oversized stack truncation, and malformed low-confidence fixture warnings.
+- Synthetic profiling fixtures and Aya CPU profile source decode fixtures for CPU samples, missing stacks/symbols, oversized stack truncation, malformed events, and process-only attribution.
 - JSON stdout output.
 
-Phase 8 is a continuous profiling foundation, not a full continuous profiling backend, Pyroscope replacement, pprof server, OTLP profile exporter, flamegraph UI, profile storage layer, trace/profile correlation engine, or workload bottleneck analyzer. Synthetic and fixture-backed profiling signals exist. Live eBPF/perf-event CPU profiling, memory allocation profiling, lock contention profiling, host runtime profiling accuracy, production pprof export, and production OTLP profile export are not implemented. Synthetic and fixture-backed HTTP trace-context extraction exists. Live HTTP/gRPC parsing from real traffic, request IDs, routes, retries, application errors, full OTLP trace export, production trace storage, UI, critical path analysis, and runtime DNS packet capture are not implemented. The Aya network source remains TCP-oriented. Host resource accuracy depends on running on Linux with the configured host procfs/sysfs/cgroup mounts.
+Phase 9 is a CPU profiling source foundation, not a full continuous profiling backend, Pyroscope replacement, pprof server, OTLP profile exporter, flamegraph UI, profile storage layer, trace/profile correlation engine, or workload bottleneck analyzer. Synthetic and fixture-backed profiling signals exist. Live CPU profile sample ingestion is implemented only through the explicit privileged `aya-cpu-profile` source mode and may only be claimed after running it on a real Linux host where samples are observed. Memory allocation profiling, lock contention profiling, host runtime profiling accuracy, production pprof export, and production OTLP profile export are not implemented. Synthetic and fixture-backed HTTP trace-context extraction exists. Live HTTP/gRPC parsing from real traffic, request IDs, routes, retries, application errors, full OTLP trace export, production trace storage, UI, critical path analysis, and runtime DNS packet capture are not implemented. The Aya network source remains TCP-oriented. Host resource accuracy depends on running on Linux with the configured host procfs/sysfs/cgroup mounts.
 
 ## Development
 
@@ -90,4 +91,10 @@ Privileged eBPF smoke test on Linux:
 sudo -E cargo run -p e-navigator-cli --release -- --source aya-exec
 ```
 
-The `aya-exec` source mode registers the statically compiled Aya exec and network sources when both modules are enabled. Do not treat privileged Aya, DNS runtime visibility, or Kubernetes runtime tests as passed unless they run on a real Linux host or Kubernetes cluster with tracefs/eBPF support and the documented privileges.
+Privileged CPU profiling source smoke test on Linux:
+
+```bash
+sudo -E cargo run --locked -p e-navigator-cli --release -- --source aya-cpu-profile
+```
+
+The `aya-exec` source mode registers the statically compiled Aya exec and network sources when both modules are enabled. The `aya-cpu-profile` source mode registers only `source.aya_cpu_profile` when its module and `[cpu_profile_source] enabled = true` are configured. Do not treat privileged Aya, CPU profiling, DNS runtime visibility, or Kubernetes runtime tests as passed unless they run on a real Linux host or Kubernetes cluster with tracefs/eBPF/perf-event support and the documented privileges.
