@@ -15,6 +15,13 @@ grep -q '"kind":"exec"' "$default_output"
 grep -q '"kind":"process_exit"' "$default_output"
 grep -q '"kind":"network_connection_open"' "$default_output"
 grep -q '"kind":"network_connection_close"' "$default_output"
+grep -q '"kind":"dns_query"' "$default_output"
+grep -q '"kind":"dns_response"' "$default_output"
+grep -q '"kind":"network_counter_metric"' "$default_output"
+grep -q '"kind":"network_duration_metric"' "$default_output"
+grep -q '"kind":"network_gauge_metric"' "$default_output"
+grep -q '"kind":"dns_counter_metric"' "$default_output"
+grep -q '"kind":"dns_latency_metric"' "$default_output"
 grep -q '"kind":"dependency_edge"' "$default_output"
 grep -q '"kind":"runtime_security_finding"' "$default_output"
 grep -q '"rule_id":"runtime.shell_in_container"' "$default_output"
@@ -53,6 +60,14 @@ name = "generator.dependency_graph"
 enabled = true
 
 [[modules]]
+name = "generator.network_metrics"
+enabled = true
+
+[[modules]]
+name = "generator.dns_metrics"
+enabled = true
+
+[[modules]]
 name = "sink.json_stdout"
 enabled = true
 CONFIG
@@ -68,6 +83,13 @@ grep -q '"kind":"exec"' "$config_output"
 grep -q '"kind":"process_exit"' "$config_output"
 grep -q '"kind":"network_connection_open"' "$config_output"
 grep -q '"kind":"network_connection_close"' "$config_output"
+grep -q '"kind":"dns_query"' "$config_output"
+grep -q '"kind":"dns_response"' "$config_output"
+grep -q '"kind":"network_counter_metric"' "$config_output"
+grep -q '"kind":"network_duration_metric"' "$config_output"
+grep -q '"kind":"network_gauge_metric"' "$config_output"
+grep -q '"kind":"dns_counter_metric"' "$config_output"
+grep -q '"kind":"dns_latency_metric"' "$config_output"
 grep -q '"kind":"dependency_edge"' "$config_output"
 grep -q '"kind":"runtime_security_finding"' "$config_output"
 grep -q '"rule_id":"runtime.shell_in_container"' "$config_output"
