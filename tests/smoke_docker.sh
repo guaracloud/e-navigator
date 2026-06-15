@@ -4,10 +4,13 @@ set -euo pipefail
 image="${1:-e-navigator:local}"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
 
 default_output="$tmp_dir/default.jsonl"
 config_output="$tmp_dir/config.jsonl"
 config_file="$tmp_dir/e-navigator.toml"
+configmap_config_file="$tmp_dir/e-navigator-configmap.toml"
 
 docker run --rm "$image" --source synthetic >"$default_output"
 test "$(wc -l <"$default_output" | tr -d ' ')" -ge 2
@@ -140,6 +143,18 @@ docker run --rm \
   "$image" \
   --source synthetic \
   --config /etc/e-navigator/e-navigator.toml >"$config_output"
+
+awk '
+  $0 == "  e-navigator.toml: |" { in_config = 1; next }
+  in_config && substr($0, 1, 4) == "    " { print substr($0, 5); next }
+  in_config { exit }
+' "$repo_root/deploy/kubernetes/configmap.yaml" >"$configmap_config_file"
+test -s "$configmap_config_file"
+docker run --rm \
+  -v "$configmap_config_file:/etc/e-navigator/e-navigator.toml:ro" \
+  "$image" \
+  --config /etc/e-navigator/e-navigator.toml \
+  --validate-config
 
 test "$(wc -l <"$config_output" | tr -d ' ')" -ge 2
 grep -q '"kind":"exec"' "$config_output"

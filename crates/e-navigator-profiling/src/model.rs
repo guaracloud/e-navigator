@@ -1,7 +1,7 @@
 use e_navigator_signals::{
     ContainerContext, KubernetesContext, NetworkProcessIdentity, ProfileSampleObservation,
     ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
-    ProfilingKind,
+    ProfilingKind, is_sensitive_profiling_attribute_key,
 };
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +12,10 @@ pub struct NormalizationLimits {
     pub max_module_bytes: usize,
     pub max_file_bytes: usize,
     pub max_attributes: usize,
+    pub max_attribute_key_bytes: usize,
+    pub max_attribute_value_bytes: usize,
     pub max_samples_per_window: u64,
+    pub max_fixture_bytes: usize,
 }
 
 impl Default for NormalizationLimits {
@@ -23,7 +26,10 @@ impl Default for NormalizationLimits {
             max_module_bytes: 256,
             max_file_bytes: 256,
             max_attributes: 16,
+            max_attribute_key_bytes: 64,
+            max_attribute_value_bytes: 256,
             max_samples_per_window: 65_536,
+            max_fixture_bytes: 1024 * 1024,
         }
     }
 }
@@ -69,8 +75,13 @@ impl RawProfileSample {
             return Err("max_samples_per_window must be greater than zero".to_string());
         }
 
-        let mut attributes = normalize_attributes(self.attributes, limits.max_attributes);
         let frames_were_truncated = self.stack_frames.len() > limits.max_frames_per_stack;
+        let mut attributes = normalize_attributes(
+            self.attributes,
+            limits.max_attributes,
+            limits.max_attribute_key_bytes,
+            limits.max_attribute_value_bytes,
+        );
         let stack_frames = self
             .stack_frames
             .into_iter()
@@ -78,11 +89,15 @@ impl RawProfileSample {
             .map(|frame| normalize_frame(frame, limits))
             .collect::<Vec<_>>();
 
-        if frames_were_truncated && attributes.len() < limits.max_attributes {
-            attributes.push(ProfilingAttribute {
+        if frames_were_truncated && limits.max_attributes > 0 {
+            let marker = ProfilingAttribute {
                 key: "profiling.stack.truncated".to_string(),
                 value: "true".to_string(),
-            });
+            };
+            if attributes.len() >= limits.max_attributes {
+                attributes.pop();
+            }
+            attributes.push(marker);
             attributes.sort();
         }
 
@@ -109,10 +124,34 @@ pub fn parse_profile_fixture(
     contents: &str,
     limits: &NormalizationLimits,
 ) -> Result<ProfileSampleObservation, String> {
+    if contents.len() > limits.max_fixture_bytes {
+        return Err(format!(
+            "profile fixture exceeds {} bytes",
+            limits.max_fixture_bytes
+        ));
+    }
     let value =
         serde_json::from_str::<serde_json::Value>(contents).map_err(|err| err.to_string())?;
     if value.get("sample_count").is_none() {
         return Err("sample_count is required".to_string());
+    }
+    let max_fixture_frames = limits.max_frames_per_stack.saturating_mul(16);
+    if let Some(stack_frames) = value.get("stack_frames").and_then(|value| value.as_array())
+        && stack_frames.len() > max_fixture_frames
+    {
+        return Err(format!(
+            "stack_frames exceeds fixture preflight limit {}",
+            max_fixture_frames
+        ));
+    }
+    let max_fixture_attributes = limits.max_attributes.saturating_mul(16);
+    if let Some(attributes) = value.get("attributes").and_then(|value| value.as_array())
+        && attributes.len() > max_fixture_attributes
+    {
+        return Err(format!(
+            "attributes exceeds fixture preflight limit {}",
+            max_fixture_attributes
+        ));
     }
     serde_json::from_value::<RawProfileSample>(value)
         .map_err(|err| err.to_string())?
@@ -137,10 +176,18 @@ fn normalize_frame(frame: RawProfileFrame, limits: &NormalizationLimits) -> Prof
 fn normalize_attributes(
     attributes: Vec<ProfilingAttribute>,
     max_attributes: usize,
+    max_key_bytes: usize,
+    max_value_bytes: usize,
 ) -> Vec<ProfilingAttribute> {
     let mut attributes = attributes
         .into_iter()
-        .filter(|attribute| !attribute.key.is_empty())
+        .filter(|attribute| {
+            !attribute.key.is_empty() && !is_sensitive_profiling_attribute_key(&attribute.key)
+        })
+        .map(|attribute| ProfilingAttribute {
+            key: truncate_utf8(&attribute.key, max_key_bytes),
+            value: truncate_utf8(&attribute.value, max_value_bytes),
+        })
         .collect::<Vec<_>>();
     attributes.sort();
     attributes.dedup_by(|left, right| left.key == right.key);
@@ -151,11 +198,11 @@ fn normalize_attributes(
 fn deterministic_stack_id(frames: &[ProfilingFrame]) -> String {
     let mut hash = 0xcbf29ce484222325_u64;
     for frame in frames {
-        hash_bytes(&mut hash, frame.symbol.as_deref().unwrap_or(""));
+        hash_optional(&mut hash, frame.symbol.as_deref());
         hash_bytes(&mut hash, "\x1f");
-        hash_bytes(&mut hash, frame.module.as_deref().unwrap_or(""));
+        hash_optional(&mut hash, frame.module.as_deref());
         hash_bytes(&mut hash, "\x1f");
-        hash_bytes(&mut hash, frame.file.as_deref().unwrap_or(""));
+        hash_optional(&mut hash, frame.file.as_deref());
         hash_bytes(&mut hash, "\x1f");
         if let Some(line) = frame.line {
             hash_bytes(&mut hash, &line.to_string());
@@ -163,6 +210,16 @@ fn deterministic_stack_id(frames: &[ProfilingFrame]) -> String {
         hash_bytes(&mut hash, "\x1e");
     }
     format!("stack:{hash:016x}")
+}
+
+fn hash_optional(hash: &mut u64, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            hash_bytes(hash, "some:");
+            hash_bytes(hash, value);
+        }
+        None => hash_bytes(hash, "none"),
+    }
 }
 
 fn hash_bytes(hash: &mut u64, value: &str) {

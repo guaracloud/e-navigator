@@ -31,12 +31,14 @@ pub enum ProfilingConfidence {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProfilingAttribute {
     pub key: String,
     pub value: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProfilingFrame {
     pub symbol: Option<String>,
     pub module: Option<String>,
@@ -45,6 +47,7 @@ pub struct ProfilingFrame {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProfileSampleObservation {
     pub timestamp_unix_nanos: u64,
     pub profiling_kind: ProfilingKind,
@@ -63,6 +66,7 @@ pub struct ProfileSampleObservation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProfilingStackTraceObservation {
     pub timestamp_unix_nanos: u64,
     pub profiling_kind: ProfilingKind,
@@ -77,6 +81,7 @@ pub struct ProfilingStackTraceObservation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProfilingSessionObservation {
     pub window: MetricAggregationWindow,
     pub profiling_kind: ProfilingKind,
@@ -95,6 +100,7 @@ pub struct ProfilingSessionObservation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProfilingWarningObservation {
     pub warning_type: String,
     pub message: String,
@@ -108,4 +114,23 @@ pub struct ProfilingWarningObservation {
     pub container: Option<ContainerContext>,
     pub kubernetes: Option<KubernetesContext>,
     pub attributes: Vec<ProfilingAttribute>,
+}
+
+pub fn sanitize_profiling_attributes(attributes: &mut Vec<ProfilingAttribute>) {
+    attributes.retain(|attribute| !is_sensitive_profiling_attribute_key(&attribute.key));
+}
+
+pub fn is_sensitive_profiling_attribute_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key.contains("token")
+        || key.contains("authorization")
+        || key.contains("cookie")
+        || key.contains("password")
+        || key.contains("secret")
+        || key.contains("api_key")
+        || key.contains("apikey")
+        || key.contains("x-api-key")
+        || key.contains("credential")
+        || key.contains("private_key")
+        || key.contains("jwt")
 }

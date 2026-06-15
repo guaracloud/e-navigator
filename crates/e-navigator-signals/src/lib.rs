@@ -29,7 +29,8 @@ pub use network::{
 pub use profiling::{
     ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind,
     ProfilingFrame, ProfilingKind, ProfilingSessionObservation, ProfilingStackTraceObservation,
-    ProfilingWarningObservation,
+    ProfilingWarningObservation, is_sensitive_profiling_attribute_key,
+    sanitize_profiling_attributes,
 };
 pub use request::{
     ExtractedTraceContextObservation, ProtocolKind, ProtocolRequestObservation,

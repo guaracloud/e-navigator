@@ -14,6 +14,8 @@ const DEFAULT_MAX_WINDOWS: usize = 4096;
 const DEFAULT_MAX_SEEN_SAMPLES: usize = 8192;
 const DEFAULT_MAX_WARNINGS: usize = 1024;
 const DEFAULT_WINDOW_NANOS: u64 = 30_000_000_000;
+const DEFAULT_MAX_STACK_IDS_PER_WINDOW: usize = 64;
+const DEFAULT_MAX_SAMPLES_PER_WINDOW: u64 = 64;
 
 #[derive(Debug)]
 pub struct ProfilingGenerator {
@@ -21,7 +23,10 @@ pub struct ProfilingGenerator {
     max_seen_samples: usize,
     max_warnings: usize,
     window_nanos: u64,
+    max_stack_ids_per_window: usize,
+    max_samples_per_window: u64,
     windows: Mutex<BTreeMap<WindowKey, WindowState>>,
+    window_order: Mutex<BTreeSet<WindowOrderKey>>,
     seen_samples: Mutex<BTreeSet<SampleFingerprint>>,
     seen_warnings: Mutex<BTreeSet<WarningFingerprint>>,
 }
@@ -49,7 +54,10 @@ impl ProfilingGenerator {
             max_seen_samples,
             max_warnings,
             window_nanos: window_nanos.max(1),
+            max_stack_ids_per_window: DEFAULT_MAX_STACK_IDS_PER_WINDOW,
+            max_samples_per_window: DEFAULT_MAX_SAMPLES_PER_WINDOW,
             windows: Mutex::new(BTreeMap::new()),
+            window_order: Mutex::new(BTreeSet::new()),
             seen_samples: Mutex::new(BTreeSet::new()),
             seen_warnings: Mutex::new(BTreeSet::new()),
         }
@@ -116,21 +124,34 @@ impl ProfilingGenerator {
         let window = window_for(sample.timestamp_unix_nanos, self.window_nanos);
         let key = WindowKey::from_sample(signal, sample, &window);
         let mut windows = self.windows()?;
+        let mut window_order = self.window_order()?;
         if let Some(state) = windows.get_mut(&key) {
-            state.observed_sample_count = state
-                .observed_sample_count
-                .saturating_add(sample.sample_count);
+            state.update_from_sample(
+                sample,
+                self.max_stack_ids_per_window,
+                self.max_samples_per_window,
+            );
             state.confidence = state.confidence.min(sample.confidence);
-            state.stack_ids.insert(sample.stack_id.clone());
             return Ok(Some(state.to_signal(signal.host.clone())));
         }
 
-        if windows.len() >= self.max_windows.max(1) {
-            return Ok(None);
+        if windows.len() >= self.max_windows.max(1)
+            && let Some(oldest) = window_order.iter().next().cloned()
+        {
+            window_order.remove(&oldest);
+            windows.remove(&oldest.key);
         }
 
-        let state = WindowState::from_sample(key.profile_id.clone(), window, signal, sample);
+        let state = WindowState::from_sample(
+            key.profile_id.clone(),
+            window,
+            signal,
+            sample,
+            self.max_stack_ids_per_window,
+            self.max_samples_per_window,
+        );
         let output = state.to_signal(signal.host.clone());
+        window_order.insert(WindowOrderKey::new(&key));
         windows.insert(key, state);
         Ok(Some(output))
     }
@@ -199,6 +220,10 @@ impl ProfilingGenerator {
         self.windows.lock().map_err(module_error)
     }
 
+    fn window_order(&self) -> CoreResult<MutexGuard<'_, BTreeSet<WindowOrderKey>>> {
+        self.window_order.lock().map_err(module_error)
+    }
+
     fn seen_samples(&self) -> CoreResult<MutexGuard<'_, BTreeSet<SampleFingerprint>>> {
         self.seen_samples.lock().map_err(module_error)
     }
@@ -213,6 +238,11 @@ struct WindowKey {
     source: String,
     host: Option<String>,
     pid: Option<u32>,
+    process_uid: Option<u32>,
+    container_id: Option<String>,
+    kubernetes_namespace: Option<String>,
+    pod_uid: Option<String>,
+    container_name: Option<String>,
     profiling_kind: &'static str,
     correlation_kind: &'static str,
     start_unix_nanos: u64,
@@ -227,7 +257,7 @@ impl WindowKey {
         window: &MetricAggregationWindow,
     ) -> Self {
         let canonical = format!(
-            "{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             signal.source,
             signal.host.as_deref().unwrap_or(""),
             sample
@@ -235,6 +265,32 @@ impl WindowKey {
                 .as_ref()
                 .map(|process| process.pid)
                 .unwrap_or(0),
+            sample
+                .process
+                .as_ref()
+                .and_then(|process| process.uid)
+                .map(|uid| uid.to_string())
+                .unwrap_or_default(),
+            sample
+                .container
+                .as_ref()
+                .map(|container| container.container_id.as_str())
+                .unwrap_or(""),
+            sample
+                .kubernetes
+                .as_ref()
+                .map(|kubernetes| kubernetes.namespace.as_str())
+                .unwrap_or(""),
+            sample
+                .kubernetes
+                .as_ref()
+                .and_then(|kubernetes| kubernetes.pod_uid.as_deref())
+                .unwrap_or(""),
+            sample
+                .kubernetes
+                .as_ref()
+                .and_then(|kubernetes| kubernetes.container_name.as_deref())
+                .unwrap_or(""),
             profiling_kind_name(sample.profiling_kind),
             correlation_kind_name(sample.correlation_kind),
             window.start_unix_nanos,
@@ -244,11 +300,45 @@ impl WindowKey {
             source: signal.source.clone(),
             host: signal.host.clone(),
             pid: sample.process.as_ref().map(|process| process.pid),
+            process_uid: sample.process.as_ref().and_then(|process| process.uid),
+            container_id: sample
+                .container
+                .as_ref()
+                .map(|container| container.container_id.clone()),
+            kubernetes_namespace: sample
+                .kubernetes
+                .as_ref()
+                .map(|kubernetes| kubernetes.namespace.clone()),
+            pod_uid: sample
+                .kubernetes
+                .as_ref()
+                .and_then(|kubernetes| kubernetes.pod_uid.clone()),
+            container_name: sample
+                .kubernetes
+                .as_ref()
+                .and_then(|kubernetes| kubernetes.container_name.clone()),
             profiling_kind: profiling_kind_name(sample.profiling_kind),
             correlation_kind: correlation_kind_name(sample.correlation_kind),
             start_unix_nanos: window.start_unix_nanos,
             end_unix_nanos: window.end_unix_nanos,
             profile_id: format!("profile:{:016x}", stable_hash64(canonical.as_bytes())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct WindowOrderKey {
+    end_unix_nanos: u64,
+    start_unix_nanos: u64,
+    key: WindowKey,
+}
+
+impl WindowOrderKey {
+    fn new(key: &WindowKey) -> Self {
+        Self {
+            end_unix_nanos: key.end_unix_nanos,
+            start_unix_nanos: key.start_unix_nanos,
+            key: key.clone(),
         }
     }
 }
@@ -277,13 +367,21 @@ impl WindowState {
         window: MetricAggregationWindow,
         signal: &SignalEnvelope,
         sample: &ProfileSampleObservation,
+        max_stack_ids_per_window: usize,
+        max_samples_per_window: u64,
     ) -> Self {
+        let mut stack_ids = BTreeSet::new();
+        if max_stack_ids_per_window > 0 {
+            stack_ids.insert(sample.stack_id.clone());
+        }
+        let observed_sample_count = sample.sample_count.min(max_samples_per_window);
+        let dropped_sample_count = sample.sample_count.saturating_sub(observed_sample_count);
         Self {
             profile_id,
             window,
-            observed_sample_count: sample.sample_count,
-            dropped_sample_count: 0,
-            stack_ids: BTreeSet::from([sample.stack_id.clone()]),
+            observed_sample_count,
+            dropped_sample_count,
+            stack_ids,
             profiling_kind: sample.profiling_kind,
             correlation_kind: sample.correlation_kind,
             confidence: sample.confidence,
@@ -293,6 +391,39 @@ impl WindowState {
             kubernetes: sample.kubernetes.clone(),
             source: signal.source.clone(),
             attributes: bounded_attributes(&sample.attributes),
+        }
+    }
+
+    fn update_from_sample(
+        &mut self,
+        sample: &ProfileSampleObservation,
+        max_stack_ids_per_window: usize,
+        max_samples_per_window: u64,
+    ) {
+        let remaining = max_samples_per_window.saturating_sub(self.observed_sample_count);
+        let accepted = sample.sample_count.min(remaining);
+        self.observed_sample_count = self.observed_sample_count.saturating_add(accepted);
+        self.dropped_sample_count = self
+            .dropped_sample_count
+            .saturating_add(sample.sample_count.saturating_sub(accepted));
+
+        if self.stack_ids.contains(&sample.stack_id)
+            || self.stack_ids.len() < max_stack_ids_per_window
+        {
+            self.stack_ids.insert(sample.stack_id.clone());
+        }
+
+        if self.process.is_none() {
+            self.process = sample.process.clone();
+        }
+        if self.container.is_none() {
+            self.container = sample.container.clone();
+        }
+        if self.kubernetes.is_none() {
+            self.kubernetes = sample.kubernetes.clone();
+        }
+        if self.sampling_period_nanos.is_none() {
+            self.sampling_period_nanos = sample.sampling_period_nanos;
         }
     }
 
@@ -327,6 +458,13 @@ struct SampleFingerprint {
     timestamp_unix_nanos: u64,
     pid: Option<u32>,
     stack_id: String,
+    profiling_kind: &'static str,
+    correlation_kind: &'static str,
+    thread_id: Option<u64>,
+    sample_count: u64,
+    sampling_period_nanos: Option<u64>,
+    container_id: Option<String>,
+    pod_uid: Option<String>,
 }
 
 impl SampleFingerprint {
@@ -337,6 +475,19 @@ impl SampleFingerprint {
             timestamp_unix_nanos: sample.timestamp_unix_nanos,
             pid: sample.process.as_ref().map(|process| process.pid),
             stack_id: sample.stack_id.clone(),
+            profiling_kind: profiling_kind_name(sample.profiling_kind),
+            correlation_kind: correlation_kind_name(sample.correlation_kind),
+            thread_id: sample.thread_id,
+            sample_count: sample.sample_count,
+            sampling_period_nanos: sample.sampling_period_nanos,
+            container_id: sample
+                .container
+                .as_ref()
+                .map(|container| container.container_id.clone()),
+            pod_uid: sample
+                .kubernetes
+                .as_ref()
+                .and_then(|kubernetes| kubernetes.pod_uid.clone()),
         }
     }
 }

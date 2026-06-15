@@ -13,7 +13,7 @@ use crate::{
     ProtocolRequestObservation, RequestCorrelationWarning, RequestSpanObservation,
     ResourceCounterMetric, ResourceGaugeMetric, RuntimeSecurityFinding,
     ServiceInteractionSpanObservation, TraceCorrelationWarning, TraceServicePathObservation,
-    TraceSpanObservation,
+    TraceSpanObservation, sanitize_profiling_attributes,
 };
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
@@ -894,8 +894,9 @@ impl SignalEnvelope {
     pub fn profile_sample_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: ProfileSampleObservation,
+        mut observation: ProfileSampleObservation,
     ) -> Self {
+        sanitize_profiling_attributes(&mut observation.attributes);
         Self::new(
             source,
             host,
@@ -907,8 +908,9 @@ impl SignalEnvelope {
     pub fn profiling_stack_trace_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: ProfilingStackTraceObservation,
+        mut observation: ProfilingStackTraceObservation,
     ) -> Self {
+        sanitize_profiling_attributes(&mut observation.attributes);
         Self::new(
             source,
             host,
@@ -920,8 +922,9 @@ impl SignalEnvelope {
     pub fn profiling_session_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: ProfilingSessionObservation,
+        mut observation: ProfilingSessionObservation,
     ) -> Self {
+        sanitize_profiling_attributes(&mut observation.attributes);
         Self::new(
             source,
             host,
@@ -933,8 +936,9 @@ impl SignalEnvelope {
     pub fn profiling_warning_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: ProfilingWarningObservation,
+        mut observation: ProfilingWarningObservation,
     ) -> Self {
+        sanitize_profiling_attributes(&mut observation.attributes);
         Self::new(
             source,
             host,

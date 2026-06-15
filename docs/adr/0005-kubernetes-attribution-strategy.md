@@ -18,4 +18,4 @@ The cache maps container IDs to namespace, pod name, pod UID, container name, no
 
 ## Consequences
 
-Attribution quality depends on host PID visibility, cgroup format, and Kubernetes API reachability. The DaemonSet runs with `hostPID: true` and a mounted config, but the same CLI runner path is used locally and in Kubernetes.
+Attribution quality depends on host procfs visibility, cgroup format, and Kubernetes API reachability. The DaemonSet uses mounted host procfs/cgroup paths and a mounted config without joining the host PID namespace, but the same CLI runner path is used locally and in Kubernetes.

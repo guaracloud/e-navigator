@@ -16,4 +16,4 @@ The generator uses bounded maps for active windows, seen sample fingerprints, an
 
 ## Consequences
 
-The generator provides deterministic, low-cardinality profiling foundation output. It intentionally drops new windows after configured bounds rather than buffering unbounded data.
+The generator provides deterministic, low-cardinality profiling foundation output. It evicts the oldest retained window when the configured window bound is reached rather than buffering unbounded data.

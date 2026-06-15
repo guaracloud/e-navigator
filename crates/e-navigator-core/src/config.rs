@@ -346,6 +346,7 @@ impl ProfilingConfig {
     pub const MAX_WINDOWS_LIMIT: usize = 65_536;
     pub const MAX_SEEN_SAMPLES_LIMIT: usize = 131_072;
     pub const MAX_WARNINGS_LIMIT: usize = 16_384;
+    pub const MAX_WINDOW_NANOS_LIMIT: u64 = 86_400_000_000_000;
 
     fn validate(&self) -> Result<(), String> {
         if !(1..=Self::MAX_WINDOWS_LIMIT).contains(&self.max_windows) {
@@ -366,8 +367,11 @@ impl ProfilingConfig {
                 Self::MAX_WARNINGS_LIMIT
             ));
         }
-        if self.window_nanos == 0 {
-            return Err("profiling.window_nanos must be greater than zero".to_string());
+        if !(1..=Self::MAX_WINDOW_NANOS_LIMIT).contains(&self.window_nanos) {
+            return Err(format!(
+                "profiling.window_nanos must be between 1 and {}",
+                Self::MAX_WINDOW_NANOS_LIMIT
+            ));
         }
         Ok(())
     }
@@ -941,7 +945,27 @@ mod tests {
         };
         assert_eq!(
             invalid_window.validate(),
-            Err("profiling.window_nanos must be greater than zero".to_string())
+            Err(format!(
+                "profiling.window_nanos must be between 1 and {}",
+                ProfilingConfig::MAX_WINDOW_NANOS_LIMIT
+            ))
+        );
+
+        let too_large_window = RuntimeConfig {
+            profiling: ProfilingConfig {
+                max_windows: 128,
+                max_seen_samples: 128,
+                max_warnings: 128,
+                window_nanos: ProfilingConfig::MAX_WINDOW_NANOS_LIMIT + 1,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            too_large_window.validate(),
+            Err(format!(
+                "profiling.window_nanos must be between 1 and {}",
+                ProfilingConfig::MAX_WINDOW_NANOS_LIMIT
+            ))
         );
     }
 

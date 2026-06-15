@@ -40,6 +40,9 @@ struct Args {
 
     #[arg(long, env = "E_NAVIGATOR_CONFIG")]
     config: Option<PathBuf>,
+
+    #[arg(long)]
+    validate_config: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -52,6 +55,9 @@ enum SourceMode {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let config = load_config(args.config.as_deref())?;
+    if args.validate_config {
+        return Ok(());
+    }
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
@@ -607,7 +613,10 @@ fn synthetic_profile_signals(
         max_module_bytes: 64,
         max_file_bytes: 64,
         max_attributes: 8,
+        max_attribute_key_bytes: 64,
+        max_attribute_value_bytes: 256,
         max_samples_per_window: 128,
+        max_fixture_bytes: 1024 * 1024,
     };
     let process = NetworkProcessIdentity {
         pid: std::process::id(),
@@ -693,7 +702,7 @@ fn synthetic_profile_signals(
     ] {
         if let Ok(sample) = sample.normalize(&limits) {
             signals.push(SignalEnvelope::profile_sample_observation(
-                "source.synthetic_profile",
+                "source.synthetic_exec",
                 host.clone(),
                 sample,
             ));
@@ -705,14 +714,14 @@ fn synthetic_profile_signals(
         &limits,
     ) {
         signals.push(SignalEnvelope::profiling_warning_observation(
-            "source.synthetic_profile",
+            "source.synthetic_exec",
             host,
             e_navigator_signals::ProfilingWarningObservation {
                 warning_type: "malformed_profile_fixture".to_string(),
                 message: format!("synthetic profile fixture rejected: {err}"),
                 timestamp_unix_nanos: started.saturating_add(3),
                 source_signal_kind: "profile_sample_observation".to_string(),
-                source_module: "source.synthetic_profile".to_string(),
+                source_module: "source.synthetic_exec".to_string(),
                 profiling_kind: ProfilingKind::Unknown,
                 correlation_kind: ProfilingCorrelationKind::Synthetic,
                 confidence: ProfilingConfidence::Low,
@@ -1097,6 +1106,26 @@ mod tests {
     }
 
     #[test]
+    fn kubernetes_configmap_embedded_runtime_config_validates() {
+        let manifest = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join("deploy/kubernetes/configmap.yaml"),
+        )
+        .expect("configmap manifest is readable");
+        let toml = extract_embedded_configmap_toml(&manifest);
+        let config = toml::from_str::<RuntimeConfig>(&toml).expect("configmap toml parses");
+
+        config.validate().expect("configmap config validates");
+        assert!(config.module_enabled("source.aya_exec"));
+        assert!(config.module_enabled("generator.profiling"));
+        assert!(
+            config.profiling.window_nanos
+                <= e_navigator_core::ProfilingConfig::MAX_WINDOW_NANOS_LIMIT
+        );
+    }
+
+    #[test]
     fn configured_kubernetes_api_endpoints_feed_runtime_security_generator() {
         let config = RuntimeConfig {
             runtime_security: RuntimeSecurityConfig {
@@ -1121,7 +1150,8 @@ mod tests {
             matches!(
                 &signal.payload,
                 SignalPayload::ProfileSampleObservation(sample)
-                    if sample.profiling_kind == e_navigator_signals::ProfilingKind::Cpu
+                    if signal.source == "source.synthetic_exec"
+                        && sample.profiling_kind == e_navigator_signals::ProfilingKind::Cpu
                         && sample.stack_frames.iter().all(|frame| frame.symbol.is_some())
             )
         }));
@@ -1147,6 +1177,26 @@ mod tests {
                     if warning.warning_type == "malformed_profile_fixture"
             )
         }));
+    }
+
+    fn extract_embedded_configmap_toml(manifest: &str) -> String {
+        let mut output = String::new();
+        let mut in_config = false;
+        for line in manifest.lines() {
+            if line == "  e-navigator.toml: |" {
+                in_config = true;
+                continue;
+            }
+            if in_config {
+                let Some(stripped) = line.strip_prefix("    ") else {
+                    break;
+                };
+                output.push_str(stripped);
+                output.push('\n');
+            }
+        }
+        assert!(!output.trim().is_empty(), "configmap toml block exists");
+        output
     }
 
     #[tokio::test]

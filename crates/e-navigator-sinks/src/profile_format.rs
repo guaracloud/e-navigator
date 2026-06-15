@@ -72,8 +72,16 @@ fn sample_record(signal: &SignalEnvelope, observation: &ProfileSampleObservation
         "profile-sample:{:016x}",
         stable_hash64(
             format!(
-                "{}|{}|{}",
-                signal.source, observation.timestamp_unix_nanos, observation.stack_id
+                "{}|{}|{}|{}",
+                signal.source,
+                observation.timestamp_unix_nanos,
+                profile_identity(
+                    signal,
+                    observation.process.as_ref(),
+                    observation.container.as_ref(),
+                    observation.kubernetes.as_ref(),
+                ),
+                observation.stack_id
             )
             .as_bytes(),
         )
@@ -131,6 +139,9 @@ fn resource_attributes(
         if let Some(container_name) = &kubernetes.container_name {
             resource.insert("k8s.container.name".to_string(), container_name.clone());
         }
+        if let Some(pod_uid) = &kubernetes.pod_uid {
+            resource.insert("k8s.pod.uid".to_string(), pod_uid.clone());
+        }
         if let Some(node_name) = &kubernetes.node_name {
             resource.insert("k8s.node.name".to_string(), node_name.clone());
         }
@@ -140,10 +151,7 @@ fn resource_attributes(
 
 fn bounded_attributes(attributes: &[ProfilingAttribute]) -> BTreeMap<String, String> {
     let mut mapped = BTreeMap::new();
-    for attribute in attributes {
-        if mapped.len() >= MAX_ATTRIBUTES {
-            break;
-        }
+    for attribute in attributes.iter().take(MAX_ATTRIBUTES) {
         if should_drop_attribute(&attribute.key) {
             continue;
         }
@@ -155,10 +163,38 @@ fn bounded_attributes(attributes: &[ProfilingAttribute]) -> BTreeMap<String, Str
     mapped
 }
 
+fn profile_identity(
+    signal: &SignalEnvelope,
+    process: Option<&e_navigator_signals::NetworkProcessIdentity>,
+    container: Option<&e_navigator_signals::ContainerContext>,
+    kubernetes: Option<&e_navigator_signals::KubernetesContext>,
+) -> String {
+    format!(
+        "{}|{}|{}|{}|{}|{}",
+        signal.host.as_deref().unwrap_or(""),
+        process
+            .map(|process| process.pid.to_string())
+            .unwrap_or_default(),
+        process
+            .and_then(|process| process.uid)
+            .map(|uid| uid.to_string())
+            .unwrap_or_default(),
+        container
+            .map(|container| container.container_id.as_str())
+            .unwrap_or(""),
+        kubernetes
+            .and_then(|kubernetes| kubernetes.pod_uid.as_deref())
+            .unwrap_or(""),
+        kubernetes
+            .and_then(|kubernetes| kubernetes.container_name.as_deref())
+            .unwrap_or("")
+    )
+}
+
 fn should_drop_attribute(key: &str) -> bool {
-    let key = key.to_ascii_lowercase();
+    let canonical_key = key.to_ascii_lowercase();
     matches!(
-        key.as_str(),
+        canonical_key.as_str(),
         "schema"
             | "profile_id"
             | "profile_kind"
@@ -167,11 +203,7 @@ fn should_drop_attribute(key: &str) -> bool {
             | "sample_count"
             | "stack_id"
             | "frame_count"
-    ) || key.contains("token")
-        || key.contains("authorization")
-        || key.contains("cookie")
-        || key.contains("password")
-        || key.contains("secret")
+    ) || e_navigator_signals::is_sensitive_profiling_attribute_key(key)
 }
 
 fn profiling_kind_name(kind: e_navigator_signals::ProfilingKind) -> &'static str {

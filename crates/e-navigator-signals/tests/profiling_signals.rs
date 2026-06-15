@@ -60,6 +60,51 @@ fn serializes_cpu_profile_sample_with_bounded_stack_and_context() {
 }
 
 #[test]
+fn profile_sample_constructor_filters_sensitive_attributes_before_json_stdout() {
+    let signal = SignalEnvelope::profile_sample_observation(
+        "source.synthetic_profile",
+        Some("node-a".to_string()),
+        e_navigator_signals::ProfileSampleObservation {
+            timestamp_unix_nanos: 1_000,
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::High,
+            sample_count: 1,
+            sampling_period_nanos: Some(10_000_000),
+            stack_id: "stack:0123456789abcdef".to_string(),
+            stack_frames: vec![],
+            process: None,
+            container: None,
+            kubernetes: None,
+            thread_id: None,
+            thread_name: None,
+            attributes: vec![
+                ProfilingAttribute {
+                    key: "authorization".to_string(),
+                    value: "bearer token".to_string(),
+                },
+                ProfilingAttribute {
+                    key: "api_key".to_string(),
+                    value: "secret".to_string(),
+                },
+                ProfilingAttribute {
+                    key: "profiling.synthetic.fixture".to_string(),
+                    value: "cpu_sample".to_string(),
+                },
+            ],
+        },
+    );
+
+    let json = serde_json::to_value(&signal).expect("signal serializes");
+    let attributes = json["payload"]["attributes"]
+        .as_array()
+        .expect("attributes are serialized");
+
+    assert_eq!(attributes.len(), 1);
+    assert_eq!(attributes[0]["key"], "profiling.synthetic.fixture");
+}
+
+#[test]
 fn serializes_stack_trace_observation_with_optional_missing_symbols() {
     let signal = SignalEnvelope::profiling_stack_trace_observation(
         "source.synthetic_profile",
@@ -218,6 +263,40 @@ fn direct_payload_deserialization_keeps_profile_payloads_unambiguous() {
         session,
         SignalPayload::ProfilingSessionObservation(_)
     ));
+}
+
+#[test]
+fn rejects_stack_trace_kind_with_profile_sample_payload_fields() {
+    let json = serde_json::json!({
+        "schema_version": 1,
+        "kind": "profiling_stack_trace_observation",
+        "source": "source.synthetic_profile",
+        "host": null,
+        "payload": {
+            "timestamp_unix_nanos": 1,
+            "profiling_kind": "cpu",
+            "correlation_kind": "synthetic",
+            "confidence": "high",
+            "sample_count": 1,
+            "sampling_period_nanos": 1000,
+            "stack_id": "stack:a",
+            "stack_frames": [],
+            "process": null,
+            "container": null,
+            "kubernetes": null,
+            "thread_id": null,
+            "thread_name": null,
+            "attributes": []
+        }
+    });
+
+    let err = serde_json::from_value::<SignalEnvelope>(json)
+        .expect_err("sample-only fields must not be accepted as stack trace payloads");
+
+    assert!(
+        err.to_string()
+            .contains("profiling_stack_trace_observation")
+    );
 }
 
 fn process() -> NetworkProcessIdentity {

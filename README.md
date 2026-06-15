@@ -26,7 +26,7 @@ Phase 8 builds a continuous profiling foundation on the bounded runtime, network
 - A narrow runtime security generator for process and network findings.
 - An internal OTEL-compatible metric formatter boundary for future exporters.
 - An internal OTEL-compatible trace formatter boundary for future exporters.
-- Versioned profiling schemas for profile sample observations, stack trace observations, profiling session/window observations, and profiling correlation warnings.
+- Versioned profiling schemas for profile sample observations, stack trace observations, profiling session/window observations, and profiling warning observations.
 - An Aya-free profiling model boundary for synthetic and fixture-backed profile normalization with bounded stack frames, bounded symbol/module/file bytes, bounded attributes, and deterministic stack IDs.
 - A bounded profiling generator that summarizes explicit observed or synthetic profile sample signals into profiling session/window observations without inferring profiles from raw CPU or resource metrics.
 - Existing processor-based profile attribution for host, process, container, and Kubernetes context where available, with structured warning signals for missing attribution.
