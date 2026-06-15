@@ -374,10 +374,12 @@ mod tests {
     use e_navigator_core::Generator;
     use e_navigator_generators::{
         DnsMetricsGenerator, NetworkMetricsGenerator, ResourceMetricsGenerator,
+        TraceCorrelationGenerator,
     };
     use e_navigator_signals::{
         ContainerContext, DnsQueryEvent, DnsQueryType, ExecEvent, KubernetesContext,
-        NetworkAddressFamily, NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol,
+        NetworkAddressFamily, NetworkConnectionCloseEvent, NetworkConnectionOpenEvent,
+        NetworkProcessIdentity, NetworkProtocol,
     };
     use std::{collections::BTreeMap, fs};
     use tokio::sync::mpsc;
@@ -715,6 +717,84 @@ mod tests {
             metric.container.as_ref().expect("container").container_id,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         );
+
+        fs::remove_dir_all(root).expect("fixture cleanup succeeds");
+    }
+
+    #[tokio::test]
+    async fn trace_correlation_uses_processor_enriched_attribution() {
+        let container_id = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+        let (processor, root) = processor_fixture(
+            91,
+            container_id,
+            KubernetesContext {
+                namespace: "default".to_string(),
+                pod_name: "trace-client-123".to_string(),
+                pod_uid: Some("trace-pod-uid".to_string()),
+                container_name: Some("trace-client".to_string()),
+                node_name: Some("node-a".to_string()),
+                labels: BTreeMap::new(),
+            },
+        );
+        let signal = SignalEnvelope::network_connection_close(
+            "source.test",
+            Some("node-a".to_string()),
+            NetworkConnectionCloseEvent {
+                process: NetworkProcessIdentity {
+                    pid: 91,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "trace-client".to_string(),
+                    executable: Some("/app/trace-client".to_string()),
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.0.0.5".to_string()),
+                local_port: Some(43512),
+                remote_address: "203.0.113.10".to_string(),
+                remote_port: 443,
+                fd: Some(9),
+                opened_at_unix_nanos: Some(100),
+                closed_at_unix_nanos: 300,
+                duration_nanos: Some(200),
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let processed = processor
+            .process(signal)
+            .await
+            .expect("processor succeeds")
+            .expect("signal remains");
+
+        let outputs = observe_generator(&TraceCorrelationGenerator::default(), &processed).await;
+        let span = outputs
+            .iter()
+            .find_map(|signal| match &signal.payload {
+                e_navigator_signals::SignalPayload::ServiceInteractionSpanObservation(span) => {
+                    Some(span)
+                }
+                _ => None,
+            })
+            .expect("trace interaction span exists");
+
+        assert_eq!(
+            span.source
+                .workload
+                .as_ref()
+                .expect("kubernetes")
+                .pod_name,
+            "trace-client-123"
+        );
+        assert_eq!(
+            span.source
+                .container
+                .as_ref()
+                .expect("container")
+                .container_id,
+            container_id
+        );
+        assert_eq!(span.process.as_ref().expect("process").pid, 91);
 
         fs::remove_dir_all(root).expect("fixture cleanup succeeds");
     }
