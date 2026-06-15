@@ -1,5 +1,5 @@
 #[cfg(any(target_os = "linux", test))]
-use e_navigator_core::CpuProfileSourceConfig;
+use e_navigator_core::{CpuProfileBackpressure, CpuProfileSourceConfig};
 #[cfg(any(target_os = "linux", test))]
 use e_navigator_profiling::model::{NormalizationLimits, RawProfileFrame, RawProfileSample};
 #[cfg(any(target_os = "linux", test))]
@@ -129,6 +129,18 @@ fn decode_cpu_profile_batch(
 }
 
 #[cfg(any(target_os = "linux", test))]
+fn send_with_backpressure(
+    tx: &tokio::sync::mpsc::Sender<SignalEnvelope>,
+    signal: SignalEnvelope,
+    backpressure: CpuProfileBackpressure,
+) -> bool {
+    match backpressure {
+        CpuProfileBackpressure::DropNewest => tx.try_send(signal).is_ok(),
+        CpuProfileBackpressure::Wait => tx.blocking_send(signal).is_ok(),
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
 fn sample_period_nanos(sample_frequency_hz: u32) -> u64 {
     1_000_000_000_u64 / u64::from(sample_frequency_hz.max(1))
 }
@@ -153,7 +165,7 @@ fn bytes_to_string(bytes: &[u8]) -> String {
 
 #[cfg(target_os = "linux")]
 mod platform {
-    use super::raw_cpu_profile_to_signal;
+    use super::{raw_cpu_profile_to_signal, send_with_backpressure};
     use async_trait::async_trait;
     use aya::{
         Ebpf, include_bytes_aligned,
@@ -265,18 +277,11 @@ mod platform {
                                         return;
                                     };
                                     accepted += 1;
-                                    match backpressure {
-                                        CpuProfileBackpressure::DropNewest => {
-                                            if cpu_tx.try_send(signal).is_err() {
-                                                warn!(
-                                                    "dropped cpu profile sample due to backpressure"
-                                                );
-                                            }
-                                        }
-                                        CpuProfileBackpressure::Wait => {
-                                            if cpu_tx.blocking_send(signal).is_err() {
-                                                closed = true;
-                                            }
+                                    if !send_with_backpressure(&cpu_tx, signal, backpressure) {
+                                        if matches!(backpressure, CpuProfileBackpressure::Wait) {
+                                            closed = true;
+                                        } else {
+                                            warn!("dropped cpu profile sample due to backpressure");
                                         }
                                     }
                                 }
@@ -585,6 +590,41 @@ mod tests {
         );
 
         assert_eq!(decoded.len(), 2);
+    }
+
+    #[test]
+    fn drop_newest_backpressure_drops_when_pipeline_queue_is_full() {
+        let raw = RawCpuProfileEvent {
+            pid: 42,
+            tid: 43,
+            uid: 1000,
+            sample_count: 1,
+            timestamp_unix_nanos: 1_000,
+            command: fixed_command("api"),
+            frame_count: 0,
+            instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
+        };
+        let signal = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            Some("node-a".to_string()),
+            &source_config(),
+            10_000,
+        )
+        .expect("raw profile event decodes");
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+        assert!(send_with_backpressure(
+            &tx,
+            signal.clone(),
+            e_navigator_core::CpuProfileBackpressure::DropNewest
+        ));
+        assert!(!send_with_backpressure(
+            &tx,
+            signal,
+            e_navigator_core::CpuProfileBackpressure::DropNewest
+        ));
+        assert!(rx.try_recv().is_ok());
+        assert!(rx.try_recv().is_err());
     }
 
     fn source_config() -> CpuProfileSourceConfig {
