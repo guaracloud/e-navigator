@@ -418,6 +418,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "e-navigator-profiling"
+version = "0.1.0"
+dependencies = [
+ "e-navigator-signals",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "e-navigator-protocol"
 version = "0.1.0"
 dependencies = [
