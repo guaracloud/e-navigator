@@ -14,6 +14,7 @@ async-trait = { workspace = true }
 clap = { workspace = true }
 e-navigator-core = { path = "../e-navigator-core" }
 e-navigator-generators = { path = "../e-navigator-generators" }
+e-navigator-profiling = { path = "../e-navigator-profiling" }
 e-navigator-processors = { path = "../e-navigator-processors" }
 e-navigator-runner = { path = "../e-navigator-runner" }
 e-navigator-signals = { path = "../e-navigator-signals" }

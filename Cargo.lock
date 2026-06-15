@@ -362,6 +362,7 @@ dependencies = [
  "e-navigator-core",
  "e-navigator-generators",
  "e-navigator-processors",
+ "e-navigator-profiling",
  "e-navigator-runner",
  "e-navigator-signals",
  "e-navigator-sinks",
