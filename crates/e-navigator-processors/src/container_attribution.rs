@@ -1346,6 +1346,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn aya_cpu_profile_samples_keep_observed_provenance_through_attribution_and_generation() {
+        let container_id = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+        let kubernetes = KubernetesContext {
+            namespace: "default".to_string(),
+            pod_name: "live-profile-client-123".to_string(),
+            pod_uid: Some("live-profile-pod-uid".to_string()),
+            container_name: Some("live-profile-client".to_string()),
+            node_name: Some("node-a".to_string()),
+            labels: BTreeMap::new(),
+        };
+        let (processor, root) = processor_fixture(104, container_id, kubernetes);
+        let signal = SignalEnvelope::profile_sample_observation(
+            "source.aya_cpu_profile",
+            Some("node-a".to_string()),
+            e_navigator_signals::ProfileSampleObservation {
+                timestamp_unix_nanos: 1_500_000_000,
+                profiling_kind: e_navigator_signals::ProfilingKind::Cpu,
+                correlation_kind:
+                    e_navigator_signals::ProfilingCorrelationKind::ObservedProfileSample,
+                confidence: e_navigator_signals::ProfilingConfidence::Medium,
+                sample_count: 1,
+                sampling_period_nanos: Some(20_408_163),
+                stack_id: "stack:observed".to_string(),
+                stack_frames: vec![],
+                process: Some(NetworkProcessIdentity {
+                    pid: 104,
+                    ppid: None,
+                    uid: Some(1000),
+                    command: "live-profile-client".to_string(),
+                    executable: None,
+                }),
+                container: None,
+                kubernetes: None,
+                thread_id: Some(104),
+                thread_name: None,
+                attributes: vec![e_navigator_signals::ProfilingAttribute {
+                    key: "profiling.source".to_string(),
+                    value: "aya_perf_event".to_string(),
+                }],
+            },
+        );
+
+        let processed = processor
+            .process(signal)
+            .await
+            .expect("processor succeeds")
+            .expect("signal remains");
+        let outputs = observe_generator(
+            &e_navigator_generators::ProfilingGenerator::default(),
+            &processed,
+        )
+        .await;
+        let window = outputs
+            .iter()
+            .find_map(|signal| match &signal.payload {
+                e_navigator_signals::SignalPayload::ProfilingSessionObservation(window) => {
+                    Some(window)
+                }
+                _ => None,
+            })
+            .expect("profiling session exists");
+
+        assert_eq!(window.source, "source.aya_cpu_profile");
+        assert_eq!(
+            window.correlation_kind,
+            e_navigator_signals::ProfilingCorrelationKind::ObservedProfileSample
+        );
+        assert_eq!(
+            window.container.as_ref().expect("container").container_id,
+            container_id
+        );
+        assert_eq!(
+            window.kubernetes.as_ref().expect("kubernetes").pod_name,
+            "live-profile-client-123"
+        );
+        assert!(outputs.iter().all(|signal| {
+            !matches!(
+                signal.payload,
+                e_navigator_signals::SignalPayload::ProfilingWarningObservation(_)
+            )
+        }));
+
+        fs::remove_dir_all(root).expect("fixture cleanup succeeds");
+    }
+
+    #[tokio::test]
     async fn profile_payload_variants_with_process_only_are_enriched_from_procfs_cgroup() {
         let container_id = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
         let kubernetes = KubernetesContext {
