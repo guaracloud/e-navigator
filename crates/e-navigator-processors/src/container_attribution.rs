@@ -125,32 +125,16 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                 );
             }
             SignalPayload::ProtocolRequestObservation(event) => {
-                self.enrich_optional_context(
-                    event.process.as_ref(),
-                    &mut event.container,
-                    &mut event.kubernetes,
-                );
+                self.enrich_existing_container_context(&mut event.container, &mut event.kubernetes);
             }
             SignalPayload::ExtractedTraceContextObservation(event) => {
-                self.enrich_optional_context(
-                    event.process.as_ref(),
-                    &mut event.container,
-                    &mut event.kubernetes,
-                );
+                self.enrich_existing_container_context(&mut event.container, &mut event.kubernetes);
             }
             SignalPayload::RequestSpanObservation(event) => {
-                self.enrich_optional_context(
-                    event.process.as_ref(),
-                    &mut event.container,
-                    &mut event.kubernetes,
-                );
+                self.enrich_existing_container_context(&mut event.container, &mut event.kubernetes);
             }
             SignalPayload::RequestCorrelationWarning(event) => {
-                self.enrich_optional_context(
-                    event.process.as_ref(),
-                    &mut event.container,
-                    &mut event.kubernetes,
-                );
+                self.enrich_existing_container_context(&mut event.container, &mut event.kubernetes);
             }
             SignalPayload::ProcessResourceObservation(event) => {
                 self.enrich_context(
@@ -197,15 +181,12 @@ impl ContainerAttributionProcessor {
         }
     }
 
-    fn enrich_optional_context(
+    fn enrich_existing_container_context(
         &self,
-        process: Option<&e_navigator_signals::NetworkProcessIdentity>,
         container: &mut Option<ContainerContext>,
         kubernetes: &mut Option<KubernetesContext>,
     ) {
-        if let Some(process) = process {
-            self.enrich_context(process.pid, container, kubernetes);
-        } else if kubernetes.is_none() {
+        if kubernetes.is_none() {
             *kubernetes = container
                 .as_ref()
                 .and_then(|container| self.kubernetes_cache.get(&container.container_id));
@@ -1063,7 +1044,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn protocol_request_observations_are_enriched_before_request_correlation() {
+    async fn protocol_request_observations_reuse_existing_container_attribution() {
         let container_id = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
         let kubernetes = KubernetesContext {
             namespace: "default".to_string(),
@@ -1101,7 +1082,10 @@ mod tests {
                     command: "request-client".to_string(),
                     executable: Some("/app/request-client".to_string()),
                 }),
-                container: None,
+                container: Some(ContainerContext {
+                    container_id: container_id.to_string(),
+                    runtime: Some("containerd".to_string()),
+                }),
                 kubernetes: None,
                 peer: Some(TracePeerContext {
                     address: Some("203.0.113.10".to_string()),

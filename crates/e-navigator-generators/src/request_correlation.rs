@@ -14,6 +14,9 @@ use tokio::sync::mpsc;
 const DEFAULT_MAX_SEEN_REQUESTS: usize = 8192;
 const DEFAULT_MAX_WARNINGS: usize = 1024;
 const MAX_REQUEST_ATTRIBUTES: usize = 8;
+const MAX_REQUEST_ATTRIBUTE_KEY_BYTES: usize = 128;
+const MAX_REQUEST_ATTRIBUTE_VALUE_BYTES: usize = 256;
+const MAX_FINGERPRINT_VALUE_BYTES: usize = 64;
 
 #[derive(Debug)]
 pub struct RequestCorrelationGenerator {
@@ -74,20 +77,26 @@ impl RequestCorrelationGenerator {
         signal: &SignalEnvelope,
         request: &ProtocolRequestObservation,
     ) -> CoreResult<Vec<SignalEnvelope>> {
-        let fingerprint = RequestFingerprint::from_request(request);
+        let trace_context = trace_context(request);
+        let fingerprint = RequestFingerprint::from_request(request, &trace_context);
         if !self.mark_request_seen(fingerprint)? {
             return Ok(Vec::new());
         }
 
-        let trace_context = trace_context(request);
-        let (correlation_kind, confidence) = if trace_context.trace_id.is_some() {
-            (
-                TraceCorrelationKind::ObservedTraceContext,
-                TraceConfidence::High,
-            )
+        let has_trace_context = trace_context.trace_id.is_some();
+        let correlation_kind = if request.correlation_kind == TraceCorrelationKind::Synthetic {
+            TraceCorrelationKind::Synthetic
+        } else if has_trace_context {
+            TraceCorrelationKind::ObservedTraceContext
         } else {
-            (TraceCorrelationKind::ProtocolObserved, request.confidence)
+            request.correlation_kind
         };
+        let confidence =
+            if has_trace_context && request.correlation_kind != TraceCorrelationKind::Synthetic {
+                TraceConfidence::High
+            } else {
+                request.confidence
+            };
 
         let mut outputs = vec![SignalEnvelope::request_span_observation(
             "generator.request_correlation",
@@ -178,7 +187,7 @@ impl RequestCorrelationGenerator {
                 source_signal_kind: signal.kind().to_string(),
                 source_module: signal.source.clone(),
                 correlation_kind: request.correlation_kind,
-                protocol: Some(request.protocol),
+                protocol: request.protocol,
                 process: request.process.clone(),
                 container: request.container.clone(),
                 kubernetes: request.kubernetes.clone(),
@@ -202,23 +211,32 @@ struct RequestFingerprint {
     start_unix_nanos: u64,
     end_unix_nanos: Option<u64>,
     pid: Option<u32>,
-    trace_id: Option<String>,
-    span_id: Option<String>,
+    trace_id_hash: Option<u64>,
+    span_id_hash: Option<u64>,
     method: Option<String>,
     status_code: Option<u16>,
     peer_key: String,
 }
 
 impl RequestFingerprint {
-    fn from_request(request: &ProtocolRequestObservation) -> Self {
+    fn from_request(
+        request: &ProtocolRequestObservation,
+        trace_context: &RequestTraceContext,
+    ) -> Self {
         Self {
             protocol: request.protocol,
             start_unix_nanos: request.start_unix_nanos,
             end_unix_nanos: request.end_unix_nanos,
             pid: request.process.as_ref().map(|process| process.pid),
-            trace_id: request.trace_id.clone(),
-            span_id: request.span_id.clone(),
-            method: request.method.clone(),
+            trace_id_hash: trace_context
+                .trace_id
+                .as_deref()
+                .map(|value| stable_hash64(value.as_bytes())),
+            span_id_hash: trace_context
+                .span_id
+                .as_deref()
+                .map(|value| stable_hash64(value.as_bytes())),
+            method: request.method.as_deref().map(bounded_fingerprint_value),
             status_code: request.status_code,
             peer_key: peer_key(request),
         }
@@ -242,11 +260,20 @@ struct RequestTraceContext {
 
 fn trace_context(request: &ProtocolRequestObservation) -> RequestTraceContext {
     if let (Some(trace_id), Some(span_id)) = (&request.trace_id, &request.span_id) {
-        return RequestTraceContext {
-            trace_id: Some(trace_id.clone()),
-            span_id: Some(span_id.clone()),
-            warning_type: None,
-        };
+        if valid_trace_id(trace_id) && valid_span_id(span_id) {
+            return RequestTraceContext {
+                trace_id: Some(trace_id.clone()),
+                span_id: Some(span_id.clone()),
+                warning_type: None,
+            };
+        }
+        if request.traceparent.is_none() {
+            return RequestTraceContext {
+                trace_id: None,
+                span_id: None,
+                warning_type: Some("malformed_trace_context"),
+            };
+        }
     }
 
     if let Some(traceparent) = &request.traceparent {
@@ -283,9 +310,39 @@ fn request_span_name(protocol: ProtocolKind) -> &'static str {
 fn bounded_attributes(attributes: &[TraceAttribute]) -> Vec<TraceAttribute> {
     attributes
         .iter()
+        .filter(|attribute| {
+            attribute.key.len() <= MAX_REQUEST_ATTRIBUTE_KEY_BYTES
+                && attribute.value.len() <= MAX_REQUEST_ATTRIBUTE_VALUE_BYTES
+        })
         .take(MAX_REQUEST_ATTRIBUTES)
         .cloned()
         .collect()
+}
+
+fn bounded_fingerprint_value(value: &str) -> String {
+    if value.len() <= MAX_FINGERPRINT_VALUE_BYTES {
+        value.to_string()
+    } else {
+        format!("hash:{:016x}", stable_hash64(value.as_bytes()))
+    }
+}
+
+fn valid_trace_id(value: &str) -> bool {
+    value.len() == 32 && is_lower_hex(value) && !is_all_zero(value)
+}
+
+fn valid_span_id(value: &str) -> bool {
+    value.len() == 16 && is_lower_hex(value) && !is_all_zero(value)
+}
+
+fn is_lower_hex(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn is_all_zero(value: &str) -> bool {
+    value.bytes().all(|byte| byte == b'0')
 }
 
 fn peer_key(request: &ProtocolRequestObservation) -> String {

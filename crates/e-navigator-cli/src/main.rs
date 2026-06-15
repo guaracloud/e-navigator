@@ -865,8 +865,18 @@ mod tests {
             .iter()
             .map(|generator| generator.metadata().name.to_string())
             .collect::<Vec<_>>();
-        assert!(generator_names.contains(&"generator.trace_correlation".to_string()));
-        assert!(generator_names.contains(&"generator.request_correlation".to_string()));
+        assert_eq!(
+            generator_names,
+            vec![
+                "generator.dependency_graph",
+                "generator.network_metrics",
+                "generator.resource_metrics",
+                "generator.dns_metrics",
+                "generator.trace_correlation",
+                "generator.request_correlation",
+                "generator.runtime_security",
+            ]
+        );
 
         for module in &mut config.modules {
             if module.name == "generator.trace_correlation" {
@@ -879,9 +889,17 @@ mod tests {
             .iter()
             .map(|generator| generator.metadata().name.to_string())
             .collect::<Vec<_>>();
-        assert_eq!(registry.generators.len(), 6);
-        assert!(!generator_names.contains(&"generator.trace_correlation".to_string()));
-        assert!(generator_names.contains(&"generator.request_correlation".to_string()));
+        assert_eq!(
+            generator_names,
+            vec![
+                "generator.dependency_graph",
+                "generator.network_metrics",
+                "generator.resource_metrics",
+                "generator.dns_metrics",
+                "generator.request_correlation",
+                "generator.runtime_security",
+            ]
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ Future Aya/eBPF sources may capture bounded protocol bytes or metadata. Shared p
 
 Introduce `e-navigator-protocol` as an Aya-free protocol extraction boundary. The crate contains bounded HTTP fixture parsing and strict W3C traceparent parsing.
 
-The boundary enforces fixed maximum header bytes, request-line bytes, attribute count, and tracestate bytes. W3C `traceparent` validation checks version, 16-byte trace ID, 8-byte span ID, flags, hex encoding, malformed lengths, and all-zero IDs. `tracestate` is treated as bounded opaque text.
+The boundary enforces fixed maximum header bytes, request-line bytes, attribute count, and tracestate bytes. W3C `traceparent` validation checks version, reserved version `ff`, lowercase hex encoding, 16-byte trace ID, 8-byte span ID, flags, malformed lengths, and all-zero IDs. `tracestate` is treated as bounded opaque text inside the extraction boundary and is not serialized into emitted SignalEnvelope JSON by default.
 
 ## Consequences
 

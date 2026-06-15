@@ -21,7 +21,7 @@ Phase 7 builds a request-level tracing foundation on the bounded runtime, networ
 - Versioned trace-foundation schemas for trace span observations, service interaction span observations, service path observations, and trace correlation warnings.
 - A bounded trace correlation generator for network-inferred service interactions, direct/upstream dependency-edge service paths, DNS-derived service paths, duplicate suppression, and missing-attribution warnings.
 - Versioned request/protocol schemas for protocol request observations, extracted trace-context observations, request span observations, and request correlation warnings.
-- An Aya-free bounded protocol extraction boundary for fixture-backed HTTP request headers and strict W3C traceparent validation.
+- An Aya-free bounded protocol extraction boundary for fixture-backed HTTP request headers, strict W3C traceparent validation, and non-serialized raw trace-context headers by default.
 - A bounded request correlation generator for protocol-observed and explicitly synthetic request spans, duplicate suppression, missing or malformed trace-context warnings, and missing-attribution warnings.
 - A narrow runtime security generator for process and network findings.
 - An internal OTEL-compatible metric formatter boundary for future exporters.

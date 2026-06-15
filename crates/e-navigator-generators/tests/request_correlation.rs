@@ -41,6 +41,82 @@ async fn observed_trace_context_protocol_request_generates_request_span() {
 }
 
 #[tokio::test]
+async fn valid_traceparent_fallback_generates_request_span_ids() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.trace_id = None;
+    request.span_id = None;
+
+    let outputs = observe(&generator, &signal).await;
+
+    assert_eq!(outputs.len(), 1);
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(
+        span.trace_id.as_deref(),
+        Some("4bf92f3577b34da6a3ce929d0e0e4736")
+    );
+    assert_eq!(span.span_id.as_deref(), Some("00f067aa0ba902b7"));
+    assert_eq!(
+        span.correlation_kind,
+        TraceCorrelationKind::ObservedTraceContext
+    );
+}
+
+#[tokio::test]
+async fn synthetic_protocol_requests_preserve_synthetic_provenance() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.correlation_kind = TraceCorrelationKind::Synthetic;
+    request.confidence = TraceConfidence::High;
+
+    let outputs = observe(&generator, &signal).await;
+
+    assert_eq!(outputs.len(), 1);
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(span.correlation_kind, TraceCorrelationKind::Synthetic);
+    assert_eq!(span.confidence, TraceConfidence::High);
+}
+
+#[tokio::test]
+async fn synthetic_requests_without_trace_context_remain_synthetic() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(None, true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.correlation_kind = TraceCorrelationKind::Synthetic;
+
+    let outputs = observe(&generator, &signal).await;
+
+    assert_eq!(outputs.len(), 2);
+    assert!(outputs.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::RequestSpanObservation(span)
+                if span.correlation_kind == TraceCorrelationKind::Synthetic
+        )
+    }));
+    assert!(outputs.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::RequestCorrelationWarning(warning)
+                if warning.correlation_kind == TraceCorrelationKind::Synthetic
+                    && warning.warning_type == "missing_trace_context"
+        )
+    }));
+}
+
+#[tokio::test]
 async fn method_and_status_are_only_copied_when_observed() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);
@@ -60,6 +136,37 @@ async fn method_and_status_are_only_copied_when_observed() {
 }
 
 #[tokio::test]
+async fn request_attributes_are_count_and_byte_bounded() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.attributes = vec![
+        TraceAttribute {
+            key: "custom.kept".to_string(),
+            value: "value".to_string(),
+        },
+        TraceAttribute {
+            key: "k".repeat(129),
+            value: "dropped".to_string(),
+        },
+        TraceAttribute {
+            key: "custom.too_large".to_string(),
+            value: "v".repeat(257),
+        },
+    ];
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(span.attributes.len(), 1);
+    assert_eq!(span.attributes[0].key, "custom.kept");
+}
+
+#[tokio::test]
 async fn missing_trace_context_emits_warning_and_span_without_ids() {
     let generator = RequestCorrelationGenerator::default();
     let signal = protocol_request_signal(None, true);
@@ -75,6 +182,13 @@ async fn missing_trace_context_emits_warning_and_span_without_ids() {
         )
     }));
     assert_request_warning(&outputs, "missing_trace_context");
+    assert!(outputs.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::RequestSpanObservation(span)
+                if span.correlation_kind == TraceCorrelationKind::ProtocolObserved
+        )
+    }));
 }
 
 #[tokio::test]

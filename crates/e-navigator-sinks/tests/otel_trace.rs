@@ -193,7 +193,7 @@ fn formats_request_span_with_bounded_stable_attributes() {
             protocol: ProtocolKind::Http,
             trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
             span_id: Some("00f067aa0ba902b7".to_string()),
-            parent_span_id: None,
+            parent_span_id: Some("7c0ffee000000001".to_string()),
             start_unix_nanos: 1_000,
             end_unix_nanos: Some(2_000),
             duration_nanos: Some(1_000),
@@ -227,6 +227,15 @@ fn formats_request_span_with_bounded_stable_attributes() {
 
     assert_eq!(record.name, "http request");
     assert_eq!(record.kind, OtelTraceRecordKind::RequestSpan);
+    assert_eq!(
+        record.trace_id,
+        Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string())
+    );
+    assert_eq!(record.span_id, Some("00f067aa0ba902b7".to_string()));
+    assert_eq!(record.parent_span_id, Some("7c0ffee000000001".to_string()));
+    assert_eq!(record.start_unix_nanos, 1_000);
+    assert_eq!(record.end_unix_nanos, Some(2_000));
+    assert_eq!(record.duration_nanos, Some(1_000));
     assert_eq!(record.resource["service.name"], "checkout-api");
     assert_eq!(
         record.attributes["trace.correlation.kind"],
@@ -252,7 +261,7 @@ fn formats_request_correlation_warning() {
             source_signal_kind: "protocol_request_observation".to_string(),
             source_module: "source.protocol_fixture".to_string(),
             correlation_kind: TraceCorrelationKind::ProtocolObserved,
-            protocol: Some(ProtocolKind::Http),
+            protocol: ProtocolKind::Http,
             process: Some(network_process()),
             container: Some(container_context()),
             kubernetes: Some(kubernetes_context()),

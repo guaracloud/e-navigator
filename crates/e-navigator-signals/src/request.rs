@@ -23,7 +23,9 @@ pub struct ProtocolRequestObservation {
     pub trace_id: Option<String>,
     pub span_id: Option<String>,
     pub parent_span_id: Option<String>,
+    #[serde(default, skip_serializing)]
     pub traceparent: Option<String>,
+    #[serde(default, skip_serializing)]
     pub tracestate: Option<String>,
     pub correlation_kind: TraceCorrelationKind,
     pub confidence: TraceConfidence,
@@ -41,10 +43,12 @@ pub struct ProtocolRequestObservation {
 pub struct ExtractedTraceContextObservation {
     pub protocol: ProtocolKind,
     pub timestamp_unix_nanos: u64,
-    pub trace_id: String,
-    pub span_id: String,
+    pub trace_id: Option<String>,
+    pub span_id: Option<String>,
     pub parent_span_id: Option<String>,
-    pub traceparent: String,
+    #[serde(default, skip_serializing)]
+    pub traceparent: Option<String>,
+    #[serde(default, skip_serializing)]
     pub tracestate: Option<String>,
     pub correlation_kind: TraceCorrelationKind,
     pub confidence: TraceConfidence,
@@ -85,7 +89,7 @@ pub struct RequestCorrelationWarning {
     pub source_signal_kind: String,
     pub source_module: String,
     pub correlation_kind: TraceCorrelationKind,
-    pub protocol: Option<ProtocolKind>,
+    pub protocol: ProtocolKind,
     pub process: Option<NetworkProcessIdentity>,
     pub container: Option<ContainerContext>,
     pub kubernetes: Option<KubernetesContext>,

@@ -12,7 +12,7 @@ Phase 7 needs request-level tracing foundations without claiming full distribute
 
 Add versioned SignalEnvelope-compatible payloads for protocol request observations, extracted trace-context observations, request span observations, and request correlation warnings.
 
-Request payloads carry optional `trace_id`, `span_id`, `parent_span_id`, `traceparent`, and `tracestate` fields only when observed or explicitly synthetic. They preserve host, process, container, Kubernetes, peer, protocol, timing, correlation kind, confidence, and bounded attributes.
+Request payloads carry optional `trace_id`, `span_id`, and `parent_span_id` fields only when observed or explicitly synthetic. Raw `traceparent` and `tracestate` may be used in-memory by protocol fixtures and future bounded sources for extraction, but they are not serialized into emitted SignalEnvelope JSON by default; parsed identifiers and warnings carry the observable result without logging opaque vendor state. Request payloads preserve host, process, container, Kubernetes, peer, protocol, timing, correlation kind, confidence, and bounded attributes.
 
 Span names remain low-cardinality by default: `http request`, `grpc request`, or `protocol request`. Raw paths, domains, and IP addresses are not used as span names.
 

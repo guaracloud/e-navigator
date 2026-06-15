@@ -28,6 +28,14 @@ fn rejects_malformed_traceparents_and_all_zero_ids() {
         TraceContextError::InvalidHex
     );
     assert_eq!(
+        parse_traceparent("00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01").unwrap_err(),
+        TraceContextError::InvalidHex
+    );
+    assert_eq!(
+        parse_traceparent("ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01").unwrap_err(),
+        TraceContextError::ReservedVersion
+    );
+    assert_eq!(
         parse_traceparent("00-00000000000000000000000000000000-00f067aa0ba902b7-01").unwrap_err(),
         TraceContextError::AllZeroTraceId
     );

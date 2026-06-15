@@ -20,6 +20,7 @@ default-members = [
   "crates/e-navigator-generators",
   "crates/e-navigator-runner",
   "crates/e-navigator-signals",
+  "crates/e-navigator-protocol",
   "crates/e-navigator-sinks",
   "crates/e-navigator-sources-host",
   "crates/e-navigator-sources-ebpf-aya",

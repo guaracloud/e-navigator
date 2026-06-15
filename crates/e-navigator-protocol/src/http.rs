@@ -47,14 +47,14 @@ pub fn parse_http_request(
         let Some((key, value)) = line.split_once(':') else {
             continue;
         };
-        let key = key.trim().to_ascii_lowercase();
+        let key = key.trim();
         let value = value.trim();
-        match key.as_str() {
-            "traceparent" => traceparent = Some(value.to_string()),
-            "tracestate" if value.len() <= config.max_tracestate_bytes => {
-                tracestate = Some(value.to_string());
-            }
-            _ => {}
+        if key.eq_ignore_ascii_case("traceparent") {
+            traceparent = Some(value.to_string());
+        } else if key.eq_ignore_ascii_case("tracestate")
+            && value.len() <= config.max_tracestate_bytes
+        {
+            tracestate = Some(value.to_string());
         }
     }
 
@@ -101,11 +101,13 @@ fn header_end(bytes: &[u8], max_header_bytes: usize) -> Result<usize, HttpExtrac
 }
 
 fn parse_method(request_line: &str) -> Result<Option<String>, HttpExtraction> {
-    let fields = request_line.split_whitespace().collect::<Vec<_>>();
-    if fields.len() < 3 {
+    let mut fields = request_line.split_whitespace();
+    let Some(method) = fields.next() else {
+        return Err(HttpExtraction::MalformedRequestLine);
+    };
+    if fields.next().is_none() || fields.next().is_none() {
         return Err(HttpExtraction::MalformedRequestLine);
     }
-    let method = fields[0];
     if method.is_empty()
         || !method
             .bytes()

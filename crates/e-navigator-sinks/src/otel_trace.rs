@@ -274,12 +274,10 @@ fn request_warning_record(
         "trace.source.module".to_string(),
         serde_json::json!(warning.source_module),
     );
-    if let Some(protocol) = warning.protocol {
-        attributes.insert(
-            "network.protocol.name".to_string(),
-            serde_json::json!(protocol_kind_name(protocol)),
-        );
-    }
+    attributes.insert(
+        "network.protocol.name".to_string(),
+        serde_json::json!(protocol_kind_name(warning.protocol)),
+    );
     append_process_attributes(&mut attributes, warning.process.as_ref());
     append_peer_attributes(&mut attributes, warning.peer.as_ref());
 

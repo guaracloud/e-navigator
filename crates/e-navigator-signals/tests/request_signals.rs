@@ -2,7 +2,7 @@ use e_navigator_signals::{
     ContainerContext, ExtractedTraceContextObservation, KubernetesContext, NetworkProcessIdentity,
     ProtocolKind, ProtocolRequestObservation, RequestCorrelationWarning, RequestSpanObservation,
     SignalEnvelope, SignalPayload, TraceAttribute, TraceConfidence, TraceCorrelationKind,
-    TracePeerContext,
+    TraceCorrelationWarning, TracePeerContext,
 };
 use std::collections::BTreeMap;
 
@@ -48,11 +48,8 @@ fn serializes_protocol_request_observation_with_explicit_context() {
         json["payload"]["trace_id"],
         "4bf92f3577b34da6a3ce929d0e0e4736"
     );
-    assert_eq!(
-        json["payload"]["traceparent"],
-        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-    );
-    assert_eq!(json["payload"]["tracestate"], "vendor=value");
+    assert!(json["payload"].get("traceparent").is_none());
+    assert!(json["payload"].get("tracestate").is_none());
     assert_eq!(json["payload"]["correlation_kind"], "protocol_observed");
     assert_eq!(json["payload"]["method"], "GET");
     assert_eq!(json["payload"]["status_code"], 200);
@@ -72,11 +69,13 @@ fn serializes_extracted_trace_context_observation() {
         ExtractedTraceContextObservation {
             protocol: ProtocolKind::Http,
             timestamp_unix_nanos: 1_100,
-            trace_id: "4bf92f3577b34da6a3ce929d0e0e4736".to_string(),
-            span_id: "00f067aa0ba902b7".to_string(),
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
             parent_span_id: None,
-            traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string(),
-            tracestate: None,
+            traceparent: Some(
+                "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string(),
+            ),
+            tracestate: Some("vendor=value".to_string()),
             correlation_kind: TraceCorrelationKind::ObservedTraceContext,
             confidence: TraceConfidence::High,
             process: Some(process()),
@@ -95,6 +94,8 @@ fn serializes_extracted_trace_context_observation() {
         json["payload"]["trace_id"],
         "4bf92f3577b34da6a3ce929d0e0e4736"
     );
+    assert!(json["payload"].get("traceparent").is_none());
+    assert!(json["payload"].get("tracestate").is_none());
 
     let decoded: SignalEnvelope = serde_json::from_value(json).expect("signal deserializes");
     assert!(matches!(
@@ -156,7 +157,7 @@ fn serializes_request_correlation_warning() {
             source_signal_kind: "protocol_request_observation".to_string(),
             source_module: "source.protocol_fixture".to_string(),
             correlation_kind: TraceCorrelationKind::ProtocolObserved,
-            protocol: Some(ProtocolKind::Http),
+            protocol: ProtocolKind::Http,
             process: Some(process()),
             container: Some(container()),
             kubernetes: Some(kubernetes()),
@@ -203,6 +204,52 @@ fn direct_signal_payload_deserialization_keeps_request_span_unambiguous() {
     let payload: SignalPayload = serde_json::from_value(value).expect("payload deserializes");
 
     assert!(matches!(payload, SignalPayload::RequestSpanObservation(_)));
+}
+
+#[test]
+fn direct_signal_payload_deserialization_keeps_warnings_unambiguous() {
+    let trace_warning = serde_json::to_value(TraceCorrelationWarning {
+        warning_type: "missing_attribution".to_string(),
+        message: "trace correlation source signal has no container or Kubernetes context"
+            .to_string(),
+        timestamp_unix_nanos: 2_000,
+        source_signal_kind: "network_connection_close".to_string(),
+        source_module: "source.test".to_string(),
+        correlation_kind: TraceCorrelationKind::NetworkInferred,
+        process: None,
+        container: None,
+        kubernetes: None,
+        peer: None,
+    })
+    .expect("trace warning serializes");
+    let request_warning = serde_json::to_value(RequestCorrelationWarning {
+        warning_type: "missing_trace_context".to_string(),
+        message: "protocol request had no observed trace context".to_string(),
+        timestamp_unix_nanos: 2_000,
+        source_signal_kind: "protocol_request_observation".to_string(),
+        source_module: "source.protocol_fixture".to_string(),
+        correlation_kind: TraceCorrelationKind::ProtocolObserved,
+        protocol: ProtocolKind::Http,
+        process: None,
+        container: None,
+        kubernetes: None,
+        peer: None,
+    })
+    .expect("request warning serializes");
+
+    let trace_payload: SignalPayload =
+        serde_json::from_value(trace_warning).expect("trace warning payload deserializes");
+    let request_payload: SignalPayload =
+        serde_json::from_value(request_warning).expect("request warning payload deserializes");
+
+    assert!(matches!(
+        trace_payload,
+        SignalPayload::TraceCorrelationWarning(_)
+    ));
+    assert!(matches!(
+        request_payload,
+        SignalPayload::RequestCorrelationWarning(_)
+    ));
 }
 
 fn process() -> NetworkProcessIdentity {

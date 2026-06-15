@@ -10,6 +10,7 @@ pub struct TraceContext {
 pub enum TraceContextError {
     Malformed,
     InvalidHex,
+    ReservedVersion,
     AllZeroTraceId,
     AllZeroSpanId,
 }
@@ -28,8 +29,15 @@ pub fn parse_traceparent(value: &str) -> Result<TraceContext, TraceContextError>
     {
         return Err(TraceContextError::Malformed);
     }
-    if !is_hex(version) || !is_hex(trace_id) || !is_hex(span_id) || !is_hex(flags) {
+    if !is_lower_hex(version)
+        || !is_lower_hex(trace_id)
+        || !is_lower_hex(span_id)
+        || !is_lower_hex(flags)
+    {
         return Err(TraceContextError::InvalidHex);
+    }
+    if version == "ff" {
+        return Err(TraceContextError::ReservedVersion);
     }
     if is_all_zero(trace_id) {
         return Err(TraceContextError::AllZeroTraceId);
@@ -46,8 +54,10 @@ pub fn parse_traceparent(value: &str) -> Result<TraceContext, TraceContextError>
     })
 }
 
-fn is_hex(value: &str) -> bool {
-    value.bytes().all(|byte| byte.is_ascii_hexdigit())
+fn is_lower_hex(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn is_all_zero(value: &str) -> bool {
