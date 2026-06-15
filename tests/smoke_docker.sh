@@ -22,6 +22,13 @@ grep -q '"kind":"network_duration_metric"' "$default_output"
 grep -q '"kind":"network_gauge_metric"' "$default_output"
 grep -q '"kind":"dns_counter_metric"' "$default_output"
 grep -q '"kind":"dns_latency_metric"' "$default_output"
+grep -q '"kind":"node_memory_observation"' "$default_output"
+grep -q '"kind":"process_resource_observation"' "$default_output"
+grep -q '"kind":"cgroup_memory_observation"' "$default_output"
+grep -q '"kind":"resource_gauge_metric"' "$default_output"
+grep -q '"kind":"resource_counter_metric"' "$default_output"
+grep -q '"metric_name":"system.memory.available"' "$default_output"
+grep -q '"metric_name":"container.memory.usage"' "$default_output"
 grep -q '"kind":"dependency_edge"' "$default_output"
 grep -q '"kind":"runtime_security_finding"' "$default_output"
 grep -q '"rule_id":"runtime.shell_in_container"' "$default_output"
@@ -68,6 +75,10 @@ name = "generator.dns_metrics"
 enabled = true
 
 [[modules]]
+name = "generator.resource_metrics"
+enabled = true
+
+[[modules]]
 name = "sink.json_stdout"
 enabled = true
 CONFIG
@@ -90,6 +101,13 @@ grep -q '"kind":"network_duration_metric"' "$config_output"
 grep -q '"kind":"network_gauge_metric"' "$config_output"
 grep -q '"kind":"dns_counter_metric"' "$config_output"
 grep -q '"kind":"dns_latency_metric"' "$config_output"
+grep -q '"kind":"node_memory_observation"' "$config_output"
+grep -q '"kind":"process_resource_observation"' "$config_output"
+grep -q '"kind":"cgroup_memory_observation"' "$config_output"
+grep -q '"kind":"resource_gauge_metric"' "$config_output"
+grep -q '"kind":"resource_counter_metric"' "$config_output"
+grep -q '"metric_name":"system.memory.available"' "$config_output"
+grep -q '"metric_name":"container.memory.usage"' "$config_output"
 grep -q '"kind":"dependency_edge"' "$config_output"
 grep -q '"kind":"runtime_security_finding"' "$config_output"
 grep -q '"rule_id":"runtime.shell_in_container"' "$config_output"

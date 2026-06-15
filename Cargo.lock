@@ -366,6 +366,7 @@ dependencies = [
  "e-navigator-signals",
  "e-navigator-sinks",
  "e-navigator-sources-ebpf-aya",
+ "e-navigator-sources-host",
  "tokio",
  "toml",
  "tracing",

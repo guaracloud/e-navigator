@@ -16,6 +16,10 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub runtime_security: RuntimeSecurityConfig,
     #[serde(default)]
+    pub resource_source: ResourceSourceConfig,
+    #[serde(default)]
+    pub resource_metrics: ResourceMetricsConfig,
+    #[serde(default)]
     pub network_metrics: NetworkMetricsConfig,
     #[serde(default)]
     pub dns_metrics: DnsMetricsConfig,
@@ -30,6 +34,8 @@ impl Default for RuntimeConfig {
             argv_capture: ArgvCaptureConfig::default(),
             attribution: AttributionConfig::default(),
             runtime_security: RuntimeSecurityConfig::default(),
+            resource_source: ResourceSourceConfig::default(),
+            resource_metrics: ResourceMetricsConfig::default(),
             network_metrics: NetworkMetricsConfig::default(),
             dns_metrics: DnsMetricsConfig::default(),
         }
@@ -49,6 +55,8 @@ impl RuntimeConfig {
         self.argv_capture.validate()?;
         self.attribution.validate()?;
         self.runtime_security.validate()?;
+        self.resource_source.validate()?;
+        self.resource_metrics.validate()?;
         self.network_metrics.validate()?;
         self.dns_metrics.validate()?;
 
@@ -164,6 +172,30 @@ pub struct NetworkMetricsConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceSourceConfig {
+    #[serde(default = "default_procfs_root")]
+    pub procfs_root: PathBuf,
+    #[serde(default = "default_sysfs_root")]
+    pub sysfs_root: PathBuf,
+    #[serde(default = "default_cgroup_root")]
+    pub cgroup_root: PathBuf,
+    #[serde(default = "default_resource_sample_interval_millis")]
+    pub sample_interval_millis: u64,
+    #[serde(default = "default_resource_max_processes")]
+    pub max_processes: usize,
+    #[serde(default = "default_resource_max_cgroups")]
+    pub max_cgroups: usize,
+    #[serde(default = "default_resource_max_file_bytes")]
+    pub max_file_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceMetricsConfig {
+    #[serde(default = "default_resource_metrics_max_keys")]
+    pub max_keys: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DnsMetricsConfig {
     #[serde(default = "default_dns_metrics_max_domains")]
     pub max_domains: usize,
@@ -193,6 +225,61 @@ impl Default for NetworkMetricsConfig {
             max_metric_keys: default_network_metrics_max_metric_keys(),
             max_active_connections: default_network_metrics_max_active_connections(),
         }
+    }
+}
+
+impl Default for ResourceSourceConfig {
+    fn default() -> Self {
+        Self {
+            procfs_root: default_procfs_root(),
+            sysfs_root: default_sysfs_root(),
+            cgroup_root: default_cgroup_root(),
+            sample_interval_millis: default_resource_sample_interval_millis(),
+            max_processes: default_resource_max_processes(),
+            max_cgroups: default_resource_max_cgroups(),
+            max_file_bytes: default_resource_max_file_bytes(),
+        }
+    }
+}
+
+impl ResourceSourceConfig {
+    fn validate(&self) -> Result<(), String> {
+        if self.procfs_root.as_os_str().is_empty() {
+            return Err("resource_source.procfs_root must not be empty".to_string());
+        }
+        if self.sysfs_root.as_os_str().is_empty() {
+            return Err("resource_source.sysfs_root must not be empty".to_string());
+        }
+        if self.cgroup_root.as_os_str().is_empty() {
+            return Err("resource_source.cgroup_root must not be empty".to_string());
+        }
+        if self.max_processes == 0 {
+            return Err("resource_source.max_processes must be greater than zero".to_string());
+        }
+        if self.max_cgroups == 0 {
+            return Err("resource_source.max_cgroups must be greater than zero".to_string());
+        }
+        if self.max_file_bytes == 0 {
+            return Err("resource_source.max_file_bytes must be greater than zero".to_string());
+        }
+        Ok(())
+    }
+}
+
+impl Default for ResourceMetricsConfig {
+    fn default() -> Self {
+        Self {
+            max_keys: default_resource_metrics_max_keys(),
+        }
+    }
+}
+
+impl ResourceMetricsConfig {
+    fn validate(&self) -> Result<(), String> {
+        if self.max_keys == 0 {
+            return Err("resource_metrics.max_keys must be greater than zero".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -261,8 +348,10 @@ fn default_modules() -> Vec<ModuleConfig> {
     vec![
         ModuleConfig::enabled("source.aya_exec"),
         ModuleConfig::enabled("source.aya_network"),
+        ModuleConfig::enabled("source.host_resource"),
         ModuleConfig::enabled("source.synthetic_exec"),
         ModuleConfig::enabled("processor.container_attribution"),
+        ModuleConfig::enabled("generator.resource_metrics"),
         ModuleConfig::enabled("generator.network_metrics"),
         ModuleConfig::enabled("generator.dns_metrics"),
         ModuleConfig::enabled("generator.dependency_graph"),
@@ -287,6 +376,14 @@ fn default_procfs_root() -> PathBuf {
     PathBuf::from("/proc")
 }
 
+fn default_sysfs_root() -> PathBuf {
+    PathBuf::from("/sys")
+}
+
+fn default_cgroup_root() -> PathBuf {
+    PathBuf::from("/sys/fs/cgroup")
+}
+
 fn default_kubernetes_attribution_enabled() -> bool {
     true
 }
@@ -309,6 +406,26 @@ fn default_network_metrics_max_active_connections() -> usize {
 
 fn default_dns_metrics_max_domains() -> usize {
     1024
+}
+
+fn default_resource_sample_interval_millis() -> u64 {
+    15_000
+}
+
+fn default_resource_max_processes() -> usize {
+    128
+}
+
+fn default_resource_max_cgroups() -> usize {
+    128
+}
+
+fn default_resource_max_file_bytes() -> u64 {
+    128 * 1024
+}
+
+fn default_resource_metrics_max_keys() -> usize {
+    4096
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -388,8 +505,10 @@ mod tests {
         assert!(config.validate().is_ok());
         assert!(config.module_enabled("source.aya_exec"));
         assert!(config.module_enabled("source.aya_network"));
+        assert!(config.module_enabled("source.host_resource"));
         assert!(config.module_enabled("source.synthetic_exec"));
         assert!(config.module_enabled("processor.container_attribution"));
+        assert!(config.module_enabled("generator.resource_metrics"));
         assert!(config.module_enabled("generator.network_metrics"));
         assert!(config.module_enabled("generator.dns_metrics"));
         assert!(config.module_enabled("generator.dependency_graph"));
@@ -434,6 +553,30 @@ mod tests {
         assert_eq!(
             config.validate(),
             Err("dns_metrics.max_domains must be greater than zero".to_string())
+        );
+    }
+
+    #[test]
+    fn resource_source_and_metrics_limits_are_validated() {
+        let invalid_processes = RuntimeConfig {
+            resource_source: ResourceSourceConfig {
+                max_processes: 0,
+                ..ResourceSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_processes.validate(),
+            Err("resource_source.max_processes must be greater than zero".to_string())
+        );
+
+        let invalid_metric_keys = RuntimeConfig {
+            resource_metrics: ResourceMetricsConfig { max_keys: 0 },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_metric_keys.validate(),
+            Err("resource_metrics.max_keys must be greater than zero".to_string())
         );
     }
 

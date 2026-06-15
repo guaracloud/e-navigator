@@ -1,7 +1,7 @@
 use e_navigator_signals::{
     DnsCounterMetric, DnsLatencyMetric, MetricAggregationWindow, NetworkAddressFamily,
     NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric, NetworkProtocol,
-    SignalEnvelope, SignalPayload,
+    ResourceCounterMetric, ResourceGaugeMetric, SignalEnvelope, SignalPayload,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -47,6 +47,10 @@ pub fn format_otel_metric_record(signal: &SignalEnvelope) -> Option<OtelMetricRe
         SignalPayload::NetworkGaugeMetric(metric) => Some(network_gauge_record(signal, metric)),
         SignalPayload::DnsCounterMetric(metric) => Some(dns_counter_record(signal, metric)),
         SignalPayload::DnsLatencyMetric(metric) => Some(dns_latency_record(signal, metric)),
+        SignalPayload::ResourceGaugeMetric(metric) => Some(resource_gauge_record(signal, metric)),
+        SignalPayload::ResourceCounterMetric(metric) => {
+            Some(resource_counter_record(signal, metric))
+        }
         _ => None,
     }
 }
@@ -167,6 +171,36 @@ fn dns_latency_record(signal: &SignalEnvelope, metric: &DnsLatencyMetric) -> Ote
     }
 }
 
+fn resource_gauge_record(
+    signal: &SignalEnvelope,
+    metric: &ResourceGaugeMetric,
+) -> OtelMetricRecord {
+    OtelMetricRecord {
+        name: metric.metric_name.clone(),
+        unit: metric.unit.clone(),
+        kind: OtelMetricKind::Gauge,
+        value: OtelMetricValue::I64(metric.value),
+        window: metric.window.clone(),
+        resource: resource_metric_resource_attributes(signal, metric),
+        attributes: resource_metric_attributes(&metric.attributes),
+    }
+}
+
+fn resource_counter_record(
+    signal: &SignalEnvelope,
+    metric: &ResourceCounterMetric,
+) -> OtelMetricRecord {
+    OtelMetricRecord {
+        name: metric.metric_name.clone(),
+        unit: metric.unit.clone(),
+        kind: OtelMetricKind::Sum,
+        value: OtelMetricValue::U64(metric.value),
+        window: metric.window.clone(),
+        resource: resource_counter_resource_attributes(signal, metric),
+        attributes: resource_metric_attributes(&metric.attributes),
+    }
+}
+
 fn resource_attributes(
     signal: &SignalEnvelope,
     container: Option<&e_navigator_signals::ContainerContext>,
@@ -208,6 +242,50 @@ fn resource_attributes(
         }
     }
     resource
+}
+
+fn resource_metric_resource_attributes(
+    signal: &SignalEnvelope,
+    metric: &ResourceGaugeMetric,
+) -> BTreeMap<String, serde_json::Value> {
+    let mut resource = resource_attributes(
+        signal,
+        metric.resource.container.as_ref(),
+        metric.resource.kubernetes.as_ref(),
+    );
+    if let Some(host) = &metric.resource.host_name {
+        resource.insert("host.name".to_string(), serde_json::json!(host));
+    }
+    resource
+}
+
+fn resource_counter_resource_attributes(
+    signal: &SignalEnvelope,
+    metric: &ResourceCounterMetric,
+) -> BTreeMap<String, serde_json::Value> {
+    let mut resource = resource_attributes(
+        signal,
+        metric.resource.container.as_ref(),
+        metric.resource.kubernetes.as_ref(),
+    );
+    if let Some(host) = &metric.resource.host_name {
+        resource.insert("host.name".to_string(), serde_json::json!(host));
+    }
+    resource
+}
+
+fn resource_metric_attributes(
+    attributes: &[e_navigator_signals::ResourceMetricAttribute],
+) -> BTreeMap<String, serde_json::Value> {
+    attributes
+        .iter()
+        .map(|attribute| {
+            (
+                attribute.key.clone(),
+                serde_json::json!(attribute.value.clone()),
+            )
+        })
+        .collect()
 }
 
 fn network_attributes(
@@ -356,5 +434,41 @@ mod tests {
             signal.payload,
             SignalPayload::NetworkCounterMetric(_)
         ));
+    }
+
+    #[test]
+    fn formats_resource_gauge_metric_as_stable_otel_record() {
+        let signal = SignalEnvelope::resource_gauge_metric(
+            "generator.resource_metrics",
+            Some("node-a".to_string()),
+            e_navigator_signals::ResourceGaugeMetric {
+                metric_name: "system.memory.available".to_string(),
+                unit: "By".to_string(),
+                value: 4096,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 100,
+                    end_unix_nanos: 200,
+                },
+                resource: e_navigator_signals::ResourceContext {
+                    host_name: Some("node-a".to_string()),
+                    container: None,
+                    kubernetes: None,
+                },
+                process: None,
+                cgroup: None,
+                attributes: vec![e_navigator_signals::ResourceMetricAttribute {
+                    key: "state".to_string(),
+                    value: "available".to_string(),
+                }],
+            },
+        );
+
+        let record = format_otel_metric_record(&signal).expect("resource metric formats");
+
+        assert_eq!(record.name, "system.memory.available");
+        assert_eq!(record.kind, OtelMetricKind::Gauge);
+        assert_eq!(record.value, OtelMetricValue::I64(4096));
+        assert_eq!(record.resource["host.name"], "node-a");
+        assert_eq!(record.attributes["state"], "available");
     }
 }

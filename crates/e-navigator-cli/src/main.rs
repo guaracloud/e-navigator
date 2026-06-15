@@ -3,18 +3,21 @@ use clap::{Parser, ValueEnum};
 use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, RuntimeConfig, Source};
 use e_navigator_generators::{
     DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator,
-    RuntimeSecurityGenerator,
+    ResourceMetricsGenerator, RuntimeSecurityGenerator,
 };
 use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::{ModuleRegistry, Runner};
 use e_navigator_signals::{
+    CgroupCpuObservation, CgroupMemoryObservation, CgroupPidsObservation, CgroupResourceContext,
     ContainerContext, DnsQueryEvent, DnsQueryType, DnsResponseCode, DnsResponseEvent, ExecEvent,
-    KubernetesContext, NetworkAddressFamily, NetworkConnectionCloseEvent,
-    NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol, ProcessExitEvent,
-    SignalEnvelope,
+    KubernetesContext, MetricAggregationWindow, NetworkAddressFamily, NetworkConnectionCloseEvent,
+    NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol, NodeCpuObservation,
+    NodeFilesystemObservation, NodeMemoryObservation, ProcessExitEvent, ProcessResourceContext,
+    ProcessResourceObservation, SignalEnvelope,
 };
 use e_navigator_sinks::JsonStdoutSink;
 use e_navigator_sources_ebpf_aya::{AyaExecSource, AyaNetworkSource};
+use e_navigator_sources_host::{HostResourceConfig, HostResourceSource};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
@@ -42,6 +45,7 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let config = load_config(args.config.as_deref())?;
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| EnvFilter::new(config.log_level.clone())),
@@ -90,6 +94,13 @@ fn build_registry(
         registry = registry.with_source(Box::new(AyaNetworkSource::new(host.clone())));
     }
 
+    if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.host_resource") {
+        registry = registry.with_source(Box::new(HostResourceSource::with_host(
+            host_resource_config(config),
+            host.clone(),
+        )));
+    }
+
     if config.module_enabled("processor.container_attribution") {
         registry = registry.with_processor(Box::new(ContainerAttributionProcessor::new(
             config.attribution.clone(),
@@ -104,6 +115,12 @@ fn build_registry(
         registry = registry.with_generator(Box::new(NetworkMetricsGenerator::with_limits(
             config.network_metrics.max_metric_keys,
             config.network_metrics.max_active_connections,
+        )));
+    }
+
+    if config.module_enabled("generator.resource_metrics") {
+        registry = registry.with_generator(Box::new(ResourceMetricsGenerator::with_limits(
+            config.resource_metrics.max_keys,
         )));
     }
 
@@ -126,6 +143,18 @@ fn build_registry(
     }
 
     registry
+}
+
+fn host_resource_config(config: &RuntimeConfig) -> HostResourceConfig {
+    HostResourceConfig {
+        procfs_root: config.resource_source.procfs_root.clone(),
+        sysfs_root: config.resource_source.sysfs_root.clone(),
+        cgroup_root: config.resource_source.cgroup_root.clone(),
+        sample_interval_millis: config.resource_source.sample_interval_millis,
+        max_processes: config.resource_source.max_processes,
+        max_cgroups: config.resource_source.max_cgroups,
+        max_file_bytes: config.resource_source.max_file_bytes,
+    }
 }
 
 fn node_name() -> Option<String> {
@@ -295,7 +324,7 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
 
         let dns_response = SignalEnvelope::dns_response(
             "source.synthetic_exec",
-            self.host,
+            self.host.clone(),
             DnsResponseEvent {
                 process: NetworkProcessIdentity {
                     pid: std::process::id(),
@@ -312,14 +341,200 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
                 server_address: Some("10.96.0.10".to_string()),
                 server_port: Some(53),
                 timestamp_unix_nanos: opened_at.saturating_add(duration_nanos + 15_001),
-                container: Some(container),
-                kubernetes: Some(kubernetes),
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
             },
         );
         tx.send(dns_response)
             .await
-            .map_err(|_| CoreError::PipelineClosed)
+            .map_err(|_| CoreError::PipelineClosed)?;
+
+        let resource_started = opened_at.saturating_add(duration_nanos + 20_000);
+        for signal in
+            synthetic_resource_signals(self.host.clone(), container, kubernetes, resource_started)
+        {
+            tx.send(signal)
+                .await
+                .map_err(|_| CoreError::PipelineClosed)?;
+        }
+
+        Ok(())
     }
+}
+
+fn synthetic_resource_signals(
+    host: Option<String>,
+    container: ContainerContext,
+    kubernetes: KubernetesContext,
+    started: u64,
+) -> Vec<SignalEnvelope> {
+    let window = MetricAggregationWindow {
+        start_unix_nanos: started,
+        end_unix_nanos: started.saturating_add(1_000),
+    };
+    let cgroup = CgroupResourceContext {
+        cgroup_path: "/kubepods.slice/pod-synthetic/e-navigator.scope".to_string(),
+        container: Some(container.clone()),
+        kubernetes: Some(kubernetes.clone()),
+    };
+    let process = ProcessResourceContext {
+        pid: std::process::id(),
+        ppid: None,
+        uid: None,
+        command: "synthetic-api".to_string(),
+        executable: Some("/app/synthetic-api".to_string()),
+        container: Some(container.clone()),
+        kubernetes: Some(kubernetes.clone()),
+    };
+
+    vec![
+        SignalEnvelope::node_cpu_observation(
+            "source.synthetic_exec",
+            host.clone(),
+            NodeCpuObservation {
+                metric_name: "system.cpu.time".to_string(),
+                unit: "ns".to_string(),
+                timestamp_unix_nanos: window.end_unix_nanos,
+                window: window.clone(),
+                user_nanos: 1_000_000_000,
+                system_nanos: 500_000_000,
+                idle_nanos: 8_000_000_000,
+                iowait_nanos: 100_000_000,
+                steal_nanos: 0,
+                runnable_tasks: Some(2),
+                blocked_tasks: Some(0),
+            },
+        ),
+        SignalEnvelope::node_cpu_observation(
+            "source.synthetic_exec",
+            host.clone(),
+            NodeCpuObservation {
+                metric_name: "system.cpu.time".to_string(),
+                unit: "ns".to_string(),
+                timestamp_unix_nanos: window.end_unix_nanos.saturating_add(1_000),
+                window: MetricAggregationWindow {
+                    start_unix_nanos: window.end_unix_nanos,
+                    end_unix_nanos: window.end_unix_nanos.saturating_add(1_000),
+                },
+                user_nanos: 1_030_000_000,
+                system_nanos: 520_000_000,
+                idle_nanos: 8_040_000_000,
+                iowait_nanos: 100_000_000,
+                steal_nanos: 0,
+                runnable_tasks: Some(2),
+                blocked_tasks: Some(0),
+            },
+        ),
+        SignalEnvelope::node_memory_observation(
+            "source.synthetic_exec",
+            host.clone(),
+            NodeMemoryObservation {
+                metric_name: "system.memory.usage".to_string(),
+                unit: "By".to_string(),
+                timestamp_unix_nanos: window.end_unix_nanos,
+                window: window.clone(),
+                mem_total_bytes: 8 * 1024 * 1024 * 1024,
+                mem_available_bytes: Some(5 * 1024 * 1024 * 1024),
+                mem_free_bytes: Some(4 * 1024 * 1024 * 1024),
+                swap_total_bytes: Some(1024 * 1024 * 1024),
+                swap_free_bytes: Some(1024 * 1024 * 1024),
+            },
+        ),
+        SignalEnvelope::node_filesystem_observation(
+            "source.synthetic_exec",
+            host.clone(),
+            NodeFilesystemObservation {
+                metric_name: "system.filesystem.usage".to_string(),
+                unit: "By".to_string(),
+                timestamp_unix_nanos: window.end_unix_nanos,
+                window: window.clone(),
+                mount_point: "/var/lib/kubelet".to_string(),
+                filesystem_type: Some("synthetic".to_string()),
+                total_bytes: 100 * 1024 * 1024 * 1024,
+                available_bytes: 60 * 1024 * 1024 * 1024,
+            },
+        ),
+        SignalEnvelope::process_resource_observation(
+            "source.synthetic_exec",
+            host.clone(),
+            ProcessResourceObservation {
+                metric_name: "process.resource".to_string(),
+                unit: "1".to_string(),
+                timestamp_unix_nanos: window.end_unix_nanos,
+                window: window.clone(),
+                process,
+                cpu_time_nanos: Some(10_000_000),
+                memory_rss_bytes: Some(64 * 1024 * 1024),
+                virtual_memory_bytes: Some(128 * 1024 * 1024),
+                open_fds: Some(32),
+                socket_count: Some(4),
+                thread_count: Some(8),
+            },
+        ),
+        SignalEnvelope::cgroup_cpu_observation(
+            "source.synthetic_exec",
+            host.clone(),
+            CgroupCpuObservation {
+                metric_name: "container.cpu.time".to_string(),
+                unit: "ns".to_string(),
+                timestamp_unix_nanos: window.end_unix_nanos,
+                window: window.clone(),
+                cgroup: cgroup.clone(),
+                usage_nanos: Some(2_000_000_000),
+                user_nanos: Some(1_500_000_000),
+                system_nanos: Some(500_000_000),
+                throttled_periods: Some(0),
+                throttled_nanos: Some(0),
+            },
+        ),
+        SignalEnvelope::cgroup_cpu_observation(
+            "source.synthetic_exec",
+            host.clone(),
+            CgroupCpuObservation {
+                metric_name: "container.cpu.time".to_string(),
+                unit: "ns".to_string(),
+                timestamp_unix_nanos: window.end_unix_nanos.saturating_add(1_000),
+                window: MetricAggregationWindow {
+                    start_unix_nanos: window.end_unix_nanos,
+                    end_unix_nanos: window.end_unix_nanos.saturating_add(1_000),
+                },
+                cgroup: cgroup.clone(),
+                usage_nanos: Some(2_060_000_000),
+                user_nanos: Some(1_550_000_000),
+                system_nanos: Some(510_000_000),
+                throttled_periods: Some(0),
+                throttled_nanos: Some(0),
+            },
+        ),
+        SignalEnvelope::cgroup_memory_observation(
+            "source.synthetic_exec",
+            host.clone(),
+            CgroupMemoryObservation {
+                metric_name: "container.memory.usage".to_string(),
+                unit: "By".to_string(),
+                timestamp_unix_nanos: window.end_unix_nanos,
+                window: window.clone(),
+                cgroup: cgroup.clone(),
+                current_bytes: Some(128 * 1024 * 1024),
+                peak_bytes: Some(160 * 1024 * 1024),
+                max_bytes: Some(512 * 1024 * 1024),
+            },
+        ),
+        SignalEnvelope::cgroup_pids_observation(
+            "source.synthetic_exec",
+            host,
+            CgroupPidsObservation {
+                metric_name: "container.process.count".to_string(),
+                unit: "{process}".to_string(),
+                timestamp_unix_nanos: window.end_unix_nanos,
+                window,
+                cgroup,
+                process_count: Some(3),
+                thread_count: Some(12),
+                max_processes: Some(512),
+            },
+        ),
+    ]
 }
 
 fn synthetic_attribution() -> (ContainerContext, KubernetesContext) {
@@ -372,7 +587,7 @@ mod tests {
 
         assert_eq!(registry.sources.len(), 1);
         assert_eq!(registry.processors.len(), 0);
-        assert_eq!(registry.generators.len(), 4);
+        assert_eq!(registry.generators.len(), 5);
         assert_eq!(registry.sinks.len(), 1);
     }
 
@@ -417,7 +632,7 @@ mod tests {
 
     #[tokio::test]
     async fn synthetic_source_emits_attributed_runtime_and_network_fixtures() {
-        let (tx, mut rx) = mpsc::channel(8);
+        let (tx, mut rx) = mpsc::channel(16);
         Box::new(SyntheticExecSource {
             host: Some("node-a".to_string()),
         })
@@ -430,7 +645,7 @@ mod tests {
             signals.push(signal);
         }
 
-        assert_eq!(signals.len(), 6);
+        assert!(signals.len() >= 10);
         let SignalPayload::Exec(exec) = &signals[0].payload else {
             panic!("expected exec fixture");
         };
@@ -468,5 +683,16 @@ mod tests {
         };
         assert_eq!(response.query_name, "api.example.com");
         assert_eq!(response.latency_nanos, Some(15_000));
+
+        assert!(
+            signals
+                .iter()
+                .any(|signal| matches!(signal.payload, SignalPayload::NodeMemoryObservation(_)))
+        );
+        assert!(
+            signals
+                .iter()
+                .any(|signal| matches!(signal.payload, SignalPayload::CgroupMemoryObservation(_)))
+        );
     }
 }

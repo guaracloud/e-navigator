@@ -19,6 +19,7 @@ e-navigator-runner = { path = "../e-navigator-runner" }
 e-navigator-signals = { path = "../e-navigator-signals" }
 e-navigator-sinks = { path = "../e-navigator-sinks" }
 e-navigator-sources-ebpf-aya = { path = "../e-navigator-sources-ebpf-aya" }
+e-navigator-sources-host = { path = "../e-navigator-sources-host" }
 tokio = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }

@@ -124,6 +124,25 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                     &mut event.kubernetes,
                 );
             }
+            SignalPayload::ProcessResourceObservation(event) => {
+                self.enrich_context(
+                    event.process.pid,
+                    &mut event.process.container,
+                    &mut event.process.kubernetes,
+                );
+            }
+            SignalPayload::CgroupCpuObservation(event) => {
+                self.enrich_cgroup_context(&mut event.cgroup);
+            }
+            SignalPayload::CgroupMemoryObservation(event) => {
+                self.enrich_cgroup_context(&mut event.cgroup);
+            }
+            SignalPayload::CgroupPidsObservation(event) => {
+                self.enrich_cgroup_context(&mut event.cgroup);
+            }
+            SignalPayload::CgroupFileDescriptorObservation(event) => {
+                self.enrich_cgroup_context(&mut event.cgroup);
+            }
             SignalPayload::DependencyEdge(_) => {}
             SignalPayload::RuntimeSecurityFinding(_) => {}
             _ => {}
@@ -145,6 +164,15 @@ impl ContainerAttributionProcessor {
         }
         if kubernetes.is_none() {
             *kubernetes = container
+                .as_ref()
+                .and_then(|container| self.kubernetes_cache.get(&container.container_id));
+        }
+    }
+
+    fn enrich_cgroup_context(&self, cgroup: &mut e_navigator_signals::CgroupResourceContext) {
+        if cgroup.kubernetes.is_none() {
+            cgroup.kubernetes = cgroup
+                .container
                 .as_ref()
                 .and_then(|container| self.kubernetes_cache.get(&container.container_id));
         }
@@ -341,7 +369,9 @@ struct ContainerStatus {
 mod tests {
     use super::*;
     use e_navigator_core::Generator;
-    use e_navigator_generators::{DnsMetricsGenerator, NetworkMetricsGenerator};
+    use e_navigator_generators::{
+        DnsMetricsGenerator, NetworkMetricsGenerator, ResourceMetricsGenerator,
+    };
     use e_navigator_signals::{
         ContainerContext, DnsQueryEvent, DnsQueryType, ExecEvent, KubernetesContext,
         NetworkAddressFamily, NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol,
@@ -747,6 +777,90 @@ mod tests {
         assert_eq!(
             metric.container.as_ref().expect("container").container_id,
             "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        );
+
+        fs::remove_dir_all(root).expect("fixture cleanup succeeds");
+    }
+
+    #[tokio::test]
+    async fn resource_observations_use_processor_enriched_attribution() {
+        let container_id = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+        let (processor, root) = processor_fixture(
+            90,
+            container_id,
+            KubernetesContext {
+                namespace: "default".to_string(),
+                pod_name: "resource-client-123".to_string(),
+                pod_uid: Some("resource-pod-uid".to_string()),
+                container_name: Some("resource-client".to_string()),
+                node_name: Some("node-a".to_string()),
+                labels: BTreeMap::new(),
+            },
+        );
+        let signal = SignalEnvelope::process_resource_observation(
+            "source.host_resource",
+            Some("node-a".to_string()),
+            e_navigator_signals::ProcessResourceObservation {
+                metric_name: "process.resource".to_string(),
+                unit: "1".to_string(),
+                timestamp_unix_nanos: 99,
+                window: e_navigator_signals::MetricAggregationWindow {
+                    start_unix_nanos: 90,
+                    end_unix_nanos: 99,
+                },
+                process: e_navigator_signals::ProcessResourceContext {
+                    pid: 90,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "resource-client".to_string(),
+                    executable: Some("/app/resource-client".to_string()),
+                    container: None,
+                    kubernetes: None,
+                },
+                cpu_time_nanos: Some(100),
+                memory_rss_bytes: Some(4096),
+                virtual_memory_bytes: None,
+                open_fds: Some(8),
+                socket_count: Some(2),
+                thread_count: Some(3),
+            },
+        );
+        let processed = processor
+            .process(signal)
+            .await
+            .expect("processor succeeds")
+            .expect("signal remains");
+
+        let outputs = observe_generator(&ResourceMetricsGenerator::default(), &processed).await;
+        let metric = outputs
+            .iter()
+            .find_map(|signal| match &signal.payload {
+                e_navigator_signals::SignalPayload::ResourceGaugeMetric(metric)
+                    if metric.metric_name == "process.memory.usage" =>
+                {
+                    Some(metric)
+                }
+                _ => None,
+            })
+            .expect("resource metric exists");
+
+        assert_eq!(
+            metric
+                .process
+                .as_ref()
+                .and_then(|process| process.kubernetes.as_ref())
+                .expect("kubernetes")
+                .pod_name,
+            "resource-client-123"
+        );
+        assert_eq!(
+            metric
+                .process
+                .as_ref()
+                .and_then(|process| process.container.as_ref())
+                .expect("container")
+                .container_id,
+            container_id
         );
 
         fs::remove_dir_all(root).expect("fixture cleanup succeeds");
