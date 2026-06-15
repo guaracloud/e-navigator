@@ -56,6 +56,12 @@ data:
     max_seen_requests = 8192
     max_warnings = 1024
 
+    [profiling]
+    max_windows = 4096
+    max_seen_samples = 8192
+    max_warnings = 1024
+    window_nanos = 30000000000
+
     [[modules]]
     name = "source.aya_exec"
     enabled = true
@@ -90,6 +96,10 @@ data:
 
     [[modules]]
     name = "generator.request_correlation"
+    enabled = true
+
+    [[modules]]
+    name = "generator.profiling"
     enabled = true
 
     [[modules]]
