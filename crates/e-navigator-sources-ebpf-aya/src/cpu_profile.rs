@@ -112,7 +112,7 @@ fn raw_cpu_profile_to_signal_with_clock(
     })
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(test)]
 fn decode_cpu_profile_batch(
     events: &[&[u8]],
     host: Option<String>,
