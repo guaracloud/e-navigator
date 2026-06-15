@@ -8,6 +8,10 @@ cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-progr
 cargo test --locked --workspace --exclude e-navigator-ebpf-programs
 cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 cargo run --locked -p e-navigator-cli -- --source synthetic
+docker build -f Containerfile -t e-navigator:local .
+docker run --rm e-navigator:local --source synthetic
+tests/smoke_docker.sh e-navigator:local
+git diff --check
 ```
 
 ## Aya Prerequisites
@@ -27,7 +31,7 @@ Install `bpftool` from the Linux distribution package manager.
 cargo run --locked -p e-navigator-cli -- --source synthetic
 ```
 
-Expected result: newline-delimited JSON is printed to stdout, including attributed synthetic exec, process exit, network connection, DNS, dependency edge, metric, and runtime security finding fixtures.
+Expected result: newline-delimited JSON is printed to stdout, including attributed synthetic exec, process exit, network connection, DNS, dependency edge, network metric, DNS metric, and runtime security finding fixtures.
 
 ## Docker Smoke Tests
 
