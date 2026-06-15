@@ -110,6 +110,20 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                     &mut event.kubernetes,
                 );
             }
+            SignalPayload::DnsQuery(event) => {
+                self.enrich_context(
+                    event.process.pid,
+                    &mut event.container,
+                    &mut event.kubernetes,
+                );
+            }
+            SignalPayload::DnsResponse(event) => {
+                self.enrich_context(
+                    event.process.pid,
+                    &mut event.container,
+                    &mut event.kubernetes,
+                );
+            }
             SignalPayload::DependencyEdge(_) => {}
             SignalPayload::RuntimeSecurityFinding(_) => {}
             _ => {}
@@ -326,11 +340,14 @@ struct ContainerStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use e_navigator_core::Generator;
+    use e_navigator_generators::{DnsMetricsGenerator, NetworkMetricsGenerator};
     use e_navigator_signals::{
-        ContainerContext, ExecEvent, KubernetesContext, NetworkAddressFamily,
-        NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol,
+        ContainerContext, DnsQueryEvent, DnsQueryType, ExecEvent, KubernetesContext,
+        NetworkAddressFamily, NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol,
     };
     use std::{collections::BTreeMap, fs};
+    use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn processor_preserves_exec_event() {
@@ -599,5 +616,187 @@ mod tests {
         );
 
         fs::remove_dir_all(root).expect("fixture cleanup succeeds");
+    }
+
+    #[tokio::test]
+    async fn network_metric_uses_processor_enriched_attribution() {
+        let (processor, root) = processor_fixture(
+            88,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            KubernetesContext {
+                namespace: "default".to_string(),
+                pod_name: "api-123".to_string(),
+                pod_uid: Some("api-pod-uid".to_string()),
+                container_name: Some("api".to_string()),
+                node_name: Some("node-a".to_string()),
+                labels: BTreeMap::new(),
+            },
+        );
+        let signal = SignalEnvelope::network_connection_open(
+            "source.test",
+            Some("node-a".to_string()),
+            NetworkConnectionOpenEvent {
+                process: NetworkProcessIdentity {
+                    pid: 88,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "api".to_string(),
+                    executable: Some("/app/api".to_string()),
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.0.0.5".to_string()),
+                local_port: Some(43512),
+                remote_address: "203.0.113.10".to_string(),
+                remote_port: 443,
+                fd: Some(9),
+                timestamp_unix_nanos: 99,
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let processed = processor
+            .process(signal)
+            .await
+            .expect("processor succeeds")
+            .expect("signal remains");
+
+        let outputs = observe_generator(&NetworkMetricsGenerator::default(), &processed).await;
+        let metric = outputs
+            .iter()
+            .find_map(|signal| match &signal.payload {
+                e_navigator_signals::SignalPayload::NetworkCounterMetric(metric)
+                    if metric.metric_name == "network.connection.open.count" =>
+                {
+                    Some(metric)
+                }
+                _ => None,
+            })
+            .expect("network metric exists");
+
+        assert_eq!(
+            metric.kubernetes.as_ref().expect("kubernetes").pod_name,
+            "api-123"
+        );
+        assert_eq!(
+            metric.container.as_ref().expect("container").container_id,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+
+        fs::remove_dir_all(root).expect("fixture cleanup succeeds");
+    }
+
+    #[tokio::test]
+    async fn dns_metric_uses_processor_enriched_attribution() {
+        let (processor, root) = processor_fixture(
+            89,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            KubernetesContext {
+                namespace: "default".to_string(),
+                pod_name: "dns-client-123".to_string(),
+                pod_uid: Some("dns-pod-uid".to_string()),
+                container_name: Some("dns-client".to_string()),
+                node_name: Some("node-a".to_string()),
+                labels: BTreeMap::new(),
+            },
+        );
+        let signal = SignalEnvelope::dns_query(
+            "source.test",
+            Some("node-a".to_string()),
+            DnsQueryEvent {
+                process: NetworkProcessIdentity {
+                    pid: 89,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "api".to_string(),
+                    executable: Some("/app/api".to_string()),
+                },
+                query_name: "api.example.com".to_string(),
+                query_type: DnsQueryType::A,
+                transport_protocol: NetworkProtocol::Udp,
+                server_address: Some("10.96.0.10".to_string()),
+                server_port: Some(53),
+                timestamp_unix_nanos: 99,
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let processed = processor
+            .process(signal)
+            .await
+            .expect("processor succeeds")
+            .expect("signal remains");
+
+        let outputs = observe_generator(&DnsMetricsGenerator::default(), &processed).await;
+        let metric = outputs
+            .iter()
+            .find_map(|signal| match &signal.payload {
+                e_navigator_signals::SignalPayload::DnsCounterMetric(metric)
+                    if metric.metric_name == "dns.query.count" =>
+                {
+                    Some(metric)
+                }
+                _ => None,
+            })
+            .expect("dns metric exists");
+
+        assert_eq!(
+            metric.kubernetes.as_ref().expect("kubernetes").pod_name,
+            "dns-client-123"
+        );
+        assert_eq!(
+            metric.container.as_ref().expect("container").container_id,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        );
+
+        fs::remove_dir_all(root).expect("fixture cleanup succeeds");
+    }
+
+    async fn observe_generator<G>(generator: &G, signal: &SignalEnvelope) -> Vec<SignalEnvelope>
+    where
+        G: Generator<SignalEnvelope>,
+    {
+        let (tx, mut rx) = mpsc::channel(8);
+        generator
+            .observe(signal, &tx)
+            .await
+            .expect("generator succeeds");
+        drop(tx);
+
+        let mut outputs = Vec::new();
+        while let Some(output) = rx.recv().await {
+            outputs.push(output);
+        }
+        outputs
+    }
+
+    fn processor_fixture(
+        pid: u32,
+        container_id: &str,
+        kubernetes: KubernetesContext,
+    ) -> (ContainerAttributionProcessor, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "e-navigator-processor-generator-attribution-test-{}-{pid}",
+            std::process::id()
+        ));
+        let pid_dir = root.join(pid.to_string());
+        fs::create_dir_all(&pid_dir).expect("pid dir is created");
+        fs::write(
+            pid_dir.join("cgroup"),
+            format!("0::/kubepods.slice/cri-containerd-{container_id}.scope\n"),
+        )
+        .expect("cgroup fixture is written");
+        let processor = ContainerAttributionProcessor::with_cache(
+            AttributionConfig {
+                procfs_root: root.clone(),
+                kubernetes: KubernetesAttributionConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+            },
+            KubernetesMetadataCache::from_contexts([(container_id.to_string(), kubernetes)]),
+        );
+
+        (processor, root)
     }
 }
