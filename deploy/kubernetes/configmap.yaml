@@ -37,6 +37,18 @@ data:
     max_fds_per_process = 1024
     max_file_bytes = 131072
 
+    [cpu_profile_source]
+    enabled = false
+    module_name = "source.aya_cpu_profile"
+    sample_frequency_hz = 49
+    max_active_targets = 128
+    max_frames_per_sample = 64
+    max_samples_per_batch = 64
+    max_symbol_bytes = 256
+    max_module_bytes = 256
+    max_file_bytes = 256
+    backpressure = "drop_newest"
+
     [resource_metrics]
     max_keys = 4096
 
@@ -69,6 +81,10 @@ data:
     [[modules]]
     name = "source.aya_network"
     enabled = true
+
+    [[modules]]
+    name = "source.aya_cpu_profile"
+    enabled = false
 
     [[modules]]
     name = "source.host_resource"

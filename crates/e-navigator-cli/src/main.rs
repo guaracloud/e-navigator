@@ -1177,11 +1177,23 @@ mod tests {
                 .join("deploy/kubernetes/configmap.yaml"),
         )
         .expect("configmap manifest is readable");
+        assert!(manifest.contains("[cpu_profile_source]"));
+        assert!(manifest.contains("name = \"source.aya_cpu_profile\""));
         let toml = extract_embedded_configmap_toml(&manifest);
         let config = toml::from_str::<RuntimeConfig>(&toml).expect("configmap toml parses");
 
         config.validate().expect("configmap config validates");
         assert!(config.module_enabled("source.aya_exec"));
+        assert!(!config.module_enabled("source.aya_cpu_profile"));
+        assert!(!config.cpu_profile_source.enabled);
+        assert_eq!(
+            config.cpu_profile_source.module_name,
+            "source.aya_cpu_profile"
+        );
+        assert_eq!(
+            config.cpu_profile_source.backpressure,
+            e_navigator_core::CpuProfileBackpressure::DropNewest
+        );
         assert!(config.module_enabled("generator.profiling"));
         assert!(
             config.profiling.window_nanos
