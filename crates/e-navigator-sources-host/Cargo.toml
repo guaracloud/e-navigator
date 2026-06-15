@@ -1,0 +1,13 @@
+[package]
+name = "e-navigator-sources-host"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+e-navigator-core = { path = "../e-navigator-core" }
+e-navigator-signals = { path = "../e-navigator-signals" }
+tokio.workspace = true
+tracing.workspace = true
