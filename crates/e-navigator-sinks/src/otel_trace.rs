@@ -1,8 +1,9 @@
 use e_navigator_signals::{
     ContainerContext, DependencyEndpoint, KubernetesContext, NetworkProcessIdentity,
-    NetworkProtocol, ServiceInteractionSpanObservation, SignalEnvelope, SignalPayload,
-    TraceAttribute, TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning,
-    TracePeerContext, TraceServicePathObservation, TraceSpanObservation,
+    NetworkProtocol, ProtocolKind, RequestCorrelationWarning, RequestSpanObservation,
+    ServiceInteractionSpanObservation, SignalEnvelope, SignalPayload, TraceAttribute,
+    TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext,
+    TraceServicePathObservation, TraceSpanObservation,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -18,6 +19,8 @@ pub enum OtelTraceRecordKind {
     ServiceInteraction,
     ServicePath,
     CorrelationWarning,
+    RequestSpan,
+    RequestWarning,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -43,6 +46,10 @@ pub fn format_otel_trace_record(signal: &SignalEnvelope) -> Option<OtelTraceReco
         SignalPayload::TraceServicePathObservation(path) => Some(service_path_record(signal, path)),
         SignalPayload::TraceCorrelationWarning(warning) => {
             Some(correlation_warning_record(signal, warning))
+        }
+        SignalPayload::RequestSpanObservation(span) => Some(request_span_record(signal, span)),
+        SignalPayload::RequestCorrelationWarning(warning) => {
+            Some(request_warning_record(signal, warning))
         }
         _ => None,
     }
@@ -188,6 +195,97 @@ fn correlation_warning_record(
     OtelTraceRecord {
         name: "trace.correlation.warning".to_string(),
         kind: OtelTraceRecordKind::CorrelationWarning,
+        trace_id: None,
+        span_id: None,
+        parent_span_id: None,
+        start_unix_nanos: warning.timestamp_unix_nanos,
+        end_unix_nanos: Some(warning.timestamp_unix_nanos),
+        duration_nanos: Some(0),
+        resource: resource_attributes(
+            signal,
+            warning.container.as_ref(),
+            warning.kubernetes.as_ref(),
+            None,
+        ),
+        attributes,
+    }
+}
+
+fn request_span_record(signal: &SignalEnvelope, span: &RequestSpanObservation) -> OtelTraceRecord {
+    let mut attributes = correlation_attributes(span.correlation_kind, span.confidence);
+    attributes.insert(
+        "network.protocol.name".to_string(),
+        serde_json::json!(protocol_kind_name(span.protocol)),
+    );
+    if let Some(method) = &span.method {
+        attributes.insert("http.request.method".to_string(), serde_json::json!(method));
+    }
+    if let Some(status_code) = span.status_code {
+        attributes.insert(
+            "http.response.status_code".to_string(),
+            serde_json::json!(status_code),
+        );
+    }
+    append_process_attributes(&mut attributes, span.process.as_ref());
+    append_peer_attributes(&mut attributes, span.peer.as_ref());
+    append_trace_attributes(&mut attributes, &span.attributes);
+
+    OtelTraceRecord {
+        name: span.name.clone(),
+        kind: OtelTraceRecordKind::RequestSpan,
+        trace_id: span.trace_id.clone(),
+        span_id: span.span_id.clone(),
+        parent_span_id: span.parent_span_id.clone(),
+        start_unix_nanos: span.start_unix_nanos,
+        end_unix_nanos: span.end_unix_nanos,
+        duration_nanos: span.duration_nanos,
+        resource: resource_attributes(
+            signal,
+            span.container.as_ref(),
+            span.kubernetes.as_ref(),
+            span.service_name.as_deref(),
+        ),
+        attributes,
+    }
+}
+
+fn request_warning_record(
+    signal: &SignalEnvelope,
+    warning: &RequestCorrelationWarning,
+) -> OtelTraceRecord {
+    let mut attributes = BTreeMap::new();
+    attributes.insert(
+        "trace.correlation.kind".to_string(),
+        serde_json::json!(correlation_kind_name(warning.correlation_kind)),
+    );
+    attributes.insert(
+        "warning.type".to_string(),
+        serde_json::json!(warning.warning_type),
+    );
+    attributes.insert(
+        "warning.message".to_string(),
+        serde_json::json!(warning.message),
+    );
+    attributes.insert(
+        "trace.source.signal.kind".to_string(),
+        serde_json::json!(warning.source_signal_kind),
+    );
+    attributes.insert(
+        "trace.source.module".to_string(),
+        serde_json::json!(warning.source_module),
+    );
+    if let Some(protocol) = warning.protocol {
+        attributes.insert(
+            "network.protocol.name".to_string(),
+            serde_json::json!(protocol_kind_name(protocol)),
+        );
+    }
+    append_process_attributes(&mut attributes, warning.process.as_ref());
+    append_peer_attributes(&mut attributes, warning.peer.as_ref());
+
+    OtelTraceRecord {
+        name: "request.correlation.warning".to_string(),
+        kind: OtelTraceRecordKind::RequestWarning,
         trace_id: None,
         span_id: None,
         parent_span_id: None,
@@ -425,9 +523,19 @@ fn protocol_name(protocol: NetworkProtocol) -> &'static str {
     }
 }
 
+fn protocol_kind_name(protocol: ProtocolKind) -> &'static str {
+    match protocol {
+        ProtocolKind::Http => "http",
+        ProtocolKind::Grpc => "grpc",
+        ProtocolKind::Unknown => "unknown",
+        _ => "other",
+    }
+}
+
 fn correlation_kind_name(kind: TraceCorrelationKind) -> &'static str {
     match kind {
         TraceCorrelationKind::ObservedTraceContext => "observed_trace_context",
+        TraceCorrelationKind::ProtocolObserved => "protocol_observed",
         TraceCorrelationKind::NetworkInferred => "network_inferred",
         TraceCorrelationKind::DependencyInferred => "dependency_inferred",
         TraceCorrelationKind::Synthetic => "synthetic",

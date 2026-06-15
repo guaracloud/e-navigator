@@ -1,8 +1,9 @@
 use e_navigator_signals::{
     ContainerContext, DependencyEndpoint, KubernetesContext, NetworkProcessIdentity,
-    NetworkProtocol, ServiceInteractionSpanObservation, SignalEnvelope, TraceAttribute,
-    TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext,
-    TraceServicePathObservation, TraceSpanObservation,
+    NetworkProtocol, ProtocolKind, RequestCorrelationWarning, RequestSpanObservation,
+    ServiceInteractionSpanObservation, SignalEnvelope, TraceAttribute, TraceConfidence,
+    TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext, TraceServicePathObservation,
+    TraceSpanObservation,
 };
 use e_navigator_sinks::{OtelTraceRecordKind, format_otel_trace_record};
 use std::collections::BTreeMap;
@@ -180,6 +181,95 @@ fn formats_service_path_and_warning_trace_foundation_records() {
         warning_record.attributes["server.container.id"],
         "container-a"
     );
+}
+
+#[test]
+fn formats_request_span_with_bounded_stable_attributes() {
+    let signal = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "http request".to_string(),
+            protocol: ProtocolKind::Http,
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_000),
+            duration_nanos: Some(1_000),
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            service_name: Some("checkout-api".to_string()),
+            method: Some("GET".to_string()),
+            status_code: Some(200),
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(trace_peer_context()),
+            attributes: vec![
+                TraceAttribute {
+                    key: "http.request.method".to_string(),
+                    value: "POST".to_string(),
+                },
+                TraceAttribute {
+                    key: "authorization".to_string(),
+                    value: "secret".to_string(),
+                },
+                TraceAttribute {
+                    key: "custom.value".to_string(),
+                    value: "kept".to_string(),
+                },
+            ],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("request span formats");
+
+    assert_eq!(record.name, "http request");
+    assert_eq!(record.kind, OtelTraceRecordKind::RequestSpan);
+    assert_eq!(record.resource["service.name"], "checkout-api");
+    assert_eq!(
+        record.attributes["trace.correlation.kind"],
+        "observed_trace_context"
+    );
+    assert_eq!(record.attributes["trace.correlation.confidence"], "high");
+    assert_eq!(record.attributes["network.protocol.name"], "http");
+    assert_eq!(record.attributes["http.request.method"], "GET");
+    assert_eq!(record.attributes["http.response.status_code"], 200);
+    assert_eq!(record.attributes["custom.value"], "kept");
+    assert!(!record.attributes.contains_key("authorization"));
+}
+
+#[test]
+fn formats_request_correlation_warning() {
+    let signal = SignalEnvelope::request_correlation_warning(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestCorrelationWarning {
+            warning_type: "missing_trace_context".to_string(),
+            message: "protocol request had no observed trace context".to_string(),
+            timestamp_unix_nanos: 1_500,
+            source_signal_kind: "protocol_request_observation".to_string(),
+            source_module: "source.protocol_fixture".to_string(),
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            protocol: Some(ProtocolKind::Http),
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(trace_peer_context()),
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("request warning formats");
+
+    assert_eq!(record.kind, OtelTraceRecordKind::RequestWarning);
+    assert_eq!(record.name, "request.correlation.warning");
+    assert_eq!(record.attributes["warning.type"], "missing_trace_context");
+    assert_eq!(
+        record.attributes["trace.source.signal.kind"],
+        "protocol_request_observation"
+    );
+    assert_eq!(record.attributes["network.protocol.name"], "http");
 }
 
 #[test]
