@@ -27,6 +27,13 @@ data:
     # Kubernetes API endpoints are also discovered from
     # KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT inside the pod.
 
+    [network_metrics]
+    max_metric_keys = 4096
+    max_active_connections = 8192
+
+    [dns_metrics]
+    max_domains = 1024
+
     [[modules]]
     name = "source.aya_exec"
     enabled = true
@@ -37,6 +44,14 @@ data:
 
     [[modules]]
     name = "processor.container_attribution"
+    enabled = true
+
+    [[modules]]
+    name = "generator.network_metrics"
+    enabled = true
+
+    [[modules]]
+    name = "generator.dns_metrics"
     enabled = true
 
     [[modules]]
