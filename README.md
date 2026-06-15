@@ -2,7 +2,7 @@
 
 E-Navigator is a Rust and eBPF observability, security, profiling, and diagnostics platform for Linux and Kubernetes workloads.
 
-Phase 5 builds bounded Linux and Kubernetes resource observability on the runtime, network, DNS, dependency, security, and OTEL-compatible export foundations:
+Phase 6 builds a distributed tracing foundation on the bounded runtime, network, DNS, dependency, security, resource, and OTEL-compatible export foundations:
 
 - A layered Rust workspace.
 - A statically registered signal pipeline.
@@ -18,11 +18,14 @@ Phase 5 builds bounded Linux and Kubernetes resource observability on the runtim
 - A non-privileged bounded host resource source for procfs, sysfs, and cgroup v2 files with configurable roots and sampling limits.
 - A bounded resource metric generator for low-cardinality node, process, and cgroup/container metrics.
 - A dependency graph generator for observed network edges.
+- Versioned trace-foundation schemas for trace span observations, service interaction span observations, service path observations, and trace correlation warnings.
+- A bounded trace correlation generator for network-inferred service interactions, dependency/DNS-derived service paths, duplicate suppression, and missing-attribution warnings.
 - A narrow runtime security generator for process and network findings.
 - An internal OTEL-compatible metric formatter boundary for future exporters.
+- An internal OTEL-compatible trace formatter boundary for future exporters.
 - JSON stdout output.
 
-Runtime DNS packet capture, production OTLP export, cost attribution, capacity planning, continuous profiling, and UI storage are not implemented in Phase 5. The Aya network source remains TCP-oriented. Host resource accuracy depends on running on Linux with the configured host procfs/sysfs/cgroup mounts.
+Phase 6 is a tracing foundation, not a full distributed tracing backend or Tempo replacement. Runtime HTTP/gRPC parsing, request IDs, routes, methods, status codes, retries, full OTLP trace export, production trace storage, UI, critical path analysis, profiling correlation, cost attribution, capacity planning, continuous profiling, and runtime DNS packet capture are not implemented. The Aya network source remains TCP-oriented. Host resource accuracy depends on running on Linux with the configured host procfs/sysfs/cgroup mounts.
 
 ## Development
 

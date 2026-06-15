@@ -31,7 +31,7 @@ Install `bpftool` from the Linux distribution package manager.
 cargo run --locked -p e-navigator-cli -- --source synthetic
 ```
 
-Expected result: newline-delimited JSON is printed to stdout, including attributed synthetic exec, process exit, network connection, DNS, resource observation, dependency edge, network metric, DNS metric, resource metric, and runtime security finding fixtures.
+Expected result: newline-delimited JSON is printed to stdout, including attributed synthetic exec, process exit, network connection, failed network interaction, DNS, resource observation, dependency edge, network metric, DNS metric, resource metric, trace span observation, network-inferred service interaction span, DNS-derived service path observation, and runtime security finding fixtures.
 
 ## Docker Smoke Tests
 
@@ -72,6 +72,8 @@ Expected network result: the runner prints JSON network connection signals from 
 Phase 5 resource metrics are available through synthetic fixtures and the non-privileged `source.host_resource` path when run on Linux with readable procfs, sysfs, and cgroup v2 files. Do not claim host resource accuracy from synthetic output.
 
 DNS query and response schemas are available through synthetic fixtures and generator tests. Runtime Aya DNS packet capture is intentionally deferred; do not claim real DNS runtime visibility from the synthetic source or from the TCP-oriented `source.aya_network` source.
+
+Phase 6 trace-foundation signals are available through synthetic fixtures and the bounded `generator.trace_correlation` path. Synthetic output proves schema, runner, and formatter behavior only. Do not claim request-level tracing, HTTP or gRPC parsing, real trace-context extraction, production OTLP trace export, critical path analysis, or Kubernetes runtime tracing from synthetic output.
 
 The smoke test must run as root or with the Linux capabilities and rlimits required to load and attach eBPF programs.
 Do not claim this test passed unless it ran on a Linux host with tracefs/eBPF support.
