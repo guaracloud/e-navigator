@@ -1,0 +1,8 @@
+[package]
+name = "e-navigator-protocol"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+e-navigator-signals = { path = "../e-navigator-signals" }
