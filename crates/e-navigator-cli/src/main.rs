@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use clap::{Parser, ValueEnum};
 use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, RuntimeConfig, Source};
 use e_navigator_generators::{
-    DependencyGraphGenerator, NetworkMetricsGenerator, RuntimeSecurityGenerator,
+    DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator,
+    RuntimeSecurityGenerator,
 };
 use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::{ModuleRegistry, Runner};
@@ -103,6 +104,12 @@ fn build_registry(
         registry = registry.with_generator(Box::new(NetworkMetricsGenerator::with_limits(
             config.network_metrics.max_metric_keys,
             config.network_metrics.max_active_connections,
+        )));
+    }
+
+    if config.module_enabled("generator.dns_metrics") {
+        registry = registry.with_generator(Box::new(DnsMetricsGenerator::with_domain_limit(
+            config.dns_metrics.max_domains,
         )));
     }
 
@@ -365,7 +372,7 @@ mod tests {
 
         assert_eq!(registry.sources.len(), 1);
         assert_eq!(registry.processors.len(), 0);
-        assert_eq!(registry.generators.len(), 3);
+        assert_eq!(registry.generators.len(), 4);
         assert_eq!(registry.sinks.len(), 1);
     }
 

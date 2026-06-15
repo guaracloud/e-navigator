@@ -17,6 +17,8 @@ pub struct RuntimeConfig {
     pub runtime_security: RuntimeSecurityConfig,
     #[serde(default)]
     pub network_metrics: NetworkMetricsConfig,
+    #[serde(default)]
+    pub dns_metrics: DnsMetricsConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -29,6 +31,7 @@ impl Default for RuntimeConfig {
             attribution: AttributionConfig::default(),
             runtime_security: RuntimeSecurityConfig::default(),
             network_metrics: NetworkMetricsConfig::default(),
+            dns_metrics: DnsMetricsConfig::default(),
         }
     }
 }
@@ -47,6 +50,7 @@ impl RuntimeConfig {
         self.attribution.validate()?;
         self.runtime_security.validate()?;
         self.network_metrics.validate()?;
+        self.dns_metrics.validate()?;
 
         Ok(())
     }
@@ -159,6 +163,30 @@ pub struct NetworkMetricsConfig {
     pub max_active_connections: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DnsMetricsConfig {
+    #[serde(default = "default_dns_metrics_max_domains")]
+    pub max_domains: usize,
+}
+
+impl Default for DnsMetricsConfig {
+    fn default() -> Self {
+        Self {
+            max_domains: default_dns_metrics_max_domains(),
+        }
+    }
+}
+
+impl DnsMetricsConfig {
+    fn validate(&self) -> Result<(), String> {
+        if self.max_domains == 0 {
+            return Err("dns_metrics.max_domains must be greater than zero".to_string());
+        }
+
+        Ok(())
+    }
+}
+
 impl Default for NetworkMetricsConfig {
     fn default() -> Self {
         Self {
@@ -236,6 +264,7 @@ fn default_modules() -> Vec<ModuleConfig> {
         ModuleConfig::enabled("source.synthetic_exec"),
         ModuleConfig::enabled("processor.container_attribution"),
         ModuleConfig::enabled("generator.network_metrics"),
+        ModuleConfig::enabled("generator.dns_metrics"),
         ModuleConfig::enabled("generator.dependency_graph"),
         ModuleConfig::enabled("generator.runtime_security"),
         ModuleConfig::enabled("sink.json_stdout"),
@@ -276,6 +305,10 @@ fn default_network_metrics_max_metric_keys() -> usize {
 
 fn default_network_metrics_max_active_connections() -> usize {
     8192
+}
+
+fn default_dns_metrics_max_domains() -> usize {
+    1024
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -358,6 +391,7 @@ mod tests {
         assert!(config.module_enabled("source.synthetic_exec"));
         assert!(config.module_enabled("processor.container_attribution"));
         assert!(config.module_enabled("generator.network_metrics"));
+        assert!(config.module_enabled("generator.dns_metrics"));
         assert!(config.module_enabled("generator.dependency_graph"));
         assert!(config.module_enabled("generator.runtime_security"));
         assert!(config.module_enabled("sink.json_stdout"));
@@ -387,6 +421,19 @@ mod tests {
         assert_eq!(
             invalid_active_connections.validate(),
             Err("network_metrics.max_active_connections must be greater than zero".to_string())
+        );
+    }
+
+    #[test]
+    fn dns_metrics_limits_are_validated() {
+        let config = RuntimeConfig {
+            dns_metrics: DnsMetricsConfig { max_domains: 0 },
+            ..RuntimeConfig::default()
+        };
+
+        assert_eq!(
+            config.validate(),
+            Err("dns_metrics.max_domains must be greater than zero".to_string())
         );
     }
 
