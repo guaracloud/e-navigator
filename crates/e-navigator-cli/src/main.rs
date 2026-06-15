@@ -3,7 +3,8 @@ use clap::{Parser, ValueEnum};
 use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, RuntimeConfig, Source};
 use e_navigator_generators::{
     DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator,
-    ResourceMetricsGenerator, RuntimeSecurityGenerator, TraceCorrelationGenerator,
+    RequestCorrelationGenerator, ResourceMetricsGenerator, RuntimeSecurityGenerator,
+    TraceCorrelationGenerator,
 };
 use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::{ModuleRegistry, Runner};
@@ -137,6 +138,13 @@ fn build_registry(
             config.trace_correlation.max_service_paths,
             config.trace_correlation.max_seen_interactions,
             config.trace_correlation.max_warnings,
+        )));
+    }
+
+    if config.module_enabled("generator.request_correlation") {
+        registry = registry.with_generator(Box::new(RequestCorrelationGenerator::with_limits(
+            config.request_correlation.max_seen_requests,
+            config.request_correlation.max_warnings,
         )));
     }
 
@@ -725,7 +733,7 @@ mod tests {
 
         assert_eq!(registry.sources.len(), 1);
         assert_eq!(registry.processors.len(), 0);
-        assert_eq!(registry.generators.len(), 6);
+        assert_eq!(registry.generators.len(), 7);
         assert_eq!(registry.sinks.len(), 1);
 
         let generator_names = registry
@@ -734,6 +742,7 @@ mod tests {
             .map(|generator| generator.metadata().name.to_string())
             .collect::<Vec<_>>();
         assert!(generator_names.contains(&"generator.trace_correlation".to_string()));
+        assert!(generator_names.contains(&"generator.request_correlation".to_string()));
 
         for module in &mut config.modules {
             if module.name == "generator.trace_correlation" {
@@ -746,8 +755,9 @@ mod tests {
             .iter()
             .map(|generator| generator.metadata().name.to_string())
             .collect::<Vec<_>>();
-        assert_eq!(registry.generators.len(), 5);
+        assert_eq!(registry.generators.len(), 6);
         assert!(!generator_names.contains(&"generator.trace_correlation".to_string()));
+        assert!(generator_names.contains(&"generator.request_correlation".to_string()));
     }
 
     #[test]

@@ -25,6 +25,8 @@ pub struct RuntimeConfig {
     pub dns_metrics: DnsMetricsConfig,
     #[serde(default)]
     pub trace_correlation: TraceCorrelationConfig,
+    #[serde(default)]
+    pub request_correlation: RequestCorrelationConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -41,6 +43,7 @@ impl Default for RuntimeConfig {
             network_metrics: NetworkMetricsConfig::default(),
             dns_metrics: DnsMetricsConfig::default(),
             trace_correlation: TraceCorrelationConfig::default(),
+            request_correlation: RequestCorrelationConfig::default(),
         }
     }
 }
@@ -63,6 +66,7 @@ impl RuntimeConfig {
         self.network_metrics.validate()?;
         self.dns_metrics.validate()?;
         self.trace_correlation.validate()?;
+        self.request_correlation.validate()?;
 
         Ok(())
     }
@@ -217,6 +221,14 @@ pub struct TraceCorrelationConfig {
     pub max_warnings: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestCorrelationConfig {
+    #[serde(default = "default_request_correlation_max_seen_requests")]
+    pub max_seen_requests: usize,
+    #[serde(default = "default_request_correlation_max_warnings")]
+    pub max_warnings: usize,
+}
+
 impl Default for DnsMetricsConfig {
     fn default() -> Self {
         Self {
@@ -245,6 +257,15 @@ impl Default for TraceCorrelationConfig {
     }
 }
 
+impl Default for RequestCorrelationConfig {
+    fn default() -> Self {
+        Self {
+            max_seen_requests: default_request_correlation_max_seen_requests(),
+            max_warnings: default_request_correlation_max_warnings(),
+        }
+    }
+}
+
 impl TraceCorrelationConfig {
     pub const MAX_SERVICE_PATHS_LIMIT: usize = 65_536;
     pub const MAX_SEEN_INTERACTIONS_LIMIT: usize = 131_072;
@@ -266,6 +287,27 @@ impl TraceCorrelationConfig {
         if !(1..=Self::MAX_WARNINGS_LIMIT).contains(&self.max_warnings) {
             return Err(format!(
                 "trace_correlation.max_warnings must be between 1 and {}",
+                Self::MAX_WARNINGS_LIMIT
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl RequestCorrelationConfig {
+    pub const MAX_SEEN_REQUESTS_LIMIT: usize = 131_072;
+    pub const MAX_WARNINGS_LIMIT: usize = 16_384;
+
+    fn validate(&self) -> Result<(), String> {
+        if !(1..=Self::MAX_SEEN_REQUESTS_LIMIT).contains(&self.max_seen_requests) {
+            return Err(format!(
+                "request_correlation.max_seen_requests must be between 1 and {}",
+                Self::MAX_SEEN_REQUESTS_LIMIT
+            ));
+        }
+        if !(1..=Self::MAX_WARNINGS_LIMIT).contains(&self.max_warnings) {
+            return Err(format!(
+                "request_correlation.max_warnings must be between 1 and {}",
                 Self::MAX_WARNINGS_LIMIT
             ));
         }
@@ -415,6 +457,7 @@ fn default_modules() -> Vec<ModuleConfig> {
         ModuleConfig::enabled("generator.network_metrics"),
         ModuleConfig::enabled("generator.dns_metrics"),
         ModuleConfig::enabled("generator.trace_correlation"),
+        ModuleConfig::enabled("generator.request_correlation"),
         ModuleConfig::enabled("generator.dependency_graph"),
         ModuleConfig::enabled("generator.runtime_security"),
         ModuleConfig::enabled("sink.json_stdout"),
@@ -478,6 +521,14 @@ fn default_trace_correlation_max_seen_interactions() -> usize {
 }
 
 fn default_trace_correlation_max_warnings() -> usize {
+    1024
+}
+
+fn default_request_correlation_max_seen_requests() -> usize {
+    8192
+}
+
+fn default_request_correlation_max_warnings() -> usize {
     1024
 }
 
@@ -589,6 +640,7 @@ mod tests {
         assert!(config.module_enabled("generator.network_metrics"));
         assert!(config.module_enabled("generator.dns_metrics"));
         assert!(config.module_enabled("generator.trace_correlation"));
+        assert!(config.module_enabled("generator.request_correlation"));
         assert!(config.module_enabled("generator.dependency_graph"));
         assert!(config.module_enabled("generator.runtime_security"));
         assert!(config.module_enabled("sink.json_stdout"));
@@ -729,6 +781,39 @@ mod tests {
             Err(format!(
                 "trace_correlation.max_warnings must be between 1 and {}",
                 TraceCorrelationConfig::MAX_WARNINGS_LIMIT
+            ))
+        );
+    }
+
+    #[test]
+    fn request_correlation_limits_are_validated() {
+        let invalid_requests = RuntimeConfig {
+            request_correlation: RequestCorrelationConfig {
+                max_seen_requests: 0,
+                max_warnings: 128,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_requests.validate(),
+            Err(format!(
+                "request_correlation.max_seen_requests must be between 1 and {}",
+                RequestCorrelationConfig::MAX_SEEN_REQUESTS_LIMIT
+            ))
+        );
+
+        let invalid_warnings = RuntimeConfig {
+            request_correlation: RequestCorrelationConfig {
+                max_seen_requests: 128,
+                max_warnings: 0,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_warnings.validate(),
+            Err(format!(
+                "request_correlation.max_warnings must be between 1 and {}",
+                RequestCorrelationConfig::MAX_WARNINGS_LIMIT
             ))
         );
     }

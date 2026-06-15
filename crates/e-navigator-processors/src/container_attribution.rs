@@ -124,6 +124,34 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                     &mut event.kubernetes,
                 );
             }
+            SignalPayload::ProtocolRequestObservation(event) => {
+                self.enrich_optional_context(
+                    event.process.as_ref(),
+                    &mut event.container,
+                    &mut event.kubernetes,
+                );
+            }
+            SignalPayload::ExtractedTraceContextObservation(event) => {
+                self.enrich_optional_context(
+                    event.process.as_ref(),
+                    &mut event.container,
+                    &mut event.kubernetes,
+                );
+            }
+            SignalPayload::RequestSpanObservation(event) => {
+                self.enrich_optional_context(
+                    event.process.as_ref(),
+                    &mut event.container,
+                    &mut event.kubernetes,
+                );
+            }
+            SignalPayload::RequestCorrelationWarning(event) => {
+                self.enrich_optional_context(
+                    event.process.as_ref(),
+                    &mut event.container,
+                    &mut event.kubernetes,
+                );
+            }
             SignalPayload::ProcessResourceObservation(event) => {
                 self.enrich_context(
                     event.process.pid,
@@ -163,6 +191,21 @@ impl ContainerAttributionProcessor {
             *container = self.container_for_pid(pid);
         }
         if kubernetes.is_none() {
+            *kubernetes = container
+                .as_ref()
+                .and_then(|container| self.kubernetes_cache.get(&container.container_id));
+        }
+    }
+
+    fn enrich_optional_context(
+        &self,
+        process: Option<&e_navigator_signals::NetworkProcessIdentity>,
+        container: &mut Option<ContainerContext>,
+        kubernetes: &mut Option<KubernetesContext>,
+    ) {
+        if let Some(process) = process {
+            self.enrich_context(process.pid, container, kubernetes);
+        } else if kubernetes.is_none() {
             *kubernetes = container
                 .as_ref()
                 .and_then(|container| self.kubernetes_cache.get(&container.container_id));
@@ -373,13 +416,14 @@ mod tests {
     use super::*;
     use e_navigator_core::Generator;
     use e_navigator_generators::{
-        DnsMetricsGenerator, NetworkMetricsGenerator, ResourceMetricsGenerator,
-        TraceCorrelationGenerator,
+        DnsMetricsGenerator, NetworkMetricsGenerator, RequestCorrelationGenerator,
+        ResourceMetricsGenerator, TraceCorrelationGenerator,
     };
     use e_navigator_signals::{
         ContainerContext, DnsQueryEvent, DnsQueryType, ExecEvent, KubernetesContext,
         NetworkAddressFamily, NetworkConnectionCloseEvent, NetworkConnectionOpenEvent,
-        NetworkProcessIdentity, NetworkProtocol,
+        NetworkProcessIdentity, NetworkProtocol, ProtocolKind, ProtocolRequestObservation,
+        TraceConfidence, TraceCorrelationKind, TracePeerContext,
     };
     use std::{collections::BTreeMap, fs};
     use tokio::sync::mpsc;
@@ -1016,6 +1060,84 @@ mod tests {
                 .pod_name,
             "resource-pod-456"
         );
+    }
+
+    #[tokio::test]
+    async fn protocol_request_observations_are_enriched_before_request_correlation() {
+        let container_id = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+        let kubernetes = KubernetesContext {
+            namespace: "default".to_string(),
+            pod_name: "request-client-123".to_string(),
+            pod_uid: Some("request-pod-uid".to_string()),
+            container_name: Some("request-client".to_string()),
+            node_name: Some("node-a".to_string()),
+            labels: BTreeMap::new(),
+        };
+        let (processor, root) = processor_fixture(95, container_id, kubernetes);
+        let signal = SignalEnvelope::protocol_request_observation(
+            "source.protocol_fixture",
+            Some("node-a".to_string()),
+            ProtocolRequestObservation {
+                protocol: ProtocolKind::Http,
+                start_unix_nanos: 1_000,
+                end_unix_nanos: Some(2_000),
+                duration_nanos: Some(1_000),
+                trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+                span_id: Some("00f067aa0ba902b7".to_string()),
+                parent_span_id: None,
+                traceparent: Some(
+                    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string(),
+                ),
+                tracestate: None,
+                correlation_kind: TraceCorrelationKind::ProtocolObserved,
+                confidence: TraceConfidence::Medium,
+                service_name: Some("request-client".to_string()),
+                method: Some("GET".to_string()),
+                status_code: Some(200),
+                process: Some(NetworkProcessIdentity {
+                    pid: 95,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "request-client".to_string(),
+                    executable: Some("/app/request-client".to_string()),
+                }),
+                container: None,
+                kubernetes: None,
+                peer: Some(TracePeerContext {
+                    address: Some("203.0.113.10".to_string()),
+                    port: Some(443),
+                    domain: None,
+                    workload: None,
+                    container: None,
+                }),
+                attributes: vec![],
+            },
+        );
+
+        let processed = processor
+            .process(signal)
+            .await
+            .expect("processor succeeds")
+            .expect("signal remains");
+        let outputs = observe_generator(&RequestCorrelationGenerator::default(), &processed).await;
+        let span = outputs
+            .iter()
+            .find_map(|signal| match &signal.payload {
+                e_navigator_signals::SignalPayload::RequestSpanObservation(span) => Some(span),
+                _ => None,
+            })
+            .expect("request span exists");
+
+        assert_eq!(
+            span.container.as_ref().expect("container").container_id,
+            container_id
+        );
+        assert_eq!(
+            span.kubernetes.as_ref().expect("kubernetes").pod_name,
+            "request-client-123"
+        );
+
+        fs::remove_dir_all(root).expect("fixture cleanup succeeds");
     }
 
     async fn observe_generator<G>(generator: &G, signal: &SignalEnvelope) -> Vec<SignalEnvelope>

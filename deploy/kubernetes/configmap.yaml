@@ -52,6 +52,10 @@ data:
     max_seen_interactions = 8192
     max_warnings = 1024
 
+    [request_correlation]
+    max_seen_requests = 8192
+    max_warnings = 1024
+
     [[modules]]
     name = "source.aya_exec"
     enabled = true
@@ -82,6 +86,10 @@ data:
 
     [[modules]]
     name = "generator.trace_correlation"
+    enabled = true
+
+    [[modules]]
+    name = "generator.request_correlation"
     enabled = true
 
     [[modules]]
