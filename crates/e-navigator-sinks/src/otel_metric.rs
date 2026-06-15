@@ -182,7 +182,12 @@ fn resource_gauge_record(
         value: OtelMetricValue::I64(metric.value),
         window: metric.window.clone(),
         resource: resource_metric_resource_attributes(signal, metric),
-        attributes: resource_metric_attributes(&metric.attributes),
+        attributes: resource_metric_attributes(
+            &metric.metric_name,
+            &metric.attributes,
+            metric.process.as_ref(),
+            metric.cgroup.as_ref(),
+        ),
     }
 }
 
@@ -197,7 +202,12 @@ fn resource_counter_record(
         value: OtelMetricValue::U64(metric.value),
         window: metric.window.clone(),
         resource: resource_counter_resource_attributes(signal, metric),
-        attributes: resource_metric_attributes(&metric.attributes),
+        attributes: resource_metric_attributes(
+            &metric.metric_name,
+            &metric.attributes,
+            metric.process.as_ref(),
+            metric.cgroup.as_ref(),
+        ),
     }
 }
 
@@ -275,17 +285,50 @@ fn resource_counter_resource_attributes(
 }
 
 fn resource_metric_attributes(
+    metric_name: &str,
     attributes: &[e_navigator_signals::ResourceMetricAttribute],
+    process: Option<&e_navigator_signals::ProcessResourceContext>,
+    cgroup: Option<&e_navigator_signals::CgroupResourceContext>,
 ) -> BTreeMap<String, serde_json::Value> {
-    attributes
-        .iter()
-        .map(|attribute| {
-            (
-                attribute.key.clone(),
-                serde_json::json!(attribute.value.clone()),
-            )
-        })
-        .collect()
+    let mut mapped = BTreeMap::new();
+    for attribute in attributes {
+        let key = resource_attribute_key(metric_name, &attribute.key, &attribute.value);
+        mapped.insert(key.to_string(), serde_json::json!(attribute.value.clone()));
+    }
+    if let Some(process) = process {
+        mapped.insert("process.pid".to_string(), serde_json::json!(process.pid));
+        if let Some(ppid) = process.ppid {
+            mapped.insert("process.parent_pid".to_string(), serde_json::json!(ppid));
+        }
+        mapped.insert(
+            "process.command".to_string(),
+            serde_json::json!(process.command.clone()),
+        );
+    }
+    if let Some(cgroup) = cgroup {
+        mapped.insert(
+            "linux.cgroup.path".to_string(),
+            serde_json::json!(cgroup.cgroup_path.clone()),
+        );
+    }
+    mapped
+}
+
+fn resource_attribute_key<'a>(metric_name: &str, key: &'a str, value: &str) -> &'a str {
+    match (metric_name, key, value) {
+        ("system.cpu.time", "state", _) | ("container.cpu.time", "state", _) => "cpu.mode",
+        ("process.cpu.time", "state", _) => "process.cpu.state",
+        ("system.disk.io", "state", _) | ("system.disk.operations", "state", _) => {
+            "disk.io.direction"
+        }
+        ("system.disk.io", "device", _) | ("system.disk.operations", "device", _) => {
+            "system.device"
+        }
+        ("system.filesystem.usage", "mountpoint", _)
+        | ("system.filesystem.available", "mountpoint", _)
+        | ("system.filesystem.limit", "mountpoint", _) => "system.filesystem.mountpoint",
+        _ => key,
+    }
 }
 
 fn network_attributes(
@@ -470,5 +513,59 @@ mod tests {
         assert_eq!(record.value, OtelMetricValue::I64(4096));
         assert_eq!(record.resource["host.name"], "node-a");
         assert_eq!(record.attributes["state"], "available");
+    }
+
+    #[test]
+    fn formats_resource_counter_metric_with_process_scope() {
+        let signal = SignalEnvelope::resource_counter_metric(
+            "generator.resource_metrics",
+            Some("node-a".to_string()),
+            e_navigator_signals::ResourceCounterMetric {
+                metric_name: "process.cpu.time".to_string(),
+                unit: "ns".to_string(),
+                value: 400,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 100,
+                    end_unix_nanos: 200,
+                },
+                resource: e_navigator_signals::ResourceContext {
+                    host_name: Some("node-a".to_string()),
+                    container: None,
+                    kubernetes: None,
+                },
+                process: Some(e_navigator_signals::ProcessResourceContext {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "api".to_string(),
+                    executable: Some("/app/api".to_string()),
+                    container: None,
+                    kubernetes: None,
+                }),
+                cgroup: Some(e_navigator_signals::CgroupResourceContext {
+                    cgroup_path: "/kubepods.slice/pod123/container.scope".to_string(),
+                    container: None,
+                    kubernetes: None,
+                }),
+                attributes: vec![e_navigator_signals::ResourceMetricAttribute {
+                    key: "state".to_string(),
+                    value: "total".to_string(),
+                }],
+            },
+        );
+
+        let record = format_otel_metric_record(&signal).expect("resource counter formats");
+
+        assert_eq!(record.name, "process.cpu.time");
+        assert_eq!(record.kind, OtelMetricKind::Sum);
+        assert_eq!(record.value, OtelMetricValue::U64(400));
+        assert_eq!(record.attributes["process.cpu.state"], "total");
+        assert_eq!(record.attributes["process.pid"], 42);
+        assert_eq!(record.attributes["process.parent_pid"], 1);
+        assert_eq!(record.attributes["process.command"], "api");
+        assert_eq!(
+            record.attributes["linux.cgroup.path"],
+            "/kubepods.slice/pod123/container.scope"
+        );
     }
 }

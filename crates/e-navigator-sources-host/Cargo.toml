@@ -9,5 +9,6 @@ repository.workspace = true
 async-trait.workspace = true
 e-navigator-core = { path = "../e-navigator-core" }
 e-navigator-signals = { path = "../e-navigator-signals" }
+libc.workspace = true
 tokio.workspace = true
 tracing.workspace = true

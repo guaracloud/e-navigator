@@ -33,11 +33,11 @@ repository = "https://github.com/victorbona/e-navigator"
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
-aya = { git = "https://github.com/aya-rs/aya", default-features = false }
-aya-build = { git = "https://github.com/aya-rs/aya", default-features = false }
-aya-ebpf = { git = "https://github.com/aya-rs/aya", default-features = false }
-aya-log = { git = "https://github.com/aya-rs/aya", default-features = false }
-aya-log-ebpf = { git = "https://github.com/aya-rs/aya", default-features = false }
+aya = { git = "https://github.com/aya-rs/aya", rev = "b277f74443d4befdeb088879d0c358d726f9aa8e", default-features = false }
+aya-build = { git = "https://github.com/aya-rs/aya", rev = "b277f74443d4befdeb088879d0c358d726f9aa8e", default-features = false }
+aya-ebpf = { git = "https://github.com/aya-rs/aya", rev = "b277f74443d4befdeb088879d0c358d726f9aa8e", default-features = false }
+aya-log = { git = "https://github.com/aya-rs/aya", rev = "b277f74443d4befdeb088879d0c358d726f9aa8e", default-features = false }
+aya-log-ebpf = { git = "https://github.com/aya-rs/aya", rev = "b277f74443d4befdeb088879d0c358d726f9aa8e", default-features = false }
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 libc = "0.2"

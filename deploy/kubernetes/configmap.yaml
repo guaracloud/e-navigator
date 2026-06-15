@@ -34,6 +34,7 @@ data:
     sample_interval_millis = 15000
     max_processes = 128
     max_cgroups = 128
+    max_fds_per_process = 1024
     max_file_bytes = 131072
 
     [resource_metrics]

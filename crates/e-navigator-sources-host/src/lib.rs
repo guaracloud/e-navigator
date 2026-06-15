@@ -17,10 +17,10 @@ use tokio::sync::mpsc;
 use tracing::warn;
 
 const MAX_FILE_BYTES: u64 = 128 * 1024;
-const NANOSECONDS_PER_TICK: u64 = 10_000_000;
 const DISK_SECTOR_BYTES: u64 = 512;
 const DEFAULT_MAX_PROCESSES: usize = 128;
 const DEFAULT_MAX_CGROUPS: usize = 128;
+const DEFAULT_MAX_FDS_PER_PROCESS: usize = 1024;
 const DEFAULT_SAMPLE_INTERVAL_MILLIS: u64 = 15_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +31,7 @@ pub struct HostResourceConfig {
     pub sample_interval_millis: u64,
     pub max_processes: usize,
     pub max_cgroups: usize,
+    pub max_fds_per_process: usize,
     pub max_file_bytes: u64,
 }
 
@@ -43,6 +44,7 @@ impl Default for HostResourceConfig {
             sample_interval_millis: DEFAULT_SAMPLE_INTERVAL_MILLIS,
             max_processes: DEFAULT_MAX_PROCESSES,
             max_cgroups: DEFAULT_MAX_CGROUPS,
+            max_fds_per_process: DEFAULT_MAX_FDS_PER_PROCESS,
             max_file_bytes: MAX_FILE_BYTES,
         }
     }
@@ -123,12 +125,13 @@ fn sample_host_resources(
     let started = now_unix_nanos();
     let ended = started;
     let mut snapshot = HostResourceSnapshot::default();
+    let clock_ticks_per_second = clock_ticks_per_second();
 
     push_file_observation(
         &mut snapshot,
         &config.procfs_root.join("stat"),
         |contents| {
-            parse_cpu_stat(&contents, started, ended).map(|observation| {
+            parse_cpu_stat(&contents, clock_ticks_per_second, started, ended).map(|observation| {
                 SignalEnvelope::node_cpu_observation(
                     "source.host_resource",
                     host.clone(),
@@ -196,7 +199,7 @@ fn sample_host_resources(
     for sample in sample_cgroups(config, &mut snapshot.warnings) {
         snapshot
             .signals
-            .extend(sample.into_observations(started, ended));
+            .extend(sample.into_observations(host.clone(), started, ended));
     }
 
     snapshot
@@ -216,6 +219,7 @@ fn push_file_observation(
 
 pub fn parse_cpu_stat(
     contents: &str,
+    clock_ticks_per_second: u64,
     start_unix_nanos: u64,
     end_unix_nanos: u64,
 ) -> Result<NodeCpuObservation, String> {
@@ -246,11 +250,14 @@ pub fn parse_cpu_stat(
             start_unix_nanos,
             end_unix_nanos,
         },
-        user_nanos: ticks_to_nanos(parse_u64(fields[0])? + parse_u64(fields[1])?),
-        system_nanos: ticks_to_nanos(parse_u64(fields[2])?),
-        idle_nanos: ticks_to_nanos(parse_u64(fields[3])?),
-        iowait_nanos: ticks_to_nanos(parse_u64(fields[4])?),
-        steal_nanos: ticks_to_nanos(parse_u64(fields[7])?),
+        user_nanos: ticks_to_nanos(
+            parse_u64(fields[0])? + parse_u64(fields[1])?,
+            clock_ticks_per_second,
+        ),
+        system_nanos: ticks_to_nanos(parse_u64(fields[2])?, clock_ticks_per_second),
+        idle_nanos: ticks_to_nanos(parse_u64(fields[3])?, clock_ticks_per_second),
+        iowait_nanos: ticks_to_nanos(parse_u64(fields[4])?, clock_ticks_per_second),
+        steal_nanos: ticks_to_nanos(parse_u64(fields[7])?, clock_ticks_per_second),
         runnable_tasks,
         blocked_tasks,
     })
@@ -347,6 +354,7 @@ pub fn parse_process_stat(
     pid: u32,
     stat: &str,
     status: Option<&str>,
+    clock_ticks_per_second: u64,
     page_size_bytes: u64,
     fd_count: u64,
     socket_count: u64,
@@ -394,7 +402,10 @@ pub fn parse_process_stat(
             container: None,
             kubernetes: None,
         },
-        cpu_time_nanos: Some(ticks_to_nanos(utime.saturating_add(stime))),
+        cpu_time_nanos: Some(ticks_to_nanos(
+            utime.saturating_add(stime),
+            clock_ticks_per_second,
+        )),
         memory_rss_bytes: Some(rss_pages.saturating_mul(page_size_bytes)),
         virtual_memory_bytes: vsize,
         open_fds: Some(fd_count),
@@ -419,6 +430,7 @@ pub struct CgroupSample {
 impl CgroupSample {
     pub fn into_observations(
         self,
+        host: Option<String>,
         start_unix_nanos: u64,
         end_unix_nanos: u64,
     ) -> Vec<SignalEnvelope> {
@@ -436,7 +448,7 @@ impl CgroupSample {
         if let Some(cpu_stat) = self.cpu_stat {
             signals.push(SignalEnvelope::cgroup_cpu_observation(
                 "source.host_resource",
-                None,
+                host.clone(),
                 CgroupCpuObservation {
                     metric_name: "container.cpu.time".to_string(),
                     unit: "ns".to_string(),
@@ -457,7 +469,7 @@ impl CgroupSample {
         {
             signals.push(SignalEnvelope::cgroup_memory_observation(
                 "source.host_resource",
-                None,
+                host.clone(),
                 CgroupMemoryObservation {
                     metric_name: "container.memory.usage".to_string(),
                     unit: "By".to_string(),
@@ -474,7 +486,7 @@ impl CgroupSample {
         if self.pids_current.is_some() || self.pids_max.is_some() {
             signals.push(SignalEnvelope::cgroup_pids_observation(
                 "source.host_resource",
-                None,
+                host.clone(),
                 CgroupPidsObservation {
                     metric_name: "container.process.count".to_string(),
                     unit: "{process}".to_string(),
@@ -491,7 +503,7 @@ impl CgroupSample {
         if self.fd_count.is_some() || self.socket_count.is_some() {
             signals.push(SignalEnvelope::cgroup_file_descriptor_observation(
                 "source.host_resource",
-                None,
+                host,
                 CgroupFileDescriptorObservation {
                     metric_name: "container.file_descriptor.count".to_string(),
                     unit: "{file_descriptor}".to_string(),
@@ -514,18 +526,15 @@ fn sample_processes(
     ended: u64,
     warnings: &mut Vec<String>,
 ) -> Vec<ProcessResourceObservation> {
-    let mut entries = match fs::read_dir(&config.procfs_root) {
-        Ok(entries) => entries
-            .filter_map(Result::ok)
-            .filter_map(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .parse::<u32>()
-                    .ok()
-                    .map(|pid| (pid, entry.path()))
-            })
-            .collect::<Vec<_>>(),
+    let clock_ticks_per_second = clock_ticks_per_second();
+    let page_size_bytes = page_size_bytes();
+    let mut entries = match bounded_numeric_dirs(
+        &config.procfs_root,
+        config.max_processes,
+        "process",
+        warnings,
+    ) {
+        Ok(entries) => entries,
         Err(err) => {
             warnings.push(format!("{}: {err}", config.procfs_root.display()));
             return Vec::new();
@@ -543,13 +552,15 @@ fn sample_processes(
             }
         };
         let status = read_bounded_to_string(&path.join("status"), config.max_file_bytes).ok();
-        let fd_count = count_dir_entries(&path.join("fd"), config.max_processes).unwrap_or(0);
-        let socket_count = count_socket_fds(&path.join("fd"), config.max_processes).unwrap_or(0);
+        let fd_count = count_dir_entries(&path.join("fd"), config.max_fds_per_process).unwrap_or(0);
+        let socket_count =
+            count_socket_fds(&path.join("fd"), config.max_fds_per_process).unwrap_or(0);
         match parse_process_stat(
             pid,
             &stat,
             status.as_deref(),
-            4096,
+            clock_ticks_per_second,
+            page_size_bytes,
             fd_count,
             socket_count,
             started,
@@ -574,11 +585,7 @@ fn sample_cgroups(config: &HostResourceConfig, warnings: &mut Vec<String>) -> Ve
             || path.join("memory.current").exists()
         {
             samples.push(CgroupSample {
-                path: path
-                    .strip_prefix(&config.cgroup_root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .to_string(),
+                path: normalize_cgroup_path(&config.cgroup_root, &path),
                 cpu_stat: read_bounded_to_string(&path.join("cpu.stat"), config.max_file_bytes)
                     .ok(),
                 memory_current: read_bounded_to_string(
@@ -606,18 +613,99 @@ fn sample_cgroups(config: &HostResourceConfig, warnings: &mut Vec<String>) -> Ve
         }
         match fs::read_dir(&path) {
             Ok(entries) => {
-                let mut children = entries
-                    .filter_map(Result::ok)
-                    .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_dir()))
-                    .map(|entry| entry.path())
-                    .collect::<Vec<_>>();
+                let mut children = bounded_child_dirs(
+                    entries,
+                    config.max_cgroups.saturating_sub(samples.len()),
+                    &path,
+                    warnings,
+                );
                 children.sort();
-                queue.extend(children.into_iter().take(config.max_cgroups));
+                for child in children {
+                    if queue.len().saturating_add(samples.len()) >= config.max_cgroups {
+                        warnings.push(format!(
+                            "{}: cgroup traversal truncated at {} entries",
+                            path.display(),
+                            config.max_cgroups
+                        ));
+                        break;
+                    }
+                    queue.push_back(child);
+                }
             }
             Err(err) => warnings.push(format!("{}: {err}", path.display())),
         }
     }
     samples
+}
+
+fn bounded_numeric_dirs(
+    root: &Path,
+    limit: usize,
+    label: &str,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<(u32, PathBuf)>, String> {
+    let mut entries = Vec::new();
+    let mut truncated = false;
+    for entry in fs::read_dir(root).map_err(|err| err.to_string())? {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let Some(pid) = entry.file_name().to_string_lossy().parse::<u32>().ok() else {
+            continue;
+        };
+        if entries.len() >= limit {
+            truncated = true;
+            break;
+        }
+        entries.push((pid, entry.path()));
+    }
+    if truncated {
+        warnings.push(format!(
+            "{}: {label} scan truncated at {limit} entries",
+            root.display()
+        ));
+    }
+    Ok(entries)
+}
+
+fn bounded_child_dirs(
+    entries: fs::ReadDir,
+    limit: usize,
+    path: &Path,
+    warnings: &mut Vec<String>,
+) -> Vec<PathBuf> {
+    let mut children = Vec::new();
+    let mut truncated = false;
+    for entry in entries {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        if !entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
+            continue;
+        }
+        if children.len() >= limit {
+            truncated = true;
+            break;
+        }
+        children.push(entry.path());
+    }
+    if truncated {
+        warnings.push(format!(
+            "{}: child cgroup scan truncated at {limit} entries",
+            path.display()
+        ));
+    }
+    children
+}
+
+fn normalize_cgroup_path(root: &Path, path: &Path) -> String {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    let text = relative.to_string_lossy();
+    if text.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", text.trim_start_matches('/'))
+    }
 }
 
 fn read_bounded_to_string(path: &Path, max_bytes: u64) -> Result<String, String> {
@@ -732,8 +820,11 @@ fn parse_f64(value: &str) -> Result<f64, String> {
         .map_err(|err| format!("invalid float {value:?}: {err}"))
 }
 
-fn ticks_to_nanos(ticks: u64) -> u64 {
-    ticks.saturating_mul(NANOSECONDS_PER_TICK)
+fn ticks_to_nanos(ticks: u64, clock_ticks_per_second: u64) -> u64 {
+    ticks
+        .saturating_mul(1_000_000_000)
+        .checked_div(clock_ticks_per_second.max(1))
+        .unwrap_or(0)
 }
 
 fn micros_to_nanos(micros: u64) -> u64 {
@@ -751,20 +842,35 @@ fn now_unix_nanos() -> u64 {
         .unwrap_or(0)
 }
 
+fn clock_ticks_per_second() -> u64 {
+    sysconf_positive(libc::_SC_CLK_TCK).unwrap_or(100)
+}
+
+fn page_size_bytes() -> u64 {
+    sysconf_positive(libc::_SC_PAGESIZE).unwrap_or(4096)
+}
+
+fn sysconf_positive(name: libc::c_int) -> Option<u64> {
+    let value = unsafe { libc::sysconf(name) };
+    (value > 0).then_some(value as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use e_navigator_core::Source;
     use e_navigator_signals::SignalPayload;
 
     use crate::{
-        CgroupSample, HostResourceConfig, HostResourceSnapshot, HostResourceSource, parse_cpu_stat,
-        parse_diskstats, parse_loadavg, parse_meminfo, parse_process_stat,
+        CgroupSample, HostResourceConfig, HostResourceSource, normalize_cgroup_path,
+        parse_cpu_stat, parse_diskstats, parse_loadavg, parse_meminfo, parse_process_stat,
+        sample_cgroups, sample_processes,
     };
 
     #[test]
     fn parses_proc_stat_cpu_and_saturation_without_unbounded_labels() {
         let cpu = parse_cpu_stat(
             "cpu  100 0 50 500 10 0 0 2 0 0\nprocs_running 3\nprocs_blocked 1\n",
+            100,
             1_000,
             2_000,
         )
@@ -823,6 +929,7 @@ mod tests {
             42,
             "42 (api worker) S 1 1 1 0 -1 0 0 0 0 0 12 6 0 0 20 0 4 0 100 8192 8\n",
             Some("Name:\tapi\nUid:\t1000\t1000\t1000\t1000\nThreads:\t4\n"),
+            100,
             4096,
             2,
             1,
@@ -859,9 +966,14 @@ mod tests {
             socket_count: Some(7),
         };
 
-        let observations = sample.into_observations(1_000, 2_000);
+        let observations = sample.into_observations(Some("node-a".to_string()), 1_000, 2_000);
 
         assert_eq!(observations.len(), 4);
+        assert!(
+            observations
+                .iter()
+                .all(|signal| signal.host.as_deref() == Some("node-a"))
+        );
         assert!(matches!(
             observations[0].payload,
             SignalPayload::CgroupCpuObservation(_)
@@ -882,7 +994,7 @@ mod tests {
 
     #[test]
     fn malformed_missing_and_partial_files_are_non_fatal_warnings() {
-        assert!(parse_cpu_stat("intr 1\n", 1_000, 2_000).is_err());
+        assert!(parse_cpu_stat("intr 1\n", 100, 1_000, 2_000).is_err());
         assert!(parse_meminfo("MemFree: 1 kB\n", 1_000, 2_000).is_err());
         assert!(parse_loadavg("0.1 0.2\n", 1_000, 2_000).is_err());
         assert!(
@@ -890,9 +1002,133 @@ mod tests {
                 .expect("partial line skipped")
                 .is_empty()
         );
+    }
 
-        let snapshot = HostResourceSnapshot::default();
-        assert!(snapshot.warnings.iter().all(|warning| !warning.is_empty()));
+    #[test]
+    fn sample_once_reports_missing_and_malformed_procfs_warnings() {
+        let root = std::env::temp_dir().join(format!(
+            "e-navigator-host-source-warning-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let proc_root = root.join("proc");
+        let cgroup_root = root.join("cgroup");
+        std::fs::create_dir_all(&proc_root).expect("proc root");
+        std::fs::create_dir_all(&cgroup_root).expect("cgroup root");
+        std::fs::write(proc_root.join("stat"), "intr 1\n").expect("stat");
+        std::fs::write(
+            proc_root.join("meminfo"),
+            "MemTotal: 8192 kB\nMemAvailable: 4096 kB\n",
+        )
+        .expect("meminfo");
+        std::fs::write(proc_root.join("diskstats"), "partial\n").expect("diskstats");
+        std::fs::write(cgroup_root.join("cgroup.procs"), "").expect("cgroup procs");
+
+        let source = HostResourceSource::new(HostResourceConfig {
+            procfs_root: proc_root,
+            cgroup_root,
+            sample_interval_millis: 0,
+            max_processes: 1,
+            max_cgroups: 1,
+            ..HostResourceConfig::default()
+        });
+        let snapshot = source.sample_once();
+
+        assert!(
+            snapshot
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("aggregate cpu line"))
+        );
+        assert!(
+            snapshot
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("loadavg"))
+        );
+        assert!(
+            snapshot
+                .signals
+                .iter()
+                .any(|signal| matches!(signal.payload, SignalPayload::NodeMemoryObservation(_)))
+        );
+
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn normalizes_cgroup_paths_to_linux_cgroup_form() {
+        let root = std::path::Path::new("/sys/fs/cgroup");
+        assert_eq!(normalize_cgroup_path(root, root), "/");
+        assert_eq!(
+            normalize_cgroup_path(root, &root.join("kubepods.slice/pod123")),
+            "/kubepods.slice/pod123"
+        );
+    }
+
+    #[test]
+    fn process_scan_is_bounded_before_collection() {
+        let root = std::env::temp_dir().join(format!(
+            "e-navigator-host-source-process-cap-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        for pid in [100, 101, 102] {
+            std::fs::create_dir_all(root.join(pid.to_string())).expect("pid dir");
+            std::fs::write(
+                root.join(pid.to_string()).join("stat"),
+                format!("{pid} (api) S 1 1 1 0 -1 0 0 0 0 0 1 1 0 0 20 0 1 0 100 8192 1\n"),
+            )
+            .expect("stat");
+        }
+
+        let config = HostResourceConfig {
+            procfs_root: root.clone(),
+            max_processes: 1,
+            ..HostResourceConfig::default()
+        };
+        let mut warnings = Vec::new();
+        let observations = sample_processes(&config, 1_000, 2_000, &mut warnings);
+
+        assert_eq!(observations.len(), 1);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("process scan truncated"))
+        );
+
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn cgroup_child_scan_is_bounded_before_collection() {
+        let root = std::env::temp_dir().join(format!(
+            "e-navigator-host-source-cgroup-cap-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("a")).expect("cgroup dir");
+        std::fs::create_dir_all(root.join("b")).expect("cgroup dir");
+        std::fs::create_dir_all(root.join("c")).expect("cgroup dir");
+        std::fs::write(root.join("cgroup.procs"), "").expect("root cgroup procs");
+        std::fs::write(root.join("a/cgroup.procs"), "").expect("child cgroup procs");
+
+        let config = HostResourceConfig {
+            cgroup_root: root.clone(),
+            max_cgroups: 2,
+            ..HostResourceConfig::default()
+        };
+        let mut warnings = Vec::new();
+        let samples = sample_cgroups(&config, &mut warnings);
+
+        assert!(samples.len() <= 2);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("cgroup scan truncated"))
+        );
+
+        std::fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[tokio::test]

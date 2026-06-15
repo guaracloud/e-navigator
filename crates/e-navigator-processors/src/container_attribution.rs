@@ -170,6 +170,9 @@ impl ContainerAttributionProcessor {
     }
 
     fn enrich_cgroup_context(&self, cgroup: &mut e_navigator_signals::CgroupResourceContext) {
+        if cgroup.container.is_none() {
+            cgroup.container = parse_container_from_cgroup(&cgroup.cgroup_path);
+        }
         if cgroup.kubernetes.is_none() {
             cgroup.kubernetes = cgroup
                 .container
@@ -864,6 +867,79 @@ mod tests {
         );
 
         fs::remove_dir_all(root).expect("fixture cleanup succeeds");
+    }
+
+    #[tokio::test]
+    async fn cgroup_resource_observations_are_enriched_from_cgroup_path() {
+        let container_id = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+        let kubernetes = KubernetesContext {
+            namespace: "default".to_string(),
+            pod_name: "resource-pod-456".to_string(),
+            pod_uid: Some("resource-pod-uid".to_string()),
+            container_name: Some("resource-client".to_string()),
+            node_name: Some("node-a".to_string()),
+            labels: BTreeMap::new(),
+        };
+        let processor = ContainerAttributionProcessor::with_cache(
+            AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            KubernetesMetadataCache::from_contexts([(container_id.to_string(), kubernetes)]),
+        );
+        let signal = SignalEnvelope::cgroup_memory_observation(
+            "source.host_resource",
+            Some("node-a".to_string()),
+            e_navigator_signals::CgroupMemoryObservation {
+                metric_name: "container.memory.usage".to_string(),
+                unit: "By".to_string(),
+                timestamp_unix_nanos: 99,
+                window: e_navigator_signals::MetricAggregationWindow {
+                    start_unix_nanos: 90,
+                    end_unix_nanos: 99,
+                },
+                cgroup: e_navigator_signals::CgroupResourceContext {
+                    cgroup_path: format!("/kubepods.slice/cri-containerd-{container_id}.scope"),
+                    container: None,
+                    kubernetes: None,
+                },
+                current_bytes: Some(4096),
+                peak_bytes: None,
+                max_bytes: None,
+            },
+        );
+
+        let processed = processor
+            .process(signal)
+            .await
+            .expect("processor succeeds")
+            .expect("signal remains");
+
+        let e_navigator_signals::SignalPayload::CgroupMemoryObservation(event) = processed.payload
+        else {
+            panic!("expected cgroup memory payload");
+        };
+        assert_eq!(
+            event
+                .cgroup
+                .container
+                .as_ref()
+                .expect("container")
+                .container_id,
+            container_id
+        );
+        assert_eq!(
+            event
+                .cgroup
+                .kubernetes
+                .as_ref()
+                .expect("kubernetes")
+                .pod_name,
+            "resource-pod-456"
+        );
     }
 
     async fn observe_generator<G>(generator: &G, signal: &SignalEnvelope) -> Vec<SignalEnvelope>

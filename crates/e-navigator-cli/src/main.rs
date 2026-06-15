@@ -8,12 +8,13 @@ use e_navigator_generators::{
 use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::{ModuleRegistry, Runner};
 use e_navigator_signals::{
-    CgroupCpuObservation, CgroupMemoryObservation, CgroupPidsObservation, CgroupResourceContext,
-    ContainerContext, DnsQueryEvent, DnsQueryType, DnsResponseCode, DnsResponseEvent, ExecEvent,
-    KubernetesContext, MetricAggregationWindow, NetworkAddressFamily, NetworkConnectionCloseEvent,
-    NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol, NodeCpuObservation,
-    NodeFilesystemObservation, NodeMemoryObservation, ProcessExitEvent, ProcessResourceContext,
-    ProcessResourceObservation, SignalEnvelope,
+    CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
+    CgroupPidsObservation, CgroupResourceContext, ContainerContext, DnsQueryEvent, DnsQueryType,
+    DnsResponseCode, DnsResponseEvent, ExecEvent, KubernetesContext, MetricAggregationWindow,
+    NetworkAddressFamily, NetworkConnectionCloseEvent, NetworkConnectionOpenEvent,
+    NetworkProcessIdentity, NetworkProtocol, NodeCpuObservation, NodeDiskIoObservation,
+    NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation, ProcessExitEvent,
+    ProcessResourceContext, ProcessResourceObservation, SignalEnvelope,
 };
 use e_navigator_sinks::JsonStdoutSink;
 use e_navigator_sources_ebpf_aya::{AyaExecSource, AyaNetworkSource};
@@ -153,6 +154,7 @@ fn host_resource_config(config: &RuntimeConfig) -> HostResourceConfig {
         sample_interval_millis: config.resource_source.sample_interval_millis,
         max_processes: config.resource_source.max_processes,
         max_cgroups: config.resource_source.max_cgroups,
+        max_fds_per_process: config.resource_source.max_fds_per_process,
         max_file_bytes: config.resource_source.max_file_bytes,
     }
 }
@@ -440,6 +442,21 @@ fn synthetic_resource_signals(
                 swap_free_bytes: Some(1024 * 1024 * 1024),
             },
         ),
+        SignalEnvelope::node_load_observation(
+            "source.synthetic_exec",
+            host.clone(),
+            NodeLoadObservation {
+                metric_name: "system.cpu.load_average.1m".to_string(),
+                unit: "1".to_string(),
+                timestamp_unix_nanos: window.end_unix_nanos,
+                window: window.clone(),
+                load1: 0.25,
+                load5: 0.5,
+                load15: 0.75,
+                runnable_tasks: Some(2),
+                total_tasks: Some(200),
+            },
+        ),
         SignalEnvelope::node_filesystem_observation(
             "source.synthetic_exec",
             host.clone(),
@@ -452,6 +469,39 @@ fn synthetic_resource_signals(
                 filesystem_type: Some("synthetic".to_string()),
                 total_bytes: 100 * 1024 * 1024 * 1024,
                 available_bytes: 60 * 1024 * 1024 * 1024,
+            },
+        ),
+        SignalEnvelope::node_disk_io_observation(
+            "source.synthetic_exec",
+            host.clone(),
+            NodeDiskIoObservation {
+                metric_name: "system.disk.io".to_string(),
+                unit: "By".to_string(),
+                timestamp_unix_nanos: window.end_unix_nanos,
+                window: window.clone(),
+                device: "synthetic0".to_string(),
+                reads_completed: 10,
+                writes_completed: 20,
+                read_bytes: 4096,
+                written_bytes: 8192,
+            },
+        ),
+        SignalEnvelope::node_disk_io_observation(
+            "source.synthetic_exec",
+            host.clone(),
+            NodeDiskIoObservation {
+                metric_name: "system.disk.io".to_string(),
+                unit: "By".to_string(),
+                timestamp_unix_nanos: window.end_unix_nanos.saturating_add(1_000),
+                window: MetricAggregationWindow {
+                    start_unix_nanos: window.end_unix_nanos,
+                    end_unix_nanos: window.end_unix_nanos.saturating_add(1_000),
+                },
+                device: "synthetic0".to_string(),
+                reads_completed: 12,
+                writes_completed: 23,
+                read_bytes: 8192,
+                written_bytes: 16_384,
             },
         ),
         SignalEnvelope::process_resource_observation(
@@ -522,16 +572,29 @@ fn synthetic_resource_signals(
         ),
         SignalEnvelope::cgroup_pids_observation(
             "source.synthetic_exec",
-            host,
+            host.clone(),
             CgroupPidsObservation {
                 metric_name: "container.process.count".to_string(),
                 unit: "{process}".to_string(),
                 timestamp_unix_nanos: window.end_unix_nanos,
-                window,
-                cgroup,
+                window: window.clone(),
+                cgroup: cgroup.clone(),
                 process_count: Some(3),
                 thread_count: Some(12),
                 max_processes: Some(512),
+            },
+        ),
+        SignalEnvelope::cgroup_file_descriptor_observation(
+            "source.synthetic_exec",
+            host,
+            CgroupFileDescriptorObservation {
+                metric_name: "container.file_descriptor.count".to_string(),
+                unit: "{file_descriptor}".to_string(),
+                timestamp_unix_nanos: window.end_unix_nanos,
+                window,
+                cgroup,
+                open_fds: Some(64),
+                socket_count: Some(6),
             },
         ),
     ]
@@ -632,7 +695,7 @@ mod tests {
 
     #[tokio::test]
     async fn synthetic_source_emits_attributed_runtime_and_network_fixtures() {
-        let (tx, mut rx) = mpsc::channel(16);
+        let (tx, mut rx) = mpsc::channel(64);
         Box::new(SyntheticExecSource {
             host: Some("node-a".to_string()),
         })
@@ -692,7 +755,32 @@ mod tests {
         assert!(
             signals
                 .iter()
+                .any(|signal| matches!(signal.payload, SignalPayload::NodeLoadObservation(_)))
+        );
+        assert!(
+            signals.iter().any(|signal| matches!(
+                signal.payload,
+                SignalPayload::NodeFilesystemObservation(_)
+            ))
+        );
+        assert!(
+            signals
+                .iter()
+                .any(|signal| matches!(signal.payload, SignalPayload::NodeDiskIoObservation(_)))
+        );
+        assert!(
+            signals
+                .iter()
                 .any(|signal| matches!(signal.payload, SignalPayload::CgroupMemoryObservation(_)))
         );
+        assert!(
+            signals
+                .iter()
+                .any(|signal| matches!(signal.payload, SignalPayload::CgroupPidsObservation(_)))
+        );
+        assert!(signals.iter().any(|signal| matches!(
+            signal.payload,
+            SignalPayload::CgroupFileDescriptorObservation(_)
+        )));
     }
 }

@@ -185,6 +185,8 @@ pub struct ResourceSourceConfig {
     pub max_processes: usize,
     #[serde(default = "default_resource_max_cgroups")]
     pub max_cgroups: usize,
+    #[serde(default = "default_resource_max_fds_per_process")]
+    pub max_fds_per_process: usize,
     #[serde(default = "default_resource_max_file_bytes")]
     pub max_file_bytes: u64,
 }
@@ -237,6 +239,7 @@ impl Default for ResourceSourceConfig {
             sample_interval_millis: default_resource_sample_interval_millis(),
             max_processes: default_resource_max_processes(),
             max_cgroups: default_resource_max_cgroups(),
+            max_fds_per_process: default_resource_max_fds_per_process(),
             max_file_bytes: default_resource_max_file_bytes(),
         }
     }
@@ -258,6 +261,11 @@ impl ResourceSourceConfig {
         }
         if self.max_cgroups == 0 {
             return Err("resource_source.max_cgroups must be greater than zero".to_string());
+        }
+        if self.max_fds_per_process == 0 {
+            return Err(
+                "resource_source.max_fds_per_process must be greater than zero".to_string(),
+            );
         }
         if self.max_file_bytes == 0 {
             return Err("resource_source.max_file_bytes must be greater than zero".to_string());
@@ -418,6 +426,10 @@ fn default_resource_max_processes() -> usize {
 
 fn default_resource_max_cgroups() -> usize {
     128
+}
+
+fn default_resource_max_fds_per_process() -> usize {
+    1024
 }
 
 fn default_resource_max_file_bytes() -> u64 {
