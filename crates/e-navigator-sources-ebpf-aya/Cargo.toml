@@ -8,6 +8,7 @@ version.workspace = true
 async-trait = { workspace = true }
 bytes = { workspace = true }
 e-navigator-core = { path = "../e-navigator-core" }
+e-navigator-profiling = { path = "../e-navigator-profiling" }
 e-navigator-signals = { path = "../e-navigator-signals" }
 tokio = { workspace = true, features = ["io-util"] }
 tracing = { workspace = true }

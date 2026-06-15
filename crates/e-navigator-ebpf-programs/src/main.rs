@@ -6,9 +6,9 @@ use aya_ebpf::{
         bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_ktime_get_ns,
         bpf_probe_read_user, bpf_probe_read_user_str_bytes,
     },
-    macros::{map, tracepoint},
+    macros::{map, perf_event, tracepoint},
     maps::{Array, HashMap, PerCpuArray, PerfEventArray},
-    programs::TracePointContext,
+    programs::{PerfEventContext, TracePointContext},
 };
 
 const EXECUTABLE_LEN: usize = 256;
@@ -20,6 +20,7 @@ const IPPROTO_TCP: u32 = 6;
 const NETWORK_EVENT_OPEN: u32 = 1;
 const NETWORK_EVENT_CLOSE: u32 = 2;
 const NETWORK_EVENT_FAILURE: u32 = 3;
+const CPU_PROFILE_MAX_FRAMES: usize = 4;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -63,6 +64,19 @@ pub struct RawNetworkEvent {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct RawCpuProfileEvent {
+    pub pid: u32,
+    pub tid: u32,
+    pub uid: u32,
+    pub sample_count: u64,
+    pub timestamp_unix_nanos: u64,
+    pub command: [u8; 16],
+    pub frame_count: u32,
+    pub instruction_pointers: [u64; CPU_PROFILE_MAX_FRAMES],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct PendingConnect {
     pub pid: u32,
     pub uid: u32,
@@ -96,6 +110,9 @@ static EXIT_EVENTS: PerfEventArray<RawExitEvent> = PerfEventArray::new(0);
 static NETWORK_EVENTS: PerfEventArray<RawNetworkEvent> = PerfEventArray::new(0);
 
 #[map]
+static CPU_PROFILE_EVENTS: PerfEventArray<RawCpuProfileEvent> = PerfEventArray::new(0);
+
+#[map]
 static EXEC_EVENT_SCRATCH: PerCpuArray<RawExecEvent> = PerCpuArray::with_max_entries(1, 0);
 
 #[map]
@@ -103,6 +120,10 @@ static EXIT_EVENT_SCRATCH: PerCpuArray<RawExitEvent> = PerCpuArray::with_max_ent
 
 #[map]
 static NETWORK_EVENT_SCRATCH: PerCpuArray<RawNetworkEvent> = PerCpuArray::with_max_entries(1, 0);
+
+#[map]
+static CPU_PROFILE_EVENT_SCRATCH: PerCpuArray<RawCpuProfileEvent> =
+    PerCpuArray::with_max_entries(1, 0);
 
 #[map]
 static ARGV_CAPTURE_ENABLED: Array<u32> = Array::with_max_entries(1, 0);
@@ -154,6 +175,14 @@ pub fn tracepoint_close_enter(ctx: TracePointContext) -> u32 {
     }
 }
 
+#[perf_event]
+pub fn sample_cpu_profile(ctx: PerfEventContext) -> u32 {
+    match try_sample_cpu_profile(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
 fn try_tracepoint_execve(ctx: TracePointContext) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let uid_gid = bpf_get_current_uid_gid();
@@ -188,6 +217,27 @@ fn try_tracepoint_process_exit(ctx: TracePointContext) -> Result<u32, i64> {
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
 
     EXIT_EVENTS.output(&ctx, &*event, 0);
+    Ok(0)
+}
+
+fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let uid_gid = bpf_get_current_uid_gid();
+    let event = unsafe {
+        let ptr = CPU_PROFILE_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+        &mut *ptr
+    };
+
+    event.pid = (pid_tgid >> 32) as u32;
+    event.tid = pid_tgid as u32;
+    event.uid = uid_gid as u32;
+    event.sample_count = 1;
+    event.timestamp_unix_nanos = 0;
+    event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
+    event.frame_count = 0;
+    event.instruction_pointers = [0; CPU_PROFILE_MAX_FRAMES];
+
+    CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
     Ok(0)
 }
 
