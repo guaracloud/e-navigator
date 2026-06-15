@@ -2,7 +2,7 @@
 
 E-Navigator is a Rust and eBPF observability, security, profiling, and diagnostics platform for Linux and Kubernetes workloads.
 
-Phase 7 builds a request-level tracing foundation on the bounded runtime, network, DNS, dependency, security, resource, trace-correlation, and OTEL-compatible export foundations:
+Phase 8 builds a continuous profiling foundation on the bounded runtime, network, DNS, dependency, security, resource, trace-correlation, request-correlation, and export-boundary foundations:
 
 - A layered Rust workspace.
 - A statically registered signal pipeline.
@@ -26,9 +26,15 @@ Phase 7 builds a request-level tracing foundation on the bounded runtime, networ
 - A narrow runtime security generator for process and network findings.
 - An internal OTEL-compatible metric formatter boundary for future exporters.
 - An internal OTEL-compatible trace formatter boundary for future exporters.
+- Versioned profiling schemas for profile sample observations, stack trace observations, profiling session/window observations, and profiling correlation warnings.
+- An Aya-free profiling model boundary for synthetic and fixture-backed profile normalization with bounded stack frames, bounded symbol/module/file bytes, bounded attributes, and deterministic stack IDs.
+- A bounded profiling generator that summarizes explicit observed or synthetic profile sample signals into profiling session/window observations without inferring profiles from raw CPU or resource metrics.
+- Existing processor-based profile attribution for host, process, container, and Kubernetes context where available, with structured warning signals for missing attribution.
+- An internal profile-compatible formatter boundary for future pprof or OTLP profile exporters.
+- Synthetic profiling fixtures for CPU samples, missing symbols, oversized stack truncation, and malformed low-confidence fixture warnings.
 - JSON stdout output.
 
-Phase 7 is a request-level tracing foundation, not a full distributed tracing backend, service mesh, Beyla replacement, or Tempo replacement. Synthetic and fixture-backed HTTP trace-context extraction exists. Live HTTP/gRPC parsing from real traffic, request IDs, routes, retries, application errors, full OTLP trace export, production trace storage, UI, critical path analysis, profiling correlation, cost attribution, capacity planning, continuous profiling, and runtime DNS packet capture are not implemented. The Aya network source remains TCP-oriented. Host resource accuracy depends on running on Linux with the configured host procfs/sysfs/cgroup mounts.
+Phase 8 is a continuous profiling foundation, not a full continuous profiling backend, Pyroscope replacement, pprof server, OTLP profile exporter, flamegraph UI, profile storage layer, trace/profile correlation engine, cost attribution engine, capacity planning system, or workload bottleneck analyzer. Synthetic and fixture-backed profiling signals exist. Live eBPF/perf-event CPU profiling, memory allocation profiling, lock contention profiling, host runtime profiling accuracy, production pprof export, and production OTLP profile export are not implemented. Synthetic and fixture-backed HTTP trace-context extraction exists. Live HTTP/gRPC parsing from real traffic, request IDs, routes, retries, application errors, full OTLP trace export, production trace storage, UI, critical path analysis, cost attribution, capacity planning, and runtime DNS packet capture are not implemented. The Aya network source remains TCP-oriented. Host resource accuracy depends on running on Linux with the configured host procfs/sysfs/cgroup mounts.
 
 ## Development
 
