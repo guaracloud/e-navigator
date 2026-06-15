@@ -24,7 +24,7 @@ use e_navigator_signals::{
     TraceCorrelationKind, TracePeerContext, TraceSpanObservation,
 };
 use e_navigator_sinks::JsonStdoutSink;
-use e_navigator_sources_ebpf_aya::{AyaExecSource, AyaNetworkSource};
+use e_navigator_sources_ebpf_aya::{AyaCpuProfileSource, AyaExecSource, AyaNetworkSource};
 use e_navigator_sources_host::{HostResourceConfig, HostResourceSource};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -48,6 +48,7 @@ struct Args {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum SourceMode {
     AyaExec,
+    AyaCpuProfile,
     Synthetic,
 }
 
@@ -96,6 +97,15 @@ fn build_registry(
             registry = registry.with_source(Box::new(AyaExecSource::new(
                 host.clone(),
                 config.argv_capture.clone(),
+            )));
+        }
+        SourceMode::AyaCpuProfile
+            if config.cpu_profile_source.enabled
+                && config.module_enabled("source.aya_cpu_profile") =>
+        {
+            registry = registry.with_source(Box::new(AyaCpuProfileSource::new(
+                host.clone(),
+                config.cpu_profile_source.clone(),
             )));
         }
         SourceMode::Synthetic if config.module_enabled("source.synthetic_exec") => {
@@ -1079,6 +1089,60 @@ mod tests {
                 "generator.runtime_security",
             ]
         );
+    }
+
+    #[test]
+    fn cpu_profile_source_mode_registers_only_when_module_and_config_are_enabled() {
+        let mut config = RuntimeConfig::default();
+        config.cpu_profile_source.enabled = true;
+        set_module_enabled(&mut config, "source.aya_exec", false);
+        set_module_enabled(&mut config, "source.aya_network", false);
+        set_module_enabled(&mut config, "source.host_resource", false);
+        set_module_enabled(&mut config, "source.synthetic_exec", false);
+        set_module_enabled(&mut config, "source.aya_cpu_profile", true);
+
+        let registry = build_registry(
+            &config,
+            SourceMode::AyaCpuProfile,
+            Some("node-a".to_string()),
+        );
+
+        assert_eq!(source_names(&registry), vec!["source.aya_cpu_profile"]);
+
+        set_module_enabled(&mut config, "source.aya_cpu_profile", false);
+        let registry = build_registry(
+            &config,
+            SourceMode::AyaCpuProfile,
+            Some("node-a".to_string()),
+        );
+
+        assert!(source_names(&registry).is_empty());
+    }
+
+    #[test]
+    fn synthetic_source_mode_does_not_register_cpu_profile_source() {
+        let mut config = RuntimeConfig::default();
+        config.cpu_profile_source.enabled = true;
+        set_module_enabled(&mut config, "source.aya_cpu_profile", true);
+
+        let registry = build_registry(&config, SourceMode::Synthetic, Some("node-a".to_string()));
+
+        assert_eq!(source_names(&registry), vec!["source.synthetic_exec"]);
+    }
+
+    fn set_module_enabled(config: &mut RuntimeConfig, name: &str, enabled: bool) {
+        let Some(module) = config.modules.iter_mut().find(|module| module.name == name) else {
+            panic!("missing module {name}");
+        };
+        module.enabled = enabled;
+    }
+
+    fn source_names(registry: &ModuleRegistry) -> Vec<&'static str> {
+        registry
+            .sources
+            .iter()
+            .map(|source| source.metadata().name)
+            .collect()
     }
 
     #[test]
