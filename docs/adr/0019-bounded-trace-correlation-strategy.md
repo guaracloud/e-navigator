@@ -9,13 +9,13 @@ Trace-like correlation can become noisy and high-cardinality if raw network, DNS
 
 ## Decision
 
-Add a statically registered `generator.trace_correlation` module. It derives trace-foundation signals from network close/failure events, dependency edges, and successful DNS responses.
+Add a statically registered `generator.trace_correlation` module. It derives trace-foundation signals from network close/failure events, dependency edges that reach the generator, and successful DNS responses.
 
 The generator:
 
 - emits service interaction spans only when there is observed network close or failure data,
 - does not infer request IDs, routes, HTTP methods, status codes, retries, or application errors from TCP alone,
-- derives service path observations from dependency or DNS data,
+- derives service path observations from direct/upstream dependency-edge data or DNS data,
 - keeps service path state, seen interaction fingerprints, and warning fingerprints bounded,
 - uses deterministic keys,
 - suppresses duplicate observations.

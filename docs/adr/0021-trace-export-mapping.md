@@ -9,14 +9,16 @@ Phase 4 added an internal OTEL-compatible metric formatter. Phase 6 needs a simi
 
 ## Decision
 
-Add an internal trace formatter in the sinks crate. It maps trace-foundation `SignalEnvelope` payloads into stable records with:
+Add an internal trace formatter in the sinks crate. It maps trace-foundation `SignalEnvelope` payloads into stable records with the applicable fields for each payload kind:
 
 - record kind,
 - trace/span IDs when observed or explicitly synthetic,
-- start, end, and duration timestamps,
+- start, end, and duration timestamps where the payload carries them,
 - resource attributes,
-- trace attributes,
-- correlation kind and confidence.
+- bounded trace attributes,
+- correlation kind and confidence where the payload carries both.
+
+Correlation warning records map warning metadata and correlation kind. They do not invent span IDs, confidence, or duration beyond a zero-duration warning timestamp record.
 
 JSON stdout remains newline-delimited `SignalEnvelope` JSON. No production OTLP trace exporter is added in Phase 6.
 

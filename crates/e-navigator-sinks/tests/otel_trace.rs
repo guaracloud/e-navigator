@@ -27,10 +27,24 @@ fn formats_trace_span_observation_as_stable_internal_trace_record() {
             container: Some(container_context()),
             kubernetes: Some(kubernetes_context()),
             peer: Some(trace_peer_context()),
-            attributes: vec![TraceAttribute {
-                key: "net.transport".to_string(),
-                value: "tcp".to_string(),
-            }],
+            attributes: vec![
+                TraceAttribute {
+                    key: "net.transport".to_string(),
+                    value: "tcp".to_string(),
+                },
+                TraceAttribute {
+                    key: "trace.correlation.kind".to_string(),
+                    value: "overridden".to_string(),
+                },
+                TraceAttribute {
+                    key: "auth.token".to_string(),
+                    value: "sensitive".to_string(),
+                },
+                TraceAttribute {
+                    key: "custom.too_large".to_string(),
+                    value: "x".repeat(257),
+                },
+            ],
         },
     );
 
@@ -47,8 +61,14 @@ fn formats_trace_span_observation_as_stable_internal_trace_record() {
     assert_eq!(record.resource["service.name"], "checkout-api");
     assert_eq!(record.attributes["trace.correlation.kind"], "synthetic");
     assert_eq!(record.attributes["trace.correlation.confidence"], "high");
+    assert_eq!(record.attributes["net.transport"], "tcp");
+    assert!(!record.attributes.contains_key("auth.token"));
+    assert!(!record.attributes.contains_key("custom.too_large"));
     assert_eq!(record.attributes["server.address"], "203.0.113.10");
     assert_eq!(record.attributes["server.port"], 443);
+    assert_eq!(record.attributes["server.k8s.namespace.name"], "default");
+    assert_eq!(record.attributes["server.k8s.pod.name"], "api-123");
+    assert_eq!(record.attributes["server.container.id"], "container-a");
     assert_eq!(record.attributes["process.pid"], 42);
 }
 
@@ -58,7 +78,7 @@ fn formats_service_interaction_without_inventing_trace_ids() {
         "generator.trace_correlation",
         Some("node-a".to_string()),
         ServiceInteractionSpanObservation {
-            name: "tcp client 203.0.113.10:443".to_string(),
+            name: "tcp client".to_string(),
             trace_id: None,
             span_id: None,
             parent_span_id: None,
@@ -92,7 +112,7 @@ fn formats_service_path_and_warning_trace_foundation_records() {
         "generator.trace_correlation",
         Some("node-a".to_string()),
         TraceServicePathObservation {
-            path_key: "default/api-123/api->api.example.com:unknown/udp".to_string(),
+            path_key: "trace-path:0123456789abcdef".to_string(),
             source: source_endpoint(),
             destination: DependencyEndpoint {
                 workload: None,
@@ -135,7 +155,7 @@ fn formats_service_path_and_warning_trace_foundation_records() {
     assert_eq!(path_record.name, "trace.service.path");
     assert_eq!(
         path_record.attributes["trace.service.path.key"],
-        "default/api-123/api->api.example.com:unknown/udp"
+        "trace-path:0123456789abcdef"
     );
     assert_eq!(
         path_record.attributes["dns.question.name"],
@@ -150,6 +170,15 @@ fn formats_service_path_and_warning_trace_foundation_records() {
     assert_eq!(
         warning_record.attributes["trace.source.signal.kind"],
         "network_connection_close"
+    );
+    assert_eq!(
+        warning_record.attributes["server.k8s.namespace.name"],
+        "default"
+    );
+    assert_eq!(warning_record.attributes["server.k8s.pod.name"], "api-123");
+    assert_eq!(
+        warning_record.attributes["server.container.id"],
+        "container-a"
     );
 }
 
@@ -196,8 +225,8 @@ fn trace_peer_context() -> TracePeerContext {
         address: Some("203.0.113.10".to_string()),
         port: Some(443),
         domain: None,
-        workload: None,
-        container: None,
+        workload: Some(kubernetes_context()),
+        container: Some(container_context()),
     }
 }
 

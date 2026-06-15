@@ -7,6 +7,10 @@ use e_navigator_signals::{
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+const MAX_FORMATTED_TRACE_ATTRIBUTES: usize = 16;
+const MAX_TRACE_ATTRIBUTE_KEY_BYTES: usize = 128;
+const MAX_TRACE_ATTRIBUTE_VALUE_BYTES: usize = 256;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OtelTraceRecordKind {
@@ -297,20 +301,10 @@ fn append_endpoint_attributes(
         attributes.insert("dns.question.name".to_string(), serde_json::json!(domain));
     }
     if let Some(workload) = &endpoint.workload {
-        attributes.insert(
-            format!("{prefix}.k8s.namespace.name"),
-            serde_json::json!(workload.namespace),
-        );
-        attributes.insert(
-            format!("{prefix}.k8s.pod.name"),
-            serde_json::json!(workload.pod_name),
-        );
+        append_workload_attributes(attributes, prefix, workload);
     }
     if let Some(container) = &endpoint.container {
-        attributes.insert(
-            format!("{prefix}.container.id"),
-            serde_json::json!(container.container_id),
-        );
+        append_container_attributes(attributes, prefix, container);
     }
 }
 
@@ -328,6 +322,53 @@ fn append_peer_attributes(
         if let Some(domain) = &peer.domain {
             attributes.insert("dns.question.name".to_string(), serde_json::json!(domain));
         }
+        if let Some(workload) = &peer.workload {
+            append_workload_attributes(attributes, "server", workload);
+        }
+        if let Some(container) = &peer.container {
+            append_container_attributes(attributes, "server", container);
+        }
+    }
+}
+
+fn append_workload_attributes(
+    attributes: &mut BTreeMap<String, serde_json::Value>,
+    prefix: &str,
+    workload: &KubernetesContext,
+) {
+    attributes.insert(
+        format!("{prefix}.k8s.namespace.name"),
+        serde_json::json!(workload.namespace),
+    );
+    attributes.insert(
+        format!("{prefix}.k8s.pod.name"),
+        serde_json::json!(workload.pod_name),
+    );
+    if let Some(pod_uid) = &workload.pod_uid {
+        attributes.insert(format!("{prefix}.k8s.pod.uid"), serde_json::json!(pod_uid));
+    }
+    if let Some(container_name) = &workload.container_name {
+        attributes.insert(
+            format!("{prefix}.k8s.container.name"),
+            serde_json::json!(container_name),
+        );
+    }
+}
+
+fn append_container_attributes(
+    attributes: &mut BTreeMap<String, serde_json::Value>,
+    prefix: &str,
+    container: &ContainerContext,
+) {
+    attributes.insert(
+        format!("{prefix}.container.id"),
+        serde_json::json!(container.container_id),
+    );
+    if let Some(runtime) = &container.runtime {
+        attributes.insert(
+            format!("{prefix}.container.runtime"),
+            serde_json::json!(runtime),
+        );
     }
 }
 
@@ -335,12 +376,45 @@ fn append_trace_attributes(
     attributes: &mut BTreeMap<String, serde_json::Value>,
     source: &[TraceAttribute],
 ) {
+    let mut accepted = 0;
     for attribute in source {
+        if accepted >= MAX_FORMATTED_TRACE_ATTRIBUTES {
+            break;
+        }
+        if !trace_attribute_allowed(attribute, attributes) {
+            continue;
+        }
         attributes.insert(
             attribute.key.clone(),
             serde_json::json!(attribute.value.clone()),
         );
+        accepted += 1;
     }
+}
+
+fn trace_attribute_allowed(
+    attribute: &TraceAttribute,
+    existing: &BTreeMap<String, serde_json::Value>,
+) -> bool {
+    if attribute.key.is_empty()
+        || attribute.key.len() > MAX_TRACE_ATTRIBUTE_KEY_BYTES
+        || attribute.value.len() > MAX_TRACE_ATTRIBUTE_VALUE_BYTES
+        || existing.contains_key(&attribute.key)
+    {
+        return false;
+    }
+
+    let key = attribute.key.to_ascii_lowercase();
+    ![
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "authorization",
+        "cookie",
+    ]
+    .iter()
+    .any(|sensitive| key.contains(sensitive))
 }
 
 fn protocol_name(protocol: NetworkProtocol) -> &'static str {

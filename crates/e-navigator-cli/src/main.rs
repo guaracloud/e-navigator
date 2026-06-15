@@ -727,6 +727,27 @@ mod tests {
         assert_eq!(registry.processors.len(), 0);
         assert_eq!(registry.generators.len(), 6);
         assert_eq!(registry.sinks.len(), 1);
+
+        let generator_names = registry
+            .generators
+            .iter()
+            .map(|generator| generator.metadata().name.to_string())
+            .collect::<Vec<_>>();
+        assert!(generator_names.contains(&"generator.trace_correlation".to_string()));
+
+        for module in &mut config.modules {
+            if module.name == "generator.trace_correlation" {
+                module.enabled = false;
+            }
+        }
+        let registry = build_registry(&config, SourceMode::Synthetic, Some("node-a".to_string()));
+        let generator_names = registry
+            .generators
+            .iter()
+            .map(|generator| generator.metadata().name.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(registry.generators.len(), 5);
+        assert!(!generator_names.contains(&"generator.trace_correlation".to_string()));
     }
 
     #[test]

@@ -19,7 +19,7 @@ Phase 6 builds a distributed tracing foundation on the bounded runtime, network,
 - A bounded resource metric generator for low-cardinality node, process, and cgroup/container metrics.
 - A dependency graph generator for observed network edges.
 - Versioned trace-foundation schemas for trace span observations, service interaction span observations, service path observations, and trace correlation warnings.
-- A bounded trace correlation generator for network-inferred service interactions, dependency/DNS-derived service paths, duplicate suppression, and missing-attribution warnings.
+- A bounded trace correlation generator for network-inferred service interactions, direct/upstream dependency-edge service paths, DNS-derived service paths, duplicate suppression, and missing-attribution warnings.
 - A narrow runtime security generator for process and network findings.
 - An internal OTEL-compatible metric formatter boundary for future exporters.
 - An internal OTEL-compatible trace formatter boundary for future exporters.

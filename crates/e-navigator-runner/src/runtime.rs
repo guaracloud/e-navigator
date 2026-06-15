@@ -1,9 +1,12 @@
 use e_navigator_core::{CoreError, CoreResult, ModuleMetadata, RuntimeConfig};
 use e_navigator_signals::SignalEnvelope;
+use std::collections::VecDeque;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::debug;
 
 use crate::ModuleRegistry;
+
+const MAX_DERIVED_SIGNALS_PER_GENERATOR: usize = 64;
 
 pub struct Runner {
     config: RuntimeConfig,
@@ -100,16 +103,34 @@ impl Runner {
 
         let signal = current.ok_or(CoreError::PipelineClosed)?;
 
-        for generator in &self.registry.generators {
-            self.handle_generator(generator.as_ref(), &signal).await?;
+        let mut pending_generated = VecDeque::new();
+        for (generator_index, generator) in self.registry.generators.iter().enumerate() {
+            let generated = self.handle_generator(generator.as_ref(), &signal).await?;
+            for derived in generated {
+                self.write_to_sinks(&derived).await?;
+                pending_generated.push_back((generator_index + 1, derived));
+            }
         }
 
-        for sink in &self.registry.sinks {
-            let metadata = sink.metadata();
-            sink.write(&signal)
-                .await
-                .map_err(|err| with_module_context(metadata, err))?;
+        while let Some((start_index, generated_signal)) = pending_generated.pop_front() {
+            for (generator_index, generator) in self
+                .registry
+                .generators
+                .iter()
+                .enumerate()
+                .skip(start_index)
+            {
+                let downstream = self
+                    .handle_generator(generator.as_ref(), &generated_signal)
+                    .await?;
+                for derived in downstream {
+                    self.write_to_sinks(&derived).await?;
+                    pending_generated.push_back((generator_index + 1, derived));
+                }
+            }
         }
+
+        self.write_to_sinks(&signal).await?;
 
         Ok(())
     }
@@ -118,11 +139,12 @@ impl Runner {
         &self,
         generator: &dyn e_navigator_core::Generator<SignalEnvelope>,
         signal: &SignalEnvelope,
-    ) -> CoreResult<()> {
+    ) -> CoreResult<Vec<SignalEnvelope>> {
         let (derived_tx, mut derived_rx) = mpsc::channel(16);
         let observe = generator.observe(signal, &derived_tx);
         tokio::pin!(observe);
         let mut observe_done = false;
+        let mut generated = Vec::new();
 
         while !observe_done {
             tokio::select! {
@@ -132,28 +154,47 @@ impl Runner {
                 }
                 derived = derived_rx.recv() => {
                     if let Some(derived) = derived {
-                        for sink in &self.registry.sinks {
-                            let metadata = sink.metadata();
-                            sink.write(&derived)
-                                .await
-                                .map_err(|err| with_module_context(metadata, err))?;
-                        }
+                        push_generated(&mut generated, derived, generator.metadata())?;
                     }
                 }
             }
         }
 
         while let Ok(derived) = derived_rx.try_recv() {
-            for sink in &self.registry.sinks {
-                let metadata = sink.metadata();
-                sink.write(&derived)
-                    .await
-                    .map_err(|err| with_module_context(metadata, err))?;
-            }
+            push_generated(&mut generated, derived, generator.metadata())?;
+        }
+
+        Ok(generated)
+    }
+
+    async fn write_to_sinks(&self, signal: &SignalEnvelope) -> CoreResult<()> {
+        for sink in &self.registry.sinks {
+            let metadata = sink.metadata();
+            sink.write(signal)
+                .await
+                .map_err(|err| with_module_context(metadata, err))?;
         }
 
         Ok(())
     }
+}
+
+fn push_generated(
+    generated: &mut Vec<SignalEnvelope>,
+    signal: SignalEnvelope,
+    metadata: ModuleMetadata,
+) -> CoreResult<()> {
+    if generated.len() >= MAX_DERIVED_SIGNALS_PER_GENERATOR {
+        return Err(CoreError::ModuleFailed {
+            module: metadata.name.to_string(),
+            message: format!(
+                "generator emitted more than {MAX_DERIVED_SIGNALS_PER_GENERATOR} derived signals for one input"
+            ),
+        });
+    }
+
+    generated.push(signal);
+    Ok(())
 }
 
 async fn finish_source_results(
@@ -193,7 +234,7 @@ mod tests {
     use e_navigator_core::{
         CoreResult, Generator, ModuleKind, ModuleMetadata, Processor, Signal, Sink, Source,
     };
-    use e_navigator_signals::{ExecEvent, ProcessExitEvent, SignalEnvelope};
+    use e_navigator_signals::{ExecEvent, ProcessExitEvent, SignalEnvelope, SignalPayload};
     use tokio::{
         sync::{Mutex, mpsc},
         time::{Duration, timeout},
@@ -331,6 +372,81 @@ mod tests {
         }
     }
 
+    struct ProcessExitGenerator;
+
+    #[async_trait]
+    impl Generator<SignalEnvelope> for ProcessExitGenerator {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("generator.process_exit", ModuleKind::Generator)
+        }
+
+        async fn observe(
+            &self,
+            signal: &SignalEnvelope,
+            tx: &mpsc::Sender<SignalEnvelope>,
+        ) -> CoreResult<()> {
+            if matches!(&signal.payload, SignalPayload::Exec(_)) {
+                tx.send(SignalEnvelope::process_exit(
+                    "generator.process_exit",
+                    None,
+                    ProcessExitEvent {
+                        pid: 1,
+                        ppid: None,
+                        uid: None,
+                        command: "generated-exit".to_string(),
+                        exit_code: Some(0),
+                        runtime_nanos: Some(1),
+                        timestamp_unix_nanos: 2,
+                        container: None,
+                        kubernetes: None,
+                    },
+                ))
+                .await
+                .map_err(|_| CoreError::PipelineClosed)?;
+            }
+
+            Ok(())
+        }
+    }
+
+    struct DownstreamExecGenerator;
+
+    #[async_trait]
+    impl Generator<SignalEnvelope> for DownstreamExecGenerator {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("generator.downstream_exec", ModuleKind::Generator)
+        }
+
+        async fn observe(
+            &self,
+            signal: &SignalEnvelope,
+            tx: &mpsc::Sender<SignalEnvelope>,
+        ) -> CoreResult<()> {
+            if matches!(&signal.payload, SignalPayload::ProcessExit(_)) {
+                tx.send(SignalEnvelope::exec(
+                    "generator.downstream_exec",
+                    None,
+                    ExecEvent {
+                        pid: 2,
+                        ppid: Some(1),
+                        uid: None,
+                        command: "downstream-derived".to_string(),
+                        executable: None,
+                        arguments: vec![],
+                        cgroup_id: None,
+                        timestamp_unix_nanos: 3,
+                        container: None,
+                        kubernetes: None,
+                    },
+                ))
+                .await
+                .map_err(|_| CoreError::PipelineClosed)?;
+            }
+
+            Ok(())
+        }
+    }
+
     #[tokio::test]
     async fn runner_routes_source_signal_to_sink() {
         let seen = Arc::new(Mutex::new(Vec::new()));
@@ -396,6 +512,37 @@ mod tests {
             .expect("runner exits after source closes");
 
         assert_eq!(seen.lock().await.len(), 18);
+    }
+
+    #[tokio::test]
+    async fn runner_routes_generated_signals_to_downstream_generators() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(OneSignalSource))
+            .with_generator(Box::new(ProcessExitGenerator))
+            .with_generator(Box::new(DownstreamExecGenerator))
+            .with_sink(Box::new(MemorySink { seen: seen.clone() }));
+        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
+
+        runner
+            .run()
+            .await
+            .expect("runner exits after source closes");
+
+        let seen = seen.lock().await;
+        assert_eq!(seen.len(), 3);
+        assert!(seen.iter().any(|signal| {
+            matches!(
+                &signal.payload,
+                SignalPayload::ProcessExit(event) if event.command == "generated-exit"
+            )
+        }));
+        assert!(seen.iter().any(|signal| {
+            matches!(
+                &signal.payload,
+                SignalPayload::Exec(event) if event.command == "downstream-derived"
+            )
+        }));
     }
 
     #[tokio::test]

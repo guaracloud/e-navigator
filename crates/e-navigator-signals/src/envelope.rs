@@ -69,6 +69,10 @@ pub enum SignalPayload {
     DnsResponse(DnsResponseEvent),
     DnsCounterMetric(DnsCounterMetric),
     DnsLatencyMetric(DnsLatencyMetric),
+    TraceSpanObservation(TraceSpanObservation),
+    ServiceInteractionSpanObservation(ServiceInteractionSpanObservation),
+    TraceServicePathObservation(TraceServicePathObservation),
+    TraceCorrelationWarning(TraceCorrelationWarning),
     DependencyEdge(DependencyEdgeEvent),
     RuntimeSecurityFinding(RuntimeSecurityFinding),
     NodeCpuObservation(NodeCpuObservation),
@@ -83,10 +87,6 @@ pub enum SignalPayload {
     CgroupFileDescriptorObservation(CgroupFileDescriptorObservation),
     ResourceGaugeMetric(ResourceGaugeMetric),
     ResourceCounterMetric(ResourceCounterMetric),
-    TraceSpanObservation(TraceSpanObservation),
-    ServiceInteractionSpanObservation(ServiceInteractionSpanObservation),
-    TraceServicePathObservation(TraceServicePathObservation),
-    TraceCorrelationWarning(TraceCorrelationWarning),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1099,7 +1099,7 @@ mod tests {
             "generator.trace_correlation",
             Some("node-a".to_string()),
             ServiceInteractionSpanObservation {
-                name: "tcp client 203.0.113.10:443".to_string(),
+                name: "tcp client".to_string(),
                 trace_id: None,
                 span_id: None,
                 parent_span_id: None,
@@ -1149,7 +1149,7 @@ mod tests {
             "generator.trace_correlation",
             Some("node-a".to_string()),
             TraceServicePathObservation {
-                path_key: "default/api->203.0.113.10:443/tcp".to_string(),
+                path_key: "trace-path:0123456789abcdef".to_string(),
                 source: DependencyEndpoint {
                     workload: Some(kubernetes_context()),
                     container: Some(container_context()),
@@ -1179,15 +1179,22 @@ mod tests {
             serde_json::from_value::<SignalEnvelope>(json.clone()).expect("signal deserializes");
 
         assert_eq!(json["kind"], "trace_service_path_observation");
-        assert_eq!(
-            json["payload"]["path_key"],
-            "default/api->203.0.113.10:443/tcp"
-        );
+        assert_eq!(json["payload"]["path_key"], "trace-path:0123456789abcdef");
         assert_eq!(json["payload"]["observations"], 2);
         assert_eq!(json["payload"]["correlation_kind"], "dependency_inferred");
         assert_eq!(
             decoded.signal_kind(),
             SignalKind::TraceServicePathObservation
+        );
+
+        let decoded_payload =
+            serde_json::from_value::<SignalPayload>(json["payload"].clone()).expect("payload");
+        assert!(
+            matches!(
+                decoded_payload,
+                SignalPayload::TraceServicePathObservation(_)
+            ),
+            "direct SignalPayload deserialization must preserve trace service path identity"
         );
     }
 

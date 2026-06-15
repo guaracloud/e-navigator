@@ -102,7 +102,7 @@ impl TraceCorrelationGenerator {
             "generator.trace_correlation",
             signal.host.clone(),
             ServiceInteractionSpanObservation {
-                name: interaction_name(event.protocol, &event.remote_address, event.remote_port),
+                name: interaction_name(event.protocol),
                 trace_id: None,
                 span_id: None,
                 parent_span_id: None,
@@ -169,7 +169,7 @@ impl TraceCorrelationGenerator {
             "generator.trace_correlation",
             signal.host.clone(),
             ServiceInteractionSpanObservation {
-                name: interaction_name(event.protocol, &event.remote_address, event.remote_port),
+                name: interaction_name(event.protocol),
                 trace_id: None,
                 span_id: None,
                 parent_span_id: None,
@@ -227,7 +227,7 @@ impl TraceCorrelationGenerator {
                     source: event.source.clone(),
                     destination: event.destination.clone(),
                     protocol: event.protocol,
-                    observations: event.observations,
+                    observations: PathObservationCount::Cumulative(event.observations),
                     first_seen_unix_nanos: event.first_seen_unix_nanos,
                     last_seen_unix_nanos: event.last_seen_unix_nanos,
                     correlation_kind: TraceCorrelationKind::DependencyInferred,
@@ -268,7 +268,7 @@ impl TraceCorrelationGenerator {
                 domain: Some(domain),
             },
             protocol: event.transport_protocol,
-            observations: 1,
+            observations: PathObservationCount::Delta(1),
             first_seen_unix_nanos: event.timestamp_unix_nanos,
             last_seen_unix_nanos: event.timestamp_unix_nanos,
             correlation_kind: TraceCorrelationKind::DependencyInferred,
@@ -299,7 +299,18 @@ impl TraceCorrelationGenerator {
             let last_seen = state
                 .last_seen_unix_nanos
                 .max(observation.last_seen_unix_nanos);
-            let observations = state.observations.max(observation.observations);
+            let observations = match observation.observations {
+                PathObservationCount::Cumulative(count) => state.observations.max(count),
+                PathObservationCount::Delta(count) => {
+                    if observation.first_seen_unix_nanos == state.last_seen_unix_nanos
+                        && observation.last_seen_unix_nanos == state.last_seen_unix_nanos
+                    {
+                        state.observations
+                    } else {
+                        state.observations.saturating_add(count)
+                    }
+                }
+            };
             if first_seen == state.first_seen_unix_nanos
                 && last_seen == state.last_seen_unix_nanos
                 && observations == state.observations
@@ -399,12 +410,18 @@ struct PathObservation {
     source: DependencyEndpoint,
     destination: DependencyEndpoint,
     protocol: NetworkProtocol,
-    observations: u64,
+    observations: PathObservationCount,
     first_seen_unix_nanos: u64,
     last_seen_unix_nanos: u64,
     correlation_kind: TraceCorrelationKind,
     confidence: TraceConfidence,
     attributes: Vec<TraceAttribute>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PathObservationCount {
+    Cumulative(u64),
+    Delta(u64),
 }
 
 #[derive(Debug, Clone)]
@@ -428,7 +445,7 @@ impl PathState {
             source: observation.source,
             destination: observation.destination,
             protocol: observation.protocol,
-            observations: observation.observations,
+            observations: observation.observations.initial_count(),
             first_seen_unix_nanos: observation.first_seen_unix_nanos,
             last_seen_unix_nanos: observation.last_seen_unix_nanos,
             correlation_kind: observation.correlation_kind,
@@ -457,6 +474,14 @@ impl PathState {
     }
 }
 
+impl PathObservationCount {
+    fn initial_count(self) -> u64 {
+        match self {
+            Self::Cumulative(count) | Self::Delta(count) => count,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct PathKey {
     path_key: String,
@@ -464,22 +489,35 @@ struct PathKey {
 
 impl PathKey {
     fn from_observation(observation: &PathObservation) -> Self {
+        let canonical_key = format!(
+            "{}->{}",
+            endpoint_label(
+                &observation.source,
+                observation.protocol,
+                EndpointSide::Source,
+            ),
+            endpoint_label(
+                &observation.destination,
+                observation.protocol,
+                EndpointSide::Destination,
+            ),
+        );
         Self {
             path_key: format!(
-                "{}->{}",
-                endpoint_label(
-                    &observation.source,
-                    observation.protocol,
-                    EndpointSide::Source,
-                ),
-                endpoint_label(
-                    &observation.destination,
-                    observation.protocol,
-                    EndpointSide::Destination,
-                ),
+                "trace-path:{:016x}",
+                stable_hash64(canonical_key.as_bytes())
             ),
         }
     }
+}
+
+fn stable_hash64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -592,10 +630,11 @@ fn endpoint_label(
     side: EndpointSide,
 ) -> String {
     if let Some(workload) = &endpoint.workload {
+        let pod_identity = workload.pod_uid.as_deref().unwrap_or(&workload.pod_name);
         return format!(
             "{}/{}/{}",
             workload.namespace,
-            workload.pod_name,
+            pod_identity,
             workload.container_name.as_deref().unwrap_or("unknown")
         );
     }
@@ -627,13 +666,8 @@ fn endpoint_label(
     }
 }
 
-fn interaction_name(protocol: NetworkProtocol, remote_address: &str, remote_port: u16) -> String {
-    format!(
-        "{} client {}:{}",
-        protocol_name(protocol),
-        remote_address,
-        remote_port
-    )
+fn interaction_name(protocol: NetworkProtocol) -> String {
+    format!("{} client", protocol_name(protocol))
 }
 
 fn network_attributes(

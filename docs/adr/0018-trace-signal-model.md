@@ -18,7 +18,7 @@ Add versioned `SignalEnvelope` payloads for:
 
 Trace IDs, span IDs, and parent span IDs are optional. Synthetic fixtures may include explicit IDs. Network- and dependency-inferred observations must leave those fields empty unless a future source actually observes trace context.
 
-Trace payloads carry host, process, container, Kubernetes, source/destination, peer, timestamp, duration, correlation kind, confidence, and bounded attributes. Correlation kinds include observed trace context, network-inferred, dependency-inferred, and synthetic.
+Trace payloads carry the applicable subset of host, process, container, Kubernetes, source/destination, peer, timestamp, duration, correlation kind, confidence, and bounded attributes for each payload kind. Correlation warnings carry warning metadata and correlation kind, but do not pretend to be spans.
 
 ## Consequences
 

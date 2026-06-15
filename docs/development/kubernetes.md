@@ -21,7 +21,7 @@ The Phase 6 ConfigMap enables:
 - bounded low-cardinality resource metric generation,
 - bounded network metric generation for connection counters, failures, durations, active connections, traffic destinations, and protocol distribution,
 - bounded DNS metric generation from DNS signals,
-- bounded trace correlation from network, dependency, and DNS observations,
+- bounded trace correlation from network observations, direct/upstream dependency-edge observations, and DNS observations,
 - dependency edge generation from network observations,
 - DNS domain dependency edge generation when DNS response signals are available,
 - runtime security findings for shell-in-container, exact network-tool execution, external container egress, and Kubernetes API connections matched from configured endpoints or in-cluster Kubernetes service environment.
@@ -69,9 +69,9 @@ Expected exec result: JSON exec or process exit signals from `source.aya_exec` a
 
 Expected network result: JSON network connection signals from `source.aya_network` are visible, and network metric, dependency edge, or network runtime security finding signals appear when the observed connection matches generator inputs.
 
-Expected resource result: JSON resource observation signals from `source.host_resource` and resource metric signals from `generator.resource_metrics` appear in the DaemonSet logs after the configured sampling interval. These signals require the configured read-only `/host/proc` and `/host/sys` mounts. Treat them as host-resource runtime proof only after running in a real Linux Kubernetes node environment.
+Expected resource result: JSON resource observation signals from `source.host_resource` and resource metric signals from `generator.resource_metrics` appear in the DaemonSet logs after the configured sampling interval. These signals require the configured read-only `/host/proc` and `/host/cgroup` mounts. Treat them as host-resource runtime proof only after running in a real Linux Kubernetes node environment.
 
-Expected trace-foundation result: JSON `service_interaction_span_observation` signals may appear for observed network close or failure events, and `trace_service_path_observation` signals may appear when dependency or DNS observations are available. Trace IDs, span IDs, routes, methods, status codes, retries, and request errors are not expected from the current Aya sources unless a future source actually observes them.
+Expected trace-foundation result: JSON `service_interaction_span_observation` signals may appear for observed network close or failure events, and `trace_service_path_observation` signals may appear when direct/upstream dependency-edge observations or DNS observations are available. Trace IDs, span IDs, routes, methods, status codes, retries, and request errors are not expected from the current Aya sources unless a future source actually observes them.
 
 ## Privilege Boundary
 

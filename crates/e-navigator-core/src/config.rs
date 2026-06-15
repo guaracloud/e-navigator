@@ -246,19 +246,28 @@ impl Default for TraceCorrelationConfig {
 }
 
 impl TraceCorrelationConfig {
+    pub const MAX_SERVICE_PATHS_LIMIT: usize = 65_536;
+    pub const MAX_SEEN_INTERACTIONS_LIMIT: usize = 131_072;
+    pub const MAX_WARNINGS_LIMIT: usize = 16_384;
+
     fn validate(&self) -> Result<(), String> {
-        if self.max_service_paths == 0 {
-            return Err(
-                "trace_correlation.max_service_paths must be greater than zero".to_string(),
-            );
+        if !(1..=Self::MAX_SERVICE_PATHS_LIMIT).contains(&self.max_service_paths) {
+            return Err(format!(
+                "trace_correlation.max_service_paths must be between 1 and {}",
+                Self::MAX_SERVICE_PATHS_LIMIT
+            ));
         }
-        if self.max_seen_interactions == 0 {
-            return Err(
-                "trace_correlation.max_seen_interactions must be greater than zero".to_string(),
-            );
+        if !(1..=Self::MAX_SEEN_INTERACTIONS_LIMIT).contains(&self.max_seen_interactions) {
+            return Err(format!(
+                "trace_correlation.max_seen_interactions must be between 1 and {}",
+                Self::MAX_SEEN_INTERACTIONS_LIMIT
+            ));
         }
-        if self.max_warnings == 0 {
-            return Err("trace_correlation.max_warnings must be greater than zero".to_string());
+        if !(1..=Self::MAX_WARNINGS_LIMIT).contains(&self.max_warnings) {
+            return Err(format!(
+                "trace_correlation.max_warnings must be between 1 and {}",
+                Self::MAX_WARNINGS_LIMIT
+            ));
         }
         Ok(())
     }
@@ -637,7 +646,10 @@ mod tests {
         };
         assert_eq!(
             invalid_paths.validate(),
-            Err("trace_correlation.max_service_paths must be greater than zero".to_string())
+            Err(format!(
+                "trace_correlation.max_service_paths must be between 1 and {}",
+                TraceCorrelationConfig::MAX_SERVICE_PATHS_LIMIT
+            ))
         );
 
         let invalid_interactions = RuntimeConfig {
@@ -650,7 +662,10 @@ mod tests {
         };
         assert_eq!(
             invalid_interactions.validate(),
-            Err("trace_correlation.max_seen_interactions must be greater than zero".to_string())
+            Err(format!(
+                "trace_correlation.max_seen_interactions must be between 1 and {}",
+                TraceCorrelationConfig::MAX_SEEN_INTERACTIONS_LIMIT
+            ))
         );
 
         let invalid_warnings = RuntimeConfig {
@@ -663,7 +678,58 @@ mod tests {
         };
         assert_eq!(
             invalid_warnings.validate(),
-            Err("trace_correlation.max_warnings must be greater than zero".to_string())
+            Err(format!(
+                "trace_correlation.max_warnings must be between 1 and {}",
+                TraceCorrelationConfig::MAX_WARNINGS_LIMIT
+            ))
+        );
+
+        let too_many_paths = RuntimeConfig {
+            trace_correlation: TraceCorrelationConfig {
+                max_service_paths: TraceCorrelationConfig::MAX_SERVICE_PATHS_LIMIT + 1,
+                max_seen_interactions: 128,
+                max_warnings: 128,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            too_many_paths.validate(),
+            Err(format!(
+                "trace_correlation.max_service_paths must be between 1 and {}",
+                TraceCorrelationConfig::MAX_SERVICE_PATHS_LIMIT
+            ))
+        );
+
+        let too_many_interactions = RuntimeConfig {
+            trace_correlation: TraceCorrelationConfig {
+                max_service_paths: 128,
+                max_seen_interactions: TraceCorrelationConfig::MAX_SEEN_INTERACTIONS_LIMIT + 1,
+                max_warnings: 128,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            too_many_interactions.validate(),
+            Err(format!(
+                "trace_correlation.max_seen_interactions must be between 1 and {}",
+                TraceCorrelationConfig::MAX_SEEN_INTERACTIONS_LIMIT
+            ))
+        );
+
+        let too_many_warnings = RuntimeConfig {
+            trace_correlation: TraceCorrelationConfig {
+                max_service_paths: 128,
+                max_seen_interactions: 128,
+                max_warnings: TraceCorrelationConfig::MAX_WARNINGS_LIMIT + 1,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            too_many_warnings.validate(),
+            Err(format!(
+                "trace_correlation.max_warnings must be between 1 and {}",
+                TraceCorrelationConfig::MAX_WARNINGS_LIMIT
+            ))
         );
     }
 

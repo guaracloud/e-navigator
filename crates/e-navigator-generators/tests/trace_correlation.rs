@@ -20,7 +20,7 @@ async fn network_close_generates_network_inferred_service_interaction_span() {
     let SignalPayload::ServiceInteractionSpanObservation(span) = &outputs[0].payload else {
         panic!("expected service interaction span");
     };
-    assert_eq!(span.name, "tcp client 203.0.113.10:443");
+    assert_eq!(span.name, "tcp client");
     assert_eq!(span.trace_id, None);
     assert_eq!(span.span_id, None);
     assert_eq!(span.parent_span_id, None);
@@ -56,6 +56,30 @@ async fn failed_connection_generates_error_interaction_span() {
 }
 
 #[tokio::test]
+async fn failed_connection_without_attribution_emits_warning() {
+    let generator = TraceCorrelationGenerator::default();
+    let signal = network_failure_signal("203.0.113.10", 443, 4_000, 111, false);
+
+    let outputs = observe(&generator, &signal).await;
+
+    assert_eq!(outputs.len(), 2);
+    assert!(outputs.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::ServiceInteractionSpanObservation(span)
+                if span.error_type == Some("errno_111".to_string())
+        )
+    }));
+    assert!(outputs.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::TraceCorrelationWarning(warning)
+                if warning.source_signal_kind == "network_connection_failure"
+        )
+    }));
+}
+
+#[tokio::test]
 async fn dependency_edge_generates_service_path_observation() {
     let generator = TraceCorrelationGenerator::default();
     let signal = dependency_edge_signal("203.0.113.10", Some(443), None, 2);
@@ -66,7 +90,7 @@ async fn dependency_edge_generates_service_path_observation() {
     let SignalPayload::TraceServicePathObservation(path) = &outputs[0].payload else {
         panic!("expected trace service path");
     };
-    assert_eq!(path.path_key, "default/api-123/api->203.0.113.10:443/tcp");
+    assert_low_cardinality_path_key(&path.path_key);
     assert_eq!(path.observations, 2);
     assert_eq!(path.first_seen_unix_nanos, 1_000);
     assert_eq!(path.last_seen_unix_nanos, 2_000);
@@ -88,10 +112,7 @@ async fn dns_response_generates_domain_service_path_when_successful() {
     let SignalPayload::TraceServicePathObservation(path) = &outputs[0].payload else {
         panic!("expected trace service path");
     };
-    assert_eq!(
-        path.path_key,
-        "default/api-123/api->api.example.com:unknown/udp"
-    );
+    assert_low_cardinality_path_key(&path.path_key);
     assert_eq!(path.destination.domain, Some("api.example.com".to_string()));
     assert_eq!(path.destination.address, None);
     assert_eq!(path.protocol, NetworkProtocol::Udp);
@@ -137,8 +158,57 @@ async fn deterministic_aggregation_uses_stable_path_key() {
     let first_key = service_path_key(&first_outputs);
     let second_key = service_path_key(&second_outputs);
 
-    assert_eq!(first_key, "default/api-123/api->203.0.113.10:443/tcp");
+    assert_low_cardinality_path_key(&first_key);
     assert_eq!(second_key, first_key);
+}
+
+#[tokio::test]
+async fn dns_service_path_counts_each_distinct_response() {
+    let generator = TraceCorrelationGenerator::default();
+    let first = dns_response_signal_at("api.example.com.", DnsResponseCode::NoError, 1_500);
+    let second = dns_response_signal_at("api.example.com.", DnsResponseCode::NoError, 1_600);
+
+    let first_outputs = observe(&generator, &first).await;
+    let second_outputs = observe(&generator, &second).await;
+
+    let SignalPayload::TraceServicePathObservation(first_path) = &first_outputs[0].payload else {
+        panic!("expected first trace service path");
+    };
+    let SignalPayload::TraceServicePathObservation(second_path) = &second_outputs[0].payload else {
+        panic!("expected second trace service path");
+    };
+    assert_eq!(first_path.observations, 1);
+    assert_eq!(second_path.observations, 2);
+    assert_eq!(second_path.first_seen_unix_nanos, 1_500);
+    assert_eq!(second_path.last_seen_unix_nanos, 1_600);
+}
+
+#[tokio::test]
+async fn service_path_key_distinguishes_recreated_pods_by_uid() {
+    let generator = TraceCorrelationGenerator::default();
+    let first = dependency_edge_signal_with_workload(
+        "203.0.113.10",
+        Some(443),
+        None,
+        1,
+        kubernetes_context_with_uid("api-123", Some("pod-uid-a")),
+    );
+    let second = dependency_edge_signal_with_workload(
+        "203.0.113.10",
+        Some(443),
+        None,
+        1,
+        kubernetes_context_with_uid("api-123", Some("pod-uid-b")),
+    );
+
+    let first_outputs = observe(&generator, &first).await;
+    let second_outputs = observe(&generator, &second).await;
+
+    let first_key = service_path_key(&first_outputs);
+    let second_key = service_path_key(&second_outputs);
+    assert_low_cardinality_path_key(&first_key);
+    assert_low_cardinality_path_key(&second_key);
+    assert_ne!(first_key, second_key);
 }
 
 #[tokio::test]
@@ -202,6 +272,14 @@ fn service_path_key(outputs: &[SignalEnvelope]) -> String {
             _ => None,
         })
         .expect("service path emitted")
+}
+
+fn assert_low_cardinality_path_key(path_key: &str) {
+    assert!(path_key.starts_with("trace-path:"));
+    assert!(!path_key.contains("203.0.113.10"));
+    assert!(!path_key.contains("api.example.com"));
+    assert!(!path_key.contains("api-123"));
+    assert!(!path_key.contains("pod-uid"));
 }
 
 fn network_open_signal(remote_address: &str, remote_port: u16, attributed: bool) -> SignalEnvelope {
@@ -286,12 +364,22 @@ fn dependency_edge_signal(
     domain: Option<&str>,
     observations: u64,
 ) -> SignalEnvelope {
+    dependency_edge_signal_with_workload(address, port, domain, observations, kubernetes_context())
+}
+
+fn dependency_edge_signal_with_workload(
+    address: &str,
+    port: Option<u16>,
+    domain: Option<&str>,
+    observations: u64,
+    workload: KubernetesContext,
+) -> SignalEnvelope {
     SignalEnvelope::dependency_edge(
         "generator.dependency_graph",
         Some("node-a".to_string()),
         DependencyEdgeEvent {
             source: DependencyEndpoint {
-                workload: Some(kubernetes_context()),
+                workload: Some(workload),
                 container: Some(container_context()),
                 address: None,
                 port: None,
@@ -313,6 +401,14 @@ fn dependency_edge_signal(
 }
 
 fn dns_response_signal(query_name: &str, response_code: DnsResponseCode) -> SignalEnvelope {
+    dns_response_signal_at(query_name, response_code, 1_500)
+}
+
+fn dns_response_signal_at(
+    query_name: &str,
+    response_code: DnsResponseCode,
+    timestamp_unix_nanos: u64,
+) -> SignalEnvelope {
     SignalEnvelope::dns_response(
         "source.test",
         Some("node-a".to_string()),
@@ -325,7 +421,7 @@ fn dns_response_signal(query_name: &str, response_code: DnsResponseCode) -> Sign
             transport_protocol: NetworkProtocol::Udp,
             server_address: Some("10.96.0.10".to_string()),
             server_port: Some(53),
-            timestamp_unix_nanos: 1_500,
+            timestamp_unix_nanos,
             container: Some(container_context()),
             kubernetes: Some(kubernetes_context()),
         },
@@ -358,10 +454,14 @@ fn container_context() -> ContainerContext {
 }
 
 fn kubernetes_context() -> KubernetesContext {
+    kubernetes_context_with_uid("api-123", Some("pod-uid"))
+}
+
+fn kubernetes_context_with_uid(pod_name: &str, pod_uid: Option<&str>) -> KubernetesContext {
     KubernetesContext {
         namespace: "default".to_string(),
-        pod_name: "api-123".to_string(),
-        pod_uid: Some("pod-uid".to_string()),
+        pod_name: pod_name.to_string(),
+        pod_uid: pod_uid.map(str::to_string),
         container_name: Some("api".to_string()),
         node_name: Some("node-a".to_string()),
         labels: BTreeMap::new(),

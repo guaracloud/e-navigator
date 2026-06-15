@@ -29,8 +29,8 @@ data:
 
     [resource_source]
     procfs_root = "/host/proc"
-    sysfs_root = "/host/sys"
-    cgroup_root = "/host/sys/fs/cgroup"
+    sysfs_root = "/sys"
+    cgroup_root = "/host/cgroup"
     sample_interval_millis = 15000
     max_processes = 128
     max_cgroups = 128
