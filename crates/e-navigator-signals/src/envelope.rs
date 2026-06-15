@@ -2,10 +2,13 @@ use e_navigator_core::Signal;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 
 use crate::{
-    DependencyEdgeEvent, DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent, DnsResponseEvent,
-    ExecEvent, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
+    CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
+    CgroupPidsObservation, DependencyEdgeEvent, DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent,
+    DnsResponseEvent, ExecEvent, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
     NetworkConnectionOpenEvent, NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric,
-    ProcessExitEvent, ProcessLifecycleDurationEvent, RuntimeSecurityFinding,
+    NodeCpuObservation, NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation,
+    NodeMemoryObservation, ProcessExitEvent, ProcessLifecycleDurationEvent,
+    ProcessResourceObservation, ResourceCounterMetric, ResourceGaugeMetric, RuntimeSecurityFinding,
 };
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
@@ -29,9 +32,21 @@ pub enum SignalKind {
     DnsLatencyMetric,
     DependencyEdge,
     RuntimeSecurityFinding,
+    NodeCpuObservation,
+    NodeLoadObservation,
+    NodeMemoryObservation,
+    NodeFilesystemObservation,
+    NodeDiskIoObservation,
+    ProcessResourceObservation,
+    CgroupCpuObservation,
+    CgroupMemoryObservation,
+    CgroupPidsObservation,
+    CgroupFileDescriptorObservation,
+    ResourceGaugeMetric,
+    ResourceCounterMetric,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 #[non_exhaustive]
 pub enum SignalPayload {
@@ -50,9 +65,21 @@ pub enum SignalPayload {
     DnsLatencyMetric(DnsLatencyMetric),
     DependencyEdge(DependencyEdgeEvent),
     RuntimeSecurityFinding(RuntimeSecurityFinding),
+    NodeCpuObservation(NodeCpuObservation),
+    NodeLoadObservation(NodeLoadObservation),
+    NodeMemoryObservation(NodeMemoryObservation),
+    NodeFilesystemObservation(NodeFilesystemObservation),
+    NodeDiskIoObservation(NodeDiskIoObservation),
+    ProcessResourceObservation(ProcessResourceObservation),
+    CgroupCpuObservation(CgroupCpuObservation),
+    CgroupMemoryObservation(CgroupMemoryObservation),
+    CgroupPidsObservation(CgroupPidsObservation),
+    CgroupFileDescriptorObservation(CgroupFileDescriptorObservation),
+    ResourceGaugeMetric(ResourceGaugeMetric),
+    ResourceCounterMetric(ResourceCounterMetric),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SignalEnvelope {
     pub schema_version: u16,
     kind: SignalKind,
@@ -160,6 +187,98 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
                     .map(SignalPayload::RuntimeSecurityFinding)
                     .map_err(|err| {
                         D::Error::custom(format!("invalid runtime_security_finding payload: {err}"))
+                    })?
+            }
+            SignalKind::NodeCpuObservation => {
+                serde_json::from_value::<NodeCpuObservation>(raw.payload)
+                    .map(SignalPayload::NodeCpuObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid node_cpu_observation payload: {err}"))
+                    })?
+            }
+            SignalKind::NodeLoadObservation => {
+                serde_json::from_value::<NodeLoadObservation>(raw.payload)
+                    .map(SignalPayload::NodeLoadObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid node_load_observation payload: {err}"))
+                    })?
+            }
+            SignalKind::NodeMemoryObservation => {
+                serde_json::from_value::<NodeMemoryObservation>(raw.payload)
+                    .map(SignalPayload::NodeMemoryObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid node_memory_observation payload: {err}"))
+                    })?
+            }
+            SignalKind::NodeFilesystemObservation => {
+                serde_json::from_value::<NodeFilesystemObservation>(raw.payload)
+                    .map(SignalPayload::NodeFilesystemObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid node_filesystem_observation payload: {err}"
+                        ))
+                    })?
+            }
+            SignalKind::NodeDiskIoObservation => {
+                serde_json::from_value::<NodeDiskIoObservation>(raw.payload)
+                    .map(SignalPayload::NodeDiskIoObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid node_disk_io_observation payload: {err}"))
+                    })?
+            }
+            SignalKind::ProcessResourceObservation => {
+                serde_json::from_value::<ProcessResourceObservation>(raw.payload)
+                    .map(SignalPayload::ProcessResourceObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid process_resource_observation payload: {err}"
+                        ))
+                    })?
+            }
+            SignalKind::CgroupCpuObservation => {
+                serde_json::from_value::<CgroupCpuObservation>(raw.payload)
+                    .map(SignalPayload::CgroupCpuObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid cgroup_cpu_observation payload: {err}"))
+                    })?
+            }
+            SignalKind::CgroupMemoryObservation => {
+                serde_json::from_value::<CgroupMemoryObservation>(raw.payload)
+                    .map(SignalPayload::CgroupMemoryObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid cgroup_memory_observation payload: {err}"
+                        ))
+                    })?
+            }
+            SignalKind::CgroupPidsObservation => {
+                serde_json::from_value::<CgroupPidsObservation>(raw.payload)
+                    .map(SignalPayload::CgroupPidsObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid cgroup_pids_observation payload: {err}"))
+                    })?
+            }
+            SignalKind::CgroupFileDescriptorObservation => {
+                serde_json::from_value::<CgroupFileDescriptorObservation>(raw.payload)
+                    .map(SignalPayload::CgroupFileDescriptorObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid cgroup_file_descriptor_observation payload: {err}"
+                        ))
+                    })?
+            }
+            SignalKind::ResourceGaugeMetric => {
+                serde_json::from_value::<ResourceGaugeMetric>(raw.payload)
+                    .map(SignalPayload::ResourceGaugeMetric)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid resource_gauge_metric payload: {err}"))
+                    })?
+            }
+            SignalKind::ResourceCounterMetric => {
+                serde_json::from_value::<ResourceCounterMetric>(raw.payload)
+                    .map(SignalPayload::ResourceCounterMetric)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid resource_counter_metric payload: {err}"))
                     })?
             }
         };
@@ -381,6 +500,177 @@ impl SignalEnvelope {
         }
     }
 
+    pub fn node_cpu_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: NodeCpuObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::NodeCpuObservation,
+            SignalPayload::NodeCpuObservation(observation),
+        )
+    }
+
+    pub fn node_load_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: NodeLoadObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::NodeLoadObservation,
+            SignalPayload::NodeLoadObservation(observation),
+        )
+    }
+
+    pub fn node_memory_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: NodeMemoryObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::NodeMemoryObservation,
+            SignalPayload::NodeMemoryObservation(observation),
+        )
+    }
+
+    pub fn node_filesystem_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: NodeFilesystemObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::NodeFilesystemObservation,
+            SignalPayload::NodeFilesystemObservation(observation),
+        )
+    }
+
+    pub fn node_disk_io_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: NodeDiskIoObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::NodeDiskIoObservation,
+            SignalPayload::NodeDiskIoObservation(observation),
+        )
+    }
+
+    pub fn process_resource_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: ProcessResourceObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::ProcessResourceObservation,
+            SignalPayload::ProcessResourceObservation(observation),
+        )
+    }
+
+    pub fn cgroup_cpu_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: CgroupCpuObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::CgroupCpuObservation,
+            SignalPayload::CgroupCpuObservation(observation),
+        )
+    }
+
+    pub fn cgroup_memory_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: CgroupMemoryObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::CgroupMemoryObservation,
+            SignalPayload::CgroupMemoryObservation(observation),
+        )
+    }
+
+    pub fn cgroup_pids_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: CgroupPidsObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::CgroupPidsObservation,
+            SignalPayload::CgroupPidsObservation(observation),
+        )
+    }
+
+    pub fn cgroup_file_descriptor_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: CgroupFileDescriptorObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::CgroupFileDescriptorObservation,
+            SignalPayload::CgroupFileDescriptorObservation(observation),
+        )
+    }
+
+    pub fn resource_gauge_metric(
+        source: impl Into<String>,
+        host: Option<String>,
+        metric: ResourceGaugeMetric,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::ResourceGaugeMetric,
+            SignalPayload::ResourceGaugeMetric(metric),
+        )
+    }
+
+    pub fn resource_counter_metric(
+        source: impl Into<String>,
+        host: Option<String>,
+        metric: ResourceCounterMetric,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::ResourceCounterMetric,
+            SignalPayload::ResourceCounterMetric(metric),
+        )
+    }
+
+    fn new(
+        source: impl Into<String>,
+        host: Option<String>,
+        kind: SignalKind,
+        payload: SignalPayload,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind,
+            source: source.into(),
+            host,
+            payload,
+        }
+    }
+
     pub fn signal_kind(&self) -> SignalKind {
         self.kind
     }
@@ -404,6 +694,18 @@ impl Signal for SignalEnvelope {
             SignalKind::DnsLatencyMetric => "dns_latency_metric",
             SignalKind::DependencyEdge => "dependency_edge",
             SignalKind::RuntimeSecurityFinding => "runtime_security_finding",
+            SignalKind::NodeCpuObservation => "node_cpu_observation",
+            SignalKind::NodeLoadObservation => "node_load_observation",
+            SignalKind::NodeMemoryObservation => "node_memory_observation",
+            SignalKind::NodeFilesystemObservation => "node_filesystem_observation",
+            SignalKind::NodeDiskIoObservation => "node_disk_io_observation",
+            SignalKind::ProcessResourceObservation => "process_resource_observation",
+            SignalKind::CgroupCpuObservation => "cgroup_cpu_observation",
+            SignalKind::CgroupMemoryObservation => "cgroup_memory_observation",
+            SignalKind::CgroupPidsObservation => "cgroup_pids_observation",
+            SignalKind::CgroupFileDescriptorObservation => "cgroup_file_descriptor_observation",
+            SignalKind::ResourceGaugeMetric => "resource_gauge_metric",
+            SignalKind::ResourceCounterMetric => "resource_counter_metric",
         }
     }
 }
@@ -412,10 +714,14 @@ impl Signal for SignalEnvelope {
 mod tests {
     use super::*;
     use crate::{
-        DependencyEndpoint, DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent, DnsQueryType,
-        DnsResponseCode, DnsResponseEvent, MetricAggregationWindow, NetworkAddressFamily,
-        NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric, NetworkProcessIdentity,
-        NetworkProtocol,
+        CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
+        CgroupPidsObservation, CgroupResourceContext, DependencyEndpoint, DnsCounterMetric,
+        DnsLatencyMetric, DnsQueryEvent, DnsQueryType, DnsResponseCode, DnsResponseEvent,
+        MetricAggregationWindow, NetworkAddressFamily, NetworkCounterMetric, NetworkDurationMetric,
+        NetworkGaugeMetric, NetworkProcessIdentity, NetworkProtocol, NodeCpuObservation,
+        NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation,
+        NodeMemoryObservation, ProcessResourceContext, ProcessResourceObservation, ResourceContext,
+        ResourceCounterMetric, ResourceGaugeMetric, ResourceMetricAttribute,
     };
 
     #[test]
@@ -913,6 +1219,286 @@ mod tests {
                 .payload,
             SignalPayload::DnsLatencyMetric(_)
         ));
+    }
+
+    #[test]
+    fn serializes_resource_observation_signals() {
+        let window = MetricAggregationWindow {
+            start_unix_nanos: 1_000,
+            end_unix_nanos: 2_000,
+        };
+        let signals = [
+            SignalEnvelope::node_cpu_observation(
+                "source.procfs_resource",
+                Some("node-a".to_string()),
+                NodeCpuObservation {
+                    metric_name: "system.cpu.time".to_string(),
+                    unit: "ns".to_string(),
+                    timestamp_unix_nanos: 2_000,
+                    window: window.clone(),
+                    user_nanos: 1_000,
+                    system_nanos: 500,
+                    idle_nanos: 5_000,
+                    iowait_nanos: 100,
+                    steal_nanos: 0,
+                    runnable_tasks: Some(2),
+                    blocked_tasks: Some(0),
+                },
+            ),
+            SignalEnvelope::node_load_observation(
+                "source.procfs_resource",
+                Some("node-a".to_string()),
+                NodeLoadObservation {
+                    metric_name: "system.cpu.load_average.1m".to_string(),
+                    unit: "1".to_string(),
+                    timestamp_unix_nanos: 2_000,
+                    window: window.clone(),
+                    load1: 0.25,
+                    load5: 0.5,
+                    load15: 0.75,
+                    runnable_tasks: Some(2),
+                    total_tasks: Some(200),
+                },
+            ),
+            SignalEnvelope::node_memory_observation(
+                "source.procfs_resource",
+                Some("node-a".to_string()),
+                NodeMemoryObservation {
+                    metric_name: "system.memory.usage".to_string(),
+                    unit: "By".to_string(),
+                    timestamp_unix_nanos: 2_000,
+                    window: window.clone(),
+                    mem_total_bytes: 8_192,
+                    mem_available_bytes: Some(4_096),
+                    mem_free_bytes: Some(2_048),
+                    swap_total_bytes: Some(1_024),
+                    swap_free_bytes: Some(512),
+                },
+            ),
+            SignalEnvelope::node_filesystem_observation(
+                "source.procfs_resource",
+                Some("node-a".to_string()),
+                NodeFilesystemObservation {
+                    metric_name: "system.filesystem.usage".to_string(),
+                    unit: "By".to_string(),
+                    timestamp_unix_nanos: 2_000,
+                    window: window.clone(),
+                    mount_point: "/var/lib/kubelet".to_string(),
+                    filesystem_type: Some("ext4".to_string()),
+                    total_bytes: 1_000_000,
+                    available_bytes: 250_000,
+                },
+            ),
+            SignalEnvelope::node_disk_io_observation(
+                "source.procfs_resource",
+                Some("node-a".to_string()),
+                NodeDiskIoObservation {
+                    metric_name: "system.disk.io".to_string(),
+                    unit: "By".to_string(),
+                    timestamp_unix_nanos: 2_000,
+                    window: window.clone(),
+                    device: "nvme0n1".to_string(),
+                    reads_completed: 10,
+                    writes_completed: 20,
+                    read_bytes: 4_096,
+                    written_bytes: 8_192,
+                },
+            ),
+        ];
+
+        let kinds: Vec<_> = signals.iter().map(SignalEnvelope::kind).collect();
+
+        assert_eq!(
+            kinds,
+            vec![
+                "node_cpu_observation",
+                "node_load_observation",
+                "node_memory_observation",
+                "node_filesystem_observation",
+                "node_disk_io_observation"
+            ]
+        );
+        for signal in signals {
+            let json = serde_json::to_value(&signal).expect("signal serializes");
+            let decoded: SignalEnvelope = serde_json::from_value(json).expect("round trips");
+            assert_eq!(decoded.schema_version, 1);
+        }
+    }
+
+    #[test]
+    fn serializes_process_and_resource_metric_signals() {
+        let process = ProcessResourceContext {
+            pid: 42,
+            ppid: Some(1),
+            uid: Some(1000),
+            command: "api".to_string(),
+            executable: Some("/app/api".to_string()),
+            container: None,
+            kubernetes: None,
+        };
+        let window = MetricAggregationWindow {
+            start_unix_nanos: 1_000,
+            end_unix_nanos: 2_000,
+        };
+        let observation = SignalEnvelope::process_resource_observation(
+            "source.procfs_resource",
+            Some("node-a".to_string()),
+            ProcessResourceObservation {
+                metric_name: "process.memory.usage".to_string(),
+                unit: "By".to_string(),
+                timestamp_unix_nanos: 2_000,
+                window: window.clone(),
+                process: process.clone(),
+                cpu_time_nanos: Some(500),
+                memory_rss_bytes: Some(4_096),
+                virtual_memory_bytes: Some(8_192),
+                open_fds: Some(12),
+                socket_count: Some(2),
+                thread_count: Some(4),
+            },
+        );
+        let gauge = SignalEnvelope::resource_gauge_metric(
+            "generator.resource_metrics",
+            Some("node-a".to_string()),
+            ResourceGaugeMetric {
+                metric_name: "process.memory.usage".to_string(),
+                unit: "By".to_string(),
+                value: 4_096,
+                window: window.clone(),
+                resource: ResourceContext {
+                    host_name: Some("node-a".to_string()),
+                    container: None,
+                    kubernetes: None,
+                },
+                process: Some(process.clone()),
+                cgroup: None,
+                attributes: vec![ResourceMetricAttribute {
+                    key: "state".to_string(),
+                    value: "rss".to_string(),
+                }],
+            },
+        );
+        let counter = SignalEnvelope::resource_counter_metric(
+            "generator.resource_metrics",
+            Some("node-a".to_string()),
+            ResourceCounterMetric {
+                metric_name: "process.cpu.time".to_string(),
+                unit: "ns".to_string(),
+                value: 500,
+                window,
+                resource: ResourceContext {
+                    host_name: Some("node-a".to_string()),
+                    container: None,
+                    kubernetes: None,
+                },
+                process: Some(process),
+                cgroup: None,
+                attributes: vec![ResourceMetricAttribute {
+                    key: "cpu.mode".to_string(),
+                    value: "total".to_string(),
+                }],
+            },
+        );
+
+        assert_eq!(observation.kind(), "process_resource_observation");
+        assert_eq!(gauge.kind(), "resource_gauge_metric");
+        assert_eq!(counter.kind(), "resource_counter_metric");
+
+        for signal in [observation, gauge, counter] {
+            let json = serde_json::to_value(&signal).expect("signal serializes");
+            assert_eq!(json["schema_version"], 1);
+            let decoded: SignalEnvelope = serde_json::from_value(json).expect("round trips");
+            assert_eq!(decoded.schema_version, 1);
+        }
+    }
+
+    #[test]
+    fn serializes_cgroup_resource_observation_signals() {
+        let cgroup = CgroupResourceContext {
+            cgroup_path: "/kubepods.slice/pod123/container.scope".to_string(),
+            container: None,
+            kubernetes: None,
+        };
+        let window = MetricAggregationWindow {
+            start_unix_nanos: 1_000,
+            end_unix_nanos: 2_000,
+        };
+        let signals = [
+            SignalEnvelope::cgroup_cpu_observation(
+                "source.procfs_resource",
+                Some("node-a".to_string()),
+                CgroupCpuObservation {
+                    metric_name: "container.cpu.time".to_string(),
+                    unit: "ns".to_string(),
+                    timestamp_unix_nanos: 2_000,
+                    window: window.clone(),
+                    cgroup: cgroup.clone(),
+                    usage_nanos: Some(10_000),
+                    user_nanos: Some(6_000),
+                    system_nanos: Some(4_000),
+                    throttled_periods: Some(1),
+                    throttled_nanos: Some(100),
+                },
+            ),
+            SignalEnvelope::cgroup_memory_observation(
+                "source.procfs_resource",
+                Some("node-a".to_string()),
+                CgroupMemoryObservation {
+                    metric_name: "container.memory.usage".to_string(),
+                    unit: "By".to_string(),
+                    timestamp_unix_nanos: 2_000,
+                    window: window.clone(),
+                    cgroup: cgroup.clone(),
+                    current_bytes: Some(8_192),
+                    peak_bytes: Some(16_384),
+                    max_bytes: Some(65_536),
+                },
+            ),
+            SignalEnvelope::cgroup_pids_observation(
+                "source.procfs_resource",
+                Some("node-a".to_string()),
+                CgroupPidsObservation {
+                    metric_name: "container.process.count".to_string(),
+                    unit: "{process}".to_string(),
+                    timestamp_unix_nanos: 2_000,
+                    window: window.clone(),
+                    cgroup: cgroup.clone(),
+                    process_count: Some(3),
+                    thread_count: Some(9),
+                    max_processes: Some(512),
+                },
+            ),
+            SignalEnvelope::cgroup_file_descriptor_observation(
+                "source.procfs_resource",
+                Some("node-a".to_string()),
+                CgroupFileDescriptorObservation {
+                    metric_name: "container.file_descriptor.count".to_string(),
+                    unit: "{file_descriptor}".to_string(),
+                    timestamp_unix_nanos: 2_000,
+                    window,
+                    cgroup,
+                    open_fds: Some(42),
+                    socket_count: Some(7),
+                },
+            ),
+        ];
+
+        let kinds: Vec<_> = signals.iter().map(SignalEnvelope::kind).collect();
+
+        assert_eq!(
+            kinds,
+            vec![
+                "cgroup_cpu_observation",
+                "cgroup_memory_observation",
+                "cgroup_pids_observation",
+                "cgroup_file_descriptor_observation"
+            ]
+        );
+        for signal in signals {
+            let json = serde_json::to_value(&signal).expect("signal serializes");
+            let decoded: SignalEnvelope = serde_json::from_value(json).expect("round trips");
+            assert_eq!(decoded.schema_version, 1);
+        }
     }
 
     fn network_process() -> NetworkProcessIdentity {

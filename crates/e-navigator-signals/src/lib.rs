@@ -3,6 +3,7 @@ pub mod envelope;
 pub mod exec;
 pub mod metrics;
 pub mod network;
+pub mod resource;
 
 pub use dns::{
     DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent, DnsQueryType, DnsResponseCode,
@@ -21,4 +22,11 @@ pub use network::{
     DependencyEdgeEvent, DependencyEndpoint, NetworkAddressFamily, NetworkConnectionCloseEvent,
     NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkProcessIdentity,
     NetworkProtocol,
+};
+pub use resource::{
+    CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
+    CgroupPidsObservation, CgroupResourceContext, NodeCpuObservation, NodeDiskIoObservation,
+    NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation, ProcessResourceContext,
+    ProcessResourceObservation, ResourceContext, ResourceCounterMetric, ResourceGaugeMetric,
+    ResourceMetricAttribute,
 };
