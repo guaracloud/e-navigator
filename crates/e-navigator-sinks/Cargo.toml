@@ -8,5 +8,6 @@ version.workspace = true
 async-trait = { workspace = true }
 e-navigator-core = { path = "../e-navigator-core" }
 e-navigator-signals = { path = "../e-navigator-signals" }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

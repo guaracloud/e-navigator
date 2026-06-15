@@ -441,6 +441,7 @@ dependencies = [
  "async-trait",
  "e-navigator-core",
  "e-navigator-signals",
+ "serde",
  "serde_json",
  "tokio",
 ]
