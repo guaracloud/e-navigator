@@ -1,0 +1,295 @@
+use e_navigator_core::Generator;
+use e_navigator_generators::RequestCorrelationGenerator;
+use e_navigator_signals::{
+    ContainerContext, KubernetesContext, NetworkAddressFamily, NetworkConnectionCloseEvent,
+    NetworkProcessIdentity, NetworkProtocol, ProtocolKind, ProtocolRequestObservation,
+    RequestCorrelationWarning, SignalEnvelope, SignalPayload, TraceAttribute, TraceConfidence,
+    TraceCorrelationKind, TracePeerContext,
+};
+use std::collections::BTreeMap;
+use tokio::sync::mpsc;
+
+#[tokio::test]
+async fn observed_trace_context_protocol_request_generates_request_span() {
+    let generator = RequestCorrelationGenerator::default();
+    let signal = protocol_request_signal(Some(valid_traceparent()), true);
+
+    let outputs = observe(&generator, &signal).await;
+
+    assert_eq!(outputs.len(), 1);
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(span.name, "http request");
+    assert_eq!(span.protocol, ProtocolKind::Http);
+    assert_eq!(
+        span.trace_id.as_deref(),
+        Some("4bf92f3577b34da6a3ce929d0e0e4736")
+    );
+    assert_eq!(span.span_id.as_deref(), Some("00f067aa0ba902b7"));
+    assert_eq!(
+        span.correlation_kind,
+        TraceCorrelationKind::ObservedTraceContext
+    );
+    assert_eq!(span.confidence, TraceConfidence::High);
+    assert_eq!(span.method.as_deref(), Some("GET"));
+    assert_eq!(span.status_code, Some(200));
+    assert_eq!(span.process, Some(process()));
+    assert_eq!(span.container, Some(container()));
+    assert_eq!(span.kubernetes, Some(kubernetes()));
+    assert_eq!(span.peer, Some(peer()));
+}
+
+#[tokio::test]
+async fn method_and_status_are_only_copied_when_observed() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(None, true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.method = None;
+    request.status_code = None;
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(span.method, None);
+    assert_eq!(span.status_code, None);
+}
+
+#[tokio::test]
+async fn missing_trace_context_emits_warning_and_span_without_ids() {
+    let generator = RequestCorrelationGenerator::default();
+    let signal = protocol_request_signal(None, true);
+
+    let outputs = observe(&generator, &signal).await;
+
+    assert_eq!(outputs.len(), 2);
+    assert!(outputs.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::RequestSpanObservation(span)
+                if span.trace_id.is_none() && span.span_id.is_none()
+        )
+    }));
+    assert_request_warning(&outputs, "missing_trace_context");
+}
+
+#[tokio::test]
+async fn malformed_trace_context_emits_warning_without_inventing_ids() {
+    let generator = RequestCorrelationGenerator::default();
+    let signal = protocol_request_signal(Some("00-bad".to_string()), true);
+
+    let outputs = observe(&generator, &signal).await;
+
+    assert_eq!(outputs.len(), 2);
+    assert!(outputs.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::RequestSpanObservation(span)
+                if span.trace_id.is_none() && span.span_id.is_none()
+        )
+    }));
+    assert_request_warning(&outputs, "malformed_trace_context");
+}
+
+#[tokio::test]
+async fn raw_tcp_only_signal_does_not_generate_request_span() {
+    let generator = RequestCorrelationGenerator::default();
+    let signal = network_close_signal();
+
+    let outputs = observe(&generator, &signal).await;
+
+    assert!(outputs.is_empty());
+}
+
+#[tokio::test]
+async fn duplicate_protocol_request_is_suppressed_deterministically() {
+    let generator = RequestCorrelationGenerator::default();
+    let signal = protocol_request_signal(Some(valid_traceparent()), true);
+
+    let first = observe(&generator, &signal).await;
+    let second = observe(&generator, &signal).await;
+
+    assert_eq!(first.len(), 1);
+    assert!(second.is_empty());
+}
+
+#[tokio::test]
+async fn bounded_seen_state_evicts_oldest_fingerprint() {
+    let generator = RequestCorrelationGenerator::with_limits(1, 8);
+    let first = protocol_request_signal_at(1_000, Some(valid_traceparent()), true);
+    let second = protocol_request_signal_at(2_000, Some(valid_traceparent()), true);
+
+    assert_eq!(observe(&generator, &first).await.len(), 1);
+    assert_eq!(observe(&generator, &second).await.len(), 1);
+    assert_eq!(observe(&generator, &first).await.len(), 1);
+}
+
+#[tokio::test]
+async fn attribution_failure_warning_is_non_fatal_and_visible() {
+    let generator = RequestCorrelationGenerator::default();
+    let signal = protocol_request_signal(Some(valid_traceparent()), false);
+
+    let outputs = observe(&generator, &signal).await;
+
+    assert_eq!(outputs.len(), 2);
+    assert!(outputs.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::RequestSpanObservation(span)
+                if span.container.is_none() && span.kubernetes.is_none()
+        )
+    }));
+    assert_request_warning(&outputs, "missing_attribution");
+}
+
+async fn observe(
+    generator: &RequestCorrelationGenerator,
+    signal: &SignalEnvelope,
+) -> Vec<SignalEnvelope> {
+    let (tx, mut rx) = mpsc::channel(8);
+    generator
+        .observe(signal, &tx)
+        .await
+        .expect("generator succeeds");
+    drop(tx);
+
+    let mut outputs = Vec::new();
+    while let Some(output) = rx.recv().await {
+        outputs.push(output);
+    }
+    outputs
+}
+
+fn assert_request_warning(outputs: &[SignalEnvelope], warning_type: &str) {
+    assert!(outputs.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::RequestCorrelationWarning(RequestCorrelationWarning { warning_type: found, .. })
+                if found == warning_type
+        )
+    }));
+}
+
+fn protocol_request_signal(traceparent: Option<String>, attributed: bool) -> SignalEnvelope {
+    protocol_request_signal_at(1_000, traceparent, attributed)
+}
+
+fn protocol_request_signal_at(
+    start_unix_nanos: u64,
+    traceparent: Option<String>,
+    attributed: bool,
+) -> SignalEnvelope {
+    let (trace_id, span_id) = if traceparent.as_deref() == Some(valid_traceparent().as_str()) {
+        (
+            Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            Some("00f067aa0ba902b7".to_string()),
+        )
+    } else {
+        (None, None)
+    };
+    let (container, kubernetes) = attribution(attributed);
+    SignalEnvelope::protocol_request_observation(
+        "source.protocol_fixture",
+        Some("node-a".to_string()),
+        ProtocolRequestObservation {
+            protocol: ProtocolKind::Http,
+            start_unix_nanos,
+            end_unix_nanos: Some(start_unix_nanos + 1_500),
+            duration_nanos: Some(1_500),
+            trace_id,
+            span_id,
+            parent_span_id: None,
+            traceparent,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::Medium,
+            service_name: Some("checkout-api".to_string()),
+            method: Some("GET".to_string()),
+            status_code: Some(200),
+            process: Some(process()),
+            container,
+            kubernetes,
+            peer: Some(peer()),
+            attributes: vec![TraceAttribute {
+                key: "http.request.method".to_string(),
+                value: "GET".to_string(),
+            }],
+        },
+    )
+}
+
+fn network_close_signal() -> SignalEnvelope {
+    SignalEnvelope::network_connection_close(
+        "source.test",
+        Some("node-a".to_string()),
+        NetworkConnectionCloseEvent {
+            process: process(),
+            protocol: NetworkProtocol::Tcp,
+            address_family: NetworkAddressFamily::Ipv4,
+            local_address: Some("10.0.0.5".to_string()),
+            local_port: Some(43512),
+            remote_address: "203.0.113.10".to_string(),
+            remote_port: 443,
+            fd: Some(7),
+            opened_at_unix_nanos: Some(1_000),
+            closed_at_unix_nanos: 2_000,
+            duration_nanos: Some(1_000),
+            container: Some(container()),
+            kubernetes: Some(kubernetes()),
+        },
+    )
+}
+
+fn valid_traceparent() -> String {
+    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string()
+}
+
+fn attribution(attributed: bool) -> (Option<ContainerContext>, Option<KubernetesContext>) {
+    if attributed {
+        (Some(container()), Some(kubernetes()))
+    } else {
+        (None, None)
+    }
+}
+
+fn process() -> NetworkProcessIdentity {
+    NetworkProcessIdentity {
+        pid: 42,
+        ppid: Some(1),
+        uid: Some(1000),
+        command: "api".to_string(),
+        executable: Some("/app/api".to_string()),
+    }
+}
+
+fn container() -> ContainerContext {
+    ContainerContext {
+        container_id: "container-a".to_string(),
+        runtime: Some("containerd".to_string()),
+    }
+}
+
+fn kubernetes() -> KubernetesContext {
+    KubernetesContext {
+        namespace: "default".to_string(),
+        pod_name: "api-123".to_string(),
+        pod_uid: Some("pod-uid".to_string()),
+        container_name: Some("api".to_string()),
+        node_name: Some("node-a".to_string()),
+        labels: BTreeMap::new(),
+    }
+}
+
+fn peer() -> TracePeerContext {
+    TracePeerContext {
+        address: Some("203.0.113.10".to_string()),
+        port: Some(443),
+        domain: Some("api.example.com".to_string()),
+        workload: None,
+        container: None,
+    }
+}

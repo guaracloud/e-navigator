@@ -7,5 +7,6 @@ version.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 e-navigator-core = { path = "../e-navigator-core" }
+e-navigator-protocol = { path = "../e-navigator-protocol" }
 e-navigator-signals = { path = "../e-navigator-signals" }
 tokio = { workspace = true }
