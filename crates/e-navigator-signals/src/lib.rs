@@ -3,6 +3,7 @@ pub mod envelope;
 pub mod exec;
 pub mod metrics;
 pub mod network;
+pub mod request;
 pub mod resource;
 pub mod trace;
 
@@ -23,6 +24,10 @@ pub use network::{
     DependencyEdgeEvent, DependencyEndpoint, NetworkAddressFamily, NetworkConnectionCloseEvent,
     NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkProcessIdentity,
     NetworkProtocol,
+};
+pub use request::{
+    ExtractedTraceContextObservation, ProtocolKind, ProtocolRequestObservation,
+    RequestCorrelationWarning, RequestSpanObservation,
 };
 pub use resource::{
     CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,

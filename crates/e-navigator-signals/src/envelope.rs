@@ -4,13 +4,14 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 use crate::{
     CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
     CgroupPidsObservation, DependencyEdgeEvent, DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent,
-    DnsResponseEvent, ExecEvent, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
-    NetworkConnectionOpenEvent, NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric,
-    NodeCpuObservation, NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation,
-    NodeMemoryObservation, ProcessExitEvent, ProcessLifecycleDurationEvent,
-    ProcessResourceObservation, ResourceCounterMetric, ResourceGaugeMetric, RuntimeSecurityFinding,
-    ServiceInteractionSpanObservation, TraceCorrelationWarning, TraceServicePathObservation,
-    TraceSpanObservation,
+    DnsResponseEvent, ExecEvent, ExtractedTraceContextObservation, NetworkConnectionCloseEvent,
+    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkCounterMetric,
+    NetworkDurationMetric, NetworkGaugeMetric, NodeCpuObservation, NodeDiskIoObservation,
+    NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation, ProcessExitEvent,
+    ProcessLifecycleDurationEvent, ProcessResourceObservation, ProtocolRequestObservation,
+    RequestCorrelationWarning, RequestSpanObservation, ResourceCounterMetric, ResourceGaugeMetric,
+    RuntimeSecurityFinding, ServiceInteractionSpanObservation, TraceCorrelationWarning,
+    TraceServicePathObservation, TraceSpanObservation,
 };
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
@@ -50,6 +51,10 @@ pub enum SignalKind {
     ServiceInteractionSpanObservation,
     TraceServicePathObservation,
     TraceCorrelationWarning,
+    ProtocolRequestObservation,
+    ExtractedTraceContextObservation,
+    RequestSpanObservation,
+    RequestCorrelationWarning,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -69,6 +74,10 @@ pub enum SignalPayload {
     DnsResponse(DnsResponseEvent),
     DnsCounterMetric(DnsCounterMetric),
     DnsLatencyMetric(DnsLatencyMetric),
+    RequestSpanObservation(RequestSpanObservation),
+    ProtocolRequestObservation(ProtocolRequestObservation),
+    ExtractedTraceContextObservation(ExtractedTraceContextObservation),
+    RequestCorrelationWarning(RequestCorrelationWarning),
     TraceSpanObservation(TraceSpanObservation),
     ServiceInteractionSpanObservation(ServiceInteractionSpanObservation),
     TraceServicePathObservation(TraceServicePathObservation),
@@ -322,6 +331,40 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
                     .map_err(|err| {
                         D::Error::custom(format!(
                             "invalid trace_correlation_warning payload: {err}"
+                        ))
+                    })?
+            }
+            SignalKind::ProtocolRequestObservation => {
+                serde_json::from_value::<ProtocolRequestObservation>(raw.payload)
+                    .map(SignalPayload::ProtocolRequestObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid protocol_request_observation payload: {err}"
+                        ))
+                    })?
+            }
+            SignalKind::ExtractedTraceContextObservation => {
+                serde_json::from_value::<ExtractedTraceContextObservation>(raw.payload)
+                    .map(SignalPayload::ExtractedTraceContextObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid extracted_trace_context_observation payload: {err}"
+                        ))
+                    })?
+            }
+            SignalKind::RequestSpanObservation => {
+                serde_json::from_value::<RequestSpanObservation>(raw.payload)
+                    .map(SignalPayload::RequestSpanObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid request_span_observation payload: {err}"))
+                    })?
+            }
+            SignalKind::RequestCorrelationWarning => {
+                serde_json::from_value::<RequestCorrelationWarning>(raw.payload)
+                    .map(SignalPayload::RequestCorrelationWarning)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid request_correlation_warning payload: {err}"
                         ))
                     })?
             }
@@ -752,6 +795,58 @@ impl SignalEnvelope {
         )
     }
 
+    pub fn protocol_request_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: ProtocolRequestObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::ProtocolRequestObservation,
+            SignalPayload::ProtocolRequestObservation(observation),
+        )
+    }
+
+    pub fn extracted_trace_context_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: ExtractedTraceContextObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::ExtractedTraceContextObservation,
+            SignalPayload::ExtractedTraceContextObservation(observation),
+        )
+    }
+
+    pub fn request_span_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: RequestSpanObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::RequestSpanObservation,
+            SignalPayload::RequestSpanObservation(observation),
+        )
+    }
+
+    pub fn request_correlation_warning(
+        source: impl Into<String>,
+        host: Option<String>,
+        warning: RequestCorrelationWarning,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::RequestCorrelationWarning,
+            SignalPayload::RequestCorrelationWarning(warning),
+        )
+    }
+
     fn new(
         source: impl Into<String>,
         host: Option<String>,
@@ -806,6 +901,10 @@ impl Signal for SignalEnvelope {
             SignalKind::ServiceInteractionSpanObservation => "service_interaction_span_observation",
             SignalKind::TraceServicePathObservation => "trace_service_path_observation",
             SignalKind::TraceCorrelationWarning => "trace_correlation_warning",
+            SignalKind::ProtocolRequestObservation => "protocol_request_observation",
+            SignalKind::ExtractedTraceContextObservation => "extracted_trace_context_observation",
+            SignalKind::RequestSpanObservation => "request_span_observation",
+            SignalKind::RequestCorrelationWarning => "request_correlation_warning",
         }
     }
 }

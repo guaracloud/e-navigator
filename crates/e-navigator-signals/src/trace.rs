@@ -10,6 +10,7 @@ use crate::{
 #[non_exhaustive]
 pub enum TraceCorrelationKind {
     ObservedTraceContext,
+    ProtocolObserved,
     NetworkInferred,
     DependencyInferred,
     Synthetic,
