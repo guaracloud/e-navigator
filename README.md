@@ -2,7 +2,7 @@
 
 E-Navigator is a Rust and eBPF observability, security, profiling, and diagnostics platform for Linux and Kubernetes workloads.
 
-Phase 6 builds a distributed tracing foundation on the bounded runtime, network, DNS, dependency, security, resource, and OTEL-compatible export foundations:
+Phase 7 builds a request-level tracing foundation on the bounded runtime, network, DNS, dependency, security, resource, trace-correlation, and OTEL-compatible export foundations:
 
 - A layered Rust workspace.
 - A statically registered signal pipeline.
@@ -20,12 +20,15 @@ Phase 6 builds a distributed tracing foundation on the bounded runtime, network,
 - A dependency graph generator for observed network edges.
 - Versioned trace-foundation schemas for trace span observations, service interaction span observations, service path observations, and trace correlation warnings.
 - A bounded trace correlation generator for network-inferred service interactions, direct/upstream dependency-edge service paths, DNS-derived service paths, duplicate suppression, and missing-attribution warnings.
+- Versioned request/protocol schemas for protocol request observations, extracted trace-context observations, request span observations, and request correlation warnings.
+- An Aya-free bounded protocol extraction boundary for fixture-backed HTTP request headers and strict W3C traceparent validation.
+- A bounded request correlation generator for protocol-observed and explicitly synthetic request spans, duplicate suppression, missing or malformed trace-context warnings, and missing-attribution warnings.
 - A narrow runtime security generator for process and network findings.
 - An internal OTEL-compatible metric formatter boundary for future exporters.
 - An internal OTEL-compatible trace formatter boundary for future exporters.
 - JSON stdout output.
 
-Phase 6 is a tracing foundation, not a full distributed tracing backend or Tempo replacement. Runtime HTTP/gRPC parsing, request IDs, routes, methods, status codes, retries, full OTLP trace export, production trace storage, UI, critical path analysis, profiling correlation, cost attribution, capacity planning, continuous profiling, and runtime DNS packet capture are not implemented. The Aya network source remains TCP-oriented. Host resource accuracy depends on running on Linux with the configured host procfs/sysfs/cgroup mounts.
+Phase 7 is a request-level tracing foundation, not a full distributed tracing backend, service mesh, Beyla replacement, or Tempo replacement. Synthetic and fixture-backed HTTP trace-context extraction exists. Live HTTP/gRPC parsing from real traffic, request IDs, routes, retries, application errors, full OTLP trace export, production trace storage, UI, critical path analysis, profiling correlation, cost attribution, capacity planning, continuous profiling, and runtime DNS packet capture are not implemented. The Aya network source remains TCP-oriented. Host resource accuracy depends on running on Linux with the configured host procfs/sysfs/cgroup mounts.
 
 ## Development
 
