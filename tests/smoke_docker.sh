@@ -19,6 +19,9 @@ grep -q '"kind":"network_connection_failure"' "$default_output"
 grep -q '"kind":"dns_query"' "$default_output"
 grep -q '"kind":"dns_response"' "$default_output"
 grep -q '"kind":"trace_span_observation"' "$default_output"
+grep -q '"kind":"protocol_request_observation"' "$default_output"
+grep -q '"kind":"request_span_observation"' "$default_output"
+grep -q '"kind":"request_correlation_warning"' "$default_output"
 grep -q '"kind":"service_interaction_span_observation"' "$default_output"
 grep -q '"kind":"trace_service_path_observation"' "$default_output"
 grep -q '"kind":"network_counter_metric"' "$default_output"
@@ -49,6 +52,8 @@ grep -q '"rule_id":"runtime.shell_in_container"' "$default_output"
 grep -q '"rule_id":"network.unexpected_external_connection"' "$default_output"
 grep -q '"duration_nanos":2000000' "$default_output"
 grep -q '"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"' "$default_output"
+grep -q '"warning_type":"missing_trace_context"' "$default_output"
+grep -q '"warning_type":"malformed_trace_context"' "$default_output"
 grep -q '"error_type":"errno_111"' "$default_output"
 
 cat >"$config_file" <<'CONFIG'
@@ -69,6 +74,10 @@ enabled = false
 [trace_correlation]
 max_service_paths = 4096
 max_seen_interactions = 8192
+max_warnings = 1024
+
+[request_correlation]
+max_seen_requests = 8192
 max_warnings = 1024
 
 [[modules]]
@@ -100,6 +109,10 @@ name = "generator.trace_correlation"
 enabled = true
 
 [[modules]]
+name = "generator.request_correlation"
+enabled = true
+
+[[modules]]
 name = "generator.resource_metrics"
 enabled = true
 
@@ -123,6 +136,9 @@ grep -q '"kind":"network_connection_failure"' "$config_output"
 grep -q '"kind":"dns_query"' "$config_output"
 grep -q '"kind":"dns_response"' "$config_output"
 grep -q '"kind":"trace_span_observation"' "$config_output"
+grep -q '"kind":"protocol_request_observation"' "$config_output"
+grep -q '"kind":"request_span_observation"' "$config_output"
+grep -q '"kind":"request_correlation_warning"' "$config_output"
 grep -q '"kind":"service_interaction_span_observation"' "$config_output"
 grep -q '"kind":"trace_service_path_observation"' "$config_output"
 grep -q '"kind":"network_counter_metric"' "$config_output"
@@ -153,4 +169,6 @@ grep -q '"rule_id":"runtime.shell_in_container"' "$config_output"
 grep -q '"rule_id":"network.unexpected_external_connection"' "$config_output"
 grep -q '"duration_nanos":2000000' "$config_output"
 grep -q '"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"' "$config_output"
+grep -q '"warning_type":"missing_trace_context"' "$config_output"
+grep -q '"warning_type":"malformed_trace_context"' "$config_output"
 grep -q '"error_type":"errno_111"' "$config_output"

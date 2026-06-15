@@ -15,8 +15,9 @@ use e_navigator_signals::{
     NetworkAddressFamily, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
     NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol, NodeCpuObservation,
     NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation,
-    ProcessExitEvent, ProcessResourceContext, ProcessResourceObservation, SignalEnvelope,
-    TraceAttribute, TraceConfidence, TraceCorrelationKind, TracePeerContext, TraceSpanObservation,
+    ProcessExitEvent, ProcessResourceContext, ProcessResourceObservation, ProtocolKind,
+    ProtocolRequestObservation, SignalEnvelope, TraceAttribute, TraceConfidence,
+    TraceCorrelationKind, TracePeerContext, TraceSpanObservation,
 };
 use e_navigator_sinks::JsonStdoutSink;
 use e_navigator_sources_ebpf_aya::{AyaExecSource, AyaNetworkSource};
@@ -408,6 +409,18 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
             .await
             .map_err(|_| CoreError::PipelineClosed)?;
 
+        for request in synthetic_protocol_request_signals(
+            self.host.clone(),
+            container.clone(),
+            kubernetes.clone(),
+            opened_at,
+            duration_nanos,
+        ) {
+            tx.send(request)
+                .await
+                .map_err(|_| CoreError::PipelineClosed)?;
+        }
+
         let failure = SignalEnvelope::network_connection_failure(
             "source.synthetic_exec",
             self.host.clone(),
@@ -445,6 +458,117 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
 
         Ok(())
     }
+}
+
+fn synthetic_protocol_request_signals(
+    host: Option<String>,
+    container: ContainerContext,
+    kubernetes: KubernetesContext,
+    started: u64,
+    duration_nanos: u64,
+) -> Vec<SignalEnvelope> {
+    let process = NetworkProcessIdentity {
+        pid: std::process::id(),
+        ppid: None,
+        uid: None,
+        command: "synthetic-api".to_string(),
+        executable: Some("/app/synthetic-api".to_string()),
+    };
+    let peer = TracePeerContext {
+        address: Some("203.0.113.10".to_string()),
+        port: Some(443),
+        domain: Some("api.example.com".to_string()),
+        workload: None,
+        container: None,
+    };
+    let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
+    vec![
+        SignalEnvelope::protocol_request_observation(
+            "source.synthetic_exec",
+            host.clone(),
+            ProtocolRequestObservation {
+                protocol: ProtocolKind::Http,
+                start_unix_nanos: started,
+                end_unix_nanos: Some(started.saturating_add(duration_nanos)),
+                duration_nanos: Some(duration_nanos),
+                trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+                span_id: Some("00f067aa0ba902b7".to_string()),
+                parent_span_id: None,
+                traceparent: Some(traceparent.to_string()),
+                tracestate: Some("synthetic=value".to_string()),
+                correlation_kind: TraceCorrelationKind::Synthetic,
+                confidence: TraceConfidence::High,
+                service_name: Some("synthetic-api".to_string()),
+                method: Some("GET".to_string()),
+                status_code: Some(200),
+                process: Some(process.clone()),
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
+                peer: Some(peer.clone()),
+                attributes: vec![TraceAttribute {
+                    key: "trace.synthetic.fixture".to_string(),
+                    value: "http_trace_context_request".to_string(),
+                }],
+            },
+        ),
+        SignalEnvelope::protocol_request_observation(
+            "source.synthetic_exec",
+            host.clone(),
+            ProtocolRequestObservation {
+                protocol: ProtocolKind::Http,
+                start_unix_nanos: started.saturating_add(duration_nanos + 10_000),
+                end_unix_nanos: Some(started.saturating_add(duration_nanos + 11_000)),
+                duration_nanos: Some(1_000),
+                trace_id: None,
+                span_id: None,
+                parent_span_id: None,
+                traceparent: Some("00-bad".to_string()),
+                tracestate: None,
+                correlation_kind: TraceCorrelationKind::Synthetic,
+                confidence: TraceConfidence::Low,
+                service_name: Some("synthetic-api".to_string()),
+                method: Some("GET".to_string()),
+                status_code: None,
+                process: Some(process.clone()),
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
+                peer: Some(peer.clone()),
+                attributes: vec![TraceAttribute {
+                    key: "trace.synthetic.fixture".to_string(),
+                    value: "malformed_trace_context_request".to_string(),
+                }],
+            },
+        ),
+        SignalEnvelope::protocol_request_observation(
+            "source.synthetic_exec",
+            host,
+            ProtocolRequestObservation {
+                protocol: ProtocolKind::Http,
+                start_unix_nanos: started.saturating_add(duration_nanos + 20_000),
+                end_unix_nanos: Some(started.saturating_add(duration_nanos + 21_000)),
+                duration_nanos: Some(1_000),
+                trace_id: None,
+                span_id: None,
+                parent_span_id: None,
+                traceparent: None,
+                tracestate: None,
+                correlation_kind: TraceCorrelationKind::Synthetic,
+                confidence: TraceConfidence::Low,
+                service_name: Some("synthetic-api".to_string()),
+                method: Some("POST".to_string()),
+                status_code: None,
+                process: Some(process),
+                container: Some(container),
+                kubernetes: Some(kubernetes),
+                peer: Some(peer),
+                attributes: vec![TraceAttribute {
+                    key: "trace.synthetic.fixture".to_string(),
+                    value: "missing_trace_context_request".to_string(),
+                }],
+            },
+        ),
+    ]
 }
 
 fn synthetic_resource_signals(
@@ -858,6 +982,28 @@ mod tests {
             SignalPayload::TraceSpanObservation(span)
                 if span.trace_id.as_deref() == Some("4bf92f3577b34da6a3ce929d0e0e4736")
                     && span.span_id.as_deref() == Some("00f067aa0ba902b7")
+        )));
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::ProtocolRequestObservation(request)
+                if request.traceparent.as_deref()
+                    == Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+                    && request.method.as_deref() == Some("GET")
+                    && request.status_code == Some(200)
+        )));
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::ProtocolRequestObservation(request)
+                if request.traceparent.as_deref() == Some("00-bad")
+                    && request.trace_id.is_none()
+                    && request.span_id.is_none()
+        )));
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::ProtocolRequestObservation(request)
+                if request.traceparent.is_none()
+                    && request.trace_id.is_none()
+                    && request.span_id.is_none()
         )));
         assert!(signals.iter().any(|signal| matches!(
             &signal.payload,
