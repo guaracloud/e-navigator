@@ -27,7 +27,7 @@ Install `bpftool` from the Linux distribution package manager.
 cargo run --locked -p e-navigator-cli -- --source synthetic
 ```
 
-Expected result: newline-delimited JSON is printed to stdout, including attributed synthetic exec, process exit, network connection, dependency edge, and runtime security finding fixtures.
+Expected result: newline-delimited JSON is printed to stdout, including attributed synthetic exec, process exit, network connection, DNS, dependency edge, metric, and runtime security finding fixtures.
 
 ## Docker Smoke Tests
 
@@ -64,6 +64,8 @@ In another shell:
 Expected result: the runner prints JSON exec signals from `source.aya_exec`.
 To exercise network visibility, open a TCP connection from the same host while the runner is active.
 Expected network result: the runner prints JSON network connection signals from `source.aya_network`.
+
+Phase 4 DNS query and response schemas are available through synthetic fixtures and generator tests. Runtime Aya DNS packet capture is intentionally deferred; do not claim real DNS runtime visibility from the synthetic source or from the TCP-oriented `source.aya_network` source.
 
 The smoke test must run as root or with the Linux capabilities and rlimits required to load and attach eBPF programs.
 Do not claim this test passed unless it ran on a Linux host with tracefs/eBPF support.

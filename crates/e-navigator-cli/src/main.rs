@@ -7,9 +7,10 @@ use e_navigator_generators::{
 use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::{ModuleRegistry, Runner};
 use e_navigator_signals::{
-    ContainerContext, ExecEvent, KubernetesContext, NetworkAddressFamily,
-    NetworkConnectionCloseEvent, NetworkConnectionOpenEvent, NetworkProcessIdentity,
-    NetworkProtocol, ProcessExitEvent, SignalEnvelope,
+    ContainerContext, DnsQueryEvent, DnsQueryType, DnsResponseCode, DnsResponseEvent, ExecEvent,
+    KubernetesContext, NetworkAddressFamily, NetworkConnectionCloseEvent,
+    NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol, ProcessExitEvent,
+    SignalEnvelope,
 };
 use e_navigator_sinks::JsonStdoutSink;
 use e_navigator_sources_ebpf_aya::{AyaExecSource, AyaNetworkSource};
@@ -233,7 +234,7 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
         let duration_nanos = 2_000_000;
         let close = SignalEnvelope::network_connection_close(
             "source.synthetic_exec",
-            self.host,
+            self.host.clone(),
             NetworkConnectionCloseEvent {
                 process: NetworkProcessIdentity {
                     pid: std::process::id(),
@@ -252,11 +253,65 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
                 opened_at_unix_nanos: Some(opened_at),
                 closed_at_unix_nanos: opened_at.saturating_add(duration_nanos),
                 duration_nanos: Some(duration_nanos),
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
+            },
+        );
+        tx.send(close)
+            .await
+            .map_err(|_| CoreError::PipelineClosed)?;
+
+        let dns_query = SignalEnvelope::dns_query(
+            "source.synthetic_exec",
+            self.host.clone(),
+            DnsQueryEvent {
+                process: NetworkProcessIdentity {
+                    pid: std::process::id(),
+                    ppid: None,
+                    uid: None,
+                    command: "synthetic-api".to_string(),
+                    executable: Some("/app/synthetic-api".to_string()),
+                },
+                query_name: "api.example.com".to_string(),
+                query_type: DnsQueryType::A,
+                transport_protocol: NetworkProtocol::Udp,
+                server_address: Some("10.96.0.10".to_string()),
+                server_port: Some(53),
+                timestamp_unix_nanos: opened_at.saturating_add(duration_nanos + 1),
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
+            },
+        );
+        tx.send(dns_query)
+            .await
+            .map_err(|_| CoreError::PipelineClosed)?;
+
+        let dns_response = SignalEnvelope::dns_response(
+            "source.synthetic_exec",
+            self.host,
+            DnsResponseEvent {
+                process: NetworkProcessIdentity {
+                    pid: std::process::id(),
+                    ppid: None,
+                    uid: None,
+                    command: "synthetic-api".to_string(),
+                    executable: Some("/app/synthetic-api".to_string()),
+                },
+                query_name: "api.example.com".to_string(),
+                query_type: DnsQueryType::A,
+                response_code: DnsResponseCode::NoError,
+                latency_nanos: Some(15_000),
+                transport_protocol: NetworkProtocol::Udp,
+                server_address: Some("10.96.0.10".to_string()),
+                server_port: Some(53),
+                timestamp_unix_nanos: opened_at.saturating_add(duration_nanos + 15_001),
                 container: Some(container),
                 kubernetes: Some(kubernetes),
             },
         );
-        tx.send(close).await.map_err(|_| CoreError::PipelineClosed)
+        tx.send(dns_response)
+            .await
+            .map_err(|_| CoreError::PipelineClosed)
     }
 }
 
@@ -368,7 +423,7 @@ mod tests {
             signals.push(signal);
         }
 
-        assert_eq!(signals.len(), 4);
+        assert_eq!(signals.len(), 6);
         let SignalPayload::Exec(exec) = &signals[0].payload else {
             panic!("expected exec fixture");
         };
@@ -393,5 +448,18 @@ mod tests {
         };
         assert_eq!(close.remote_port, 443);
         assert_eq!(close.duration_nanos, Some(2_000_000));
+
+        let SignalPayload::DnsQuery(query) = &signals[4].payload else {
+            panic!("expected dns query fixture");
+        };
+        assert_eq!(query.query_name, "api.example.com");
+        assert!(query.container.is_some());
+        assert!(query.kubernetes.is_some());
+
+        let SignalPayload::DnsResponse(response) = &signals[5].payload else {
+            panic!("expected dns response fixture");
+        };
+        assert_eq!(response.query_name, "api.example.com");
+        assert_eq!(response.latency_nanos, Some(15_000));
     }
 }
