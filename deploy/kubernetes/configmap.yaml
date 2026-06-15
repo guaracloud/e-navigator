@@ -47,6 +47,11 @@ data:
     [dns_metrics]
     max_domains = 1024
 
+    [trace_correlation]
+    max_service_paths = 4096
+    max_seen_interactions = 8192
+    max_warnings = 1024
+
     [[modules]]
     name = "source.aya_exec"
     enabled = true
@@ -73,6 +78,10 @@ data:
 
     [[modules]]
     name = "generator.dns_metrics"
+    enabled = true
+
+    [[modules]]
+    name = "generator.trace_correlation"
     enabled = true
 
     [[modules]]

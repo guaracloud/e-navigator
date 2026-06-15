@@ -23,6 +23,8 @@ pub struct RuntimeConfig {
     pub network_metrics: NetworkMetricsConfig,
     #[serde(default)]
     pub dns_metrics: DnsMetricsConfig,
+    #[serde(default)]
+    pub trace_correlation: TraceCorrelationConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -38,6 +40,7 @@ impl Default for RuntimeConfig {
             resource_metrics: ResourceMetricsConfig::default(),
             network_metrics: NetworkMetricsConfig::default(),
             dns_metrics: DnsMetricsConfig::default(),
+            trace_correlation: TraceCorrelationConfig::default(),
         }
     }
 }
@@ -59,6 +62,7 @@ impl RuntimeConfig {
         self.resource_metrics.validate()?;
         self.network_metrics.validate()?;
         self.dns_metrics.validate()?;
+        self.trace_correlation.validate()?;
 
         Ok(())
     }
@@ -203,6 +207,16 @@ pub struct DnsMetricsConfig {
     pub max_domains: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraceCorrelationConfig {
+    #[serde(default = "default_trace_correlation_max_service_paths")]
+    pub max_service_paths: usize,
+    #[serde(default = "default_trace_correlation_max_seen_interactions")]
+    pub max_seen_interactions: usize,
+    #[serde(default = "default_trace_correlation_max_warnings")]
+    pub max_warnings: usize,
+}
+
 impl Default for DnsMetricsConfig {
     fn default() -> Self {
         Self {
@@ -217,6 +231,33 @@ impl DnsMetricsConfig {
             return Err("dns_metrics.max_domains must be greater than zero".to_string());
         }
 
+        Ok(())
+    }
+}
+
+impl Default for TraceCorrelationConfig {
+    fn default() -> Self {
+        Self {
+            max_service_paths: default_trace_correlation_max_service_paths(),
+            max_seen_interactions: default_trace_correlation_max_seen_interactions(),
+            max_warnings: default_trace_correlation_max_warnings(),
+        }
+    }
+}
+
+impl TraceCorrelationConfig {
+    fn validate(&self) -> Result<(), String> {
+        if self.max_service_paths == 0 {
+            return Err("trace_correlation.max_service_paths must be greater than zero".to_string());
+        }
+        if self.max_seen_interactions == 0 {
+            return Err(
+                "trace_correlation.max_seen_interactions must be greater than zero".to_string(),
+            );
+        }
+        if self.max_warnings == 0 {
+            return Err("trace_correlation.max_warnings must be greater than zero".to_string());
+        }
         Ok(())
     }
 }
@@ -417,6 +458,18 @@ fn default_dns_metrics_max_domains() -> usize {
     1024
 }
 
+fn default_trace_correlation_max_service_paths() -> usize {
+    4096
+}
+
+fn default_trace_correlation_max_seen_interactions() -> usize {
+    8192
+}
+
+fn default_trace_correlation_max_warnings() -> usize {
+    1024
+}
+
 fn default_resource_sample_interval_millis() -> u64 {
     15_000
 }
@@ -567,6 +620,48 @@ mod tests {
         assert_eq!(
             config.validate(),
             Err("dns_metrics.max_domains must be greater than zero".to_string())
+        );
+    }
+
+    #[test]
+    fn trace_correlation_limits_are_validated() {
+        let invalid_paths = RuntimeConfig {
+            trace_correlation: TraceCorrelationConfig {
+                max_service_paths: 0,
+                max_seen_interactions: 128,
+                max_warnings: 128,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_paths.validate(),
+            Err("trace_correlation.max_service_paths must be greater than zero".to_string())
+        );
+
+        let invalid_interactions = RuntimeConfig {
+            trace_correlation: TraceCorrelationConfig {
+                max_service_paths: 128,
+                max_seen_interactions: 0,
+                max_warnings: 128,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_interactions.validate(),
+            Err("trace_correlation.max_seen_interactions must be greater than zero".to_string())
+        );
+
+        let invalid_warnings = RuntimeConfig {
+            trace_correlation: TraceCorrelationConfig {
+                max_service_paths: 128,
+                max_seen_interactions: 128,
+                max_warnings: 0,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_warnings.validate(),
+            Err("trace_correlation.max_warnings must be greater than zero".to_string())
         );
     }
 

@@ -65,6 +65,11 @@ procfs_root = "/proc"
 [attribution.kubernetes]
 enabled = false
 
+[trace_correlation]
+max_service_paths = 4096
+max_seen_interactions = 8192
+max_warnings = 1024
+
 [[modules]]
 name = "source.synthetic_exec"
 enabled = true

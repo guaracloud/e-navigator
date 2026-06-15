@@ -133,7 +133,11 @@ fn build_registry(
     }
 
     if config.module_enabled("generator.trace_correlation") {
-        registry = registry.with_generator(Box::new(TraceCorrelationGenerator::default()));
+        registry = registry.with_generator(Box::new(TraceCorrelationGenerator::with_limits(
+            config.trace_correlation.max_service_paths,
+            config.trace_correlation.max_seen_interactions,
+            config.trace_correlation.max_warnings,
+        )));
     }
 
     if config.module_enabled("generator.runtime_security") {

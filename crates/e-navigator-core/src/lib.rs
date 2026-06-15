@@ -6,7 +6,7 @@ pub mod pipeline;
 pub use config::{
     ArgvCaptureConfig, AttributionConfig, DnsMetricsConfig, KubernetesAttributionConfig,
     ModuleConfig, NetworkEndpointConfig, NetworkMetricsConfig, ResourceMetricsConfig,
-    ResourceSourceConfig, RuntimeConfig, RuntimeSecurityConfig,
+    ResourceSourceConfig, RuntimeConfig, RuntimeSecurityConfig, TraceCorrelationConfig,
 };
 pub use error::{CoreError, CoreResult};
 pub use module::{ModuleKind, ModuleMetadata};
