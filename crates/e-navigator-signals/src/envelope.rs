@@ -8,10 +8,12 @@ use crate::{
     NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkCounterMetric,
     NetworkDurationMetric, NetworkGaugeMetric, NodeCpuObservation, NodeDiskIoObservation,
     NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation, ProcessExitEvent,
-    ProcessLifecycleDurationEvent, ProcessResourceObservation, ProtocolRequestObservation,
-    RequestCorrelationWarning, RequestSpanObservation, ResourceCounterMetric, ResourceGaugeMetric,
-    RuntimeSecurityFinding, ServiceInteractionSpanObservation, TraceCorrelationWarning,
-    TraceServicePathObservation, TraceSpanObservation,
+    ProcessLifecycleDurationEvent, ProcessResourceObservation, ProfileSampleObservation,
+    ProfilingSessionObservation, ProfilingStackTraceObservation, ProfilingWarningObservation,
+    ProtocolRequestObservation, RequestCorrelationWarning, RequestSpanObservation,
+    ResourceCounterMetric, ResourceGaugeMetric, RuntimeSecurityFinding,
+    ServiceInteractionSpanObservation, TraceCorrelationWarning, TraceServicePathObservation,
+    TraceSpanObservation,
 };
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
@@ -55,6 +57,10 @@ pub enum SignalKind {
     ExtractedTraceContextObservation,
     RequestSpanObservation,
     RequestCorrelationWarning,
+    ProfileSampleObservation,
+    ProfilingStackTraceObservation,
+    ProfilingSessionObservation,
+    ProfilingWarningObservation,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -78,6 +84,10 @@ pub enum SignalPayload {
     ProtocolRequestObservation(ProtocolRequestObservation),
     ExtractedTraceContextObservation(ExtractedTraceContextObservation),
     RequestCorrelationWarning(RequestCorrelationWarning),
+    ProfileSampleObservation(ProfileSampleObservation),
+    ProfilingStackTraceObservation(ProfilingStackTraceObservation),
+    ProfilingSessionObservation(ProfilingSessionObservation),
+    ProfilingWarningObservation(ProfilingWarningObservation),
     TraceSpanObservation(TraceSpanObservation),
     ServiceInteractionSpanObservation(ServiceInteractionSpanObservation),
     TraceServicePathObservation(TraceServicePathObservation),
@@ -365,6 +375,42 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
                     .map_err(|err| {
                         D::Error::custom(format!(
                             "invalid request_correlation_warning payload: {err}"
+                        ))
+                    })?
+            }
+            SignalKind::ProfileSampleObservation => {
+                serde_json::from_value::<ProfileSampleObservation>(raw.payload)
+                    .map(SignalPayload::ProfileSampleObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid profile_sample_observation payload: {err}"
+                        ))
+                    })?
+            }
+            SignalKind::ProfilingStackTraceObservation => {
+                serde_json::from_value::<ProfilingStackTraceObservation>(raw.payload)
+                    .map(SignalPayload::ProfilingStackTraceObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid profiling_stack_trace_observation payload: {err}"
+                        ))
+                    })?
+            }
+            SignalKind::ProfilingSessionObservation => {
+                serde_json::from_value::<ProfilingSessionObservation>(raw.payload)
+                    .map(SignalPayload::ProfilingSessionObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid profiling_session_observation payload: {err}"
+                        ))
+                    })?
+            }
+            SignalKind::ProfilingWarningObservation => {
+                serde_json::from_value::<ProfilingWarningObservation>(raw.payload)
+                    .map(SignalPayload::ProfilingWarningObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid profiling_warning_observation payload: {err}"
                         ))
                     })?
             }
@@ -847,6 +893,58 @@ impl SignalEnvelope {
         )
     }
 
+    pub fn profile_sample_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: ProfileSampleObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::ProfileSampleObservation,
+            SignalPayload::ProfileSampleObservation(observation),
+        )
+    }
+
+    pub fn profiling_stack_trace_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: ProfilingStackTraceObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::ProfilingStackTraceObservation,
+            SignalPayload::ProfilingStackTraceObservation(observation),
+        )
+    }
+
+    pub fn profiling_session_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: ProfilingSessionObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::ProfilingSessionObservation,
+            SignalPayload::ProfilingSessionObservation(observation),
+        )
+    }
+
+    pub fn profiling_warning_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: ProfilingWarningObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::ProfilingWarningObservation,
+            SignalPayload::ProfilingWarningObservation(observation),
+        )
+    }
+
     fn new(
         source: impl Into<String>,
         host: Option<String>,
@@ -905,6 +1003,10 @@ impl Signal for SignalEnvelope {
             SignalKind::ExtractedTraceContextObservation => "extracted_trace_context_observation",
             SignalKind::RequestSpanObservation => "request_span_observation",
             SignalKind::RequestCorrelationWarning => "request_correlation_warning",
+            SignalKind::ProfileSampleObservation => "profile_sample_observation",
+            SignalKind::ProfilingStackTraceObservation => "profiling_stack_trace_observation",
+            SignalKind::ProfilingSessionObservation => "profiling_session_observation",
+            SignalKind::ProfilingWarningObservation => "profiling_warning_observation",
         }
     }
 }
