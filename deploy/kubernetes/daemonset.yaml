@@ -52,6 +52,12 @@ spec:
             - name: sys-kernel-tracing
               mountPath: /sys/kernel/tracing
               readOnly: true
+            - name: host-proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: host-sys
+              mountPath: /host/sys
+              readOnly: true
       volumes:
         - name: config
           configMap:
@@ -63,4 +69,12 @@ spec:
         - name: sys-kernel-tracing
           hostPath:
             path: /sys/kernel/tracing
+            type: Directory
+        - name: host-proc
+          hostPath:
+            path: /proc
+            type: Directory
+        - name: host-sys
+          hostPath:
+            path: /sys
             type: Directory

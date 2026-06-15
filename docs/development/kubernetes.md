@@ -10,13 +10,15 @@ Before applying the DaemonSet, build and publish or load an image that contains 
 docker build -f Containerfile -t ghcr.io/victorbona/e-navigator:dev .
 ```
 
-The Phase 4 ConfigMap enables:
+The Phase 5 ConfigMap enables:
 
 - bounded argv capture,
 - procfs cgroup attribution,
 - Kubernetes pod/node metadata attribution,
 - Aya process exec and process exit visibility,
 - Aya TCP connect/failure and fd-close duration visibility,
+- bounded non-privileged node, process, and cgroup/container resource observations from host procfs, sysfs, and cgroup v2 files,
+- bounded low-cardinality resource metric generation,
 - bounded network metric generation for connection counters, failures, durations, active connections, traffic destinations, and protocol distribution,
 - bounded DNS metric generation from DNS signals,
 - dependency edge generation from network observations,
@@ -66,10 +68,12 @@ Expected exec result: JSON exec or process exit signals from `source.aya_exec` a
 
 Expected network result: JSON network connection signals from `source.aya_network` are visible, and network metric, dependency edge, or network runtime security finding signals appear when the observed connection matches generator inputs.
 
+Expected resource result: JSON resource observation signals from `source.host_resource` and resource metric signals from `generator.resource_metrics` appear in the DaemonSet logs after the configured sampling interval. These signals require the configured read-only `/host/proc` and `/host/sys` mounts. Treat them as host-resource runtime proof only after running in a real Linux Kubernetes node environment.
+
 ## Privilege Boundary
 
 Kubernetes manifest dry-run validation and Docker synthetic checks are non-privileged CI checks. They do not prove real Aya/eBPF load or tracepoint attachment.
 
 The DaemonSet is configured for privileged eBPF testing with `hostPID: true` and one `e-navigator` container per pod. Treat the Kubernetes exec smoke test as passed only after running it in a real Linux cluster where the pod can access tracefs/eBPF facilities and the logs show real process exec or process exit signals from `source.aya_exec`. Treat the Kubernetes network smoke test as passed only when the logs show real network connection signals from `source.aya_network` after a workload opens a TCP connection.
 
-The current network source attaches syscall tracepoints for TCP-oriented connect attempt/failure visibility and fd-close duration derived from connections observed by this agent. It does not implement DNS packet parsing, full OTLP export, or full distributed tracing. Phase 4 DNS metrics in Kubernetes require DNS signals; the included Aya sources do not yet produce real DNS query or response signals.
+The current network source attaches syscall tracepoints for TCP-oriented connect attempt/failure visibility and fd-close duration derived from connections observed by this agent. It does not implement DNS packet parsing, full OTLP export, full distributed tracing, capacity planning, cost attribution, continuous profiling, or UI storage. DNS metrics in Kubernetes require DNS signals; the included Aya sources do not yet produce real DNS query or response signals.

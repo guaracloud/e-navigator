@@ -16,7 +16,7 @@ data:
     max_bytes = 512
 
     [attribution]
-    procfs_root = "/proc"
+    procfs_root = "/host/proc"
 
     [attribution.kubernetes]
     enabled = true
@@ -26,6 +26,18 @@ data:
     [runtime_security]
     # Kubernetes API endpoints are also discovered from
     # KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT inside the pod.
+
+    [resource_source]
+    procfs_root = "/host/proc"
+    sysfs_root = "/host/sys"
+    cgroup_root = "/host/sys/fs/cgroup"
+    sample_interval_millis = 15000
+    max_processes = 128
+    max_cgroups = 128
+    max_file_bytes = 131072
+
+    [resource_metrics]
+    max_keys = 4096
 
     [network_metrics]
     max_metric_keys = 4096
@@ -43,7 +55,15 @@ data:
     enabled = true
 
     [[modules]]
+    name = "source.host_resource"
+    enabled = true
+
+    [[modules]]
     name = "processor.container_attribution"
+    enabled = true
+
+    [[modules]]
+    name = "generator.resource_metrics"
     enabled = true
 
     [[modules]]

@@ -2,7 +2,7 @@
 
 E-Navigator is a Rust and eBPF observability, security, profiling, and diagnostics platform for Linux and Kubernetes workloads.
 
-Phase 4 builds bounded network observability, DNS-ready intelligence, and an OTEL-compatible export foundation on the runtime and dependency foundation:
+Phase 5 builds bounded Linux and Kubernetes resource observability on the runtime, network, DNS, dependency, security, and OTEL-compatible export foundations:
 
 - A layered Rust workspace.
 - A statically registered signal pipeline.
@@ -14,12 +14,15 @@ Phase 4 builds bounded network observability, DNS-ready intelligence, and an OTE
 - Best-effort container and Kubernetes attribution.
 - Bounded network metric generation for connection counts, failures, durations, active connection gauges, traffic destinations, and protocol distribution.
 - DNS query/response schemas, synthetic DNS fixtures, and bounded DNS metric/dependency generation from DNS signals.
+- Versioned resource observation schemas for node CPU/load/memory/filesystem/disk, process resources, and cgroup/container CPU, memory, process/thread, fd, and socket counts where available.
+- A non-privileged bounded host resource source for procfs, sysfs, and cgroup v2 files with configurable roots and sampling limits.
+- A bounded resource metric generator for low-cardinality node, process, and cgroup/container metrics.
 - A dependency graph generator for observed network edges.
 - A narrow runtime security generator for process and network findings.
 - An internal OTEL-compatible metric formatter boundary for future exporters.
 - JSON stdout output.
 
-Runtime DNS packet capture and production OTLP export are not implemented in Phase 4. The Aya network source remains TCP-oriented.
+Runtime DNS packet capture, production OTLP export, cost attribution, capacity planning, continuous profiling, and UI storage are not implemented in Phase 5. The Aya network source remains TCP-oriented. Host resource accuracy depends on running on Linux with the configured host procfs/sysfs/cgroup mounts.
 
 ## Development
 
