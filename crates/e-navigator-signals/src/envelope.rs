@@ -2,9 +2,10 @@ use e_navigator_core::Signal;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 
 use crate::{
-    DependencyEdgeEvent, ExecEvent, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
-    NetworkConnectionOpenEvent, ProcessExitEvent, ProcessLifecycleDurationEvent,
-    RuntimeSecurityFinding,
+    DependencyEdgeEvent, DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent, DnsResponseEvent,
+    ExecEvent, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
+    NetworkConnectionOpenEvent, NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric,
+    ProcessExitEvent, ProcessLifecycleDurationEvent, RuntimeSecurityFinding,
 };
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
@@ -19,6 +20,13 @@ pub enum SignalKind {
     NetworkConnectionOpen,
     NetworkConnectionClose,
     NetworkConnectionFailure,
+    NetworkCounterMetric,
+    NetworkDurationMetric,
+    NetworkGaugeMetric,
+    DnsQuery,
+    DnsResponse,
+    DnsCounterMetric,
+    DnsLatencyMetric,
     DependencyEdge,
     RuntimeSecurityFinding,
 }
@@ -33,6 +41,13 @@ pub enum SignalPayload {
     NetworkConnectionOpen(NetworkConnectionOpenEvent),
     NetworkConnectionClose(NetworkConnectionCloseEvent),
     NetworkConnectionFailure(NetworkConnectionFailureEvent),
+    NetworkCounterMetric(NetworkCounterMetric),
+    NetworkDurationMetric(NetworkDurationMetric),
+    NetworkGaugeMetric(NetworkGaugeMetric),
+    DnsQuery(DnsQueryEvent),
+    DnsResponse(DnsResponseEvent),
+    DnsCounterMetric(DnsCounterMetric),
+    DnsLatencyMetric(DnsLatencyMetric),
     DependencyEdge(DependencyEdgeEvent),
     RuntimeSecurityFinding(RuntimeSecurityFinding),
 }
@@ -96,6 +111,43 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
             .map_err(|err| {
                 D::Error::custom(format!("invalid network_connection_failure payload: {err}"))
             })?,
+            SignalKind::NetworkCounterMetric => {
+                serde_json::from_value::<NetworkCounterMetric>(raw.payload)
+                    .map(SignalPayload::NetworkCounterMetric)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid network_counter_metric payload: {err}"))
+                    })?
+            }
+            SignalKind::NetworkDurationMetric => {
+                serde_json::from_value::<NetworkDurationMetric>(raw.payload)
+                    .map(SignalPayload::NetworkDurationMetric)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid network_duration_metric payload: {err}"))
+                    })?
+            }
+            SignalKind::NetworkGaugeMetric => {
+                serde_json::from_value::<NetworkGaugeMetric>(raw.payload)
+                    .map(SignalPayload::NetworkGaugeMetric)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid network_gauge_metric payload: {err}"))
+                    })?
+            }
+            SignalKind::DnsQuery => serde_json::from_value::<DnsQueryEvent>(raw.payload)
+                .map(SignalPayload::DnsQuery)
+                .map_err(|err| D::Error::custom(format!("invalid dns_query payload: {err}")))?,
+            SignalKind::DnsResponse => serde_json::from_value::<DnsResponseEvent>(raw.payload)
+                .map(SignalPayload::DnsResponse)
+                .map_err(|err| D::Error::custom(format!("invalid dns_response payload: {err}")))?,
+            SignalKind::DnsCounterMetric => serde_json::from_value::<DnsCounterMetric>(raw.payload)
+                .map(SignalPayload::DnsCounterMetric)
+                .map_err(|err| {
+                    D::Error::custom(format!("invalid dns_counter_metric payload: {err}"))
+                })?,
+            SignalKind::DnsLatencyMetric => serde_json::from_value::<DnsLatencyMetric>(raw.payload)
+                .map(SignalPayload::DnsLatencyMetric)
+                .map_err(|err| {
+                    D::Error::custom(format!("invalid dns_latency_metric payload: {err}"))
+                })?,
             SignalKind::DependencyEdge => {
                 serde_json::from_value::<DependencyEdgeEvent>(raw.payload)
                     .map(SignalPayload::DependencyEdge)
@@ -217,6 +269,104 @@ impl SignalEnvelope {
         }
     }
 
+    pub fn network_counter_metric(
+        source: impl Into<String>,
+        host: Option<String>,
+        metric: NetworkCounterMetric,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::NetworkCounterMetric,
+            source: source.into(),
+            host,
+            payload: SignalPayload::NetworkCounterMetric(metric),
+        }
+    }
+
+    pub fn network_duration_metric(
+        source: impl Into<String>,
+        host: Option<String>,
+        metric: NetworkDurationMetric,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::NetworkDurationMetric,
+            source: source.into(),
+            host,
+            payload: SignalPayload::NetworkDurationMetric(metric),
+        }
+    }
+
+    pub fn network_gauge_metric(
+        source: impl Into<String>,
+        host: Option<String>,
+        metric: NetworkGaugeMetric,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::NetworkGaugeMetric,
+            source: source.into(),
+            host,
+            payload: SignalPayload::NetworkGaugeMetric(metric),
+        }
+    }
+
+    pub fn dns_query(
+        source: impl Into<String>,
+        host: Option<String>,
+        event: DnsQueryEvent,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::DnsQuery,
+            source: source.into(),
+            host,
+            payload: SignalPayload::DnsQuery(event),
+        }
+    }
+
+    pub fn dns_response(
+        source: impl Into<String>,
+        host: Option<String>,
+        event: DnsResponseEvent,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::DnsResponse,
+            source: source.into(),
+            host,
+            payload: SignalPayload::DnsResponse(event),
+        }
+    }
+
+    pub fn dns_counter_metric(
+        source: impl Into<String>,
+        host: Option<String>,
+        metric: DnsCounterMetric,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::DnsCounterMetric,
+            source: source.into(),
+            host,
+            payload: SignalPayload::DnsCounterMetric(metric),
+        }
+    }
+
+    pub fn dns_latency_metric(
+        source: impl Into<String>,
+        host: Option<String>,
+        metric: DnsLatencyMetric,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::DnsLatencyMetric,
+            source: source.into(),
+            host,
+            payload: SignalPayload::DnsLatencyMetric(metric),
+        }
+    }
+
     pub fn dependency_edge(
         source: impl Into<String>,
         host: Option<String>,
@@ -245,6 +395,13 @@ impl Signal for SignalEnvelope {
             SignalKind::NetworkConnectionOpen => "network_connection_open",
             SignalKind::NetworkConnectionClose => "network_connection_close",
             SignalKind::NetworkConnectionFailure => "network_connection_failure",
+            SignalKind::NetworkCounterMetric => "network_counter_metric",
+            SignalKind::NetworkDurationMetric => "network_duration_metric",
+            SignalKind::NetworkGaugeMetric => "network_gauge_metric",
+            SignalKind::DnsQuery => "dns_query",
+            SignalKind::DnsResponse => "dns_response",
+            SignalKind::DnsCounterMetric => "dns_counter_metric",
+            SignalKind::DnsLatencyMetric => "dns_latency_metric",
             SignalKind::DependencyEdge => "dependency_edge",
             SignalKind::RuntimeSecurityFinding => "runtime_security_finding",
         }
@@ -255,7 +412,10 @@ impl Signal for SignalEnvelope {
 mod tests {
     use super::*;
     use crate::{
-        DependencyEndpoint, NetworkAddressFamily, NetworkProcessIdentity, NetworkProtocol,
+        DependencyEndpoint, DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent, DnsQueryType,
+        DnsResponseCode, DnsResponseEvent, MetricAggregationWindow, NetworkAddressFamily,
+        NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric, NetworkProcessIdentity,
+        NetworkProtocol,
     };
 
     #[test]
@@ -513,5 +673,255 @@ mod tests {
             .expect_err("mismatched kind and payload must be rejected");
 
         assert!(err.to_string().contains("payload"));
+    }
+
+    #[test]
+    fn serializes_network_counter_metric_signal() {
+        let metric = NetworkCounterMetric {
+            metric_name: "network.connection.open.count".to_string(),
+            unit: "{connection}".to_string(),
+            value: 1,
+            window: MetricAggregationWindow {
+                start_unix_nanos: 100,
+                end_unix_nanos: 100,
+            },
+            process: Some(network_process()),
+            protocol: Some(NetworkProtocol::Tcp),
+            address_family: Some(NetworkAddressFamily::Ipv4),
+            local_address: Some("10.0.0.5".to_string()),
+            local_port: Some(43512),
+            remote_address: Some("203.0.113.10".to_string()),
+            remote_port: Some(443),
+            errno: None,
+            container: None,
+            kubernetes: None,
+        };
+        let signal =
+            SignalEnvelope::network_counter_metric("generator.test", Some("node-a".into()), metric);
+
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+        let decoded: SignalEnvelope = serde_json::from_value(json.clone()).expect("round trips");
+
+        assert_eq!(json["kind"], "network_counter_metric");
+        assert_eq!(
+            json["payload"]["metric_name"],
+            "network.connection.open.count"
+        );
+        assert_eq!(json["payload"]["unit"], "{connection}");
+        assert_eq!(json["payload"]["value"], 1);
+        assert_eq!(json["payload"]["window"]["start_unix_nanos"], 100);
+        assert!(matches!(
+            decoded.payload,
+            SignalPayload::NetworkCounterMetric(_)
+        ));
+    }
+
+    #[test]
+    fn serializes_network_duration_metric_signal() {
+        let metric = NetworkDurationMetric {
+            metric_name: "network.connection.duration".to_string(),
+            unit: "ns".to_string(),
+            count: 1,
+            sum_nanos: 600,
+            min_nanos: 600,
+            max_nanos: 600,
+            window: MetricAggregationWindow {
+                start_unix_nanos: 300,
+                end_unix_nanos: 900,
+            },
+            process: Some(network_process()),
+            protocol: Some(NetworkProtocol::Tcp),
+            address_family: Some(NetworkAddressFamily::Ipv4),
+            remote_address: Some("203.0.113.10".to_string()),
+            remote_port: Some(443),
+            container: None,
+            kubernetes: None,
+        };
+        let signal = SignalEnvelope::network_duration_metric("generator.test", None, metric);
+
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+        let decoded: SignalEnvelope = serde_json::from_value(json.clone()).expect("round trips");
+
+        assert_eq!(json["kind"], "network_duration_metric");
+        assert_eq!(
+            json["payload"]["metric_name"],
+            "network.connection.duration"
+        );
+        assert_eq!(json["payload"]["unit"], "ns");
+        assert_eq!(json["payload"]["count"], 1);
+        assert_eq!(json["payload"]["sum_nanos"], 600);
+        assert!(matches!(
+            decoded.payload,
+            SignalPayload::NetworkDurationMetric(_)
+        ));
+    }
+
+    #[test]
+    fn serializes_network_gauge_metric_signal() {
+        let metric = NetworkGaugeMetric {
+            metric_name: "network.connection.active".to_string(),
+            unit: "{connection}".to_string(),
+            value: 1,
+            window: MetricAggregationWindow {
+                start_unix_nanos: 300,
+                end_unix_nanos: 900,
+            },
+            process: Some(network_process()),
+            protocol: Some(NetworkProtocol::Tcp),
+            address_family: Some(NetworkAddressFamily::Ipv4),
+            remote_address: Some("203.0.113.10".to_string()),
+            remote_port: Some(443),
+            container: None,
+            kubernetes: None,
+        };
+        let signal = SignalEnvelope::network_gauge_metric("generator.test", None, metric);
+
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+        let decoded: SignalEnvelope = serde_json::from_value(json.clone()).expect("round trips");
+
+        assert_eq!(json["kind"], "network_gauge_metric");
+        assert_eq!(json["payload"]["metric_name"], "network.connection.active");
+        assert_eq!(json["payload"]["value"], 1);
+        assert!(matches!(
+            decoded.payload,
+            SignalPayload::NetworkGaugeMetric(_)
+        ));
+    }
+
+    #[test]
+    fn serializes_dns_query_and_response_signals() {
+        let query = SignalEnvelope::dns_query(
+            "source.synthetic_dns",
+            Some("node-a".to_string()),
+            DnsQueryEvent {
+                process: network_process(),
+                query_name: "api.example.com".to_string(),
+                query_type: DnsQueryType::A,
+                transport_protocol: NetworkProtocol::Udp,
+                server_address: Some("10.96.0.10".to_string()),
+                server_port: Some(53),
+                timestamp_unix_nanos: 400,
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let response = SignalEnvelope::dns_response(
+            "source.synthetic_dns",
+            Some("node-a".to_string()),
+            DnsResponseEvent {
+                process: network_process(),
+                query_name: "missing.example.com".to_string(),
+                query_type: DnsQueryType::Aaaa,
+                response_code: DnsResponseCode::NxDomain,
+                latency_nanos: Some(15_000),
+                transport_protocol: NetworkProtocol::Udp,
+                server_address: Some("10.96.0.10".to_string()),
+                server_port: Some(53),
+                timestamp_unix_nanos: 415,
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let query_json = serde_json::to_value(&query).expect("query serializes");
+        let response_json = serde_json::to_value(&response).expect("response serializes");
+
+        assert_eq!(query_json["kind"], "dns_query");
+        assert_eq!(query_json["payload"]["query_name"], "api.example.com");
+        assert_eq!(query_json["payload"]["query_type"], "a");
+        assert_eq!(response_json["kind"], "dns_response");
+        assert_eq!(response_json["payload"]["response_code"], "nx_domain");
+        assert!(matches!(
+            serde_json::from_value::<SignalEnvelope>(query_json)
+                .expect("query round trips")
+                .payload,
+            SignalPayload::DnsQuery(_)
+        ));
+        assert!(matches!(
+            serde_json::from_value::<SignalEnvelope>(response_json)
+                .expect("response round trips")
+                .payload,
+            SignalPayload::DnsResponse(_)
+        ));
+    }
+
+    #[test]
+    fn serializes_dns_metric_signals() {
+        let counter = SignalEnvelope::dns_counter_metric(
+            "generator.dns_metrics",
+            Some("node-a".to_string()),
+            DnsCounterMetric {
+                metric_name: "dns.query.count".to_string(),
+                unit: "{query}".to_string(),
+                value: 1,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 400,
+                    end_unix_nanos: 415,
+                },
+                query_name: Some("api.example.com".to_string()),
+                query_type: Some(DnsQueryType::A),
+                response_code: None,
+                server_address: Some("10.96.0.10".to_string()),
+                server_port: Some(53),
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let latency = SignalEnvelope::dns_latency_metric(
+            "generator.dns_metrics",
+            Some("node-a".to_string()),
+            DnsLatencyMetric {
+                metric_name: "dns.lookup.duration".to_string(),
+                unit: "ns".to_string(),
+                count: 1,
+                sum_nanos: 15_000,
+                min_nanos: 15_000,
+                max_nanos: 15_000,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 400,
+                    end_unix_nanos: 415,
+                },
+                query_name: Some("api.example.com".to_string()),
+                query_type: Some(DnsQueryType::A),
+                response_code: Some(DnsResponseCode::NoError),
+                server_address: Some("10.96.0.10".to_string()),
+                server_port: Some(53),
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let counter_json = serde_json::to_value(&counter).expect("counter serializes");
+        let latency_json = serde_json::to_value(&latency).expect("latency serializes");
+
+        assert_eq!(counter_json["kind"], "dns_counter_metric");
+        assert_eq!(counter_json["payload"]["metric_name"], "dns.query.count");
+        assert_eq!(latency_json["kind"], "dns_latency_metric");
+        assert_eq!(
+            latency_json["payload"]["metric_name"],
+            "dns.lookup.duration"
+        );
+        assert!(matches!(
+            serde_json::from_value::<SignalEnvelope>(counter_json)
+                .expect("counter round trips")
+                .payload,
+            SignalPayload::DnsCounterMetric(_)
+        ));
+        assert!(matches!(
+            serde_json::from_value::<SignalEnvelope>(latency_json)
+                .expect("latency round trips")
+                .payload,
+            SignalPayload::DnsLatencyMetric(_)
+        ));
+    }
+
+    fn network_process() -> NetworkProcessIdentity {
+        NetworkProcessIdentity {
+            pid: 42,
+            ppid: Some(1),
+            uid: Some(1000),
+            command: "api".to_string(),
+            executable: Some("/app/api".to_string()),
+        }
     }
 }
