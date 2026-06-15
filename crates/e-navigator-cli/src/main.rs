@@ -3,7 +3,7 @@ use clap::{Parser, ValueEnum};
 use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, RuntimeConfig, Source};
 use e_navigator_generators::{
     DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator,
-    ResourceMetricsGenerator, RuntimeSecurityGenerator,
+    ResourceMetricsGenerator, RuntimeSecurityGenerator, TraceCorrelationGenerator,
 };
 use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::{ModuleRegistry, Runner};
@@ -12,9 +12,10 @@ use e_navigator_signals::{
     CgroupPidsObservation, CgroupResourceContext, ContainerContext, DnsQueryEvent, DnsQueryType,
     DnsResponseCode, DnsResponseEvent, ExecEvent, KubernetesContext, MetricAggregationWindow,
     NetworkAddressFamily, NetworkConnectionCloseEvent, NetworkConnectionOpenEvent,
-    NetworkProcessIdentity, NetworkProtocol, NodeCpuObservation, NodeDiskIoObservation,
-    NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation, ProcessExitEvent,
-    ProcessResourceContext, ProcessResourceObservation, SignalEnvelope,
+    NetworkConnectionFailureEvent, NetworkProcessIdentity, NetworkProtocol, NodeCpuObservation,
+    NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation,
+    ProcessExitEvent, ProcessResourceContext, ProcessResourceObservation, SignalEnvelope,
+    TraceAttribute, TraceConfidence, TraceCorrelationKind, TracePeerContext, TraceSpanObservation,
 };
 use e_navigator_sinks::JsonStdoutSink;
 use e_navigator_sources_ebpf_aya::{AyaExecSource, AyaNetworkSource};
@@ -129,6 +130,10 @@ fn build_registry(
         registry = registry.with_generator(Box::new(DnsMetricsGenerator::with_domain_limit(
             config.dns_metrics.max_domains,
         )));
+    }
+
+    if config.module_enabled("generator.trace_correlation") {
+        registry = registry.with_generator(Box::new(TraceCorrelationGenerator::default()));
     }
 
     if config.module_enabled("generator.runtime_security") {
@@ -348,6 +353,72 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
             },
         );
         tx.send(dns_response)
+            .await
+            .map_err(|_| CoreError::PipelineClosed)?;
+
+        let trace_span = SignalEnvelope::trace_span_observation(
+            "source.synthetic_exec",
+            self.host.clone(),
+            TraceSpanObservation {
+                name: "synthetic checkout".to_string(),
+                trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+                span_id: Some("00f067aa0ba902b7".to_string()),
+                parent_span_id: None,
+                start_unix_nanos: opened_at,
+                end_unix_nanos: Some(opened_at.saturating_add(duration_nanos)),
+                duration_nanos: Some(duration_nanos),
+                correlation_kind: TraceCorrelationKind::Synthetic,
+                confidence: TraceConfidence::High,
+                service_name: Some("synthetic-api".to_string()),
+                process: Some(NetworkProcessIdentity {
+                    pid: std::process::id(),
+                    ppid: None,
+                    uid: None,
+                    command: "synthetic-api".to_string(),
+                    executable: Some("/app/synthetic-api".to_string()),
+                }),
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
+                peer: Some(TracePeerContext {
+                    address: Some("203.0.113.10".to_string()),
+                    port: Some(443),
+                    domain: Some("api.example.com".to_string()),
+                    workload: None,
+                    container: None,
+                }),
+                attributes: vec![TraceAttribute {
+                    key: "trace.synthetic.fixture".to_string(),
+                    value: "true_trace_context".to_string(),
+                }],
+            },
+        );
+        tx.send(trace_span)
+            .await
+            .map_err(|_| CoreError::PipelineClosed)?;
+
+        let failure = SignalEnvelope::network_connection_failure(
+            "source.synthetic_exec",
+            self.host.clone(),
+            NetworkConnectionFailureEvent {
+                process: NetworkProcessIdentity {
+                    pid: std::process::id(),
+                    ppid: None,
+                    uid: None,
+                    command: "synthetic-api".to_string(),
+                    executable: Some("/app/synthetic-api".to_string()),
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                remote_address: "198.51.100.20".to_string(),
+                remote_port: 5432,
+                fd: Some(8),
+                errno: 111,
+                timestamp_unix_nanos: opened_at.saturating_add(duration_nanos + 30_000),
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
+            },
+        );
+        tx.send(failure)
             .await
             .map_err(|_| CoreError::PipelineClosed)?;
 
@@ -650,7 +721,7 @@ mod tests {
 
         assert_eq!(registry.sources.len(), 1);
         assert_eq!(registry.processors.len(), 0);
-        assert_eq!(registry.generators.len(), 5);
+        assert_eq!(registry.generators.len(), 6);
         assert_eq!(registry.sinks.len(), 1);
     }
 
@@ -694,7 +765,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn synthetic_source_emits_attributed_runtime_and_network_fixtures() {
+    async fn synthetic_source_emits_attributed_runtime_network_and_trace_fixtures() {
         let (tx, mut rx) = mpsc::channel(64);
         Box::new(SyntheticExecSource {
             host: Some("node-a".to_string()),
@@ -746,6 +817,18 @@ mod tests {
         };
         assert_eq!(response.query_name, "api.example.com");
         assert_eq!(response.latency_nanos, Some(15_000));
+
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::TraceSpanObservation(span)
+                if span.trace_id.as_deref() == Some("4bf92f3577b34da6a3ce929d0e0e4736")
+                    && span.span_id.as_deref() == Some("00f067aa0ba902b7")
+        )));
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::NetworkConnectionFailure(failure)
+                if failure.remote_address == "198.51.100.20" && failure.errno == 111
+        )));
 
         assert!(
             signals

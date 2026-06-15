@@ -362,6 +362,7 @@ fn default_modules() -> Vec<ModuleConfig> {
         ModuleConfig::enabled("generator.resource_metrics"),
         ModuleConfig::enabled("generator.network_metrics"),
         ModuleConfig::enabled("generator.dns_metrics"),
+        ModuleConfig::enabled("generator.trace_correlation"),
         ModuleConfig::enabled("generator.dependency_graph"),
         ModuleConfig::enabled("generator.runtime_security"),
         ModuleConfig::enabled("sink.json_stdout"),
@@ -523,6 +524,7 @@ mod tests {
         assert!(config.module_enabled("generator.resource_metrics"));
         assert!(config.module_enabled("generator.network_metrics"));
         assert!(config.module_enabled("generator.dns_metrics"));
+        assert!(config.module_enabled("generator.trace_correlation"));
         assert!(config.module_enabled("generator.dependency_graph"));
         assert!(config.module_enabled("generator.runtime_security"));
         assert!(config.module_enabled("sink.json_stdout"));

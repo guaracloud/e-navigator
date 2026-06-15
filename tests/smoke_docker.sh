@@ -17,6 +17,9 @@ grep -q '"kind":"network_connection_open"' "$default_output"
 grep -q '"kind":"network_connection_close"' "$default_output"
 grep -q '"kind":"dns_query"' "$default_output"
 grep -q '"kind":"dns_response"' "$default_output"
+grep -q '"kind":"trace_span_observation"' "$default_output"
+grep -q '"kind":"service_interaction_span_observation"' "$default_output"
+grep -q '"kind":"trace_service_path_observation"' "$default_output"
 grep -q '"kind":"network_counter_metric"' "$default_output"
 grep -q '"kind":"network_duration_metric"' "$default_output"
 grep -q '"kind":"network_gauge_metric"' "$default_output"
@@ -44,6 +47,8 @@ grep -q '"kind":"runtime_security_finding"' "$default_output"
 grep -q '"rule_id":"runtime.shell_in_container"' "$default_output"
 grep -q '"rule_id":"network.unexpected_external_connection"' "$default_output"
 grep -q '"duration_nanos":2000000' "$default_output"
+grep -q '"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"' "$default_output"
+grep -q '"error_type":"errno_111"' "$default_output"
 
 cat >"$config_file" <<'CONFIG'
 log_level = "info"
@@ -85,6 +90,10 @@ name = "generator.dns_metrics"
 enabled = true
 
 [[modules]]
+name = "generator.trace_correlation"
+enabled = true
+
+[[modules]]
 name = "generator.resource_metrics"
 enabled = true
 
@@ -106,6 +115,9 @@ grep -q '"kind":"network_connection_open"' "$config_output"
 grep -q '"kind":"network_connection_close"' "$config_output"
 grep -q '"kind":"dns_query"' "$config_output"
 grep -q '"kind":"dns_response"' "$config_output"
+grep -q '"kind":"trace_span_observation"' "$config_output"
+grep -q '"kind":"service_interaction_span_observation"' "$config_output"
+grep -q '"kind":"trace_service_path_observation"' "$config_output"
 grep -q '"kind":"network_counter_metric"' "$config_output"
 grep -q '"kind":"network_duration_metric"' "$config_output"
 grep -q '"kind":"network_gauge_metric"' "$config_output"
@@ -133,3 +145,5 @@ grep -q '"kind":"runtime_security_finding"' "$config_output"
 grep -q '"rule_id":"runtime.shell_in_container"' "$config_output"
 grep -q '"rule_id":"network.unexpected_external_connection"' "$config_output"
 grep -q '"duration_nanos":2000000' "$config_output"
+grep -q '"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"' "$config_output"
+grep -q '"error_type":"errno_111"' "$config_output"
