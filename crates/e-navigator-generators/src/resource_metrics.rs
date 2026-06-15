@@ -136,8 +136,8 @@ impl ResourceMetricsGenerator {
         if !emitted_cpu_delta {
             return Ok(metrics);
         }
-        if let Some(value) = observation.runnable_tasks {
-            if let Some(metric) = self.update_gauge(
+        if let Some(value) = observation.runnable_tasks
+            && let Some(metric) = self.update_gauge(
                 StateKey::node(signal, "system.cpu.saturation.runnable", "runnable"),
                 signal,
                 "system.cpu.saturation.runnable",
@@ -145,12 +145,12 @@ impl ResourceMetricsGenerator {
                 value as i64,
                 observation.window.clone(),
                 [("state", "runnable")],
-            )? {
-                metrics.push(metric);
-            }
+            )?
+        {
+            metrics.push(metric);
         }
-        if let Some(value) = observation.blocked_tasks {
-            if let Some(metric) = self.update_gauge(
+        if let Some(value) = observation.blocked_tasks
+            && let Some(metric) = self.update_gauge(
                 StateKey::node(signal, "system.cpu.saturation.blocked", "blocked"),
                 signal,
                 "system.cpu.saturation.blocked",
@@ -158,9 +158,9 @@ impl ResourceMetricsGenerator {
                 value as i64,
                 observation.window.clone(),
                 [("state", "blocked")],
-            )? {
-                metrics.push(metric);
-            }
+            )?
+        {
+            metrics.push(metric);
         }
         Ok(metrics)
     }
@@ -855,6 +855,7 @@ fn gauge_metric<'a, const N: usize>(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn counter_metric<'a, const N: usize>(
     signal: &SignalEnvelope,
     name: &str,

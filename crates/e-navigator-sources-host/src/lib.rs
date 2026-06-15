@@ -342,6 +342,7 @@ pub fn parse_diskstats(
     Ok(observations)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn parse_process_stat(
     pid: u32,
     stat: &str,
