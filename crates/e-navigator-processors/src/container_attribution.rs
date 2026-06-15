@@ -136,6 +136,18 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
             SignalPayload::RequestCorrelationWarning(event) => {
                 self.enrich_existing_container_context(&mut event.container, &mut event.kubernetes);
             }
+            SignalPayload::ProfileSampleObservation(event) => {
+                self.enrich_existing_container_context(&mut event.container, &mut event.kubernetes);
+            }
+            SignalPayload::ProfilingStackTraceObservation(event) => {
+                self.enrich_existing_container_context(&mut event.container, &mut event.kubernetes);
+            }
+            SignalPayload::ProfilingSessionObservation(event) => {
+                self.enrich_existing_container_context(&mut event.container, &mut event.kubernetes);
+            }
+            SignalPayload::ProfilingWarningObservation(event) => {
+                self.enrich_existing_container_context(&mut event.container, &mut event.kubernetes);
+            }
             SignalPayload::ProcessResourceObservation(event) => {
                 self.enrich_context(
                     event.process.pid,
@@ -1119,6 +1131,85 @@ mod tests {
         assert_eq!(
             span.kubernetes.as_ref().expect("kubernetes").pod_name,
             "request-client-123"
+        );
+
+        fs::remove_dir_all(root).expect("fixture cleanup succeeds");
+    }
+
+    #[tokio::test]
+    async fn profile_samples_reuse_existing_container_attribution_before_generation() {
+        let container_id = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+        let kubernetes = KubernetesContext {
+            namespace: "default".to_string(),
+            pod_name: "profile-client-123".to_string(),
+            pod_uid: Some("profile-pod-uid".to_string()),
+            container_name: Some("profile-client".to_string()),
+            node_name: Some("node-a".to_string()),
+            labels: BTreeMap::new(),
+        };
+        let (processor, root) = processor_fixture(101, container_id, kubernetes);
+        let signal = SignalEnvelope::profile_sample_observation(
+            "source.synthetic_profile",
+            Some("node-a".to_string()),
+            e_navigator_signals::ProfileSampleObservation {
+                timestamp_unix_nanos: 1_500_000_000,
+                profiling_kind: e_navigator_signals::ProfilingKind::Cpu,
+                correlation_kind: e_navigator_signals::ProfilingCorrelationKind::Synthetic,
+                confidence: e_navigator_signals::ProfilingConfidence::High,
+                sample_count: 1,
+                sampling_period_nanos: Some(10_000_000),
+                stack_id: "stack:0123456789abcdef".to_string(),
+                stack_frames: vec![e_navigator_signals::ProfilingFrame {
+                    symbol: Some("profile_client::handler".to_string()),
+                    module: Some("profile-client".to_string()),
+                    file: None,
+                    line: None,
+                }],
+                process: Some(NetworkProcessIdentity {
+                    pid: 101,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "profile-client".to_string(),
+                    executable: Some("/app/profile-client".to_string()),
+                }),
+                container: Some(ContainerContext {
+                    container_id: container_id.to_string(),
+                    runtime: Some("containerd".to_string()),
+                }),
+                kubernetes: None,
+                thread_id: None,
+                thread_name: None,
+                attributes: vec![],
+            },
+        );
+
+        let processed = processor
+            .process(signal)
+            .await
+            .expect("processor succeeds")
+            .expect("signal remains");
+        let outputs = observe_generator(
+            &e_navigator_generators::ProfilingGenerator::default(),
+            &processed,
+        )
+        .await;
+        let window = outputs
+            .iter()
+            .find_map(|signal| match &signal.payload {
+                e_navigator_signals::SignalPayload::ProfilingSessionObservation(window) => {
+                    Some(window)
+                }
+                _ => None,
+            })
+            .expect("profiling session exists");
+
+        assert_eq!(
+            window.container.as_ref().expect("container").container_id,
+            container_id
+        );
+        assert_eq!(
+            window.kubernetes.as_ref().expect("kubernetes").pod_name,
+            "profile-client-123"
         );
 
         fs::remove_dir_all(root).expect("fixture cleanup succeeds");
