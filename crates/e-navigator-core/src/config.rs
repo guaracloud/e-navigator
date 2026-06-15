@@ -18,6 +18,8 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub resource_source: ResourceSourceConfig,
     #[serde(default)]
+    pub cpu_profile_source: CpuProfileSourceConfig,
+    #[serde(default)]
     pub resource_metrics: ResourceMetricsConfig,
     #[serde(default)]
     pub network_metrics: NetworkMetricsConfig,
@@ -41,6 +43,7 @@ impl Default for RuntimeConfig {
             attribution: AttributionConfig::default(),
             runtime_security: RuntimeSecurityConfig::default(),
             resource_source: ResourceSourceConfig::default(),
+            cpu_profile_source: CpuProfileSourceConfig::default(),
             resource_metrics: ResourceMetricsConfig::default(),
             network_metrics: NetworkMetricsConfig::default(),
             dns_metrics: DnsMetricsConfig::default(),
@@ -65,6 +68,7 @@ impl RuntimeConfig {
         self.attribution.validate()?;
         self.runtime_security.validate()?;
         self.resource_source.validate()?;
+        self.cpu_profile_source.validate(self)?;
         self.resource_metrics.validate()?;
         self.network_metrics.validate()?;
         self.dns_metrics.validate()?;
@@ -207,6 +211,37 @@ pub struct ResourceSourceConfig {
 pub struct ResourceMetricsConfig {
     #[serde(default = "default_resource_metrics_max_keys")]
     pub max_keys: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CpuProfileSourceConfig {
+    #[serde(default = "default_cpu_profile_source_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_cpu_profile_source_module_name")]
+    pub module_name: String,
+    #[serde(default = "default_cpu_profile_sample_frequency_hz")]
+    pub sample_frequency_hz: u32,
+    #[serde(default = "default_cpu_profile_max_active_targets")]
+    pub max_active_targets: usize,
+    #[serde(default = "default_cpu_profile_max_frames_per_sample")]
+    pub max_frames_per_sample: usize,
+    #[serde(default = "default_cpu_profile_max_samples_per_batch")]
+    pub max_samples_per_batch: usize,
+    #[serde(default = "default_cpu_profile_max_symbol_bytes")]
+    pub max_symbol_bytes: usize,
+    #[serde(default = "default_cpu_profile_max_module_bytes")]
+    pub max_module_bytes: usize,
+    #[serde(default = "default_cpu_profile_max_file_bytes")]
+    pub max_file_bytes: usize,
+    #[serde(default)]
+    pub backpressure: CpuProfileBackpressure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpuProfileBackpressure {
+    DropNewest,
+    Wait,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -401,6 +436,29 @@ impl Default for ResourceSourceConfig {
     }
 }
 
+impl Default for CpuProfileSourceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_cpu_profile_source_enabled(),
+            module_name: default_cpu_profile_source_module_name(),
+            sample_frequency_hz: default_cpu_profile_sample_frequency_hz(),
+            max_active_targets: default_cpu_profile_max_active_targets(),
+            max_frames_per_sample: default_cpu_profile_max_frames_per_sample(),
+            max_samples_per_batch: default_cpu_profile_max_samples_per_batch(),
+            max_symbol_bytes: default_cpu_profile_max_symbol_bytes(),
+            max_module_bytes: default_cpu_profile_max_module_bytes(),
+            max_file_bytes: default_cpu_profile_max_file_bytes(),
+            backpressure: CpuProfileBackpressure::default(),
+        }
+    }
+}
+
+impl Default for CpuProfileBackpressure {
+    fn default() -> Self {
+        Self::DropNewest
+    }
+}
+
 impl ResourceSourceConfig {
     fn validate(&self) -> Result<(), String> {
         if self.procfs_root.as_os_str().is_empty() {
@@ -425,6 +483,75 @@ impl ResourceSourceConfig {
         }
         if self.max_file_bytes == 0 {
             return Err("resource_source.max_file_bytes must be greater than zero".to_string());
+        }
+        Ok(())
+    }
+}
+
+impl CpuProfileSourceConfig {
+    pub const STATIC_MODULE_NAME: &'static str = "source.aya_cpu_profile";
+    pub const MAX_SAMPLE_FREQUENCY_HZ: u32 = 999;
+    pub const MAX_ACTIVE_TARGETS_LIMIT: usize = 4096;
+    pub const MAX_FRAMES_PER_SAMPLE_LIMIT: usize = 256;
+    pub const MAX_SAMPLES_PER_BATCH_LIMIT: usize = 1024;
+    pub const MAX_SYMBOL_BYTES_LIMIT: usize = 1024;
+    pub const MAX_MODULE_BYTES_LIMIT: usize = 1024;
+    pub const MAX_FILE_BYTES_LIMIT: usize = 1024;
+
+    fn validate(&self, runtime: &RuntimeConfig) -> Result<(), String> {
+        if self.module_name != Self::STATIC_MODULE_NAME {
+            return Err(format!(
+                "cpu_profile_source.module_name must be {}",
+                Self::STATIC_MODULE_NAME
+            ));
+        }
+        if self.enabled && !runtime.module_enabled(&self.module_name) {
+            return Err(
+                "cpu_profile_source.enabled requires enabled source.aya_cpu_profile module"
+                    .to_string(),
+            );
+        }
+        if !(1..=Self::MAX_SAMPLE_FREQUENCY_HZ).contains(&self.sample_frequency_hz) {
+            return Err(format!(
+                "cpu_profile_source.sample_frequency_hz must be between 1 and {}",
+                Self::MAX_SAMPLE_FREQUENCY_HZ
+            ));
+        }
+        if !(1..=Self::MAX_ACTIVE_TARGETS_LIMIT).contains(&self.max_active_targets) {
+            return Err(format!(
+                "cpu_profile_source.max_active_targets must be between 1 and {}",
+                Self::MAX_ACTIVE_TARGETS_LIMIT
+            ));
+        }
+        if !(1..=Self::MAX_FRAMES_PER_SAMPLE_LIMIT).contains(&self.max_frames_per_sample) {
+            return Err(format!(
+                "cpu_profile_source.max_frames_per_sample must be between 1 and {}",
+                Self::MAX_FRAMES_PER_SAMPLE_LIMIT
+            ));
+        }
+        if !(1..=Self::MAX_SAMPLES_PER_BATCH_LIMIT).contains(&self.max_samples_per_batch) {
+            return Err(format!(
+                "cpu_profile_source.max_samples_per_batch must be between 1 and {}",
+                Self::MAX_SAMPLES_PER_BATCH_LIMIT
+            ));
+        }
+        if !(1..=Self::MAX_SYMBOL_BYTES_LIMIT).contains(&self.max_symbol_bytes) {
+            return Err(format!(
+                "cpu_profile_source.max_symbol_bytes must be between 1 and {}",
+                Self::MAX_SYMBOL_BYTES_LIMIT
+            ));
+        }
+        if !(1..=Self::MAX_MODULE_BYTES_LIMIT).contains(&self.max_module_bytes) {
+            return Err(format!(
+                "cpu_profile_source.max_module_bytes must be between 1 and {}",
+                Self::MAX_MODULE_BYTES_LIMIT
+            ));
+        }
+        if !(1..=Self::MAX_FILE_BYTES_LIMIT).contains(&self.max_file_bytes) {
+            return Err(format!(
+                "cpu_profile_source.max_file_bytes must be between 1 and {}",
+                Self::MAX_FILE_BYTES_LIMIT
+            ));
         }
         Ok(())
     }
@@ -512,6 +639,7 @@ fn default_modules() -> Vec<ModuleConfig> {
     vec![
         ModuleConfig::enabled("source.aya_exec"),
         ModuleConfig::enabled("source.aya_network"),
+        ModuleConfig::disabled("source.aya_cpu_profile"),
         ModuleConfig::enabled("source.host_resource"),
         ModuleConfig::enabled("source.synthetic_exec"),
         ModuleConfig::enabled("processor.container_attribution"),
@@ -635,6 +763,42 @@ fn default_resource_metrics_max_keys() -> usize {
     4096
 }
 
+fn default_cpu_profile_source_enabled() -> bool {
+    false
+}
+
+fn default_cpu_profile_source_module_name() -> String {
+    CpuProfileSourceConfig::STATIC_MODULE_NAME.to_string()
+}
+
+fn default_cpu_profile_sample_frequency_hz() -> u32 {
+    49
+}
+
+fn default_cpu_profile_max_active_targets() -> usize {
+    128
+}
+
+fn default_cpu_profile_max_frames_per_sample() -> usize {
+    64
+}
+
+fn default_cpu_profile_max_samples_per_batch() -> usize {
+    64
+}
+
+fn default_cpu_profile_max_symbol_bytes() -> usize {
+    256
+}
+
+fn default_cpu_profile_max_module_bytes() -> usize {
+    256
+}
+
+fn default_cpu_profile_max_file_bytes() -> usize {
+    256
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModuleConfig {
     pub name: String,
@@ -646,6 +810,13 @@ impl ModuleConfig {
         Self {
             name: name.into(),
             enabled: true,
+        }
+    }
+
+    pub fn disabled(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            enabled: false,
         }
     }
 }
@@ -712,6 +883,7 @@ mod tests {
         assert!(config.validate().is_ok());
         assert!(config.module_enabled("source.aya_exec"));
         assert!(config.module_enabled("source.aya_network"));
+        assert!(!config.module_enabled("source.aya_cpu_profile"));
         assert!(config.module_enabled("source.host_resource"));
         assert!(config.module_enabled("source.synthetic_exec"));
         assert!(config.module_enabled("processor.container_attribution"));
@@ -724,6 +896,141 @@ mod tests {
         assert!(config.module_enabled("generator.dependency_graph"));
         assert!(config.module_enabled("generator.runtime_security"));
         assert!(config.module_enabled("sink.json_stdout"));
+    }
+
+    #[test]
+    fn cpu_profile_source_defaults_are_bounded_and_disabled() {
+        let config = RuntimeConfig::default();
+
+        assert!(!config.cpu_profile_source.enabled);
+        assert_eq!(
+            config.cpu_profile_source.module_name,
+            "source.aya_cpu_profile"
+        );
+        assert_eq!(config.cpu_profile_source.sample_frequency_hz, 49);
+        assert_eq!(config.cpu_profile_source.max_active_targets, 128);
+        assert_eq!(config.cpu_profile_source.max_frames_per_sample, 64);
+        assert_eq!(config.cpu_profile_source.max_samples_per_batch, 64);
+        assert_eq!(config.cpu_profile_source.max_symbol_bytes, 256);
+        assert_eq!(config.cpu_profile_source.max_module_bytes, 256);
+        assert_eq!(config.cpu_profile_source.max_file_bytes, 256);
+        assert_eq!(
+            config.cpu_profile_source.backpressure,
+            CpuProfileBackpressure::DropNewest
+        );
+    }
+
+    #[test]
+    fn cpu_profile_source_validates_zero_and_oversized_limits() {
+        let invalid_frequency = RuntimeConfig {
+            modules: cpu_profile_modules(),
+            cpu_profile_source: CpuProfileSourceConfig {
+                enabled: true,
+                sample_frequency_hz: 0,
+                ..CpuProfileSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_frequency.validate(),
+            Err(format!(
+                "cpu_profile_source.sample_frequency_hz must be between 1 and {}",
+                CpuProfileSourceConfig::MAX_SAMPLE_FREQUENCY_HZ
+            ))
+        );
+
+        let too_many_targets = RuntimeConfig {
+            modules: cpu_profile_modules(),
+            cpu_profile_source: CpuProfileSourceConfig {
+                enabled: true,
+                max_active_targets: CpuProfileSourceConfig::MAX_ACTIVE_TARGETS_LIMIT + 1,
+                ..CpuProfileSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            too_many_targets.validate(),
+            Err(format!(
+                "cpu_profile_source.max_active_targets must be between 1 and {}",
+                CpuProfileSourceConfig::MAX_ACTIVE_TARGETS_LIMIT
+            ))
+        );
+
+        let invalid_frames = RuntimeConfig {
+            modules: cpu_profile_modules(),
+            cpu_profile_source: CpuProfileSourceConfig {
+                enabled: true,
+                max_frames_per_sample: 0,
+                ..CpuProfileSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_frames.validate(),
+            Err(format!(
+                "cpu_profile_source.max_frames_per_sample must be between 1 and {}",
+                CpuProfileSourceConfig::MAX_FRAMES_PER_SAMPLE_LIMIT
+            ))
+        );
+
+        let invalid_batch = RuntimeConfig {
+            modules: cpu_profile_modules(),
+            cpu_profile_source: CpuProfileSourceConfig {
+                enabled: true,
+                max_samples_per_batch: 0,
+                ..CpuProfileSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            invalid_batch.validate(),
+            Err(format!(
+                "cpu_profile_source.max_samples_per_batch must be between 1 and {}",
+                CpuProfileSourceConfig::MAX_SAMPLES_PER_BATCH_LIMIT
+            ))
+        );
+
+        let too_many_symbol_bytes = RuntimeConfig {
+            modules: cpu_profile_modules(),
+            cpu_profile_source: CpuProfileSourceConfig {
+                enabled: true,
+                max_symbol_bytes: CpuProfileSourceConfig::MAX_SYMBOL_BYTES_LIMIT + 1,
+                ..CpuProfileSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            too_many_symbol_bytes.validate(),
+            Err(format!(
+                "cpu_profile_source.max_symbol_bytes must be between 1 and {}",
+                CpuProfileSourceConfig::MAX_SYMBOL_BYTES_LIMIT
+            ))
+        );
+    }
+
+    #[test]
+    fn cpu_profile_source_requires_static_module_enablement() {
+        let config = RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.aya_cpu_profile"),
+                ModuleConfig::enabled("sink.json_stdout"),
+            ],
+            cpu_profile_source: CpuProfileSourceConfig {
+                enabled: true,
+                ..CpuProfileSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        };
+
+        assert!(config.validate().is_ok());
+        assert!(config.module_enabled("source.aya_cpu_profile"));
+    }
+
+    fn cpu_profile_modules() -> Vec<ModuleConfig> {
+        vec![
+            ModuleConfig::enabled("source.aya_cpu_profile"),
+            ModuleConfig::enabled("sink.json_stdout"),
+        ]
     }
 
     #[test]
