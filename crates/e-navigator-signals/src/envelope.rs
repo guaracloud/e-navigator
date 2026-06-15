@@ -9,6 +9,8 @@ use crate::{
     NodeCpuObservation, NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation,
     NodeMemoryObservation, ProcessExitEvent, ProcessLifecycleDurationEvent,
     ProcessResourceObservation, ResourceCounterMetric, ResourceGaugeMetric, RuntimeSecurityFinding,
+    ServiceInteractionSpanObservation, TraceCorrelationWarning, TraceServicePathObservation,
+    TraceSpanObservation,
 };
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
@@ -44,6 +46,10 @@ pub enum SignalKind {
     CgroupFileDescriptorObservation,
     ResourceGaugeMetric,
     ResourceCounterMetric,
+    TraceSpanObservation,
+    ServiceInteractionSpanObservation,
+    TraceServicePathObservation,
+    TraceCorrelationWarning,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -77,6 +83,10 @@ pub enum SignalPayload {
     CgroupFileDescriptorObservation(CgroupFileDescriptorObservation),
     ResourceGaugeMetric(ResourceGaugeMetric),
     ResourceCounterMetric(ResourceCounterMetric),
+    TraceSpanObservation(TraceSpanObservation),
+    ServiceInteractionSpanObservation(ServiceInteractionSpanObservation),
+    TraceServicePathObservation(TraceServicePathObservation),
+    TraceCorrelationWarning(TraceCorrelationWarning),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -279,6 +289,38 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
                     .map(SignalPayload::ResourceCounterMetric)
                     .map_err(|err| {
                         D::Error::custom(format!("invalid resource_counter_metric payload: {err}"))
+                    })?
+            }
+            SignalKind::TraceSpanObservation => {
+                serde_json::from_value::<TraceSpanObservation>(raw.payload)
+                    .map(SignalPayload::TraceSpanObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid trace_span_observation payload: {err}"))
+                    })?
+            }
+            SignalKind::ServiceInteractionSpanObservation => serde_json::from_value::<
+                ServiceInteractionSpanObservation,
+            >(raw.payload)
+            .map(SignalPayload::ServiceInteractionSpanObservation)
+            .map_err(|err| {
+                D::Error::custom(format!(
+                    "invalid service_interaction_span_observation payload: {err}"
+                ))
+            })?,
+            SignalKind::TraceServicePathObservation => {
+                serde_json::from_value::<TraceServicePathObservation>(raw.payload)
+                    .map(SignalPayload::TraceServicePathObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid trace_service_path_observation payload: {err}"
+                        ))
+                    })?
+            }
+            SignalKind::TraceCorrelationWarning => {
+                serde_json::from_value::<TraceCorrelationWarning>(raw.payload)
+                    .map(SignalPayload::TraceCorrelationWarning)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid trace_correlation_warning payload: {err}"))
                     })?
             }
         };
@@ -656,6 +698,58 @@ impl SignalEnvelope {
         )
     }
 
+    pub fn trace_span_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: TraceSpanObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::TraceSpanObservation,
+            SignalPayload::TraceSpanObservation(observation),
+        )
+    }
+
+    pub fn service_interaction_span_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: ServiceInteractionSpanObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::ServiceInteractionSpanObservation,
+            SignalPayload::ServiceInteractionSpanObservation(observation),
+        )
+    }
+
+    pub fn trace_service_path_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        observation: TraceServicePathObservation,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::TraceServicePathObservation,
+            SignalPayload::TraceServicePathObservation(observation),
+        )
+    }
+
+    pub fn trace_correlation_warning(
+        source: impl Into<String>,
+        host: Option<String>,
+        warning: TraceCorrelationWarning,
+    ) -> Self {
+        Self::new(
+            source,
+            host,
+            SignalKind::TraceCorrelationWarning,
+            SignalPayload::TraceCorrelationWarning(warning),
+        )
+    }
+
     fn new(
         source: impl Into<String>,
         host: Option<String>,
@@ -706,6 +800,10 @@ impl Signal for SignalEnvelope {
             SignalKind::CgroupFileDescriptorObservation => "cgroup_file_descriptor_observation",
             SignalKind::ResourceGaugeMetric => "resource_gauge_metric",
             SignalKind::ResourceCounterMetric => "resource_counter_metric",
+            SignalKind::TraceSpanObservation => "trace_span_observation",
+            SignalKind::ServiceInteractionSpanObservation => "service_interaction_span_observation",
+            SignalKind::TraceServicePathObservation => "trace_service_path_observation",
+            SignalKind::TraceCorrelationWarning => "trace_correlation_warning",
         }
     }
 }
@@ -722,6 +820,9 @@ mod tests {
         NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation,
         NodeMemoryObservation, ProcessResourceContext, ProcessResourceObservation, ResourceContext,
         ResourceCounterMetric, ResourceGaugeMetric, ResourceMetricAttribute,
+        ServiceInteractionSpanObservation, TraceAttribute, TraceConfidence, TraceCorrelationKind,
+        TraceCorrelationWarning, TracePeerContext, TraceServicePathObservation,
+        TraceSpanObservation,
     };
 
     #[test]
@@ -945,6 +1046,167 @@ mod tests {
         assert_eq!(json["payload"]["observations"], 2);
         assert_eq!(json["payload"]["first_seen_unix_nanos"], 300);
         assert_eq!(json["payload"]["last_seen_unix_nanos"], 350);
+    }
+
+    #[test]
+    fn serializes_trace_span_observation_signal_with_optional_context() {
+        let signal = SignalEnvelope::trace_span_observation(
+            "source.synthetic_exec",
+            Some("node-a".to_string()),
+            TraceSpanObservation {
+                name: "synthetic checkout".to_string(),
+                trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+                span_id: Some("00f067aa0ba902b7".to_string()),
+                parent_span_id: Some("f0f067aa0ba902b0".to_string()),
+                start_unix_nanos: 1_000,
+                end_unix_nanos: Some(3_000),
+                duration_nanos: Some(2_000),
+                correlation_kind: TraceCorrelationKind::Synthetic,
+                confidence: TraceConfidence::High,
+                service_name: Some("checkout-api".to_string()),
+                process: Some(network_process()),
+                container: Some(container_context()),
+                kubernetes: Some(kubernetes_context()),
+                peer: Some(trace_peer_context()),
+                attributes: vec![TraceAttribute {
+                    key: "net.transport".to_string(),
+                    value: "tcp".to_string(),
+                }],
+            },
+        );
+
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+        let decoded =
+            serde_json::from_value::<SignalEnvelope>(json.clone()).expect("signal deserializes");
+
+        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["kind"], "trace_span_observation");
+        assert_eq!(json["payload"]["trace_id"], "4bf92f3577b34da6a3ce929d0e0e4736");
+        assert_eq!(json["payload"]["duration_nanos"], 2_000);
+        assert_eq!(json["payload"]["correlation_kind"], "synthetic");
+        assert_eq!(json["payload"]["confidence"], "high");
+        assert_eq!(decoded.signal_kind(), SignalKind::TraceSpanObservation);
+    }
+
+    #[test]
+    fn serializes_service_interaction_span_without_trace_ids() {
+        let signal = SignalEnvelope::service_interaction_span_observation(
+            "generator.trace_correlation",
+            Some("node-a".to_string()),
+            ServiceInteractionSpanObservation {
+                name: "tcp client 203.0.113.10:443".to_string(),
+                trace_id: None,
+                span_id: None,
+                parent_span_id: None,
+                start_unix_nanos: 10_000,
+                end_unix_nanos: Some(15_000),
+                duration_nanos: Some(5_000),
+                correlation_kind: TraceCorrelationKind::NetworkInferred,
+                confidence: TraceConfidence::Medium,
+                source: DependencyEndpoint {
+                    workload: Some(kubernetes_context()),
+                    container: Some(container_context()),
+                    address: Some("10.0.0.5".to_string()),
+                    port: Some(43512),
+                    domain: None,
+                },
+                destination: DependencyEndpoint {
+                    workload: None,
+                    container: None,
+                    address: Some("203.0.113.10".to_string()),
+                    port: Some(443),
+                    domain: None,
+                },
+                protocol: NetworkProtocol::Tcp,
+                process: Some(network_process()),
+                error_type: None,
+                attributes: vec![],
+            },
+        );
+
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+        let decoded =
+            serde_json::from_value::<SignalEnvelope>(json.clone()).expect("signal deserializes");
+
+        assert_eq!(json["kind"], "service_interaction_span_observation");
+        assert!(json["payload"]["trace_id"].is_null());
+        assert_eq!(json["payload"]["correlation_kind"], "network_inferred");
+        assert_eq!(json["payload"]["destination"]["address"], "203.0.113.10");
+        assert_eq!(
+            decoded.signal_kind(),
+            SignalKind::ServiceInteractionSpanObservation
+        );
+    }
+
+    #[test]
+    fn serializes_trace_service_path_observation() {
+        let signal = SignalEnvelope::trace_service_path_observation(
+            "generator.trace_correlation",
+            Some("node-a".to_string()),
+            TraceServicePathObservation {
+                path_key: "default/api->203.0.113.10:443/tcp".to_string(),
+                source: DependencyEndpoint {
+                    workload: Some(kubernetes_context()),
+                    container: Some(container_context()),
+                    address: None,
+                    port: None,
+                    domain: None,
+                },
+                destination: DependencyEndpoint {
+                    workload: None,
+                    container: None,
+                    address: Some("203.0.113.10".to_string()),
+                    port: Some(443),
+                    domain: Some("api.example.com".to_string()),
+                },
+                protocol: NetworkProtocol::Tcp,
+                observations: 2,
+                first_seen_unix_nanos: 1_000,
+                last_seen_unix_nanos: 3_000,
+                correlation_kind: TraceCorrelationKind::DependencyInferred,
+                confidence: TraceConfidence::Low,
+                attributes: vec![],
+            },
+        );
+
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+        let decoded =
+            serde_json::from_value::<SignalEnvelope>(json.clone()).expect("signal deserializes");
+
+        assert_eq!(json["kind"], "trace_service_path_observation");
+        assert_eq!(json["payload"]["path_key"], "default/api->203.0.113.10:443/tcp");
+        assert_eq!(json["payload"]["observations"], 2);
+        assert_eq!(json["payload"]["correlation_kind"], "dependency_inferred");
+        assert_eq!(decoded.signal_kind(), SignalKind::TraceServicePathObservation);
+    }
+
+    #[test]
+    fn serializes_trace_correlation_warning_signal() {
+        let signal = SignalEnvelope::trace_correlation_warning(
+            "generator.trace_correlation",
+            Some("node-a".to_string()),
+            TraceCorrelationWarning {
+                warning_type: "missing_attribution".to_string(),
+                message: "network observation has no container or Kubernetes context".to_string(),
+                timestamp_unix_nanos: 1_000,
+                source_signal_kind: "network_connection_open".to_string(),
+                source_module: "source.test".to_string(),
+                correlation_kind: TraceCorrelationKind::NetworkInferred,
+                process: None,
+                container: None,
+                kubernetes: None,
+                peer: Some(trace_peer_context()),
+            },
+        );
+
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+        let decoded =
+            serde_json::from_value::<SignalEnvelope>(json.clone()).expect("signal deserializes");
+
+        assert_eq!(json["kind"], "trace_correlation_warning");
+        assert_eq!(json["payload"]["warning_type"], "missing_attribution");
+        assert_eq!(json["payload"]["correlation_kind"], "network_inferred");
+        assert_eq!(decoded.signal_kind(), SignalKind::TraceCorrelationWarning);
     }
 
     #[test]
@@ -1508,6 +1770,34 @@ mod tests {
             uid: Some(1000),
             command: "api".to_string(),
             executable: Some("/app/api".to_string()),
+        }
+    }
+
+    fn container_context() -> crate::ContainerContext {
+        crate::ContainerContext {
+            container_id: "container-a".to_string(),
+            runtime: Some("containerd".to_string()),
+        }
+    }
+
+    fn kubernetes_context() -> crate::KubernetesContext {
+        crate::KubernetesContext {
+            namespace: "default".to_string(),
+            pod_name: "api-123".to_string(),
+            pod_uid: Some("pod-uid".to_string()),
+            container_name: Some("api".to_string()),
+            node_name: Some("node-a".to_string()),
+            labels: std::collections::BTreeMap::new(),
+        }
+    }
+
+    fn trace_peer_context() -> TracePeerContext {
+        TracePeerContext {
+            address: Some("203.0.113.10".to_string()),
+            port: Some(443),
+            domain: Some("payments.example.com".to_string()),
+            workload: None,
+            container: None,
         }
     }
 }

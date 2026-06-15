@@ -4,6 +4,7 @@ pub mod exec;
 pub mod metrics;
 pub mod network;
 pub mod resource;
+pub mod trace;
 
 pub use dns::{
     DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent, DnsQueryType, DnsResponseCode,
@@ -29,4 +30,8 @@ pub use resource::{
     NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation, ProcessResourceContext,
     ProcessResourceObservation, ResourceContext, ResourceCounterMetric, ResourceGaugeMetric,
     ResourceMetricAttribute,
+};
+pub use trace::{
+    ServiceInteractionSpanObservation, TraceAttribute, TraceConfidence, TraceCorrelationKind,
+    TraceCorrelationWarning, TracePeerContext, TraceServicePathObservation, TraceSpanObservation,
 };
