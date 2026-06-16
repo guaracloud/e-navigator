@@ -1,10 +1,58 @@
+use e_navigator_core::Signal;
 use e_navigator_signals::{
     ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkProcessIdentity,
     ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
     ProfilingKind, ProfilingSessionObservation, ProfilingStackTraceObservation,
     ProfilingWarningObservation, SignalEnvelope, SignalPayload,
 };
+use proptest::prelude::*;
 use std::collections::BTreeMap;
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+
+    #[test]
+    fn constructed_profile_envelopes_round_trip_without_changing_identity(
+        source in "[a-z_\\.]{1,32}",
+        host in prop::option::of("[a-z0-9.-]{1,32}"),
+        sample_count in 1u64..1024,
+    ) {
+        let signal = SignalEnvelope::profile_sample_observation(
+            source.clone(),
+            host.clone(),
+            e_navigator_signals::ProfileSampleObservation {
+                timestamp_unix_nanos: 1_000,
+                profiling_kind: ProfilingKind::Cpu,
+                correlation_kind: ProfilingCorrelationKind::Synthetic,
+                confidence: ProfilingConfidence::High,
+                sample_count,
+                sampling_period_nanos: Some(10_000_000),
+                stack_id: "stack:0123456789abcdef".to_string(),
+                stack_frames: vec![ProfilingFrame {
+                    symbol: Some("checkout::handler".to_string()),
+                    module: Some("checkout".to_string()),
+                    file: None,
+                    line: None,
+                }],
+                process: Some(process()),
+                container: Some(container()),
+                kubernetes: Some(kubernetes()),
+                thread_id: None,
+                thread_name: None,
+                attributes: vec![],
+            },
+        );
+
+        let json = serde_json::to_value(&signal).expect("serializes");
+        let decoded: SignalEnvelope = serde_json::from_value(json).expect("deserializes");
+
+        prop_assert_eq!(decoded.schema_version, signal.schema_version);
+        prop_assert_eq!(decoded.kind(), signal.kind());
+        prop_assert_eq!(decoded.source, source);
+        prop_assert_eq!(decoded.host, host);
+        prop_assert!(matches!(decoded.payload, SignalPayload::ProfileSampleObservation(_)));
+    }
+}
 
 #[test]
 fn serializes_cpu_profile_sample_with_bounded_stack_and_context() {

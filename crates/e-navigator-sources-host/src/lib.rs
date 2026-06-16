@@ -856,6 +856,34 @@ mod tests {
     }
 
     #[test]
+    fn malformed_cgroup_resource_files_are_non_fatal() {
+        let sample = CgroupSample {
+            path: "/kubepods.slice/pod123/container.scope".to_string(),
+            cpu_stat: Some("usage_usec nope\nnr_throttled nope\n".to_string()),
+            memory_current: Some("not-a-number\n".to_string()),
+            memory_peak: Some("not-a-number\n".to_string()),
+            memory_max: Some("not-a-number\n".to_string()),
+            pids_current: Some("not-a-number\n".to_string()),
+            pids_max: Some("not-a-number\n".to_string()),
+            fd_count: Some(u64::MAX),
+            socket_count: Some(u64::MAX),
+        };
+
+        let observations = sample.into_observations(Some("node-a".to_string()), 1_000, 2_000);
+
+        assert_eq!(observations.len(), 4);
+        assert!(observations.iter().all(|signal| {
+            matches!(
+                signal.payload,
+                SignalPayload::CgroupCpuObservation(_)
+                    | SignalPayload::CgroupMemoryObservation(_)
+                    | SignalPayload::CgroupPidsObservation(_)
+                    | SignalPayload::CgroupFileDescriptorObservation(_)
+            )
+        }));
+    }
+
+    #[test]
     fn malformed_missing_and_partial_files_are_non_fatal_warnings() {
         assert!(parse_cpu_stat("intr 1\n", 100, 1_000, 2_000).is_err());
         assert!(parse_meminfo("MemFree: 1 kB\n", 1_000, 2_000).is_err());

@@ -8,3 +8,6 @@ version.workspace = true
 e-navigator-core = { path = "../e-navigator-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

@@ -17,6 +17,7 @@ These invariants are part of the userspace quality gate. They are intentionally 
 - Procfs, sysfs, cgroup, HTTP fixture, traceparent, profile fixture, and raw Aya decode helpers must be testable without privileges.
 - Decode helpers must reject short buffers, unknown event types, unknown address families, unknown protocols, zero profile samples, and malformed fixtures without inventing context.
 - Truncation must be deterministic and UTF-8 safe.
+- Property-style parser tests are part of the non-privileged gate for traceparent parsing, HTTP fixture extraction, profile normalization, cgroup/container ID extraction, and envelope round trips.
 
 ## Attribution And Sensitivity
 
@@ -39,7 +40,17 @@ These invariants are part of the userspace quality gate. They are intentionally 
 
 ## Future Fuzz Targets
 
-Cargo-fuzz is not wired in this repository yet. The deterministic adversarial tests identify the first fuzz targets:
+Cargo-fuzz is not wired in this repository yet. Current implemented coverage is deterministic and property-style tests in the normal Cargo test suite. Future fuzz work should add `cargo-fuzz` targets and run them with bounded local commands like:
+
+```bash
+cargo fuzz run traceparent_parser -- -max_total_time=60
+cargo fuzz run http_request_parser -- -max_total_time=60
+cargo fuzz run profile_fixture_parser -- -max_total_time=60
+cargo fuzz run host_procfs_parsers -- -max_total_time=60
+cargo fuzz run raw_network_event_decode -- -max_total_time=60
+```
+
+The first target functions are:
 
 - `e_navigator_protocol::trace_context::parse_traceparent`
 - `e_navigator_protocol::http::parse_http_request`

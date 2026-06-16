@@ -60,6 +60,12 @@ jobs:
       - name: Cargo deny
         run: cargo deny check
 
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Cargo audit
+        run: cargo audit
+
       - name: Install cargo-machete
         run: cargo install cargo-machete --locked
 

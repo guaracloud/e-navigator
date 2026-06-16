@@ -7,7 +7,6 @@ publish = false
 
 [dependencies]
 aya-ebpf = { workspace = true }
-aya-log-ebpf = { workspace = true }
 
 [[bin]]
 name = "e-navigator-ebpf-programs"

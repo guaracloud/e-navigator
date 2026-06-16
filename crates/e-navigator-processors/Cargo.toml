@@ -16,3 +16,4 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 e-navigator-generators = { path = "../e-navigator-generators" }
+proptest = { workspace = true }

@@ -1,7 +1,75 @@
 use e_navigator_profiling::model::{
     NormalizationLimits, RawProfileFrame, RawProfileSample, parse_profile_fixture,
 };
-use e_navigator_signals::{ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind};
+use e_navigator_signals::{
+    ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind,
+};
+use proptest::prelude::*;
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    #[test]
+    fn normalized_profiles_respect_frame_string_and_attribute_bounds(
+        frames in prop::collection::vec(raw_frame_strategy(), 0..24),
+        attributes in prop::collection::vec(attribute_strategy(), 0..24),
+        max_frames in 1usize..8,
+        max_symbol_bytes in 0usize..24,
+        max_module_bytes in 0usize..24,
+        max_file_bytes in 0usize..24,
+        max_attributes in 0usize..8,
+    ) {
+        let limits = NormalizationLimits {
+            max_frames_per_stack: max_frames,
+            max_symbol_bytes,
+            max_module_bytes,
+            max_file_bytes,
+            max_attributes,
+            max_attribute_key_bytes: 12,
+            max_attribute_value_bytes: 16,
+            ..NormalizationLimits::default()
+        };
+        let normalized = raw_sample(frames)
+            .with_attributes(attributes)
+            .normalize(&limits)
+            .expect("sample normalizes");
+
+        prop_assert!(normalized.stack_frames.len() <= limits.max_frames_per_stack);
+        prop_assert!(normalized.attributes.len() <= limits.max_attributes);
+        for frame in normalized.stack_frames {
+            prop_assert!(frame.symbol.as_ref().is_none_or(|value| value.len() <= limits.max_symbol_bytes));
+            prop_assert!(frame.module.as_ref().is_none_or(|value| value.len() <= limits.max_module_bytes));
+            prop_assert!(frame.file.as_ref().is_none_or(|value| value.len() <= limits.max_file_bytes));
+        }
+        for attribute in normalized.attributes {
+            if attribute.key != "profiling.stack.truncated" {
+                prop_assert!(attribute.key.len() <= limits.max_attribute_key_bytes);
+                prop_assert!(attribute.value.len() <= limits.max_attribute_value_bytes);
+            }
+            prop_assert!(!attribute.key.eq_ignore_ascii_case("authorization"));
+            prop_assert!(!attribute.key.to_ascii_lowercase().contains("api_key"));
+        }
+    }
+
+    #[test]
+    fn equivalent_normalized_frames_have_deterministic_stack_ids(
+        frames in prop::collection::vec(raw_frame_strategy(), 0..12),
+    ) {
+        let limits = NormalizationLimits {
+            max_frames_per_stack: 8,
+            max_symbol_bytes: 16,
+            max_module_bytes: 16,
+            max_file_bytes: 16,
+            ..NormalizationLimits::default()
+        };
+
+        let first = raw_sample(frames.clone()).normalize(&limits).expect("first normalizes");
+        let second = raw_sample(frames).normalize(&limits).expect("second normalizes");
+
+        prop_assert_eq!(first.stack_frames, second.stack_frames);
+        prop_assert_eq!(first.stack_id, second.stack_id);
+    }
+}
 
 #[test]
 fn bounded_stack_truncation_limits_frame_count() {
@@ -306,4 +374,34 @@ fn frame(symbol: Option<String>) -> RawProfileFrame {
         file: None,
         line: None,
     }
+}
+
+fn raw_frame_strategy() -> impl Strategy<Value = RawProfileFrame> {
+    (
+        prop::option::of("[a-zA-Z0-9_:]{0,80}"),
+        prop::option::of("[a-zA-Z0-9_.-]{0,80}"),
+        prop::option::of("[a-zA-Z0-9_/.-]{0,80}"),
+        prop::option::of(any::<u32>()),
+    )
+        .prop_map(|(symbol, module, file, line)| RawProfileFrame {
+            symbol,
+            module,
+            file,
+            line,
+        })
+}
+
+fn attribute_strategy() -> impl Strategy<Value = ProfilingAttribute> {
+    prop_oneof![
+        Just(ProfilingAttribute {
+            key: "authorization".to_string(),
+            value: "bearer secret".to_string(),
+        }),
+        Just(ProfilingAttribute {
+            key: "api_key".to_string(),
+            value: "secret".to_string(),
+        }),
+        ("[a-zA-Z0-9_.-]{0,48}", "[a-zA-Z0-9_.:/-]{0,96}")
+            .prop_map(|(key, value)| { ProfilingAttribute { key, value } }),
+    ]
 }

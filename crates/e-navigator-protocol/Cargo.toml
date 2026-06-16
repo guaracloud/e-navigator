@@ -6,3 +6,6 @@ version.workspace = true
 
 [dependencies]
 e-navigator-signals = { path = "../e-navigator-signals" }
+
+[dev-dependencies]
+proptest = { workspace = true }

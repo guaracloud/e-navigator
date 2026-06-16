@@ -39,7 +39,15 @@ Phase 9 is a CPU profiling source foundation, not a full continuous profiling ba
 
 ## Development
 
-Run non-privileged checks:
+Run the strict local quality gate:
+
+```bash
+scripts/quality.sh
+```
+
+The strict script fails if required supply-chain tools are missing: `cargo-deny`, `cargo-audit`, and `cargo-machete`. For constrained local environments only, set `E_NAVIGATOR_SKIP_SUPPLY_CHAIN=1` to run the Rust checks without the supply-chain checks.
+
+Direct non-privileged checks:
 
 ```bash
 cargo fmt --all -- --check
@@ -47,19 +55,16 @@ cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-progr
 cargo test --locked --workspace --exclude e-navigator-ebpf-programs
 cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 cargo run --locked -p e-navigator-cli -- --source synthetic
+cargo deny check
+cargo audit
+cargo machete
 docker build -f Containerfile -t e-navigator:local .
 docker run --rm e-navigator:local --source synthetic
 tests/smoke_docker.sh e-navigator:local
 git diff --check
 ```
 
-Optional local supply-chain checks:
-
-```bash
-cargo deny check
-cargo audit
-cargo machete
-```
+`cargo deny` currently keeps duplicate dependency versions at warning level in `deny.toml`. This keeps the gate focused on actionable license, advisory, source, yanked, and unused-dependency failures while transitive ecosystem convergence is tracked without blocking unrelated systems work.
 
 Aya/eBPF development also requires the nightly Rust toolchain with `rust-src`, `bpf-linker`, and `bpftool`.
 
@@ -74,11 +79,15 @@ See:
 Non-privileged checks:
 
 ```bash
+scripts/quality.sh
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings
 cargo test --locked --workspace --exclude e-navigator-ebpf-programs
 cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 cargo run --locked -p e-navigator-cli -- --source synthetic
+cargo deny check
+cargo audit
+cargo machete
 docker build -f Containerfile -t e-navigator:local .
 docker run --rm e-navigator:local --source synthetic
 tests/smoke_docker.sh e-navigator:local

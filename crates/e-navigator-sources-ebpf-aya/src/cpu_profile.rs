@@ -577,6 +577,30 @@ mod tests {
     }
 
     #[test]
+    fn zero_sample_count_is_rejected() {
+        let raw = RawCpuProfileEvent {
+            pid: 42,
+            tid: 43,
+            uid: 1000,
+            sample_count: 0,
+            timestamp_unix_nanos: 1_000,
+            command: fixed_command("api"),
+            frame_count: 1,
+            instruction_pointers: [0xabc, 0, 0, 0],
+        };
+
+        assert!(
+            raw_cpu_profile_to_signal_with_clock(
+                raw_as_bytes(&raw),
+                None,
+                &source_config(),
+                10_000
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn deterministic_output_for_same_observed_sample() {
         let raw = RawCpuProfileEvent {
             pid: 42,

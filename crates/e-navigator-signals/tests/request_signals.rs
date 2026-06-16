@@ -1,10 +1,57 @@
+use e_navigator_core::Signal;
 use e_navigator_signals::{
     ContainerContext, ExtractedTraceContextObservation, KubernetesContext, NetworkProcessIdentity,
     ProtocolKind, ProtocolRequestObservation, RequestCorrelationWarning, RequestSpanObservation,
     SignalEnvelope, SignalPayload, TraceAttribute, TraceConfidence, TraceCorrelationKind,
     TraceCorrelationWarning, TracePeerContext,
 };
+use proptest::prelude::*;
 use std::collections::BTreeMap;
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+
+    #[test]
+    fn constructed_request_envelopes_round_trip_without_changing_identity(
+        source in "[a-z_\\.]{1,32}",
+        host in prop::option::of("[a-z0-9.-]{1,32}"),
+        method in prop::option::of("[A-Z-]{1,16}"),
+    ) {
+        let signal = SignalEnvelope::request_span_observation(
+            source.clone(),
+            host.clone(),
+            RequestSpanObservation {
+                name: "http request".to_string(),
+                protocol: ProtocolKind::Http,
+                trace_id: None,
+                span_id: None,
+                parent_span_id: None,
+                start_unix_nanos: 1,
+                end_unix_nanos: Some(2),
+                duration_nanos: Some(1),
+                correlation_kind: TraceCorrelationKind::ProtocolObserved,
+                confidence: TraceConfidence::Medium,
+                service_name: None,
+                method,
+                status_code: None,
+                process: Some(process()),
+                container: Some(container()),
+                kubernetes: Some(kubernetes()),
+                peer: Some(peer()),
+                attributes: vec![],
+            },
+        );
+
+        let json = serde_json::to_value(&signal).expect("serializes");
+        let decoded: SignalEnvelope = serde_json::from_value(json).expect("deserializes");
+
+        prop_assert_eq!(decoded.schema_version, signal.schema_version);
+        prop_assert_eq!(decoded.kind(), signal.kind());
+        prop_assert_eq!(decoded.source, source);
+        prop_assert_eq!(decoded.host, host);
+        prop_assert!(matches!(decoded.payload, SignalPayload::RequestSpanObservation(_)));
+    }
+}
 
 #[test]
 fn serializes_protocol_request_observation_with_explicit_context() {

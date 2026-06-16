@@ -247,11 +247,14 @@ mod tests {
     use e_navigator_signals::{ExecEvent, ProcessExitEvent, SignalEnvelope, SignalPayload};
     use tokio::{
         sync::{Mutex, mpsc},
-        time::{Duration, timeout},
+        time::{Duration, sleep, timeout},
     };
 
     use super::*;
-    use std::sync::Arc;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
     struct OneSignalSource;
 
@@ -326,6 +329,24 @@ mod tests {
         }
     }
 
+    struct SlowMemorySink {
+        seen: Arc<Mutex<Vec<SignalEnvelope>>>,
+        delay: Duration,
+    }
+
+    #[async_trait]
+    impl Sink<SignalEnvelope> for SlowMemorySink {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("sink.slow_memory", ModuleKind::Sink)
+        }
+
+        async fn write(&self, signal: &SignalEnvelope) -> CoreResult<()> {
+            sleep(self.delay).await;
+            self.seen.lock().await.push(signal.clone());
+            Ok(())
+        }
+    }
+
     struct FailingProcessor;
 
     #[async_trait]
@@ -354,6 +375,46 @@ mod tests {
                 module: "source.failing".to_string(),
                 message: "boom".to_string(),
             })
+        }
+    }
+
+    struct SignalThenFailingSource;
+
+    #[async_trait]
+    impl Source<SignalEnvelope> for SignalThenFailingSource {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("source.signal_then_failing", ModuleKind::Source)
+        }
+
+        async fn run(self: Box<Self>, tx: mpsc::Sender<SignalEnvelope>) -> CoreResult<()> {
+            Box::new(OneSignalSource).run(tx).await?;
+            Err(CoreError::ModuleFailed {
+                module: "source.signal_then_failing".to_string(),
+                message: "source failed after send".to_string(),
+            })
+        }
+    }
+
+    struct NeverEndingSource {
+        aborted: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl Source<SignalEnvelope> for NeverEndingSource {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("source.never_ending", ModuleKind::Source)
+        }
+
+        async fn run(self: Box<Self>, _tx: mpsc::Sender<SignalEnvelope>) -> CoreResult<()> {
+            struct AbortFlag(Arc<AtomicBool>);
+            impl Drop for AbortFlag {
+                fn drop(&mut self) {
+                    self.0.store(true, Ordering::SeqCst);
+                }
+            }
+
+            let _abort_flag = AbortFlag(self.aborted);
+            std::future::pending::<CoreResult<()>>().await
         }
     }
 
@@ -544,6 +605,55 @@ mod tests {
             err.to_string()
                 .contains("more than 64 derived signals for one input")
         );
+    }
+
+    #[tokio::test]
+    async fn slow_sink_backpressure_does_not_hide_source_errors() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(SignalThenFailingSource))
+            .with_sink(Box::new(SlowMemorySink {
+                seen: seen.clone(),
+                delay: Duration::from_millis(25),
+            }));
+        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
+
+        let err = timeout(Duration::from_secs(1), runner.run())
+            .await
+            .expect("runner returns")
+            .expect_err("source failure propagates");
+
+        assert!(err.to_string().contains("source.signal_then_failing"));
+        assert!(err.to_string().contains("source failed after send"));
+        assert!(seen.lock().await.len() <= 1);
+    }
+
+    #[tokio::test]
+    async fn source_failure_aborts_remaining_sources() {
+        let aborted = Arc::new(AtomicBool::new(false));
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(NeverEndingSource {
+                aborted: aborted.clone(),
+            }))
+            .with_source(Box::new(FailingSource))
+            .with_sink(Box::new(MemorySink {
+                seen: Arc::new(Mutex::new(Vec::new())),
+            }));
+        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
+
+        let err = timeout(Duration::from_secs(1), runner.run())
+            .await
+            .expect("runner returns")
+            .expect_err("source failure propagates");
+
+        assert!(err.to_string().contains("source.failing"));
+        for _ in 0..20 {
+            if aborted.load(Ordering::SeqCst) {
+                return;
+            }
+            sleep(Duration::from_millis(5)).await;
+        }
+        panic!("remaining source was not aborted");
     }
 
     #[tokio::test]
