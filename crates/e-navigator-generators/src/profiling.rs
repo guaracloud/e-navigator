@@ -257,40 +257,49 @@ impl WindowKey {
         window: &MetricAggregationWindow,
     ) -> Self {
         let canonical = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            "source:{}|host:{}|pid:{}|uid:{}|container:{}|namespace:{}|pod:{}|k8s_container:{}|kind:{}|correlation:{}|start:{}|end:{}",
             signal.source,
-            signal.host.as_deref().unwrap_or(""),
+            signal
+                .host
+                .as_deref()
+                .map(optional_str)
+                .unwrap_or_else(|| "none".to_string()),
             sample
                 .process
                 .as_ref()
                 .map(|process| process.pid)
-                .unwrap_or(0),
+                .map(optional_u32)
+                .unwrap_or_else(|| "none".to_string()),
             sample
                 .process
                 .as_ref()
                 .and_then(|process| process.uid)
-                .map(|uid| uid.to_string())
-                .unwrap_or_default(),
+                .map(optional_u32)
+                .unwrap_or_else(|| "none".to_string()),
             sample
                 .container
                 .as_ref()
                 .map(|container| container.container_id.as_str())
-                .unwrap_or(""),
+                .map(optional_str)
+                .unwrap_or_else(|| "none".to_string()),
             sample
                 .kubernetes
                 .as_ref()
                 .map(|kubernetes| kubernetes.namespace.as_str())
-                .unwrap_or(""),
+                .map(optional_str)
+                .unwrap_or_else(|| "none".to_string()),
             sample
                 .kubernetes
                 .as_ref()
                 .and_then(|kubernetes| kubernetes.pod_uid.as_deref())
-                .unwrap_or(""),
+                .map(optional_str)
+                .unwrap_or_else(|| "none".to_string()),
             sample
                 .kubernetes
                 .as_ref()
                 .and_then(|kubernetes| kubernetes.container_name.as_deref())
-                .unwrap_or(""),
+                .map(optional_str)
+                .unwrap_or_else(|| "none".to_string()),
             profiling_kind_name(sample.profiling_kind),
             correlation_kind_name(sample.correlation_kind),
             window.start_unix_nanos,
@@ -534,6 +543,14 @@ fn correlation_kind_name(kind: e_navigator_signals::ProfilingCorrelationKind) ->
         e_navigator_signals::ProfilingCorrelationKind::RuntimeInferred => "runtime_inferred",
         _ => "unknown",
     }
+}
+
+fn optional_str(value: &str) -> String {
+    format!("some:{value}")
+}
+
+fn optional_u32(value: u32) -> String {
+    format!("some:{value}")
 }
 
 fn stable_hash64(bytes: &[u8]) -> u64 {

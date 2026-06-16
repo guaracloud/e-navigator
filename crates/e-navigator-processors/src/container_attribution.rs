@@ -152,28 +152,32 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                     event.process.as_ref().map(|process| process.pid),
                     &mut event.container,
                     &mut event.kubernetes,
-                );
+                )
+                .await;
             }
             SignalPayload::ProfilingStackTraceObservation(event) => {
                 self.enrich_profile_context(
                     event.process.as_ref().map(|process| process.pid),
                     &mut event.container,
                     &mut event.kubernetes,
-                );
+                )
+                .await;
             }
             SignalPayload::ProfilingSessionObservation(event) => {
                 self.enrich_profile_context(
                     event.process.as_ref().map(|process| process.pid),
                     &mut event.container,
                     &mut event.kubernetes,
-                );
+                )
+                .await;
             }
             SignalPayload::ProfilingWarningObservation(event) => {
                 self.enrich_profile_context(
                     event.process.as_ref().map(|process| process.pid),
                     &mut event.container,
                     &mut event.kubernetes,
-                );
+                )
+                .await;
             }
             SignalPayload::ProcessResourceObservation(event) => {
                 self.enrich_context(
@@ -232,14 +236,21 @@ impl ContainerAttributionProcessor {
         }
     }
 
-    fn enrich_profile_context(
+    async fn enrich_profile_context(
         &self,
         pid: Option<u32>,
         container: &mut Option<ContainerContext>,
         kubernetes: &mut Option<KubernetesContext>,
     ) {
         if let Some(pid) = pid {
-            self.enrich_context(pid, container, kubernetes);
+            if container.is_none() {
+                *container = self.container_for_pid_async(pid).await;
+            }
+            if kubernetes.is_none() {
+                *kubernetes = container
+                    .as_ref()
+                    .and_then(|container| self.kubernetes_cache.get(&container.container_id));
+            }
         } else {
             self.enrich_existing_container_context(container, kubernetes);
         }
@@ -271,6 +282,44 @@ impl ContainerAttributionProcessor {
                     path = %path.display(),
                     error = %err,
                     "unable to read process cgroup for attribution"
+                );
+                None
+            }
+        };
+        self.store_cached_container_for_pid(pid, container.clone());
+        container
+    }
+
+    async fn container_for_pid_async(&self, pid: u32) -> Option<ContainerContext> {
+        if let Some(container) = self.cached_container_for_pid(pid) {
+            return container;
+        }
+
+        let path = self.config.procfs_root.join(pid.to_string()).join("cgroup");
+        let read_path = path.clone();
+        let container = match tokio::task::spawn_blocking(move || {
+            read_bounded_to_string(&read_path, MAX_CGROUP_BYTES)
+                .map(|contents| parse_container_from_cgroup(&contents))
+                .map_err(|err| err.to_string())
+        })
+        .await
+        {
+            Ok(Ok(container)) => container,
+            Ok(Err(err)) => {
+                warn!(
+                    pid,
+                    path = %path.display(),
+                    error = %err,
+                    "unable to read process cgroup for attribution"
+                );
+                None
+            }
+            Err(err) => {
+                warn!(
+                    pid,
+                    path = %path.display(),
+                    error = %err,
+                    "unable to join process cgroup attribution task"
                 );
                 None
             }

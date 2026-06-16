@@ -34,6 +34,6 @@ Use bounded defaults for sample frequency, active targets, frames per sample, sa
 
 Non-privileged CI covers config validation, static registration, raw event decode fixtures, malformed events, stack truncation, process-only attribution, generator enrichment, and synthetic output.
 
-Privileged Linux or Kubernetes runtime CPU profiling may only be claimed after running the explicit CPU profile source mode in a real privileged Linux environment and observing `profile_sample_observation` records from `source.aya_cpu_profile`.
+Privileged local Linux CPU profiling may only be claimed after running the explicit CPU profile source mode on a real privileged Linux host and observing `profile_sample_observation` records from `source.aya_cpu_profile`. Kubernetes CPU profiling may only be claimed after running the explicit CPU profile source mode on a privileged Kubernetes node or cluster and observing real `source.aya_cpu_profile` samples from that environment.
 
 Phase 9 does not implement or claim memory allocation profiling, lock profiling, pprof export, OTLP profile export, profile storage, flamegraph UI, trace/profile correlation, bottleneck analysis, Pyroscope replacement behavior, or full continuous profiling backend behavior.

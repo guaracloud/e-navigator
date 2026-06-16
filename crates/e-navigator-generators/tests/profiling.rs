@@ -238,6 +238,26 @@ async fn workload_identity_separates_processless_profile_windows() {
 }
 
 #[tokio::test]
+async fn profile_id_distinguishes_missing_pid_from_pid_zero() {
+    let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
+    let mut processless = sample_signal_with_stack(1_500_000_000, "stack:a", None);
+    let mut pid_zero = sample_signal_with_stack(1_600_000_000, "stack:b", None);
+    clear_process(&mut processless);
+    set_pid(&mut pid_zero, 0);
+
+    let first = observe(&generator, &processless).await;
+    let second = observe(&generator, &pid_zero).await;
+
+    let SignalPayload::ProfilingSessionObservation(first_window) = &first[0].payload else {
+        panic!("expected first profiling session");
+    };
+    let SignalPayload::ProfilingSessionObservation(second_window) = &second[0].payload else {
+        panic!("expected second profiling session");
+    };
+    assert_ne!(first_window.profile_id, second_window.profile_id);
+}
+
+#[tokio::test]
 async fn per_window_stack_and_sample_counts_are_bounded() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
 
@@ -350,6 +370,13 @@ fn clear_process(signal: &mut SignalEnvelope) {
         panic!("expected profile sample");
     };
     sample.process = None;
+}
+
+fn set_pid(signal: &mut SignalEnvelope, pid: u32) {
+    let SignalPayload::ProfileSampleObservation(sample) = &mut signal.payload else {
+        panic!("expected profile sample");
+    };
+    sample.process.as_mut().expect("process").pid = pid;
 }
 
 fn context() -> (ContainerContext, KubernetesContext) {

@@ -136,8 +136,16 @@ fn send_with_backpressure(
 ) -> bool {
     match backpressure {
         CpuProfileBackpressure::DropNewest => tx.try_send(signal).is_ok(),
-        CpuProfileBackpressure::Wait => tx.blocking_send(signal).is_ok(),
+        CpuProfileBackpressure::StopSource => tx.try_send(signal).is_ok(),
     }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn bounded_cpu_targets(cpus: &[u32], max_active_targets: usize) -> Vec<u32> {
+    cpus.iter()
+        .copied()
+        .take(max_active_targets)
+        .collect::<Vec<_>>()
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -165,7 +173,7 @@ fn bytes_to_string(bytes: &[u8]) -> String {
 
 #[cfg(target_os = "linux")]
 mod platform {
-    use super::{raw_cpu_profile_to_signal, send_with_backpressure};
+    use super::{bounded_cpu_targets, raw_cpu_profile_to_signal, send_with_backpressure};
     use async_trait::async_trait;
     use aya::{
         Ebpf, include_bytes_aligned,
@@ -227,7 +235,8 @@ mod platform {
             let perf_type = PerfEventConfig::Software(SoftwareEvent::CpuClock);
             let sample_policy = SamplePolicy::Frequency(self.config.sample_frequency_hz.into());
             let cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
-            for cpu in cpus.iter().copied().take(self.config.max_active_targets) {
+            let active_cpus = bounded_cpu_targets(&cpus, self.config.max_active_targets);
+            for cpu in active_cpus.iter().copied() {
                 program
                     .attach(
                         perf_type,
@@ -247,7 +256,7 @@ mod platform {
                 })?)
                 .map_err(module_error)?;
 
-            for cpu_id in cpus {
+            for cpu_id in active_cpus {
                 let mut buffer = perf_array.open(cpu_id, None).map_err(module_error)?;
                 let cpu_tx = tx.clone();
                 let host = self.host.clone();
@@ -256,12 +265,13 @@ mod platform {
                 let reader_shutdown = shutdown.clone();
 
                 reader_handles.push(tokio::task::spawn_blocking(move || {
-                    let mut closed = false;
-
                     while !reader_shutdown.is_stopped() {
                         let mut accepted = 0_usize;
+                        let mut exit = ReaderExit::Stopped;
                         buffer.for_each(|event| {
-                            if closed || accepted >= config.max_samples_per_batch {
+                            if matches!(exit, ReaderExit::BackpressureStop)
+                                || accepted >= config.max_samples_per_batch
+                            {
                                 return;
                             }
 
@@ -278,8 +288,12 @@ mod platform {
                                     };
                                     accepted += 1;
                                     if !send_with_backpressure(&cpu_tx, signal, backpressure) {
-                                        if matches!(backpressure, CpuProfileBackpressure::Wait) {
-                                            closed = true;
+                                        if matches!(
+                                            backpressure,
+                                            CpuProfileBackpressure::StopSource
+                                        ) {
+                                            reader_shutdown.stop();
+                                            exit = ReaderExit::BackpressureStop;
                                         } else {
                                             warn!("dropped cpu profile sample due to backpressure");
                                         }
@@ -291,20 +305,34 @@ mod platform {
                             }
                         });
 
-                        if closed {
-                            return;
+                        if matches!(exit, ReaderExit::BackpressureStop) {
+                            return ReaderExit::BackpressureStop;
                         }
 
                         std::thread::sleep(std::time::Duration::from_millis(100));
                     }
+                    ReaderExit::Stopped
                 }));
             }
 
             debug!("aya cpu profile source attached");
-            tokio::signal::ctrl_c().await.map_err(module_error)?;
-            shutdown.stop();
-            join_reader_handles(reader_handles).await
+            let reader_results = join_reader_handles(reader_handles);
+            tokio::pin!(reader_results);
+            tokio::select! {
+                result = &mut reader_results => result,
+                signal = tokio::signal::ctrl_c() => {
+                    signal.map_err(module_error)?;
+                    shutdown.stop();
+                    reader_results.await
+                }
+            }
         }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum ReaderExit {
+        Stopped,
+        BackpressureStop,
     }
 
     #[derive(Clone)]
@@ -334,9 +362,22 @@ mod platform {
         }
     }
 
-    async fn join_reader_handles(handles: Vec<JoinHandle<()>>) -> CoreResult<()> {
+    async fn join_reader_handles(handles: Vec<JoinHandle<ReaderExit>>) -> CoreResult<()> {
+        let mut backpressure_stopped = false;
         for handle in handles {
-            handle.await.map_err(module_error)?;
+            if matches!(
+                handle.await.map_err(module_error)?,
+                ReaderExit::BackpressureStop
+            ) {
+                backpressure_stopped = true;
+            }
+        }
+
+        if backpressure_stopped {
+            return Err(CoreError::ModuleFailed {
+                module: "source.aya_cpu_profile".to_string(),
+                message: "cpu profile source stopped due to pipeline backpressure".to_string(),
+            });
         }
 
         Ok(())
@@ -625,6 +666,47 @@ mod tests {
         ));
         assert!(rx.try_recv().is_ok());
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn stop_source_backpressure_does_not_block_on_full_queue() {
+        let raw = RawCpuProfileEvent {
+            pid: 42,
+            tid: 43,
+            uid: 1000,
+            sample_count: 1,
+            timestamp_unix_nanos: 1_000,
+            command: fixed_command("api"),
+            frame_count: 0,
+            instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
+        };
+        let signal = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            Some("node-a".to_string()),
+            &source_config(),
+            10_000,
+        )
+        .expect("raw profile event decodes");
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+        assert!(send_with_backpressure(
+            &tx,
+            signal.clone(),
+            e_navigator_core::CpuProfileBackpressure::StopSource
+        ));
+        assert!(!send_with_backpressure(
+            &tx,
+            signal,
+            e_navigator_core::CpuProfileBackpressure::StopSource
+        ));
+        assert!(rx.try_recv().is_ok());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn cpu_reader_targets_are_bounded_by_active_target_limit() {
+        assert_eq!(bounded_cpu_targets(&[0, 1, 2, 3], 2), vec![0, 1]);
+        assert_eq!(bounded_cpu_targets(&[0, 1], 4), vec![0, 1]);
     }
 
     fn source_config() -> CpuProfileSourceConfig {

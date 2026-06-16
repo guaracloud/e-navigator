@@ -242,7 +242,7 @@ pub struct CpuProfileSourceConfig {
 pub enum CpuProfileBackpressure {
     #[default]
     DropNewest,
-    Wait,
+    StopSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -934,6 +934,23 @@ mod tests {
             ))
         );
 
+        let too_high_frequency = RuntimeConfig {
+            modules: cpu_profile_modules(),
+            cpu_profile_source: CpuProfileSourceConfig {
+                enabled: true,
+                sample_frequency_hz: CpuProfileSourceConfig::MAX_SAMPLE_FREQUENCY_HZ + 1,
+                ..CpuProfileSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            too_high_frequency.validate(),
+            Err(format!(
+                "cpu_profile_source.sample_frequency_hz must be between 1 and {}",
+                CpuProfileSourceConfig::MAX_SAMPLE_FREQUENCY_HZ
+            ))
+        );
+
         let too_many_targets = RuntimeConfig {
             modules: cpu_profile_modules(),
             cpu_profile_source: CpuProfileSourceConfig {
@@ -1001,6 +1018,40 @@ mod tests {
                 CpuProfileSourceConfig::MAX_SYMBOL_BYTES_LIMIT
             ))
         );
+
+        let too_many_module_bytes = RuntimeConfig {
+            modules: cpu_profile_modules(),
+            cpu_profile_source: CpuProfileSourceConfig {
+                enabled: true,
+                max_module_bytes: CpuProfileSourceConfig::MAX_MODULE_BYTES_LIMIT + 1,
+                ..CpuProfileSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            too_many_module_bytes.validate(),
+            Err(format!(
+                "cpu_profile_source.max_module_bytes must be between 1 and {}",
+                CpuProfileSourceConfig::MAX_MODULE_BYTES_LIMIT
+            ))
+        );
+
+        let too_many_file_bytes = RuntimeConfig {
+            modules: cpu_profile_modules(),
+            cpu_profile_source: CpuProfileSourceConfig {
+                enabled: true,
+                max_file_bytes: CpuProfileSourceConfig::MAX_FILE_BYTES_LIMIT + 1,
+                ..CpuProfileSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            too_many_file_bytes.validate(),
+            Err(format!(
+                "cpu_profile_source.max_file_bytes must be between 1 and {}",
+                CpuProfileSourceConfig::MAX_FILE_BYTES_LIMIT
+            ))
+        );
     }
 
     #[test]
@@ -1019,6 +1070,39 @@ mod tests {
 
         assert!(config.validate().is_ok());
         assert!(config.module_enabled("source.aya_cpu_profile"));
+
+        let wrong_module_name = RuntimeConfig {
+            modules: cpu_profile_modules(),
+            cpu_profile_source: CpuProfileSourceConfig {
+                enabled: true,
+                module_name: "source.dynamic_cpu_profile".to_string(),
+                ..CpuProfileSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            wrong_module_name.validate(),
+            Err("cpu_profile_source.module_name must be source.aya_cpu_profile".to_string())
+        );
+
+        let disabled_module = RuntimeConfig {
+            modules: vec![
+                ModuleConfig::disabled("source.aya_cpu_profile"),
+                ModuleConfig::enabled("sink.json_stdout"),
+            ],
+            cpu_profile_source: CpuProfileSourceConfig {
+                enabled: true,
+                ..CpuProfileSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        };
+        assert_eq!(
+            disabled_module.validate(),
+            Err(
+                "cpu_profile_source.enabled requires enabled source.aya_cpu_profile module"
+                    .to_string()
+            )
+        );
     }
 
     fn cpu_profile_modules() -> Vec<ModuleConfig> {

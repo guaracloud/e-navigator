@@ -94,7 +94,7 @@ sudo -E cargo run -p e-navigator-cli --release -- --source aya-exec
 Privileged CPU profiling source smoke test on Linux:
 
 ```bash
-sudo -E cargo run --locked -p e-navigator-cli --release -- --source aya-cpu-profile
+sudo -E cargo run --locked -p e-navigator-cli --release -- --source aya-cpu-profile --config /path/to/e-navigator-cpu-profile.toml
 ```
 
 The `aya-exec` source mode registers the statically compiled Aya exec and network sources when both modules are enabled. The `aya-cpu-profile` source mode registers only `source.aya_cpu_profile` when its module and `[cpu_profile_source] enabled = true` are configured. Do not treat privileged Aya, CPU profiling, DNS runtime visibility, or Kubernetes runtime tests as passed unless they run on a real Linux host or Kubernetes cluster with tracefs/eBPF/perf-event support and the documented privileges.

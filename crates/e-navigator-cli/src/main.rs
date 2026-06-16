@@ -1217,7 +1217,7 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_profile_fixtures_cover_phase8_foundation_cases() {
+    fn synthetic_profile_fixtures_cover_phase9_foundation_cases() {
         let (container, kubernetes) = synthetic_attribution();
         let signals =
             synthetic_profile_signals(Some("node-a".to_string()), container, kubernetes, 1_000);
@@ -1228,6 +1228,9 @@ mod tests {
                 SignalPayload::ProfileSampleObservation(sample)
                     if signal.source == "source.synthetic_exec"
                         && sample.profiling_kind == e_navigator_signals::ProfilingKind::Cpu
+                        && sample.attributes.iter().any(|attribute| attribute.key == "profiling.synthetic.fixture"
+                            && attribute.value == "cpu_sample")
+                        && !sample.stack_frames.is_empty()
                         && sample.stack_frames.iter().all(|frame| frame.symbol.is_some())
             )
         }));
@@ -1235,14 +1238,18 @@ mod tests {
             matches!(
                 &signal.payload,
                 SignalPayload::ProfileSampleObservation(sample)
-                    if sample.stack_frames.iter().any(|frame| frame.symbol.is_none())
+                    if sample.attributes.iter().any(|attribute| attribute.key == "profiling.synthetic.fixture"
+                        && attribute.value == "missing_symbols")
+                        && sample.stack_frames.iter().any(|frame| frame.symbol.is_none())
             )
         }));
         assert!(signals.iter().any(|signal| {
             matches!(
                 &signal.payload,
                 SignalPayload::ProfileSampleObservation(sample)
-                    if sample.stack_frames.len() == 4
+                    if sample.attributes.iter().any(|attribute| attribute.key == "profiling.synthetic.fixture"
+                        && attribute.value == "oversized_stack")
+                        && sample.stack_frames.len() == 4
                         && sample.attributes.iter().any(|attribute| attribute.key == "profiling.stack.truncated")
             )
         }));
