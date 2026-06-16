@@ -1,5 +1,6 @@
 use e_navigator_core::{Generator, Processor, Sink, Source};
 use e_navigator_signals::SignalEnvelope;
+use std::fmt;
 
 #[derive(Default)]
 pub struct ModuleRegistry {
@@ -7,6 +8,18 @@ pub struct ModuleRegistry {
     pub processors: Vec<Box<dyn Processor<SignalEnvelope>>>,
     pub generators: Vec<Box<dyn Generator<SignalEnvelope>>>,
     pub sinks: Vec<Box<dyn Sink<SignalEnvelope>>>,
+}
+
+impl fmt::Debug for ModuleRegistry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ModuleRegistry")
+            .field("sources", &self.sources.len())
+            .field("processors", &self.processors.len())
+            .field("generators", &self.generators.len())
+            .field("sinks", &self.sinks.len())
+            .finish()
+    }
 }
 
 impl ModuleRegistry {

@@ -1,3 +1,6 @@
+#![forbid(unsafe_code)]
+#![warn(missing_debug_implementations, rust_2018_idioms, unreachable_pub)]
+
 use async_trait::async_trait;
 use clap::{Parser, ValueEnum};
 use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, RuntimeConfig, Source};

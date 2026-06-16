@@ -1,6 +1,6 @@
 use e_navigator_core::{CoreError, CoreResult, ModuleMetadata, RuntimeConfig};
 use e_navigator_signals::SignalEnvelope;
-use std::collections::VecDeque;
+use std::{collections::VecDeque, fmt};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::debug;
 
@@ -11,6 +11,16 @@ const MAX_DERIVED_SIGNALS_PER_GENERATOR: usize = 64;
 pub struct Runner {
     config: RuntimeConfig,
     registry: ModuleRegistry,
+}
+
+impl fmt::Debug for Runner {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Runner")
+            .field("config", &self.config)
+            .field("registry", &self.registry)
+            .finish()
+    }
 }
 
 impl Runner {
@@ -512,6 +522,28 @@ mod tests {
             .expect("runner exits after source closes");
 
         assert_eq!(seen.lock().await.len(), 18);
+    }
+
+    #[tokio::test]
+    async fn runner_rejects_generator_cascade_that_exceeds_per_input_limit() {
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(OneSignalSource))
+            .with_generator(Box::new(ManySignalsGenerator { count: 65 }))
+            .with_sink(Box::new(MemorySink {
+                seen: Arc::new(Mutex::new(Vec::new())),
+            }));
+        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
+
+        let err = timeout(Duration::from_secs(1), runner.run())
+            .await
+            .expect("runner does not deadlock")
+            .expect_err("derived signal limit is enforced");
+
+        assert!(err.to_string().contains("generator.many"));
+        assert!(
+            err.to_string()
+                .contains("more than 64 derived signals for one input")
+        );
     }
 
     #[tokio::test]

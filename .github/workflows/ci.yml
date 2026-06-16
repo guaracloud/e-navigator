@@ -41,6 +41,31 @@ jobs:
       - name: Build
         run: cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 
+  supply-chain:
+    name: Supply-chain checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Cargo deny
+        run: cargo deny check
+
+      - name: Install cargo-machete
+        run: cargo install cargo-machete --locked
+
+      - name: Cargo machete
+        run: cargo machete
+
   manifests:
     name: Kubernetes manifest checks
     runs-on: ubuntu-latest

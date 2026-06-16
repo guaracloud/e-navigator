@@ -53,12 +53,21 @@ tests/smoke_docker.sh e-navigator:local
 git diff --check
 ```
 
+Optional local supply-chain checks:
+
+```bash
+cargo deny check
+cargo audit
+cargo machete
+```
+
 Aya/eBPF development also requires the nightly Rust toolchain with `rust-src`, `bpf-linker`, and `bpftool`.
 
 See:
 
 - `docs/development/local-linux.md`
 - `docs/development/kubernetes.md`
+- `docs/engineering-invariants.md`
 
 ## Verification
 

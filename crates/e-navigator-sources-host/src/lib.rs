@@ -1,10 +1,10 @@
+#![warn(missing_debug_implementations, rust_2018_idioms, unreachable_pub)]
+
 use async_trait::async_trait;
 use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Source};
 use e_navigator_signals::{
-    CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
-    CgroupPidsObservation, CgroupResourceContext, MetricAggregationWindow, NodeCpuObservation,
-    NodeDiskIoObservation, NodeLoadObservation, NodeMemoryObservation, ProcessResourceContext,
-    ProcessResourceObservation, SignalEnvelope,
+    MetricAggregationWindow, NodeCpuObservation, NodeDiskIoObservation, NodeLoadObservation,
+    NodeMemoryObservation, ProcessResourceContext, ProcessResourceObservation, SignalEnvelope,
 };
 use std::{
     collections::VecDeque,
@@ -16,45 +16,13 @@ use std::{
 use tokio::sync::mpsc;
 use tracing::warn;
 
-const MAX_FILE_BYTES: u64 = 128 * 1024;
+mod config;
+mod model;
+
+pub use config::HostResourceConfig;
+pub use model::{CgroupSample, HostResourceSnapshot};
+
 const DISK_SECTOR_BYTES: u64 = 512;
-const DEFAULT_MAX_PROCESSES: usize = 128;
-const DEFAULT_MAX_CGROUPS: usize = 128;
-const DEFAULT_MAX_FDS_PER_PROCESS: usize = 1024;
-const DEFAULT_SAMPLE_INTERVAL_MILLIS: u64 = 15_000;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HostResourceConfig {
-    pub procfs_root: PathBuf,
-    pub sysfs_root: PathBuf,
-    pub cgroup_root: PathBuf,
-    pub sample_interval_millis: u64,
-    pub max_processes: usize,
-    pub max_cgroups: usize,
-    pub max_fds_per_process: usize,
-    pub max_file_bytes: u64,
-}
-
-impl Default for HostResourceConfig {
-    fn default() -> Self {
-        Self {
-            procfs_root: PathBuf::from("/proc"),
-            sysfs_root: PathBuf::from("/sys"),
-            cgroup_root: PathBuf::from("/sys/fs/cgroup"),
-            sample_interval_millis: DEFAULT_SAMPLE_INTERVAL_MILLIS,
-            max_processes: DEFAULT_MAX_PROCESSES,
-            max_cgroups: DEFAULT_MAX_CGROUPS,
-            max_fds_per_process: DEFAULT_MAX_FDS_PER_PROCESS,
-            max_file_bytes: MAX_FILE_BYTES,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct HostResourceSnapshot {
-    pub signals: Vec<SignalEnvelope>,
-    pub warnings: Vec<String>,
-}
 
 #[derive(Debug, Clone)]
 pub struct HostResourceSource {
@@ -414,112 +382,6 @@ pub fn parse_process_stat(
     })
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct CgroupSample {
-    pub path: String,
-    pub cpu_stat: Option<String>,
-    pub memory_current: Option<String>,
-    pub memory_peak: Option<String>,
-    pub memory_max: Option<String>,
-    pub pids_current: Option<String>,
-    pub pids_max: Option<String>,
-    pub fd_count: Option<u64>,
-    pub socket_count: Option<u64>,
-}
-
-impl CgroupSample {
-    pub fn into_observations(
-        self,
-        host: Option<String>,
-        start_unix_nanos: u64,
-        end_unix_nanos: u64,
-    ) -> Vec<SignalEnvelope> {
-        let cgroup = CgroupResourceContext {
-            cgroup_path: self.path,
-            container: None,
-            kubernetes: None,
-        };
-        let window = MetricAggregationWindow {
-            start_unix_nanos,
-            end_unix_nanos,
-        };
-        let mut signals = Vec::new();
-
-        if let Some(cpu_stat) = self.cpu_stat {
-            signals.push(SignalEnvelope::cgroup_cpu_observation(
-                "source.host_resource",
-                host.clone(),
-                CgroupCpuObservation {
-                    metric_name: "container.cpu.time".to_string(),
-                    unit: "ns".to_string(),
-                    timestamp_unix_nanos: end_unix_nanos,
-                    window: window.clone(),
-                    cgroup: cgroup.clone(),
-                    usage_nanos: cpu_stat_value(&cpu_stat, "usage_usec").map(micros_to_nanos),
-                    user_nanos: cpu_stat_value(&cpu_stat, "user_usec").map(micros_to_nanos),
-                    system_nanos: cpu_stat_value(&cpu_stat, "system_usec").map(micros_to_nanos),
-                    throttled_periods: cpu_stat_value(&cpu_stat, "nr_throttled"),
-                    throttled_nanos: cpu_stat_value(&cpu_stat, "throttled_usec")
-                        .map(micros_to_nanos),
-                },
-            ));
-        }
-
-        if self.memory_current.is_some() || self.memory_peak.is_some() || self.memory_max.is_some()
-        {
-            signals.push(SignalEnvelope::cgroup_memory_observation(
-                "source.host_resource",
-                host.clone(),
-                CgroupMemoryObservation {
-                    metric_name: "container.memory.usage".to_string(),
-                    unit: "By".to_string(),
-                    timestamp_unix_nanos: end_unix_nanos,
-                    window: window.clone(),
-                    cgroup: cgroup.clone(),
-                    current_bytes: self.memory_current.as_deref().and_then(parse_cgroup_limit),
-                    peak_bytes: self.memory_peak.as_deref().and_then(parse_cgroup_limit),
-                    max_bytes: self.memory_max.as_deref().and_then(parse_cgroup_limit),
-                },
-            ));
-        }
-
-        if self.pids_current.is_some() || self.pids_max.is_some() {
-            signals.push(SignalEnvelope::cgroup_pids_observation(
-                "source.host_resource",
-                host.clone(),
-                CgroupPidsObservation {
-                    metric_name: "container.process.count".to_string(),
-                    unit: "{process}".to_string(),
-                    timestamp_unix_nanos: end_unix_nanos,
-                    window: window.clone(),
-                    cgroup: cgroup.clone(),
-                    process_count: self.pids_current.as_deref().and_then(parse_cgroup_limit),
-                    thread_count: None,
-                    max_processes: self.pids_max.as_deref().and_then(parse_cgroup_limit),
-                },
-            ));
-        }
-
-        if self.fd_count.is_some() || self.socket_count.is_some() {
-            signals.push(SignalEnvelope::cgroup_file_descriptor_observation(
-                "source.host_resource",
-                host,
-                CgroupFileDescriptorObservation {
-                    metric_name: "container.file_descriptor.count".to_string(),
-                    unit: "{file_descriptor}".to_string(),
-                    timestamp_unix_nanos: end_unix_nanos,
-                    window,
-                    cgroup,
-                    open_fds: self.fd_count,
-                    socket_count: self.socket_count,
-                },
-            ));
-        }
-
-        signals
-    }
-}
-
 fn sample_processes(
     config: &HostResourceConfig,
     started: u64,
@@ -783,25 +645,6 @@ fn status_value<'a>(contents: &'a str, key: &str) -> Option<&'a str> {
     })
 }
 
-fn cpu_stat_value(contents: &str, key: &str) -> Option<u64> {
-    contents.lines().find_map(|line| {
-        let mut fields = line.split_whitespace();
-        match (fields.next(), fields.next()) {
-            (Some(found), Some(value)) if found == key => parse_u64(value).ok(),
-            _ => None,
-        }
-    })
-}
-
-fn parse_cgroup_limit(contents: &str) -> Option<u64> {
-    let value = contents.trim();
-    if value == "max" {
-        None
-    } else {
-        value.parse::<u64>().ok()
-    }
-}
-
 fn parse_u64(value: &str) -> Result<u64, String> {
     value
         .parse::<u64>()
@@ -825,10 +668,6 @@ fn ticks_to_nanos(ticks: u64, clock_ticks_per_second: u64) -> u64 {
         .saturating_mul(1_000_000_000)
         .checked_div(clock_ticks_per_second.max(1))
         .unwrap_or(0)
-}
-
-fn micros_to_nanos(micros: u64) -> u64 {
-    micros.saturating_mul(1_000)
 }
 
 fn kib_to_bytes(kib: u64) -> u64 {
@@ -947,6 +786,30 @@ mod tests {
         assert_eq!(process.open_fds, Some(2));
         assert_eq!(process.socket_count, Some(1));
         assert_eq!(process.thread_count, Some(4));
+    }
+
+    #[test]
+    fn adversarial_procfs_parsers_reject_malformed_inputs_without_panics() {
+        assert!(parse_cpu_stat("", 100, 1_000, 2_000).is_err());
+        assert!(parse_cpu_stat("cpu 1 2 3\n", 100, 1_000, 2_000).is_err());
+        assert!(parse_loadavg("not-a-float 0.1 0.2 1/2 3\n", 1_000, 2_000).is_err());
+        assert!(parse_meminfo("MemFree: 1 kB\n", 1_000, 2_000).is_err());
+        assert!(
+            parse_process_stat(42, "42 api S 1 1 1", None, 100, 4096, 0, 0, 1_000, 2_000,).is_err()
+        );
+    }
+
+    #[test]
+    fn diskstats_byte_conversion_saturates_on_extreme_sector_counts() {
+        let disks = parse_diskstats(
+            "259 0 nvme0n1 1 0 18446744073709551615 0 1 0 18446744073709551615 0\n",
+            1_000,
+            2_000,
+        )
+        .expect("diskstats parses with saturating byte conversion");
+
+        assert_eq!(disks[0].read_bytes, u64::MAX);
+        assert_eq!(disks[0].written_bytes, u64::MAX);
     }
 
     #[test]

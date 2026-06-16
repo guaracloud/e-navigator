@@ -621,6 +621,39 @@ mod tests {
         assert_eq!(event.opened_at_unix_nanos, Some(1_000));
     }
 
+    #[test]
+    fn rejects_short_unknown_family_and_protocol_raw_network_events() {
+        assert!(raw_network_to_signal_with_clock(&[0, 1, 2], None, 1_000).is_none());
+
+        let mut raw = RawNetworkEvent {
+            event_type: RAW_NETWORK_EVENT_OPEN,
+            pid: 42,
+            uid: 1000,
+            fd: 7,
+            errno: 0,
+            family: RAW_AF_INET,
+            protocol: RAW_PROTO_TCP,
+            remote_port_be: 443_u16.to_be(),
+            local_port_be: 43512_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([203, 0, 113, 10]),
+            local_addr_v4: u32::from_ne_bytes([10, 0, 0, 5]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 1_000,
+            duration_nanos: 0,
+            command: fixed_command("api"),
+        };
+
+        raw.event_type = 99;
+        assert!(raw_network_to_signal_with_clock(raw_as_bytes(&raw), None, 1_000).is_none());
+        raw.event_type = RAW_NETWORK_EVENT_OPEN;
+        raw.family = 99;
+        assert!(raw_network_to_signal_with_clock(raw_as_bytes(&raw), None, 1_000).is_none());
+        raw.family = RAW_AF_INET;
+        raw.protocol = 17;
+        assert!(raw_network_to_signal_with_clock(raw_as_bytes(&raw), None, 1_000).is_none());
+    }
+
     fn fixed_command(value: &str) -> [u8; 16] {
         let mut command = [0_u8; 16];
         let bytes = value.as_bytes();

@@ -46,6 +46,27 @@ fn rejects_malformed_traceparents_and_all_zero_ids() {
 }
 
 #[test]
+fn rejects_traceparent_length_and_separator_variants() {
+    for value in [
+        "",
+        "00",
+        "00-4bf92f3577b34da6a3ce929d0e0e473-00f067aa0ba902b7-01",
+        "00-4bf92f3577b34da6a3ce929d0e0e473600-00f067aa0ba902b7-01",
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902-01",
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b700-01",
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-0",
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-011",
+        "00:4bf92f3577b34da6a3ce929d0e0e4736:00f067aa0ba902b7:01",
+    ] {
+        assert_eq!(
+            parse_traceparent(value).unwrap_err(),
+            TraceContextError::Malformed,
+            "{value:?}"
+        );
+    }
+}
+
+#[test]
 fn extracts_http_request_trace_context_from_bounded_fixture() {
     let bytes = b"GET /checkout/123 HTTP/1.1\r\nHost: api.example.com\r\nTraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\nTracestate: vendor=value\r\nAuthorization: Bearer secret\r\n\r\n";
 
@@ -88,6 +109,32 @@ fn reports_missing_and_invalid_trace_context_without_inventing_ids() {
         malformed.warning.as_deref(),
         Some("malformed_trace_context")
     );
+}
+
+#[test]
+fn rejects_adversarial_http_header_fixtures_without_panicking() {
+    let config = ProtocolExtractionConfig::default();
+
+    assert_eq!(
+        parse_http_request(b"\xff\xfe\xfd\r\n\r\n", &config).unwrap_err(),
+        HttpExtraction::InvalidUtf8
+    );
+    assert_eq!(
+        parse_http_request(b"GET\r\nHost: api.example.com\r\n\r\n", &config).unwrap_err(),
+        HttpExtraction::MalformedRequestLine
+    );
+    assert_eq!(
+        parse_http_request(b"GET / HTTP/1.1\nHost: api.example.com\n\n", &config).unwrap_err(),
+        HttpExtraction::HeadersTooLong
+    );
+
+    let lowercase_method = parse_http_request(
+        b"get / HTTP/1.1\r\nTraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\n\r\n",
+        &config,
+    )
+    .expect("lowercase method is parsed without inventing normalized method context");
+    assert_eq!(lowercase_method.method, None);
+    assert!(lowercase_method.attributes.is_empty());
 }
 
 #[test]
