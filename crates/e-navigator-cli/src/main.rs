@@ -81,7 +81,7 @@ fn load_config(path: Option<&std::path::Path>) -> anyhow::Result<RuntimeConfig> 
         Some(path) => {
             let contents = std::fs::read_to_string(path)?;
             let config = toml::from_str::<RuntimeConfig>(&contents)?;
-            config.validate().map_err(CoreError::InvalidConfig)?;
+            config.validate_typed().map_err(CoreError::InvalidConfig)?;
             Ok(config)
         }
         None => Ok(RuntimeConfig::default()),

@@ -5,6 +5,14 @@ license.workspace = true
 version.workspace = true
 publish = false
 
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
 [dependencies]
 aya-ebpf = { workspace = true }
 

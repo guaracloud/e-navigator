@@ -654,6 +654,11 @@ mod tests {
         assert!(raw_network_to_signal_with_clock(raw_as_bytes(&raw), None, 1_000).is_none());
     }
 
+    #[test]
+    fn raw_network_event_layout_size_matches_ebpf_abi() {
+        assert_eq!(std::mem::size_of::<RawNetworkEvent>(), 104);
+    }
+
     fn fixed_command(value: &str) -> [u8; 16] {
         let mut command = [0_u8; 16];
         let bytes = value.as_bytes();

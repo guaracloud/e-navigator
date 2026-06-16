@@ -1,0 +1,159 @@
+[
+  {
+    "schema_version": 1,
+    "kind": "exec",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "pid": 42,
+      "ppid": 1,
+      "uid": 1000,
+      "command": "checkout",
+      "executable": "/app/checkout",
+      "arguments": ["checkout"],
+      "cgroup_id": 7,
+      "timestamp_unix_nanos": 1000,
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "network_connection_open",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout"},
+      "protocol": "tcp",
+      "address_family": "ipv4",
+      "local_address": "10.0.0.5",
+      "local_port": 41000,
+      "remote_address": "203.0.113.10",
+      "remote_port": 443,
+      "fd": 9,
+      "timestamp_unix_nanos": 1000,
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "dns_response",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout"},
+      "query_name": "api.example.com",
+      "query_type": "a",
+      "response_code": "no_error",
+      "latency_nanos": 15000,
+      "transport_protocol": "udp",
+      "server_address": "10.96.0.10",
+      "server_port": 53,
+      "timestamp_unix_nanos": 1100,
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "dependency_edge",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "source": {"workload": null, "container": null, "address": "10.0.0.5", "port": 41000, "domain": null},
+      "destination": {"workload": null, "container": null, "address": "203.0.113.10", "port": 443, "domain": null},
+      "protocol": "tcp",
+      "observations": 1,
+      "first_seen_unix_nanos": 1000,
+      "last_seen_unix_nanos": 1200
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "node_memory_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "system.memory.usage",
+      "unit": "By",
+      "timestamp_unix_nanos": 1200,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "mem_total_bytes": 1024,
+      "mem_available_bytes": 512,
+      "mem_free_bytes": 256,
+      "swap_total_bytes": 0,
+      "swap_free_bytes": 0
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "trace_span_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "name": "synthetic checkout",
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": "00f067aa0ba902b7",
+      "parent_span_id": null,
+      "start_unix_nanos": 1000,
+      "end_unix_nanos": 1200,
+      "duration_nanos": 200,
+      "correlation_kind": "synthetic",
+      "confidence": "high",
+      "service_name": "checkout",
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout"},
+      "container": null,
+      "kubernetes": null,
+      "peer": {"address": "203.0.113.10", "port": 443, "domain": "api.example.com", "workload": null, "container": null},
+      "attributes": [{"key": "trace.synthetic.fixture", "value": "golden"}]
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "protocol_request_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "protocol": "http",
+      "start_unix_nanos": 1000,
+      "end_unix_nanos": 1200,
+      "duration_nanos": 200,
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": "00f067aa0ba902b7",
+      "parent_span_id": null,
+      "correlation_kind": "synthetic",
+      "confidence": "high",
+      "service_name": "checkout",
+      "method": "GET",
+      "status_code": 200,
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout"},
+      "container": null,
+      "kubernetes": null,
+      "peer": {"address": "203.0.113.10", "port": 443, "domain": "api.example.com", "workload": null, "container": null},
+      "attributes": [{"key": "trace.synthetic.fixture", "value": "golden"}]
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "profile_sample_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "timestamp_unix_nanos": 1300,
+      "profiling_kind": "cpu",
+      "correlation_kind": "synthetic",
+      "confidence": "high",
+      "sample_count": 2,
+      "sampling_period_nanos": 10000000,
+      "stack_id": "stack:golden",
+      "stack_frames": [{"symbol": "checkout::handler", "module": "checkout", "file": null, "line": null}],
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout"},
+      "container": null,
+      "kubernetes": null,
+      "thread_id": 7,
+      "thread_name": "worker",
+      "attributes": [{"key": "profiling.synthetic.fixture", "value": "golden"}]
+    }
+  }
+]

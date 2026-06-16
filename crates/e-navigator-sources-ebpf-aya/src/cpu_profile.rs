@@ -733,6 +733,11 @@ mod tests {
         assert_eq!(bounded_cpu_targets(&[0, 1], 4), vec![0, 1]);
     }
 
+    #[test]
+    fn raw_cpu_profile_event_layout_size_matches_ebpf_abi() {
+        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 88);
+    }
+
     fn source_config() -> CpuProfileSourceConfig {
         CpuProfileSourceConfig {
             enabled: true,

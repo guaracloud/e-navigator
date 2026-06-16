@@ -1,4 +1,4 @@
-use e_navigator_core::{CoreError, CoreResult, ModuleMetadata, RuntimeConfig};
+use e_navigator_core::{ConfigError, CoreError, CoreResult, ModuleMetadata, RuntimeConfig};
 use e_navigator_signals::SignalEnvelope;
 use std::{collections::VecDeque, fmt};
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -25,18 +25,20 @@ impl fmt::Debug for Runner {
 
 impl Runner {
     pub fn new(config: RuntimeConfig, registry: ModuleRegistry) -> CoreResult<Self> {
-        config.validate().map_err(CoreError::InvalidConfig)?;
+        config.validate_typed().map_err(CoreError::InvalidConfig)?;
 
         if registry.module_count() == 0 {
-            return Err(CoreError::InvalidConfig(
-                "at least one registered module is required".to_string(),
-            ));
+            return Err(CoreError::InvalidConfig(ConfigError::invalid_value(
+                "modules",
+                "at least one registered module is required",
+            )));
         }
 
         if !registry.has_source_and_sink() {
-            return Err(CoreError::InvalidConfig(
-                "at least one source and one sink are required".to_string(),
-            ));
+            return Err(CoreError::InvalidConfig(ConfigError::invalid_value(
+                "modules",
+                "at least one source and one sink are required",
+            )));
         }
 
         Ok(Self { config, registry })
@@ -244,16 +246,24 @@ mod tests {
     use e_navigator_core::{
         CoreResult, Generator, ModuleKind, ModuleMetadata, Processor, Signal, Sink, Source,
     };
-    use e_navigator_signals::{ExecEvent, ProcessExitEvent, SignalEnvelope, SignalPayload};
+    use e_navigator_generators::{DependencyGraphGenerator, TraceCorrelationGenerator};
+    use e_navigator_signals::{
+        ContainerContext, ExecEvent, KubernetesContext, NetworkAddressFamily,
+        NetworkConnectionCloseEvent, NetworkConnectionOpenEvent, NetworkProcessIdentity,
+        NetworkProtocol, ProcessExitEvent, SignalEnvelope, SignalPayload,
+    };
     use tokio::{
         sync::{Mutex, mpsc},
         time::{Duration, sleep, timeout},
     };
 
     use super::*;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+    use std::{
+        collections::BTreeMap,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
     };
 
     struct OneSignalSource;
@@ -310,6 +320,79 @@ mod tests {
                 },
             );
             tx.send(signal).await.map_err(|_| CoreError::PipelineClosed)
+        }
+    }
+
+    struct NetworkOpenAndCloseSource;
+
+    #[async_trait]
+    impl Source<SignalEnvelope> for NetworkOpenAndCloseSource {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("source.network_contract", ModuleKind::Source)
+        }
+
+        async fn run(self: Box<Self>, tx: mpsc::Sender<SignalEnvelope>) -> CoreResult<()> {
+            let process = NetworkProcessIdentity {
+                pid: 42,
+                ppid: Some(1),
+                uid: Some(1000),
+                command: "checkout-api".to_string(),
+                executable: Some("/app/checkout-api".to_string()),
+            };
+            let container = Some(ContainerContext {
+                container_id: "container-1".to_string(),
+                runtime: Some("containerd".to_string()),
+            });
+            let kubernetes = Some(KubernetesContext {
+                namespace: "shop".to_string(),
+                pod_name: "checkout-7d8f".to_string(),
+                pod_uid: Some("pod-uid-1".to_string()),
+                container_name: Some("checkout".to_string()),
+                node_name: Some("node-a".to_string()),
+                labels: BTreeMap::new(),
+            });
+            let opened_at = 1_000;
+            tx.send(SignalEnvelope::network_connection_open(
+                "source.network_contract",
+                Some("node-a".to_string()),
+                NetworkConnectionOpenEvent {
+                    process: process.clone(),
+                    protocol: NetworkProtocol::Tcp,
+                    address_family: NetworkAddressFamily::Ipv4,
+                    local_address: Some("10.0.0.5".to_string()),
+                    local_port: Some(41000),
+                    remote_address: "203.0.113.10".to_string(),
+                    remote_port: 443,
+                    fd: Some(9),
+                    timestamp_unix_nanos: opened_at,
+                    container: container.clone(),
+                    kubernetes: kubernetes.clone(),
+                },
+            ))
+            .await
+            .map_err(|_| CoreError::PipelineClosed)?;
+
+            tx.send(SignalEnvelope::network_connection_close(
+                "source.network_contract",
+                Some("node-a".to_string()),
+                NetworkConnectionCloseEvent {
+                    process,
+                    protocol: NetworkProtocol::Tcp,
+                    address_family: NetworkAddressFamily::Ipv4,
+                    local_address: Some("10.0.0.5".to_string()),
+                    local_port: Some(41000),
+                    remote_address: "203.0.113.10".to_string(),
+                    remote_port: 443,
+                    fd: Some(9),
+                    opened_at_unix_nanos: Some(opened_at),
+                    closed_at_unix_nanos: opened_at + 2_000,
+                    duration_nanos: Some(2_000),
+                    container,
+                    kubernetes,
+                },
+            ))
+            .await
+            .map_err(|_| CoreError::PipelineClosed)
         }
     }
 
@@ -684,6 +767,35 @@ mod tests {
                 &signal.payload,
                 SignalPayload::Exec(event) if event.command == "downstream-derived"
             )
+        }));
+    }
+
+    #[tokio::test]
+    async fn dependency_graph_output_reaches_trace_correlation_in_static_generator_order() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(NetworkOpenAndCloseSource))
+            .with_generator(Box::new(DependencyGraphGenerator::default()))
+            .with_generator(Box::new(TraceCorrelationGenerator::default()))
+            .with_sink(Box::new(MemorySink { seen: seen.clone() }));
+        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
+
+        runner
+            .run()
+            .await
+            .expect("runner exits after source closes");
+
+        let seen = seen.lock().await;
+        assert!(seen.iter().any(|signal| {
+            matches!(&signal.payload, SignalPayload::DependencyEdge(edge)
+                if edge.destination.address.as_deref() == Some("203.0.113.10")
+                    && edge.destination.port == Some(443))
+        }));
+        assert!(seen.iter().any(|signal| {
+            matches!(&signal.payload, SignalPayload::TraceServicePathObservation(path)
+                if path.path_key.starts_with("trace-path:")
+                    && path.destination.address.as_deref() == Some("203.0.113.10")
+                    && path.destination.port == Some(443))
         }));
     }
 

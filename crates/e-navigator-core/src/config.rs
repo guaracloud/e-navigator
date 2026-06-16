@@ -1,5 +1,54 @@
 use serde::{Deserialize, Serialize};
-use std::{net::IpAddr, path::PathBuf};
+use std::{fmt, net::IpAddr, path::PathBuf};
+
+pub type ConfigResult<T> = Result<T, ConfigError>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigError {
+    field: &'static str,
+    category: ConfigErrorKind,
+    message: String,
+}
+
+impl ConfigError {
+    pub fn invalid_value(field: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            field,
+            category: ConfigErrorKind::InvalidValue,
+            message: message.into(),
+        }
+    }
+
+    pub fn invalid_reference(field: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            field,
+            category: ConfigErrorKind::InvalidReference,
+            message: message.into(),
+        }
+    }
+
+    pub fn field(&self) -> &'static str {
+        self.field
+    }
+
+    pub fn category(&self) -> ConfigErrorKind {
+        self.category
+    }
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigErrorKind {
+    InvalidValue,
+    InvalidReference,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeConfig {
@@ -56,12 +105,22 @@ impl Default for RuntimeConfig {
 
 impl RuntimeConfig {
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_typed().map_err(|err| err.to_string())
+    }
+
+    pub fn validate_typed(&self) -> ConfigResult<()> {
         if self.queue_capacity == 0 {
-            return Err("queue_capacity must be greater than zero".to_string());
+            return Err(ConfigError::invalid_value(
+                "queue_capacity",
+                "queue_capacity must be greater than zero",
+            ));
         }
 
         if self.modules.iter().filter(|module| module.enabled).count() == 0 {
-            return Err("at least one module must be enabled".to_string());
+            return Err(ConfigError::invalid_value(
+                "modules",
+                "at least one module must be enabled",
+            ));
         }
 
         self.argv_capture.validate()?;
@@ -111,18 +170,24 @@ impl ArgvCaptureConfig {
     pub const MAX_ARGS_LIMIT: usize = 8;
     pub const MAX_BYTES_LIMIT: usize = 512;
 
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> ConfigResult<()> {
         if !(1..=Self::MAX_ARGS_LIMIT).contains(&self.max_args) {
-            return Err(format!(
-                "argv_capture.max_args must be between 1 and {}",
-                Self::MAX_ARGS_LIMIT
+            return Err(ConfigError::invalid_value(
+                "argv_capture.max_args",
+                format!(
+                    "argv_capture.max_args must be between 1 and {}",
+                    Self::MAX_ARGS_LIMIT
+                ),
             ));
         }
 
         if !(1..=Self::MAX_BYTES_LIMIT).contains(&self.max_bytes) {
-            return Err(format!(
-                "argv_capture.max_bytes must be between 1 and {}",
-                Self::MAX_BYTES_LIMIT
+            return Err(ConfigError::invalid_value(
+                "argv_capture.max_bytes",
+                format!(
+                    "argv_capture.max_bytes must be between 1 and {}",
+                    Self::MAX_BYTES_LIMIT
+                ),
             ));
         }
 
@@ -148,9 +213,12 @@ impl Default for AttributionConfig {
 }
 
 impl AttributionConfig {
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> ConfigResult<()> {
         if self.procfs_root.as_os_str().is_empty() {
-            return Err("attribution.procfs_root must not be empty".to_string());
+            return Err(ConfigError::invalid_value(
+                "attribution.procfs_root",
+                "attribution.procfs_root must not be empty",
+            ));
         }
 
         Ok(())
@@ -164,7 +232,7 @@ pub struct RuntimeSecurityConfig {
 }
 
 impl RuntimeSecurityConfig {
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> ConfigResult<()> {
         for endpoint in &self.kubernetes_api_endpoints {
             endpoint.validate()?;
         }
@@ -290,9 +358,12 @@ impl Default for DnsMetricsConfig {
 }
 
 impl DnsMetricsConfig {
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> ConfigResult<()> {
         if self.max_domains == 0 {
-            return Err("dns_metrics.max_domains must be greater than zero".to_string());
+            return Err(ConfigError::invalid_value(
+                "dns_metrics.max_domains",
+                "dns_metrics.max_domains must be greater than zero",
+            ));
         }
 
         Ok(())
@@ -334,23 +405,32 @@ impl TraceCorrelationConfig {
     pub const MAX_SEEN_INTERACTIONS_LIMIT: usize = 131_072;
     pub const MAX_WARNINGS_LIMIT: usize = 16_384;
 
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> ConfigResult<()> {
         if !(1..=Self::MAX_SERVICE_PATHS_LIMIT).contains(&self.max_service_paths) {
-            return Err(format!(
-                "trace_correlation.max_service_paths must be between 1 and {}",
-                Self::MAX_SERVICE_PATHS_LIMIT
+            return Err(ConfigError::invalid_value(
+                "trace_correlation.max_service_paths",
+                format!(
+                    "trace_correlation.max_service_paths must be between 1 and {}",
+                    Self::MAX_SERVICE_PATHS_LIMIT
+                ),
             ));
         }
         if !(1..=Self::MAX_SEEN_INTERACTIONS_LIMIT).contains(&self.max_seen_interactions) {
-            return Err(format!(
-                "trace_correlation.max_seen_interactions must be between 1 and {}",
-                Self::MAX_SEEN_INTERACTIONS_LIMIT
+            return Err(ConfigError::invalid_value(
+                "trace_correlation.max_seen_interactions",
+                format!(
+                    "trace_correlation.max_seen_interactions must be between 1 and {}",
+                    Self::MAX_SEEN_INTERACTIONS_LIMIT
+                ),
             ));
         }
         if !(1..=Self::MAX_WARNINGS_LIMIT).contains(&self.max_warnings) {
-            return Err(format!(
-                "trace_correlation.max_warnings must be between 1 and {}",
-                Self::MAX_WARNINGS_LIMIT
+            return Err(ConfigError::invalid_value(
+                "trace_correlation.max_warnings",
+                format!(
+                    "trace_correlation.max_warnings must be between 1 and {}",
+                    Self::MAX_WARNINGS_LIMIT
+                ),
             ));
         }
         Ok(())
@@ -361,17 +441,23 @@ impl RequestCorrelationConfig {
     pub const MAX_SEEN_REQUESTS_LIMIT: usize = 131_072;
     pub const MAX_WARNINGS_LIMIT: usize = 16_384;
 
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> ConfigResult<()> {
         if !(1..=Self::MAX_SEEN_REQUESTS_LIMIT).contains(&self.max_seen_requests) {
-            return Err(format!(
-                "request_correlation.max_seen_requests must be between 1 and {}",
-                Self::MAX_SEEN_REQUESTS_LIMIT
+            return Err(ConfigError::invalid_value(
+                "request_correlation.max_seen_requests",
+                format!(
+                    "request_correlation.max_seen_requests must be between 1 and {}",
+                    Self::MAX_SEEN_REQUESTS_LIMIT
+                ),
             ));
         }
         if !(1..=Self::MAX_WARNINGS_LIMIT).contains(&self.max_warnings) {
-            return Err(format!(
-                "request_correlation.max_warnings must be between 1 and {}",
-                Self::MAX_WARNINGS_LIMIT
+            return Err(ConfigError::invalid_value(
+                "request_correlation.max_warnings",
+                format!(
+                    "request_correlation.max_warnings must be between 1 and {}",
+                    Self::MAX_WARNINGS_LIMIT
+                ),
             ));
         }
         Ok(())
@@ -384,29 +470,41 @@ impl ProfilingConfig {
     pub const MAX_WARNINGS_LIMIT: usize = 16_384;
     pub const MAX_WINDOW_NANOS_LIMIT: u64 = 86_400_000_000_000;
 
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> ConfigResult<()> {
         if !(1..=Self::MAX_WINDOWS_LIMIT).contains(&self.max_windows) {
-            return Err(format!(
-                "profiling.max_windows must be between 1 and {}",
-                Self::MAX_WINDOWS_LIMIT
+            return Err(ConfigError::invalid_value(
+                "profiling.max_windows",
+                format!(
+                    "profiling.max_windows must be between 1 and {}",
+                    Self::MAX_WINDOWS_LIMIT
+                ),
             ));
         }
         if !(1..=Self::MAX_SEEN_SAMPLES_LIMIT).contains(&self.max_seen_samples) {
-            return Err(format!(
-                "profiling.max_seen_samples must be between 1 and {}",
-                Self::MAX_SEEN_SAMPLES_LIMIT
+            return Err(ConfigError::invalid_value(
+                "profiling.max_seen_samples",
+                format!(
+                    "profiling.max_seen_samples must be between 1 and {}",
+                    Self::MAX_SEEN_SAMPLES_LIMIT
+                ),
             ));
         }
         if !(1..=Self::MAX_WARNINGS_LIMIT).contains(&self.max_warnings) {
-            return Err(format!(
-                "profiling.max_warnings must be between 1 and {}",
-                Self::MAX_WARNINGS_LIMIT
+            return Err(ConfigError::invalid_value(
+                "profiling.max_warnings",
+                format!(
+                    "profiling.max_warnings must be between 1 and {}",
+                    Self::MAX_WARNINGS_LIMIT
+                ),
             ));
         }
         if !(1..=Self::MAX_WINDOW_NANOS_LIMIT).contains(&self.window_nanos) {
-            return Err(format!(
-                "profiling.window_nanos must be between 1 and {}",
-                Self::MAX_WINDOW_NANOS_LIMIT
+            return Err(ConfigError::invalid_value(
+                "profiling.window_nanos",
+                format!(
+                    "profiling.window_nanos must be between 1 and {}",
+                    Self::MAX_WINDOW_NANOS_LIMIT
+                ),
             ));
         }
         Ok(())
@@ -455,29 +553,48 @@ impl Default for CpuProfileSourceConfig {
 }
 
 impl ResourceSourceConfig {
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> ConfigResult<()> {
         if self.procfs_root.as_os_str().is_empty() {
-            return Err("resource_source.procfs_root must not be empty".to_string());
+            return Err(ConfigError::invalid_value(
+                "resource_source.procfs_root",
+                "resource_source.procfs_root must not be empty",
+            ));
         }
         if self.sysfs_root.as_os_str().is_empty() {
-            return Err("resource_source.sysfs_root must not be empty".to_string());
+            return Err(ConfigError::invalid_value(
+                "resource_source.sysfs_root",
+                "resource_source.sysfs_root must not be empty",
+            ));
         }
         if self.cgroup_root.as_os_str().is_empty() {
-            return Err("resource_source.cgroup_root must not be empty".to_string());
+            return Err(ConfigError::invalid_value(
+                "resource_source.cgroup_root",
+                "resource_source.cgroup_root must not be empty",
+            ));
         }
         if self.max_processes == 0 {
-            return Err("resource_source.max_processes must be greater than zero".to_string());
+            return Err(ConfigError::invalid_value(
+                "resource_source.max_processes",
+                "resource_source.max_processes must be greater than zero",
+            ));
         }
         if self.max_cgroups == 0 {
-            return Err("resource_source.max_cgroups must be greater than zero".to_string());
+            return Err(ConfigError::invalid_value(
+                "resource_source.max_cgroups",
+                "resource_source.max_cgroups must be greater than zero",
+            ));
         }
         if self.max_fds_per_process == 0 {
-            return Err(
-                "resource_source.max_fds_per_process must be greater than zero".to_string(),
-            );
+            return Err(ConfigError::invalid_value(
+                "resource_source.max_fds_per_process",
+                "resource_source.max_fds_per_process must be greater than zero",
+            ));
         }
         if self.max_file_bytes == 0 {
-            return Err("resource_source.max_file_bytes must be greater than zero".to_string());
+            return Err(ConfigError::invalid_value(
+                "resource_source.max_file_bytes",
+                "resource_source.max_file_bytes must be greater than zero",
+            ));
         }
         Ok(())
     }
@@ -493,59 +610,83 @@ impl CpuProfileSourceConfig {
     pub const MAX_MODULE_BYTES_LIMIT: usize = 1024;
     pub const MAX_FILE_BYTES_LIMIT: usize = 1024;
 
-    fn validate(&self, runtime: &RuntimeConfig) -> Result<(), String> {
+    fn validate(&self, runtime: &RuntimeConfig) -> ConfigResult<()> {
         if self.module_name != Self::STATIC_MODULE_NAME {
-            return Err(format!(
-                "cpu_profile_source.module_name must be {}",
-                Self::STATIC_MODULE_NAME
+            return Err(ConfigError::invalid_reference(
+                "cpu_profile_source.module_name",
+                format!(
+                    "cpu_profile_source.module_name must be {}",
+                    Self::STATIC_MODULE_NAME
+                ),
             ));
         }
         if self.enabled && !runtime.module_enabled(&self.module_name) {
-            return Err(
-                "cpu_profile_source.enabled requires enabled source.aya_cpu_profile module"
-                    .to_string(),
-            );
+            return Err(ConfigError::invalid_reference(
+                "cpu_profile_source.enabled",
+                "cpu_profile_source.enabled requires enabled source.aya_cpu_profile module",
+            ));
         }
         if !(1..=Self::MAX_SAMPLE_FREQUENCY_HZ).contains(&self.sample_frequency_hz) {
-            return Err(format!(
-                "cpu_profile_source.sample_frequency_hz must be between 1 and {}",
-                Self::MAX_SAMPLE_FREQUENCY_HZ
+            return Err(ConfigError::invalid_value(
+                "cpu_profile_source.sample_frequency_hz",
+                format!(
+                    "cpu_profile_source.sample_frequency_hz must be between 1 and {}",
+                    Self::MAX_SAMPLE_FREQUENCY_HZ
+                ),
             ));
         }
         if !(1..=Self::MAX_ACTIVE_TARGETS_LIMIT).contains(&self.max_active_targets) {
-            return Err(format!(
-                "cpu_profile_source.max_active_targets must be between 1 and {}",
-                Self::MAX_ACTIVE_TARGETS_LIMIT
+            return Err(ConfigError::invalid_value(
+                "cpu_profile_source.max_active_targets",
+                format!(
+                    "cpu_profile_source.max_active_targets must be between 1 and {}",
+                    Self::MAX_ACTIVE_TARGETS_LIMIT
+                ),
             ));
         }
         if !(1..=Self::MAX_FRAMES_PER_SAMPLE_LIMIT).contains(&self.max_frames_per_sample) {
-            return Err(format!(
-                "cpu_profile_source.max_frames_per_sample must be between 1 and {}",
-                Self::MAX_FRAMES_PER_SAMPLE_LIMIT
+            return Err(ConfigError::invalid_value(
+                "cpu_profile_source.max_frames_per_sample",
+                format!(
+                    "cpu_profile_source.max_frames_per_sample must be between 1 and {}",
+                    Self::MAX_FRAMES_PER_SAMPLE_LIMIT
+                ),
             ));
         }
         if !(1..=Self::MAX_SAMPLES_PER_BATCH_LIMIT).contains(&self.max_samples_per_batch) {
-            return Err(format!(
-                "cpu_profile_source.max_samples_per_batch must be between 1 and {}",
-                Self::MAX_SAMPLES_PER_BATCH_LIMIT
+            return Err(ConfigError::invalid_value(
+                "cpu_profile_source.max_samples_per_batch",
+                format!(
+                    "cpu_profile_source.max_samples_per_batch must be between 1 and {}",
+                    Self::MAX_SAMPLES_PER_BATCH_LIMIT
+                ),
             ));
         }
         if !(1..=Self::MAX_SYMBOL_BYTES_LIMIT).contains(&self.max_symbol_bytes) {
-            return Err(format!(
-                "cpu_profile_source.max_symbol_bytes must be between 1 and {}",
-                Self::MAX_SYMBOL_BYTES_LIMIT
+            return Err(ConfigError::invalid_value(
+                "cpu_profile_source.max_symbol_bytes",
+                format!(
+                    "cpu_profile_source.max_symbol_bytes must be between 1 and {}",
+                    Self::MAX_SYMBOL_BYTES_LIMIT
+                ),
             ));
         }
         if !(1..=Self::MAX_MODULE_BYTES_LIMIT).contains(&self.max_module_bytes) {
-            return Err(format!(
-                "cpu_profile_source.max_module_bytes must be between 1 and {}",
-                Self::MAX_MODULE_BYTES_LIMIT
+            return Err(ConfigError::invalid_value(
+                "cpu_profile_source.max_module_bytes",
+                format!(
+                    "cpu_profile_source.max_module_bytes must be between 1 and {}",
+                    Self::MAX_MODULE_BYTES_LIMIT
+                ),
             ));
         }
         if !(1..=Self::MAX_FILE_BYTES_LIMIT).contains(&self.max_file_bytes) {
-            return Err(format!(
-                "cpu_profile_source.max_file_bytes must be between 1 and {}",
-                Self::MAX_FILE_BYTES_LIMIT
+            return Err(ConfigError::invalid_value(
+                "cpu_profile_source.max_file_bytes",
+                format!(
+                    "cpu_profile_source.max_file_bytes must be between 1 and {}",
+                    Self::MAX_FILE_BYTES_LIMIT
+                ),
             ));
         }
         Ok(())
@@ -561,24 +702,31 @@ impl Default for ResourceMetricsConfig {
 }
 
 impl ResourceMetricsConfig {
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> ConfigResult<()> {
         if self.max_keys == 0 {
-            return Err("resource_metrics.max_keys must be greater than zero".to_string());
+            return Err(ConfigError::invalid_value(
+                "resource_metrics.max_keys",
+                "resource_metrics.max_keys must be greater than zero",
+            ));
         }
         Ok(())
     }
 }
 
 impl NetworkMetricsConfig {
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> ConfigResult<()> {
         if self.max_metric_keys == 0 {
-            return Err("network_metrics.max_metric_keys must be greater than zero".to_string());
+            return Err(ConfigError::invalid_value(
+                "network_metrics.max_metric_keys",
+                "network_metrics.max_metric_keys must be greater than zero",
+            ));
         }
 
         if self.max_active_connections == 0 {
-            return Err(
-                "network_metrics.max_active_connections must be greater than zero".to_string(),
-            );
+            return Err(ConfigError::invalid_value(
+                "network_metrics.max_active_connections",
+                "network_metrics.max_active_connections must be greater than zero",
+            ));
         }
 
         Ok(())
@@ -586,16 +734,19 @@ impl NetworkMetricsConfig {
 }
 
 impl NetworkEndpointConfig {
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> ConfigResult<()> {
         self.address.parse::<IpAddr>().map_err(|_| {
-            "runtime_security.kubernetes_api_endpoints.address must be an IP address".to_string()
+            ConfigError::invalid_value(
+                "runtime_security.kubernetes_api_endpoints.address",
+                "runtime_security.kubernetes_api_endpoints.address must be an IP address",
+            )
         })?;
 
         if self.port == 0 {
-            return Err(
-                "runtime_security.kubernetes_api_endpoints.port must be greater than zero"
-                    .to_string(),
-            );
+            return Err(ConfigError::invalid_value(
+                "runtime_security.kubernetes_api_endpoints.port",
+                "runtime_security.kubernetes_api_endpoints.port must be greater than zero",
+            ));
         }
 
         Ok(())
@@ -1423,6 +1574,15 @@ mod tests {
             ..RuntimeConfig::default()
         };
 
+        let err = config
+            .validate_typed()
+            .expect_err("queue capacity is invalid");
+        assert_eq!(err.field(), "queue_capacity");
+        assert_eq!(err.category(), ConfigErrorKind::InvalidValue);
+        assert_eq!(
+            err.to_string(),
+            "queue_capacity must be greater than zero".to_string()
+        );
         assert_eq!(
             config.validate(),
             Err("queue_capacity must be greater than zero".to_string())

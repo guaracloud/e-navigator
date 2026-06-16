@@ -57,6 +57,17 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 which = "8"
 proptest = "1"
 
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
 [profile.release.package.e-navigator-ebpf-programs]
 debug = 2
 codegen-units = 1

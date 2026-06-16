@@ -5,6 +5,9 @@ license.workspace = true
 version.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 e-navigator-signals = { path = "../e-navigator-signals" }
 serde = { workspace = true }

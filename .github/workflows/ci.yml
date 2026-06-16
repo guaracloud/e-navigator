@@ -41,6 +41,9 @@ jobs:
       - name: Build
         run: cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 
+      - name: Synthetic run
+        run: cargo run --locked -p e-navigator-cli -- --source synthetic
+
   supply-chain:
     name: Supply-chain checks
     runs-on: ubuntu-latest
@@ -88,3 +91,19 @@ jobs:
           kubectl apply --dry-run=client -f deploy/kubernetes/rbac.yaml
           kubectl apply --dry-run=client -f deploy/kubernetes/configmap.yaml
           kubectl apply --dry-run=client -f deploy/kubernetes/daemonset.yaml
+
+  docker:
+    name: Docker smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -f Containerfile -t e-navigator:local .
+
+      - name: Synthetic image run
+        run: docker run --rm e-navigator:local --source synthetic
+
+      - name: Docker smoke
+        run: tests/smoke_docker.sh e-navigator:local

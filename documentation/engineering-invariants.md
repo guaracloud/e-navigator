@@ -10,6 +10,8 @@ These invariants are part of the userspace quality gate. They are intentionally 
 - Source failures are fatal unless a future test proves a specific source is optional and non-fatal.
 - Generators must be bounded. A generator may not emit more than the runner's per-input derived-signal limit.
 - Queues, caches, aggregation maps, and seen-key sets must have explicit configured or local bounds.
+- Module authoring rules live in `documentation/module-authoring.md`.
+- Evidence-backed product claims live in `documentation/claims-matrix.md`.
 
 ## Parsers And Decoders
 
@@ -31,6 +33,7 @@ These invariants are part of the userspace quality gate. They are intentionally 
 - Privileged Aya/eBPF behavior is separate from non-privileged proof.
 - Non-privileged tests may prove raw decode, parser, formatter, generator, runner, and manifest validity.
 - Live Aya/eBPF, perf-event profiling, DNS runtime visibility, and Kubernetes runtime behavior may only be claimed after running on a real Linux host or Kubernetes cluster with the documented privileges.
+- Privileged proof commands and non-claims live in `documentation/privileged-runtime-proof.md`.
 
 ## Exporter Boundaries
 

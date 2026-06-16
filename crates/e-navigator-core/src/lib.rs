@@ -7,10 +7,11 @@ pub mod module;
 pub mod pipeline;
 
 pub use config::{
-    ArgvCaptureConfig, AttributionConfig, CpuProfileBackpressure, CpuProfileSourceConfig,
-    DnsMetricsConfig, KubernetesAttributionConfig, ModuleConfig, NetworkEndpointConfig,
-    NetworkMetricsConfig, ProfilingConfig, RequestCorrelationConfig, ResourceMetricsConfig,
-    ResourceSourceConfig, RuntimeConfig, RuntimeSecurityConfig, TraceCorrelationConfig,
+    ArgvCaptureConfig, AttributionConfig, ConfigError, ConfigErrorKind, ConfigResult,
+    CpuProfileBackpressure, CpuProfileSourceConfig, DnsMetricsConfig, KubernetesAttributionConfig,
+    ModuleConfig, NetworkEndpointConfig, NetworkMetricsConfig, ProfilingConfig,
+    RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig, RuntimeConfig,
+    RuntimeSecurityConfig, TraceCorrelationConfig,
 };
 pub use error::{CoreError, CoreResult};
 pub use module::{ModuleKind, ModuleMetadata};
