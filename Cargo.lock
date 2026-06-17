@@ -364,6 +364,7 @@ dependencies = [
  "serde",
  "thiserror",
  "tokio",
+ "toml",
 ]
 
 [[package]]
