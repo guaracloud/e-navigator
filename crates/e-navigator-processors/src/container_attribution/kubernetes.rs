@@ -1,11 +1,164 @@
 use e_navigator_core::KubernetesAttributionConfig;
 use e_navigator_signals::KubernetesContext;
 use serde::Deserialize;
-use std::{collections::BTreeMap, time::Duration};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+use tracing::{debug, warn};
 
 use super::cgroup::read_bounded_to_string;
 
 const MAX_TOKEN_BYTES: u64 = 64 * 1024;
+const MIN_KUBERNETES_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const MIN_KUBERNETES_METADATA_MISS_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+
+#[derive(Debug, Clone, Copy)]
+struct KubernetesRefreshState {
+    refreshed_at: Instant,
+    requested_container_found: bool,
+    immediate_retry_available: bool,
+}
+
+#[derive(Debug)]
+pub(super) struct KubernetesAttribution {
+    config: KubernetesAttributionConfig,
+    cache: Mutex<KubernetesMetadataCache>,
+    provider: Arc<dyn KubernetesMetadataProvider>,
+    last_refresh: Mutex<Option<KubernetesRefreshState>>,
+}
+
+impl KubernetesAttribution {
+    pub(super) fn new(config: KubernetesAttributionConfig) -> Self {
+        let provider = Arc::new(InClusterKubernetesMetadataProvider);
+        let cache = if config.enabled {
+            provider.refresh(&config).unwrap_or_else(|err| {
+                warn!(error = %err, "kubernetes metadata cache unavailable");
+                KubernetesMetadataCache::default()
+            })
+        } else {
+            KubernetesMetadataCache::default()
+        };
+
+        Self::with_cache_and_provider(config, cache, provider)
+    }
+
+    pub(super) fn with_cache(
+        config: KubernetesAttributionConfig,
+        cache: KubernetesMetadataCache,
+    ) -> Self {
+        Self::with_cache_and_provider(config, cache, Arc::new(InClusterKubernetesMetadataProvider))
+    }
+
+    pub(super) fn with_cache_and_provider(
+        config: KubernetesAttributionConfig,
+        cache: KubernetesMetadataCache,
+        provider: Arc<dyn KubernetesMetadataProvider>,
+    ) -> Self {
+        Self {
+            config,
+            cache: Mutex::new(cache),
+            provider,
+            last_refresh: Mutex::new(None),
+        }
+    }
+
+    pub(super) fn context_for_container(&self, container_id: &str) -> Option<KubernetesContext> {
+        if let Some(context) = self.cached_context(container_id) {
+            return Some(context);
+        }
+
+        if !self.config.enabled || !self.should_refresh_cache() {
+            return None;
+        }
+
+        match self.provider.refresh(&self.config) {
+            Ok(cache) => {
+                let cache_entries = cache.len();
+                let requested_container_found = cache.contains_container(container_id);
+                if let Ok(mut kubernetes_cache) = self.cache.lock() {
+                    *kubernetes_cache = cache;
+                }
+                self.record_refresh(requested_container_found);
+                debug!(
+                    cache_entries,
+                    requested_container_found, "kubernetes metadata cache refreshed"
+                );
+            }
+            Err(err) => {
+                self.record_refresh(false);
+                warn!(error = %err, "kubernetes metadata cache refresh failed");
+                return None;
+            }
+        }
+
+        self.cached_context(container_id)
+    }
+
+    fn cached_context(&self, container_id: &str) -> Option<KubernetesContext> {
+        self.cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(container_id))
+    }
+
+    fn should_refresh_cache(&self) -> bool {
+        let Ok(last_refresh) = self.last_refresh.lock() else {
+            return false;
+        };
+        let now = Instant::now();
+        let Some(last_refresh) = *last_refresh else {
+            return true;
+        };
+
+        if last_refresh.requested_container_found {
+            return now.duration_since(last_refresh.refreshed_at)
+                >= MIN_KUBERNETES_METADATA_REFRESH_INTERVAL;
+        }
+
+        last_refresh.immediate_retry_available
+            || now.duration_since(last_refresh.refreshed_at)
+                >= MIN_KUBERNETES_METADATA_MISS_REFRESH_INTERVAL
+    }
+
+    fn record_refresh(&self, requested_container_found: bool) {
+        let Ok(mut last_refresh) = self.last_refresh.lock() else {
+            return;
+        };
+        let immediate_retry_available = if requested_container_found {
+            false
+        } else {
+            !last_refresh.is_some_and(|state| {
+                !state.requested_container_found && state.immediate_retry_available
+            })
+        };
+        *last_refresh = Some(KubernetesRefreshState {
+            refreshed_at: Instant::now(),
+            requested_container_found,
+            immediate_retry_available,
+        });
+    }
+}
+
+pub(super) trait KubernetesMetadataProvider: std::fmt::Debug + Send + Sync {
+    fn refresh(
+        &self,
+        config: &KubernetesAttributionConfig,
+    ) -> Result<KubernetesMetadataCache, String>;
+}
+
+#[derive(Debug, Default)]
+struct InClusterKubernetesMetadataProvider;
+
+impl KubernetesMetadataProvider for InClusterKubernetesMetadataProvider {
+    fn refresh(
+        &self,
+        config: &KubernetesAttributionConfig,
+    ) -> Result<KubernetesMetadataCache, String> {
+        KubernetesMetadataCache::from_in_cluster(config)
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct KubernetesMetadataCache {

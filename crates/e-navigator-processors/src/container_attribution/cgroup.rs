@@ -100,4 +100,20 @@ mod tests {
             assert_eq!(first.runtime.as_deref(), runtime);
         }
     }
+
+    #[test]
+    fn bounded_cgroup_file_reads_stop_at_configured_limit() {
+        let dir = std::env::temp_dir().join(format!(
+            "e-navigator-bounded-cgroup-read-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("fixture dir");
+        let path = dir.join("cgroup");
+        std::fs::write(&path, "0123456789abcdef").expect("fixture cgroup file");
+
+        let contents = read_bounded_to_string(&path, 6).expect("bounded read");
+
+        assert_eq!(contents, "012345");
+        std::fs::remove_dir_all(dir).expect("fixture cleanup");
+    }
 }
