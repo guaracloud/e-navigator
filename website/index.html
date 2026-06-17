@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="E-Navigator is a Rust and eBPF signal plane for Linux and Kubernetes observability, profiling, security, and runtime diagnostics."
+    >
+    <meta property="og:title" content="E-Navigator - Rust and eBPF observability for Kubernetes">
+    <meta
+      property="og:description"
+      content="A vision-first Rust and eBPF platform for workload signals, dependency mapping, profiling foundations, and runtime diagnostics."
+    >
+    <meta property="og:image" content="./logos/og-image.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="E-Navigator logo and title card">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="E-Navigator - Rust and eBPF observability for Kubernetes">
+    <meta
+      name="twitter:description"
+      content="A Rust and eBPF signal plane for Linux and Kubernetes observability, profiling, security, and diagnostics."
+    >
+    <meta name="twitter:image" content="./logos/og-image.png">
+    <title>E-Navigator - Rust and eBPF observability for Kubernetes</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="./logos/favicon-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="./logos/favicon-16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="./logos/apple-touch-icon.png">
+    <link rel="preload" as="image" href="./logos/logo-square-transparent.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Afacad+Flux:wght@500;600;700&amp;family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&amp;family=Recursive+Mono:wght@500;600&amp;display=swap"
+      rel="stylesheet"
+    >
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <nav class="nav" aria-label="Primary navigation">
+        <a class="brand" href="./index.html" aria-label="E-Navigator home">
+          <span class="brand-mark" aria-hidden="true">
+            <img src="./logos/logo-square-transparent.png" alt="">
+          </span>
+          <span>E-Navigator</span>
+        </a>
+        <div class="nav-links">
+          <a href="#signals">Signals</a>
+          <a href="#kubernetes">Kubernetes</a>
+          <a href="#proof">Proof</a>
+          <a href="https://github.com/guaracloud/e-navigator">GitHub</a>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero section">
+        <div class="hero-copy">
+          <p class="eyebrow">Rust + eBPF observability for Linux and Kubernetes</p>
+          <h1>One efficient signal plane for runtime truth.</h1>
+          <p class="hero-lede">
+            E-Navigator is a vision-first observability, profiling, security,
+            and diagnostics platform built around a statically registered Rust
+            pipeline and bounded eBPF sources.
+          </p>
+          <div class="hero-actions" role="group" aria-label="Primary actions">
+            <a class="button button-primary" href="#kubernetes">Deploy on Kubernetes</a>
+            <a class="button button-secondary" href="#local">Run synthetic demo</a>
+            <a class="button button-ghost" href="#proof">Read proof matrix</a>
+          </div>
+          <ul class="trust-row" aria-label="Platform properties">
+            <li>Rust workspace</li>
+            <li>eBPF sources</li>
+            <li>Kubernetes DaemonSet</li>
+            <li>OpenTelemetry boundaries</li>
+            <li>Strict proof matrix</li>
+          </ul>
+        </div>
+
+        <figure class="hero-logo-panel">
+          <img
+            src="./logos/logo-square-transparent.png"
+            alt="E-Navigator compass and Kubernetes signal logo"
+            width="1024"
+            height="1024"
+          >
+        </figure>
+      </section>
+
+      <section class="audiences section" aria-labelledby="audiences-title">
+        <div class="section-heading">
+          <p class="eyebrow">Built for operators who need answers</p>
+          <h2 id="audiences-title">What happened, why it happened, and who was affected.</h2>
+        </div>
+        <div class="audience-grid">
+          <article class="audience">
+            <h3>Platform and SRE teams</h3>
+            <p>Inspect Linux and Kubernetes workloads through node-local collection, bounded attribution, and explicit deployment proof.</p>
+            <a href="https://github.com/guaracloud/e-navigator/blob/main/deploy/kubernetes/daemonset.yaml">Open DaemonSet</a>
+          </article>
+          <article class="audience">
+            <h3>Observability engineers</h3>
+            <p>Unify resource, network, DNS fixture, dependency, request, trace, and profiling signals behind versioned envelopes.</p>
+            <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/engineering-invariants.md">Read invariants</a>
+          </article>
+          <article class="audience">
+            <h3>Runtime security teams</h3>
+            <p>Track process and network findings without blurring synthetic, dry-run, Docker, and privileged eBPF evidence.</p>
+            <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/claims-matrix.md">Review claims</a>
+          </article>
+        </div>
+      </section>
+
+      <section id="signals" class="signals section" aria-labelledby="signals-title">
+        <div class="section-heading">
+          <p class="eyebrow">Signal families</p>
+          <h2 id="signals-title">A modular pipeline for workload intelligence.</h2>
+          <p>
+            The current foundation favors bounded schemas, deterministic
+            generators, and honest attribution warnings over noisy dashboards or
+            unproven runtime claims.
+          </p>
+        </div>
+        <div class="signal-grid">
+          <article class="signal signal-primary">
+            <span class="signal-value">Sources</span>
+            <span class="signal-label">host resources, Aya exec, TCP network, and opt-in CPU profile sampling</span>
+          </article>
+          <article class="signal">
+            <span class="signal-value">Signals</span>
+            <span class="signal-label">versioned envelopes for metrics, dependencies, requests, traces, profiling, and security</span>
+          </article>
+          <article class="signal">
+            <span class="signal-value">Generators</span>
+            <span class="signal-label">bounded aggregation for low-cardinality metrics and service relationships</span>
+          </article>
+          <article class="signal signal-wide">
+            <span class="signal-value">Sinks</span>
+            <span class="signal-label">JSON stdout today, with OpenTelemetry-compatible formatter boundaries for future exporters</span>
+          </article>
+        </div>
+      </section>
+
+      <section class="workflow section" aria-labelledby="workflow-title">
+        <div class="section-heading">
+          <p class="eyebrow">Runtime shape</p>
+          <h2 id="workflow-title">One node-local process, one static signal path.</h2>
+        </div>
+        <div class="workflow-grid">
+          <div class="workflow-step">
+            <span>01</span>
+            <h3>Sources observe</h3>
+            <p>Host filesystems, procfs, cgroups, and privileged Aya sources feed bounded raw observations.</p>
+          </div>
+          <div class="workflow-step">
+            <span>02</span>
+            <h3>Processors attribute</h3>
+            <p>Host, process, container, and Kubernetes context are attached where available, with warnings when missing.</p>
+          </div>
+          <div class="workflow-step">
+            <span>03</span>
+            <h3>Generators summarize</h3>
+            <p>Signals become metrics, dependency edges, request spans, profile windows, and security findings.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="kubernetes" class="install section" aria-labelledby="kubernetes-title">
+        <div class="section-heading">
+          <p class="eyebrow">Kubernetes path</p>
+          <h2 id="kubernetes-title">Start with manifest proof, then deploy on a capable Linux cluster.</h2>
+        </div>
+        <div class="command-stack">
+          <article class="command-card">
+            <div>
+              <h3>Validate manifests</h3>
+              <p>Run client-side Kubernetes validation before applying privileged DaemonSet resources.</p>
+            </div>
+            <div class="command-code">
+              <button class="copy-button" type="button">Copy</button>
+              <pre><code>kubectl apply --dry-run=client -f deploy/kubernetes/namespace.yaml
+kubectl apply --dry-run=client -f deploy/kubernetes/rbac.yaml
+kubectl apply --dry-run=client -f deploy/kubernetes/configmap.yaml
+kubectl apply --dry-run=client -f deploy/kubernetes/daemonset.yaml</code></pre>
+            </div>
+          </article>
+          <article class="command-card">
+            <div>
+              <h3>Apply deliberately</h3>
+              <p>Use a real Linux node with the documented eBPF, perf-event, tracefs, and container attribution prerequisites.</p>
+            </div>
+            <div class="command-code">
+              <button class="copy-button" type="button">Copy</button>
+              <pre><code>kubectl apply -f deploy/kubernetes/namespace.yaml
+kubectl apply -f deploy/kubernetes/rbac.yaml
+kubectl apply -f deploy/kubernetes/configmap.yaml
+kubectl apply -f deploy/kubernetes/daemonset.yaml</code></pre>
+            </div>
+          </article>
+          <article id="local" class="command-card">
+            <div>
+              <h3>Synthetic local run</h3>
+              <p>Exercise the pipeline without privileged Linux or Kubernetes dependencies.</p>
+            </div>
+            <div class="command-code">
+              <button class="copy-button" type="button">Copy</button>
+              <pre><code>cargo run --locked -p e-navigator-cli -- --source synthetic</code></pre>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="proof" class="production-pair section" aria-label="Proof and roadmap boundaries">
+        <div class="proof-panel production-panel" aria-labelledby="proof-title">
+          <div class="section-heading">
+            <p class="eyebrow">Proof boundaries</p>
+            <h2 id="proof-title">Evidence buckets stay separate.</h2>
+            <p>
+              Synthetic fixtures, Docker smoke, Kubernetes dry-runs, and
+              privileged eBPF runtime proof are not interchangeable. The claims
+              matrix is the source of truth for what is implemented and proven.
+            </p>
+          </div>
+          <ul class="verify-list" aria-label="Evidence categories">
+            <li>Synthetic signals</li>
+            <li>Docker smoke</li>
+            <li>Kubernetes dry-run</li>
+            <li>Privileged Linux proof</li>
+            <li>Deferred exporters and UI</li>
+          </ul>
+          <a class="button button-secondary" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/claims-matrix.md">Open claims matrix</a>
+        </div>
+
+        <div class="roadmap production-panel" aria-labelledby="roadmap-title">
+          <div class="section-heading">
+            <p class="eyebrow">Vision</p>
+            <h2 id="roadmap-title">Consolidate the signal stack without hiding the gaps.</h2>
+          </div>
+          <ol class="rollout-list">
+            <li>Observe runtime behavior with bounded Rust and eBPF sources.</li>
+            <li>Attribute signals to host, process, container, and Kubernetes context.</li>
+            <li>Generate low-cardinality metrics, dependency edges, request spans, and profile windows.</li>
+            <li>Keep OpenTelemetry export, storage, UI, flamegraphs, and live DNS capture explicit future work.</li>
+          </ol>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div>
+        <strong>E-Navigator</strong>
+        <p>Apache-2.0 licensed Rust and eBPF observability foundation.</p>
+      </div>
+      <nav aria-label="Footer links">
+        <a href="https://github.com/guaracloud/e-navigator">GitHub</a>
+        <a href="https://github.com/guaracloud/e-navigator/blob/main/README.md">README</a>
+        <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/vision.md">Vision</a>
+        <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/claims-matrix.md">Claims matrix</a>
+        <a href="https://github.com/guaracloud/e-navigator/blob/main/CONTRIBUTING.md">Contributing</a>
+      </nav>
+    </footer>
+    <script src="./script.js" defer></script>
+  </body>
+</html>
