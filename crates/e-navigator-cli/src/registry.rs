@@ -80,8 +80,11 @@ pub(crate) fn build_registry(
     }
 
     if config.module_enabled("generator.dns_metrics") {
-        registry = registry.with_generator(Box::new(DnsMetricsGenerator::with_domain_limit(
+        registry = registry.with_generator(Box::new(DnsMetricsGenerator::with_limits(
             config.dns_metrics.max_domains,
+            config.dns_metrics.max_counters,
+            config.dns_metrics.max_latencies,
+            config.dns_metrics.max_edges,
         )));
     }
 

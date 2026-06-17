@@ -463,25 +463,27 @@ mod platform {
                     if decision == DiagnosticSampleDecision::Filtered
                         && diagnostics.try_acquire_filtered_preview()
                     {
+                        let logged_filter_values =
+                            diagnostics.redact_values(filter_values.iter().copied());
                         info!(
                             target: "e_navigator_sources_ebpf_aya::source_diagnostics",
                             source = "source.aya_exec",
                             raw_event = "exec",
                             diagnostic_decision = "filtered",
-                            filter_values = ?filter_values,
+                            filter_values = ?logged_filter_values,
                             pid = event.pid,
                             uid = ?event.uid,
-                            command = %event.command,
-                            executable = ?event.executable,
-                            arguments = ?event.arguments,
+                            command = %diagnostics.redact_value(&event.command),
+                            executable = ?diagnostics.redact_optional_value(event.executable.as_deref()),
+                            arguments = ?diagnostics.redact_values(event.arguments.iter().map(String::as_str)),
                             argument_count = event.arguments.len(),
-                            cgroup_id = ?event.cgroup_id,
-                            container_id = ?container_id(&event.container),
+                            cgroup_id = ?diagnostics.redact_optional_u64(event.cgroup_id),
+                            container_id = ?diagnostics.redact_optional_value(container_id(&event.container)),
                             container_runtime = ?container_runtime(&event.container),
-                            kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
-                            kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
-                            kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
-                            kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                            kubernetes_namespace = ?diagnostics.redact_optional_value(kubernetes_namespace(&event.kubernetes)),
+                            kubernetes_pod_name = ?diagnostics.redact_optional_value(kubernetes_pod_name(&event.kubernetes)),
+                            kubernetes_pod_uid = ?diagnostics.redact_optional_value(kubernetes_pod_uid(&event.kubernetes)),
+                            kubernetes_container_name = ?diagnostics.redact_optional_value(kubernetes_container_name(&event.kubernetes)),
                             "source diagnostic raw event filtered"
                         );
                     }
@@ -494,17 +496,17 @@ mod platform {
                     raw_event = "exec",
                     pid = event.pid,
                     uid = ?event.uid,
-                    command = %event.command,
-                    executable = ?event.executable,
-                    arguments = ?event.arguments,
+                    command = %diagnostics.redact_value(&event.command),
+                    executable = ?diagnostics.redact_optional_value(event.executable.as_deref()),
+                    arguments = ?diagnostics.redact_values(event.arguments.iter().map(String::as_str)),
                     argument_count = event.arguments.len(),
-                    cgroup_id = ?event.cgroup_id,
-                    container_id = ?container_id(&event.container),
+                    cgroup_id = ?diagnostics.redact_optional_u64(event.cgroup_id),
+                    container_id = ?diagnostics.redact_optional_value(container_id(&event.container)),
                     container_runtime = ?container_runtime(&event.container),
-                    kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
-                    kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
-                    kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
-                    kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                    kubernetes_namespace = ?diagnostics.redact_optional_value(kubernetes_namespace(&event.kubernetes)),
+                    kubernetes_pod_name = ?diagnostics.redact_optional_value(kubernetes_pod_name(&event.kubernetes)),
+                    kubernetes_pod_uid = ?diagnostics.redact_optional_value(kubernetes_pod_uid(&event.kubernetes)),
+                    kubernetes_container_name = ?diagnostics.redact_optional_value(kubernetes_container_name(&event.kubernetes)),
                     "source diagnostic raw event decoded"
                 );
                 DiagnosticSampleDecision::Matched
@@ -516,22 +518,24 @@ mod platform {
                     if decision == DiagnosticSampleDecision::Filtered
                         && diagnostics.try_acquire_filtered_preview()
                     {
+                        let logged_filter_values =
+                            diagnostics.redact_values(filter_values.iter().copied());
                         info!(
                             target: "e_navigator_sources_ebpf_aya::source_diagnostics",
                             source = "source.aya_exec",
                             raw_event = "process_exit",
                             diagnostic_decision = "filtered",
-                            filter_values = ?filter_values,
+                            filter_values = ?logged_filter_values,
                             pid = event.pid,
                             uid = ?event.uid,
-                            command = %event.command,
-                            cgroup_id = ?event.cgroup_id,
-                            container_id = ?container_id(&event.container),
+                            command = %diagnostics.redact_value(&event.command),
+                            cgroup_id = ?diagnostics.redact_optional_u64(event.cgroup_id),
+                            container_id = ?diagnostics.redact_optional_value(container_id(&event.container)),
                             container_runtime = ?container_runtime(&event.container),
-                            kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
-                            kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
-                            kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
-                            kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                            kubernetes_namespace = ?diagnostics.redact_optional_value(kubernetes_namespace(&event.kubernetes)),
+                            kubernetes_pod_name = ?diagnostics.redact_optional_value(kubernetes_pod_name(&event.kubernetes)),
+                            kubernetes_pod_uid = ?diagnostics.redact_optional_value(kubernetes_pod_uid(&event.kubernetes)),
+                            kubernetes_container_name = ?diagnostics.redact_optional_value(kubernetes_container_name(&event.kubernetes)),
                             "source diagnostic raw event filtered"
                         );
                     }
@@ -544,14 +548,14 @@ mod platform {
                     raw_event = "process_exit",
                     pid = event.pid,
                     uid = ?event.uid,
-                    command = %event.command,
-                    cgroup_id = ?event.cgroup_id,
-                    container_id = ?container_id(&event.container),
+                    command = %diagnostics.redact_value(&event.command),
+                    cgroup_id = ?diagnostics.redact_optional_u64(event.cgroup_id),
+                    container_id = ?diagnostics.redact_optional_value(container_id(&event.container)),
                     container_runtime = ?container_runtime(&event.container),
-                    kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
-                    kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
-                    kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
-                    kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                    kubernetes_namespace = ?diagnostics.redact_optional_value(kubernetes_namespace(&event.kubernetes)),
+                    kubernetes_pod_name = ?diagnostics.redact_optional_value(kubernetes_pod_name(&event.kubernetes)),
+                    kubernetes_pod_uid = ?diagnostics.redact_optional_value(kubernetes_pod_uid(&event.kubernetes)),
+                    kubernetes_container_name = ?diagnostics.redact_optional_value(kubernetes_container_name(&event.kubernetes)),
                     "source diagnostic raw event decoded"
                 );
                 DiagnosticSampleDecision::Matched

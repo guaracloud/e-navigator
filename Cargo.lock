@@ -383,6 +383,7 @@ dependencies = [
  "e-navigator-protocol",
  "e-navigator-signals",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

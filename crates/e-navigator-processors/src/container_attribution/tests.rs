@@ -2,6 +2,7 @@ use super::{
     cgroup::parse_container_from_cgroup, cgroup_id::cgroup_path_id,
     kubernetes::KubernetesMetadataProvider, pid::is_expected_process_exit_race, *,
 };
+use async_trait::async_trait;
 use e_navigator_core::{AttributionConfig, Generator, KubernetesAttributionConfig, Processor};
 use e_navigator_generators::{
     DnsMetricsGenerator, NetworkMetricsGenerator, RequestCorrelationGenerator,
@@ -11,15 +12,16 @@ use e_navigator_signals::{
     ContainerContext, DependencyEdgeEvent, DependencyEndpoint, DnsQueryEvent, DnsQueryType,
     ExecEvent, KubernetesContext, NetworkAddressFamily, NetworkConnectionCloseEvent,
     NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol, ProcessExitEvent,
-    ProtocolKind, ProtocolRequestObservation, SignalEnvelope, TraceConfidence,
+    ProtocolKind, ProtocolRequestObservation, SignalEnvelope, SignalPayload, TraceConfidence,
     TraceCorrelationKind, TracePeerContext,
 };
 use std::{
     collections::{BTreeMap, VecDeque},
     fs, io,
     sync::{Arc, Mutex},
+    time::Duration,
 };
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, time::timeout};
 
 #[derive(Debug)]
 struct StaticKubernetesMetadataProvider {
@@ -32,8 +34,9 @@ impl StaticKubernetesMetadataProvider {
     }
 }
 
+#[async_trait]
 impl KubernetesMetadataProvider for StaticKubernetesMetadataProvider {
-    fn refresh(
+    async fn refresh(
         &self,
         _config: &e_navigator_core::KubernetesAttributionConfig,
     ) -> Result<KubernetesMetadataCache, String> {
@@ -66,8 +69,45 @@ impl CountingKubernetesMetadataProvider {
     }
 }
 
+#[derive(Debug)]
+struct SlowKubernetesMetadataProvider {
+    delay: Duration,
+    cache: KubernetesMetadataCache,
+}
+
+impl SlowKubernetesMetadataProvider {
+    fn new(delay: Duration, cache: KubernetesMetadataCache) -> Self {
+        Self { delay, cache }
+    }
+}
+
+#[async_trait]
+impl KubernetesMetadataProvider for SlowKubernetesMetadataProvider {
+    async fn refresh(
+        &self,
+        _config: &e_navigator_core::KubernetesAttributionConfig,
+    ) -> Result<KubernetesMetadataCache, String> {
+        tokio::time::sleep(self.delay).await;
+        Ok(self.cache.clone())
+    }
+}
+
+#[derive(Debug)]
+struct FailingKubernetesMetadataProvider;
+
+#[async_trait]
+impl KubernetesMetadataProvider for FailingKubernetesMetadataProvider {
+    async fn refresh(
+        &self,
+        _config: &e_navigator_core::KubernetesAttributionConfig,
+    ) -> Result<KubernetesMetadataCache, String> {
+        Err("api unavailable".to_string())
+    }
+}
+
+#[async_trait]
 impl KubernetesMetadataProvider for CountingKubernetesMetadataProvider {
-    fn refresh(
+    async fn refresh(
         &self,
         _config: &e_navigator_core::KubernetesAttributionConfig,
     ) -> Result<KubernetesMetadataCache, String> {
@@ -76,8 +116,9 @@ impl KubernetesMetadataProvider for CountingKubernetesMetadataProvider {
     }
 }
 
+#[async_trait]
 impl KubernetesMetadataProvider for SequencedKubernetesMetadataProvider {
-    fn refresh(
+    async fn refresh(
         &self,
         _config: &e_navigator_core::KubernetesAttributionConfig,
     ) -> Result<KubernetesMetadataCache, String> {
@@ -159,6 +200,127 @@ async fn processor_preserves_existing_attribution_without_cgroup_id() {
         .expect("signal remains");
 
     assert_eq!(processed, signal);
+}
+
+#[tokio::test]
+async fn kubernetes_cache_miss_does_not_block_signal_processing() {
+    let container_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let processor = ContainerAttributionProcessor::with_cache_and_provider(
+        AttributionConfig {
+            kubernetes: KubernetesAttributionConfig {
+                enabled: true,
+                ..Default::default()
+            },
+            ..AttributionConfig::default()
+        },
+        KubernetesMetadataCache::default(),
+        SlowKubernetesMetadataProvider::new(
+            Duration::from_millis(150),
+            KubernetesMetadataCache::from_contexts([(
+                container_id.to_string(),
+                kube_context("api"),
+            )]),
+        ),
+    );
+
+    let processed = timeout(
+        Duration::from_millis(50),
+        processor.process(exec_with_container(container_id)),
+    )
+    .await
+    .expect("cache miss must not wait for refresh")
+    .expect("processor succeeds")
+    .expect("signal remains");
+
+    let SignalPayload::Exec(event) = processed.payload else {
+        panic!("expected exec payload");
+    };
+    assert!(event.kubernetes.is_none());
+
+    tokio::time::sleep(Duration::from_millis(175)).await;
+    let processed = processor
+        .process(exec_with_container(container_id))
+        .await
+        .expect("processor succeeds")
+        .expect("signal remains");
+    let SignalPayload::Exec(event) = processed.payload else {
+        panic!("expected exec payload");
+    };
+    assert_eq!(event.kubernetes.expect("kubernetes").pod_name, "api");
+}
+
+#[tokio::test]
+async fn kubernetes_refresh_failure_preserves_stale_cache() {
+    let container_id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let processor = ContainerAttributionProcessor::with_cache_and_provider(
+        AttributionConfig {
+            kubernetes: KubernetesAttributionConfig {
+                enabled: true,
+                ..Default::default()
+            },
+            ..AttributionConfig::default()
+        },
+        KubernetesMetadataCache::from_contexts([(container_id.to_string(), kube_context("stale"))]),
+        FailingKubernetesMetadataProvider,
+    );
+
+    let first = processor
+        .process(exec_with_container(container_id))
+        .await
+        .expect("processor succeeds")
+        .expect("signal remains");
+    let SignalPayload::Exec(event) = first.payload else {
+        panic!("expected exec payload");
+    };
+    assert_eq!(
+        event.kubernetes.expect("stale kubernetes").pod_name,
+        "stale"
+    );
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let second = processor
+        .process(exec_with_container(container_id))
+        .await
+        .expect("processor succeeds")
+        .expect("signal remains");
+    let SignalPayload::Exec(event) = second.payload else {
+        panic!("expected exec payload");
+    };
+    assert_eq!(
+        event.kubernetes.expect("stale kubernetes remains").pod_name,
+        "stale"
+    );
+}
+
+#[tokio::test]
+async fn kubernetes_refresh_is_single_flight_for_concurrent_misses() {
+    let refreshes = Arc::new(Mutex::new(0));
+    let provider = CountingKubernetesMetadataProvider::new(
+        refreshes.clone(),
+        KubernetesMetadataCache::default(),
+    );
+    let processor = ContainerAttributionProcessor::with_cache_and_provider(
+        AttributionConfig {
+            kubernetes: KubernetesAttributionConfig {
+                enabled: true,
+                ..Default::default()
+            },
+            ..AttributionConfig::default()
+        },
+        KubernetesMetadataCache::default(),
+        provider,
+    );
+
+    let first = processor.process(exec_with_container(
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    ));
+    let second = processor.process(exec_with_container(
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    ));
+    let _ = tokio::join!(first, second);
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    assert_eq!(*refreshes.lock().expect("refresh count lock"), 1);
 }
 
 #[test]
@@ -1156,23 +1318,53 @@ async fn refreshes_kubernetes_metadata_on_container_cache_miss() {
         },
     );
 
-    let processed = processor
+    let first = processor
         .process(signal)
         .await
         .expect("processor succeeds")
         .expect("signal remains");
 
-    let e_navigator_signals::SignalPayload::NetworkConnectionOpen(event) = processed.payload else {
+    let e_navigator_signals::SignalPayload::NetworkConnectionOpen(event) = first.payload else {
         panic!("expected network open payload");
     };
     assert_eq!(
         event.container.as_ref().expect("container").container_id,
         container_id
     );
-    assert_eq!(
-        event.kubernetes.as_ref().expect("kubernetes").namespace,
-        "e-navigator-test"
-    );
+    assert!(event.kubernetes.is_none());
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let second = processor
+        .process(SignalEnvelope::network_connection_open(
+            "source.test",
+            Some("homelab-01".to_string()),
+            NetworkConnectionOpenEvent {
+                process: NetworkProcessIdentity {
+                    pid: 120,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "wget".to_string(),
+                    executable: Some("/bin/wget".to_string()),
+                    cgroup_id: None,
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.42.248.225".to_string()),
+                local_port: Some(43512),
+                remote_address: "10.43.0.1".to_string(),
+                remote_port: 443,
+                fd: Some(9),
+                timestamp_unix_nanos: 100,
+                container: None,
+                kubernetes: None,
+            },
+        ))
+        .await
+        .expect("processor succeeds")
+        .expect("signal remains");
+    let e_navigator_signals::SignalPayload::NetworkConnectionOpen(event) = second.payload else {
+        panic!("expected network open payload");
+    };
     assert_eq!(
         event.kubernetes.as_ref().expect("kubernetes").pod_name,
         "known-exec-network-dns"
@@ -1359,8 +1551,32 @@ async fn retries_kubernetes_metadata_refresh_after_requested_container_miss() {
     else {
         panic!("expected network open payload");
     };
+    assert!(second_event.kubernetes.is_none());
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let third = processor
+        .process(signal())
+        .await
+        .expect("processor succeeds")
+        .expect("signal remains");
+    let e_navigator_signals::SignalPayload::NetworkConnectionOpen(third_event) = third.payload
+    else {
+        panic!("expected network open payload");
+    };
+    assert!(third_event.kubernetes.is_none());
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let fourth = processor
+        .process(signal())
+        .await
+        .expect("processor succeeds")
+        .expect("signal remains");
+    let e_navigator_signals::SignalPayload::NetworkConnectionOpen(fourth_event) = fourth.payload
+    else {
+        panic!("expected network open payload");
+    };
     assert_eq!(
-        second_event
+        fourth_event
             .kubernetes
             .as_ref()
             .expect("kubernetes")
@@ -1799,6 +2015,39 @@ where
         outputs.push(output);
     }
     outputs
+}
+
+fn exec_with_container(container_id: &str) -> SignalEnvelope {
+    SignalEnvelope::exec(
+        "source.test",
+        None,
+        ExecEvent {
+            pid: 7,
+            ppid: Some(1),
+            uid: Some(1000),
+            command: "sh".to_string(),
+            executable: Some("/bin/sh".to_string()),
+            arguments: vec!["sh".to_string()],
+            cgroup_id: None,
+            timestamp_unix_nanos: 99,
+            container: Some(ContainerContext {
+                container_id: container_id.to_string(),
+                runtime: Some("containerd".to_string()),
+            }),
+            kubernetes: None,
+        },
+    )
+}
+
+fn kube_context(pod_name: &str) -> KubernetesContext {
+    KubernetesContext {
+        namespace: "default".to_string(),
+        pod_name: pod_name.to_string(),
+        pod_uid: Some(format!("{pod_name}-uid")),
+        container_name: Some("app".to_string()),
+        node_name: Some("node-a".to_string()),
+        labels: BTreeMap::new(),
+    }
 }
 
 fn processor_fixture(

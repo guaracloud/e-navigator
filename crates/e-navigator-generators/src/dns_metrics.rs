@@ -7,20 +7,31 @@ use e_navigator_signals::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Mutex, MutexGuard},
+    sync::{
+        Mutex, MutexGuard,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use tokio::sync::mpsc;
+use tracing::warn;
 
 const DEFAULT_MAX_DOMAINS: usize = 1024;
+const DEFAULT_MAX_DNS_STATE_KEYS: usize = 4096;
 
 #[derive(Debug)]
 pub struct DnsMetricsGenerator {
     max_domains: usize,
+    max_counters: usize,
+    max_latencies: usize,
+    max_edges: usize,
     domains: Mutex<BTreeSet<String>>,
     counters: Mutex<BTreeMap<CounterKey, CounterState>>,
     latencies: Mutex<BTreeMap<LatencyKey, LatencyState>>,
     edges: Mutex<BTreeMap<EdgeKey, EdgeState>>,
     seen_events: Mutex<BTreeSet<EventFingerprint>>,
+    suppressed_counters: AtomicU64,
+    suppressed_latencies: AtomicU64,
+    suppressed_edges: AtomicU64,
 }
 
 impl Default for DnsMetricsGenerator {
@@ -31,13 +42,42 @@ impl Default for DnsMetricsGenerator {
 
 impl DnsMetricsGenerator {
     pub fn with_domain_limit(max_domains: usize) -> Self {
+        Self::with_limits(
+            max_domains,
+            DEFAULT_MAX_DNS_STATE_KEYS,
+            DEFAULT_MAX_DNS_STATE_KEYS,
+            DEFAULT_MAX_DNS_STATE_KEYS,
+        )
+    }
+
+    pub fn with_limits(
+        max_domains: usize,
+        max_counters: usize,
+        max_latencies: usize,
+        max_edges: usize,
+    ) -> Self {
         Self {
             max_domains,
+            max_counters,
+            max_latencies,
+            max_edges,
             domains: Mutex::new(BTreeSet::new()),
             counters: Mutex::new(BTreeMap::new()),
             latencies: Mutex::new(BTreeMap::new()),
             edges: Mutex::new(BTreeMap::new()),
             seen_events: Mutex::new(BTreeSet::new()),
+            suppressed_counters: AtomicU64::new(0),
+            suppressed_latencies: AtomicU64::new(0),
+            suppressed_edges: AtomicU64::new(0),
+        }
+    }
+
+    #[cfg(test)]
+    fn suppression_counts(&self) -> DnsSuppressionCounts {
+        DnsSuppressionCounts {
+            counters: self.suppressed_counters.load(Ordering::Relaxed),
+            latencies: self.suppressed_latencies.load(Ordering::Relaxed),
+            edges: self.suppressed_edges.load(Ordering::Relaxed),
         }
     }
 }
@@ -160,6 +200,14 @@ impl DnsMetricsGenerator {
             },
         };
         let signal = state.to_signal(host);
+        if counters.len() >= self.max_counters {
+            self.suppressed_counters.fetch_add(1, Ordering::Relaxed);
+            warn!(
+                max_counters = self.max_counters,
+                "dns counter state limit reached; suppressing new counter key"
+            );
+            return Ok(None);
+        }
         counters.insert(key, state);
         Ok(Some(signal))
     }
@@ -195,6 +243,14 @@ impl DnsMetricsGenerator {
             },
         };
         let signal = state.to_signal(host);
+        if latencies.len() >= self.max_latencies {
+            self.suppressed_latencies.fetch_add(1, Ordering::Relaxed);
+            warn!(
+                max_latencies = self.max_latencies,
+                "dns latency state limit reached; suppressing new latency key"
+            );
+            return Ok(None);
+        }
         latencies.insert(key, state);
         Ok(Some(signal))
     }
@@ -237,6 +293,14 @@ impl DnsMetricsGenerator {
             last_seen_unix_nanos: event.timestamp_unix_nanos,
         };
         let signal = state.to_signal(host);
+        if edges.len() >= self.max_edges {
+            self.suppressed_edges.fetch_add(1, Ordering::Relaxed);
+            warn!(
+                max_edges = self.max_edges,
+                "dns dependency edge state limit reached; suppressing new edge key"
+            );
+            return Ok(None);
+        }
         edges.insert(key, state);
         Ok(Some(signal))
     }
@@ -277,6 +341,14 @@ impl DnsMetricsGenerator {
     fn seen_events(&self) -> CoreResult<MutexGuard<'_, BTreeSet<EventFingerprint>>> {
         self.seen_events.lock().map_err(module_error)
     }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DnsSuppressionCounts {
+    counters: u64,
+    latencies: u64,
+    edges: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -720,6 +792,98 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn bounds_counter_state_across_workload_container_and_server_dimensions() {
+        let generator = DnsMetricsGenerator::with_limits(16, 1, 16, 16);
+        let first = dns_query_with_dimensions(
+            "api.example.com",
+            "pod-a",
+            "container-a",
+            "10.0.0.10",
+            53,
+            100,
+        );
+        let second = dns_query_with_dimensions(
+            "api.example.com",
+            "pod-b",
+            "container-b",
+            "10.0.0.11",
+            5353,
+            101,
+        );
+        let repeat = dns_query_with_dimensions(
+            "api.example.com",
+            "pod-a",
+            "container-a",
+            "10.0.0.10",
+            53,
+            102,
+        );
+
+        let first_outputs = observe(&generator, &first).await;
+        let second_outputs = observe(&generator, &second).await;
+        let repeat_outputs = observe(&generator, &repeat).await;
+
+        assert_eq!(dns_counter(&first_outputs, "dns.query.count").value, 1);
+        assert!(
+            !second_outputs
+                .iter()
+                .any(|signal| matches!(signal.payload, SignalPayload::DnsCounterMetric(_)))
+        );
+        assert_eq!(dns_counter(&repeat_outputs, "dns.query.count").value, 2);
+        assert_eq!(generator.suppression_counts().counters, 1);
+    }
+
+    #[tokio::test]
+    async fn bounds_latency_and_edge_state_for_high_cardinality_dns_responses() {
+        let generator = DnsMetricsGenerator::with_limits(16, 16, 1, 1);
+        let first = dns_response_with_dimensions(
+            "api.example.com",
+            "pod-a",
+            "container-a",
+            "10.0.0.10",
+            53,
+            100,
+        );
+        let second = dns_response_with_dimensions(
+            "api.example.com",
+            "pod-b",
+            "container-b",
+            "10.0.0.11",
+            5353,
+            101,
+        );
+        let repeat = dns_response_with_dimensions(
+            "api.example.com",
+            "pod-a",
+            "container-a",
+            "10.0.0.10",
+            53,
+            102,
+        );
+
+        let first_outputs = observe(&generator, &first).await;
+        let second_outputs = observe(&generator, &second).await;
+        let repeat_outputs = observe(&generator, &repeat).await;
+
+        assert_eq!(dns_latency(&first_outputs, "dns.lookup.duration").count, 1);
+        assert!(dependency_edge(&first_outputs).observations == 1);
+        assert!(
+            !second_outputs
+                .iter()
+                .any(|signal| matches!(signal.payload, SignalPayload::DnsLatencyMetric(_)))
+        );
+        assert!(
+            !second_outputs
+                .iter()
+                .any(|signal| matches!(signal.payload, SignalPayload::DependencyEdge(_)))
+        );
+        assert_eq!(dns_latency(&repeat_outputs, "dns.lookup.duration").count, 2);
+        assert_eq!(dependency_edge(&repeat_outputs).observations, 2);
+        assert_eq!(generator.suppression_counts().latencies, 1);
+        assert_eq!(generator.suppression_counts().edges, 1);
+    }
+
     async fn observe(
         generator: &DnsMetricsGenerator,
         signal: &SignalEnvelope,
@@ -818,6 +982,50 @@ mod tests {
         )
     }
 
+    fn dns_query_with_dimensions(
+        query_name: &str,
+        pod_name: &str,
+        container_id: &str,
+        server_address: &str,
+        server_port: u16,
+        timestamp: u64,
+    ) -> SignalEnvelope {
+        let mut signal = dns_query_signal(query_name, DnsQueryType::A, timestamp);
+        let SignalPayload::DnsQuery(event) = &mut signal.payload else {
+            panic!("expected dns query");
+        };
+        event.server_address = Some(server_address.to_string());
+        event.server_port = Some(server_port);
+        event.container = Some(ContainerContext {
+            container_id: container_id.to_string(),
+            runtime: Some("containerd".to_string()),
+        });
+        event.kubernetes = Some(kubernetes_context_with_pod(pod_name));
+        signal
+    }
+
+    fn dns_response_with_dimensions(
+        query_name: &str,
+        pod_name: &str,
+        container_id: &str,
+        server_address: &str,
+        server_port: u16,
+        timestamp: u64,
+    ) -> SignalEnvelope {
+        let mut signal = dns_response_signal(query_name, DnsResponseCode::NoError, timestamp);
+        let SignalPayload::DnsResponse(event) = &mut signal.payload else {
+            panic!("expected dns response");
+        };
+        event.server_address = Some(server_address.to_string());
+        event.server_port = Some(server_port);
+        event.container = Some(ContainerContext {
+            container_id: container_id.to_string(),
+            runtime: Some("containerd".to_string()),
+        });
+        event.kubernetes = Some(kubernetes_context_with_pod(pod_name));
+        signal
+    }
+
     fn network_process() -> NetworkProcessIdentity {
         NetworkProcessIdentity {
             pid: 42,
@@ -837,13 +1045,17 @@ mod tests {
     }
 
     fn kubernetes_context() -> KubernetesContext {
+        kubernetes_context_with_pod("api-123")
+    }
+
+    fn kubernetes_context_with_pod(pod_name: &str) -> KubernetesContext {
         let mut labels = BTreeMap::new();
         labels.insert("app".to_string(), "api".to_string());
 
         KubernetesContext {
             namespace: "default".to_string(),
-            pod_name: "api-123".to_string(),
-            pod_uid: Some("pod-uid".to_string()),
+            pod_name: pod_name.to_string(),
+            pod_uid: Some(format!("{pod_name}-uid")),
             container_name: Some("api".to_string()),
             node_name: Some("node-a".to_string()),
             labels,

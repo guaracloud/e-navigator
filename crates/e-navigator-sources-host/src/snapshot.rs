@@ -9,14 +9,21 @@ pub(crate) fn sample_host_resources(
     config: &HostResourceConfig,
     host: Option<String>,
 ) -> HostResourceSnapshot {
-    let started = now_unix_nanos();
-    let ended = started;
+    sample_host_resources_with_clock(config, host, now_unix_nanos)
+}
+
+fn sample_host_resources_with_clock(
+    config: &HostResourceConfig,
+    host: Option<String>,
+    mut now: impl FnMut() -> u64,
+) -> HostResourceSnapshot {
+    let started = now();
     let mut snapshot = HostResourceSnapshot::default();
 
-    collect_node_observations(config, host.clone(), started, ended, &mut snapshot);
+    collect_node_observations(config, host.clone(), started, started, &mut snapshot);
 
     snapshot.signals.extend(
-        sample_processes(config, started, ended, &mut snapshot.warnings)
+        sample_processes(config, started, started, &mut snapshot.warnings)
             .into_iter()
             .map(|observation| {
                 SignalEnvelope::process_resource_observation(
@@ -29,17 +36,72 @@ pub(crate) fn sample_host_resources(
     for sample in sample_cgroups(config, &mut snapshot.warnings) {
         snapshot
             .signals
-            .extend(sample.into_observations(host.clone(), started, ended));
+            .extend(sample.into_observations(host.clone(), started, started));
+    }
+    let ended = now().max(started);
+    for signal in &mut snapshot.signals {
+        apply_observation_window(signal, started, ended);
     }
 
     snapshot
+}
+
+fn apply_observation_window(signal: &mut SignalEnvelope, started: u64, ended: u64) {
+    match &mut signal.payload {
+        e_navigator_signals::SignalPayload::NodeCpuObservation(observation) => {
+            observation.timestamp_unix_nanos = ended;
+            observation.window.start_unix_nanos = started;
+            observation.window.end_unix_nanos = ended;
+        }
+        e_navigator_signals::SignalPayload::NodeLoadObservation(observation) => {
+            observation.timestamp_unix_nanos = ended;
+            observation.window.start_unix_nanos = started;
+            observation.window.end_unix_nanos = ended;
+        }
+        e_navigator_signals::SignalPayload::NodeMemoryObservation(observation) => {
+            observation.timestamp_unix_nanos = ended;
+            observation.window.start_unix_nanos = started;
+            observation.window.end_unix_nanos = ended;
+        }
+        e_navigator_signals::SignalPayload::NodeDiskIoObservation(observation) => {
+            observation.timestamp_unix_nanos = ended;
+            observation.window.start_unix_nanos = started;
+            observation.window.end_unix_nanos = ended;
+        }
+        e_navigator_signals::SignalPayload::ProcessResourceObservation(observation) => {
+            observation.timestamp_unix_nanos = ended;
+            observation.window.start_unix_nanos = started;
+            observation.window.end_unix_nanos = ended;
+        }
+        e_navigator_signals::SignalPayload::CgroupCpuObservation(observation) => {
+            observation.timestamp_unix_nanos = ended;
+            observation.window.start_unix_nanos = started;
+            observation.window.end_unix_nanos = ended;
+        }
+        e_navigator_signals::SignalPayload::CgroupMemoryObservation(observation) => {
+            observation.timestamp_unix_nanos = ended;
+            observation.window.start_unix_nanos = started;
+            observation.window.end_unix_nanos = ended;
+        }
+        e_navigator_signals::SignalPayload::CgroupPidsObservation(observation) => {
+            observation.timestamp_unix_nanos = ended;
+            observation.window.start_unix_nanos = started;
+            observation.window.end_unix_nanos = ended;
+        }
+        e_navigator_signals::SignalPayload::CgroupFileDescriptorObservation(observation) => {
+            observation.timestamp_unix_nanos = ended;
+            observation.window.start_unix_nanos = started;
+            observation.window.end_unix_nanos = ended;
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use e_navigator_signals::SignalPayload;
 
-    use super::sample_host_resources;
+    use super::{sample_host_resources, sample_host_resources_with_clock};
     use crate::HostResourceConfig;
 
     #[test]
@@ -140,6 +202,51 @@ mod tests {
         std::fs::remove_dir_all(root).expect("cleanup");
     }
 
+    #[test]
+    fn generated_observations_use_post_sampling_window_end() {
+        let root = temp_path("window");
+        let _ = std::fs::remove_dir_all(&root);
+        let proc_root = root.join("proc");
+        let cgroup_root = root.join("cgroup");
+        std::fs::create_dir_all(&proc_root).expect("proc root");
+        std::fs::create_dir_all(&cgroup_root).expect("cgroup root");
+        std::fs::write(
+            proc_root.join("stat"),
+            "cpu  100 0 50 500 10 0 0 2 0 0\nprocs_running 3\nprocs_blocked 1\n",
+        )
+        .expect("stat");
+        std::fs::write(proc_root.join("loadavg"), "0.25 0.50 0.75 2/200 12345\n").expect("loadavg");
+        std::fs::write(proc_root.join("meminfo"), "MemTotal: 8192 kB\n").expect("meminfo");
+        std::fs::write(
+            proc_root.join("diskstats"),
+            "259 0 nvme0n1 10 0 8 0 20 0 16 0 0 0 0 0 0 0 0\n",
+        )
+        .expect("diskstats");
+        std::fs::write(cgroup_root.join("cgroup.procs"), "").expect("cgroup");
+
+        let mut ticks = [1_000_u64, 2_000_u64].into_iter();
+        let snapshot = sample_host_resources_with_clock(
+            &HostResourceConfig {
+                procfs_root: proc_root,
+                cgroup_root,
+                ..HostResourceConfig::default()
+            },
+            None,
+            || ticks.next().expect("clock tick"),
+        );
+
+        assert!(!snapshot.signals.is_empty());
+        for signal in &snapshot.signals {
+            let (timestamp, start, end) = signal_window(signal);
+            assert_eq!(timestamp, 2_000);
+            assert_eq!(start, 1_000);
+            assert_eq!(end, 2_000);
+            assert!(end >= start);
+        }
+
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
     fn signal_timestamp(signal: &e_navigator_signals::SignalEnvelope) -> u64 {
         match &signal.payload {
             SignalPayload::NodeCpuObservation(observation) => observation.timestamp_unix_nanos,
@@ -156,6 +263,57 @@ mod tests {
                 observation.timestamp_unix_nanos
             }
             _ => 0,
+        }
+    }
+
+    fn signal_window(signal: &e_navigator_signals::SignalEnvelope) -> (u64, u64, u64) {
+        match &signal.payload {
+            SignalPayload::NodeCpuObservation(observation) => (
+                observation.timestamp_unix_nanos,
+                observation.window.start_unix_nanos,
+                observation.window.end_unix_nanos,
+            ),
+            SignalPayload::NodeLoadObservation(observation) => (
+                observation.timestamp_unix_nanos,
+                observation.window.start_unix_nanos,
+                observation.window.end_unix_nanos,
+            ),
+            SignalPayload::NodeMemoryObservation(observation) => (
+                observation.timestamp_unix_nanos,
+                observation.window.start_unix_nanos,
+                observation.window.end_unix_nanos,
+            ),
+            SignalPayload::NodeDiskIoObservation(observation) => (
+                observation.timestamp_unix_nanos,
+                observation.window.start_unix_nanos,
+                observation.window.end_unix_nanos,
+            ),
+            SignalPayload::ProcessResourceObservation(observation) => (
+                observation.timestamp_unix_nanos,
+                observation.window.start_unix_nanos,
+                observation.window.end_unix_nanos,
+            ),
+            SignalPayload::CgroupCpuObservation(observation) => (
+                observation.timestamp_unix_nanos,
+                observation.window.start_unix_nanos,
+                observation.window.end_unix_nanos,
+            ),
+            SignalPayload::CgroupMemoryObservation(observation) => (
+                observation.timestamp_unix_nanos,
+                observation.window.start_unix_nanos,
+                observation.window.end_unix_nanos,
+            ),
+            SignalPayload::CgroupPidsObservation(observation) => (
+                observation.timestamp_unix_nanos,
+                observation.window.start_unix_nanos,
+                observation.window.end_unix_nanos,
+            ),
+            SignalPayload::CgroupFileDescriptorObservation(observation) => (
+                observation.timestamp_unix_nanos,
+                observation.window.start_unix_nanos,
+                observation.window.end_unix_nanos,
+            ),
+            _ => (0, 0, 0),
         }
     }
 

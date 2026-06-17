@@ -19,7 +19,9 @@ pub use cpu_profile::{CpuProfileBackpressure, CpuProfileSourceConfig};
 pub use dns_metrics::DnsMetricsConfig;
 pub use error::{ConfigError, ConfigErrorKind, ConfigResult};
 pub use kubernetes::KubernetesAttributionConfig;
-pub use modules::ModuleConfig;
+pub use modules::{
+    KNOWN_MODULES, KnownModule, ModuleConfig, is_known_module_name, known_module_names,
+};
 pub use network_metrics::{NetworkEndpointConfig, NetworkMetricsConfig, RuntimeSecurityConfig};
 pub use profiling::ProfilingConfig;
 pub use request_correlation::RequestCorrelationConfig;

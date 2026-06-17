@@ -2,10 +2,15 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct SourceDiagnostics {
     enabled: bool,
+    raw_values: bool,
     remaining: Arc<AtomicUsize>,
     filtered_preview_remaining: Arc<AtomicUsize>,
     filters: Arc<Vec<String>>,
@@ -37,6 +42,9 @@ impl SourceDiagnostics {
             std::env::var("E_NAVIGATOR_SOURCE_DIAGNOSTICS_FILTERED_LIMIT")
                 .ok()
                 .as_deref(),
+            std::env::var("E_NAVIGATOR_SOURCE_DIAGNOSTICS_RAW")
+                .ok()
+                .as_deref(),
         )
     }
 
@@ -45,8 +53,12 @@ impl SourceDiagnostics {
         limit: Option<&str>,
         filter: Option<&str>,
         filtered_preview_limit: Option<&str>,
+        raw_values: Option<&str>,
     ) -> Self {
         let enabled = enabled
+            .map(|value| matches!(value, "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"))
+            .unwrap_or(false);
+        let raw_values = raw_values
             .map(|value| matches!(value, "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"))
             .unwrap_or(false);
         let limit = limit
@@ -62,22 +74,24 @@ impl SourceDiagnostics {
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
             .collect();
-        Self::with_filters(enabled, limit, filtered_preview_limit, filters)
+        Self::with_filters(enabled, raw_values, limit, filtered_preview_limit, filters)
     }
 
     #[cfg(test)]
     fn new(enabled: bool, limit: usize) -> Self {
-        Self::with_filters(enabled, limit, 0, Vec::new())
+        Self::with_filters(enabled, false, limit, 0, Vec::new())
     }
 
     fn with_filters(
         enabled: bool,
+        raw_values: bool,
         limit: usize,
         filtered_preview_limit: usize,
         filters: Vec<String>,
     ) -> Self {
         Self {
             enabled,
+            raw_values,
             remaining: Arc::new(AtomicUsize::new(limit)),
             filtered_preview_remaining: Arc::new(AtomicUsize::new(filtered_preview_limit)),
             filters: Arc::new(filters),
@@ -86,6 +100,10 @@ impl SourceDiagnostics {
 
     pub(crate) fn enabled(&self) -> bool {
         self.enabled
+    }
+
+    pub(crate) fn raw_values_enabled(&self) -> bool {
+        self.raw_values
     }
 
     pub(crate) fn remaining_samples(&self) -> usize {
@@ -155,6 +173,44 @@ impl SourceDiagnostics {
             })
             .is_ok()
     }
+
+    pub(crate) fn redact_value(&self, value: &str) -> String {
+        if self.raw_values || value.is_empty() {
+            return value.to_string();
+        }
+
+        format!("<redacted len={} hash={}>", value.len(), short_hash(value))
+    }
+
+    pub(crate) fn redact_optional_value(&self, value: Option<&str>) -> Option<String> {
+        value.map(|value| self.redact_value(value))
+    }
+
+    pub(crate) fn redact_optional_u64(&self, value: Option<u64>) -> Option<String> {
+        value.map(|value| {
+            if self.raw_values {
+                value.to_string()
+            } else {
+                format!("<redacted hash={}>", short_hash(&value))
+            }
+        })
+    }
+
+    pub(crate) fn redact_values<'a>(
+        &self,
+        values: impl IntoIterator<Item = &'a str>,
+    ) -> Vec<String> {
+        values
+            .into_iter()
+            .map(|value| self.redact_value(value))
+            .collect()
+    }
+}
+
+fn short_hash<T: Hash + ?Sized>(value: &T) -> String {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 #[cfg(test)]
@@ -181,10 +237,10 @@ mod tests {
 
     #[test]
     fn diagnostics_parse_environment_flags_and_limits() {
-        let disabled = SourceDiagnostics::from_values(None, None, None, None);
-        let enabled = SourceDiagnostics::from_values(Some("1"), Some("7"), None, Some("3"));
+        let disabled = SourceDiagnostics::from_values(None, None, None, None, None);
+        let enabled = SourceDiagnostics::from_values(Some("1"), Some("7"), None, Some("3"), None);
         let invalid_limit =
-            SourceDiagnostics::from_values(Some("true"), Some("not-a-number"), None, None);
+            SourceDiagnostics::from_values(Some("true"), Some("not-a-number"), None, None, None);
 
         assert!(!disabled.enabled());
         assert!(enabled.enabled());
@@ -198,8 +254,13 @@ mod tests {
 
     #[test]
     fn diagnostics_filter_samples_by_text() {
-        let diagnostics =
-            SourceDiagnostics::from_values(Some("1"), Some("2"), Some("wget,known-exec"), None);
+        let diagnostics = SourceDiagnostics::from_values(
+            Some("1"),
+            Some("2"),
+            Some("wget,known-exec"),
+            None,
+            None,
+        );
 
         assert!(!diagnostics.try_acquire_sample_for(&["longhorn-manager"]));
         assert_eq!(
@@ -219,7 +280,7 @@ mod tests {
     #[test]
     fn diagnostics_bound_filtered_preview_samples() {
         let diagnostics =
-            SourceDiagnostics::from_values(Some("1"), Some("2"), Some("wget"), Some("1"));
+            SourceDiagnostics::from_values(Some("1"), Some("2"), Some("wget"), Some("1"), None);
 
         assert_eq!(
             diagnostics.sample_decision_for(&["longhorn-manager"]),
@@ -228,5 +289,58 @@ mod tests {
         assert_eq!(diagnostics.remaining_samples(), 2);
         assert!(diagnostics.try_acquire_filtered_preview());
         assert!(!diagnostics.try_acquire_filtered_preview());
+    }
+
+    #[test]
+    fn diagnostics_redact_sensitive_values_by_default() {
+        let diagnostics = SourceDiagnostics::from_values(Some("1"), Some("2"), None, None, None);
+
+        assert!(!diagnostics.raw_values_enabled());
+        assert_ne!(
+            diagnostics.redact_value("curl https://token@example.invalid"),
+            "curl https://token@example.invalid"
+        );
+        assert!(
+            diagnostics
+                .redact_value("curl https://token@example.invalid")
+                .contains("<redacted")
+        );
+        assert_ne!(
+            diagnostics.redact_optional_u64(Some(42)).as_deref(),
+            Some("42")
+        );
+        assert_ne!(
+            diagnostics
+                .redact_optional_value(Some("pod-uid"))
+                .as_deref(),
+            Some("pod-uid")
+        );
+        assert_eq!(diagnostics.redact_values(["--password=secret"]).len(), 1);
+    }
+
+    #[test]
+    fn diagnostics_raw_opt_in_preserves_sensitive_values() {
+        let diagnostics =
+            SourceDiagnostics::from_values(Some("1"), Some("2"), None, None, Some("1"));
+
+        assert!(diagnostics.raw_values_enabled());
+        assert_eq!(
+            diagnostics.redact_value("curl https://token@example.invalid"),
+            "curl https://token@example.invalid"
+        );
+        assert_eq!(
+            diagnostics.redact_optional_u64(Some(42)).as_deref(),
+            Some("42")
+        );
+        assert_eq!(
+            diagnostics
+                .redact_optional_value(Some("pod-uid"))
+                .as_deref(),
+            Some("pod-uid")
+        );
+        assert_eq!(
+            diagnostics.redact_values(["--password=secret"]),
+            vec!["--password=secret".to_string()]
+        );
     }
 }

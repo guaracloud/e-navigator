@@ -69,6 +69,36 @@ fn no_enabled_modules_is_invalid() {
 }
 
 #[test]
+fn unknown_module_names_are_invalid_and_list_known_modules() {
+    assert_invalid(
+        RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.synthetic_exec"),
+                ModuleConfig::enabled("generator.dns_typo"),
+                ModuleConfig::enabled("sink.json_stdout"),
+            ],
+            ..RuntimeConfig::default()
+        },
+        "unknown module 'generator.dns_typo'; known modules: source.aya_exec, source.aya_network, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, sink.json_stdout",
+    );
+}
+
+#[test]
+fn duplicate_module_names_are_invalid() {
+    assert_invalid(
+        RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.synthetic_exec"),
+                ModuleConfig::enabled("source.synthetic_exec"),
+                ModuleConfig::enabled("sink.json_stdout"),
+            ],
+            ..RuntimeConfig::default()
+        },
+        "duplicate module 'source.synthetic_exec'",
+    );
+}
+
+#[test]
 fn zero_queue_capacity_is_invalid_with_typed_error_metadata() {
     let config = RuntimeConfig {
         queue_capacity: 0,
@@ -84,6 +114,25 @@ fn zero_queue_capacity_is_invalid_with_typed_error_metadata() {
     assert_eq!(
         config.validate(),
         Err("queue_capacity must be greater than zero".to_string())
+    );
+}
+
+#[test]
+fn runtime_derived_signal_bounds_are_validated() {
+    assert_invalid(
+        RuntimeConfig {
+            max_derived_signals_per_input: 0,
+            ..RuntimeConfig::default()
+        },
+        "max_derived_signals_per_input must be greater than zero",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            max_derived_signal_depth: 0,
+            ..RuntimeConfig::default()
+        },
+        "max_derived_signal_depth must be greater than zero",
     );
 }
 
@@ -208,6 +257,7 @@ fn kubernetes_attribution_paths_are_validated_when_enabled() {
                 enabled: false,
                 token_path: PathBuf::new(),
                 ca_cert_path: PathBuf::new(),
+                ..KubernetesAttributionConfig::default()
             },
             ..AttributionConfig::default()
         },
@@ -359,10 +409,46 @@ fn runtime_security_kubernetes_api_endpoints_are_validated() {
 fn dns_metrics_limits_are_validated() {
     assert_invalid(
         RuntimeConfig {
-            dns_metrics: DnsMetricsConfig { max_domains: 0 },
+            dns_metrics: DnsMetricsConfig {
+                max_domains: 0,
+                ..DnsMetricsConfig::default()
+            },
             ..RuntimeConfig::default()
         },
         "dns_metrics.max_domains must be greater than zero",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            dns_metrics: DnsMetricsConfig {
+                max_counters: 0,
+                ..DnsMetricsConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "dns_metrics.max_counters must be greater than zero",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            dns_metrics: DnsMetricsConfig {
+                max_latencies: 0,
+                ..DnsMetricsConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "dns_metrics.max_latencies must be greater than zero",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            dns_metrics: DnsMetricsConfig {
+                max_edges: 0,
+                ..DnsMetricsConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "dns_metrics.max_edges must be greater than zero",
     );
 }
 

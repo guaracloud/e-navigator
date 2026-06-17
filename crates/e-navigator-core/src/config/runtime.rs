@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
-use super::modules::default_modules;
+use super::modules::{default_modules, is_known_module_name, known_module_names};
 use super::{
     ArgvCaptureConfig, AttributionConfig, ConfigError, ConfigResult, CpuProfileSourceConfig,
     DnsMetricsConfig, ModuleConfig, NetworkMetricsConfig, ProfilingConfig,
@@ -14,6 +15,10 @@ pub struct RuntimeConfig {
     pub log_level: String,
     #[serde(default = "default_queue_capacity")]
     pub queue_capacity: usize,
+    #[serde(default = "default_max_derived_signals_per_input")]
+    pub max_derived_signals_per_input: usize,
+    #[serde(default = "default_max_derived_signal_depth")]
+    pub max_derived_signal_depth: usize,
     #[serde(default = "default_modules")]
     pub modules: Vec<ModuleConfig>,
     #[serde(default)]
@@ -45,6 +50,8 @@ impl Default for RuntimeConfig {
         Self {
             log_level: default_log_level(),
             queue_capacity: default_queue_capacity(),
+            max_derived_signals_per_input: default_max_derived_signals_per_input(),
+            max_derived_signal_depth: default_max_derived_signal_depth(),
             modules: default_modules(),
             argv_capture: ArgvCaptureConfig::default(),
             attribution: AttributionConfig::default(),
@@ -81,6 +88,22 @@ impl RuntimeConfig {
             ));
         }
 
+        if self.max_derived_signals_per_input == 0 {
+            return Err(ConfigError::invalid_value(
+                "max_derived_signals_per_input",
+                "max_derived_signals_per_input must be greater than zero",
+            ));
+        }
+
+        if self.max_derived_signal_depth == 0 {
+            return Err(ConfigError::invalid_value(
+                "max_derived_signal_depth",
+                "max_derived_signal_depth must be greater than zero",
+            ));
+        }
+
+        self.validate_modules()?;
+
         self.argv_capture.validate()?;
         self.attribution.validate()?;
         self.runtime_security.validate()?;
@@ -102,6 +125,30 @@ impl RuntimeConfig {
             .find(|module| module.name == name)
             .is_some_and(|module| module.enabled)
     }
+
+    fn validate_modules(&self) -> ConfigResult<()> {
+        let mut seen = BTreeSet::new();
+        for module in &self.modules {
+            if !is_known_module_name(&module.name) {
+                return Err(ConfigError::invalid_reference(
+                    "modules",
+                    format!(
+                        "unknown module '{}'; known modules: {}",
+                        module.name,
+                        known_module_names().collect::<Vec<_>>().join(", ")
+                    ),
+                ));
+            }
+            if !seen.insert(module.name.as_str()) {
+                return Err(ConfigError::invalid_value(
+                    "modules",
+                    format!("duplicate module '{}'", module.name),
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 fn default_log_level() -> String {
@@ -110,4 +157,12 @@ fn default_log_level() -> String {
 
 fn default_queue_capacity() -> usize {
     1024
+}
+
+fn default_max_derived_signals_per_input() -> usize {
+    256
+}
+
+fn default_max_derived_signal_depth() -> usize {
+    8
 }

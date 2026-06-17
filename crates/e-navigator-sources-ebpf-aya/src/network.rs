@@ -390,24 +390,26 @@ mod platform {
                     if decision == DiagnosticSampleDecision::Filtered
                         && diagnostics.try_acquire_filtered_preview()
                     {
+                        let logged_filter_values =
+                            diagnostics.redact_values(filter_values.iter().copied());
                         info!(
                             target: "e_navigator_sources_ebpf_aya::source_diagnostics",
                             source = "source.aya_network",
                             raw_event = "network_connection_open",
                             diagnostic_decision = "filtered",
-                            filter_values = ?filter_values,
+                            filter_values = ?logged_filter_values,
                             pid = event.process.pid,
                             uid = ?event.process.uid,
-                            command = %event.process.command,
-                            cgroup_id = ?event.process.cgroup_id,
-                            remote_address = %event.remote_address,
+                            command = %diagnostics.redact_value(&event.process.command),
+                            cgroup_id = ?diagnostics.redact_optional_u64(event.process.cgroup_id),
+                            remote_address = %diagnostics.redact_value(&event.remote_address),
                             remote_port = event.remote_port,
-                            container_id = ?container_id(&event.container),
+                            container_id = ?diagnostics.redact_optional_value(container_id(&event.container)),
                             container_runtime = ?container_runtime(&event.container),
-                            kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
-                            kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
-                            kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
-                            kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                            kubernetes_namespace = ?diagnostics.redact_optional_value(kubernetes_namespace(&event.kubernetes)),
+                            kubernetes_pod_name = ?diagnostics.redact_optional_value(kubernetes_pod_name(&event.kubernetes)),
+                            kubernetes_pod_uid = ?diagnostics.redact_optional_value(kubernetes_pod_uid(&event.kubernetes)),
+                            kubernetes_container_name = ?diagnostics.redact_optional_value(kubernetes_container_name(&event.kubernetes)),
                             "source diagnostic raw event filtered"
                         );
                     }
@@ -420,16 +422,16 @@ mod platform {
                     raw_event = "network_connection_open",
                     pid = event.process.pid,
                     uid = ?event.process.uid,
-                    command = %event.process.command,
-                    cgroup_id = ?event.process.cgroup_id,
-                    remote_address = %event.remote_address,
+                    command = %diagnostics.redact_value(&event.process.command),
+                    cgroup_id = ?diagnostics.redact_optional_u64(event.process.cgroup_id),
+                    remote_address = %diagnostics.redact_value(&event.remote_address),
                     remote_port = event.remote_port,
-                    container_id = ?container_id(&event.container),
+                    container_id = ?diagnostics.redact_optional_value(container_id(&event.container)),
                     container_runtime = ?container_runtime(&event.container),
-                    kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
-                    kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
-                    kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
-                    kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                    kubernetes_namespace = ?diagnostics.redact_optional_value(kubernetes_namespace(&event.kubernetes)),
+                    kubernetes_pod_name = ?diagnostics.redact_optional_value(kubernetes_pod_name(&event.kubernetes)),
+                    kubernetes_pod_uid = ?diagnostics.redact_optional_value(kubernetes_pod_uid(&event.kubernetes)),
+                    kubernetes_container_name = ?diagnostics.redact_optional_value(kubernetes_container_name(&event.kubernetes)),
                     "source diagnostic raw event decoded"
                 );
                 DiagnosticSampleDecision::Matched
@@ -442,25 +444,27 @@ mod platform {
                     if decision == DiagnosticSampleDecision::Filtered
                         && diagnostics.try_acquire_filtered_preview()
                     {
+                        let logged_filter_values =
+                            diagnostics.redact_values(filter_values.iter().copied());
                         info!(
                             target: "e_navigator_sources_ebpf_aya::source_diagnostics",
                             source = "source.aya_network",
                             raw_event = "network_connection_close",
                             diagnostic_decision = "filtered",
-                            filter_values = ?filter_values,
+                            filter_values = ?logged_filter_values,
                             pid = event.process.pid,
                             uid = ?event.process.uid,
-                            command = %event.process.command,
-                            cgroup_id = ?event.process.cgroup_id,
-                            remote_address = %event.remote_address,
+                            command = %diagnostics.redact_value(&event.process.command),
+                            cgroup_id = ?diagnostics.redact_optional_u64(event.process.cgroup_id),
+                            remote_address = %diagnostics.redact_value(&event.remote_address),
                             remote_port = event.remote_port,
                             duration_nanos = ?event.duration_nanos,
-                            container_id = ?container_id(&event.container),
+                            container_id = ?diagnostics.redact_optional_value(container_id(&event.container)),
                             container_runtime = ?container_runtime(&event.container),
-                            kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
-                            kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
-                            kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
-                            kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                            kubernetes_namespace = ?diagnostics.redact_optional_value(kubernetes_namespace(&event.kubernetes)),
+                            kubernetes_pod_name = ?diagnostics.redact_optional_value(kubernetes_pod_name(&event.kubernetes)),
+                            kubernetes_pod_uid = ?diagnostics.redact_optional_value(kubernetes_pod_uid(&event.kubernetes)),
+                            kubernetes_container_name = ?diagnostics.redact_optional_value(kubernetes_container_name(&event.kubernetes)),
                             "source diagnostic raw event filtered"
                         );
                     }
@@ -473,17 +477,17 @@ mod platform {
                     raw_event = "network_connection_close",
                     pid = event.process.pid,
                     uid = ?event.process.uid,
-                    command = %event.process.command,
-                    cgroup_id = ?event.process.cgroup_id,
-                    remote_address = %event.remote_address,
+                    command = %diagnostics.redact_value(&event.process.command),
+                    cgroup_id = ?diagnostics.redact_optional_u64(event.process.cgroup_id),
+                    remote_address = %diagnostics.redact_value(&event.remote_address),
                     remote_port = event.remote_port,
                     duration_nanos = ?event.duration_nanos,
-                    container_id = ?container_id(&event.container),
+                    container_id = ?diagnostics.redact_optional_value(container_id(&event.container)),
                     container_runtime = ?container_runtime(&event.container),
-                    kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
-                    kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
-                    kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
-                    kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                    kubernetes_namespace = ?diagnostics.redact_optional_value(kubernetes_namespace(&event.kubernetes)),
+                    kubernetes_pod_name = ?diagnostics.redact_optional_value(kubernetes_pod_name(&event.kubernetes)),
+                    kubernetes_pod_uid = ?diagnostics.redact_optional_value(kubernetes_pod_uid(&event.kubernetes)),
+                    kubernetes_container_name = ?diagnostics.redact_optional_value(kubernetes_container_name(&event.kubernetes)),
                     "source diagnostic raw event decoded"
                 );
                 DiagnosticSampleDecision::Matched
@@ -496,25 +500,27 @@ mod platform {
                     if decision == DiagnosticSampleDecision::Filtered
                         && diagnostics.try_acquire_filtered_preview()
                     {
+                        let logged_filter_values =
+                            diagnostics.redact_values(filter_values.iter().copied());
                         info!(
                             target: "e_navigator_sources_ebpf_aya::source_diagnostics",
                             source = "source.aya_network",
                             raw_event = "network_connection_failure",
                             diagnostic_decision = "filtered",
-                            filter_values = ?filter_values,
+                            filter_values = ?logged_filter_values,
                             pid = event.process.pid,
                             uid = ?event.process.uid,
-                            command = %event.process.command,
-                            cgroup_id = ?event.process.cgroup_id,
-                            remote_address = %event.remote_address,
+                            command = %diagnostics.redact_value(&event.process.command),
+                            cgroup_id = ?diagnostics.redact_optional_u64(event.process.cgroup_id),
+                            remote_address = %diagnostics.redact_value(&event.remote_address),
                             remote_port = event.remote_port,
                             errno = event.errno,
-                            container_id = ?container_id(&event.container),
+                            container_id = ?diagnostics.redact_optional_value(container_id(&event.container)),
                             container_runtime = ?container_runtime(&event.container),
-                            kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
-                            kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
-                            kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
-                            kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                            kubernetes_namespace = ?diagnostics.redact_optional_value(kubernetes_namespace(&event.kubernetes)),
+                            kubernetes_pod_name = ?diagnostics.redact_optional_value(kubernetes_pod_name(&event.kubernetes)),
+                            kubernetes_pod_uid = ?diagnostics.redact_optional_value(kubernetes_pod_uid(&event.kubernetes)),
+                            kubernetes_container_name = ?diagnostics.redact_optional_value(kubernetes_container_name(&event.kubernetes)),
                             "source diagnostic raw event filtered"
                         );
                     }
@@ -527,17 +533,17 @@ mod platform {
                     raw_event = "network_connection_failure",
                     pid = event.process.pid,
                     uid = ?event.process.uid,
-                    command = %event.process.command,
-                    cgroup_id = ?event.process.cgroup_id,
-                    remote_address = %event.remote_address,
+                    command = %diagnostics.redact_value(&event.process.command),
+                    cgroup_id = ?diagnostics.redact_optional_u64(event.process.cgroup_id),
+                    remote_address = %diagnostics.redact_value(&event.remote_address),
                     remote_port = event.remote_port,
                     errno = event.errno,
-                    container_id = ?container_id(&event.container),
+                    container_id = ?diagnostics.redact_optional_value(container_id(&event.container)),
                     container_runtime = ?container_runtime(&event.container),
-                    kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
-                    kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
-                    kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
-                    kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                    kubernetes_namespace = ?diagnostics.redact_optional_value(kubernetes_namespace(&event.kubernetes)),
+                    kubernetes_pod_name = ?diagnostics.redact_optional_value(kubernetes_pod_name(&event.kubernetes)),
+                    kubernetes_pod_uid = ?diagnostics.redact_optional_value(kubernetes_pod_uid(&event.kubernetes)),
+                    kubernetes_container_name = ?diagnostics.redact_optional_value(kubernetes_container_name(&event.kubernetes)),
                     "source diagnostic raw event decoded"
                 );
                 DiagnosticSampleDecision::Matched

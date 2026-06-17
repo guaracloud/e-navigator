@@ -2,7 +2,7 @@ use e_navigator_core::{ConfigError, CoreError, CoreResult, ModuleMetadata, Runti
 use e_navigator_signals::SignalEnvelope;
 use std::{collections::VecDeque, fmt};
 use tokio::{sync::mpsc, task::JoinHandle};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::ModuleRegistry;
 
@@ -99,18 +99,25 @@ impl Runner {
             return Ok(());
         };
 
+        let mut budget = DerivedSignalBudget::new(
+            self.config.max_derived_signals_per_input,
+            self.config.max_derived_signal_depth,
+        );
         let mut pending_generated = VecDeque::new();
         for (generator_index, generator) in self.registry.generators.iter().enumerate() {
             let generated = self.handle_generator(generator.as_ref(), &signal).await?;
             for derived in generated {
+                if !budget.try_accept(generator.metadata(), 1) {
+                    continue;
+                }
                 if let Some(processed) = self.process_signal(derived).await? {
                     self.write_to_sinks(&processed).await?;
-                    pending_generated.push_back((generator_index + 1, processed));
+                    pending_generated.push_back((generator_index + 1, 1_usize, processed));
                 }
             }
         }
 
-        while let Some((start_index, generated_signal)) = pending_generated.pop_front() {
+        while let Some((start_index, depth, generated_signal)) = pending_generated.pop_front() {
             for (generator_index, generator) in self
                 .registry
                 .generators
@@ -118,13 +125,17 @@ impl Runner {
                 .enumerate()
                 .skip(start_index)
             {
+                let next_depth = depth.saturating_add(1);
                 let downstream = self
                     .handle_generator(generator.as_ref(), &generated_signal)
                     .await?;
                 for derived in downstream {
+                    if !budget.try_accept(generator.metadata(), next_depth) {
+                        continue;
+                    }
                     if let Some(processed) = self.process_signal(derived).await? {
                         self.write_to_sinks(&processed).await?;
-                        pending_generated.push_back((generator_index + 1, processed));
+                        pending_generated.push_back((generator_index + 1, next_depth, processed));
                     }
                 }
             }
@@ -198,6 +209,47 @@ impl Runner {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct DerivedSignalBudget {
+    remaining: usize,
+    max_signals: usize,
+    max_depth: usize,
+}
+
+impl DerivedSignalBudget {
+    fn new(max_signals: usize, max_depth: usize) -> Self {
+        Self {
+            remaining: max_signals,
+            max_signals,
+            max_depth,
+        }
+    }
+
+    fn try_accept(&mut self, metadata: ModuleMetadata, depth: usize) -> bool {
+        if depth > self.max_depth {
+            warn!(
+                module = metadata.name,
+                depth,
+                max_depth = self.max_depth,
+                "derived signal dropped because generation depth budget was exhausted"
+            );
+            return false;
+        }
+
+        if self.remaining == 0 {
+            warn!(
+                module = metadata.name,
+                max_derived_signals_per_input = self.max_signals,
+                "derived signal dropped because per-input derived signal budget was exhausted"
+            );
+            return false;
+        }
+
+        self.remaining -= 1;
+        true
     }
 }
 
@@ -836,6 +888,76 @@ mod tests {
             )
         }));
         assert!(seen.iter().any(|signal| {
+            matches!(
+                &signal.payload,
+                SignalPayload::Exec(event) if event.command == "downstream-derived"
+            )
+        }));
+    }
+
+    #[tokio::test]
+    async fn runner_global_derived_budget_bounds_total_fanout_per_original_signal() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(OneSignalSource))
+            .with_generator(Box::new(ManySignalsGenerator { count: 3 }))
+            .with_generator(Box::new(ManySignalsGenerator { count: 3 }))
+            .with_sink(Box::new(MemorySink { seen: seen.clone() }));
+        let runner = Runner::new(
+            RuntimeConfig {
+                max_derived_signals_per_input: 4,
+                ..RuntimeConfig::default()
+            },
+            registry,
+        )
+        .expect("runner builds");
+
+        runner
+            .run()
+            .await
+            .expect("runner exits after source closes");
+
+        let seen = seen.lock().await;
+        assert_eq!(seen.len(), 5);
+        assert_eq!(
+            seen.iter()
+                .filter(|signal| signal.source == "source.test")
+                .count(),
+            5
+        );
+    }
+
+    #[tokio::test]
+    async fn runner_depth_budget_drops_downstream_derived_signals() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(OneSignalSource))
+            .with_generator(Box::new(ProcessExitGenerator))
+            .with_generator(Box::new(DownstreamExecGenerator))
+            .with_sink(Box::new(MemorySink { seen: seen.clone() }));
+        let runner = Runner::new(
+            RuntimeConfig {
+                max_derived_signal_depth: 1,
+                ..RuntimeConfig::default()
+            },
+            registry,
+        )
+        .expect("runner builds");
+
+        runner
+            .run()
+            .await
+            .expect("runner exits after source closes");
+
+        let seen = seen.lock().await;
+        assert_eq!(seen.len(), 2);
+        assert!(seen.iter().any(|signal| {
+            matches!(
+                &signal.payload,
+                SignalPayload::ProcessExit(event) if event.command == "generated-exit"
+            )
+        }));
+        assert!(!seen.iter().any(|signal| {
             matches!(
                 &signal.payload,
                 SignalPayload::Exec(event) if event.command == "downstream-derived"
