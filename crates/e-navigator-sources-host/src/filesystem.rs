@@ -1,4 +1,5 @@
 use std::{
+    collections::BinaryHeap,
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
@@ -47,7 +48,7 @@ pub(crate) fn bounded_numeric_dirs(
     label: &str,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<(u32, PathBuf)>, String> {
-    let mut entries = Vec::new();
+    let mut entries = BoundedSelection::new(limit);
     for entry in fs::read_dir(root).map_err(|err| err.to_string())? {
         let Ok(entry) = entry else {
             continue;
@@ -57,9 +58,9 @@ pub(crate) fn bounded_numeric_dirs(
         };
         entries.push((pid, entry.path()));
     }
+    let truncated = entries.was_truncated();
+    let mut entries = entries.into_sorted_vec();
     entries.sort_by_key(|(pid, _)| *pid);
-    let truncated = entries.len() > limit;
-    entries.truncate(limit);
     if truncated {
         warnings.push(format!(
             "{}: {label} scan truncated at {limit} entries",
@@ -75,7 +76,7 @@ pub(crate) fn bounded_child_dirs(
     path: &Path,
     warnings: &mut Vec<String>,
 ) -> Vec<PathBuf> {
-    let mut children = Vec::new();
+    let mut children = BoundedSelection::new(limit);
     for entry in entries {
         let Ok(entry) = entry else {
             continue;
@@ -85,9 +86,8 @@ pub(crate) fn bounded_child_dirs(
         }
         children.push(entry.path());
     }
-    children.sort();
-    let truncated = children.len() > limit;
-    children.truncate(limit);
+    let truncated = children.was_truncated();
+    let children = children.into_sorted_vec();
     if truncated {
         warnings.push(format!(
             "{}: child cgroup scan truncated at {limit} entries",
@@ -97,13 +97,60 @@ pub(crate) fn bounded_child_dirs(
     children
 }
 
+struct BoundedSelection<T> {
+    limit: usize,
+    eligible: usize,
+    retained: BinaryHeap<T>,
+}
+
+impl<T: Ord> BoundedSelection<T> {
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            eligible: 0,
+            retained: BinaryHeap::new(),
+        }
+    }
+
+    fn push(&mut self, value: T) {
+        self.eligible = self.eligible.saturating_add(1);
+        if self.limit == 0 {
+            return;
+        }
+        if self.retained.len() < self.limit {
+            self.retained.push(value);
+            return;
+        }
+        let Some(largest_retained) = self.retained.peek() else {
+            return;
+        };
+        if value < *largest_retained {
+            let _ = self.retained.pop();
+            self.retained.push(value);
+        }
+    }
+
+    fn was_truncated(&self) -> bool {
+        self.eligible > self.limit
+    }
+
+    fn into_sorted_vec(self) -> Vec<T> {
+        self.retained.into_sorted_vec()
+    }
+
+    #[cfg(test)]
+    fn retained_len(&self) -> usize {
+        self.retained.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
     use super::{
-        bounded_child_dirs, bounded_numeric_dirs, count_dir_entries, count_socket_fds,
-        read_bounded_to_string,
+        BoundedSelection, bounded_child_dirs, bounded_numeric_dirs, count_dir_entries,
+        count_socket_fds, read_bounded_to_string,
     };
 
     #[test]
@@ -123,7 +170,7 @@ mod tests {
     fn bounded_numeric_pid_directory_traversal_selects_lowest_pids_under_limit() {
         let root = temp_path("pid-cap");
         let _ = std::fs::remove_dir_all(&root);
-        for pid in ["300", "100", "200"] {
+        for pid in ["900", "300", "100", "700", "200", "500"] {
             std::fs::create_dir_all(root.join(pid)).expect("pid");
         }
         std::fs::create_dir_all(root.join("not-a-pid")).expect("non pid");
@@ -177,6 +224,19 @@ mod tests {
                 .any(|warning| warning.contains("child cgroup scan truncated"))
         );
         std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn bounded_selection_retains_only_the_lowest_candidates() {
+        let mut selection = BoundedSelection::new(3);
+
+        for value in [90, 10, 80, 20, 70, 30, 60, 40, 50] {
+            selection.push(value);
+            assert!(selection.retained_len() <= 3);
+        }
+
+        assert!(selection.was_truncated());
+        assert_eq!(selection.into_sorted_vec(), vec![10, 20, 30]);
     }
 
     #[test]

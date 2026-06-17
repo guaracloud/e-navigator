@@ -115,16 +115,16 @@ impl ExecEventNormalizer {
         host: Option<String>,
         argv_capture: &ArgvCaptureConfig,
         procfs_root: &std::path::Path,
-    ) -> Option<e_navigator_signals::SignalEnvelope> {
+    ) -> ExecDecodeResult {
         match raw.event_source {
             EXEC_EVENT_SOURCE_SYSCALL_ENTER => {
                 self.store_pending(raw, argv_capture);
-                None
+                ExecDecodeResult::Pending
             }
-            EXEC_EVENT_SOURCE_SCHED_EXEC => {
-                Some(self.success_signal(raw, host, argv_capture, procfs_root))
-            }
-            _ => None,
+            EXEC_EVENT_SOURCE_SCHED_EXEC => ExecDecodeResult::Emitted(Box::new(
+                self.success_signal(raw, host, argv_capture, procfs_root),
+            )),
+            _ => ExecDecodeResult::Invalid,
         }
     }
 
@@ -162,6 +162,7 @@ impl ExecEventNormalizer {
         success_monotonic_nanos: u64,
     ) -> Option<PendingExecAttempt> {
         let pending = self.pending.remove(&pid)?;
+        self.remove_ordered_pid(pid);
         let age = success_monotonic_nanos.saturating_sub(pending.event_monotonic_nanos);
         (age <= PENDING_EXEC_MAX_AGE_NANOS).then_some(pending)
     }
@@ -174,6 +175,34 @@ impl ExecEventNormalizer {
             self.pending.remove(&pid);
         }
     }
+
+    fn remove_ordered_pid(&mut self, pid: u32) {
+        if let Some(index) = self
+            .order
+            .iter()
+            .position(|ordered_pid| *ordered_pid == pid)
+        {
+            self.order.remove(index);
+        }
+    }
+
+    #[cfg(test)]
+    fn retained_pending_len(&self) -> usize {
+        self.pending.len()
+    }
+
+    #[cfg(test)]
+    fn retained_order_len(&self) -> usize {
+        self.order.len()
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug)]
+enum ExecDecodeResult {
+    Pending,
+    Emitted(Box<e_navigator_signals::SignalEnvelope>),
+    Invalid,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -223,6 +252,25 @@ fn raw_to_success_signal(
             kubernetes: None,
         },
     )
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn raw_to_signal(
+    bytes: &[u8],
+    host: Option<String>,
+    argv_capture: &ArgvCaptureConfig,
+    procfs_root: &std::path::Path,
+    exec_normalizer: &std::sync::Mutex<ExecEventNormalizer>,
+) -> ExecDecodeResult {
+    if bytes.len() < core::mem::size_of::<RawExecEvent>() {
+        return ExecDecodeResult::Invalid;
+    }
+
+    let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawExecEvent>()) };
+    exec_normalizer
+        .lock()
+        .map(|mut normalizer| normalizer.normalize(raw, host, argv_capture, procfs_root))
+        .unwrap_or(ExecDecodeResult::Invalid)
 }
 
 #[cfg(target_os = "linux")]
@@ -460,25 +508,30 @@ mod platform {
                             match event {
                                 PerfEvent::Sample { head, tail } => {
                                     let bytes = perf_sample_bytes(head, tail);
-                                    if let Some(signal) = raw_to_signal(
+                                    match super::raw_to_signal(
                                         bytes.as_ref(),
                                         host.clone(),
                                         &argv_capture,
                                         &procfs_root,
                                         &exec_normalizer,
                                     ) {
-                                        telemetry.record_decoded_sample();
-                                        let diagnostic_decision =
-                                            log_signal_diagnostic(&diagnostics, &signal);
-                                        telemetry.record_diagnostic_decision(diagnostic_decision);
-                                        if cpu_tx.blocking_send(signal).is_err() {
-                                            telemetry.record_send_failure();
-                                            closed = true;
-                                        } else {
-                                            telemetry.record_sent_signal();
+                                        super::ExecDecodeResult::Emitted(signal) => {
+                                            telemetry.record_decoded_sample();
+                                            let diagnostic_decision =
+                                                log_signal_diagnostic(&diagnostics, &signal);
+                                            telemetry
+                                                .record_diagnostic_decision(diagnostic_decision);
+                                            if cpu_tx.blocking_send(*signal).is_err() {
+                                                telemetry.record_send_failure();
+                                                closed = true;
+                                            } else {
+                                                telemetry.record_sent_signal();
+                                            }
                                         }
-                                    } else {
-                                        telemetry.record_invalid_sample();
+                                        super::ExecDecodeResult::Pending => {}
+                                        super::ExecDecodeResult::Invalid => {
+                                            telemetry.record_invalid_sample();
+                                        }
                                     }
                                 }
                                 PerfEvent::Lost { count } => {
@@ -788,24 +841,6 @@ mod platform {
             })
     }
 
-    fn raw_to_signal(
-        bytes: &[u8],
-        host: Option<String>,
-        argv_capture: &ArgvCaptureConfig,
-        procfs_root: &std::path::Path,
-        exec_normalizer: &Mutex<super::ExecEventNormalizer>,
-    ) -> Option<SignalEnvelope> {
-        if bytes.len() < core::mem::size_of::<RawExecEvent>() {
-            return None;
-        }
-
-        let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawExecEvent>()) };
-        exec_normalizer
-            .lock()
-            .ok()
-            .and_then(|mut normalizer| normalizer.normalize(raw, host, argv_capture, procfs_root))
-    }
-
     #[derive(Clone)]
     struct ReaderShutdown {
         stopped: Arc<AtomicBool>,
@@ -999,14 +1034,8 @@ mod tests {
         );
         let success = raw_exec_event(42, EXEC_EVENT_SOURCE_SCHED_EXEC, 20, "", []);
 
-        assert!(
-            normalizer
-                .normalize(entry, None, &config, procfs_root)
-                .is_none()
-        );
-        let signal = normalizer
-            .normalize(success, None, &config, procfs_root)
-            .expect("sched success emits normalized exec");
+        assert_pending(normalizer.normalize(entry, None, &config, procfs_root));
+        let signal = emitted_signal(normalizer.normalize(success, None, &config, procfs_root));
 
         let e_navigator_signals::SignalPayload::Exec(event) = signal.payload else {
             panic!("expected exec payload");
@@ -1033,11 +1062,9 @@ mod tests {
             ["/missing/binary"],
         );
 
-        assert!(
-            normalizer
-                .normalize(entry, None, &config, procfs_root)
-                .is_none()
-        );
+        assert_pending(normalizer.normalize(entry, None, &config, procfs_root));
+        assert_eq!(normalizer.retained_pending_len(), 1);
+        assert_eq!(normalizer.retained_order_len(), 1);
     }
 
     #[test]
@@ -1064,19 +1091,149 @@ mod tests {
             [],
         );
 
-        assert!(
-            normalizer
-                .normalize(entry, None, &config, procfs_root)
-                .is_none()
-        );
-        let signal = normalizer
-            .normalize(success, None, &config, procfs_root)
-            .expect("sched success still emits without stale argv");
+        assert_pending(normalizer.normalize(entry, None, &config, procfs_root));
+        let signal = emitted_signal(normalizer.normalize(success, None, &config, procfs_root));
 
         let e_navigator_signals::SignalPayload::Exec(event) = signal.payload else {
             panic!("expected exec payload");
         };
         assert!(event.arguments.is_empty());
+        assert_eq!(normalizer.retained_pending_len(), 0);
+        assert_eq!(normalizer.retained_order_len(), 0);
+    }
+
+    #[test]
+    fn normalizer_successful_exec_stream_does_not_retain_ordering_state() {
+        let mut normalizer = ExecEventNormalizer::default();
+        let config = ArgvCaptureConfig {
+            enabled: true,
+            max_args: 8,
+            max_bytes: 512,
+        };
+        let procfs_root = std::path::Path::new("/proc/does-not-exist-for-e-navigator-test");
+
+        for pid in 1..=MAX_PENDING_EXEC_ATTEMPTS as u32 + 128 {
+            let entry = raw_exec_event(
+                pid,
+                EXEC_EVENT_SOURCE_SYSCALL_ENTER,
+                u64::from(pid),
+                "/bin/sh",
+                ["sh"],
+            );
+            let success = raw_exec_event(
+                pid,
+                EXEC_EVENT_SOURCE_SCHED_EXEC,
+                u64::from(pid) + 1,
+                "",
+                [],
+            );
+
+            assert_pending(normalizer.normalize(entry, None, &config, procfs_root));
+            let _signal = emitted_signal(normalizer.normalize(success, None, &config, procfs_root));
+        }
+
+        assert_eq!(normalizer.retained_pending_len(), 0);
+        assert_eq!(normalizer.retained_order_len(), 0);
+    }
+
+    #[test]
+    fn normalizer_overflow_evicts_oldest_pending_and_ordering_entries() {
+        let mut normalizer = ExecEventNormalizer::default();
+        let config = ArgvCaptureConfig {
+            enabled: true,
+            max_args: 8,
+            max_bytes: 512,
+        };
+        let procfs_root = std::path::Path::new("/proc/does-not-exist-for-e-navigator-test");
+
+        for pid in 1..=MAX_PENDING_EXEC_ATTEMPTS as u32 + 2 {
+            let entry = raw_exec_event(
+                pid,
+                EXEC_EVENT_SOURCE_SYSCALL_ENTER,
+                u64::from(pid),
+                "/bin/sh",
+                ["sh"],
+            );
+            assert_pending(normalizer.normalize(entry, None, &config, procfs_root));
+        }
+
+        assert_eq!(normalizer.retained_pending_len(), MAX_PENDING_EXEC_ATTEMPTS);
+        assert_eq!(normalizer.retained_order_len(), MAX_PENDING_EXEC_ATTEMPTS);
+        assert!(!normalizer.pending.contains_key(&1));
+        assert!(!normalizer.pending.contains_key(&2));
+        assert_eq!(normalizer.order.front().copied(), Some(3));
+    }
+
+    #[test]
+    fn normalizer_duplicate_pid_updates_without_growing_ordering_state() {
+        let mut normalizer = ExecEventNormalizer::default();
+        let config = ArgvCaptureConfig {
+            enabled: true,
+            max_args: 8,
+            max_bytes: 512,
+        };
+        let procfs_root = std::path::Path::new("/proc/does-not-exist-for-e-navigator-test");
+        let first = raw_exec_event(42, EXEC_EVENT_SOURCE_SYSCALL_ENTER, 10, "/bin/old", ["old"]);
+        let second = raw_exec_event(42, EXEC_EVENT_SOURCE_SYSCALL_ENTER, 20, "/bin/new", ["new"]);
+        let success = raw_exec_event(42, EXEC_EVENT_SOURCE_SCHED_EXEC, 21, "", []);
+
+        assert_pending(normalizer.normalize(first, None, &config, procfs_root));
+        assert_pending(normalizer.normalize(second, None, &config, procfs_root));
+        assert_eq!(normalizer.retained_pending_len(), 1);
+        assert_eq!(normalizer.retained_order_len(), 1);
+
+        let signal = emitted_signal(normalizer.normalize(success, None, &config, procfs_root));
+
+        let e_navigator_signals::SignalPayload::Exec(event) = signal.payload else {
+            panic!("expected exec payload");
+        };
+        assert_eq!(event.executable.as_deref(), Some("/bin/new"));
+        assert_eq!(event.arguments, vec!["new"]);
+        assert_eq!(normalizer.retained_pending_len(), 0);
+        assert_eq!(normalizer.retained_order_len(), 0);
+    }
+
+    #[test]
+    fn raw_to_signal_classifies_pending_emitted_and_invalid_exec_samples() {
+        let normalizer = std::sync::Mutex::new(ExecEventNormalizer::default());
+        let config = ArgvCaptureConfig {
+            enabled: true,
+            max_args: 8,
+            max_bytes: 512,
+        };
+        let procfs_root = std::path::Path::new("/proc/does-not-exist-for-e-navigator-test");
+        let entry = raw_exec_event(42, EXEC_EVENT_SOURCE_SYSCALL_ENTER, 10, "/bin/sh", ["sh"]);
+        let success = raw_exec_event(42, EXEC_EVENT_SOURCE_SCHED_EXEC, 11, "", []);
+        let unknown = raw_exec_event(7, 99, 12, "", []);
+
+        assert_pending(raw_to_signal(
+            &raw_exec_event_bytes(&entry),
+            None,
+            &config,
+            procfs_root,
+            &normalizer,
+        ));
+        let _signal = emitted_signal(raw_to_signal(
+            &raw_exec_event_bytes(&success),
+            None,
+            &config,
+            procfs_root,
+            &normalizer,
+        ));
+        assert_invalid(raw_to_signal(
+            &raw_exec_event_bytes(&unknown),
+            None,
+            &config,
+            procfs_root,
+            &normalizer,
+        ));
+        assert_invalid(raw_to_signal(
+            &[0_u8; 4],
+            None,
+            &config,
+            procfs_root,
+            &normalizer,
+        ));
     }
 
     fn raw_argument_slots<const N: usize>(values: [&str; N]) -> [[u8; RAW_ARG_LEN]; RAW_MAX_ARGS] {
@@ -1120,5 +1277,39 @@ mod tests {
         let copy_len = bytes.len().min(command.len().saturating_sub(1));
         command[..copy_len].copy_from_slice(&bytes[..copy_len]);
         command
+    }
+
+    fn raw_exec_event_bytes(raw: &RawExecEvent) -> Vec<u8> {
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                std::ptr::from_ref(raw).cast::<u8>(),
+                core::mem::size_of::<RawExecEvent>(),
+            )
+        };
+        bytes.to_vec()
+    }
+
+    fn assert_pending(result: ExecDecodeResult) {
+        match result {
+            ExecDecodeResult::Pending => {}
+            ExecDecodeResult::Emitted(_) => panic!("expected pending exec sample"),
+            ExecDecodeResult::Invalid => panic!("expected pending exec sample"),
+        }
+    }
+
+    fn assert_invalid(result: ExecDecodeResult) {
+        match result {
+            ExecDecodeResult::Invalid => {}
+            ExecDecodeResult::Pending => panic!("expected invalid exec sample"),
+            ExecDecodeResult::Emitted(_) => panic!("expected invalid exec sample"),
+        }
+    }
+
+    fn emitted_signal(result: ExecDecodeResult) -> e_navigator_signals::SignalEnvelope {
+        match result {
+            ExecDecodeResult::Emitted(signal) => *signal,
+            ExecDecodeResult::Pending => panic!("expected emitted exec signal"),
+            ExecDecodeResult::Invalid => panic!("expected emitted exec signal"),
+        }
     }
 }
