@@ -137,10 +137,10 @@ fn runtime_derived_signal_bounds_are_validated() {
 }
 
 #[test]
-fn argv_capture_defaults_are_bounded_and_enabled() {
+fn argv_capture_defaults_are_bounded_and_disabled() {
     let config = RuntimeConfig::default();
 
-    assert!(config.argv_capture.enabled);
+    assert!(!config.argv_capture.enabled);
     assert_eq!(config.argv_capture.max_args, 8);
     assert_eq!(config.argv_capture.max_bytes, 512);
 }

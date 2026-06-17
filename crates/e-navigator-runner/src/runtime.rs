@@ -47,11 +47,11 @@ impl Runner {
     pub async fn run(mut self) -> CoreResult<()> {
         let (tx, mut rx) = mpsc::channel::<SignalEnvelope>(self.config.queue_capacity);
         let (source_result_tx, mut source_result_rx) =
-            mpsc::channel::<CoreResult<()>>(self.registry.sources.len());
+            mpsc::channel::<CoreResult<()>>(self.registry.sources().len());
 
         let mut source_handles = Vec::new();
 
-        for source in self.registry.sources.drain(..) {
+        for source in self.registry.drain_sources() {
             let source_tx = tx.clone();
             let result_tx = source_result_tx.clone();
             let metadata = source.metadata();
@@ -104,7 +104,7 @@ impl Runner {
             self.config.max_derived_signal_depth,
         );
         let mut pending_generated = VecDeque::new();
-        for (generator_index, generator) in self.registry.generators.iter().enumerate() {
+        for (generator_index, generator) in self.registry.generators().iter().enumerate() {
             let generated = self.handle_generator(generator.as_ref(), &signal).await?;
             for derived in generated {
                 if !budget.try_accept(generator.metadata(), 1) {
@@ -120,7 +120,7 @@ impl Runner {
         while let Some((start_index, depth, generated_signal)) = pending_generated.pop_front() {
             for (generator_index, generator) in self
                 .registry
-                .generators
+                .generators()
                 .iter()
                 .enumerate()
                 .skip(start_index)
@@ -149,7 +149,7 @@ impl Runner {
     async fn process_signal(&self, signal: SignalEnvelope) -> CoreResult<Option<SignalEnvelope>> {
         let mut current = Some(signal);
 
-        for processor in &self.registry.processors {
+        for processor in self.registry.processors() {
             let metadata = processor.metadata();
             let signal = current.take().ok_or(CoreError::PipelineClosed)?;
             match processor
@@ -201,7 +201,7 @@ impl Runner {
     }
 
     async fn write_to_sinks(&self, signal: &SignalEnvelope) -> CoreResult<()> {
-        for sink in &self.registry.sinks {
+        for sink in self.registry.sinks() {
             let metadata = sink.metadata();
             sink.write(signal)
                 .await

@@ -48,7 +48,6 @@ pub(crate) fn bounded_numeric_dirs(
     warnings: &mut Vec<String>,
 ) -> Result<Vec<(u32, PathBuf)>, String> {
     let mut entries = Vec::new();
-    let mut truncated = false;
     for entry in fs::read_dir(root).map_err(|err| err.to_string())? {
         let Ok(entry) = entry else {
             continue;
@@ -56,12 +55,11 @@ pub(crate) fn bounded_numeric_dirs(
         let Some(pid) = entry.file_name().to_string_lossy().parse::<u32>().ok() else {
             continue;
         };
-        if entries.len() >= limit {
-            truncated = true;
-            break;
-        }
         entries.push((pid, entry.path()));
     }
+    entries.sort_by_key(|(pid, _)| *pid);
+    let truncated = entries.len() > limit;
+    entries.truncate(limit);
     if truncated {
         warnings.push(format!(
             "{}: {label} scan truncated at {limit} entries",
@@ -78,7 +76,6 @@ pub(crate) fn bounded_child_dirs(
     warnings: &mut Vec<String>,
 ) -> Vec<PathBuf> {
     let mut children = Vec::new();
-    let mut truncated = false;
     for entry in entries {
         let Ok(entry) = entry else {
             continue;
@@ -86,12 +83,11 @@ pub(crate) fn bounded_child_dirs(
         if !entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
             continue;
         }
-        if children.len() >= limit {
-            truncated = true;
-            break;
-        }
         children.push(entry.path());
     }
+    children.sort();
+    let truncated = children.len() > limit;
+    children.truncate(limit);
     if truncated {
         warnings.push(format!(
             "{}: child cgroup scan truncated at {limit} entries",
@@ -124,17 +120,21 @@ mod tests {
     }
 
     #[test]
-    fn bounded_numeric_pid_directory_traversal_honors_limit() {
+    fn bounded_numeric_pid_directory_traversal_selects_lowest_pids_under_limit() {
         let root = temp_path("pid-cap");
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("100")).expect("pid");
-        std::fs::create_dir_all(root.join("101")).expect("pid");
+        for pid in ["300", "100", "200"] {
+            std::fs::create_dir_all(root.join(pid)).expect("pid");
+        }
         std::fs::create_dir_all(root.join("not-a-pid")).expect("non pid");
         let mut warnings = Vec::new();
 
-        let entries = bounded_numeric_dirs(&root, 1, "process", &mut warnings).expect("scan");
+        let entries = bounded_numeric_dirs(&root, 2, "process", &mut warnings).expect("scan");
 
-        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries.iter().map(|(pid, _)| *pid).collect::<Vec<_>>(),
+            vec![100, 200]
+        );
         assert!(
             warnings
                 .iter()
@@ -144,22 +144,33 @@ mod tests {
     }
 
     #[test]
-    fn bounded_child_directory_traversal_honors_limit() {
+    fn bounded_child_directory_traversal_selects_lexical_paths_under_limit() {
         let root = temp_path("child-cap");
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("a")).expect("child");
-        std::fs::create_dir_all(root.join("b")).expect("child");
+        for child in ["zeta", "alpha", "beta"] {
+            std::fs::create_dir_all(root.join(child)).expect("child");
+        }
         std::fs::write(root.join("file"), "").expect("file");
         let mut warnings = Vec::new();
 
         let children = bounded_child_dirs(
             std::fs::read_dir(&root).expect("read dir"),
-            1,
+            2,
             &root,
             &mut warnings,
         );
 
-        assert_eq!(children.len(), 1);
+        assert_eq!(
+            children
+                .iter()
+                .map(|path| path
+                    .file_name()
+                    .expect("name")
+                    .to_string_lossy()
+                    .to_string())
+                .collect::<Vec<_>>(),
+            vec!["alpha".to_string(), "beta".to_string()]
+        );
         assert!(
             warnings
                 .iter()

@@ -19,6 +19,39 @@
   },
   {
     "schema_version": 1,
+    "kind": "process_exit",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "pid": 42,
+      "ppid": 1,
+      "uid": 1000,
+      "command": "checkout",
+      "cgroup_id": 7,
+      "exit_code": 0,
+      "runtime_nanos": 500,
+      "timestamp_unix_nanos": 1500,
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "process_lifecycle_duration",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "pid": 42,
+      "command": "checkout",
+      "started_at_unix_nanos": 1000,
+      "exited_at_unix_nanos": 1500,
+      "duration_nanos": 500,
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
     "kind": "network_connection_open",
     "source": "golden",
     "host": "node-a",
@@ -32,6 +65,125 @@
       "remote_port": 443,
       "fd": 9,
       "timestamp_unix_nanos": 1000,
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "network_connection_close",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "cgroup_id": null},
+      "protocol": "tcp",
+      "address_family": "ipv4",
+      "local_address": "10.0.0.5",
+      "local_port": 41000,
+      "remote_address": "203.0.113.10",
+      "remote_port": 443,
+      "fd": 9,
+      "opened_at_unix_nanos": 1000,
+      "closed_at_unix_nanos": 1200,
+      "duration_nanos": 200,
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "network_connection_failure",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "cgroup_id": null},
+      "protocol": "tcp",
+      "address_family": "ipv4",
+      "remote_address": "203.0.113.10",
+      "remote_port": 443,
+      "fd": 9,
+      "errno": 111,
+      "timestamp_unix_nanos": 1000,
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "network_counter_metric",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "network.connection.open.count",
+      "unit": "{connection}",
+      "value": 1,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1000},
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "cgroup_id": null},
+      "protocol": "tcp",
+      "address_family": "ipv4",
+      "local_address": "10.0.0.5",
+      "local_port": 41000,
+      "remote_address": "203.0.113.10",
+      "remote_port": 443,
+      "errno": null,
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "network_duration_metric",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "network.connection.duration",
+      "unit": "ns",
+      "count": 1,
+      "sum_nanos": 200,
+      "min_nanos": 200,
+      "max_nanos": 200,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "cgroup_id": null},
+      "protocol": "tcp",
+      "address_family": "ipv4",
+      "remote_address": "203.0.113.10",
+      "remote_port": 443,
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "network_gauge_metric",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "network.connection.active",
+      "unit": "{connection}",
+      "value": 1,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "cgroup_id": null},
+      "protocol": "tcp",
+      "address_family": "ipv4",
+      "remote_address": "203.0.113.10",
+      "remote_port": 443,
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "dns_query",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "cgroup_id": null},
+      "query_name": "api.example.com",
+      "query_type": "a",
+      "transport_protocol": "udp",
+      "server_address": "10.96.0.10",
+      "server_port": 53,
+      "timestamp_unix_nanos": 1050,
       "container": null,
       "kubernetes": null
     }
@@ -57,6 +209,47 @@
   },
   {
     "schema_version": 1,
+    "kind": "dns_counter_metric",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "dns.query.count",
+      "unit": "{query}",
+      "value": 1,
+      "window": {"start_unix_nanos": 1050, "end_unix_nanos": 1100},
+      "query_name": "api.example.com",
+      "query_type": "a",
+      "response_code": null,
+      "server_address": "10.96.0.10",
+      "server_port": 53,
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "dns_latency_metric",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "dns.lookup.duration",
+      "unit": "ns",
+      "count": 1,
+      "sum_nanos": 15000,
+      "min_nanos": 15000,
+      "max_nanos": 15000,
+      "window": {"start_unix_nanos": 1050, "end_unix_nanos": 1100},
+      "query_name": "api.example.com",
+      "query_type": "a",
+      "response_code": "no_error",
+      "server_address": "10.96.0.10",
+      "server_port": 53,
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
     "kind": "dependency_edge",
     "source": "golden",
     "host": "node-a",
@@ -67,6 +260,55 @@
       "observations": 1,
       "first_seen_unix_nanos": 1000,
       "last_seen_unix_nanos": 1200
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "runtime_security_finding",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "rule_id": "runtime.network_tool_exec",
+      "severity": "medium",
+      "matched_process": {"pid": 42, "command": "curl", "executable": "/usr/bin/curl", "arguments": ["curl"]},
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "node_cpu_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "system.cpu.time",
+      "unit": "ns",
+      "timestamp_unix_nanos": 1200,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "user_nanos": 100,
+      "system_nanos": 50,
+      "idle_nanos": 1000,
+      "iowait_nanos": 10,
+      "steal_nanos": 0,
+      "runnable_tasks": 2,
+      "blocked_tasks": 0
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "node_load_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "system.cpu.load_average.1m",
+      "unit": "1",
+      "timestamp_unix_nanos": 1200,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "load1": 0.25,
+      "load5": 0.5,
+      "load15": 0.75,
+      "runnable_tasks": 2,
+      "total_tasks": 200
     }
   },
   {
@@ -84,6 +326,155 @@
       "mem_free_bytes": 256,
       "swap_total_bytes": 0,
       "swap_free_bytes": 0
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "node_filesystem_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "system.filesystem.usage",
+      "unit": "By",
+      "timestamp_unix_nanos": 1200,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "mount_point": "/var/lib/kubelet",
+      "filesystem_type": "ext4",
+      "total_bytes": 1000000,
+      "available_bytes": 250000
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "node_disk_io_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "system.disk.io",
+      "unit": "By",
+      "timestamp_unix_nanos": 1200,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "device": "nvme0n1",
+      "reads_completed": 10,
+      "writes_completed": 20,
+      "read_bytes": 4096,
+      "written_bytes": 8192
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "process_resource_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "process.memory.usage",
+      "unit": "By",
+      "timestamp_unix_nanos": 1200,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "container": null, "kubernetes": null},
+      "cpu_time_nanos": 500,
+      "memory_rss_bytes": 4096,
+      "virtual_memory_bytes": 8192,
+      "open_fds": 12,
+      "socket_count": 2,
+      "thread_count": 4
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "cgroup_cpu_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "container.cpu.time",
+      "unit": "ns",
+      "timestamp_unix_nanos": 1200,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "cgroup": {"cgroup_path": "/kubepods.slice/pod123/container.scope", "container": null, "kubernetes": null},
+      "usage_nanos": 10000,
+      "user_nanos": 6000,
+      "system_nanos": 4000,
+      "throttled_periods": 1,
+      "throttled_nanos": 100
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "cgroup_memory_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "container.memory.usage",
+      "unit": "By",
+      "timestamp_unix_nanos": 1200,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "cgroup": {"cgroup_path": "/kubepods.slice/pod123/container.scope", "container": null, "kubernetes": null},
+      "current_bytes": 8192,
+      "peak_bytes": 16384,
+      "max_bytes": 65536
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "cgroup_pids_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "container.process.count",
+      "unit": "{process}",
+      "timestamp_unix_nanos": 1200,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "cgroup": {"cgroup_path": "/kubepods.slice/pod123/container.scope", "container": null, "kubernetes": null},
+      "process_count": 3,
+      "thread_count": 9,
+      "max_processes": 512
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "cgroup_file_descriptor_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "container.file_descriptor.count",
+      "unit": "{file_descriptor}",
+      "timestamp_unix_nanos": 1200,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "cgroup": {"cgroup_path": "/kubepods.slice/pod123/container.scope", "container": null, "kubernetes": null},
+      "open_fds": 42,
+      "socket_count": 7
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "resource_gauge_metric",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "process.memory.usage",
+      "unit": "By",
+      "value": 4096,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "resource": {"host_name": "node-a", "container": null, "kubernetes": null},
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "container": null, "kubernetes": null},
+      "cgroup": null,
+      "attributes": [{"key": "state", "value": "rss"}]
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "resource_counter_metric",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "process.cpu.time",
+      "unit": "ns",
+      "value": 500,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "resource": {"host_name": "node-a", "container": null, "kubernetes": null},
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "container": null, "kubernetes": null},
+      "cgroup": null,
+      "attributes": [{"key": "cpu.mode", "value": "total"}]
     }
   },
   {
@@ -107,6 +498,65 @@
       "kubernetes": null,
       "peer": {"address": "203.0.113.10", "port": 443, "domain": "api.example.com", "workload": null, "container": null},
       "attributes": [{"key": "trace.synthetic.fixture", "value": "golden"}]
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "service_interaction_span_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "name": "tcp client",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "start_unix_nanos": 1000,
+      "end_unix_nanos": 1200,
+      "duration_nanos": 200,
+      "correlation_kind": "network_inferred",
+      "confidence": "medium",
+      "source": {"workload": null, "container": null, "address": "10.0.0.5", "port": 41000, "domain": null},
+      "destination": {"workload": null, "container": null, "address": "203.0.113.10", "port": 443, "domain": null},
+      "protocol": "tcp",
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "cgroup_id": null},
+      "error_type": null,
+      "attributes": []
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "trace_service_path_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "path_key": "trace-path:golden",
+      "source": {"workload": null, "container": null, "address": "10.0.0.5", "port": 41000, "domain": null},
+      "destination": {"workload": null, "container": null, "address": "203.0.113.10", "port": 443, "domain": "api.example.com"},
+      "protocol": "tcp",
+      "observations": 1,
+      "first_seen_unix_nanos": 1000,
+      "last_seen_unix_nanos": 1200,
+      "correlation_kind": "dependency_inferred",
+      "confidence": "low",
+      "attributes": []
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "trace_correlation_warning",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "warning_type": "missing_attribution",
+      "message": "network observation has no container context",
+      "timestamp_unix_nanos": 1200,
+      "source_signal_kind": "network_connection_open",
+      "source_module": "source.synthetic",
+      "correlation_kind": "network_inferred",
+      "process": null,
+      "container": null,
+      "kubernetes": null,
+      "peer": {"address": "203.0.113.10", "port": 443, "domain": null, "workload": null, "container": null}
     }
   },
   {
@@ -136,6 +586,71 @@
   },
   {
     "schema_version": 1,
+    "kind": "extracted_trace_context_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "protocol": "http",
+      "timestamp_unix_nanos": 1000,
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": "00f067aa0ba902b7",
+      "parent_span_id": null,
+      "correlation_kind": "observed_trace_context",
+      "confidence": "high",
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "cgroup_id": null},
+      "container": null,
+      "kubernetes": null,
+      "peer": {"address": "203.0.113.10", "port": 443, "domain": "api.example.com", "workload": null, "container": null},
+      "attributes": []
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "request_span_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "name": "GET /checkout",
+      "protocol": "http",
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": "00f067aa0ba902b7",
+      "parent_span_id": null,
+      "start_unix_nanos": 1000,
+      "end_unix_nanos": 1200,
+      "duration_nanos": 200,
+      "correlation_kind": "protocol_observed",
+      "confidence": "high",
+      "service_name": "checkout",
+      "method": "GET",
+      "status_code": 200,
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "cgroup_id": null},
+      "container": null,
+      "kubernetes": null,
+      "peer": {"address": "203.0.113.10", "port": 443, "domain": "api.example.com", "workload": null, "container": null},
+      "attributes": []
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "request_correlation_warning",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "warning_type": "missing_request_context",
+      "message": "request observation is missing protocol context",
+      "timestamp_unix_nanos": 1200,
+      "source_signal_kind": "protocol_request_observation",
+      "source_module": "source.synthetic",
+      "correlation_kind": "protocol_observed",
+      "protocol": "http",
+      "process": null,
+      "container": null,
+      "kubernetes": null,
+      "peer": null
+    }
+  },
+  {
+    "schema_version": 1,
     "kind": "profile_sample_observation",
     "source": "golden",
     "host": "node-a",
@@ -154,6 +669,66 @@
       "thread_id": 7,
       "thread_name": "worker",
       "attributes": [{"key": "profiling.synthetic.fixture", "value": "golden"}]
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "profiling_stack_trace_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "timestamp_unix_nanos": 1300,
+      "profiling_kind": "cpu",
+      "correlation_kind": "observed_profile_sample",
+      "confidence": "high",
+      "stack_id": "stack:golden",
+      "stack_frames": [{"symbol": "checkout::handler", "module": "checkout", "file": null, "line": null}],
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "cgroup_id": null},
+      "container": null,
+      "kubernetes": null,
+      "attributes": []
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "profiling_session_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1300},
+      "profiling_kind": "cpu",
+      "correlation_kind": "observed_profile_sample",
+      "confidence": "high",
+      "profile_id": "profile:golden",
+      "observed_sample_count": 2,
+      "dropped_sample_count": 0,
+      "distinct_stack_count": 1,
+      "sampling_period_nanos": 10000000,
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "cgroup_id": null},
+      "container": null,
+      "kubernetes": null,
+      "source": "source.synthetic_profile",
+      "attributes": []
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "profiling_warning_observation",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "warning_type": "dropped_profile_samples",
+      "message": "profile samples were dropped by bounded aggregation",
+      "timestamp_unix_nanos": 1300,
+      "source_signal_kind": "profile_sample_observation",
+      "source_module": "source.synthetic_profile",
+      "profiling_kind": "cpu",
+      "correlation_kind": "observed_profile_sample",
+      "confidence": "medium",
+      "process": null,
+      "container": null,
+      "kubernetes": null,
+      "attributes": []
     }
   }
 ]

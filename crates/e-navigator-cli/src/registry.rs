@@ -185,10 +185,10 @@ mod tests {
 
         let registry = build_registry(&config, SourceMode::Synthetic, Some("node-a".to_string()));
 
-        assert_eq!(registry.sources.len(), 1);
-        assert_eq!(registry.processors.len(), 0);
-        assert_eq!(registry.generators.len(), 8);
-        assert_eq!(registry.sinks.len(), 1);
+        assert_eq!(registry.sources().len(), 1);
+        assert_eq!(registry.processors().len(), 0);
+        assert_eq!(registry.generators().len(), 8);
+        assert_eq!(registry.sinks().len(), 1);
 
         let names = generator_names(&registry);
         assert_eq!(
@@ -333,7 +333,7 @@ mod tests {
 
     fn source_names(registry: &ModuleRegistry) -> Vec<&'static str> {
         registry
-            .sources
+            .sources()
             .iter()
             .map(|source| source.metadata().name)
             .collect()
@@ -341,7 +341,7 @@ mod tests {
 
     fn generator_names(registry: &ModuleRegistry) -> Vec<String> {
         registry
-            .generators
+            .generators()
             .iter()
             .map(|generator| generator.metadata().name.to_string())
             .collect()

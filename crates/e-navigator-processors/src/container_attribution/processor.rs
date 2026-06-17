@@ -81,7 +81,9 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
         match &mut signal.payload {
             SignalPayload::Exec(event) => {
                 if event.container.is_none() {
-                    event.container = self.container_for_pid_or_cgroup(event.pid, event.cgroup_id);
+                    event.container = self
+                        .container_for_pid_or_cgroup_async(event.pid, event.cgroup_id)
+                        .await;
                 }
                 if event.kubernetes.is_none() {
                     event.kubernetes = event.container.as_ref().and_then(|container| {
@@ -91,7 +93,9 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
             }
             SignalPayload::ProcessExit(event) => {
                 if event.container.is_none() {
-                    event.container = self.container_for_pid_or_cgroup(event.pid, event.cgroup_id);
+                    event.container = self
+                        .container_for_pid_or_cgroup_async(event.pid, event.cgroup_id)
+                        .await;
                 }
                 if event.kubernetes.is_none() {
                     event.kubernetes = event.container.as_ref().and_then(|container| {
@@ -113,7 +117,8 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                     event.process.cgroup_id,
                     &mut event.container,
                     &mut event.kubernetes,
-                );
+                )
+                .await;
             }
             SignalPayload::NetworkConnectionClose(event) => {
                 self.enrich_context(
@@ -121,7 +126,8 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                     event.process.cgroup_id,
                     &mut event.container,
                     &mut event.kubernetes,
-                );
+                )
+                .await;
             }
             SignalPayload::NetworkConnectionFailure(event) => {
                 self.enrich_context(
@@ -129,7 +135,8 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                     event.process.cgroup_id,
                     &mut event.container,
                     &mut event.kubernetes,
-                );
+                )
+                .await;
             }
             SignalPayload::DnsQuery(event) => {
                 self.enrich_context(
@@ -137,7 +144,8 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                     event.process.cgroup_id,
                     &mut event.container,
                     &mut event.kubernetes,
-                );
+                )
+                .await;
             }
             SignalPayload::DnsResponse(event) => {
                 self.enrich_context(
@@ -145,7 +153,8 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                     event.process.cgroup_id,
                     &mut event.container,
                     &mut event.kubernetes,
-                );
+                )
+                .await;
             }
             SignalPayload::ProtocolRequestObservation(event) => {
                 self.enrich_existing_container_context(&mut event.container, &mut event.kubernetes);
@@ -201,19 +210,20 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                     None,
                     &mut event.process.container,
                     &mut event.process.kubernetes,
-                );
+                )
+                .await;
             }
             SignalPayload::CgroupCpuObservation(event) => {
-                self.enrich_cgroup_context(&mut event.cgroup);
+                self.enrich_cgroup_context(&mut event.cgroup).await;
             }
             SignalPayload::CgroupMemoryObservation(event) => {
-                self.enrich_cgroup_context(&mut event.cgroup);
+                self.enrich_cgroup_context(&mut event.cgroup).await;
             }
             SignalPayload::CgroupPidsObservation(event) => {
-                self.enrich_cgroup_context(&mut event.cgroup);
+                self.enrich_cgroup_context(&mut event.cgroup).await;
             }
             SignalPayload::CgroupFileDescriptorObservation(event) => {
-                self.enrich_cgroup_context(&mut event.cgroup);
+                self.enrich_cgroup_context(&mut event.cgroup).await;
             }
             SignalPayload::ServiceInteractionSpanObservation(event) => {
                 self.enrich_dependency_endpoint(&mut event.source);
@@ -236,7 +246,7 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
 }
 
 impl ContainerAttributionProcessor {
-    fn enrich_context(
+    async fn enrich_context(
         &self,
         pid: u32,
         cgroup_id: Option<u64>,
@@ -244,7 +254,7 @@ impl ContainerAttributionProcessor {
         kubernetes: &mut Option<KubernetesContext>,
     ) {
         if container.is_none() {
-            *container = self.container_for_pid_or_cgroup(pid, cgroup_id);
+            *container = self.container_for_pid_or_cgroup_async(pid, cgroup_id).await;
         }
         if kubernetes.is_none() {
             *kubernetes = container.as_ref().and_then(|container| {
@@ -294,32 +304,18 @@ impl ContainerAttributionProcessor {
         }
     }
 
-    fn enrich_cgroup_context(&self, cgroup: &mut e_navigator_signals::CgroupResourceContext) {
+    async fn enrich_cgroup_context(&self, cgroup: &mut e_navigator_signals::CgroupResourceContext) {
         if cgroup.container.is_none() {
             cgroup.container = parse_container_from_cgroup(&cgroup.cgroup_path);
         }
         self.cgroup_id_cache
-            .cache_cgroup_context(&self.config.cgroup_root, cgroup);
+            .cache_cgroup_context_async(&self.config.cgroup_root, cgroup)
+            .await;
         if cgroup.kubernetes.is_none() {
             cgroup.kubernetes = cgroup.container.as_ref().and_then(|container| {
                 self.kubernetes_context_for_container(&container.container_id)
             });
         }
-    }
-
-    fn container_for_pid_or_cgroup(
-        &self,
-        pid: u32,
-        cgroup_id: Option<u64>,
-    ) -> Option<ContainerContext> {
-        self.pid_cache
-            .container_for_pid(&self.config.procfs_root, pid)
-            .or_else(|| {
-                cgroup_id.and_then(|cgroup_id| {
-                    self.cgroup_id_cache
-                        .container_for_cgroup_id(&self.config.cgroup_root, cgroup_id)
-                })
-            })
     }
 
     async fn container_for_pid_or_cgroup_async(
@@ -333,10 +329,14 @@ impl ContainerAttributionProcessor {
             .await
         {
             Some(container) => Some(container),
-            None => cgroup_id.and_then(|cgroup_id| {
-                self.cgroup_id_cache
-                    .container_for_cgroup_id(&self.config.cgroup_root, cgroup_id)
-            }),
+            None => match cgroup_id {
+                Some(cgroup_id) => {
+                    self.cgroup_id_cache
+                        .container_for_cgroup_id_async(&self.config.cgroup_root, cgroup_id)
+                        .await
+                }
+                None => None,
+            },
         }
     }
 

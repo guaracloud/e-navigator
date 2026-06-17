@@ -8,9 +8,34 @@ const RAW_ARG_LEN: usize = 64;
 #[cfg(any(target_os = "linux", test))]
 const RAW_ARG_BYTES: usize = RAW_MAX_ARGS * RAW_ARG_LEN;
 #[cfg(any(target_os = "linux", test))]
+const EXECUTABLE_LEN: usize = 256;
+#[cfg(any(target_os = "linux", test))]
 const PERF_BUFFER_PAGE_COUNT: usize = 64;
 #[cfg(any(target_os = "linux", test))]
 const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
+#[cfg(any(target_os = "linux", test))]
+const EXEC_EVENT_SOURCE_SYSCALL_ENTER: u32 = 1;
+#[cfg(any(target_os = "linux", test))]
+const EXEC_EVENT_SOURCE_SCHED_EXEC: u32 = 2;
+#[cfg(any(target_os = "linux", test))]
+const MAX_PENDING_EXEC_ATTEMPTS: usize = 4096;
+#[cfg(any(target_os = "linux", test))]
+const PENDING_EXEC_MAX_AGE_NANOS: u64 = 5_000_000_000;
+
+#[cfg(any(target_os = "linux", test))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawExecEvent {
+    pid: u32,
+    uid: u32,
+    argument_count: u32,
+    event_source: u32,
+    event_monotonic_nanos: u64,
+    cgroup_id: u64,
+    command: [u8; 16],
+    executable: [u8; EXECUTABLE_LEN],
+    arguments: [[u8; RAW_ARG_LEN]; RAW_MAX_ARGS],
+}
 
 #[cfg(any(target_os = "linux", test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,6 +100,131 @@ fn captured_arguments_from_raw(
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Default)]
+struct ExecEventNormalizer {
+    pending: std::collections::BTreeMap<u32, PendingExecAttempt>,
+    order: std::collections::VecDeque<u32>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl ExecEventNormalizer {
+    fn normalize(
+        &mut self,
+        raw: RawExecEvent,
+        host: Option<String>,
+        argv_capture: &ArgvCaptureConfig,
+        procfs_root: &std::path::Path,
+    ) -> Option<e_navigator_signals::SignalEnvelope> {
+        match raw.event_source {
+            EXEC_EVENT_SOURCE_SYSCALL_ENTER => {
+                self.store_pending(raw, argv_capture);
+                None
+            }
+            EXEC_EVENT_SOURCE_SCHED_EXEC => {
+                Some(self.success_signal(raw, host, argv_capture, procfs_root))
+            }
+            _ => None,
+        }
+    }
+
+    fn store_pending(&mut self, raw: RawExecEvent, argv_capture: &ArgvCaptureConfig) {
+        if !self.pending.contains_key(&raw.pid) {
+            self.order.push_back(raw.pid);
+        }
+        let captured =
+            captured_arguments_from_raw(&raw.arguments, raw.argument_count, argv_capture);
+        self.pending.insert(
+            raw.pid,
+            PendingExecAttempt {
+                event_monotonic_nanos: raw.event_monotonic_nanos,
+                executable: bytes_to_string(&raw.executable),
+                captured,
+            },
+        );
+        self.evict_overflow();
+    }
+
+    fn success_signal(
+        &mut self,
+        raw: RawExecEvent,
+        host: Option<String>,
+        argv_capture: &ArgvCaptureConfig,
+        procfs_root: &std::path::Path,
+    ) -> e_navigator_signals::SignalEnvelope {
+        let pending = self.take_fresh_pending(raw.pid, raw.event_monotonic_nanos);
+        raw_to_success_signal(raw, pending, host, argv_capture, procfs_root)
+    }
+
+    fn take_fresh_pending(
+        &mut self,
+        pid: u32,
+        success_monotonic_nanos: u64,
+    ) -> Option<PendingExecAttempt> {
+        let pending = self.pending.remove(&pid)?;
+        let age = success_monotonic_nanos.saturating_sub(pending.event_monotonic_nanos);
+        (age <= PENDING_EXEC_MAX_AGE_NANOS).then_some(pending)
+    }
+
+    fn evict_overflow(&mut self) {
+        while self.pending.len() > MAX_PENDING_EXEC_ATTEMPTS {
+            let Some(pid) = self.order.pop_front() else {
+                break;
+            };
+            self.pending.remove(&pid);
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingExecAttempt {
+    event_monotonic_nanos: u64,
+    executable: String,
+    captured: CapturedArguments,
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn raw_to_success_signal(
+    raw: RawExecEvent,
+    pending: Option<PendingExecAttempt>,
+    host: Option<String>,
+    argv_capture: &ArgvCaptureConfig,
+    procfs_root: &std::path::Path,
+) -> e_navigator_signals::SignalEnvelope {
+    let task_comm = bytes_to_string(&raw.command);
+    let sched_executable = bytes_to_string(&raw.executable);
+    let executable = pending
+        .as_ref()
+        .map(|pending| pending.executable.clone())
+        .filter(|executable| !executable.is_empty())
+        .or_else(|| (!sched_executable.is_empty()).then_some(sched_executable));
+    let arguments = pending
+        .map(|pending| pending.captured.arguments)
+        .unwrap_or_else(|| {
+            captured_arguments_from_raw(&raw.arguments, raw.argument_count, argv_capture).arguments
+        });
+    let command = executable.clone().unwrap_or(task_comm.clone());
+    let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
+
+    e_navigator_signals::SignalEnvelope::exec(
+        "source.aya_exec",
+        host,
+        e_navigator_signals::ExecEvent {
+            pid: raw.pid,
+            ppid: None,
+            uid: Some(raw.uid),
+            command,
+            executable,
+            arguments,
+            cgroup_id: (raw.cgroup_id != 0).then_some(raw.cgroup_id),
+            timestamp_unix_nanos: now_unix_nanos(),
+            container,
+            kubernetes: None,
+        },
+    )
+}
+
 #[cfg(target_os = "linux")]
 mod platform {
     use crate::diagnostics::{DiagnosticSampleDecision, SourceDiagnostics};
@@ -92,33 +242,18 @@ mod platform {
         ArgvCaptureConfig, CoreError, CoreResult, ModuleKind, ModuleMetadata, Source,
     };
     use e_navigator_signals::{
-        ContainerContext, ExecEvent, KubernetesContext, ProcessExitEvent, SignalEnvelope,
-        SignalPayload,
+        ContainerContext, KubernetesContext, ProcessExitEvent, SignalEnvelope, SignalPayload,
     };
     use std::{
         path::PathBuf,
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicBool, Ordering},
         },
     };
     use tokio::sync::mpsc;
     use tokio::task::JoinHandle;
     use tracing::{debug, info, warn};
-
-    const EXECUTABLE_LEN: usize = 256;
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct RawExecEvent {
-        pid: u32,
-        uid: u32,
-        argument_count: u32,
-        cgroup_id: u64,
-        command: [u8; 16],
-        executable: [u8; EXECUTABLE_LEN],
-        arguments: [[u8; super::RAW_ARG_LEN]; super::RAW_MAX_ARGS],
-    }
 
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -163,6 +298,7 @@ mod platform {
             let argv_capture = self.argv_capture.clone();
             let diagnostics = SourceDiagnostics::from_env();
             let telemetry = Arc::new(SourceTelemetry::new("source.aya_exec"));
+            let exec_normalizer = Arc::new(Mutex::new(super::ExecEventNormalizer::default()));
 
             let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
                 env!("OUT_DIR"),
@@ -307,6 +443,7 @@ mod platform {
                 let host = self.host.clone();
                 let argv_capture = argv_capture.clone();
                 let procfs_root = self.procfs_root.clone();
+                let exec_normalizer = exec_normalizer.clone();
                 let reader_shutdown = shutdown.clone();
                 let diagnostics = diagnostics.clone();
                 let telemetry = telemetry.clone();
@@ -328,6 +465,7 @@ mod platform {
                                         host.clone(),
                                         &argv_capture,
                                         &procfs_root,
+                                        &exec_normalizer,
                                     ) {
                                         telemetry.record_decoded_sample();
                                         let diagnostic_decision =
@@ -655,39 +793,17 @@ mod platform {
         host: Option<String>,
         argv_capture: &ArgvCaptureConfig,
         procfs_root: &std::path::Path,
+        exec_normalizer: &Mutex<super::ExecEventNormalizer>,
     ) -> Option<SignalEnvelope> {
         if bytes.len() < core::mem::size_of::<RawExecEvent>() {
             return None;
         }
 
         let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawExecEvent>()) };
-        let task_comm = super::bytes_to_string(&raw.command);
-        let executable = super::bytes_to_string(&raw.executable);
-        let captured =
-            super::captured_arguments_from_raw(&raw.arguments, raw.argument_count, argv_capture);
-        let command = if executable.is_empty() {
-            task_comm
-        } else {
-            executable.clone()
-        };
-        let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
-
-        Some(SignalEnvelope::exec(
-            "source.aya_exec",
-            host,
-            ExecEvent {
-                pid: raw.pid,
-                ppid: None,
-                uid: Some(raw.uid),
-                command,
-                executable: (!executable.is_empty()).then_some(executable),
-                arguments: captured.arguments,
-                cgroup_id: (raw.cgroup_id != 0).then_some(raw.cgroup_id),
-                timestamp_unix_nanos: super::now_unix_nanos(),
-                container,
-                kubernetes: None,
-            },
-        ))
+        exec_normalizer
+            .lock()
+            .ok()
+            .and_then(|mut normalizer| normalizer.normalize(raw, host, argv_capture, procfs_root))
     }
 
     #[derive(Clone)]
@@ -865,6 +981,104 @@ mod tests {
         assert!((10..=50).contains(&PERF_READER_POLL_INTERVAL_MS));
     }
 
+    #[test]
+    fn normalizer_emits_once_for_syscall_entry_and_sched_success() {
+        let mut normalizer = ExecEventNormalizer::default();
+        let config = ArgvCaptureConfig {
+            enabled: true,
+            max_args: 8,
+            max_bytes: 512,
+        };
+        let procfs_root = std::path::Path::new("/proc/does-not-exist-for-e-navigator-test");
+        let entry = raw_exec_event(
+            42,
+            EXEC_EVENT_SOURCE_SYSCALL_ENTER,
+            10,
+            "/bin/sh",
+            ["sh", "-c", "echo ok"],
+        );
+        let success = raw_exec_event(42, EXEC_EVENT_SOURCE_SCHED_EXEC, 20, "", []);
+
+        assert!(
+            normalizer
+                .normalize(entry, None, &config, procfs_root)
+                .is_none()
+        );
+        let signal = normalizer
+            .normalize(success, None, &config, procfs_root)
+            .expect("sched success emits normalized exec");
+
+        let e_navigator_signals::SignalPayload::Exec(event) = signal.payload else {
+            panic!("expected exec payload");
+        };
+        assert_eq!(event.pid, 42);
+        assert_eq!(event.executable.as_deref(), Some("/bin/sh"));
+        assert_eq!(event.arguments, vec!["sh", "-c", "echo ok"]);
+    }
+
+    #[test]
+    fn normalizer_does_not_emit_failed_exec_attempts() {
+        let mut normalizer = ExecEventNormalizer::default();
+        let config = ArgvCaptureConfig {
+            enabled: true,
+            max_args: 8,
+            max_bytes: 512,
+        };
+        let procfs_root = std::path::Path::new("/proc/does-not-exist-for-e-navigator-test");
+        let entry = raw_exec_event(
+            42,
+            EXEC_EVENT_SOURCE_SYSCALL_ENTER,
+            10,
+            "/missing/binary",
+            ["/missing/binary"],
+        );
+
+        assert!(
+            normalizer
+                .normalize(entry, None, &config, procfs_root)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn normalizer_discards_stale_pending_argv() {
+        let mut normalizer = ExecEventNormalizer::default();
+        let config = ArgvCaptureConfig {
+            enabled: true,
+            max_args: 8,
+            max_bytes: 512,
+        };
+        let procfs_root = std::path::Path::new("/proc/does-not-exist-for-e-navigator-test");
+        let entry = raw_exec_event(
+            42,
+            EXEC_EVENT_SOURCE_SYSCALL_ENTER,
+            10,
+            "/missing/binary",
+            ["--password=stale"],
+        );
+        let success = raw_exec_event(
+            42,
+            EXEC_EVENT_SOURCE_SCHED_EXEC,
+            10 + PENDING_EXEC_MAX_AGE_NANOS + 1,
+            "",
+            [],
+        );
+
+        assert!(
+            normalizer
+                .normalize(entry, None, &config, procfs_root)
+                .is_none()
+        );
+        let signal = normalizer
+            .normalize(success, None, &config, procfs_root)
+            .expect("sched success still emits without stale argv");
+
+        let e_navigator_signals::SignalPayload::Exec(event) = signal.payload else {
+            panic!("expected exec payload");
+        };
+        assert!(event.arguments.is_empty());
+    }
+
     fn raw_argument_slots<const N: usize>(values: [&str; N]) -> [[u8; RAW_ARG_LEN]; RAW_MAX_ARGS] {
         let mut slots = [[0_u8; RAW_ARG_LEN]; RAW_MAX_ARGS];
         for (slot, value) in slots.iter_mut().zip(values) {
@@ -873,5 +1087,38 @@ mod tests {
             slot[..copy_len].copy_from_slice(&bytes[..copy_len]);
         }
         slots
+    }
+
+    fn raw_exec_event<const N: usize>(
+        pid: u32,
+        event_source: u32,
+        event_monotonic_nanos: u64,
+        executable: &str,
+        arguments: [&str; N],
+    ) -> RawExecEvent {
+        let mut executable_bytes = [0_u8; EXECUTABLE_LEN];
+        let executable_raw = executable.as_bytes();
+        let executable_len = executable_raw.len().min(EXECUTABLE_LEN.saturating_sub(1));
+        executable_bytes[..executable_len].copy_from_slice(&executable_raw[..executable_len]);
+
+        RawExecEvent {
+            pid,
+            uid: 1000,
+            argument_count: arguments.len() as u32,
+            event_source,
+            event_monotonic_nanos,
+            cgroup_id: 0,
+            command: fixed_command("sh"),
+            executable: executable_bytes,
+            arguments: raw_argument_slots(arguments),
+        }
+    }
+
+    fn fixed_command(value: &str) -> [u8; 16] {
+        let mut command = [0_u8; 16];
+        let bytes = value.as_bytes();
+        let copy_len = bytes.len().min(command.len().saturating_sub(1));
+        command[..copy_len].copy_from_slice(&bytes[..copy_len]);
+        command
     }
 }

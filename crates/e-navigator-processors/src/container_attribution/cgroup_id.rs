@@ -4,10 +4,11 @@ use std::os::unix::fs::MetadataExt;
 use std::{
     collections::BTreeMap,
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Mutex,
     time::{Duration, Instant},
 };
+use tracing::warn;
 
 use super::cgroup::parse_container_from_cgroup;
 
@@ -21,7 +22,7 @@ pub(super) struct CgroupIdAttributionCache {
 }
 
 impl CgroupIdAttributionCache {
-    pub(super) fn container_for_cgroup_id(
+    pub(super) async fn container_for_cgroup_id_async(
         &self,
         cgroup_root: &Path,
         cgroup_id: u64,
@@ -30,18 +31,24 @@ impl CgroupIdAttributionCache {
             return Some(container);
         }
         if self.should_refresh_cgroup_cache() {
-            self.refresh_cgroup_id_cache(cgroup_root);
+            self.refresh_cgroup_id_cache_async(cgroup_root.to_path_buf())
+                .await;
         }
         self.cached_container_for_cgroup_id(cgroup_id)
     }
 
-    pub(super) fn cache_cgroup_context(&self, cgroup_root: &Path, cgroup: &CgroupResourceContext) {
+    pub(super) async fn cache_cgroup_context_async(
+        &self,
+        cgroup_root: &Path,
+        cgroup: &CgroupResourceContext,
+    ) {
         let Some(container) = cgroup.container.clone() else {
             return;
         };
         let path = cgroup_root.join(cgroup.cgroup_path.trim_start_matches('/'));
-        let Some(cgroup_id) = cgroup_path_id(&path) else {
-            return;
+        let cgroup_id = match cgroup_path_id_async(path).await {
+            Some(cgroup_id) => cgroup_id,
+            None => return,
         };
         if let Ok(mut cache) = self.cache.lock() {
             insert_bounded(&mut cache, cgroup_id, container);
@@ -69,13 +76,20 @@ impl CgroupIdAttributionCache {
         true
     }
 
-    fn refresh_cgroup_id_cache(&self, cgroup_root: &Path) {
-        let cache = scan_cgroup_id_cache(cgroup_root);
-        if cache.is_empty() {
-            return;
-        }
-        if let Ok(mut cgroup_cache) = self.cache.lock() {
-            *cgroup_cache = cache;
+    async fn refresh_cgroup_id_cache_async(&self, cgroup_root: PathBuf) {
+        match tokio::task::spawn_blocking(move || scan_cgroup_id_cache(&cgroup_root)).await {
+            Ok(cache) if cache.is_empty() => {}
+            Ok(cache) => {
+                if let Ok(mut cgroup_cache) = self.cache.lock() {
+                    *cgroup_cache = cache;
+                }
+            }
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "unable to join cgroup id attribution cache refresh task"
+                );
+            }
         }
     }
 }
@@ -141,8 +155,27 @@ pub(super) fn cgroup_path_id(path: &Path) -> Option<u64> {
     path.metadata().ok().map(|metadata| metadata.ino())
 }
 
+#[cfg(unix)]
+async fn cgroup_path_id_async(path: PathBuf) -> Option<u64> {
+    match tokio::task::spawn_blocking(move || cgroup_path_id(&path)).await {
+        Ok(cgroup_id) => cgroup_id,
+        Err(err) => {
+            warn!(
+                error = %err,
+                "unable to join cgroup id attribution metadata task"
+            );
+            None
+        }
+    }
+}
+
 #[cfg(not(unix))]
 pub(super) fn cgroup_path_id(_path: &Path) -> Option<u64> {
+    None
+}
+
+#[cfg(not(unix))]
+async fn cgroup_path_id_async(_path: PathBuf) -> Option<u64> {
     None
 }
 

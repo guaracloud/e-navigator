@@ -11,7 +11,8 @@ data:
     queue_capacity = 8192
 
     [argv_capture]
-    enabled = true
+    # Disabled by default because argv often contains credentials, tokens, or customer data.
+    enabled = false
     max_args = 8
     max_bytes = 512
 

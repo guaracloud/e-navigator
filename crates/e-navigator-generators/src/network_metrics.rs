@@ -7,12 +7,17 @@ use e_navigator_signals::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Mutex, MutexGuard},
+    sync::{
+        Mutex, MutexGuard,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use tokio::sync::mpsc;
+use tracing::warn;
 
 const DEFAULT_MAX_METRIC_KEYS: usize = 4096;
 const DEFAULT_MAX_ACTIVE_CONNECTIONS: usize = 8192;
+const NETWORK_SUPPRESSION_FIRST_WARNINGS: u64 = 3;
 
 #[derive(Debug)]
 pub struct NetworkMetricsGenerator {
@@ -23,6 +28,10 @@ pub struct NetworkMetricsGenerator {
     active_connections: Mutex<BTreeMap<ActiveConnectionKey, ActiveConnectionState>>,
     active_counts: Mutex<BTreeMap<ActiveGaugeKey, ActiveGaugeState>>,
     seen_events: Mutex<BTreeSet<EventFingerprint>>,
+    suppressed_counters: AtomicU64,
+    suppressed_durations: AtomicU64,
+    suppressed_active_connections: AtomicU64,
+    suppressed_active_gauges: AtomicU64,
 }
 
 impl Default for NetworkMetricsGenerator {
@@ -41,6 +50,20 @@ impl NetworkMetricsGenerator {
             active_connections: Mutex::new(BTreeMap::new()),
             active_counts: Mutex::new(BTreeMap::new()),
             seen_events: Mutex::new(BTreeSet::new()),
+            suppressed_counters: AtomicU64::new(0),
+            suppressed_durations: AtomicU64::new(0),
+            suppressed_active_connections: AtomicU64::new(0),
+            suppressed_active_gauges: AtomicU64::new(0),
+        }
+    }
+
+    #[cfg(test)]
+    fn suppression_counts(&self) -> NetworkSuppressionCounts {
+        NetworkSuppressionCounts {
+            counters: self.suppressed_counters.load(Ordering::Relaxed),
+            durations: self.suppressed_durations.load(Ordering::Relaxed),
+            active_connections: self.suppressed_active_connections.load(Ordering::Relaxed),
+            active_gauges: self.suppressed_active_gauges.load(Ordering::Relaxed),
         }
     }
 }
@@ -172,6 +195,8 @@ impl NetworkMetricsGenerator {
         }
 
         if counters.len() >= self.max_metric_keys {
+            let suppressed_total = self.suppressed_counters.fetch_add(1, Ordering::Relaxed) + 1;
+            warn_network_suppression("counter", self.max_metric_keys, suppressed_total);
             return Ok(None);
         }
 
@@ -211,6 +236,8 @@ impl NetworkMetricsGenerator {
         }
 
         if durations.len() >= self.max_metric_keys {
+            let suppressed_total = self.suppressed_durations.fetch_add(1, Ordering::Relaxed) + 1;
+            warn_network_suppression("duration", self.max_metric_keys, suppressed_total);
             return Ok(None);
         }
 
@@ -240,9 +267,19 @@ impl NetworkMetricsGenerator {
         };
         let gauge_key = ActiveGaugeKey::from_open(event);
         let mut active_connections = self.active_connections()?;
-        if active_connections.contains_key(&connection_key)
-            || active_connections.len() >= self.max_active_connections
-        {
+        if active_connections.contains_key(&connection_key) {
+            return Ok(None);
+        }
+        if active_connections.len() >= self.max_active_connections {
+            let suppressed_total = self
+                .suppressed_active_connections
+                .fetch_add(1, Ordering::Relaxed)
+                + 1;
+            warn_network_suppression(
+                "active_connection",
+                self.max_active_connections,
+                suppressed_total,
+            );
             return Ok(None);
         }
 
@@ -304,6 +341,11 @@ impl NetworkMetricsGenerator {
         }
 
         if active_counts.len() >= self.max_metric_keys {
+            let suppressed_total = self
+                .suppressed_active_gauges
+                .fetch_add(1, Ordering::Relaxed)
+                + 1;
+            warn_network_suppression("active_gauge", self.max_metric_keys, suppressed_total);
             return Ok(None);
         }
 
@@ -805,6 +847,34 @@ fn module_error<T>(err: std::sync::PoisonError<T>) -> CoreError {
     }
 }
 
+fn warn_network_suppression(
+    state_type: &'static str,
+    max_state_keys: usize,
+    suppressed_total: u64,
+) {
+    if should_warn_network_suppression(suppressed_total) {
+        warn!(
+            state_type,
+            max_state_keys,
+            suppressed_total,
+            "network metric state limit reached; suppressing new state keys"
+        );
+    }
+}
+
+fn should_warn_network_suppression(suppressed_total: u64) -> bool {
+    suppressed_total <= NETWORK_SUPPRESSION_FIRST_WARNINGS || suppressed_total.is_power_of_two()
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NetworkSuppressionCounts {
+    counters: u64,
+    durations: u64,
+    active_connections: u64,
+    active_gauges: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use e_navigator_core::Generator;
@@ -937,6 +1007,59 @@ mod tests {
             &second,
             "network.connection.open.count"
         ));
+        assert!(generator.suppression_counts().counters > 0);
+    }
+
+    #[tokio::test]
+    async fn bounded_duration_state_counts_suppression_after_limit() {
+        let generator = NetworkMetricsGenerator::with_limits(0, 8);
+
+        let outputs = observe(
+            &generator,
+            &network_close_signal("203.0.113.10", 443, 100, 700, Some(7)),
+        )
+        .await;
+
+        assert!(outputs.is_empty());
+        assert_eq!(generator.suppression_counts().durations, 1);
+    }
+
+    #[tokio::test]
+    async fn bounded_active_connection_state_counts_suppression_after_limit() {
+        let generator = NetworkMetricsGenerator::with_limits(8, 0);
+
+        let outputs = observe(
+            &generator,
+            &network_open_signal("203.0.113.10", 443, 100, Some(7)),
+        )
+        .await;
+
+        assert!(!gauge_metric_exists(&outputs, "network.connection.active"));
+        assert_eq!(generator.suppression_counts().active_connections, 1);
+    }
+
+    #[tokio::test]
+    async fn bounded_active_gauge_state_counts_suppression_after_limit() {
+        let generator = NetworkMetricsGenerator::with_limits(0, 8);
+
+        let outputs = observe(
+            &generator,
+            &network_open_signal("203.0.113.10", 443, 100, Some(7)),
+        )
+        .await;
+
+        assert!(outputs.is_empty());
+        assert_eq!(generator.suppression_counts().active_gauges, 1);
+    }
+
+    #[test]
+    fn network_suppression_warning_cadence_matches_dns_style() {
+        assert!(should_warn_network_suppression(1));
+        assert!(should_warn_network_suppression(2));
+        assert!(should_warn_network_suppression(3));
+        assert!(should_warn_network_suppression(4));
+        assert!(!should_warn_network_suppression(5));
+        assert!(should_warn_network_suppression(8));
     }
 
     #[tokio::test]
@@ -1034,6 +1157,16 @@ mod tests {
             matches!(
                 &signal.payload,
                 SignalPayload::NetworkCounterMetric(metric)
+                    if metric.metric_name == metric_name
+            )
+        })
+    }
+
+    fn gauge_metric_exists(metrics: &[SignalEnvelope], metric_name: &str) -> bool {
+        metrics.iter().any(|signal| {
+            matches!(
+                &signal.payload,
+                SignalPayload::NetworkGaugeMetric(metric)
                     if metric.metric_name == metric_name
             )
         })

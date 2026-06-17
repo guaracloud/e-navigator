@@ -23,6 +23,8 @@ const IPPROTO_TCP: u32 = 6;
 const NETWORK_EVENT_OPEN: u32 = 1;
 const NETWORK_EVENT_CLOSE: u32 = 2;
 const NETWORK_EVENT_FAILURE: u32 = 3;
+const EXEC_EVENT_SOURCE_SYSCALL_ENTER: u32 = 1;
+const EXEC_EVENT_SOURCE_SCHED_EXEC: u32 = 2;
 const CPU_PROFILE_MAX_FRAMES: usize = 4;
 
 #[repr(C)]
@@ -31,6 +33,8 @@ pub struct RawExecEvent {
     pub pid: u32,
     pub uid: u32,
     pub argument_count: u32,
+    pub event_source: u32,
+    pub event_monotonic_nanos: u64,
     pub cgroup_id: u64,
     pub command: [u8; 16],
     pub executable: [u8; EXECUTABLE_LEN],
@@ -230,6 +234,8 @@ fn try_tracepoint_exec_common(
     event.pid = (pid_tgid >> 32) as u32;
     event.uid = uid_gid as u32;
     event.argument_count = 0;
+    event.event_source = EXEC_EVENT_SOURCE_SYSCALL_ENTER;
+    event.event_monotonic_nanos = bpf_ktime_get_ns();
     event.cgroup_id = current_cgroup_id();
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     event.executable = [0; EXECUTABLE_LEN];
@@ -252,6 +258,8 @@ fn try_tracepoint_process_exec(ctx: TracePointContext) -> Result<u32, i64> {
     event.pid = (pid_tgid >> 32) as u32;
     event.uid = uid_gid as u32;
     event.argument_count = 0;
+    event.event_source = EXEC_EVENT_SOURCE_SCHED_EXEC;
+    event.event_monotonic_nanos = bpf_ktime_get_ns();
     event.cgroup_id = current_cgroup_id();
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     event.executable = [0; EXECUTABLE_LEN];

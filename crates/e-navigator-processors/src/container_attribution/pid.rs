@@ -18,29 +18,6 @@ pub(super) struct PidAttributionCache {
 }
 
 impl PidAttributionCache {
-    pub(super) fn container_for_pid(
-        &self,
-        procfs_root: &Path,
-        pid: u32,
-    ) -> Option<ContainerContext> {
-        if let Some(container) = self.cached_container_for_pid(pid) {
-            return Some(container);
-        }
-
-        let path = process_cgroup_path(procfs_root, pid);
-        let container = match read_bounded_to_string(&path, MAX_CGROUP_BYTES) {
-            Ok(contents) => parse_container_from_cgroup(&contents),
-            Err(err) => {
-                log_process_cgroup_read_error(pid, &path, &err);
-                None
-            }
-        };
-        if let Some(container) = &container {
-            self.store_cached_container_for_pid(pid, container.clone());
-        }
-        container
-    }
-
     pub(super) async fn container_for_pid_async(
         &self,
         procfs_root: &Path,

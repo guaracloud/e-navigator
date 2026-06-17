@@ -4,10 +4,10 @@ use std::fmt;
 
 #[derive(Default)]
 pub struct ModuleRegistry {
-    pub sources: Vec<Box<dyn Source<SignalEnvelope>>>,
-    pub processors: Vec<Box<dyn Processor<SignalEnvelope>>>,
-    pub generators: Vec<Box<dyn Generator<SignalEnvelope>>>,
-    pub sinks: Vec<Box<dyn Sink<SignalEnvelope>>>,
+    sources: Vec<Box<dyn Source<SignalEnvelope>>>,
+    processors: Vec<Box<dyn Processor<SignalEnvelope>>>,
+    generators: Vec<Box<dyn Generator<SignalEnvelope>>>,
+    sinks: Vec<Box<dyn Sink<SignalEnvelope>>>,
 }
 
 impl fmt::Debug for ModuleRegistry {
@@ -45,6 +45,28 @@ impl ModuleRegistry {
     pub fn with_sink(mut self, sink: Box<dyn Sink<SignalEnvelope>>) -> Self {
         self.sinks.push(sink);
         self
+    }
+
+    pub fn sources(&self) -> &[Box<dyn Source<SignalEnvelope>>] {
+        &self.sources
+    }
+
+    pub fn processors(&self) -> &[Box<dyn Processor<SignalEnvelope>>] {
+        &self.processors
+    }
+
+    pub fn generators(&self) -> &[Box<dyn Generator<SignalEnvelope>>] {
+        &self.generators
+    }
+
+    pub fn sinks(&self) -> &[Box<dyn Sink<SignalEnvelope>>] {
+        &self.sinks
+    }
+
+    pub(crate) fn drain_sources(
+        &mut self,
+    ) -> impl Iterator<Item = Box<dyn Source<SignalEnvelope>>> + '_ {
+        self.sources.drain(..)
     }
 
     pub fn module_count(&self) -> usize {

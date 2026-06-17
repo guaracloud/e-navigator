@@ -52,7 +52,7 @@ impl ArgvCaptureConfig {
 }
 
 fn default_argv_capture_enabled() -> bool {
-    true
+    false
 }
 
 fn default_argv_capture_max_args() -> usize {
