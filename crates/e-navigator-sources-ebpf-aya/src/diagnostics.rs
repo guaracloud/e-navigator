@@ -2,10 +2,6 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-};
 
 #[derive(Clone, Debug)]
 pub(crate) struct SourceDiagnostics {
@@ -179,7 +175,11 @@ impl SourceDiagnostics {
             return value.to_string();
         }
 
-        format!("<redacted len={} hash={}>", value.len(), short_hash(value))
+        format!(
+            "<redacted len={} hash={}>",
+            value.len(),
+            short_hash_bytes(value.as_bytes())
+        )
     }
 
     pub(crate) fn redact_optional_value(&self, value: Option<&str>) -> Option<String> {
@@ -191,7 +191,7 @@ impl SourceDiagnostics {
             if self.raw_values {
                 value.to_string()
             } else {
-                format!("<redacted hash={}>", short_hash(&value))
+                format!("<redacted hash={}>", short_hash_bytes(&value.to_le_bytes()))
             }
         })
     }
@@ -207,15 +207,19 @@ impl SourceDiagnostics {
     }
 }
 
-fn short_hash<T: Hash + ?Sized>(value: &T) -> String {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+fn short_hash_bytes(bytes: &[u8]) -> String {
+    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x00000100000001b3;
+
+    let hash = bytes.iter().fold(FNV_OFFSET_BASIS, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
+    });
+    format!("{hash:016x}")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SourceDiagnostics;
+    use super::{SourceDiagnostics, short_hash_bytes};
 
     #[test]
     fn diagnostics_are_disabled_by_default() {
@@ -316,6 +320,24 @@ mod tests {
             Some("pod-uid")
         );
         assert_eq!(diagnostics.redact_values(["--password=secret"]).len(), 1);
+    }
+
+    #[test]
+    fn diagnostic_redaction_uses_stable_hashes() {
+        let diagnostics = SourceDiagnostics::from_values(Some("1"), Some("2"), None, None, None);
+
+        assert_eq!(
+            short_hash_bytes(b"curl https://token@example.invalid"),
+            "5ee866e75c0426f0"
+        );
+        assert_eq!(
+            diagnostics.redact_value("curl https://token@example.invalid"),
+            "<redacted len=34 hash=5ee866e75c0426f0>"
+        );
+        assert_eq!(
+            diagnostics.redact_optional_u64(Some(42)).as_deref(),
+            Some("<redacted hash=ff3add6b3789daef>")
+        );
     }
 
     #[test]

@@ -17,6 +17,7 @@ use tracing::warn;
 
 const DEFAULT_MAX_DOMAINS: usize = 1024;
 const DEFAULT_MAX_DNS_STATE_KEYS: usize = 4096;
+const DNS_SUPPRESSION_FIRST_WARNINGS: u64 = 3;
 
 #[derive(Debug)]
 pub struct DnsMetricsGenerator {
@@ -201,11 +202,8 @@ impl DnsMetricsGenerator {
         };
         let signal = state.to_signal(host);
         if counters.len() >= self.max_counters {
-            self.suppressed_counters.fetch_add(1, Ordering::Relaxed);
-            warn!(
-                max_counters = self.max_counters,
-                "dns counter state limit reached; suppressing new counter key"
-            );
+            let suppressed_total = self.suppressed_counters.fetch_add(1, Ordering::Relaxed) + 1;
+            warn_dns_suppression("counter", self.max_counters, suppressed_total);
             return Ok(None);
         }
         counters.insert(key, state);
@@ -244,11 +242,8 @@ impl DnsMetricsGenerator {
         };
         let signal = state.to_signal(host);
         if latencies.len() >= self.max_latencies {
-            self.suppressed_latencies.fetch_add(1, Ordering::Relaxed);
-            warn!(
-                max_latencies = self.max_latencies,
-                "dns latency state limit reached; suppressing new latency key"
-            );
+            let suppressed_total = self.suppressed_latencies.fetch_add(1, Ordering::Relaxed) + 1;
+            warn_dns_suppression("latency", self.max_latencies, suppressed_total);
             return Ok(None);
         }
         latencies.insert(key, state);
@@ -294,11 +289,8 @@ impl DnsMetricsGenerator {
         };
         let signal = state.to_signal(host);
         if edges.len() >= self.max_edges {
-            self.suppressed_edges.fetch_add(1, Ordering::Relaxed);
-            warn!(
-                max_edges = self.max_edges,
-                "dns dependency edge state limit reached; suppressing new edge key"
-            );
+            let suppressed_total = self.suppressed_edges.fetch_add(1, Ordering::Relaxed) + 1;
+            warn_dns_suppression("dependency_edge", self.max_edges, suppressed_total);
             return Ok(None);
         }
         edges.insert(key, state);
@@ -341,6 +333,21 @@ impl DnsMetricsGenerator {
     fn seen_events(&self) -> CoreResult<MutexGuard<'_, BTreeSet<EventFingerprint>>> {
         self.seen_events.lock().map_err(module_error)
     }
+}
+
+fn warn_dns_suppression(state_type: &'static str, max_state_keys: usize, suppressed_total: u64) {
+    if should_warn_dns_suppression(suppressed_total) {
+        warn!(
+            state_type,
+            max_state_keys,
+            suppressed_total,
+            "dns metric state limit reached; suppressing new state keys"
+        );
+    }
+}
+
+fn should_warn_dns_suppression(suppressed_total: u64) -> bool {
+    suppressed_total <= DNS_SUPPRESSION_FIRST_WARNINGS || suppressed_total.is_power_of_two()
 }
 
 #[cfg(test)]
@@ -882,6 +889,15 @@ mod tests {
         assert_eq!(dependency_edge(&repeat_outputs).observations, 2);
         assert_eq!(generator.suppression_counts().latencies, 1);
         assert_eq!(generator.suppression_counts().edges, 1);
+    }
+
+    #[test]
+    fn dns_suppression_warnings_are_bounded() {
+        let warned: Vec<u64> = (1..=16)
+            .filter(|suppressed_total| should_warn_dns_suppression(*suppressed_total))
+            .collect();
+
+        assert_eq!(warned, vec![1, 2, 3, 4, 8, 16]);
     }
 
     async fn observe(

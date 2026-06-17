@@ -163,8 +163,16 @@ impl KubernetesAttribution {
                     let cache_entries = new_cache.len();
                     let requested_container_found =
                         new_cache.contains_container(&requested_container_id);
-                    if let Ok(mut kubernetes_cache) = cache.lock() {
-                        *kubernetes_cache = new_cache;
+                    if let Err(err) = install_refreshed_cache(cache.as_ref(), new_cache) {
+                        diagnostics.refresh_failures.fetch_add(1, Ordering::Relaxed);
+                        record_refresh_state(last_refresh.as_ref(), false, false);
+                        warn!(
+                            error = err,
+                            cache_entries,
+                            requested_container_found,
+                            "kubernetes metadata cache refresh failed to install"
+                        );
+                        return;
                     }
                     record_refresh_state(last_refresh.as_ref(), requested_container_found, true);
                     diagnostics
@@ -183,6 +191,17 @@ impl KubernetesAttribution {
             }
         });
     }
+}
+
+fn install_refreshed_cache(
+    cache: &Mutex<KubernetesMetadataCache>,
+    new_cache: KubernetesMetadataCache,
+) -> Result<(), &'static str> {
+    let Ok(mut kubernetes_cache) = cache.lock() else {
+        return Err("kubernetes metadata cache lock poisoned");
+    };
+    *kubernetes_cache = new_cache;
+    Ok(())
 }
 
 fn record_refresh_state(
@@ -699,5 +718,69 @@ mod tests {
 
         assert!(err.contains("above max_response_bytes=4"));
         handle.join().expect("server exits");
+    }
+
+    #[test]
+    fn failed_cache_install_preserves_existing_cache() {
+        let cache = Mutex::new(KubernetesMetadataCache::from_contexts([(
+            "old-container".to_string(),
+            kubernetes_context("old-pod"),
+        )]));
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = cache.lock().expect("cache lock acquired");
+            panic!("poison cache mutex");
+        });
+
+        let err = install_refreshed_cache(
+            &cache,
+            KubernetesMetadataCache::from_contexts([(
+                "new-container".to_string(),
+                kubernetes_context("new-pod"),
+            )]),
+        )
+        .expect_err("poisoned cache install fails");
+
+        assert_eq!(err, "kubernetes metadata cache lock poisoned");
+        let poisoned = cache.lock().expect_err("cache remains poisoned");
+        assert!(poisoned.get_ref().contains_container("old-container"));
+        assert!(!poisoned.get_ref().contains_container("new-container"));
+    }
+
+    #[test]
+    fn failed_refresh_state_allows_retry_and_preserves_last_success() {
+        let last_refresh = Mutex::new(Some(KubernetesRefreshState {
+            refreshed_at: Instant::now(),
+            requested_container_found: true,
+            immediate_retry_available: false,
+            in_progress: false,
+            last_success_at: Some(Instant::now()),
+        }));
+        let previous_success = last_refresh
+            .lock()
+            .expect("state lock acquired")
+            .expect("state exists")
+            .last_success_at;
+
+        record_refresh_state(&last_refresh, false, false);
+
+        let state = last_refresh
+            .lock()
+            .expect("state lock acquired")
+            .expect("state exists");
+        assert!(!state.in_progress);
+        assert!(!state.requested_container_found);
+        assert!(state.immediate_retry_available);
+        assert_eq!(state.last_success_at, previous_success);
+    }
+
+    fn kubernetes_context(pod_name: &str) -> KubernetesContext {
+        KubernetesContext {
+            namespace: "default".to_string(),
+            pod_name: pod_name.to_string(),
+            pod_uid: Some(format!("uid-{pod_name}")),
+            container_name: Some("app".to_string()),
+            node_name: Some("node-a".to_string()),
+            labels: BTreeMap::new(),
+        }
     }
 }
