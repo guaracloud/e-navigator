@@ -16,6 +16,10 @@ pub(crate) const RAW_AF_INET: u32 = 2;
 pub(crate) const RAW_AF_INET6: u32 = 10;
 #[cfg(any(target_os = "linux", test))]
 pub(crate) const RAW_PROTO_TCP: u32 = 6;
+#[cfg(any(target_os = "linux", test))]
+const PERF_BUFFER_PAGE_COUNT: usize = 64;
+#[cfg(any(target_os = "linux", test))]
+const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
 
 #[cfg(any(target_os = "linux", test))]
 #[repr(C)]
@@ -24,6 +28,7 @@ pub(crate) struct RawNetworkEvent {
     pub event_type: u32,
     pub pid: u32,
     pub uid: u32,
+    pub cgroup_id: u64,
     pub fd: i32,
     pub errno: i32,
     pub family: u32,
@@ -39,17 +44,26 @@ pub(crate) struct RawNetworkEvent {
     pub command: [u8; 16],
 }
 
-#[cfg(any(target_os = "linux", test))]
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn raw_network_to_signal(bytes: &[u8], host: Option<String>) -> Option<SignalEnvelope> {
-    raw_network_to_signal_with_clock(bytes, host, now_unix_nanos())
-}
-
-#[cfg(any(target_os = "linux", test))]
+#[cfg(test)]
 fn raw_network_to_signal_with_clock(
     bytes: &[u8],
     host: Option<String>,
     observed_unix_nanos: u64,
+) -> Option<SignalEnvelope> {
+    raw_network_to_signal_with_clock_and_procfs(
+        bytes,
+        host,
+        observed_unix_nanos,
+        std::path::Path::new("/proc"),
+    )
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn raw_network_to_signal_with_clock_and_procfs(
+    bytes: &[u8],
+    host: Option<String>,
+    observed_unix_nanos: u64,
+    procfs_root: &std::path::Path,
 ) -> Option<SignalEnvelope> {
     if bytes.len() < core::mem::size_of::<RawNetworkEvent>() {
         return None;
@@ -62,6 +76,7 @@ fn raw_network_to_signal_with_clock(
         uid: Some(raw.uid),
         command: bytes_to_string(&raw.command),
         executable: None,
+        cgroup_id: (raw.cgroup_id != 0).then_some(raw.cgroup_id),
     };
     let protocol = protocol(raw.protocol)?;
     let address_family = address_family(raw.family)?;
@@ -70,6 +85,7 @@ fn raw_network_to_signal_with_clock(
     let remote_port = u16::from_be(raw.remote_port_be);
     let local_port = u16::from_be(raw.local_port_be);
     let fd = (raw.fd >= 0).then_some(raw.fd);
+    let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
 
     match raw.event_type {
         RAW_NETWORK_EVENT_OPEN => Some(SignalEnvelope::network_connection_open(
@@ -85,7 +101,7 @@ fn raw_network_to_signal_with_clock(
                 remote_port,
                 fd,
                 timestamp_unix_nanos: observed_unix_nanos,
-                container: None,
+                container: container.clone(),
                 kubernetes: None,
             },
         )),
@@ -106,7 +122,7 @@ fn raw_network_to_signal_with_clock(
                     .filter(|_| raw.duration_nanos != 0),
                 closed_at_unix_nanos: observed_unix_nanos,
                 duration_nanos: (raw.duration_nanos != 0).then_some(raw.duration_nanos),
-                container: None,
+                container: container.clone(),
                 kubernetes: None,
             },
         )),
@@ -122,7 +138,7 @@ fn raw_network_to_signal_with_clock(
                 fd,
                 errno: raw.errno,
                 timestamp_unix_nanos: observed_unix_nanos,
-                container: None,
+                container,
                 kubernetes: None,
             },
         )),
@@ -200,6 +216,9 @@ fn now_unix_nanos() -> u64 {
 
 #[cfg(target_os = "linux")]
 mod platform {
+    use crate::diagnostics::{DiagnosticSampleDecision, SourceDiagnostics};
+    use crate::perf_sample::perf_sample_bytes;
+    use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
         Ebpf, include_bytes_aligned,
@@ -208,22 +227,26 @@ mod platform {
         util::online_cpus,
     };
     use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Source};
-    use e_navigator_signals::SignalEnvelope;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+    use e_navigator_signals::{ContainerContext, KubernetesContext, SignalEnvelope, SignalPayload};
+    use std::{
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
     };
     use tokio::{sync::mpsc, task::JoinHandle};
-    use tracing::{debug, warn};
+    use tracing::{debug, info, warn};
 
     #[derive(Debug, Default)]
     pub struct AyaNetworkSource {
         host: Option<String>,
+        procfs_root: PathBuf,
     }
 
     impl AyaNetworkSource {
-        pub fn new(host: Option<String>) -> Self {
-            Self { host }
+        pub fn new(host: Option<String>, procfs_root: PathBuf) -> Self {
+            Self { host, procfs_root }
         }
     }
 
@@ -237,6 +260,8 @@ mod platform {
             bump_memlock_rlimit();
             let shutdown = ReaderShutdown::new();
             let mut reader_handles = Vec::new();
+            let diagnostics = SourceDiagnostics::from_env();
+            let telemetry = Arc::new(SourceTelemetry::new("source.aya_network"));
             let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
                 env!("OUT_DIR"),
                 "/e-navigator-ebpf-programs"
@@ -273,10 +298,15 @@ mod platform {
 
             let cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
             for cpu_id in cpus {
-                let mut buffer = perf_array.open(cpu_id, None).map_err(module_error)?;
+                let mut buffer = perf_array
+                    .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
+                    .map_err(module_error)?;
                 let cpu_tx = tx.clone();
                 let host = self.host.clone();
+                let procfs_root = self.procfs_root.clone();
                 let reader_shutdown = shutdown.clone();
+                let diagnostics = diagnostics.clone();
+                let telemetry = telemetry.clone();
 
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     let mut closed = false;
@@ -289,39 +319,267 @@ mod platform {
 
                             match event {
                                 PerfEvent::Sample { head, tail } => {
-                                    if !tail.is_empty() {
-                                        warn!("dropped wrapped network perf event sample");
-                                        return;
-                                    }
-
+                                    let bytes = perf_sample_bytes(head, tail);
                                     if let Some(signal) =
-                                        super::raw_network_to_signal(head, host.clone())
+                                        super::raw_network_to_signal_with_clock_and_procfs(
+                                            bytes.as_ref(),
+                                            host.clone(),
+                                            super::now_unix_nanos(),
+                                            &procfs_root,
+                                        )
                                     {
+                                        telemetry.record_decoded_sample();
+                                        let diagnostic_decision =
+                                            log_signal_diagnostic(&diagnostics, &signal);
+                                        telemetry.record_diagnostic_decision(diagnostic_decision);
                                         if cpu_tx.blocking_send(signal).is_err() {
+                                            telemetry.record_send_failure();
                                             closed = true;
+                                        } else {
+                                            telemetry.record_sent_signal();
                                         }
+                                    } else {
+                                        telemetry.record_invalid_sample();
                                     }
                                 }
                                 PerfEvent::Lost { count } => {
+                                    telemetry.record_lost_perf_events(count);
                                     warn!(count, "lost network perf events");
                                 }
                             }
+                            telemetry.maybe_log_summary();
                         });
 
                         if closed {
                             return;
                         }
 
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            super::PERF_READER_POLL_INTERVAL_MS,
+                        ));
                     }
                 }));
             }
 
+            if diagnostics.enabled() {
+                info!(
+                    source = "source.aya_network",
+                    remaining_samples = diagnostics.remaining_samples(),
+                    filtered_preview_remaining_samples =
+                        diagnostics.remaining_filtered_preview_samples(),
+                    "source diagnostics enabled"
+                );
+            }
             debug!("aya network source attached");
             tokio::signal::ctrl_c().await.map_err(module_error)?;
             shutdown.stop();
             join_reader_handles(reader_handles).await
         }
+    }
+
+    fn log_signal_diagnostic(
+        diagnostics: &SourceDiagnostics,
+        signal: &SignalEnvelope,
+    ) -> DiagnosticSampleDecision {
+        match &signal.payload {
+            SignalPayload::NetworkConnectionOpen(event) => {
+                let remote_address = event.remote_address.to_string();
+                let filter_values = [event.process.command.as_str(), remote_address.as_str()];
+                let decision = diagnostics.sample_decision_for(&filter_values);
+                if decision != DiagnosticSampleDecision::Matched {
+                    if decision == DiagnosticSampleDecision::Filtered
+                        && diagnostics.try_acquire_filtered_preview()
+                    {
+                        info!(
+                            target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                            source = "source.aya_network",
+                            raw_event = "network_connection_open",
+                            diagnostic_decision = "filtered",
+                            filter_values = ?filter_values,
+                            pid = event.process.pid,
+                            uid = ?event.process.uid,
+                            command = %event.process.command,
+                            cgroup_id = ?event.process.cgroup_id,
+                            remote_address = %event.remote_address,
+                            remote_port = event.remote_port,
+                            container_id = ?container_id(&event.container),
+                            container_runtime = ?container_runtime(&event.container),
+                            kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
+                            kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
+                            kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
+                            kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                            "source diagnostic raw event filtered"
+                        );
+                    }
+                    return decision;
+                }
+
+                info!(
+                    target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                    source = "source.aya_network",
+                    raw_event = "network_connection_open",
+                    pid = event.process.pid,
+                    uid = ?event.process.uid,
+                    command = %event.process.command,
+                    cgroup_id = ?event.process.cgroup_id,
+                    remote_address = %event.remote_address,
+                    remote_port = event.remote_port,
+                    container_id = ?container_id(&event.container),
+                    container_runtime = ?container_runtime(&event.container),
+                    kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
+                    kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
+                    kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
+                    kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                    "source diagnostic raw event decoded"
+                );
+                DiagnosticSampleDecision::Matched
+            }
+            SignalPayload::NetworkConnectionClose(event) => {
+                let remote_address = event.remote_address.to_string();
+                let filter_values = [event.process.command.as_str(), remote_address.as_str()];
+                let decision = diagnostics.sample_decision_for(&filter_values);
+                if decision != DiagnosticSampleDecision::Matched {
+                    if decision == DiagnosticSampleDecision::Filtered
+                        && diagnostics.try_acquire_filtered_preview()
+                    {
+                        info!(
+                            target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                            source = "source.aya_network",
+                            raw_event = "network_connection_close",
+                            diagnostic_decision = "filtered",
+                            filter_values = ?filter_values,
+                            pid = event.process.pid,
+                            uid = ?event.process.uid,
+                            command = %event.process.command,
+                            cgroup_id = ?event.process.cgroup_id,
+                            remote_address = %event.remote_address,
+                            remote_port = event.remote_port,
+                            duration_nanos = ?event.duration_nanos,
+                            container_id = ?container_id(&event.container),
+                            container_runtime = ?container_runtime(&event.container),
+                            kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
+                            kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
+                            kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
+                            kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                            "source diagnostic raw event filtered"
+                        );
+                    }
+                    return decision;
+                }
+
+                info!(
+                    target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                    source = "source.aya_network",
+                    raw_event = "network_connection_close",
+                    pid = event.process.pid,
+                    uid = ?event.process.uid,
+                    command = %event.process.command,
+                    cgroup_id = ?event.process.cgroup_id,
+                    remote_address = %event.remote_address,
+                    remote_port = event.remote_port,
+                    duration_nanos = ?event.duration_nanos,
+                    container_id = ?container_id(&event.container),
+                    container_runtime = ?container_runtime(&event.container),
+                    kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
+                    kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
+                    kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
+                    kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                    "source diagnostic raw event decoded"
+                );
+                DiagnosticSampleDecision::Matched
+            }
+            SignalPayload::NetworkConnectionFailure(event) => {
+                let remote_address = event.remote_address.to_string();
+                let filter_values = [event.process.command.as_str(), remote_address.as_str()];
+                let decision = diagnostics.sample_decision_for(&filter_values);
+                if decision != DiagnosticSampleDecision::Matched {
+                    if decision == DiagnosticSampleDecision::Filtered
+                        && diagnostics.try_acquire_filtered_preview()
+                    {
+                        info!(
+                            target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                            source = "source.aya_network",
+                            raw_event = "network_connection_failure",
+                            diagnostic_decision = "filtered",
+                            filter_values = ?filter_values,
+                            pid = event.process.pid,
+                            uid = ?event.process.uid,
+                            command = %event.process.command,
+                            cgroup_id = ?event.process.cgroup_id,
+                            remote_address = %event.remote_address,
+                            remote_port = event.remote_port,
+                            errno = event.errno,
+                            container_id = ?container_id(&event.container),
+                            container_runtime = ?container_runtime(&event.container),
+                            kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
+                            kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
+                            kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
+                            kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                            "source diagnostic raw event filtered"
+                        );
+                    }
+                    return decision;
+                }
+
+                info!(
+                    target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                    source = "source.aya_network",
+                    raw_event = "network_connection_failure",
+                    pid = event.process.pid,
+                    uid = ?event.process.uid,
+                    command = %event.process.command,
+                    cgroup_id = ?event.process.cgroup_id,
+                    remote_address = %event.remote_address,
+                    remote_port = event.remote_port,
+                    errno = event.errno,
+                    container_id = ?container_id(&event.container),
+                    container_runtime = ?container_runtime(&event.container),
+                    kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
+                    kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
+                    kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
+                    kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                    "source diagnostic raw event decoded"
+                );
+                DiagnosticSampleDecision::Matched
+            }
+            _ => DiagnosticSampleDecision::Disabled,
+        }
+    }
+
+    fn container_id(container: &Option<ContainerContext>) -> Option<&str> {
+        container
+            .as_ref()
+            .map(|container| container.container_id.as_str())
+    }
+
+    fn container_runtime(container: &Option<ContainerContext>) -> Option<&str> {
+        container
+            .as_ref()
+            .and_then(|container| container.runtime.as_deref())
+    }
+
+    fn kubernetes_namespace(kubernetes: &Option<KubernetesContext>) -> Option<&str> {
+        kubernetes
+            .as_ref()
+            .map(|kubernetes| kubernetes.namespace.as_str())
+    }
+
+    fn kubernetes_pod_name(kubernetes: &Option<KubernetesContext>) -> Option<&str> {
+        kubernetes
+            .as_ref()
+            .map(|kubernetes| kubernetes.pod_name.as_str())
+    }
+
+    fn kubernetes_pod_uid(kubernetes: &Option<KubernetesContext>) -> Option<&str> {
+        kubernetes
+            .as_ref()
+            .and_then(|kubernetes| kubernetes.pod_uid.as_deref())
+    }
+
+    fn kubernetes_container_name(kubernetes: &Option<KubernetesContext>) -> Option<&str> {
+        kubernetes
+            .as_ref()
+            .and_then(|kubernetes| kubernetes.container_name.as_deref())
     }
 
     fn attach_tracepoint(
@@ -407,11 +665,15 @@ mod platform {
     #[derive(Debug, Default)]
     pub struct AyaNetworkSource {
         host: Option<String>,
+        _procfs_root: std::path::PathBuf,
     }
 
     impl AyaNetworkSource {
-        pub fn new(host: Option<String>) -> Self {
-            Self { host }
+        pub fn new(host: Option<String>, procfs_root: std::path::PathBuf) -> Self {
+            Self {
+                host,
+                _procfs_root: procfs_root,
+            }
         }
     }
 
@@ -447,6 +709,7 @@ mod tests {
             event_type: RAW_NETWORK_EVENT_OPEN,
             pid: 42,
             uid: 1000,
+            cgroup_id: 7,
             fd: 7,
             errno: 0,
             family: RAW_AF_INET,
@@ -472,6 +735,7 @@ mod tests {
         };
         assert_eq!(event.process.pid, 42);
         assert_eq!(event.process.uid, Some(1000));
+        assert_eq!(event.process.cgroup_id, Some(7));
         assert_eq!(event.process.command, "api");
         assert_eq!(event.protocol, NetworkProtocol::Tcp);
         assert_eq!(event.address_family, NetworkAddressFamily::Ipv4);
@@ -489,6 +753,7 @@ mod tests {
             event_type: RAW_NETWORK_EVENT_OPEN,
             pid: 42,
             uid: 1000,
+            cgroup_id: 0,
             fd: 7,
             errno: 0,
             family: RAW_AF_INET,
@@ -521,6 +786,7 @@ mod tests {
             event_type: RAW_NETWORK_EVENT_CLOSE,
             pid: 42,
             uid: 1000,
+            cgroup_id: 0,
             fd: 7,
             errno: 0,
             family: RAW_AF_INET,
@@ -557,6 +823,7 @@ mod tests {
             event_type: RAW_NETWORK_EVENT_FAILURE,
             pid: 42,
             uid: 1000,
+            cgroup_id: 0,
             fd: 7,
             errno: 111,
             family: RAW_AF_INET,
@@ -592,6 +859,7 @@ mod tests {
             event_type: RAW_NETWORK_EVENT_CLOSE,
             pid: 42,
             uid: 1000,
+            cgroup_id: 0,
             fd: 7,
             errno: 0,
             family: RAW_AF_INET,
@@ -629,6 +897,7 @@ mod tests {
             event_type: RAW_NETWORK_EVENT_OPEN,
             pid: 42,
             uid: 1000,
+            cgroup_id: 0,
             fd: 7,
             errno: 0,
             family: RAW_AF_INET,
@@ -656,7 +925,13 @@ mod tests {
 
     #[test]
     fn raw_network_event_layout_size_matches_ebpf_abi() {
-        assert_eq!(std::mem::size_of::<RawNetworkEvent>(), 104);
+        assert_eq!(std::mem::size_of::<RawNetworkEvent>(), 120);
+    }
+
+    #[test]
+    fn perf_reader_settings_are_bounded_for_short_bursts() {
+        assert!((16..=128).contains(&PERF_BUFFER_PAGE_COUNT));
+        assert!((10..=50).contains(&PERF_READER_POLL_INTERVAL_MS));
     }
 
     fn fixed_command(value: &str) -> [u8; 16] {

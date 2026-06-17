@@ -16,8 +16,6 @@ The strict gate requires `cargo-deny`, `cargo-audit`, and `cargo-machete`. In co
 E_NAVIGATOR_SKIP_SUPPLY_CHAIN=1 scripts/quality.sh
 ```
 
-Docker and Kubernetes dry-runs are part of the default local gate. They may be skipped only when the local machine cannot run them:
-
 ```bash
 E_NAVIGATOR_SKIP_DOCKER=1 E_NAVIGATOR_SKIP_KUBERNETES=1 scripts/quality.sh
 ```
@@ -33,10 +31,6 @@ cargo run --locked -p e-navigator-cli -- --source synthetic
 docker build -f Containerfile -t e-navigator:local .
 docker run --rm e-navigator:local --source synthetic
 tests/smoke_docker.sh e-navigator:local
-kubectl apply --dry-run=client -f deploy/kubernetes/namespace.yaml
-kubectl apply --dry-run=client -f deploy/kubernetes/rbac.yaml
-kubectl apply --dry-run=client -f deploy/kubernetes/configmap.yaml
-kubectl apply --dry-run=client -f deploy/kubernetes/daemonset.yaml
 git diff --check
 ```
 

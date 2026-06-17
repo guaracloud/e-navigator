@@ -100,6 +100,7 @@ fn build_registry(
             registry = registry.with_source(Box::new(AyaExecSource::new(
                 host.clone(),
                 config.argv_capture.clone(),
+                config.attribution.procfs_root.clone(),
             )));
         }
         SourceMode::AyaCpuProfile
@@ -118,7 +119,10 @@ fn build_registry(
     }
 
     if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.aya_network") {
-        registry = registry.with_source(Box::new(AyaNetworkSource::new(host.clone())));
+        registry = registry.with_source(Box::new(AyaNetworkSource::new(
+            host.clone(),
+            config.attribution.procfs_root.clone(),
+        )));
     }
 
     if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.host_resource") {
@@ -283,6 +287,7 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
                 ppid: None,
                 uid: None,
                 command: "sh".to_string(),
+                cgroup_id: None,
                 exit_code: Some(0),
                 runtime_nanos: Some(1_000_000),
                 timestamp_unix_nanos: now_unix_nanos(),
@@ -304,6 +309,7 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
                     uid: None,
                     command: "synthetic-api".to_string(),
                     executable: Some("/app/synthetic-api".to_string()),
+                    cgroup_id: None,
                 },
                 protocol: NetworkProtocol::Tcp,
                 address_family: NetworkAddressFamily::Ipv4,
@@ -330,6 +336,7 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
                     uid: None,
                     command: "synthetic-api".to_string(),
                     executable: Some("/app/synthetic-api".to_string()),
+                    cgroup_id: None,
                 },
                 protocol: NetworkProtocol::Tcp,
                 address_family: NetworkAddressFamily::Ipv4,
@@ -359,6 +366,7 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
                     uid: None,
                     command: "synthetic-api".to_string(),
                     executable: Some("/app/synthetic-api".to_string()),
+                    cgroup_id: None,
                 },
                 query_name: "api.example.com".to_string(),
                 query_type: DnsQueryType::A,
@@ -384,6 +392,7 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
                     uid: None,
                     command: "synthetic-api".to_string(),
                     executable: Some("/app/synthetic-api".to_string()),
+                    cgroup_id: None,
                 },
                 query_name: "api.example.com".to_string(),
                 query_type: DnsQueryType::A,
@@ -421,6 +430,7 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
                     uid: None,
                     command: "synthetic-api".to_string(),
                     executable: Some("/app/synthetic-api".to_string()),
+                    cgroup_id: None,
                 }),
                 container: Some(container.clone()),
                 kubernetes: Some(kubernetes.clone()),
@@ -474,6 +484,7 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
                     uid: None,
                     command: "synthetic-api".to_string(),
                     executable: Some("/app/synthetic-api".to_string()),
+                    cgroup_id: None,
                 },
                 protocol: NetworkProtocol::Tcp,
                 address_family: NetworkAddressFamily::Ipv4,
@@ -516,6 +527,7 @@ fn synthetic_protocol_request_signals(
         uid: None,
         command: "synthetic-api".to_string(),
         executable: Some("/app/synthetic-api".to_string()),
+        cgroup_id: None,
     };
     let peer = TracePeerContext {
         address: Some("203.0.113.10".to_string()),
@@ -637,6 +649,7 @@ fn synthetic_profile_signals(
         uid: None,
         command: "synthetic-api".to_string(),
         executable: Some("/app/synthetic-api".to_string()),
+        cgroup_id: None,
     };
     let mut signals = Vec::new();
     for sample in [

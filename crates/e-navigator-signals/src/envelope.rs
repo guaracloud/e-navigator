@@ -1073,6 +1073,7 @@ mod tests {
                 ppid: Some(1),
                 uid: Some(1000),
                 command: "bash".to_string(),
+                cgroup_id: None,
                 exit_code: Some(0),
                 runtime_nanos: Some(55),
                 timestamp_unix_nanos: 200,
@@ -1126,6 +1127,7 @@ mod tests {
                     uid: Some(1000),
                     command: "api".to_string(),
                     executable: Some("/usr/bin/api".to_string()),
+                    cgroup_id: None,
                 },
                 protocol: NetworkProtocol::Tcp,
                 address_family: NetworkAddressFamily::Ipv4,
@@ -1163,6 +1165,7 @@ mod tests {
                     uid: Some(1000),
                     command: "api".to_string(),
                     executable: Some("/usr/bin/api".to_string()),
+                    cgroup_id: None,
                 },
                 protocol: NetworkProtocol::Tcp,
                 address_family: NetworkAddressFamily::Ipv4,
@@ -1198,6 +1201,7 @@ mod tests {
                     uid: Some(1000),
                     command: "api".to_string(),
                     executable: Some("/usr/bin/api".to_string()),
+                    cgroup_id: None,
                 },
                 protocol: NetworkProtocol::Tcp,
                 address_family: NetworkAddressFamily::Ipv4,
@@ -1991,6 +1995,7 @@ mod tests {
             uid: Some(1000),
             command: "api".to_string(),
             executable: Some("/app/api".to_string()),
+            cgroup_id: None,
         }
     }
 

@@ -12,56 +12,75 @@ config_output="$tmp_dir/config.jsonl"
 config_file="$tmp_dir/e-navigator.toml"
 configmap_config_file="$tmp_dir/e-navigator-configmap.toml"
 
+assert_min_lines() {
+  file="$1"
+  min_lines="$2"
+  actual="$(wc -l <"$file" | tr -d ' ')"
+  if [ "$actual" -lt "$min_lines" ]; then
+    printf 'expected at least %s lines in %s, got %s\n' "$min_lines" "$file" "$actual" >&2
+    return 1
+  fi
+}
+
+assert_contains() {
+  file="$1"
+  pattern="$2"
+  if ! grep -q "$pattern" "$file"; then
+    printf 'expected %s to contain pattern: %s\n' "$file" "$pattern" >&2
+    return 1
+  fi
+}
+
 docker run --rm "$image" --source synthetic >"$default_output"
-test "$(wc -l <"$default_output" | tr -d ' ')" -ge 2
-grep -q '"kind":"exec"' "$default_output"
-grep -q '"kind":"process_exit"' "$default_output"
-grep -q '"kind":"network_connection_open"' "$default_output"
-grep -q '"kind":"network_connection_close"' "$default_output"
-grep -q '"kind":"network_connection_failure"' "$default_output"
-grep -q '"kind":"dns_query"' "$default_output"
-grep -q '"kind":"dns_response"' "$default_output"
-grep -q '"kind":"trace_span_observation"' "$default_output"
-grep -q '"kind":"protocol_request_observation"' "$default_output"
-grep -q '"kind":"request_span_observation"' "$default_output"
-grep -q '"kind":"request_correlation_warning"' "$default_output"
-grep -q '"kind":"profile_sample_observation"' "$default_output"
-grep -q '"kind":"profiling_session_observation"' "$default_output"
-grep -q '"kind":"profiling_warning_observation"' "$default_output"
-grep -q '"kind":"service_interaction_span_observation"' "$default_output"
-grep -q '"kind":"trace_service_path_observation"' "$default_output"
-grep -q '"kind":"network_counter_metric"' "$default_output"
-grep -q '"kind":"network_duration_metric"' "$default_output"
-grep -q '"kind":"network_gauge_metric"' "$default_output"
-grep -q '"kind":"dns_counter_metric"' "$default_output"
-grep -q '"kind":"dns_latency_metric"' "$default_output"
-grep -q '"kind":"node_cpu_observation"' "$default_output"
-grep -q '"kind":"node_load_observation"' "$default_output"
-grep -q '"kind":"node_memory_observation"' "$default_output"
-grep -q '"kind":"node_filesystem_observation"' "$default_output"
-grep -q '"kind":"node_disk_io_observation"' "$default_output"
-grep -q '"kind":"process_resource_observation"' "$default_output"
-grep -q '"kind":"cgroup_cpu_observation"' "$default_output"
-grep -q '"kind":"cgroup_memory_observation"' "$default_output"
-grep -q '"kind":"cgroup_pids_observation"' "$default_output"
-grep -q '"kind":"cgroup_file_descriptor_observation"' "$default_output"
-grep -q '"kind":"resource_gauge_metric"' "$default_output"
-grep -q '"kind":"resource_counter_metric"' "$default_output"
-grep -q '"metric_name":"system.cpu.load_average.milli"' "$default_output"
-grep -q '"metric_name":"system.memory.available"' "$default_output"
-grep -q '"metric_name":"system.disk.io"' "$default_output"
-grep -q '"metric_name":"container.memory.usage"' "$default_output"
-grep -q '"metric_name":"container.file_descriptor.count"' "$default_output"
-grep -q '"kind":"dependency_edge"' "$default_output"
-grep -q '"kind":"runtime_security_finding"' "$default_output"
-grep -q '"rule_id":"runtime.shell_in_container"' "$default_output"
-grep -q '"rule_id":"network.unexpected_external_connection"' "$default_output"
-grep -q '"duration_nanos":2000000' "$default_output"
-grep -q '"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"' "$default_output"
-grep -q '"warning_type":"malformed_profile_fixture"' "$default_output"
-grep -q '"warning_type":"missing_trace_context"' "$default_output"
-grep -q '"warning_type":"malformed_trace_context"' "$default_output"
-grep -q '"error_type":"errno_111"' "$default_output"
+assert_min_lines "$default_output" 2
+assert_contains "$default_output" '"kind":"exec"'
+assert_contains "$default_output" '"kind":"process_exit"'
+assert_contains "$default_output" '"kind":"network_connection_open"'
+assert_contains "$default_output" '"kind":"network_connection_close"'
+assert_contains "$default_output" '"kind":"network_connection_failure"'
+assert_contains "$default_output" '"kind":"dns_query"'
+assert_contains "$default_output" '"kind":"dns_response"'
+assert_contains "$default_output" '"kind":"trace_span_observation"'
+assert_contains "$default_output" '"kind":"protocol_request_observation"'
+assert_contains "$default_output" '"kind":"request_span_observation"'
+assert_contains "$default_output" '"kind":"request_correlation_warning"'
+assert_contains "$default_output" '"kind":"profile_sample_observation"'
+assert_contains "$default_output" '"kind":"profiling_session_observation"'
+assert_contains "$default_output" '"kind":"profiling_warning_observation"'
+assert_contains "$default_output" '"kind":"service_interaction_span_observation"'
+assert_contains "$default_output" '"kind":"trace_service_path_observation"'
+assert_contains "$default_output" '"kind":"network_counter_metric"'
+assert_contains "$default_output" '"kind":"network_duration_metric"'
+assert_contains "$default_output" '"kind":"network_gauge_metric"'
+assert_contains "$default_output" '"kind":"dns_counter_metric"'
+assert_contains "$default_output" '"kind":"dns_latency_metric"'
+assert_contains "$default_output" '"kind":"node_cpu_observation"'
+assert_contains "$default_output" '"kind":"node_load_observation"'
+assert_contains "$default_output" '"kind":"node_memory_observation"'
+assert_contains "$default_output" '"kind":"node_filesystem_observation"'
+assert_contains "$default_output" '"kind":"node_disk_io_observation"'
+assert_contains "$default_output" '"kind":"process_resource_observation"'
+assert_contains "$default_output" '"kind":"cgroup_cpu_observation"'
+assert_contains "$default_output" '"kind":"cgroup_memory_observation"'
+assert_contains "$default_output" '"kind":"cgroup_pids_observation"'
+assert_contains "$default_output" '"kind":"cgroup_file_descriptor_observation"'
+assert_contains "$default_output" '"kind":"resource_gauge_metric"'
+assert_contains "$default_output" '"kind":"resource_counter_metric"'
+assert_contains "$default_output" '"metric_name":"system.cpu.load_average.milli"'
+assert_contains "$default_output" '"metric_name":"system.memory.available"'
+assert_contains "$default_output" '"metric_name":"system.disk.io"'
+assert_contains "$default_output" '"metric_name":"container.memory.usage"'
+assert_contains "$default_output" '"metric_name":"container.file_descriptor.count"'
+assert_contains "$default_output" '"kind":"dependency_edge"'
+assert_contains "$default_output" '"kind":"runtime_security_finding"'
+assert_contains "$default_output" '"rule_id":"runtime.shell_in_container"'
+assert_contains "$default_output" '"rule_id":"network.unexpected_external_connection"'
+assert_contains "$default_output" '"duration_nanos":2000000'
+assert_contains "$default_output" '"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"'
+assert_contains "$default_output" '"warning_type":"malformed_profile_fixture"'
+assert_contains "$default_output" '"warning_type":"missing_trace_context"'
+assert_contains "$default_output" '"warning_type":"malformed_trace_context"'
+assert_contains "$default_output" '"error_type":"errno_111"'
 
 cat >"$config_file" <<'CONFIG'
 log_level = "info"
@@ -156,52 +175,52 @@ docker run --rm \
   --config /etc/e-navigator/e-navigator.toml \
   --validate-config
 
-test "$(wc -l <"$config_output" | tr -d ' ')" -ge 2
-grep -q '"kind":"exec"' "$config_output"
-grep -q '"kind":"process_exit"' "$config_output"
-grep -q '"kind":"network_connection_open"' "$config_output"
-grep -q '"kind":"network_connection_close"' "$config_output"
-grep -q '"kind":"network_connection_failure"' "$config_output"
-grep -q '"kind":"dns_query"' "$config_output"
-grep -q '"kind":"dns_response"' "$config_output"
-grep -q '"kind":"trace_span_observation"' "$config_output"
-grep -q '"kind":"protocol_request_observation"' "$config_output"
-grep -q '"kind":"request_span_observation"' "$config_output"
-grep -q '"kind":"request_correlation_warning"' "$config_output"
-grep -q '"kind":"profile_sample_observation"' "$config_output"
-grep -q '"kind":"profiling_session_observation"' "$config_output"
-grep -q '"kind":"profiling_warning_observation"' "$config_output"
-grep -q '"kind":"service_interaction_span_observation"' "$config_output"
-grep -q '"kind":"trace_service_path_observation"' "$config_output"
-grep -q '"kind":"network_counter_metric"' "$config_output"
-grep -q '"kind":"network_duration_metric"' "$config_output"
-grep -q '"kind":"network_gauge_metric"' "$config_output"
-grep -q '"kind":"dns_counter_metric"' "$config_output"
-grep -q '"kind":"dns_latency_metric"' "$config_output"
-grep -q '"kind":"node_cpu_observation"' "$config_output"
-grep -q '"kind":"node_load_observation"' "$config_output"
-grep -q '"kind":"node_memory_observation"' "$config_output"
-grep -q '"kind":"node_filesystem_observation"' "$config_output"
-grep -q '"kind":"node_disk_io_observation"' "$config_output"
-grep -q '"kind":"process_resource_observation"' "$config_output"
-grep -q '"kind":"cgroup_cpu_observation"' "$config_output"
-grep -q '"kind":"cgroup_memory_observation"' "$config_output"
-grep -q '"kind":"cgroup_pids_observation"' "$config_output"
-grep -q '"kind":"cgroup_file_descriptor_observation"' "$config_output"
-grep -q '"kind":"resource_gauge_metric"' "$config_output"
-grep -q '"kind":"resource_counter_metric"' "$config_output"
-grep -q '"metric_name":"system.cpu.load_average.milli"' "$config_output"
-grep -q '"metric_name":"system.memory.available"' "$config_output"
-grep -q '"metric_name":"system.disk.io"' "$config_output"
-grep -q '"metric_name":"container.memory.usage"' "$config_output"
-grep -q '"metric_name":"container.file_descriptor.count"' "$config_output"
-grep -q '"kind":"dependency_edge"' "$config_output"
-grep -q '"kind":"runtime_security_finding"' "$config_output"
-grep -q '"rule_id":"runtime.shell_in_container"' "$config_output"
-grep -q '"rule_id":"network.unexpected_external_connection"' "$config_output"
-grep -q '"duration_nanos":2000000' "$config_output"
-grep -q '"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"' "$config_output"
-grep -q '"warning_type":"malformed_profile_fixture"' "$config_output"
-grep -q '"warning_type":"missing_trace_context"' "$config_output"
-grep -q '"warning_type":"malformed_trace_context"' "$config_output"
-grep -q '"error_type":"errno_111"' "$config_output"
+assert_min_lines "$config_output" 2
+assert_contains "$config_output" '"kind":"exec"'
+assert_contains "$config_output" '"kind":"process_exit"'
+assert_contains "$config_output" '"kind":"network_connection_open"'
+assert_contains "$config_output" '"kind":"network_connection_close"'
+assert_contains "$config_output" '"kind":"network_connection_failure"'
+assert_contains "$config_output" '"kind":"dns_query"'
+assert_contains "$config_output" '"kind":"dns_response"'
+assert_contains "$config_output" '"kind":"trace_span_observation"'
+assert_contains "$config_output" '"kind":"protocol_request_observation"'
+assert_contains "$config_output" '"kind":"request_span_observation"'
+assert_contains "$config_output" '"kind":"request_correlation_warning"'
+assert_contains "$config_output" '"kind":"profile_sample_observation"'
+assert_contains "$config_output" '"kind":"profiling_session_observation"'
+assert_contains "$config_output" '"kind":"profiling_warning_observation"'
+assert_contains "$config_output" '"kind":"service_interaction_span_observation"'
+assert_contains "$config_output" '"kind":"trace_service_path_observation"'
+assert_contains "$config_output" '"kind":"network_counter_metric"'
+assert_contains "$config_output" '"kind":"network_duration_metric"'
+assert_contains "$config_output" '"kind":"network_gauge_metric"'
+assert_contains "$config_output" '"kind":"dns_counter_metric"'
+assert_contains "$config_output" '"kind":"dns_latency_metric"'
+assert_contains "$config_output" '"kind":"node_cpu_observation"'
+assert_contains "$config_output" '"kind":"node_load_observation"'
+assert_contains "$config_output" '"kind":"node_memory_observation"'
+assert_contains "$config_output" '"kind":"node_filesystem_observation"'
+assert_contains "$config_output" '"kind":"node_disk_io_observation"'
+assert_contains "$config_output" '"kind":"process_resource_observation"'
+assert_contains "$config_output" '"kind":"cgroup_cpu_observation"'
+assert_contains "$config_output" '"kind":"cgroup_memory_observation"'
+assert_contains "$config_output" '"kind":"cgroup_pids_observation"'
+assert_contains "$config_output" '"kind":"cgroup_file_descriptor_observation"'
+assert_contains "$config_output" '"kind":"resource_gauge_metric"'
+assert_contains "$config_output" '"kind":"resource_counter_metric"'
+assert_contains "$config_output" '"metric_name":"system.cpu.load_average.milli"'
+assert_contains "$config_output" '"metric_name":"system.memory.available"'
+assert_contains "$config_output" '"metric_name":"system.disk.io"'
+assert_contains "$config_output" '"metric_name":"container.memory.usage"'
+assert_contains "$config_output" '"metric_name":"container.file_descriptor.count"'
+assert_contains "$config_output" '"kind":"dependency_edge"'
+assert_contains "$config_output" '"kind":"runtime_security_finding"'
+assert_contains "$config_output" '"rule_id":"runtime.shell_in_container"'
+assert_contains "$config_output" '"rule_id":"network.unexpected_external_connection"'
+assert_contains "$config_output" '"duration_nanos":2000000'
+assert_contains "$config_output" '"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"'
+assert_contains "$config_output" '"warning_type":"malformed_profile_fixture"'
+assert_contains "$config_output" '"warning_type":"missing_trace_context"'
+assert_contains "$config_output" '"warning_type":"malformed_trace_context"'
+assert_contains "$config_output" '"error_type":"errno_111"'

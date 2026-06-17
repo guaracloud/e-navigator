@@ -8,7 +8,7 @@ metadata:
 data:
   e-navigator.toml: |
     log_level = "info"
-    queue_capacity = 1024
+    queue_capacity = 8192
 
     [argv_capture]
     enabled = true
@@ -31,9 +31,9 @@ data:
     procfs_root = "/host/proc"
     sysfs_root = "/sys"
     cgroup_root = "/host/cgroup"
-    sample_interval_millis = 15000
-    max_processes = 128
-    max_cgroups = 128
+    sample_interval_millis = 60000
+    max_processes = 64
+    max_cgroups = 64
     max_fds_per_process = 1024
     max_file_bytes = 131072
 

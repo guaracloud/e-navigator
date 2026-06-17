@@ -257,6 +257,7 @@ fn profile_sample_signal(
                 uid: Some(1000),
                 command: "checkout-api".to_string(),
                 executable: Some("/app/checkout-api".to_string()),
+                cgroup_id: None,
             }),
             container: container_id.map(container),
             kubernetes: pod_uid.map(kubernetes),

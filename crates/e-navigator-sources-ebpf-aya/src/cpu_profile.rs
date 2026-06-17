@@ -18,6 +18,7 @@ pub(crate) struct RawCpuProfileEvent {
     pub pid: u32,
     pub tid: u32,
     pub uid: u32,
+    pub cgroup_id: u64,
     pub sample_count: u64,
     pub timestamp_unix_nanos: u64,
     pub command: [u8; 16],
@@ -83,6 +84,7 @@ fn raw_cpu_profile_to_signal_with_clock(
             uid: Some(raw.uid),
             command: bytes_to_string(&raw.command),
             executable: None,
+            cgroup_id: (raw.cgroup_id != 0).then_some(raw.cgroup_id),
         }),
         container: None,
         kubernetes: None,
@@ -174,6 +176,7 @@ fn bytes_to_string(bytes: &[u8]) -> String {
 #[cfg(target_os = "linux")]
 mod platform {
     use super::{bounded_cpu_targets, raw_cpu_profile_to_signal, send_with_backpressure};
+    use crate::perf_sample::perf_sample_bytes;
     use async_trait::async_trait;
     use aya::{
         Ebpf, include_bytes_aligned,
@@ -277,13 +280,12 @@ mod platform {
 
                             match event {
                                 PerfBufferEvent::Sample { head, tail } => {
-                                    if !tail.is_empty() {
-                                        warn!("dropped wrapped cpu profile perf event sample");
-                                        return;
-                                    }
-                                    let Some(signal) =
-                                        raw_cpu_profile_to_signal(head, host.clone(), &config)
-                                    else {
+                                    let bytes = perf_sample_bytes(head, tail);
+                                    let Some(signal) = raw_cpu_profile_to_signal(
+                                        bytes.as_ref(),
+                                        host.clone(),
+                                        &config,
+                                    ) else {
                                         return;
                                     };
                                     accepted += 1;
@@ -460,6 +462,7 @@ mod tests {
             pid: 42,
             tid: 43,
             uid: 1000,
+            cgroup_id: 7,
             sample_count: 3,
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
@@ -489,7 +492,9 @@ mod tests {
         assert_eq!(sample.confidence, ProfilingConfidence::Medium);
         assert_eq!(sample.sample_count, 3);
         assert_eq!(sample.sampling_period_nanos, Some(10_000_000));
-        assert_eq!(sample.process.expect("process").pid, 42);
+        let process = sample.process.expect("process");
+        assert_eq!(process.pid, 42);
+        assert_eq!(process.cgroup_id, Some(7));
         assert_eq!(sample.thread_id, Some(43));
         assert_eq!(sample.stack_frames.len(), 2);
         assert_eq!(
@@ -511,6 +516,7 @@ mod tests {
             pid: 42,
             tid: 43,
             uid: 1000,
+            cgroup_id: 0,
             sample_count: 1,
             timestamp_unix_nanos: 0,
             command: fixed_command("api"),
@@ -540,6 +546,7 @@ mod tests {
             pid: 42,
             tid: 43,
             uid: 1000,
+            cgroup_id: 0,
             sample_count: 1,
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
@@ -582,6 +589,7 @@ mod tests {
             pid: 42,
             tid: 43,
             uid: 1000,
+            cgroup_id: 0,
             sample_count: 0,
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
@@ -606,6 +614,7 @@ mod tests {
             pid: 42,
             tid: 43,
             uid: 1000,
+            cgroup_id: 0,
             sample_count: 1,
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
@@ -637,6 +646,7 @@ mod tests {
             pid: 42,
             tid: 43,
             uid: 1000,
+            cgroup_id: 0,
             sample_count: 1,
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
@@ -663,6 +673,7 @@ mod tests {
             pid: 42,
             tid: 43,
             uid: 1000,
+            cgroup_id: 0,
             sample_count: 1,
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
@@ -698,6 +709,7 @@ mod tests {
             pid: 42,
             tid: 43,
             uid: 1000,
+            cgroup_id: 0,
             sample_count: 1,
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
@@ -735,7 +747,7 @@ mod tests {
 
     #[test]
     fn raw_cpu_profile_event_layout_size_matches_ebpf_abi() {
-        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 88);
+        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 96);
     }
 
     fn source_config() -> CpuProfileSourceConfig {

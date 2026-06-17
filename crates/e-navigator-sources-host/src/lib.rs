@@ -14,7 +14,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::{debug, warn};
 
 mod config;
 mod model;
@@ -23,6 +23,7 @@ pub use config::HostResourceConfig;
 pub use model::{CgroupSample, HostResourceSnapshot};
 
 const DISK_SECTOR_BYTES: u64 = 512;
+const HOST_RESOURCE_WARNING_LOG_LIMIT: usize = 8;
 
 #[derive(Debug, Clone)]
 pub struct HostResourceSource {
@@ -67,9 +68,7 @@ impl Source<SignalEnvelope> for HostResourceSource {
                         message: err.to_string(),
                     })?;
 
-            for warning in snapshot.warnings {
-                warn!(warning, "host resource observation warning");
-            }
+            log_snapshot_warnings(&snapshot.warnings);
 
             for signal in snapshot.signals {
                 tx.send(signal)
@@ -83,6 +82,28 @@ impl Source<SignalEnvelope> for HostResourceSource {
 
             tokio::time::sleep(Duration::from_millis(source.config.sample_interval_millis)).await;
         }
+    }
+}
+
+fn log_snapshot_warnings(warnings: &[String]) {
+    if warnings.is_empty() {
+        return;
+    }
+
+    warn!(
+        warning_count = warnings.len(),
+        "host resource observation warnings occurred"
+    );
+
+    for warning in warnings.iter().take(HOST_RESOURCE_WARNING_LOG_LIMIT) {
+        debug!(warning, "host resource observation warning");
+    }
+
+    let omitted = warnings
+        .len()
+        .saturating_sub(HOST_RESOURCE_WARNING_LOG_LIMIT);
+    if omitted > 0 {
+        debug!(omitted, "host resource observation warnings omitted");
     }
 }
 
@@ -438,8 +459,16 @@ fn sample_processes(
 fn sample_cgroups(config: &HostResourceConfig, warnings: &mut Vec<String>) -> Vec<CgroupSample> {
     let mut samples = Vec::new();
     let mut queue = VecDeque::from([config.cgroup_root.clone()]);
+    let mut traversal_truncated = false;
     while let Some(path) = queue.pop_front() {
         if samples.len() >= config.max_cgroups {
+            if !traversal_truncated {
+                warnings.push(format!(
+                    "{}: cgroup traversal truncated at {} entries",
+                    path.display(),
+                    config.max_cgroups
+                ));
+            }
             break;
         }
         if path.join("cgroup.procs").exists()
@@ -484,11 +513,14 @@ fn sample_cgroups(config: &HostResourceConfig, warnings: &mut Vec<String>) -> Ve
                 children.sort();
                 for child in children {
                     if queue.len().saturating_add(samples.len()) >= config.max_cgroups {
-                        warnings.push(format!(
-                            "{}: cgroup traversal truncated at {} entries",
-                            path.display(),
-                            config.max_cgroups
-                        ));
+                        if !traversal_truncated {
+                            warnings.push(format!(
+                                "{}: cgroup traversal truncated at {} entries",
+                                path.display(),
+                                config.max_cgroups
+                            ));
+                            traversal_truncated = true;
+                        }
                         break;
                     }
                     queue.push_back(child);
@@ -999,14 +1031,15 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("a")).expect("cgroup dir");
+        std::fs::create_dir_all(root.join("a/a1")).expect("cgroup dir");
+        std::fs::create_dir_all(root.join("a/a2")).expect("cgroup dir");
         std::fs::create_dir_all(root.join("b")).expect("cgroup dir");
-        std::fs::create_dir_all(root.join("c")).expect("cgroup dir");
         std::fs::write(root.join("cgroup.procs"), "").expect("root cgroup procs");
         std::fs::write(root.join("a/cgroup.procs"), "").expect("child cgroup procs");
 
         let config = HostResourceConfig {
             cgroup_root: root.clone(),
-            max_cgroups: 2,
+            max_cgroups: 3,
             ..HostResourceConfig::default()
         };
         let mut warnings = Vec::new();
@@ -1017,6 +1050,13 @@ mod tests {
             warnings
                 .iter()
                 .any(|warning| warning.contains("cgroup scan truncated"))
+        );
+        assert_eq!(
+            warnings
+                .iter()
+                .filter(|warning| warning.contains("cgroup traversal truncated"))
+                .count(),
+            1
         );
 
         std::fs::remove_dir_all(root).expect("cleanup");

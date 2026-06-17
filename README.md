@@ -47,8 +47,6 @@ scripts/quality.sh
 
 The strict script fails if required supply-chain tools are missing: `cargo-deny`, `cargo-audit`, and `cargo-machete`. For constrained local environments only, set `E_NAVIGATOR_SKIP_SUPPLY_CHAIN=1` to run the Rust checks without the supply-chain checks.
 
-Docker smoke and Kubernetes manifest dry-runs are part of `scripts/quality.sh` by default. For constrained local environments only, set `E_NAVIGATOR_SKIP_DOCKER=1` or `E_NAVIGATOR_SKIP_KUBERNETES=1`.
-
 Direct non-privileged checks:
 
 ```bash
@@ -96,27 +94,6 @@ docker build -f Containerfile -t e-navigator:local .
 docker run --rm e-navigator:local --source synthetic
 tests/smoke_docker.sh e-navigator:local
 git diff --check
-```
-
-Kubernetes manifest dry-run validation is also non-privileged:
-
-```bash
-kubectl apply --dry-run=client -f deploy/kubernetes/namespace.yaml
-kubectl apply --dry-run=client -f deploy/kubernetes/rbac.yaml
-kubectl apply --dry-run=client -f deploy/kubernetes/configmap.yaml
-kubectl apply --dry-run=client -f deploy/kubernetes/daemonset.yaml
-```
-
-Privileged eBPF smoke test on Linux:
-
-```bash
-scripts/smoke_aya_exec_linux.sh
-```
-
-Privileged CPU profiling source smoke test on Linux:
-
-```bash
-scripts/smoke_aya_cpu_profile_linux.sh /path/to/e-navigator-cpu-profile.toml
 ```
 
 The `aya-exec` source mode registers the statically compiled Aya exec and network sources when both modules are enabled. The `aya-cpu-profile` source mode registers only `source.aya_cpu_profile` when its module and `[cpu_profile_source] enabled = true` are configured. Do not treat privileged Aya, CPU profiling, DNS runtime visibility, or Kubernetes runtime tests as passed unless they run on a real Linux host or Kubernetes cluster with tracefs/eBPF/perf-event support and the documented privileges.

@@ -336,6 +336,7 @@ fn network_process() -> NetworkProcessIdentity {
         uid: Some(1000),
         command: "api".to_string(),
         executable: Some("/app/api".to_string()),
+        cgroup_id: None,
     }
 }
 

@@ -95,32 +95,18 @@ impl Runner {
     }
 
     async fn handle_signal(&self, signal: SignalEnvelope) -> CoreResult<()> {
-        let mut current = Some(signal);
-
-        for processor in &self.registry.processors {
-            let metadata = processor.metadata();
-            let signal = current.take().ok_or(CoreError::PipelineClosed)?;
-            match processor
-                .process(signal)
-                .await
-                .map_err(|err| with_module_context(metadata, err))?
-            {
-                Some(processed) => current = Some(processed),
-                None => {
-                    debug!("signal dropped by processor");
-                    return Ok(());
-                }
-            }
-        }
-
-        let signal = current.ok_or(CoreError::PipelineClosed)?;
+        let Some(signal) = self.process_signal(signal).await? else {
+            return Ok(());
+        };
 
         let mut pending_generated = VecDeque::new();
         for (generator_index, generator) in self.registry.generators.iter().enumerate() {
             let generated = self.handle_generator(generator.as_ref(), &signal).await?;
             for derived in generated {
-                self.write_to_sinks(&derived).await?;
-                pending_generated.push_back((generator_index + 1, derived));
+                if let Some(processed) = self.process_signal(derived).await? {
+                    self.write_to_sinks(&processed).await?;
+                    pending_generated.push_back((generator_index + 1, processed));
+                }
             }
         }
 
@@ -136,8 +122,10 @@ impl Runner {
                     .handle_generator(generator.as_ref(), &generated_signal)
                     .await?;
                 for derived in downstream {
-                    self.write_to_sinks(&derived).await?;
-                    pending_generated.push_back((generator_index + 1, derived));
+                    if let Some(processed) = self.process_signal(derived).await? {
+                        self.write_to_sinks(&processed).await?;
+                        pending_generated.push_back((generator_index + 1, processed));
+                    }
                 }
             }
         }
@@ -145,6 +133,28 @@ impl Runner {
         self.write_to_sinks(&signal).await?;
 
         Ok(())
+    }
+
+    async fn process_signal(&self, signal: SignalEnvelope) -> CoreResult<Option<SignalEnvelope>> {
+        let mut current = Some(signal);
+
+        for processor in &self.registry.processors {
+            let metadata = processor.metadata();
+            let signal = current.take().ok_or(CoreError::PipelineClosed)?;
+            match processor
+                .process(signal)
+                .await
+                .map_err(|err| with_module_context(metadata, err))?
+            {
+                Some(processed) => current = Some(processed),
+                None => {
+                    debug!("signal dropped by processor");
+                    return Ok(None);
+                }
+            }
+        }
+
+        current.ok_or(CoreError::PipelineClosed).map(Some)
     }
 
     async fn handle_generator(
@@ -312,6 +322,7 @@ mod tests {
                     ppid: Some(0),
                     uid: None,
                     command: "true".to_string(),
+                    cgroup_id: None,
                     exit_code: Some(0),
                     runtime_nanos: Some(10),
                     timestamp_unix_nanos: 11,
@@ -338,6 +349,7 @@ mod tests {
                 uid: Some(1000),
                 command: "checkout-api".to_string(),
                 executable: Some("/app/checkout-api".to_string()),
+                cgroup_id: None,
             };
             let container = Some(ContainerContext {
                 container_id: "container-1".to_string(),
@@ -440,6 +452,25 @@ mod tests {
 
         async fn process(&self, _signal: SignalEnvelope) -> CoreResult<Option<SignalEnvelope>> {
             Err(CoreError::PipelineClosed)
+        }
+    }
+
+    struct GeneratedExitProcessor;
+
+    #[async_trait]
+    impl Processor<SignalEnvelope> for GeneratedExitProcessor {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("processor.generated_exit", ModuleKind::Processor)
+        }
+
+        async fn process(&self, mut signal: SignalEnvelope) -> CoreResult<Option<SignalEnvelope>> {
+            if let SignalPayload::ProcessExit(event) = &mut signal.payload
+                && event.command == "generated-exit"
+            {
+                event.command = "processed-generated-exit".to_string();
+            }
+
+            Ok(Some(signal))
         }
     }
 
@@ -548,6 +579,7 @@ mod tests {
                         ppid: None,
                         uid: None,
                         command: "generated-exit".to_string(),
+                        cgroup_id: None,
                         exit_code: Some(0),
                         runtime_nanos: Some(1),
                         timestamp_unix_nanos: 2,
@@ -589,6 +621,47 @@ mod tests {
                         arguments: vec![],
                         cgroup_id: None,
                         timestamp_unix_nanos: 3,
+                        container: None,
+                        kubernetes: None,
+                    },
+                ))
+                .await
+                .map_err(|_| CoreError::PipelineClosed)?;
+            }
+
+            Ok(())
+        }
+    }
+
+    struct ProcessedExitOnlyGenerator;
+
+    #[async_trait]
+    impl Generator<SignalEnvelope> for ProcessedExitOnlyGenerator {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("generator.processed_exit_only", ModuleKind::Generator)
+        }
+
+        async fn observe(
+            &self,
+            signal: &SignalEnvelope,
+            tx: &mpsc::Sender<SignalEnvelope>,
+        ) -> CoreResult<()> {
+            if matches!(
+                &signal.payload,
+                SignalPayload::ProcessExit(event) if event.command == "processed-generated-exit"
+            ) {
+                tx.send(SignalEnvelope::exec(
+                    "generator.processed_exit_only",
+                    None,
+                    ExecEvent {
+                        pid: 3,
+                        ppid: Some(1),
+                        uid: None,
+                        command: "saw-processed-generated-exit".to_string(),
+                        executable: None,
+                        arguments: vec![],
+                        cgroup_id: None,
+                        timestamp_unix_nanos: 4,
                         container: None,
                         kubernetes: None,
                     },
@@ -766,6 +839,37 @@ mod tests {
             matches!(
                 &signal.payload,
                 SignalPayload::Exec(event) if event.command == "downstream-derived"
+            )
+        }));
+    }
+
+    #[tokio::test]
+    async fn runner_processes_generated_signals_before_downstream_generators_and_sinks() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(OneSignalSource))
+            .with_processor(Box::new(GeneratedExitProcessor))
+            .with_generator(Box::new(ProcessExitGenerator))
+            .with_generator(Box::new(ProcessedExitOnlyGenerator))
+            .with_sink(Box::new(MemorySink { seen: seen.clone() }));
+        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
+
+        runner
+            .run()
+            .await
+            .expect("runner exits after source closes");
+
+        let seen = seen.lock().await;
+        assert!(seen.iter().any(|signal| {
+            matches!(
+                &signal.payload,
+                SignalPayload::ProcessExit(event) if event.command == "processed-generated-exit"
+            )
+        }));
+        assert!(seen.iter().any(|signal| {
+            matches!(
+                &signal.payload,
+                SignalPayload::Exec(event) if event.command == "saw-processed-generated-exit"
             )
         }));
     }

@@ -21,6 +21,7 @@ pub struct ProcessExitEvent {
     pub ppid: Option<u32>,
     pub uid: Option<u32>,
     pub command: String,
+    pub cgroup_id: Option<u64>,
     pub exit_code: Option<i32>,
     pub runtime_nanos: Option<u64>,
     pub timestamp_unix_nanos: u64,

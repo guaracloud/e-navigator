@@ -11,8 +11,8 @@
 | Dependency graph | yes | no | generator tests and runner fan-out tests | no | persisted service map |
 | Trace foundation | yes | partly | schema, generator, formatter, Docker smoke | no | full OTLP trace export, trace storage, UI, critical path analysis |
 | Request/protocol foundation | yes | fixture-backed | traceparent and HTTP fixture tests | no | live HTTP/gRPC parsing, routes, retries, app errors |
-| CPU profiling source | yes, explicit opt-in source | no | raw decode, profile normalization, generator tests | requires `scripts/smoke_aya_cpu_profile_linux.sh` on Linux | pprof, Pyroscope, OTLP profiles, flamegraph UI, storage |
+| CPU profiling source | yes, explicit opt-in source | no | raw decode, profile normalization, generator tests | homelab `aya-cpu-profile` canary observed `source.aya_cpu_profile` sample envelopes and bounded raw IP stack frames for the controlled CPU workload | function symbolization, pprof, Pyroscope, OTLP profiles, flamegraph UI, storage |
 | Supply-chain checks | yes | no | `cargo deny`, `cargo audit`, `cargo machete` | no | SBOM/container image scanning automation |
 | Kubernetes packaging | yes | no | `kubectl apply --dry-run=client` | not claimed | privileged cluster runtime proof |
 
-`Privileged-proven` must remain `no` unless the exact privileged smoke command is run on a real Linux host or Kubernetes cluster and the observed output is recorded.
+`Privileged-proven` must remain `no` unless the exact privileged smoke command or guarded homelab canary is run on a real Linux host or Kubernetes cluster and the observed output is recorded.

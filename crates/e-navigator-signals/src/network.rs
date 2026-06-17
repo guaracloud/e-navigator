@@ -65,6 +65,7 @@ pub struct NetworkProcessIdentity {
     pub uid: Option<u32>,
     pub command: String,
     pub executable: Option<String>,
+    pub cgroup_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

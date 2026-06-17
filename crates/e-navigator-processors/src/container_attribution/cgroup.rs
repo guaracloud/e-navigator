@@ -1,5 +1,9 @@
 use e_navigator_signals::ContainerContext;
-use std::{fs::File, io::Read, path::Path};
+use std::{
+    fs::File,
+    io::{self, Read},
+    path::Path,
+};
 
 pub(super) fn parse_container_from_cgroup(contents: &str) -> Option<ContainerContext> {
     let container_id = find_container_id(contents)?;
@@ -39,13 +43,10 @@ fn infer_runtime(contents: &str) -> Option<String> {
     }
 }
 
-pub(super) fn read_bounded_to_string(path: &Path, max_bytes: u64) -> Result<String, String> {
-    let mut file = File::open(path).map_err(|err| err.to_string())?;
+pub(super) fn read_bounded_to_string(path: &Path, max_bytes: u64) -> io::Result<String> {
+    let mut file = File::open(path)?;
     let mut buffer = String::new();
-    file.by_ref()
-        .take(max_bytes)
-        .read_to_string(&mut buffer)
-        .map_err(|err| err.to_string())?;
+    file.by_ref().take(max_bytes).read_to_string(&mut buffer)?;
     Ok(buffer)
 }
 

@@ -7,6 +7,10 @@ const RAW_MAX_ARGS: usize = ArgvCaptureConfig::MAX_ARGS_LIMIT;
 const RAW_ARG_LEN: usize = 64;
 #[cfg(any(target_os = "linux", test))]
 const RAW_ARG_BYTES: usize = RAW_MAX_ARGS * RAW_ARG_LEN;
+#[cfg(any(target_os = "linux", test))]
+const PERF_BUFFER_PAGE_COUNT: usize = 64;
+#[cfg(any(target_os = "linux", test))]
+const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
 
 #[cfg(any(target_os = "linux", test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +77,9 @@ fn captured_arguments_from_raw(
 
 #[cfg(target_os = "linux")]
 mod platform {
+    use crate::diagnostics::{DiagnosticSampleDecision, SourceDiagnostics};
+    use crate::perf_sample::perf_sample_bytes;
+    use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
         Ebpf, include_bytes_aligned,
@@ -84,14 +91,20 @@ mod platform {
     use e_navigator_core::{
         ArgvCaptureConfig, CoreError, CoreResult, ModuleKind, ModuleMetadata, Source,
     };
-    use e_navigator_signals::{ExecEvent, ProcessExitEvent, SignalEnvelope};
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+    use e_navigator_signals::{
+        ContainerContext, ExecEvent, KubernetesContext, ProcessExitEvent, SignalEnvelope,
+        SignalPayload,
+    };
+    use std::{
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
     };
     use tokio::sync::mpsc;
     use tokio::task::JoinHandle;
-    use tracing::{debug, warn};
+    use tracing::{debug, info, warn};
 
     const EXECUTABLE_LEN: usize = 256;
 
@@ -101,6 +114,7 @@ mod platform {
         pid: u32,
         uid: u32,
         argument_count: u32,
+        cgroup_id: u64,
         command: [u8; 16],
         executable: [u8; EXECUTABLE_LEN],
         arguments: [[u8; super::RAW_ARG_LEN]; super::RAW_MAX_ARGS],
@@ -111,6 +125,7 @@ mod platform {
     struct RawExitEvent {
         pid: u32,
         uid: u32,
+        cgroup_id: u64,
         command: [u8; 16],
     }
 
@@ -118,11 +133,20 @@ mod platform {
     pub struct AyaExecSource {
         host: Option<String>,
         argv_capture: ArgvCaptureConfig,
+        procfs_root: PathBuf,
     }
 
     impl AyaExecSource {
-        pub fn new(host: Option<String>, argv_capture: ArgvCaptureConfig) -> Self {
-            Self { host, argv_capture }
+        pub fn new(
+            host: Option<String>,
+            argv_capture: ArgvCaptureConfig,
+            procfs_root: PathBuf,
+        ) -> Self {
+            Self {
+                host,
+                argv_capture,
+                procfs_root,
+            }
         }
     }
 
@@ -137,6 +161,8 @@ mod platform {
             let shutdown = ReaderShutdown::new();
             let mut reader_handles = Vec::new();
             let argv_capture = self.argv_capture.clone();
+            let diagnostics = SourceDiagnostics::from_env();
+            let telemetry = Arc::new(SourceTelemetry::new("source.aya_exec"));
 
             let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
                 env!("OUT_DIR"),
@@ -166,6 +192,54 @@ mod platform {
             })?;
             program
                 .attach("syscalls", "sys_enter_execve")
+                .map_err(|err| CoreError::ModuleFailed {
+                    module: "source.aya_exec".to_string(),
+                    message: err.to_string(),
+                })?;
+
+            let execveat_program: &mut TracePoint = ebpf
+                .program_mut("tracepoint_execveat")
+                .ok_or_else(|| CoreError::ModuleFailed {
+                    module: "source.aya_exec".to_string(),
+                    message: "missing tracepoint_execveat program".to_string(),
+                })?
+                .try_into()
+                .map_err(|err: aya::programs::ProgramError| CoreError::ModuleFailed {
+                    module: "source.aya_exec".to_string(),
+                    message: err.to_string(),
+                })?;
+            execveat_program
+                .load()
+                .map_err(|err| CoreError::ModuleFailed {
+                    module: "source.aya_exec".to_string(),
+                    message: err.to_string(),
+                })?;
+            execveat_program
+                .attach("syscalls", "sys_enter_execveat")
+                .map_err(|err| CoreError::ModuleFailed {
+                    module: "source.aya_exec".to_string(),
+                    message: err.to_string(),
+                })?;
+
+            let process_exec_program: &mut TracePoint = ebpf
+                .program_mut("tracepoint_process_exec")
+                .ok_or_else(|| CoreError::ModuleFailed {
+                    module: "source.aya_exec".to_string(),
+                    message: "missing tracepoint_process_exec program".to_string(),
+                })?
+                .try_into()
+                .map_err(|err: aya::programs::ProgramError| CoreError::ModuleFailed {
+                    module: "source.aya_exec".to_string(),
+                    message: err.to_string(),
+                })?;
+            process_exec_program
+                .load()
+                .map_err(|err| CoreError::ModuleFailed {
+                    module: "source.aya_exec".to_string(),
+                    message: err.to_string(),
+                })?;
+            process_exec_program
+                .attach("sched", "sched_process_exec")
                 .map_err(|err| CoreError::ModuleFailed {
                     module: "source.aya_exec".to_string(),
                     message: err.to_string(),
@@ -223,17 +297,19 @@ mod platform {
             })?;
 
             for cpu_id in &cpus {
-                let mut buffer =
-                    perf_array
-                        .open(*cpu_id, None)
-                        .map_err(|err| CoreError::ModuleFailed {
-                            module: "source.aya_exec".to_string(),
-                            message: err.to_string(),
-                        })?;
+                let mut buffer = perf_array
+                    .open(*cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
+                    .map_err(|err| CoreError::ModuleFailed {
+                        module: "source.aya_exec".to_string(),
+                        message: err.to_string(),
+                    })?;
                 let cpu_tx = tx.clone();
                 let host = self.host.clone();
                 let argv_capture = argv_capture.clone();
+                let procfs_root = self.procfs_root.clone();
                 let reader_shutdown = shutdown.clone();
+                let diagnostics = diagnostics.clone();
+                let telemetry = telemetry.clone();
 
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     let mut closed = false;
@@ -246,45 +322,59 @@ mod platform {
 
                             match event {
                                 PerfEvent::Sample { head, tail } => {
-                                    if !tail.is_empty() {
-                                        warn!("dropped wrapped exec perf event sample");
-                                        return;
-                                    }
-
-                                    if let Some(signal) =
-                                        raw_to_signal(head, host.clone(), &argv_capture)
-                                    {
+                                    let bytes = perf_sample_bytes(head, tail);
+                                    if let Some(signal) = raw_to_signal(
+                                        bytes.as_ref(),
+                                        host.clone(),
+                                        &argv_capture,
+                                        &procfs_root,
+                                    ) {
+                                        telemetry.record_decoded_sample();
+                                        let diagnostic_decision =
+                                            log_signal_diagnostic(&diagnostics, &signal);
+                                        telemetry.record_diagnostic_decision(diagnostic_decision);
                                         if cpu_tx.blocking_send(signal).is_err() {
+                                            telemetry.record_send_failure();
                                             closed = true;
+                                        } else {
+                                            telemetry.record_sent_signal();
                                         }
+                                    } else {
+                                        telemetry.record_invalid_sample();
                                     }
                                 }
                                 PerfEvent::Lost { count } => {
+                                    telemetry.record_lost_perf_events(count);
                                     warn!(count, "lost exec perf events");
                                 }
                             }
+                            telemetry.maybe_log_summary();
                         });
 
                         if closed {
                             return;
                         }
 
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            super::PERF_READER_POLL_INTERVAL_MS,
+                        ));
                     }
                 }));
             }
 
             for cpu_id in &cpus {
-                let mut buffer =
-                    exit_perf_array
-                        .open(*cpu_id, None)
-                        .map_err(|err| CoreError::ModuleFailed {
-                            module: "source.aya_exec".to_string(),
-                            message: err.to_string(),
-                        })?;
+                let mut buffer = exit_perf_array
+                    .open(*cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
+                    .map_err(|err| CoreError::ModuleFailed {
+                        module: "source.aya_exec".to_string(),
+                        message: err.to_string(),
+                    })?;
                 let cpu_tx = tx.clone();
                 let host = self.host.clone();
+                let procfs_root = self.procfs_root.clone();
                 let reader_shutdown = shutdown.clone();
+                let diagnostics = diagnostics.clone();
+                let telemetry = telemetry.clone();
 
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     let mut closed = false;
@@ -297,32 +387,54 @@ mod platform {
 
                             match event {
                                 PerfEvent::Sample { head, tail } => {
-                                    if !tail.is_empty() {
-                                        warn!("dropped wrapped process exit perf event sample");
-                                        return;
-                                    }
-
-                                    if let Some(signal) = raw_exit_to_signal(head, host.clone()) {
+                                    let bytes = perf_sample_bytes(head, tail);
+                                    if let Some(signal) = raw_exit_to_signal(
+                                        bytes.as_ref(),
+                                        host.clone(),
+                                        &procfs_root,
+                                    ) {
+                                        telemetry.record_decoded_sample();
+                                        let diagnostic_decision =
+                                            log_signal_diagnostic(&diagnostics, &signal);
+                                        telemetry.record_diagnostic_decision(diagnostic_decision);
                                         if cpu_tx.blocking_send(signal).is_err() {
+                                            telemetry.record_send_failure();
                                             closed = true;
+                                        } else {
+                                            telemetry.record_sent_signal();
                                         }
+                                    } else {
+                                        telemetry.record_invalid_sample();
                                     }
                                 }
                                 PerfEvent::Lost { count } => {
+                                    telemetry.record_lost_perf_events(count);
                                     warn!(count, "lost process exit perf events");
                                 }
                             }
+                            telemetry.maybe_log_summary();
                         });
 
                         if closed {
                             return;
                         }
 
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            super::PERF_READER_POLL_INTERVAL_MS,
+                        ));
                     }
                 }));
             }
 
+            if diagnostics.enabled() {
+                info!(
+                    source = "source.aya_exec",
+                    remaining_samples = diagnostics.remaining_samples(),
+                    filtered_preview_remaining_samples =
+                        diagnostics.remaining_filtered_preview_samples(),
+                    "source diagnostics enabled"
+                );
+            }
             debug!("aya exec source attached");
             tokio::signal::ctrl_c()
                 .await
@@ -335,13 +447,167 @@ mod platform {
         }
     }
 
-    fn raw_exit_to_signal(bytes: &[u8], host: Option<String>) -> Option<SignalEnvelope> {
+    fn log_signal_diagnostic(
+        diagnostics: &SourceDiagnostics,
+        signal: &SignalEnvelope,
+    ) -> DiagnosticSampleDecision {
+        match &signal.payload {
+            SignalPayload::Exec(event) => {
+                let executable = event.executable.as_deref().unwrap_or_default();
+                let mut filter_values = Vec::with_capacity(event.arguments.len() + 2);
+                filter_values.push(event.command.as_str());
+                filter_values.push(executable);
+                filter_values.extend(event.arguments.iter().map(String::as_str));
+                let decision = diagnostics.sample_decision_for(&filter_values);
+                if decision != DiagnosticSampleDecision::Matched {
+                    if decision == DiagnosticSampleDecision::Filtered
+                        && diagnostics.try_acquire_filtered_preview()
+                    {
+                        info!(
+                            target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                            source = "source.aya_exec",
+                            raw_event = "exec",
+                            diagnostic_decision = "filtered",
+                            filter_values = ?filter_values,
+                            pid = event.pid,
+                            uid = ?event.uid,
+                            command = %event.command,
+                            executable = ?event.executable,
+                            arguments = ?event.arguments,
+                            argument_count = event.arguments.len(),
+                            cgroup_id = ?event.cgroup_id,
+                            container_id = ?container_id(&event.container),
+                            container_runtime = ?container_runtime(&event.container),
+                            kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
+                            kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
+                            kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
+                            kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                            "source diagnostic raw event filtered"
+                        );
+                    }
+                    return decision;
+                }
+
+                info!(
+                    target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                    source = "source.aya_exec",
+                    raw_event = "exec",
+                    pid = event.pid,
+                    uid = ?event.uid,
+                    command = %event.command,
+                    executable = ?event.executable,
+                    arguments = ?event.arguments,
+                    argument_count = event.arguments.len(),
+                    cgroup_id = ?event.cgroup_id,
+                    container_id = ?container_id(&event.container),
+                    container_runtime = ?container_runtime(&event.container),
+                    kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
+                    kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
+                    kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
+                    kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                    "source diagnostic raw event decoded"
+                );
+                DiagnosticSampleDecision::Matched
+            }
+            SignalPayload::ProcessExit(event) => {
+                let filter_values = [event.command.as_str()];
+                let decision = diagnostics.sample_decision_for(&filter_values);
+                if decision != DiagnosticSampleDecision::Matched {
+                    if decision == DiagnosticSampleDecision::Filtered
+                        && diagnostics.try_acquire_filtered_preview()
+                    {
+                        info!(
+                            target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                            source = "source.aya_exec",
+                            raw_event = "process_exit",
+                            diagnostic_decision = "filtered",
+                            filter_values = ?filter_values,
+                            pid = event.pid,
+                            uid = ?event.uid,
+                            command = %event.command,
+                            cgroup_id = ?event.cgroup_id,
+                            container_id = ?container_id(&event.container),
+                            container_runtime = ?container_runtime(&event.container),
+                            kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
+                            kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
+                            kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
+                            kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                            "source diagnostic raw event filtered"
+                        );
+                    }
+                    return decision;
+                }
+
+                info!(
+                    target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                    source = "source.aya_exec",
+                    raw_event = "process_exit",
+                    pid = event.pid,
+                    uid = ?event.uid,
+                    command = %event.command,
+                    cgroup_id = ?event.cgroup_id,
+                    container_id = ?container_id(&event.container),
+                    container_runtime = ?container_runtime(&event.container),
+                    kubernetes_namespace = ?kubernetes_namespace(&event.kubernetes),
+                    kubernetes_pod_name = ?kubernetes_pod_name(&event.kubernetes),
+                    kubernetes_pod_uid = ?kubernetes_pod_uid(&event.kubernetes),
+                    kubernetes_container_name = ?kubernetes_container_name(&event.kubernetes),
+                    "source diagnostic raw event decoded"
+                );
+                DiagnosticSampleDecision::Matched
+            }
+            _ => DiagnosticSampleDecision::Disabled,
+        }
+    }
+
+    fn container_id(container: &Option<ContainerContext>) -> Option<&str> {
+        container
+            .as_ref()
+            .map(|container| container.container_id.as_str())
+    }
+
+    fn container_runtime(container: &Option<ContainerContext>) -> Option<&str> {
+        container
+            .as_ref()
+            .and_then(|container| container.runtime.as_deref())
+    }
+
+    fn kubernetes_namespace(kubernetes: &Option<KubernetesContext>) -> Option<&str> {
+        kubernetes
+            .as_ref()
+            .map(|kubernetes| kubernetes.namespace.as_str())
+    }
+
+    fn kubernetes_pod_name(kubernetes: &Option<KubernetesContext>) -> Option<&str> {
+        kubernetes
+            .as_ref()
+            .map(|kubernetes| kubernetes.pod_name.as_str())
+    }
+
+    fn kubernetes_pod_uid(kubernetes: &Option<KubernetesContext>) -> Option<&str> {
+        kubernetes
+            .as_ref()
+            .and_then(|kubernetes| kubernetes.pod_uid.as_deref())
+    }
+
+    fn kubernetes_container_name(kubernetes: &Option<KubernetesContext>) -> Option<&str> {
+        kubernetes
+            .as_ref()
+            .and_then(|kubernetes| kubernetes.container_name.as_deref())
+    }
+
+    fn raw_exit_to_signal(
+        bytes: &[u8],
+        host: Option<String>,
+        procfs_root: &std::path::Path,
+    ) -> Option<SignalEnvelope> {
         if bytes.len() < core::mem::size_of::<RawExitEvent>() {
             return None;
         }
 
         let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawExitEvent>()) };
         let command = super::bytes_to_string(&raw.command);
+        let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
 
         Some(SignalEnvelope::process_exit(
             "source.aya_exec",
@@ -351,10 +617,11 @@ mod platform {
                 ppid: None,
                 uid: Some(raw.uid),
                 command,
+                cgroup_id: (raw.cgroup_id != 0).then_some(raw.cgroup_id),
                 exit_code: None,
                 runtime_nanos: None,
                 timestamp_unix_nanos: super::now_unix_nanos(),
-                container: None,
+                container,
                 kubernetes: None,
             },
         ))
@@ -383,6 +650,7 @@ mod platform {
         bytes: &[u8],
         host: Option<String>,
         argv_capture: &ArgvCaptureConfig,
+        procfs_root: &std::path::Path,
     ) -> Option<SignalEnvelope> {
         if bytes.len() < core::mem::size_of::<RawExecEvent>() {
             return None;
@@ -398,6 +666,7 @@ mod platform {
         } else {
             executable.clone()
         };
+        let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
 
         Some(SignalEnvelope::exec(
             "source.aya_exec",
@@ -409,9 +678,9 @@ mod platform {
                 command,
                 executable: (!executable.is_empty()).then_some(executable),
                 arguments: captured.arguments,
-                cgroup_id: None,
+                cgroup_id: (raw.cgroup_id != 0).then_some(raw.cgroup_id),
                 timestamp_unix_nanos: super::now_unix_nanos(),
-                container: None,
+                container,
                 kubernetes: None,
             },
         ))
@@ -480,13 +749,19 @@ mod platform {
     pub struct AyaExecSource {
         host: Option<String>,
         _argv_capture: ArgvCaptureConfig,
+        _procfs_root: std::path::PathBuf,
     }
 
     impl AyaExecSource {
-        pub fn new(host: Option<String>, argv_capture: ArgvCaptureConfig) -> Self {
+        pub fn new(
+            host: Option<String>,
+            argv_capture: ArgvCaptureConfig,
+            procfs_root: std::path::PathBuf,
+        ) -> Self {
             Self {
                 host,
                 _argv_capture: argv_capture,
+                _procfs_root: procfs_root,
             }
         }
     }
@@ -578,6 +853,12 @@ mod tests {
     #[test]
     fn unix_timestamp_is_not_epoch_placeholder() {
         assert!(now_unix_nanos() > 0);
+    }
+
+    #[test]
+    fn perf_reader_settings_are_bounded_for_short_bursts() {
+        assert!((16..=128).contains(&PERF_BUFFER_PAGE_COUNT));
+        assert!((10..=50).contains(&PERF_READER_POLL_INTERVAL_MS));
     }
 
     fn raw_argument_slots<const N: usize>(values: [&str; N]) -> [[u8; RAW_ARG_LEN]; RAW_MAX_ARGS] {

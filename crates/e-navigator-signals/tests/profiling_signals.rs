@@ -354,6 +354,7 @@ fn process() -> NetworkProcessIdentity {
         uid: Some(1000),
         command: "checkout-api".to_string(),
         executable: Some("/app/checkout-api".to_string()),
+        cgroup_id: None,
     }
 }
 
