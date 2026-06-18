@@ -44,15 +44,12 @@ else
 fi
 
 if [ "${E_NAVIGATOR_SKIP_KUBERNETES:-0}" != "1" ]; then
-  require_tool kubectl
   require_tool helm
+  require_tool kubeconform
   run helm lint charts/e-navigator
   run helm template e-navigator charts/e-navigator
-  run kubectl apply --dry-run=client -f deploy/kubernetes/namespace.yaml
-  run kubectl apply --dry-run=client -f deploy/kubernetes/rbac.yaml
-  run kubectl apply --dry-run=client -f deploy/kubernetes/configmap.yaml
-  run kubectl apply --dry-run=client -f deploy/kubernetes/daemonset.yaml
-  run sh -c 'helm template e-navigator charts/e-navigator | kubectl apply --dry-run=client -f -'
+  run kubeconform -strict -summary deploy/kubernetes/*.yaml
+  run sh -c 'helm template e-navigator charts/e-navigator | kubeconform -strict -summary -'
 else
   printf '\n==> skipped Kubernetes and Helm checks\n'
 fi

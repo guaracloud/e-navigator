@@ -59,10 +59,8 @@ Raw YAML remains in `deploy/kubernetes/` for development and review, but Helm is
 the preferred install surface for published releases.
 
 ```bash
-kubectl apply --dry-run=client -f deploy/kubernetes/namespace.yaml
-kubectl apply --dry-run=client -f deploy/kubernetes/rbac.yaml
-kubectl apply --dry-run=client -f deploy/kubernetes/configmap.yaml
-kubectl apply --dry-run=client -f deploy/kubernetes/daemonset.yaml
+kubeconform -strict -summary deploy/kubernetes/*.yaml
+helm template e-navigator charts/e-navigator | kubeconform -strict -summary -
 ```
 
 ## Validation
@@ -75,6 +73,6 @@ helm template e-navigator charts/e-navigator \
   --set image.digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
 ```
 
-Helm rendering, Kubernetes dry-runs, and successful installs do not prove live
+Helm rendering, schema validation, and successful installs do not prove live
 eBPF behavior. Privileged runtime proof requires a capable Linux node or cluster
 and observed Aya/eBPF output.

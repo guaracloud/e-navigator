@@ -85,8 +85,15 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v4
 
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v4
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+
+      - name: Install kubeconform
+        run: |
+          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Validate Helm chart
         run: |
@@ -95,11 +102,8 @@ jobs:
 
       - name: Validate manifests
         run: |
-          kubectl apply --dry-run=client -f deploy/kubernetes/namespace.yaml
-          kubectl apply --dry-run=client -f deploy/kubernetes/rbac.yaml
-          kubectl apply --dry-run=client -f deploy/kubernetes/configmap.yaml
-          kubectl apply --dry-run=client -f deploy/kubernetes/daemonset.yaml
-          helm template e-navigator charts/e-navigator | kubectl apply --dry-run=client -f -
+          kubeconform -strict -summary deploy/kubernetes/*.yaml
+          helm template e-navigator charts/e-navigator | kubeconform -strict -summary -
 
   docker:
     name: Docker smoke

@@ -98,6 +98,7 @@ impl SourceDiagnostics {
         self.enabled
     }
 
+    #[cfg(test)]
     pub(crate) fn raw_values_enabled(&self) -> bool {
         self.raw_values
     }

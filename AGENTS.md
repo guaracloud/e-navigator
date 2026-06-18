@@ -6,7 +6,7 @@ E-Navigator is a Rust 2024 workspace under `crates/`. Core contracts live in `e-
 
 ## Build, Test, and Development Commands
 
-- `scripts/quality.sh`: full non-privileged local gate; includes Rust checks, supply-chain tools, Docker smoke, Kubernetes dry-runs, and `git diff --check`.
+- `scripts/quality.sh`: full non-privileged local gate; includes Rust checks, supply-chain tools, Docker smoke, Kubernetes schema validation, and `git diff --check`.
 - `cargo fmt --all -- --check`: verify formatting.
 - `cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings`: run strict linting for host-side crates.
 - `cargo test --locked --workspace --exclude e-navigator-ebpf-programs`: run workspace tests except eBPF programs.

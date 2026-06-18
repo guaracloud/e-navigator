@@ -1,56 +1,89 @@
 # E-Navigator
 
-E-Navigator is a Rust and eBPF observability, security, profiling, and diagnostics platform for Linux and Kubernetes workloads.
+A Rust and eBPF signal plane for Linux and Kubernetes observability, profiling,
+runtime security, and diagnostics.
 
-Phase 9 builds a live CPU profiling source foundation on the bounded runtime, network, DNS, dependency, security, resource, trace-correlation, request-correlation, profiling, and export-boundary foundations:
+**Status:** pre-release `0.1.0` foundation. The current tree has a statically
+registered signal pipeline, JSON stdout output, Kubernetes DaemonSet packaging,
+release-signing workflow, strict non-privileged quality gates, and bounded
+foundations for runtime, network, DNS fixture, resource, dependency, trace,
+request, profiling, and security signals. See
+[documentation/claims-matrix.md](documentation/claims-matrix.md) for the exact
+claim boundaries.
 
-- A layered Rust workspace.
-- A statically registered signal pipeline.
-- A local Linux runner.
-- Kubernetes DaemonSet packaging.
-- An Aya process exec and process exit source.
-- An Aya TCP-oriented network connect/failure and fd-close duration source.
-- Bounded, configurable argv capture.
-- Best-effort container and Kubernetes attribution.
-- Bounded network metric generation for connection counts, failures, durations, active connection gauges, traffic destinations, and protocol distribution.
-- DNS query/response schemas, synthetic DNS fixtures, and bounded DNS metric/dependency generation from DNS signals.
-- Versioned resource observation schemas for node CPU/load/memory/filesystem/disk, process resources, and cgroup/container CPU, memory, process/thread, fd, and socket counts where available.
-- A non-privileged bounded host resource source for procfs, sysfs, and cgroup v2 files with configurable roots and sampling limits.
-- A bounded resource metric generator for low-cardinality node, process, and cgroup/container metrics.
-- A dependency graph generator for observed network edges.
-- Versioned trace-foundation schemas for trace span observations, service interaction span observations, service path observations, and trace correlation warnings.
-- A bounded trace correlation generator for network-inferred service interactions, direct/upstream dependency-edge service paths, DNS-derived service paths, duplicate suppression, and missing-attribution warnings.
-- Versioned request/protocol schemas for protocol request observations, extracted trace-context observations, request span observations, and request correlation warnings.
-- An Aya-free bounded protocol extraction boundary for fixture-backed HTTP request headers, strict W3C traceparent validation, and non-serialized raw trace-context headers by default.
-- A bounded request correlation generator for protocol-observed and explicitly synthetic request spans, duplicate suppression, missing or malformed trace-context warnings, and missing-attribution warnings.
-- A narrow runtime security generator for process and network findings.
-- An internal OTEL-compatible metric formatter boundary for future exporters.
-- An internal OTEL-compatible trace formatter boundary for future exporters.
-- Versioned profiling schemas for profile sample observations, stack trace observations, profiling session/window observations, and profiling warning observations.
-- An Aya-free profiling model boundary for synthetic and fixture-backed profile normalization with bounded stack frames, bounded symbol/module/file bytes, bounded attributes, and deterministic stack IDs.
-- A statically registered, opt-in `source.aya_cpu_profile` source mode that attaches a Linux perf-event CPU clock sampler and emits bounded observed CPU profile sample envelopes when run with the required privileges.
-- A bounded profiling generator that summarizes explicit observed or synthetic profile sample signals into profiling session/window observations without inferring profiles from raw CPU or resource metrics.
-- Existing processor-based profile attribution for host, process, container, and Kubernetes context where available, with structured warning signals for missing attribution.
-- An internal profile-compatible formatter boundary for future pprof or OTLP profile exporters.
-- Synthetic profiling fixtures and Aya CPU profile source decode fixtures for CPU samples, missing stacks/symbols, oversized stack truncation, malformed events, and process-only attribution.
-- JSON stdout output.
+## What it does
 
-Phase 9 is a CPU profiling source foundation, not a full continuous profiling backend, Pyroscope replacement, pprof server, OTLP profile exporter, flamegraph UI, profile storage layer, trace/profile correlation engine, or workload bottleneck analyzer. Synthetic and fixture-backed profiling signals exist. Live CPU profile sample ingestion is implemented only through the explicit privileged `aya-cpu-profile` source mode and may only be claimed after running it on a real Linux host where samples are observed. Memory allocation profiling, lock contention profiling, host runtime profiling accuracy, production pprof export, and production OTLP profile export are not implemented. Synthetic and fixture-backed HTTP trace-context extraction exists. Live HTTP/gRPC parsing from real traffic, request IDs, routes, retries, application errors, full OTLP trace export, production trace storage, UI, critical path analysis, and runtime DNS packet capture are not implemented. The Aya network source remains TCP-oriented. Host resource accuracy depends on running on Linux with the configured host procfs/sysfs/cgroup mounts.
+`e-navigator` runs as a node-local agent and turns workload observations into
+versioned signal envelopes. The project is designed to answer practical runtime
+questions without application SDKs or sidecars:
 
-## Kubernetes Install
+- What processes, connections, resources, requests, traces, and profiles were
+  observed?
+- Which host, process, container, or Kubernetes workload can the signal be
+  attributed to?
+- Which dependency edges, low-cardinality metrics, request spans, profile
+  windows, and runtime security findings can be derived safely?
+- Which observations are synthetic, fixture-backed, non-privileged proven, or
+  privileged runtime proven?
 
-Install the OCI Helm chart on a capable Linux cluster:
+The default sink emits newline-delimited JSON. OpenTelemetry-compatible metric,
+trace, and profile formatter boundaries exist internally, but production OTLP,
+pprof, Pyroscope, storage, and UI exporters are still future work.
 
-```bash
-helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
-  --version 0.1.0 \
-  --namespace e-navigator-system \
-  --create-namespace
+## Architecture at a glance
+
+```text
+Linux / Kubernetes node
+  -> sources
+     -> processors
+        -> generators
+           -> sinks
 ```
 
-The chart deploys the current privileged DaemonSet model with read-only host
-mounts, Kubernetes metadata RBAC, and the default bounded config. For local chart
-development or dev-channel images:
+- **Sources:** synthetic fixtures, bounded host resource reads, Aya process
+  exec/exit, TCP-oriented network events, and opt-in CPU profile sampling.
+- **Processors:** best-effort host, process, container, and Kubernetes
+  attribution with structured warnings when context is missing.
+- **Generators:** runtime security findings, network/resource metrics,
+  dependency edges, trace service paths, request spans, and profiling windows.
+- **Sinks:** JSON stdout today, with internal OpenTelemetry-compatible formatter
+  boundaries for future exporters.
+
+The pipeline is statically registered by design. Runtime plugin loading is not
+part of the current architecture; see
+[documentation/adr/0002-static-pipeline-registration.md](documentation/adr/0002-static-pipeline-registration.md).
+
+## Quick start
+
+### Run the synthetic pipeline locally
+
+This exercises the pipeline without privileged Linux, eBPF, Docker, or
+Kubernetes dependencies:
+
+```bash
+cargo run --locked -p e-navigator-cli -- --source synthetic
+```
+
+Useful CLI entry points:
+
+```bash
+cargo run --locked -p e-navigator-cli -- --help
+cargo run --locked -p e-navigator-cli -- --validate-config
+cargo run --locked -p e-navigator-cli -- --validate-config --config path/to/e-navigator.toml
+```
+
+### Develop the Helm chart locally
+
+Render and validate the chart from this checkout:
+
+```bash
+helm lint charts/e-navigator
+helm template e-navigator charts/e-navigator
+helm template e-navigator charts/e-navigator \
+  | kubeconform -strict -summary -
+```
+
+For a local development install that uses the rolling `main` image:
 
 ```bash
 helm upgrade --install e-navigator charts/e-navigator \
@@ -59,73 +92,161 @@ helm upgrade --install e-navigator charts/e-navigator \
   --set image.tag=main
 ```
 
-Before production use, verify release checksums, signatures, SBOMs, image
-digests, and the chart digest with `documentation/release-verification.md`.
-Detailed chart configuration is in `documentation/helm.md`. Raw manifests remain
-available under `deploy/kubernetes/` for review and development fallback.
+Helm rendering, schema validation, and successful installs do not prove live
+eBPF behavior. Privileged runtime proof requires a capable Linux node or cluster
+and observed Aya/eBPF output.
 
-## Development
+### Install a tagged release
 
-Run the strict local quality gate:
+Tagged releases publish the container image, OCI Helm chart, SBOMs, checksums,
+signatures, and release manifest. After a release exists, install the chart with:
+
+```bash
+helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
+  --version 0.1.0 \
+  --namespace e-navigator-system \
+  --create-namespace
+```
+
+Before production use, verify checksums, Cosign signatures, SBOMs, image
+digests, the release manifest, and the chart digest with
+[documentation/release-verification.md](documentation/release-verification.md).
+Then pin the digest-backed image reference in your values file.
+
+## Current capability map
+
+Implemented and non-privileged proven:
+
+- Static runtime and JSON envelopes through Cargo tests, synthetic CLI runs, and
+  Docker smoke tests.
+- Process exec/exit source through userspace config coverage and raw decode
+  tests.
+- TCP-oriented network source through raw decode tests and synthetic smoke
+  coverage.
+- Host resource source through procfs, sysfs, cgroup parser tests, and Docker
+  synthetic fixtures.
+- Dependency graph generation through generator tests and runner fan-out tests.
+- Trace and request foundations through schema, generator, formatter, fixture,
+  and smoke tests.
+- CPU profiling foundations through raw decode, profile normalization, and
+  generator tests.
+- Kubernetes packaging through Helm lint/template and schema validation.
+- Supply-chain checks through `cargo deny`, `cargo audit`, and
+  `cargo machete`.
+
+Implemented with narrower or deferred runtime claims:
+
+- Runtime DNS support currently means schemas, synthetic DNS fixtures, and
+  bounded DNS metric/dependency generation. eBPF DNS packet capture is
+  deferred.
+- CPU profile sampling is an explicit opt-in source. Only exact observed Linux
+  or homelab canaries count as privileged evidence.
+- Kubernetes packaging proof is separate from privileged eBPF runtime proof.
+- Persisted service maps, production exporters, storage, UI, and container
+  vulnerability policy gates are deferred.
+
+For the authoritative and more detailed version, use
+[documentation/claims-matrix.md](documentation/claims-matrix.md).
+
+## What is not claimed yet
+
+E-Navigator is not yet a full observability backend, Pyroscope replacement,
+Tempo replacement, pprof server, flamegraph UI, profile store, trace store, or
+critical-path analysis engine.
+
+The following are intentionally not claimed as implemented production behavior:
+
+- production OTLP metric, trace, or profile export;
+- pprof or Pyroscope export;
+- profile storage, flamegraph rendering, or bottleneck analysis;
+- live HTTP/gRPC parsing from real traffic;
+- request route, retry, application error, or request-ID extraction;
+- runtime DNS packet capture;
+- full TCP state tracking, packet accounting, retransmits, or resets;
+- reduced-privilege Kubernetes eBPF operation.
+
+Do not treat synthetic fixtures, Docker smoke tests, Kubernetes schema checks, and
+privileged Linux or cluster runtime evidence as interchangeable.
+
+## Building and testing
+
+Run the full non-privileged local gate:
 
 ```bash
 scripts/quality.sh
 ```
 
-The strict script fails if required supply-chain tools are missing: `cargo-deny`, `cargo-audit`, and `cargo-machete`. For constrained local environments only, set `E_NAVIGATOR_SKIP_SUPPLY_CHAIN=1` to run the Rust checks without the supply-chain checks.
+The strict gate requires `cargo-deny`, `cargo-audit`, `cargo-machete`, Docker,
+Helm, `kubeconform`, Node, and the normal Rust toolchain. In constrained local
+environments only, narrow skips are available:
 
-Direct non-privileged checks:
+```bash
+E_NAVIGATOR_SKIP_SUPPLY_CHAIN=1 scripts/quality.sh
+E_NAVIGATOR_SKIP_DOCKER=1 E_NAVIGATOR_SKIP_KUBERNETES=1 scripts/quality.sh
+```
+
+Useful direct checks:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings
+cargo clippy --locked --workspace --all-targets \
+  --exclude e-navigator-ebpf-programs -- -D warnings
 cargo test --locked --workspace --exclude e-navigator-ebpf-programs
 cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 cargo run --locked -p e-navigator-cli -- --source synthetic
-helm lint charts/e-navigator
-helm template e-navigator charts/e-navigator
 cargo deny check
 cargo audit
 cargo machete
 docker build -f Containerfile -t e-navigator:local .
 docker run --rm e-navigator:local --source synthetic
 tests/smoke_docker.sh e-navigator:local
+kubeconform -strict -summary deploy/kubernetes/*.yaml
+helm template e-navigator charts/e-navigator | kubeconform -strict -summary -
+node website/check-links.mjs
 git diff --check
 ```
 
-`cargo deny` currently keeps duplicate dependency versions at warning level in `deny.toml`. This keeps the gate focused on actionable license, advisory, source, yanked, and unused-dependency failures while transitive ecosystem convergence is tracked without blocking unrelated systems work.
+Aya/eBPF development also requires the nightly Rust toolchain with `rust-src`,
+`bpf-linker`, `clang`, `llvm`, and `bpftool`.
 
-Aya/eBPF development also requires the nightly Rust toolchain with `rust-src`, `bpf-linker`, and `bpftool`.
+`cargo deny` currently keeps duplicate dependency versions at warning level in
+`deny.toml`. This keeps the gate focused on actionable license, advisory,
+source, yanked, and unused-dependency failures while transitive ecosystem
+convergence is tracked without blocking unrelated systems work.
 
-See:
+## Privileged Linux smoke tests
 
-- `CONTRIBUTING.md`
-- `documentation/engineering-invariants.md`
-- `documentation/claims-matrix.md`
-- `documentation/helm.md`
-- `documentation/release-verification.md`
-- `documentation/module-authoring.md`
-
-## Verification
-
-Non-privileged checks:
+Run these only on a capable Linux host or cluster with the documented eBPF,
+tracefs, perf-event, and Kubernetes privileges:
 
 ```bash
-scripts/quality.sh
-cargo fmt --all -- --check
-cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings
-cargo test --locked --workspace --exclude e-navigator-ebpf-programs
-cargo build --locked --workspace --exclude e-navigator-ebpf-programs
-cargo run --locked -p e-navigator-cli -- --source synthetic
-helm lint charts/e-navigator
-helm template e-navigator charts/e-navigator
-cargo deny check
-cargo audit
-cargo machete
-docker build -f Containerfile -t e-navigator:local .
-docker run --rm e-navigator:local --source synthetic
-tests/smoke_docker.sh e-navigator:local
-git diff --check
+scripts/smoke_aya_exec_linux.sh
+scripts/smoke_aya_cpu_profile_linux.sh <config>
 ```
 
-The `aya-exec` source mode registers the statically compiled Aya exec and network sources when both modules are enabled. The `aya-cpu-profile` source mode registers only `source.aya_cpu_profile` when its module and `[cpu_profile_source] enabled = true` are configured. Do not treat privileged Aya, CPU profiling, DNS runtime visibility, or Kubernetes runtime tests as passed unless they run on a real Linux host or Kubernetes cluster with tracefs/eBPF/perf-event support and the documented privileges.
+The `aya-exec` source mode registers the statically compiled Aya exec and
+network sources when both modules are enabled. The `aya-cpu-profile` source
+mode registers only `source.aya_cpu_profile` when its module and
+`[cpu_profile_source] enabled = true` are configured.
+
+## Documentation
+
+- [CONTRIBUTING.md](CONTRIBUTING.md): contributor workflow and local gates.
+- [documentation/claims-matrix.md](documentation/claims-matrix.md): implemented,
+  proven, privileged, and deferred claims.
+- [documentation/engineering-invariants.md](documentation/engineering-invariants.md):
+  boundaries that must stay true as the system grows.
+- [documentation/helm.md](documentation/helm.md): chart install and values
+  guidance.
+- [documentation/release-verification.md](documentation/release-verification.md):
+  checksums, signatures, SBOMs, images, charts, and release manifests.
+- [documentation/module-authoring.md](documentation/module-authoring.md): how to
+  add sources, processors, generators, and sinks without breaking the static
+  pipeline.
+- [documentation/vision.md](documentation/vision.md): long-range product vision.
+
+Architecture decision records live under [documentation/adr/](documentation/adr/).
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
