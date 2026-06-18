@@ -99,7 +99,7 @@
           <article class="audience">
             <h3>Platform and SRE teams</h3>
             <p>Inspect Linux and Kubernetes workloads through node-local collection, bounded attribution, and explicit deployment proof.</p>
-            <a href="https://github.com/guaracloud/e-navigator/blob/main/deploy/kubernetes/daemonset.yaml">Open DaemonSet</a>
+            <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/helm.md">Open Helm guide</a>
           </article>
           <article class="audience">
             <h3>Observability engineers</h3>
@@ -171,33 +171,31 @@
       <section id="kubernetes" class="install section" aria-labelledby="kubernetes-title">
         <div class="section-heading">
           <p class="eyebrow">Kubernetes path</p>
-          <h2 id="kubernetes-title">Start with manifest proof, then deploy on a capable Linux cluster.</h2>
+          <h2 id="kubernetes-title">Install the signed OCI chart, then prove runtime on a capable Linux cluster.</h2>
         </div>
         <div class="command-stack">
           <article class="command-card">
             <div>
-              <h3>Validate manifests</h3>
-              <p>Run client-side Kubernetes validation before applying privileged DaemonSet resources.</p>
+              <h3>Install with Helm</h3>
+              <p>Deploy the published OCI chart with the privileged DaemonSet, host mounts, and Kubernetes metadata RBAC.</p>
             </div>
             <div class="command-code">
               <button class="copy-button" type="button">Copy</button>
-              <pre><code>kubectl apply --dry-run=client -f deploy/kubernetes/namespace.yaml
-kubectl apply --dry-run=client -f deploy/kubernetes/rbac.yaml
-kubectl apply --dry-run=client -f deploy/kubernetes/configmap.yaml
-kubectl apply --dry-run=client -f deploy/kubernetes/daemonset.yaml</code></pre>
+              <pre><code>helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
+  --version 0.1.0 \
+  --namespace e-navigator-system \
+  --create-namespace</code></pre>
             </div>
           </article>
           <article class="command-card">
             <div>
-              <h3>Apply deliberately</h3>
-              <p>Use a real Linux node with the documented eBPF, perf-event, tracefs, and container attribution prerequisites.</p>
+              <h3>Verify before production</h3>
+              <p>Check release signatures, SBOMs, image digests, and chart digest before pinning a production install.</p>
             </div>
             <div class="command-code">
               <button class="copy-button" type="button">Copy</button>
-              <pre><code>kubectl apply -f deploy/kubernetes/namespace.yaml
-kubectl apply -f deploy/kubernetes/rbac.yaml
-kubectl apply -f deploy/kubernetes/configmap.yaml
-kubectl apply -f deploy/kubernetes/daemonset.yaml</code></pre>
+              <pre><code>gh release download v0.1.0 --repo guaracloud/e-navigator --dir e-navigator-release
+jq -r '.images[0].reference' e-navigator-release/release-manifest.json</code></pre>
             </div>
           </article>
           <article id="local" class="command-card">
@@ -208,6 +206,17 @@ kubectl apply -f deploy/kubernetes/daemonset.yaml</code></pre>
             <div class="command-code">
               <button class="copy-button" type="button">Copy</button>
               <pre><code>cargo run --locked -p e-navigator-cli -- --source synthetic</code></pre>
+            </div>
+          </article>
+          <article class="command-card">
+            <div>
+              <h3>Validate locally</h3>
+              <p>Render the chart and run client-side Kubernetes validation without claiming live eBPF behavior.</p>
+            </div>
+            <div class="command-code">
+              <button class="copy-button" type="button">Copy</button>
+              <pre><code>helm lint charts/e-navigator
+helm template e-navigator charts/e-navigator | kubectl apply --dry-run=client -f -</code></pre>
             </div>
           </article>
         </div>
@@ -257,6 +266,7 @@ kubectl apply -f deploy/kubernetes/daemonset.yaml</code></pre>
       <nav aria-label="Footer links">
         <a href="https://github.com/guaracloud/e-navigator">GitHub</a>
         <a href="https://github.com/guaracloud/e-navigator/blob/main/README.md">README</a>
+        <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/helm.md">Helm</a>
         <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/vision.md">Vision</a>
         <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/claims-matrix.md">Claims matrix</a>
         <a href="https://github.com/guaracloud/e-navigator/blob/main/CONTRIBUTING.md">Contributing</a>

@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-E-Navigator is a Rust 2024 workspace under `crates/`. Core contracts live in `e-navigator-core`, versioned signal schemas in `e-navigator-signals`, protocol and profiling models in `e-navigator-protocol` and `e-navigator-profiling`, and runtime wiring in `e-navigator-runner`. Sources are split between `e-navigator-sources-host` and `e-navigator-sources-ebpf-aya`; processors, generators, sinks, and the CLI each have their own crates. Integration tests live in `crates/*/tests/`. Deployment assets are in `Containerfile`, `tests/smoke_docker.sh`, and `deploy/kubernetes/`. Architecture records and boundaries are in `documentation/`.
+E-Navigator is a Rust 2024 workspace under `crates/`. Core contracts live in `e-navigator-core`, versioned signal schemas in `e-navigator-signals`, protocol and profiling models in `e-navigator-protocol` and `e-navigator-profiling`, and runtime wiring in `e-navigator-runner`. Sources are split between `e-navigator-sources-host` and `e-navigator-sources-ebpf-aya`; processors, generators, sinks, and the CLI each have their own crates. Integration tests live in `crates/*/tests/`. Deployment assets are in `Containerfile`, `charts/e-navigator/`, `deploy/kubernetes/`, and `tests/smoke_docker.sh`. Architecture records and boundaries are in `documentation/`.
 
 ## Build, Test, and Development Commands
 
@@ -11,6 +11,7 @@ E-Navigator is a Rust 2024 workspace under `crates/`. Core contracts live in `e-
 - `cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings`: run strict linting for host-side crates.
 - `cargo test --locked --workspace --exclude e-navigator-ebpf-programs`: run workspace tests except eBPF programs.
 - `cargo run --locked -p e-navigator-cli -- --source synthetic`: exercise the CLI without privileged Linux dependencies.
+- `helm lint charts/e-navigator` and `helm template e-navigator charts/e-navigator`: validate Helm packaging.
 - `scripts/smoke_aya_exec_linux.sh` and `scripts/smoke_aya_cpu_profile_linux.sh <config>`: privileged Linux-only eBPF smoke tests.
 
 Use `E_NAVIGATOR_SKIP_SUPPLY_CHAIN=1`, `E_NAVIGATOR_SKIP_DOCKER=1`, or `E_NAVIGATOR_SKIP_KUBERNETES=1` only for constrained local environments.

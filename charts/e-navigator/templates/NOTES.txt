@@ -1,0 +1,9 @@
+E-Navigator has been rendered as a privileged Linux DaemonSet.
+
+Check pods:
+  kubectl get pods -n {{ include "e-navigator.namespace" . }} -l app.kubernetes.io/name={{ include "e-navigator.name" . }}
+
+Follow logs:
+  kubectl logs -n {{ include "e-navigator.namespace" . }} -l app.kubernetes.io/name={{ include "e-navigator.name" . }} -f
+
+Do not treat a Helm render or install as privileged eBPF runtime proof. Runtime proof requires a capable Linux node or cluster and observed Aya/eBPF output.

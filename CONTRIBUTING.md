@@ -28,6 +28,8 @@ cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-progr
 cargo test --locked --workspace --exclude e-navigator-ebpf-programs
 cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 cargo run --locked -p e-navigator-cli -- --source synthetic
+helm lint charts/e-navigator
+helm template e-navigator charts/e-navigator
 docker build -f Containerfile -t e-navigator:local .
 docker run --rm e-navigator:local --source synthetic
 tests/smoke_docker.sh e-navigator:local
@@ -46,7 +48,7 @@ cargo mutants --package e-navigator-protocol --package e-navigator-profiling --p
 cargo fuzz run traceparent_parser -- -max_total_time=60
 typos
 taplo fmt --check Cargo.toml crates/*/Cargo.toml
-yamllint .github/workflows/ci.yml deploy/kubernetes
+yamllint .github/workflows charts/e-navigator deploy/kubernetes
 ```
 
 ## Boundaries

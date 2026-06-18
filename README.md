@@ -37,6 +37,33 @@ Phase 9 builds a live CPU profiling source foundation on the bounded runtime, ne
 
 Phase 9 is a CPU profiling source foundation, not a full continuous profiling backend, Pyroscope replacement, pprof server, OTLP profile exporter, flamegraph UI, profile storage layer, trace/profile correlation engine, or workload bottleneck analyzer. Synthetic and fixture-backed profiling signals exist. Live CPU profile sample ingestion is implemented only through the explicit privileged `aya-cpu-profile` source mode and may only be claimed after running it on a real Linux host where samples are observed. Memory allocation profiling, lock contention profiling, host runtime profiling accuracy, production pprof export, and production OTLP profile export are not implemented. Synthetic and fixture-backed HTTP trace-context extraction exists. Live HTTP/gRPC parsing from real traffic, request IDs, routes, retries, application errors, full OTLP trace export, production trace storage, UI, critical path analysis, and runtime DNS packet capture are not implemented. The Aya network source remains TCP-oriented. Host resource accuracy depends on running on Linux with the configured host procfs/sysfs/cgroup mounts.
 
+## Kubernetes Install
+
+Install the OCI Helm chart on a capable Linux cluster:
+
+```bash
+helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
+  --version 0.1.0 \
+  --namespace e-navigator-system \
+  --create-namespace
+```
+
+The chart deploys the current privileged DaemonSet model with read-only host
+mounts, Kubernetes metadata RBAC, and the default bounded config. For local chart
+development or dev-channel images:
+
+```bash
+helm upgrade --install e-navigator charts/e-navigator \
+  --namespace e-navigator-system \
+  --create-namespace \
+  --set image.tag=main
+```
+
+Before production use, verify release checksums, signatures, SBOMs, image
+digests, and the chart digest with `documentation/release-verification.md`.
+Detailed chart configuration is in `documentation/helm.md`. Raw manifests remain
+available under `deploy/kubernetes/` for review and development fallback.
+
 ## Development
 
 Run the strict local quality gate:
@@ -55,6 +82,8 @@ cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-progr
 cargo test --locked --workspace --exclude e-navigator-ebpf-programs
 cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 cargo run --locked -p e-navigator-cli -- --source synthetic
+helm lint charts/e-navigator
+helm template e-navigator charts/e-navigator
 cargo deny check
 cargo audit
 cargo machete
@@ -73,8 +102,9 @@ See:
 - `CONTRIBUTING.md`
 - `documentation/engineering-invariants.md`
 - `documentation/claims-matrix.md`
+- `documentation/helm.md`
+- `documentation/release-verification.md`
 - `documentation/module-authoring.md`
-- `documentation/privileged-runtime-proof.md`
 
 ## Verification
 
@@ -87,6 +117,8 @@ cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-progr
 cargo test --locked --workspace --exclude e-navigator-ebpf-programs
 cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 cargo run --locked -p e-navigator-cli -- --source synthetic
+helm lint charts/e-navigator
+helm template e-navigator charts/e-navigator
 cargo deny check
 cargo audit
 cargo machete

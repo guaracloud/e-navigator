@@ -1,0 +1,192 @@
+nameOverride: ""
+fullnameOverride: ""
+commonLabels: {}
+
+namespace:
+  create: true
+  name: e-navigator-system
+  labels: {}
+
+image:
+  repository: ghcr.io/guaracloud/e-navigator
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+rbac:
+  create: true
+
+configMap:
+  name: ""
+
+config:
+  toml: |
+    log_level = "info"
+    queue_capacity = 8192
+
+    [argv_capture]
+    # Disabled by default because argv often contains credentials, tokens, or customer data.
+    enabled = false
+    max_args = 8
+    max_bytes = 512
+
+    [attribution]
+    procfs_root = "/host/proc"
+
+    [attribution.kubernetes]
+    enabled = true
+    token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    ca_cert_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+    [runtime_security]
+    # Kubernetes API endpoints are also discovered from
+    # KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT inside the pod.
+
+    [resource_source]
+    procfs_root = "/host/proc"
+    sysfs_root = "/sys"
+    cgroup_root = "/host/cgroup"
+    sample_interval_millis = 60000
+    max_processes = 64
+    max_cgroups = 64
+    max_fds_per_process = 1024
+    max_file_bytes = 131072
+
+    [cpu_profile_source]
+    enabled = false
+    module_name = "source.aya_cpu_profile"
+    sample_frequency_hz = 49
+    max_active_targets = 128
+    max_frames_per_sample = 64
+    max_samples_per_batch = 64
+    max_symbol_bytes = 256
+    max_module_bytes = 256
+    max_file_bytes = 256
+    backpressure = "drop_newest"
+
+    [resource_metrics]
+    max_keys = 4096
+
+    [network_metrics]
+    max_metric_keys = 4096
+    max_active_connections = 8192
+
+    [dns_metrics]
+    max_domains = 1024
+
+    [trace_correlation]
+    max_service_paths = 4096
+    max_seen_interactions = 8192
+    max_warnings = 1024
+
+    [request_correlation]
+    max_seen_requests = 8192
+    max_warnings = 1024
+
+    [profiling]
+    max_windows = 4096
+    max_seen_samples = 8192
+    max_warnings = 1024
+    window_nanos = 30000000000
+
+    [[modules]]
+    name = "source.aya_exec"
+    enabled = true
+
+    [[modules]]
+    name = "source.aya_network"
+    enabled = true
+
+    [[modules]]
+    name = "source.aya_cpu_profile"
+    enabled = false
+
+    [[modules]]
+    name = "source.host_resource"
+    enabled = true
+
+    [[modules]]
+    name = "processor.container_attribution"
+    enabled = true
+
+    [[modules]]
+    name = "generator.resource_metrics"
+    enabled = true
+
+    [[modules]]
+    name = "generator.network_metrics"
+    enabled = true
+
+    [[modules]]
+    name = "generator.dns_metrics"
+    enabled = true
+
+    [[modules]]
+    name = "generator.trace_correlation"
+    enabled = true
+
+    [[modules]]
+    name = "generator.request_correlation"
+    enabled = true
+
+    [[modules]]
+    name = "generator.profiling"
+    enabled = true
+
+    [[modules]]
+    name = "generator.dependency_graph"
+    enabled = true
+
+    [[modules]]
+    name = "generator.runtime_security"
+    enabled = true
+
+    [[modules]]
+    name = "sink.json_stdout"
+    enabled = true
+
+args:
+  - "--source"
+  - "aya-exec"
+  - "--config"
+  - "/etc/e-navigator/e-navigator.toml"
+
+logLevel: info
+extraEnv: []
+podAnnotations: {}
+podLabels: {}
+terminationGracePeriodSeconds: 10
+
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations:
+  - operator: Exists
+
+resources: {}
+
+securityContext:
+  privileged: true
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: true
+
+hostPaths:
+  sysKernelDebug:
+    path: /sys/kernel/debug
+    type: Directory
+  sysKernelTracing:
+    path: /sys/kernel/tracing
+    type: Directory
+  proc:
+    path: /proc
+    type: Directory
+  cgroup:
+    path: /sys/fs/cgroup
+    type: Directory

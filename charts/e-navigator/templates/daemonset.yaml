@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "e-navigator.fullname" . }}
+  namespace: {{ include "e-navigator.namespace" . }}
+  labels:
+    {{- include "e-navigator.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "e-navigator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "e-navigator.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "e-navigator.serviceAccountName" . }}
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      containers:
+        - name: e-navigator
+          image: {{ include "e-navigator.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            {{- toYaml .Values.args | nindent 12 }}
+          env:
+            - name: RUST_LOG
+              value: {{ .Values.logLevel | quote }}
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/e-navigator
+              readOnly: true
+            - name: sys-kernel-debug
+              mountPath: /sys/kernel/debug
+              readOnly: true
+            - name: sys-kernel-tracing
+              mountPath: /sys/kernel/tracing
+              readOnly: true
+            - name: host-proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: host-cgroup
+              mountPath: /host/cgroup
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "e-navigator.configMapName" . }}
+        - name: sys-kernel-debug
+          hostPath:
+            path: {{ .Values.hostPaths.sysKernelDebug.path }}
+            type: {{ .Values.hostPaths.sysKernelDebug.type }}
+        - name: sys-kernel-tracing
+          hostPath:
+            path: {{ .Values.hostPaths.sysKernelTracing.path }}
+            type: {{ .Values.hostPaths.sysKernelTracing.type }}
+        - name: host-proc
+          hostPath:
+            path: {{ .Values.hostPaths.proc.path }}
+            type: {{ .Values.hostPaths.proc.type }}
+        - name: host-cgroup
+          hostPath:
+            path: {{ .Values.hostPaths.cgroup.path }}
+            type: {{ .Values.hostPaths.cgroup.type }}

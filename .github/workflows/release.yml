@@ -1,0 +1,232 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/guaracloud/e-navigator
+  CHART_REPOSITORY: oci://ghcr.io/guaracloud/charts
+
+jobs:
+  publish-and-sign:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      packages: write
+    outputs:
+      image_digest: ${{ steps.image.outputs.digest }}
+      chart_digest: ${{ steps.chart_push.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install release tooling
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:latest
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Sign release image and export image SBOM
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cosign sign --yes "${IMAGE}@${IMAGE_DIGEST}"
+          syft "${IMAGE}@${IMAGE_DIGEST}" -o spdx-json=dist/e-navigator-image.spdx.json
+          syft dir:. -o spdx-json=dist/e-navigator-source.spdx.json
+
+      - name: Package and publish Helm chart
+        id: chart_push
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          chart_version="${VERSION#v}"
+          helm package charts/e-navigator --version "$chart_version" --app-version "$chart_version" --destination dist
+          chart="$(ls dist/e-navigator-*.tgz)"
+          syft "$chart" -o spdx-json=dist/e-navigator-chart.spdx.json
+          helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin <<< "${{ secrets.GITHUB_TOKEN }}"
+          helm push "$chart" "$CHART_REPOSITORY" 2>&1 | tee /tmp/e-navigator-helm-push.txt
+          digest="$(awk '/^Digest:/ {print $2; exit}' /tmp/e-navigator-helm-push.txt)"
+          test -n "$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Checksum, sign, and verify release files
+        run: |
+          set -euo pipefail
+          cd dist
+          for artifact in \
+            e-navigator-image.spdx.json \
+            e-navigator-source.spdx.json \
+            e-navigator-chart.spdx.json \
+            e-navigator-*.tgz
+          do
+            sha256sum "$artifact" > "$artifact.sha256"
+            cosign sign-blob --yes "$artifact" \
+              --output-signature "$artifact.sig" \
+              --output-certificate "$artifact.pem"
+            cosign verify-blob \
+              --signature "$artifact.sig" \
+              --certificate "$artifact.pem" \
+              --certificate-identity-regexp '^https://github\.com/guaracloud/e-navigator/' \
+              --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+              "$artifact"
+          done
+
+      - name: Generate release manifest
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          CHART_DIGEST: ${{ steps.chart_push.outputs.digest }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+
+          artifacts = []
+          for name in sorted(os.listdir("dist")):
+              if name.startswith("release-manifest.json"):
+                  continue
+              path = os.path.join("dist", name)
+              if os.path.isfile(path):
+                  artifacts.append({"name": name, "size": os.path.getsize(path)})
+
+          manifest = {
+              "schema": "e-navigator.release-manifest/v1",
+              "tag": os.environ["TAG"],
+              "repository": "guaracloud/e-navigator",
+              "artifacts": artifacts,
+              "images": [
+                  {
+                      "name": os.environ["IMAGE"],
+                      "reference": f'{os.environ["IMAGE"]}@{os.environ["IMAGE_DIGEST"]}',
+                      "digest": os.environ["IMAGE_DIGEST"],
+                  }
+              ],
+              "helm_chart": {
+                  "name": "e-navigator",
+                  "repository": os.environ["CHART_REPOSITORY"],
+                  "reference": f'{os.environ["CHART_REPOSITORY"]}/e-navigator',
+                  "digest": os.environ["CHART_DIGEST"],
+              },
+              "provenance": {
+                  "signing": "keyless cosign via GitHub OIDC",
+                  "sbom": "SPDX JSON",
+              },
+          }
+          with open("dist/release-manifest.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, indent=2, sort_keys=True)
+              f.write("\n")
+          PY
+          jq -e '.schema == "e-navigator.release-manifest/v1"' dist/release-manifest.json >/dev/null
+
+      - name: Sign release manifest
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum release-manifest.json > release-manifest.json.sha256
+          cosign sign-blob --yes release-manifest.json \
+            --output-signature release-manifest.json.sig \
+            --output-certificate release-manifest.json.pem
+          cosign verify-blob \
+            --signature release-manifest.json.sig \
+            --certificate release-manifest.json.pem \
+            --certificate-identity-regexp '^https://github\.com/guaracloud/e-navigator/' \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            release-manifest.json
+
+      - name: Attach artifacts to release
+        uses: softprops/action-gh-release@e7a8f85e1c67a31e6ed99a94b41bd0b71bbee6b8
+        with:
+          files: dist/*
+
+  post-release-verify:
+    needs: publish-and-sign
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
+
+      - name: Install SBOM verifier
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p verify
+          gh release download "$TAG" --dir verify --clobber
+
+      - name: Verify checksums, signatures, image, and SBOM JSON
+        env:
+          IMAGE_DIGEST: ${{ needs.publish-and-sign.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          cd verify
+          for sum in *.sha256; do
+            sha256sum -c "$sum"
+          done
+          for sig in *.sig; do
+            artifact="${sig%.sig}"
+            cosign verify-blob \
+              --signature "$sig" \
+              --certificate "${artifact}.pem" \
+              --certificate-identity-regexp '^https://github\.com/guaracloud/e-navigator/' \
+              --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+              "$artifact"
+          done
+          for sbom in *.spdx.json; do
+            jq -e '.spdxVersion and .packages' "$sbom" >/dev/null
+          done
+          cosign verify \
+            --certificate-identity-regexp '^https://github\.com/guaracloud/e-navigator/' \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            "${IMAGE}@${IMAGE_DIGEST}"

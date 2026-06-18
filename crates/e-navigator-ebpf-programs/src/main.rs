@@ -235,7 +235,7 @@ fn try_tracepoint_exec_common(
     event.uid = uid_gid as u32;
     event.argument_count = 0;
     event.event_source = EXEC_EVENT_SOURCE_SYSCALL_ENTER;
-    event.event_monotonic_nanos = bpf_ktime_get_ns();
+    event.event_monotonic_nanos = unsafe { bpf_ktime_get_ns() };
     event.cgroup_id = current_cgroup_id();
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     event.executable = [0; EXECUTABLE_LEN];
@@ -259,7 +259,7 @@ fn try_tracepoint_process_exec(ctx: TracePointContext) -> Result<u32, i64> {
     event.uid = uid_gid as u32;
     event.argument_count = 0;
     event.event_source = EXEC_EVENT_SOURCE_SCHED_EXEC;
-    event.event_monotonic_nanos = bpf_ktime_get_ns();
+    event.event_monotonic_nanos = unsafe { bpf_ktime_get_ns() };
     event.cgroup_id = current_cgroup_id();
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     event.executable = [0; EXECUTABLE_LEN];

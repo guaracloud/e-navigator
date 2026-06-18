@@ -76,14 +76,22 @@ jobs:
         run: cargo machete
 
   manifests:
-    name: Kubernetes manifest checks
+    name: Kubernetes and Helm checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
+
+      - name: Validate Helm chart
+        run: |
+          helm lint charts/e-navigator
+          helm template e-navigator charts/e-navigator
 
       - name: Validate manifests
         run: |
@@ -91,6 +99,7 @@ jobs:
           kubectl apply --dry-run=client -f deploy/kubernetes/rbac.yaml
           kubectl apply --dry-run=client -f deploy/kubernetes/configmap.yaml
           kubectl apply --dry-run=client -f deploy/kubernetes/daemonset.yaml
+          helm template e-navigator charts/e-navigator | kubectl apply --dry-run=client -f -
 
   docker:
     name: Docker smoke

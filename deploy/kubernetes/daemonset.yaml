@@ -23,7 +23,7 @@ spec:
         - operator: Exists
       containers:
         - name: e-navigator
-          image: ghcr.io/victorbona/e-navigator:dev
+          image: ghcr.io/guaracloud/e-navigator:main
           imagePullPolicy: IfNotPresent
           args:
             - "--source"
