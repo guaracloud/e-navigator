@@ -24,3 +24,13 @@ case "$output" in
     exit 1
     ;;
 esac
+
+if ! grep -q 'E_NAVIGATOR_HOMELAB_IMAGE_PULL_SECRET' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector does not expose E_NAVIGATOR_HOMELAB_IMAGE_PULL_SECRET\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'imagePullSecrets[0].name=$image_pull_secret' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector does not pass imagePullSecrets to Helm\n' >&2
+  exit 1
+fi

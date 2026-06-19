@@ -51,19 +51,26 @@ if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ]; then
     printf 'E_NAVIGATOR_HOMELAB_IMAGE_REPOSITORY and E_NAVIGATOR_HOMELAB_IMAGE_TAG are required when E_NAVIGATOR_HOMELAB_APPLY=1\n' >&2
     exit 2
   fi
+  image_pull_secret="${E_NAVIGATOR_HOMELAB_IMAGE_PULL_SECRET:-}"
+  helm_args=(
+    --namespace "$namespace"
+    --set namespace.create=false
+    --set namespace.name="$namespace"
+    --set image.repository="$image_repository"
+    --set image.tag="$image_tag"
+    --set image.pullPolicy=IfNotPresent
+    --set resources.requests.cpu=50m
+    --set resources.requests.memory=128Mi
+    --set resources.limits.memory=512Mi
+  )
+  if [ -n "$image_pull_secret" ]; then
+    helm_args+=(--set "imagePullSecrets[0].name=$image_pull_secret")
+  fi
 
   "${kubectl_cmd[@]}" create namespace "$namespace" --dry-run=client -o yaml \
     | "${kubectl_cmd[@]}" apply -f -
   helm --kube-context "$context" upgrade --install "$release" charts/e-navigator \
-    --namespace "$namespace" \
-    --set namespace.create=false \
-    --set namespace.name="$namespace" \
-    --set image.repository="$image_repository" \
-    --set image.tag="$image_tag" \
-    --set image.pullPolicy=IfNotPresent \
-    --set resources.requests.cpu=50m \
-    --set resources.requests.memory=128Mi \
-    --set resources.limits.memory=512Mi
+    "${helm_args[@]}"
   "${kubectl_cmd[@]}" -n "$namespace" apply -f benchmarks/k8s/workload.yaml
 fi
 
