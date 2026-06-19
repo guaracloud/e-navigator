@@ -212,6 +212,14 @@ node website/check-links.mjs
 git diff --check
 ```
 
+Local benchmark and validation methodology lives in
+[documentation/benchmark.md](documentation/benchmark.md). The short local
+benchmark smoke command is:
+
+```bash
+benchmarks/runner/local-bench-smoke.sh
+```
+
 Aya/eBPF development also requires the nightly Rust toolchain with `rust-src`,
 `bpf-linker`, `clang`, `llvm`, and `bpftool`.
 
@@ -244,6 +252,10 @@ mode registers only `source.aya_cpu_profile` when its module and
   boundaries that must stay true as the system grows.
 - [documentation/helm.md](documentation/helm.md): chart install and values
   guidance.
+- [documentation/benchmark.md](documentation/benchmark.md): local benchmarks,
+  result artifact policy, and guarded homelab validation plan.
+- [documentation/privileged-runtime-proof.md](documentation/privileged-runtime-proof.md):
+  rules for recording privileged Linux or Kubernetes runtime evidence.
 - [documentation/release-verification.md](documentation/release-verification.md):
   checksums, signatures, SBOMs, images, charts, and release manifests.
 - [documentation/module-authoring.md](documentation/module-authoring.md): how to

@@ -1,0 +1,632 @@
+use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
+use e_navigator_core::Generator;
+use e_navigator_generators::{
+    DependencyGraphGenerator, DnsMetricsGenerator, GuaraCompatibilityGenerator,
+    NetworkMetricsGenerator, ProfilingGenerator, RequestCorrelationGenerator,
+    ResourceMetricsGenerator, RuntimeSecurityGenerator, TraceCorrelationGenerator,
+};
+use e_navigator_profiling::model::{NormalizationLimits, parse_profile_fixture};
+use e_navigator_protocol::{
+    ProtocolExtractionConfig, http::parse_http_request, trace_context::parse_traceparent,
+};
+use e_navigator_signals::{
+    CompatibilityCounterMetric, ContainerContext, DnsQueryEvent, DnsQueryType, DnsResponseCode,
+    DnsResponseEvent, ExecEvent, KubernetesContext, MetricAggregationWindow, NetworkAddressFamily,
+    NetworkConnectionCloseEvent, NetworkConnectionFailureEvent, NetworkConnectionOpenEvent,
+    NetworkFlowDirection, NetworkFlowEndpoint, NetworkFlowSummaryEvent, NetworkProcessIdentity,
+    NetworkProtocol, NodeCpuObservation, ProcessResourceContext, ProcessResourceObservation,
+    ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind,
+    ProfilingFrame, ProfilingKind, ProtocolKind, ProtocolRequestObservation, SignalEnvelope,
+    TraceAttribute, TraceConfidence, TraceCorrelationKind, TracePeerContext,
+};
+use e_navigator_sinks::{
+    HttpExporterConfig, HttpJsonExporter, format_profile_record,
+    format_prometheus_compatibility_metric,
+};
+use e_navigator_sources_ebpf_aya::{
+    cpu_profile::fuzz_decode_raw_cpu_profile_event, exec::fuzz_decode_raw_exec_event,
+    network::fuzz_decode_raw_network_event,
+};
+use e_navigator_sources_host::{
+    parse_cpu_stat, parse_diskstats, parse_loadavg, parse_meminfo, parse_process_stat,
+};
+use serde::Serialize;
+use std::{cell::Cell, collections::BTreeMap};
+use tokio::{runtime::Runtime, sync::mpsc};
+
+fn bench_raw_aya_decoders(c: &mut Criterion) {
+    let exec_bytes = vec![0x42; 4096];
+    let network_bytes = vec![0x11; 1024];
+    let cpu_profile_bytes = vec![0x7f; 1024];
+
+    c.bench_function("aya_decode/exec_fuzz_harness", |b| {
+        b.iter(|| fuzz_decode_raw_exec_event(black_box(&exec_bytes)))
+    });
+    c.bench_function("aya_decode/network_fuzz_harness", |b| {
+        b.iter(|| fuzz_decode_raw_network_event(black_box(&network_bytes)))
+    });
+    c.bench_function("aya_decode/cpu_profile_fuzz_harness", |b| {
+        b.iter(|| fuzz_decode_raw_cpu_profile_event(black_box(&cpu_profile_bytes)))
+    });
+}
+
+fn bench_host_parsers(c: &mut Criterion) {
+    let stat = "cpu  139755 0 33548 1852017 223 0 1417 0 0 0\nprocs_running 3\nprocs_blocked 0\n";
+    let loadavg = "0.17 0.12 0.09 2/842 12345\n";
+    let meminfo = "MemTotal:       32768000 kB\nMemFree:         1024000 kB\nMemAvailable:   24000000 kB\nSwapTotal:       8388608 kB\nSwapFree:        8388608 kB\n";
+    let diskstats = "   8       0 sda 1024 0 2048 0 512 0 4096 0 0 0 0 0 0 0 0 0 0\n";
+    let process_stat = "1234 (e-navigator) S 1 1 1 0 -1 4194560 100 0 0 0 25 9 0 0 20 0 8 0 123456 268435456 4096 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0";
+    let process_status = "Name:\te-navigator\nUid:\t1000\t1000\t1000\t1000\nThreads:\t8\n";
+
+    c.bench_function("host_parser/cpu_stat", |b| {
+        b.iter(|| parse_cpu_stat(black_box(stat), 100, 1_000, 2_000).unwrap())
+    });
+    c.bench_function("host_parser/loadavg", |b| {
+        b.iter(|| parse_loadavg(black_box(loadavg), 1_000, 2_000).unwrap())
+    });
+    c.bench_function("host_parser/meminfo", |b| {
+        b.iter(|| parse_meminfo(black_box(meminfo), 1_000, 2_000).unwrap())
+    });
+    c.bench_function("host_parser/diskstats", |b| {
+        b.iter(|| parse_diskstats(black_box(diskstats), 1_000, 2_000).unwrap())
+    });
+    c.bench_function("host_parser/process_stat", |b| {
+        b.iter(|| {
+            parse_process_stat(
+                1234,
+                black_box(process_stat),
+                Some(process_status),
+                100,
+                4096,
+                32,
+                4,
+                1_000,
+                2_000,
+            )
+            .unwrap()
+        })
+    });
+}
+
+fn bench_protocol_and_profiles(c: &mut Criterion) {
+    let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    let http = b"GET /api/orders HTTP/1.1\r\nHost: api.example.test\r\nTraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\nTracestate: rojo=00f067aa0ba902b7\r\n\r\n";
+    let protocol_config = ProtocolExtractionConfig::default();
+    let profile_fixture = r#"{
+        "timestamp_unix_nanos": 1000,
+        "profiling_kind": "cpu",
+        "correlation_kind": "observed_profile_sample",
+        "confidence": "medium",
+        "sample_count": 7,
+        "sampling_period_nanos": 20000000,
+        "stack_frames": [
+          {"symbol":"handler","module":"api","file":"src/main.rs","line":42},
+          {"symbol":"tokio::runtime","module":"tokio","file":"runtime.rs","line":7}
+        ],
+        "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "api", "executable": "/usr/bin/api", "cgroup_id": 7},
+        "attributes": [{"key":"profile.source","value":"fixture"}]
+    }"#;
+    let limits = NormalizationLimits::default();
+
+    c.bench_function("protocol/traceparent_parse", |b| {
+        b.iter(|| parse_traceparent(black_box(traceparent)).unwrap())
+    });
+    c.bench_function("protocol/http_fixture_parse", |b| {
+        b.iter(|| parse_http_request(black_box(http), &protocol_config).unwrap())
+    });
+    c.bench_function("profiling/fixture_normalize", |b| {
+        b.iter(|| parse_profile_fixture(black_box(profile_fixture), &limits).unwrap())
+    });
+}
+
+fn bench_generators(c: &mut Criterion) {
+    bench_generator(
+        c,
+        "generator/network_metrics",
+        NetworkMetricsGenerator::with_limits(8192, 8192),
+        network_signals(),
+    );
+    bench_generator(
+        c,
+        "generator/dns_metrics",
+        DnsMetricsGenerator::with_limits(4096, 4096, 4096, 4096),
+        dns_signals(),
+    );
+    bench_generator(
+        c,
+        "generator/resource_metrics",
+        ResourceMetricsGenerator::with_limits(8192),
+        resource_signals(),
+    );
+    bench_generator(
+        c,
+        "generator/dependency_graph",
+        DependencyGraphGenerator::new(8192),
+        network_signals(),
+    );
+    bench_generator(
+        c,
+        "generator/trace_correlation",
+        TraceCorrelationGenerator::with_limits(8192, 8192, 4096),
+        trace_signals(),
+    );
+    bench_generator(
+        c,
+        "generator/request_correlation",
+        RequestCorrelationGenerator::with_limits(8192, 4096),
+        request_signals(),
+    );
+    bench_generator(
+        c,
+        "generator/profiling",
+        ProfilingGenerator::with_limits(8192, 8192, 4096, 30_000_000_000),
+        profiling_signals(),
+    );
+    bench_generator(
+        c,
+        "generator/runtime_security",
+        RuntimeSecurityGenerator::with_kubernetes_api_endpoints([("10.43.0.1".to_string(), 443)]),
+        security_signals(),
+    );
+    bench_generator(
+        c,
+        "generator/guara_compat",
+        GuaraCompatibilityGenerator::with_limits(8192),
+        guara_signals(),
+    );
+}
+
+fn bench_generator<G>(
+    c: &mut Criterion,
+    name: &'static str,
+    generator: G,
+    signals: Vec<SignalEnvelope>,
+) where
+    G: Generator<SignalEnvelope> + 'static,
+{
+    let runtime = Runtime::new().unwrap();
+    let (tx, mut rx) = mpsc::channel(1024);
+    let index = Cell::new(0_usize);
+    c.bench_function(name, |b| {
+        b.iter(|| {
+            let next = index.get().wrapping_add(1);
+            index.set(next);
+            let signal = &signals[next % signals.len()];
+            runtime
+                .block_on(generator.observe(black_box(signal), &tx))
+                .unwrap();
+            while rx.try_recv().is_ok() {}
+        })
+    });
+}
+
+fn bench_serialization_and_exporter(c: &mut Criterion) {
+    let signal = network_open_signal(1_000);
+    c.bench_function("json/signal_to_vec", |b| {
+        b.iter(|| serde_json::to_vec(black_box(&signal)).unwrap())
+    });
+
+    let compat_metric = compatibility_metric_signal();
+    let profile = profiling_signals().remove(0);
+    c.bench_function("formatter/prometheus_compat", |b| {
+        b.iter(|| format_prometheus_compatibility_metric(black_box(&compat_metric)).unwrap())
+    });
+    c.bench_function("formatter/profile_record", |b| {
+        b.iter(|| format_profile_record(black_box(&profile)).unwrap())
+    });
+
+    c.bench_function("exporter/bounded_queue_enqueue", |b| {
+        b.iter_batched(
+            || {
+                HttpJsonExporter::new(HttpExporterConfig {
+                    endpoint: "http://127.0.0.1:9".to_string(),
+                    headers: Vec::new(),
+                    batch_size: 16,
+                    queue_capacity: 128,
+                    timeout_millis: 1,
+                    max_retries: 0,
+                    tls_insecure_skip_verify: false,
+                })
+                .unwrap()
+            },
+            |mut exporter: HttpJsonExporter<ExportRecord>| {
+                for value in 0..64 {
+                    exporter.enqueue(ExportRecord { value });
+                }
+                black_box(exporter.counters())
+            },
+            BatchSize::SmallInput,
+        )
+    });
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ExportRecord {
+    value: u64,
+}
+
+fn network_signals() -> Vec<SignalEnvelope> {
+    (0..128)
+        .flat_map(|index| {
+            [
+                network_open_signal(1_000 + index),
+                network_close_signal(2_000 + index),
+                network_failure_signal(3_000 + index),
+            ]
+        })
+        .collect()
+}
+
+fn dns_signals() -> Vec<SignalEnvelope> {
+    (0..128)
+        .flat_map(|index| {
+            let query = format!("api-{index}.proj-a.svc.cluster.local");
+            [
+                SignalEnvelope::dns_query(
+                    "source.synthetic",
+                    Some("node-a".to_string()),
+                    DnsQueryEvent {
+                        process: process(),
+                        query_name: query.clone(),
+                        query_type: DnsQueryType::A,
+                        transport_protocol: NetworkProtocol::Udp,
+                        server_address: Some("10.43.0.10".to_string()),
+                        server_port: Some(53),
+                        timestamp_unix_nanos: 10_000 + index,
+                        container: Some(container()),
+                        kubernetes: Some(kubernetes("api")),
+                    },
+                ),
+                SignalEnvelope::dns_response(
+                    "source.synthetic",
+                    Some("node-a".to_string()),
+                    DnsResponseEvent {
+                        process: process(),
+                        query_name: query,
+                        query_type: DnsQueryType::A,
+                        response_code: DnsResponseCode::NoError,
+                        latency_nanos: Some(750_000),
+                        transport_protocol: NetworkProtocol::Udp,
+                        server_address: Some("10.43.0.10".to_string()),
+                        server_port: Some(53),
+                        timestamp_unix_nanos: 10_500 + index,
+                        container: Some(container()),
+                        kubernetes: Some(kubernetes("api")),
+                    },
+                ),
+            ]
+        })
+        .collect()
+}
+
+fn resource_signals() -> Vec<SignalEnvelope> {
+    (0..128)
+        .flat_map(|index| {
+            let window = window(1_000 + index, 2_000 + index);
+            [
+                SignalEnvelope::node_cpu_observation(
+                    "source.host_resource",
+                    Some("node-a".to_string()),
+                    NodeCpuObservation {
+                        metric_name: "system.cpu.time".to_string(),
+                        unit: "ns".to_string(),
+                        timestamp_unix_nanos: window.end_unix_nanos,
+                        window: window.clone(),
+                        user_nanos: 10_000 + index,
+                        system_nanos: 2_000,
+                        idle_nanos: 50_000,
+                        iowait_nanos: 500,
+                        steal_nanos: 0,
+                        runnable_tasks: Some(2),
+                        blocked_tasks: Some(0),
+                    },
+                ),
+                SignalEnvelope::process_resource_observation(
+                    "source.host_resource",
+                    Some("node-a".to_string()),
+                    ProcessResourceObservation {
+                        metric_name: "process.resource".to_string(),
+                        unit: "1".to_string(),
+                        timestamp_unix_nanos: window.end_unix_nanos,
+                        window,
+                        process: ProcessResourceContext {
+                            pid: 1000 + index as u32,
+                            ppid: Some(1),
+                            uid: Some(1000),
+                            command: "api".to_string(),
+                            executable: Some("/usr/bin/api".to_string()),
+                            container: Some(container()),
+                            kubernetes: Some(kubernetes("api")),
+                        },
+                        cpu_time_nanos: Some(9_000),
+                        memory_rss_bytes: Some(64 * 1024 * 1024),
+                        virtual_memory_bytes: Some(256 * 1024 * 1024),
+                        open_fds: Some(32),
+                        socket_count: Some(8),
+                        thread_count: Some(12),
+                    },
+                ),
+            ]
+        })
+        .collect()
+}
+
+fn trace_signals() -> Vec<SignalEnvelope> {
+    let mut signals = network_signals();
+    signals.extend(dns_signals());
+    signals
+}
+
+fn request_signals() -> Vec<SignalEnvelope> {
+    (0..128)
+        .map(|index| {
+            SignalEnvelope::protocol_request_observation(
+                "source.synthetic",
+                Some("node-a".to_string()),
+                ProtocolRequestObservation {
+                    protocol: ProtocolKind::Http,
+                    start_unix_nanos: 1_000 + index,
+                    end_unix_nanos: Some(2_000 + index),
+                    duration_nanos: Some(1_000),
+                    trace_id: Some(format!("4bf92f3577b34da6a3ce929d0e0e{:04x}", index)),
+                    span_id: Some(format!("00f067aa0ba9{:04x}", index)),
+                    parent_span_id: None,
+                    traceparent: None,
+                    tracestate: None,
+                    correlation_kind: TraceCorrelationKind::ProtocolObserved,
+                    confidence: TraceConfidence::High,
+                    service_name: Some("api".to_string()),
+                    method: Some("GET".to_string()),
+                    status_code: Some(200),
+                    process: Some(process()),
+                    container: Some(container()),
+                    kubernetes: Some(kubernetes("api")),
+                    peer: Some(TracePeerContext {
+                        address: Some("10.43.12.22".to_string()),
+                        port: Some(8080),
+                        domain: Some("web.proj-a.svc.cluster.local".to_string()),
+                        workload: Some(kubernetes("web")),
+                        container: None,
+                    }),
+                    attributes: vec![TraceAttribute {
+                        key: "http.route".to_string(),
+                        value: "/orders".to_string(),
+                    }],
+                },
+            )
+        })
+        .collect()
+}
+
+fn profiling_signals() -> Vec<SignalEnvelope> {
+    (0..128)
+        .map(|index| {
+            SignalEnvelope::profile_sample_observation(
+                "source.aya_cpu_profile",
+                Some("node-a".to_string()),
+                ProfileSampleObservation {
+                    timestamp_unix_nanos: 1_000 + index,
+                    profiling_kind: ProfilingKind::Cpu,
+                    correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+                    confidence: ProfilingConfidence::Medium,
+                    sample_count: 3,
+                    sampling_period_nanos: Some(20_000_000),
+                    stack_id: format!("stack:{index:016x}"),
+                    stack_frames: vec![
+                        ProfilingFrame {
+                            symbol: Some("handler".to_string()),
+                            module: Some("api".to_string()),
+                            file: Some("src/main.rs".to_string()),
+                            line: Some(42),
+                        },
+                        ProfilingFrame {
+                            symbol: Some("tokio::runtime".to_string()),
+                            module: Some("tokio".to_string()),
+                            file: None,
+                            line: None,
+                        },
+                    ],
+                    process: Some(process()),
+                    container: Some(container()),
+                    kubernetes: Some(kubernetes("api")),
+                    thread_id: Some(42),
+                    thread_name: Some("worker".to_string()),
+                    attributes: vec![ProfilingAttribute {
+                        key: "profiling.source".to_string(),
+                        value: "fixture".to_string(),
+                    }],
+                },
+            )
+        })
+        .collect()
+}
+
+fn security_signals() -> Vec<SignalEnvelope> {
+    (0..128)
+        .flat_map(|index| {
+            [
+                SignalEnvelope::exec(
+                    "source.synthetic",
+                    Some("node-a".to_string()),
+                    ExecEvent {
+                        pid: 2000 + index as u32,
+                        ppid: Some(1),
+                        uid: Some(1000),
+                        command: "sh".to_string(),
+                        executable: Some("/bin/sh".to_string()),
+                        arguments: vec!["sh".to_string()],
+                        cgroup_id: Some(7),
+                        timestamp_unix_nanos: 1_000 + index,
+                        container: Some(container()),
+                        kubernetes: Some(kubernetes("api")),
+                    },
+                ),
+                network_open_signal(2_000 + index),
+            ]
+        })
+        .collect()
+}
+
+fn guara_signals() -> Vec<SignalEnvelope> {
+    (0..128)
+        .map(|index| {
+            SignalEnvelope::network_flow_summary(
+                "generator.network_metrics",
+                Some("node-a".to_string()),
+                NetworkFlowSummaryEvent {
+                    source: flow_endpoint("api"),
+                    destination: flow_endpoint("redis"),
+                    protocol: NetworkProtocol::Tcp,
+                    address_family: NetworkAddressFamily::Ipv4,
+                    bytes: 1024 + index,
+                    packets: Some(8),
+                    direction: NetworkFlowDirection::Egress,
+                    first_seen_unix_nanos: 1_000 + index,
+                    last_seen_unix_nanos: 2_000 + index,
+                },
+            )
+        })
+        .collect()
+}
+
+fn compatibility_metric_signal() -> SignalEnvelope {
+    SignalEnvelope::compatibility_counter_metric(
+        "generator.guara_compat",
+        Some("node-a".to_string()),
+        CompatibilityCounterMetric {
+            metric_name: "beyla_network_flow_bytes_total".to_string(),
+            unit: "By".to_string(),
+            value: 4096,
+            window: window(1_000, 2_000),
+            labels: BTreeMap::from([
+                ("k8s_src_namespace".to_string(), "proj-a".to_string()),
+                ("k8s_src_owner_name".to_string(), "api".to_string()),
+                ("k8s_src_owner_type".to_string(), "deployment".to_string()),
+                ("k8s_dst_namespace".to_string(), "proj-a".to_string()),
+                ("k8s_dst_owner_name".to_string(), "redis".to_string()),
+                ("k8s_dst_owner_type".to_string(), "deployment".to_string()),
+            ]),
+        },
+    )
+}
+
+fn network_open_signal(timestamp: u64) -> SignalEnvelope {
+    SignalEnvelope::network_connection_open(
+        "source.synthetic",
+        Some("node-a".to_string()),
+        NetworkConnectionOpenEvent {
+            process: process(),
+            protocol: NetworkProtocol::Tcp,
+            address_family: NetworkAddressFamily::Ipv4,
+            local_address: Some("10.42.0.10".to_string()),
+            local_port: Some(41234),
+            remote_address: "203.0.113.10".to_string(),
+            remote_port: 443,
+            fd: Some(12),
+            timestamp_unix_nanos: timestamp,
+            container: Some(container()),
+            kubernetes: Some(kubernetes("api")),
+        },
+    )
+}
+
+fn network_close_signal(timestamp: u64) -> SignalEnvelope {
+    SignalEnvelope::network_connection_close(
+        "source.synthetic",
+        Some("node-a".to_string()),
+        NetworkConnectionCloseEvent {
+            process: process(),
+            protocol: NetworkProtocol::Tcp,
+            address_family: NetworkAddressFamily::Ipv4,
+            local_address: Some("10.42.0.10".to_string()),
+            local_port: Some(41234),
+            remote_address: "203.0.113.10".to_string(),
+            remote_port: 443,
+            fd: Some(12),
+            opened_at_unix_nanos: Some(timestamp.saturating_sub(500)),
+            closed_at_unix_nanos: timestamp,
+            duration_nanos: Some(500),
+            container: Some(container()),
+            kubernetes: Some(kubernetes("api")),
+        },
+    )
+}
+
+fn network_failure_signal(timestamp: u64) -> SignalEnvelope {
+    SignalEnvelope::network_connection_failure(
+        "source.synthetic",
+        Some("node-a".to_string()),
+        NetworkConnectionFailureEvent {
+            process: process(),
+            protocol: NetworkProtocol::Tcp,
+            address_family: NetworkAddressFamily::Ipv4,
+            remote_address: "203.0.113.99".to_string(),
+            remote_port: 443,
+            fd: Some(13),
+            errno: 111,
+            timestamp_unix_nanos: timestamp,
+            container: Some(container()),
+            kubernetes: Some(kubernetes("api")),
+        },
+    )
+}
+
+fn process() -> NetworkProcessIdentity {
+    NetworkProcessIdentity {
+        pid: 4242,
+        ppid: Some(1),
+        uid: Some(1000),
+        command: "api".to_string(),
+        executable: Some("/usr/bin/api".to_string()),
+        cgroup_id: Some(7),
+    }
+}
+
+fn container() -> ContainerContext {
+    ContainerContext {
+        container_id: "containerd://abc123".to_string(),
+        runtime: Some("containerd".to_string()),
+    }
+}
+
+fn kubernetes(app: &str) -> KubernetesContext {
+    KubernetesContext {
+        namespace: "proj-a".to_string(),
+        pod_name: format!("{app}-7d9c9f6d7b-a1b2c"),
+        pod_uid: Some(format!("pod-{app}")),
+        container_name: Some(app.to_string()),
+        node_name: Some("homelab-01".to_string()),
+        labels: BTreeMap::from([
+            ("app.kubernetes.io/name".to_string(), app.to_string()),
+            ("guara.cloud/tier".to_string(), "pro".to_string()),
+        ]),
+    }
+}
+
+fn flow_endpoint(app: &str) -> NetworkFlowEndpoint {
+    NetworkFlowEndpoint {
+        address: Some("10.42.0.10".to_string()),
+        port: Some(8080),
+        owner_name: Some(app.to_string()),
+        owner_type: Some("deployment".to_string()),
+        container: Some(container()),
+        kubernetes: Some(kubernetes(app)),
+    }
+}
+
+fn window(start_unix_nanos: u64, end_unix_nanos: u64) -> MetricAggregationWindow {
+    MetricAggregationWindow {
+        start_unix_nanos,
+        end_unix_nanos,
+    }
+}
+
+criterion_group!(
+    benches,
+    bench_raw_aya_decoders,
+    bench_host_parsers,
+    bench_protocol_and_profiles,
+    bench_generators,
+    bench_serialization_and_exporter
+);
+criterion_main!(benches);

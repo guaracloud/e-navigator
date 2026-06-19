@@ -16,6 +16,7 @@
 | Guara Tempo service graph compatibility | partial | partly | trace formatter tests for `service.name`, `k8s.namespace.name`, `k8s.pod.name`, and `k8s.deployment.name` | no | OTLP trace transport, Tempo ingestion proof, live HTTP/gRPC/database spans, context propagation |
 | Guara Pyroscope CPU identity | partial | no | profile formatter tests for `process_cpu:cpu:nanoseconds:cpu:nanoseconds` and Guara labels | no | Pyroscope write transport, OTLP profile transport, symbolization/demangling runtime proof |
 | Exporter infrastructure | partial | no | sink-layer fake-collector tests for batching, timeout config, retry, bounded queue, headers, and drop counters | no | full OTLP protobuf metrics/traces/profiles, production collector compatibility proof |
+| Benchmark evidence harness | yes | no | local Criterion compile and smoke runs for deterministic parser, decode, generator, formatter, and queue fixtures | no | committed raw results, live overhead baselines, homelab runtime comparison |
 | Supply-chain checks | yes | no | `cargo deny`, `cargo audit`, `cargo machete`, release SBOM/signature workflow | no | container vulnerability policy gates |
 | Kubernetes packaging | yes | no | `helm lint`, `helm template`, `kubeconform -strict -summary` | not claimed | reduced-privilege eBPF runtime proof |
 
