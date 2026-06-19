@@ -1,0 +1,11 @@
+[[modules]]
+name = "source.aya_cpu_profile"
+enabled = false
+
+[[modules]]
+name = "sink.json_stdout"
+enabled = true
+
+[cpu_profile_source]
+enabled = true
+module_name = "source.aya_cpu_profile"

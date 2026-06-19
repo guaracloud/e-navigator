@@ -1,0 +1,57 @@
+[package]
+name = "e-navigator-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+e-navigator-profiling = { path = "../crates/e-navigator-profiling" }
+e-navigator-protocol = { path = "../crates/e-navigator-protocol" }
+e-navigator-sources-ebpf-aya = { path = "../crates/e-navigator-sources-ebpf-aya", features = ["fuzzing"] }
+e-navigator-sources-host = { path = "../crates/e-navigator-sources-host" }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "traceparent_parser"
+path = "fuzz_targets/traceparent_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "http_request_parser"
+path = "fuzz_targets/http_request_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "profile_fixture_parser"
+path = "fuzz_targets/profile_fixture_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "host_procfs_parsers"
+path = "fuzz_targets/host_procfs_parsers.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "raw_exec_event_decode"
+path = "fuzz_targets/raw_exec_event_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "raw_network_event_decode"
+path = "fuzz_targets/raw_network_event_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "raw_cpu_profile_event_decode"
+path = "fuzz_targets/raw_cpu_profile_event_decode.rs"
+test = false
+doc = false

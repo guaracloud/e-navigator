@@ -1,27 +1,27 @@
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_signals::{
     NetworkAddressFamily, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
     NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol, SignalEnvelope,
 };
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_NETWORK_EVENT_OPEN: u32 = 1;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_NETWORK_EVENT_CLOSE: u32 = 2;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_NETWORK_EVENT_FAILURE: u32 = 3;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_AF_INET: u32 = 2;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_AF_INET6: u32 = 10;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_PROTO_TCP: u32 = 6;
 #[cfg(any(target_os = "linux", test))]
 const PERF_BUFFER_PAGE_COUNT: usize = 64;
 #[cfg(any(target_os = "linux", test))]
 const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct RawNetworkEvent {
@@ -58,7 +58,7 @@ fn raw_network_to_signal_with_clock(
     )
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn raw_network_to_signal_with_clock_and_procfs(
     bytes: &[u8],
     host: Option<String>,
@@ -146,7 +146,21 @@ fn raw_network_to_signal_with_clock_and_procfs(
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(feature = "fuzzing")]
+pub fn fuzz_decode_raw_network_event(bytes: &[u8]) -> bool {
+    const MAX_FUZZ_BYTES: usize = 1024;
+
+    let bytes = &bytes[..bytes.len().min(MAX_FUZZ_BYTES)];
+    raw_network_to_signal_with_clock_and_procfs(
+        bytes,
+        None,
+        1_000,
+        std::path::Path::new("__e_navigator_fuzz_no_procfs__"),
+    )
+    .is_some()
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn protocol(value: u32) -> Option<NetworkProtocol> {
     match value {
         RAW_PROTO_TCP => Some(NetworkProtocol::Tcp),
@@ -154,7 +168,7 @@ fn protocol(value: u32) -> Option<NetworkProtocol> {
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn address_family(value: u32) -> Option<NetworkAddressFamily> {
     match value {
         RAW_AF_INET => Some(NetworkAddressFamily::Ipv4),
@@ -163,7 +177,7 @@ fn address_family(value: u32) -> Option<NetworkAddressFamily> {
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn remote_address(raw: &RawNetworkEvent, family: NetworkAddressFamily) -> String {
     match family {
         NetworkAddressFamily::Ipv4 => ipv4_to_string(raw.remote_addr_v4),
@@ -172,7 +186,7 @@ fn remote_address(raw: &RawNetworkEvent, family: NetworkAddressFamily) -> String
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn local_address(raw: &RawNetworkEvent, family: NetworkAddressFamily) -> Option<String> {
     match family {
         NetworkAddressFamily::Ipv4 if raw.local_addr_v4 != 0 => {
@@ -185,18 +199,18 @@ fn local_address(raw: &RawNetworkEvent, family: NetworkAddressFamily) -> Option<
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn ipv4_to_string(value: u32) -> String {
     let octets = value.to_ne_bytes();
     format!("{}.{}.{}.{}", octets[0], octets[1], octets[2], octets[3])
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn ipv6_to_string(value: [u8; 16]) -> String {
     std::net::Ipv6Addr::from(value).to_string()
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn bytes_to_string(bytes: &[u8]) -> String {
     let end = bytes
         .iter()
@@ -205,7 +219,7 @@ fn bytes_to_string(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[..end]).to_string()
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn now_unix_nanos() -> u64 {
     std::time::SystemTime::now()

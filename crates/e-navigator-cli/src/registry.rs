@@ -281,6 +281,14 @@ mod tests {
     }
 
     #[test]
+    fn registry_registers_only_json_stdout_as_concrete_sink() {
+        let config = RuntimeConfig::default();
+        let registry = build_registry(&config, SourceMode::Synthetic, Some("node-a".to_string()));
+
+        assert_eq!(sink_names(&registry), vec!["sink.json_stdout"]);
+    }
+
+    #[test]
     fn configured_kubernetes_api_endpoints_feed_runtime_security_generator() {
         let config = RuntimeConfig {
             runtime_security: RuntimeSecurityConfig {
@@ -348,6 +356,14 @@ mod tests {
             .generators()
             .iter()
             .map(|generator| generator.metadata().name.to_string())
+            .collect()
+    }
+
+    fn sink_names(registry: &ModuleRegistry) -> Vec<&'static str> {
+        registry
+            .sinks()
+            .iter()
+            .map(|sink| sink.metadata().name)
             .collect()
     }
 }

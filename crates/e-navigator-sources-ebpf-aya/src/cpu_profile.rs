@@ -1,17 +1,19 @@
 #[cfg(any(target_os = "linux", test))]
-use e_navigator_core::{CpuProfileBackpressure, CpuProfileSourceConfig};
-#[cfg(any(target_os = "linux", test))]
+use e_navigator_core::CpuProfileBackpressure;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+use e_navigator_core::CpuProfileSourceConfig;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_profiling::model::{NormalizationLimits, RawProfileFrame, RawProfileSample};
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_signals::{
     NetworkProcessIdentity, ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind,
     ProfilingKind, SignalEnvelope,
 };
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_CPU_PROFILE_MAX_FRAMES: usize = 4;
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct RawCpuProfileEvent {
@@ -26,7 +28,7 @@ pub(crate) struct RawCpuProfileEvent {
     pub instruction_pointers: [u64; RAW_CPU_PROFILE_MAX_FRAMES],
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn raw_cpu_profile_to_signal(
     bytes: &[u8],
@@ -36,7 +38,7 @@ fn raw_cpu_profile_to_signal(
     raw_cpu_profile_to_signal_with_clock(bytes, host, config, now_unix_nanos())
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn raw_cpu_profile_to_signal_with_clock(
     bytes: &[u8],
     host: Option<String>,
@@ -114,6 +116,25 @@ fn raw_cpu_profile_to_signal_with_clock(
     })
 }
 
+#[cfg(feature = "fuzzing")]
+pub fn fuzz_decode_raw_cpu_profile_event(bytes: &[u8]) -> bool {
+    const MAX_FUZZ_BYTES: usize = 1024;
+
+    let bytes = &bytes[..bytes.len().min(MAX_FUZZ_BYTES)];
+    let config = CpuProfileSourceConfig {
+        enabled: true,
+        max_active_targets: 4,
+        max_frames_per_sample: RAW_CPU_PROFILE_MAX_FRAMES,
+        max_samples_per_batch: 4,
+        max_symbol_bytes: 64,
+        max_module_bytes: 64,
+        max_file_bytes: 64,
+        ..CpuProfileSourceConfig::default()
+    };
+
+    raw_cpu_profile_to_signal_with_clock(bytes, None, &config, 1_000).is_some()
+}
+
 #[cfg(test)]
 fn decode_cpu_profile_batch(
     events: &[&[u8]],
@@ -150,12 +171,12 @@ fn bounded_cpu_targets(cpus: &[u32], max_active_targets: usize) -> Vec<u32> {
         .collect::<Vec<_>>()
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn sample_period_nanos(sample_frequency_hz: u32) -> u64 {
     1_000_000_000_u64 / u64::from(sample_frequency_hz.max(1))
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn now_unix_nanos() -> u64 {
     std::time::SystemTime::now()
@@ -164,7 +185,7 @@ fn now_unix_nanos() -> u64 {
         .unwrap_or(0)
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn bytes_to_string(bytes: &[u8]) -> String {
     let end = bytes
         .iter()

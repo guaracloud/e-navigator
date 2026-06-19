@@ -1,0 +1,11 @@
+[[modules]]
+name = "source.synthetic_exec"
+enabled = true
+
+[[modules]]
+name = "source.aya_dns"
+enabled = true
+
+[[modules]]
+name = "sink.json_stdout"
+enabled = true

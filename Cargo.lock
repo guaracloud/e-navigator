@@ -351,6 +351,7 @@ dependencies = [
  "e-navigator-sinks",
  "e-navigator-sources-ebpf-aya",
  "e-navigator-sources-host",
+ "serde_json",
  "tokio",
  "toml",
  "tracing-subscriber",

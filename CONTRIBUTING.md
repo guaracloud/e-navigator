@@ -10,7 +10,19 @@ Run the full non-privileged gate before submitting changes:
 scripts/quality.sh
 ```
 
-The strict gate requires `cargo-deny`, `cargo-audit`, and `cargo-machete`. In constrained local environments only, use:
+The strict gate requires `cargo-deny`, `cargo-audit`, `cargo-machete`, Docker,
+Helm, `kubeconform`, Node, and the normal Rust toolchain. On macOS with
+Homebrew, install missing local-gate CLIs with:
+
+```bash
+brew install docker kubeconform
+```
+
+The `docker` formula installs the Docker CLI only. Docker smoke checks still
+require a reachable Docker daemon, such as Docker Desktop or another compatible
+local daemon. CLI installation alone is not Docker smoke evidence.
+
+In constrained local environments only, use:
 
 ```bash
 E_NAVIGATOR_SKIP_SUPPLY_CHAIN=1 scripts/quality.sh
@@ -46,6 +58,12 @@ cargo llvm-cov --locked --workspace --exclude e-navigator-ebpf-programs --summar
 cargo bench --no-run --locked --workspace --exclude e-navigator-ebpf-programs
 cargo mutants --package e-navigator-protocol --package e-navigator-profiling --package e-navigator-generators --timeout 60
 cargo fuzz run traceparent_parser -- -max_total_time=60
+cargo fuzz run http_request_parser -- -max_total_time=60
+cargo fuzz run profile_fixture_parser -- -max_total_time=60
+cargo fuzz run host_procfs_parsers -- -max_total_time=60
+cargo fuzz run raw_exec_event_decode -- -max_total_time=60
+cargo fuzz run raw_network_event_decode -- -max_total_time=60
+cargo fuzz run raw_cpu_profile_event_decode -- -max_total_time=60
 typos
 taplo fmt --check Cargo.toml crates/*/Cargo.toml
 yamllint .github/workflows charts/e-navigator deploy/kubernetes

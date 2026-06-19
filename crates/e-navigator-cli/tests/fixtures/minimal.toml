@@ -1,0 +1,10 @@
+log_level = "info"
+queue_capacity = 64
+
+[[modules]]
+name = "source.synthetic_exec"
+enabled = true
+
+[[modules]]
+name = "sink.json_stdout"
+enabled = true

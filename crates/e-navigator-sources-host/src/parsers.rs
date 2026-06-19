@@ -152,8 +152,12 @@ pub fn parse_process_stat(
     let close = stat
         .rfind(')')
         .ok_or_else(|| "process stat missing command terminator".to_string())?;
+    let open = stat[..close]
+        .find('(')
+        .ok_or_else(|| "process stat missing command opener".to_string())?;
     let rest = stat
-        .get(close + 2..)
+        .get(close + ')'.len_utf8()..)
+        .and_then(|rest| rest.strip_prefix(' '))
         .ok_or_else(|| "process stat missing fields".to_string())?;
     let fields = rest.split_whitespace().collect::<Vec<_>>();
     if fields.len() < 22 {
@@ -161,7 +165,11 @@ pub fn parse_process_stat(
     }
     let command = status
         .and_then(status_name)
-        .unwrap_or_else(|| stat[stat.find('(').unwrap_or(0) + 1..close].to_string());
+        .or_else(|| {
+            stat.get(open + '('.len_utf8()..close)
+                .map(ToOwned::to_owned)
+        })
+        .ok_or_else(|| "process stat command has invalid bounds".to_string())?;
     let uid = status.and_then(status_uid);
     let threads = status
         .and_then(status_threads)
@@ -386,6 +394,32 @@ mod tests {
         assert!(parse_meminfo("MemFree: 1 kB\n", 1_000, 2_000).is_err());
         assert!(
             parse_process_stat(42, "42 api S 1 1 1", None, 100, 4096, 0, 0, 1_000, 2_000,).is_err()
+        );
+    }
+
+    #[test]
+    fn process_stat_rejects_fuzzed_non_char_boundary_command_without_panic() {
+        let data = [
+            167, 32, 9, 255, 10, 10, 255, 9, 10, 41, 9, 255, 10, 38, 9, 255, 10, 10, 255, 9, 255,
+            10, 38, 9, 255, 10, 10, 255, 38, 9, 255, 49, 10, 33, 10, 1, 10, 1, 38, 255, 10, 38, 9,
+            255, 10, 10, 255, 9, 255, 10, 38, 9, 255, 10, 10, 255, 38, 9, 255, 10, 38, 9, 255, 10,
+            10, 255, 38, 9, 255, 49, 10, 33, 10, 1, 10, 1, 38, 255, 10, 38,
+        ];
+        let contents = String::from_utf8_lossy(&data);
+
+        assert!(
+            parse_process_stat(
+                42,
+                &contents,
+                Some(&contents),
+                100,
+                4096,
+                0,
+                0,
+                1_000,
+                2_000,
+            )
+            .is_err()
         );
     }
 

@@ -1,0 +1,22 @@
+log_level = "info"
+queue_capacity = 64
+
+[[modules]]
+name = "source.aya_cpu_profile"
+enabled = true
+
+[[modules]]
+name = "sink.json_stdout"
+enabled = true
+
+[cpu_profile_source]
+enabled = true
+module_name = "source.aya_cpu_profile"
+sample_frequency_hz = 49
+max_active_targets = 8
+max_frames_per_sample = 16
+max_samples_per_batch = 16
+max_symbol_bytes = 128
+max_module_bytes = 128
+max_file_bytes = 128
+backpressure = "drop_newest"

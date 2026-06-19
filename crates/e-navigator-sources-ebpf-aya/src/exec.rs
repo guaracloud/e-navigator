@@ -1,28 +1,28 @@
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_core::ArgvCaptureConfig;
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 const RAW_MAX_ARGS: usize = ArgvCaptureConfig::MAX_ARGS_LIMIT;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 const RAW_ARG_LEN: usize = 64;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 const RAW_ARG_BYTES: usize = RAW_MAX_ARGS * RAW_ARG_LEN;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 const EXECUTABLE_LEN: usize = 256;
 #[cfg(any(target_os = "linux", test))]
 const PERF_BUFFER_PAGE_COUNT: usize = 64;
 #[cfg(any(target_os = "linux", test))]
 const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 const EXEC_EVENT_SOURCE_SYSCALL_ENTER: u32 = 1;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 const EXEC_EVENT_SOURCE_SCHED_EXEC: u32 = 2;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 const MAX_PENDING_EXEC_ATTEMPTS: usize = 4096;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 const PENDING_EXEC_MAX_AGE_NANOS: u64 = 5_000_000_000;
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct RawExecEvent {
@@ -37,7 +37,7 @@ struct RawExecEvent {
     arguments: [[u8; RAW_ARG_LEN]; RAW_MAX_ARGS],
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CapturedArguments {
     arguments: Vec<String>,
@@ -45,7 +45,7 @@ struct CapturedArguments {
     bytes: usize,
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn captured_arguments_from_raw(
     raw_arguments: &[[u8; RAW_ARG_LEN]; RAW_MAX_ARGS],
     raw_count: u32,
@@ -100,14 +100,14 @@ fn captured_arguments_from_raw(
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug, Default)]
 struct ExecEventNormalizer {
     pending: std::collections::BTreeMap<u32, PendingExecAttempt>,
     order: std::collections::VecDeque<u32>,
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 impl ExecEventNormalizer {
     fn normalize(
         &mut self,
@@ -197,7 +197,7 @@ impl ExecEventNormalizer {
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug)]
 enum ExecDecodeResult {
     Pending,
@@ -205,7 +205,7 @@ enum ExecDecodeResult {
     Invalid,
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingExecAttempt {
     event_monotonic_nanos: u64,
@@ -213,7 +213,7 @@ struct PendingExecAttempt {
     captured: CapturedArguments,
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn raw_to_success_signal(
     raw: RawExecEvent,
     pending: Option<PendingExecAttempt>,
@@ -254,7 +254,7 @@ fn raw_to_success_signal(
     )
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn raw_to_signal(
     bytes: &[u8],
     host: Option<String>,
@@ -271,6 +271,26 @@ fn raw_to_signal(
         .lock()
         .map(|mut normalizer| normalizer.normalize(raw, host, argv_capture, procfs_root))
         .unwrap_or(ExecDecodeResult::Invalid)
+}
+
+#[cfg(feature = "fuzzing")]
+pub fn fuzz_decode_raw_exec_event(bytes: &[u8]) -> bool {
+    const MAX_FUZZ_BYTES: usize = 4096;
+
+    let bytes = &bytes[..bytes.len().min(MAX_FUZZ_BYTES)];
+    let argv_capture = ArgvCaptureConfig {
+        enabled: true,
+        max_args: ArgvCaptureConfig::MAX_ARGS_LIMIT,
+        max_bytes: ArgvCaptureConfig::MAX_BYTES_LIMIT,
+    };
+    let normalizer = std::sync::Mutex::new(ExecEventNormalizer::default());
+    let procfs_root = std::path::Path::new("__e_navigator_fuzz_no_procfs__");
+
+    match raw_to_signal(bytes, None, &argv_capture, procfs_root, &normalizer) {
+        ExecDecodeResult::Pending => true,
+        ExecDecodeResult::Emitted(signal) => !signal.source.is_empty(),
+        ExecDecodeResult::Invalid => false,
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -941,7 +961,7 @@ mod platform {
 
 pub use platform::AyaExecSource;
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn now_unix_nanos() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -949,7 +969,7 @@ fn now_unix_nanos() -> u64 {
         .unwrap_or(0)
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn bytes_to_string(bytes: &[u8]) -> String {
     let end = bytes
         .iter()

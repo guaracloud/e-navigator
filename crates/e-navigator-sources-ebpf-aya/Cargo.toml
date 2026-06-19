@@ -15,6 +15,10 @@ dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
 
+[features]
+default = []
+fuzzing = []
+
 [dependencies]
 async-trait = { workspace = true }
 e-navigator-core = { path = "../e-navigator-core" }

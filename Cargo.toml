@@ -27,6 +27,7 @@ default-members = [
   "crates/e-navigator-sources-host",
   "crates/e-navigator-sources-ebpf-aya",
 ]
+exclude = ["fuzz"]
 
 [workspace.package]
 edition = "2024"

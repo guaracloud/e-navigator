@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::process::Command;
 
 #[test]
@@ -103,6 +104,76 @@ fn synthetic_run_emits_generated_contract_families() {
     ] {
         assert!(stdout.contains(expected), "missing {expected}");
     }
+}
+
+#[test]
+fn synthetic_run_emits_expected_signal_kind_families() {
+    let output = Command::new(env!("CARGO_BIN_EXE_e-navigator"))
+        .arg("--source")
+        .arg("synthetic")
+        .output()
+        .expect("run e-navigator synthetic");
+
+    assert!(
+        output.status.success(),
+        "synthetic run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("synthetic output is utf8");
+    let observed = stdout
+        .lines()
+        .map(|line| {
+            let value = serde_json::from_str::<serde_json::Value>(line)
+                .expect("synthetic signal line is json");
+            value["kind"]
+                .as_str()
+                .expect("synthetic signal has kind")
+                .to_string()
+        })
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(
+        observed,
+        BTreeSet::from([
+            "cgroup_cpu_observation".to_string(),
+            "cgroup_file_descriptor_observation".to_string(),
+            "cgroup_memory_observation".to_string(),
+            "cgroup_pids_observation".to_string(),
+            "dependency_edge".to_string(),
+            "dns_counter_metric".to_string(),
+            "dns_latency_metric".to_string(),
+            "dns_query".to_string(),
+            "dns_response".to_string(),
+            "exec".to_string(),
+            "network_connection_close".to_string(),
+            "network_connection_failure".to_string(),
+            "network_connection_open".to_string(),
+            "network_counter_metric".to_string(),
+            "network_duration_metric".to_string(),
+            "network_flow_summary".to_string(),
+            "network_gauge_metric".to_string(),
+            "node_cpu_observation".to_string(),
+            "node_disk_io_observation".to_string(),
+            "node_filesystem_observation".to_string(),
+            "node_load_observation".to_string(),
+            "node_memory_observation".to_string(),
+            "process_exit".to_string(),
+            "process_resource_observation".to_string(),
+            "profile_sample_observation".to_string(),
+            "profiling_session_observation".to_string(),
+            "profiling_warning_observation".to_string(),
+            "protocol_request_observation".to_string(),
+            "request_correlation_warning".to_string(),
+            "request_span_observation".to_string(),
+            "resource_counter_metric".to_string(),
+            "resource_gauge_metric".to_string(),
+            "runtime_security_finding".to_string(),
+            "service_interaction_span_observation".to_string(),
+            "trace_service_path_observation".to_string(),
+            "trace_span_observation".to_string(),
+        ])
+    );
 }
 
 fn temp_config_path(label: &str) -> std::path::PathBuf {

@@ -46,22 +46,30 @@ These invariants are part of the userspace quality gate. They are intentionally 
   auth/header handling, and drop accounting before adding protocol-specific
   production transport claims.
 
-## Future Fuzz Targets
+## Fuzz Targets
 
-Cargo-fuzz is not wired in this repository yet. Current implemented coverage is deterministic and property-style tests in the normal Cargo test suite. Future fuzz work should add `cargo-fuzz` targets and run them with bounded local commands like:
+Cargo-fuzz is wired as an excluded `fuzz/` crate so the normal workspace gate
+does not build libFuzzer artifacts. Fuzz targets are non-privileged parser and
+userspace decode checks only; they must not attach eBPF programs, read real
+`/proc` or `/sys`, contact Kubernetes, use Docker, or open network sockets.
+
+Run bounded local smoke fuzzing with:
 
 ```bash
 cargo fuzz run traceparent_parser -- -max_total_time=60
 cargo fuzz run http_request_parser -- -max_total_time=60
 cargo fuzz run profile_fixture_parser -- -max_total_time=60
 cargo fuzz run host_procfs_parsers -- -max_total_time=60
+cargo fuzz run raw_exec_event_decode -- -max_total_time=60
 cargo fuzz run raw_network_event_decode -- -max_total_time=60
+cargo fuzz run raw_cpu_profile_event_decode -- -max_total_time=60
 ```
 
-The first target functions are:
+The target functions are:
 
 - `e_navigator_protocol::trace_context::parse_traceparent`
 - `e_navigator_protocol::http::parse_http_request`
 - `e_navigator_profiling::model::parse_profile_fixture`
 - `e_navigator_sources_host::{parse_cpu_stat, parse_loadavg, parse_meminfo, parse_diskstats, parse_process_stat}`
-- Aya userspace raw decode helpers for exec, network, and CPU profile sample events
+- feature-gated Aya userspace raw decode fuzz entry points for exec, network,
+  and CPU profile sample events

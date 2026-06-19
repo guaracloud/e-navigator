@@ -1,0 +1,18 @@
+log_level = "info"
+queue_capacity = 64
+
+[[modules]]
+name = "source.synthetic_exec"
+enabled = true
+
+[[modules]]
+name = "generator.guara_compat"
+enabled = true
+
+[[modules]]
+name = "sink.json_stdout"
+enabled = true
+
+[cpu_profile_source]
+enabled = false
+module_name = "source.aya_cpu_profile"

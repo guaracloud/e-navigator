@@ -1,4 +1,5 @@
 use super::*;
+use crate::ModuleKind;
 use std::path::PathBuf;
 
 fn assert_invalid(config: RuntimeConfig, expected: impl Into<String>) {
@@ -45,6 +46,35 @@ fn default_config_is_valid_and_preserves_expected_modules() {
             ModuleConfig::enabled("sink.json_stdout"),
         ]
     );
+}
+
+#[test]
+fn default_config_does_not_inflate_opt_in_module_claims() {
+    let config = RuntimeConfig::default();
+
+    assert!(!config.module_enabled("source.aya_cpu_profile"));
+    assert!(!config.cpu_profile_source.enabled);
+    assert!(!config.module_enabled("generator.guara_compat"));
+}
+
+#[test]
+fn known_modules_keep_dns_as_schema_generator_support_not_runtime_capture_source() {
+    assert!(!is_known_module_name("source.aya_dns"));
+    assert!(is_known_module_name("generator.dns_metrics"));
+}
+
+#[test]
+fn known_sinks_claim_only_json_stdout_as_concrete_registered_sink() {
+    let sinks = KNOWN_MODULES
+        .iter()
+        .filter(|module| module.kind == ModuleKind::Sink)
+        .map(|module| module.name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(sinks, vec!["sink.json_stdout"]);
+    assert!(!is_known_module_name("sink.otlp"));
+    assert!(!is_known_module_name("sink.pyroscope"));
+    assert!(!is_known_module_name("sink.pprof"));
 }
 
 #[test]

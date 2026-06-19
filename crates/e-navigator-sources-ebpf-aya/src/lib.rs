@@ -7,7 +7,7 @@ pub mod exec;
 pub mod network;
 #[cfg(any(target_os = "linux", test))]
 mod perf_sample;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 mod procfs;
 #[cfg(any(target_os = "linux", test))]
 mod source_telemetry;
