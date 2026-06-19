@@ -449,8 +449,10 @@ dependencies = [
  "async-trait",
  "e-navigator-core",
  "e-navigator-signals",
+ "reqwest",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
 ]
 

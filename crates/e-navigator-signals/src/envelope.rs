@@ -3,17 +3,17 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 
 use crate::{
     CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
-    CgroupPidsObservation, DependencyEdgeEvent, DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent,
-    DnsResponseEvent, ExecEvent, ExtractedTraceContextObservation, NetworkConnectionCloseEvent,
-    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkCounterMetric,
-    NetworkDurationMetric, NetworkGaugeMetric, NodeCpuObservation, NodeDiskIoObservation,
-    NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation, ProcessExitEvent,
-    ProcessLifecycleDurationEvent, ProcessResourceObservation, ProfileSampleObservation,
-    ProfilingSessionObservation, ProfilingStackTraceObservation, ProfilingWarningObservation,
-    ProtocolRequestObservation, RequestCorrelationWarning, RequestSpanObservation,
-    ResourceCounterMetric, ResourceGaugeMetric, RuntimeSecurityFinding,
-    ServiceInteractionSpanObservation, TraceCorrelationWarning, TraceServicePathObservation,
-    TraceSpanObservation, sanitize_profiling_attributes,
+    CgroupPidsObservation, CompatibilityCounterMetric, DependencyEdgeEvent, DnsCounterMetric,
+    DnsLatencyMetric, DnsQueryEvent, DnsResponseEvent, ExecEvent, ExtractedTraceContextObservation,
+    NetworkConnectionCloseEvent, NetworkConnectionFailureEvent, NetworkConnectionOpenEvent,
+    NetworkCounterMetric, NetworkDurationMetric, NetworkFlowSummaryEvent, NetworkGaugeMetric,
+    NodeCpuObservation, NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation,
+    NodeMemoryObservation, ProcessExitEvent, ProcessLifecycleDurationEvent,
+    ProcessResourceObservation, ProfileSampleObservation, ProfilingSessionObservation,
+    ProfilingStackTraceObservation, ProfilingWarningObservation, ProtocolRequestObservation,
+    RequestCorrelationWarning, RequestSpanObservation, ResourceCounterMetric, ResourceGaugeMetric,
+    RuntimeSecurityFinding, ServiceInteractionSpanObservation, TraceCorrelationWarning,
+    TraceServicePathObservation, TraceSpanObservation, sanitize_profiling_attributes,
 };
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
@@ -28,9 +28,11 @@ pub enum SignalKind {
     NetworkConnectionOpen,
     NetworkConnectionClose,
     NetworkConnectionFailure,
+    NetworkFlowSummary,
     NetworkCounterMetric,
     NetworkDurationMetric,
     NetworkGaugeMetric,
+    CompatibilityCounterMetric,
     DnsQuery,
     DnsResponse,
     DnsCounterMetric,
@@ -73,9 +75,11 @@ pub enum SignalPayload {
     NetworkConnectionOpen(NetworkConnectionOpenEvent),
     NetworkConnectionClose(NetworkConnectionCloseEvent),
     NetworkConnectionFailure(NetworkConnectionFailureEvent),
+    NetworkFlowSummary(NetworkFlowSummaryEvent),
     NetworkCounterMetric(NetworkCounterMetric),
     NetworkDurationMetric(NetworkDurationMetric),
     NetworkGaugeMetric(NetworkGaugeMetric),
+    CompatibilityCounterMetric(CompatibilityCounterMetric),
     DnsQuery(DnsQueryEvent),
     DnsResponse(DnsResponseEvent),
     DnsCounterMetric(DnsCounterMetric),
@@ -167,6 +171,13 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
             .map_err(|err| {
                 D::Error::custom(format!("invalid network_connection_failure payload: {err}"))
             })?,
+            SignalKind::NetworkFlowSummary => {
+                serde_json::from_value::<NetworkFlowSummaryEvent>(raw.payload)
+                    .map(SignalPayload::NetworkFlowSummary)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid network_flow_summary payload: {err}"))
+                    })?
+            }
             SignalKind::NetworkCounterMetric => {
                 serde_json::from_value::<NetworkCounterMetric>(raw.payload)
                     .map(SignalPayload::NetworkCounterMetric)
@@ -186,6 +197,15 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
                     .map(SignalPayload::NetworkGaugeMetric)
                     .map_err(|err| {
                         D::Error::custom(format!("invalid network_gauge_metric payload: {err}"))
+                    })?
+            }
+            SignalKind::CompatibilityCounterMetric => {
+                serde_json::from_value::<CompatibilityCounterMetric>(raw.payload)
+                    .map(SignalPayload::CompatibilityCounterMetric)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid compatibility_counter_metric payload: {err}"
+                        ))
                     })?
             }
             SignalKind::DnsQuery => serde_json::from_value::<DnsQueryEvent>(raw.payload)
@@ -519,6 +539,20 @@ impl SignalEnvelope {
         }
     }
 
+    pub fn network_flow_summary(
+        source: impl Into<String>,
+        host: Option<String>,
+        event: NetworkFlowSummaryEvent,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::NetworkFlowSummary,
+            source: source.into(),
+            host,
+            payload: SignalPayload::NetworkFlowSummary(event),
+        }
+    }
+
     pub fn network_counter_metric(
         source: impl Into<String>,
         host: Option<String>,
@@ -558,6 +592,20 @@ impl SignalEnvelope {
             source: source.into(),
             host,
             payload: SignalPayload::NetworkGaugeMetric(metric),
+        }
+    }
+
+    pub fn compatibility_counter_metric(
+        source: impl Into<String>,
+        host: Option<String>,
+        metric: CompatibilityCounterMetric,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::CompatibilityCounterMetric,
+            source: source.into(),
+            host,
+            payload: SignalPayload::CompatibilityCounterMetric(metric),
         }
     }
 
@@ -976,9 +1024,11 @@ impl Signal for SignalEnvelope {
             SignalKind::NetworkConnectionOpen => "network_connection_open",
             SignalKind::NetworkConnectionClose => "network_connection_close",
             SignalKind::NetworkConnectionFailure => "network_connection_failure",
+            SignalKind::NetworkFlowSummary => "network_flow_summary",
             SignalKind::NetworkCounterMetric => "network_counter_metric",
             SignalKind::NetworkDurationMetric => "network_duration_metric",
             SignalKind::NetworkGaugeMetric => "network_gauge_metric",
+            SignalKind::CompatibilityCounterMetric => "compatibility_counter_metric",
             SignalKind::DnsQuery => "dns_query",
             SignalKind::DnsResponse => "dns_response",
             SignalKind::DnsCounterMetric => "dns_counter_metric",

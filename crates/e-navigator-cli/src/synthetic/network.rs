@@ -1,7 +1,9 @@
 use e_navigator_signals::{
     ContainerContext, KubernetesContext, NetworkAddressFamily, NetworkConnectionCloseEvent,
-    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkProtocol, SignalEnvelope,
+    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkFlowDirection,
+    NetworkFlowEndpoint, NetworkFlowSummaryEvent, NetworkProtocol, SignalEnvelope,
 };
+use std::collections::BTreeMap;
 
 pub(super) fn open_signal(
     host: Option<String>,
@@ -79,4 +81,57 @@ pub(super) fn failure_signal(
             kubernetes: Some(kubernetes),
         },
     )
+}
+
+pub(super) fn flow_summary_signal(host: Option<String>, opened_at: u64) -> SignalEnvelope {
+    SignalEnvelope::network_flow_summary(
+        super::source_name(),
+        host,
+        NetworkFlowSummaryEvent {
+            source: flow_endpoint("api", "deployment", None, "10.0.0.5", 43512),
+            destination: flow_endpoint("redis", "statefulset", Some("redis"), "10.0.0.20", 6379),
+            protocol: NetworkProtocol::Tcp,
+            address_family: NetworkAddressFamily::Ipv4,
+            bytes: 4096,
+            packets: Some(8),
+            direction: NetworkFlowDirection::Egress,
+            first_seen_unix_nanos: opened_at,
+            last_seen_unix_nanos: opened_at.saturating_add(2_000_000),
+        },
+    )
+}
+
+fn flow_endpoint(
+    owner_name: &str,
+    owner_type: &str,
+    catalog_slug: Option<&str>,
+    address: &str,
+    port: u16,
+) -> NetworkFlowEndpoint {
+    let mut labels = BTreeMap::from([
+        ("app.kubernetes.io/name".to_string(), owner_name.to_string()),
+        ("guara.cloud/tier".to_string(), "pro".to_string()),
+    ]);
+    if let Some(catalog_slug) = catalog_slug {
+        labels.insert(
+            "guara.cloud/catalog-slug".to_string(),
+            catalog_slug.to_string(),
+        );
+    }
+
+    NetworkFlowEndpoint {
+        address: Some(address.to_string()),
+        port: Some(port),
+        owner_name: Some(owner_name.to_string()),
+        owner_type: Some(owner_type.to_string()),
+        container: None,
+        kubernetes: Some(KubernetesContext {
+            namespace: "proj-smoke".to_string(),
+            pod_name: format!("{owner_name}-123"),
+            pod_uid: Some(format!("{owner_name}-pod-uid")),
+            container_name: Some("app".to_string()),
+            node_name: Some("synthetic-node".to_string()),
+            labels,
+        }),
+    }
 }

@@ -110,6 +110,58 @@
   },
   {
     "schema_version": 1,
+    "kind": "network_flow_summary",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "source": {
+        "address": "10.0.0.5",
+        "port": 41000,
+        "owner_name": "checkout",
+        "owner_type": "deployment",
+        "container": null,
+        "kubernetes": {
+          "namespace": "proj-paid",
+          "pod_name": "checkout-123",
+          "pod_uid": "pod-uid",
+          "container_name": "checkout",
+          "node_name": "node-a",
+          "labels": {
+            "app.kubernetes.io/name": "checkout",
+            "guara.cloud/tier": "pro"
+          }
+        }
+      },
+      "destination": {
+        "address": "10.0.0.10",
+        "port": 6379,
+        "owner_name": "redis",
+        "owner_type": "statefulset",
+        "container": null,
+        "kubernetes": {
+          "namespace": "proj-paid",
+          "pod_name": "redis-0",
+          "pod_uid": "redis-pod-uid",
+          "container_name": "redis",
+          "node_name": "node-a",
+          "labels": {
+            "app.kubernetes.io/name": "redis",
+            "guara.cloud/catalog-slug": "redis",
+            "guara.cloud/tier": "pro"
+          }
+        }
+      },
+      "protocol": "tcp",
+      "address_family": "ipv4",
+      "bytes": 2048,
+      "packets": 4,
+      "direction": "egress",
+      "first_seen_unix_nanos": 1000,
+      "last_seen_unix_nanos": 1200
+    }
+  },
+  {
+    "schema_version": 1,
     "kind": "network_counter_metric",
     "source": "golden",
     "host": "node-a",
@@ -169,6 +221,26 @@
       "remote_port": 443,
       "container": null,
       "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "compatibility_counter_metric",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "beyla_network_flow_bytes_total",
+      "unit": "By",
+      "value": 2048,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "labels": {
+        "k8s_dst_namespace": "proj-paid",
+        "k8s_dst_owner_name": "redis",
+        "k8s_dst_owner_type": "statefulset",
+        "k8s_src_namespace": "proj-paid",
+        "k8s_src_owner_name": "checkout",
+        "k8s_src_owner_type": "deployment"
+      }
     }
   },
   {

@@ -16,11 +16,23 @@ spec:
     spec:
       serviceAccountName: e-navigator
       automountServiceAccountToken: true
+      hostPID: false
+      hostNetwork: false
+      dnsPolicy: ClusterFirst
       terminationGracePeriodSeconds: 10
       nodeSelector:
         kubernetes.io/os: linux
       tolerations:
         - operator: Exists
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: guara.cloud/role
+                    operator: NotIn
+                    values:
+                      - build
       containers:
         - name: e-navigator
           image: ghcr.io/guaracloud/e-navigator:main
@@ -38,9 +50,25 @@ spec:
                 fieldRef:
                   fieldPath: spec.nodeName
           securityContext:
-            privileged: true
+            privileged: false
             readOnlyRootFilesystem: true
-            allowPrivilegeEscalation: true
+            allowPrivilegeEscalation: false
+            runAsUser: 0
+            runAsNonRoot: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - BPF
+                - SYS_PTRACE
+                - NET_RAW
+                - PERFMON
+                - DAC_READ_SEARCH
+                - CHECKPOINT_RESTORE
+                - SYS_ADMIN
+                - NET_ADMIN
+                - SYS_RESOURCE
+                - SYSLOG
           volumeMounts:
             - name: config
               mountPath: /etc/e-navigator

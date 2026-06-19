@@ -1,7 +1,7 @@
 use e_navigator_signals::{
-    DnsCounterMetric, DnsLatencyMetric, MetricAggregationWindow, NetworkAddressFamily,
-    NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric, NetworkProtocol,
-    ResourceCounterMetric, ResourceGaugeMetric, SignalEnvelope, SignalPayload,
+    CompatibilityCounterMetric, DnsCounterMetric, DnsLatencyMetric, MetricAggregationWindow,
+    NetworkAddressFamily, NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric,
+    NetworkProtocol, ResourceCounterMetric, ResourceGaugeMetric, SignalEnvelope, SignalPayload,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -45,6 +45,9 @@ pub fn format_otel_metric_record(signal: &SignalEnvelope) -> Option<OtelMetricRe
             Some(network_duration_record(signal, metric))
         }
         SignalPayload::NetworkGaugeMetric(metric) => Some(network_gauge_record(signal, metric)),
+        SignalPayload::CompatibilityCounterMetric(metric) => {
+            Some(compatibility_counter_record(signal, metric))
+        }
         SignalPayload::DnsCounterMetric(metric) => Some(dns_counter_record(signal, metric)),
         SignalPayload::DnsLatencyMetric(metric) => Some(dns_latency_record(signal, metric)),
         SignalPayload::ResourceGaugeMetric(metric) => Some(resource_gauge_record(signal, metric)),
@@ -52,6 +55,26 @@ pub fn format_otel_metric_record(signal: &SignalEnvelope) -> Option<OtelMetricRe
             Some(resource_counter_record(signal, metric))
         }
         _ => None,
+    }
+}
+
+fn compatibility_counter_record(
+    signal: &SignalEnvelope,
+    metric: &CompatibilityCounterMetric,
+) -> OtelMetricRecord {
+    let mut attributes = BTreeMap::new();
+    for (key, value) in &metric.labels {
+        attributes.insert(key.clone(), serde_json::json!(value));
+    }
+
+    OtelMetricRecord {
+        name: metric.metric_name.clone(),
+        unit: metric.unit.clone(),
+        kind: OtelMetricKind::Sum,
+        value: OtelMetricValue::U64(metric.value),
+        window: metric.window.clone(),
+        resource: resource_attributes(signal, None, None),
+        attributes,
     }
 }
 

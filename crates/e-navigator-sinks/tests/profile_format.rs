@@ -3,7 +3,7 @@ use e_navigator_signals::{
     ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind,
     ProfilingFrame, ProfilingKind, ProfilingSessionObservation, SignalEnvelope,
 };
-use e_navigator_sinks::format_profile_record;
+use e_navigator_sinks::{PYROSCOPE_CPU_PROFILE_IDENTITY, format_profile_record};
 use std::collections::BTreeMap;
 
 #[test]
@@ -40,6 +40,10 @@ fn formats_profile_session_boundary_record() {
     assert_eq!(record.schema, "e-navigator.profile.internal.v1");
     assert_eq!(record.profile_id, "profile:abc");
     assert_eq!(record.profile_kind, "cpu");
+    assert_eq!(
+        record.profile_metric_name.as_deref(),
+        Some(PYROSCOPE_CPU_PROFILE_IDENTITY)
+    );
     assert_eq!(record.sample_count, 3);
     assert_eq!(record.resource["host.name"], "node-a");
     assert_eq!(
@@ -110,6 +114,34 @@ fn profile_resource_mapping_preserves_pod_uid() {
     .expect("record formats");
 
     assert_eq!(record.resource["k8s.pod.uid"], "pod-a");
+}
+
+#[test]
+fn profile_resource_mapping_adds_pyroscope_compatible_labels() {
+    let mut signal = profile_sample_signal(Some("node-a"), Some("container-a"), Some("pod-a"));
+    if let e_navigator_signals::SignalPayload::ProfileSampleObservation(sample) =
+        &mut signal.payload
+        && let Some(kubernetes) = &mut sample.kubernetes
+    {
+        kubernetes.namespace = "proj-paid".to_string();
+        kubernetes.labels.insert(
+            "app.kubernetes.io/name".to_string(),
+            "checkout-api".to_string(),
+        );
+        kubernetes
+            .labels
+            .insert("guara.cloud/catalog-slug".to_string(), "".to_string());
+    }
+
+    let record = format_profile_record(&signal).expect("record formats");
+
+    assert_eq!(record.resource["namespace"], "proj-paid");
+    assert_eq!(record.resource["service_name"], "checkout-api");
+    assert_eq!(record.resource["catalog_slug"], "");
+    assert_eq!(record.resource["pod"], "checkout-123");
+    assert_eq!(record.resource["container"], "checkout");
+    assert_eq!(record.resource["node"], "node-a");
+    assert_eq!(record.resource["source"], "e-navigator");
 }
 
 #[test]

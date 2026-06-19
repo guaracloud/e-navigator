@@ -7,7 +7,7 @@ runtime security, and diagnostics.
 registered signal pipeline, JSON stdout output, Kubernetes DaemonSet packaging,
 release-signing workflow, strict non-privileged quality gates, and bounded
 foundations for runtime, network, DNS fixture, resource, dependency, trace,
-request, profiling, and security signals. See
+request, profiling, Guara compatibility projection, and security signals. See
 [documentation/claims-matrix.md](documentation/claims-matrix.md) for the exact
 claim boundaries.
 
@@ -45,9 +45,11 @@ Linux / Kubernetes node
 - **Processors:** best-effort host, process, container, and Kubernetes
   attribution with structured warnings when context is missing.
 - **Generators:** runtime security findings, network/resource metrics,
-  dependency edges, trace service paths, request spans, and profiling windows.
-- **Sinks:** JSON stdout today, with internal OpenTelemetry-compatible formatter
-  boundaries for future exporters.
+  dependency edges, trace service paths, request spans, profiling windows, and
+  optional Guara compatibility projections.
+- **Sinks:** JSON stdout today, with internal OpenTelemetry-compatible
+  formatter boundaries, Prometheus compatibility formatting, and HTTP exporter
+  foundations for future exporters.
 
 The pipeline is statically registered by design. Runtime plugin loading is not
 part of the current architecture; see
@@ -130,6 +132,9 @@ Implemented and non-privileged proven:
   and smoke tests.
 - CPU profiling foundations through raw decode, profile normalization, and
   generator tests.
+- Guara compatibility contracts for the Beyla L4 metric label set, Tempo
+  service-graph resource labels, Pyroscope CPU profile identity, and Guara
+  tenant scoping through golden/unit tests.
 - Kubernetes packaging through Helm lint/template and schema validation.
 - Supply-chain checks through `cargo deny`, `cargo audit`, and
   `cargo machete`.
@@ -158,6 +163,7 @@ The following are intentionally not claimed as implemented production behavior:
 
 - production OTLP metric, trace, or profile export;
 - pprof or Pyroscope export;
+- complete Beyla replacement or alloy-profiles replacement;
 - profile storage, flamegraph rendering, or bottleneck analysis;
 - live HTTP/gRPC parsing from real traffic;
 - request route, retry, application error, or request-ID extraction;

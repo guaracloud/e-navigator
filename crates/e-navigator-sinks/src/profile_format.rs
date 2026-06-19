@@ -6,6 +6,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 const PROFILE_SCHEMA: &str = "e-navigator.profile.internal.v1";
+pub const PYROSCOPE_CPU_PROFILE_IDENTITY: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
 const MAX_ATTRIBUTES: usize = 16;
 const MAX_KEY_BYTES: usize = 64;
 const MAX_VALUE_BYTES: usize = 256;
@@ -14,6 +15,7 @@ const MAX_VALUE_BYTES: usize = 256;
 pub struct ProfileRecord {
     pub schema: String,
     pub profile_id: String,
+    pub profile_metric_name: Option<String>,
     pub profile_kind: String,
     pub correlation_kind: String,
     pub confidence: String,
@@ -47,6 +49,7 @@ fn session_record(
     ProfileRecord {
         schema: PROFILE_SCHEMA.to_string(),
         profile_id: observation.profile_id.clone(),
+        profile_metric_name: profile_metric_name(observation.profiling_kind),
         profile_kind: profiling_kind_name(observation.profiling_kind).to_string(),
         correlation_kind: correlation_kind_name(observation.correlation_kind).to_string(),
         confidence: confidence_name(observation.confidence).to_string(),
@@ -90,6 +93,7 @@ fn sample_record(signal: &SignalEnvelope, observation: &ProfileSampleObservation
     ProfileRecord {
         schema: PROFILE_SCHEMA.to_string(),
         profile_id,
+        profile_metric_name: profile_metric_name(observation.profiling_kind),
         profile_kind: profiling_kind_name(observation.profiling_kind).to_string(),
         correlation_kind: correlation_kind_name(observation.correlation_kind).to_string(),
         confidence: confidence_name(observation.confidence).to_string(),
@@ -135,18 +139,47 @@ fn resource_attributes(
             "k8s.namespace.name".to_string(),
             kubernetes.namespace.clone(),
         );
+        resource.insert("namespace".to_string(), kubernetes.namespace.clone());
         resource.insert("k8s.pod.name".to_string(), kubernetes.pod_name.clone());
+        resource.insert("pod".to_string(), kubernetes.pod_name.clone());
         if let Some(container_name) = &kubernetes.container_name {
             resource.insert("k8s.container.name".to_string(), container_name.clone());
+            resource.insert("container".to_string(), container_name.clone());
         }
         if let Some(pod_uid) = &kubernetes.pod_uid {
             resource.insert("k8s.pod.uid".to_string(), pod_uid.clone());
         }
         if let Some(node_name) = &kubernetes.node_name {
             resource.insert("k8s.node.name".to_string(), node_name.clone());
+            resource.insert("node".to_string(), node_name.clone());
         }
+        resource.insert(
+            "service_name".to_string(),
+            kubernetes
+                .labels
+                .get("app.kubernetes.io/name")
+                .or_else(|| kubernetes.labels.get("app"))
+                .cloned()
+                .unwrap_or_else(|| kubernetes.pod_name.clone()),
+        );
+        resource.insert(
+            "catalog_slug".to_string(),
+            kubernetes
+                .labels
+                .get("guara.cloud/catalog-slug")
+                .cloned()
+                .unwrap_or_default(),
+        );
+        resource.insert("source".to_string(), "e-navigator".to_string());
     }
     resource
+}
+
+fn profile_metric_name(kind: e_navigator_signals::ProfilingKind) -> Option<String> {
+    match kind {
+        e_navigator_signals::ProfilingKind::Cpu => Some(PYROSCOPE_CPU_PROFILE_IDENTITY.to_string()),
+        _ => None,
+    }
 }
 
 fn bounded_attributes(attributes: &[ProfilingAttribute]) -> BTreeMap<String, String> {

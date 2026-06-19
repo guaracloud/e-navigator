@@ -343,6 +343,17 @@ fn resource_attributes(
         if let Some(node_name) = &kubernetes.node_name {
             resource.insert("k8s.node.name".to_string(), serde_json::json!(node_name));
         }
+        if let Some(deployment_name) = kubernetes
+            .labels
+            .get("app.kubernetes.io/name")
+            .or_else(|| kubernetes.labels.get("app"))
+            .filter(|name| !name.is_empty())
+        {
+            resource.insert(
+                "k8s.deployment.name".to_string(),
+                serde_json::json!(deployment_name),
+            );
+        }
     }
     resource
 }

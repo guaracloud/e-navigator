@@ -41,8 +41,15 @@
     },
     "logLevel": { "type": "string", "minLength": 1 },
     "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 },
+    "features": { "type": "object" },
+    "hostPID": { "type": "boolean" },
+    "hostNetwork": { "type": "boolean" },
+    "dnsPolicy": { "type": "string", "minLength": 1 },
+    "affinity": { "type": "object" },
     "resources": { "type": "object" },
     "securityContext": { "type": "object" },
+    "service": { "type": "object" },
+    "serviceMonitor": { "type": "object" },
     "hostPaths": { "type": "object" }
   },
   "definitions": {

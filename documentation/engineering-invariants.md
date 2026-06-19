@@ -24,6 +24,9 @@ These invariants are part of the userspace quality gate. They are intentionally 
 ## Attribution And Sensitivity
 
 - Raw sensitive request/profile attributes must not pass through by default.
+- Compatibility metrics must expose only their documented low-cardinality label
+  set; raw addresses, ports, payloads, SQL text, request bodies, packet
+  captures, and sensitive arguments must stay out of default exports.
 - Derived trace, request, profile, and dependency signals must not invent high-confidence context from low-confidence observations.
 - Missing attribution is non-fatal for generators, but it must remain visible through structured warning signals where the generator owns that warning behavior.
 - Container and Kubernetes attribution should enrich existing context, not overwrite observed context.
@@ -39,7 +42,9 @@ These invariants are part of the userspace quality gate. They are intentionally 
 
 - OTEL metric/trace and profile formatter records are internal export boundaries.
 - Do not claim production OTLP, pprof, Pyroscope, exporter retry, exporter batching, or exporter storage behavior until real exporters and integration tests exist.
-- Future exporters must define batching, timeout, retry, backpressure, and drop accounting requirements before adding network transport code.
+- Exporters must define batching, timeout, retry, backpressure, bounded queues,
+  auth/header handling, and drop accounting before adding protocol-specific
+  production transport claims.
 
 ## Future Fuzz Targets
 

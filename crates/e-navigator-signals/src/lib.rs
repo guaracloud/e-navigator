@@ -22,12 +22,13 @@ pub use exec::{
     RuntimeSecuritySeverity,
 };
 pub use metrics::{
-    MetricAggregationWindow, NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric,
+    CompatibilityCounterMetric, MetricAggregationWindow, NetworkCounterMetric,
+    NetworkDurationMetric, NetworkGaugeMetric,
 };
 pub use network::{
     DependencyEdgeEvent, DependencyEndpoint, NetworkAddressFamily, NetworkConnectionCloseEvent,
-    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkProcessIdentity,
-    NetworkProtocol,
+    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkFlowDirection,
+    NetworkFlowEndpoint, NetworkFlowSummaryEvent, NetworkProcessIdentity, NetworkProtocol,
 };
 pub use profiling::{
     ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind,

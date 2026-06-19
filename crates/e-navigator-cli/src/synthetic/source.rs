@@ -119,6 +119,10 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
         .await
         .map_err(|_| CoreError::PipelineClosed)?;
 
+        tx.send(network::flow_summary_signal(self.host.clone(), opened_at))
+            .await
+            .map_err(|_| CoreError::PipelineClosed)?;
+
         let resource_started = opened_at.saturating_add(duration_nanos + 20_000);
         for signal in resource::signals(self.host.clone(), container, kubernetes, resource_started)
         {
@@ -225,6 +229,13 @@ mod tests {
             &signal.payload,
             SignalPayload::NetworkConnectionFailure(failure)
                 if failure.remote_address == "198.51.100.20" && failure.errno == 111
+        )));
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::NetworkFlowSummary(flow)
+                if flow.bytes == 4096
+                    && flow.source.kubernetes.as_ref().map(|k| k.namespace.as_str())
+                        == Some("proj-smoke")
         )));
         assert!(signals.iter().any(|signal| matches!(
             &signal.payload,

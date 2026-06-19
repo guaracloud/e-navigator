@@ -60,6 +60,9 @@ fn formats_trace_span_observation_as_stable_internal_trace_record() {
     assert_eq!(record.span_id, Some("00f067aa0ba902b7".to_string()));
     assert_eq!(record.resource["host.name"], "node-a");
     assert_eq!(record.resource["service.name"], "checkout-api");
+    assert_eq!(record.resource["k8s.namespace.name"], "default");
+    assert_eq!(record.resource["k8s.pod.name"], "api-123");
+    assert_eq!(record.resource["k8s.deployment.name"], "api");
     assert_eq!(record.attributes["trace.correlation.kind"], "synthetic");
     assert_eq!(record.attributes["trace.correlation.confidence"], "high");
     assert_eq!(record.attributes["net.transport"], "tcp");
@@ -348,12 +351,15 @@ fn container_context() -> ContainerContext {
 }
 
 fn kubernetes_context() -> KubernetesContext {
+    let mut labels = BTreeMap::new();
+    labels.insert("app.kubernetes.io/name".to_string(), "api".to_string());
+
     KubernetesContext {
         namespace: "default".to_string(),
         pod_name: "api-123".to_string(),
         pod_uid: Some("pod-uid".to_string()),
         container_name: Some("api".to_string()),
         node_name: Some("node-a".to_string()),
-        labels: BTreeMap::new(),
+        labels,
     }
 }

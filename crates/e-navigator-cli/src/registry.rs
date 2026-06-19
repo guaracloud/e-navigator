@@ -2,9 +2,9 @@ use crate::args::SourceMode;
 use crate::synthetic::SyntheticExecSource;
 use e_navigator_core::RuntimeConfig;
 use e_navigator_generators::{
-    DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator, ProfilingGenerator,
-    RequestCorrelationGenerator, ResourceMetricsGenerator, RuntimeSecurityGenerator,
-    TraceCorrelationGenerator,
+    DependencyGraphGenerator, DnsMetricsGenerator, GuaraCompatibilityGenerator,
+    NetworkMetricsGenerator, ProfilingGenerator, RequestCorrelationGenerator,
+    ResourceMetricsGenerator, RuntimeSecurityGenerator, TraceCorrelationGenerator,
 };
 use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::ModuleRegistry;
@@ -118,6 +118,10 @@ pub(crate) fn build_registry(
                 config,
             )),
         ));
+    }
+
+    if config.module_enabled("generator.guara_compat") {
+        registry = registry.with_generator(Box::new(GuaraCompatibilityGenerator::default()));
     }
 
     if config.module_enabled("sink.json_stdout") {

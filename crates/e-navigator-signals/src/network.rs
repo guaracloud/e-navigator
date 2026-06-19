@@ -59,6 +59,40 @@ pub struct DependencyEdgeEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkFlowSummaryEvent {
+    pub source: NetworkFlowEndpoint,
+    pub destination: NetworkFlowEndpoint,
+    pub protocol: NetworkProtocol,
+    pub address_family: NetworkAddressFamily,
+    pub bytes: u64,
+    pub packets: Option<u64>,
+    pub direction: NetworkFlowDirection,
+    pub first_seen_unix_nanos: u64,
+    pub last_seen_unix_nanos: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkFlowEndpoint {
+    pub address: Option<String>,
+    pub port: Option<u16>,
+    pub owner_name: Option<String>,
+    pub owner_type: Option<String>,
+    pub container: Option<ContainerContext>,
+    pub kubernetes: Option<KubernetesContext>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum NetworkFlowDirection {
+    Egress,
+    Ingress,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkProcessIdentity {
     pub pid: u32,
     pub ppid: Option<u32>,

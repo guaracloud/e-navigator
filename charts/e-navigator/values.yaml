@@ -149,8 +149,19 @@ config:
     enabled = true
 
     [[modules]]
+    name = "generator.guara_compat"
+    enabled = false
+
+    [[modules]]
     name = "sink.json_stdout"
     enabled = true
+
+features:
+  metrics: true
+  traces: true
+  profiles: false
+  guaraCompatibility: false
+  protocolProbes: false
 
 args:
   - "--source"
@@ -170,12 +181,53 @@ nodeSelector:
 tolerations:
   - operator: Exists
 
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: guara.cloud/role
+              operator: NotIn
+              values:
+                - build
+
 resources: {}
 
+hostPID: false
+hostNetwork: false
+dnsPolicy: ClusterFirst
+
 securityContext:
-  privileged: true
+  privileged: false
   readOnlyRootFilesystem: true
-  allowPrivilegeEscalation: true
+  allowPrivilegeEscalation: false
+  runAsUser: 0
+  runAsNonRoot: false
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - BPF
+      - SYS_PTRACE
+      - NET_RAW
+      - PERFMON
+      - DAC_READ_SEARCH
+      - CHECKPOINT_RESTORE
+      - SYS_ADMIN
+      - NET_ADMIN
+      - SYS_RESOURCE
+      - SYSLOG
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 9090
+  targetPort: 9090
+
+serviceMonitor:
+  enabled: false
+  interval: 60s
+  scrapeTimeout: 10s
 
 hostPaths:
   sysKernelDebug:

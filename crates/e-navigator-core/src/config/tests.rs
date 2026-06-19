@@ -41,6 +41,7 @@ fn default_config_is_valid_and_preserves_expected_modules() {
             ModuleConfig::enabled("generator.profiling"),
             ModuleConfig::enabled("generator.dependency_graph"),
             ModuleConfig::enabled("generator.runtime_security"),
+            ModuleConfig::disabled("generator.guara_compat"),
             ModuleConfig::enabled("sink.json_stdout"),
         ]
     );
@@ -79,7 +80,7 @@ fn unknown_module_names_are_invalid_and_list_known_modules() {
             ],
             ..RuntimeConfig::default()
         },
-        "unknown module 'generator.dns_typo'; known modules: source.aya_exec, source.aya_network, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, sink.json_stdout",
+        "unknown module 'generator.dns_typo'; known modules: source.aya_exec, source.aya_network, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, generator.guara_compat, sink.json_stdout",
     );
 }
 
