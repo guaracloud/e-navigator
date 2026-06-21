@@ -11,6 +11,11 @@ results_dir="${E_NAVIGATOR_HOMELAB_RESULTS_DIR:-benchmarks/results/${timestamp}}
 release="${E_NAVIGATOR_HOMELAB_RELEASE:-e-navigator-bench}"
 required_context="staging"
 required_namespace="e-navigator-bench"
+required_image_repository="ghcr.io/guaracloud/e-navigator"
+required_image_tag="sha-8ab271c"
+image_repository="${E_NAVIGATOR_HOMELAB_IMAGE_REPOSITORY:-$required_image_repository}"
+image_tag="${E_NAVIGATOR_HOMELAB_IMAGE_TAG:-$required_image_tag}"
+image_pull_secret="${E_NAVIGATOR_HOMELAB_IMAGE_PULL_SECRET:-}"
 
 if [ "${E_NAVIGATOR_HOMELAB_CONFIRM:-0}" != "1" ]; then
   cat >&2 <<MSG
@@ -81,6 +86,7 @@ write_prometheus_http_runtime_config() {
 
   awk '
     $0 == "  toml: |" { in_config = 1; next }
+    in_config && $0 == "" { print ""; next }
     in_config && substr($0, 1, 4) == "    " { print substr($0, 5); next }
     in_config { exit }
   ' charts/e-navigator/values.yaml >"$output"
@@ -89,6 +95,33 @@ write_prometheus_http_runtime_config() {
     s/(\[prometheus_http\]\nenabled = )false/${1}true/;
     s/(\[\[modules\]\]\nname = "sink\.prometheus_http"\nenabled = )false/${1}true/;
   ' "$output"
+}
+
+write_run_metadata() {
+  local image_substitution="no"
+  if [ "$image_repository" != "$required_image_repository" ] || [ "$image_tag" != "$required_image_tag" ]; then
+    image_substitution="yes"
+  fi
+
+  local pull_secret_configured="no"
+  if [ -n "$image_pull_secret" ]; then
+    pull_secret_configured="yes"
+  fi
+
+  cat >"$results_dir/run-metadata.txt" <<EOF
+Context: ${context}
+Namespace: ${namespace}
+Release: ${release}
+Apply mode: ${E_NAVIGATOR_HOMELAB_APPLY:-0}
+Required image: ${required_image_repository}:${required_image_tag}
+Configured image: ${image_repository}:${image_tag}
+Image substitution: ${image_substitution}
+Pull secret configured: ${pull_secret_configured}
+Prometheus HTTP opt-in: ${E_NAVIGATOR_HOMELAB_ENABLE_PROMETHEUS_HTTP:-0}
+ServiceMonitor opt-in: ${E_NAVIGATOR_HOMELAB_ENABLE_SERVICE_MONITOR:-0}
+Prometheus API configured: $([ -n "${E_NAVIGATOR_HOMELAB_PROMETHEUS_URL:-}${E_NAVIGATOR_HOMELAB_PROMETHEUS_SERVICE:-}" ] && printf 'yes' || printf 'no')
+Cleanup requested: ${E_NAVIGATOR_HOMELAB_CLEANUP:-0}
+EOF
 }
 
 top_samples="${E_NAVIGATOR_HOMELAB_TOP_SAMPLES:-10}"
@@ -303,6 +336,8 @@ write_summary_files() {
 - Context: \`${context}\`
 - Namespace: \`${namespace}\`
 - Release: \`${release}\`
+- Required image: \`${required_image_repository}:${required_image_tag}\`
+- Configured image: \`${image_repository}:${image_tag}\`
 - Cleanup requested: \`${E_NAVIGATOR_HOMELAB_CLEANUP:-0}\`
 
 This generated summary is an artifact index. It does not upgrade any claim by
@@ -311,6 +346,7 @@ itself; inspect the referenced evidence before updating documentation.
 ## Captured Evidence
 
 - Commands: \`commands.txt\`
+- Run metadata: \`run-metadata.txt\`
 - Apply/install outputs, when apply mode is enabled: \`namespace-apply.txt\`, \`helm-upgrade-install.txt\`, \`workload-apply.txt\`
 - Rendered manifest: \`rendered-manifest.txt\`
 - Live Helm values: \`helm-values.txt\`
@@ -338,6 +374,7 @@ EOF
 | --- | --- | --- | --- |
 | Context | captured | \`current-context.txt\` | no other context validated |
 | Namespace | captured | \`namespace.txt\` | no other namespace validated |
+| Run metadata | captured | \`run-metadata.txt\` | metadata records configured intent only; image, sink, and cleanup claims require the related runtime artifacts |
 | Apply/install commands | captured when apply mode is enabled | \`namespace-apply.txt\`, \`helm-upgrade-install.txt\`, \`workload-apply.txt\` | successful apply does not prove runtime behavior without rollout, logs, and endpoint evidence |
 | Rendered manifest | captured | \`rendered-manifest.txt\`, \`helm-manifest.txt\`, \`helm-values.txt\` | render does not prove runtime behavior |
 | DaemonSet rollout | captured | \`rollout.txt\`, \`daemonset-yaml.txt\` | no production soak |
@@ -353,15 +390,9 @@ EOF
 }
 
 render_args=(--namespace "$namespace" --set namespace.create=false --set namespace.name="$namespace")
+write_run_metadata
 
 if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ]; then
-  image_repository="${E_NAVIGATOR_HOMELAB_IMAGE_REPOSITORY:-}"
-  image_tag="${E_NAVIGATOR_HOMELAB_IMAGE_TAG:-}"
-  if [ -z "$image_repository" ] || [ -z "$image_tag" ]; then
-    printf 'E_NAVIGATOR_HOMELAB_IMAGE_REPOSITORY and E_NAVIGATOR_HOMELAB_IMAGE_TAG are required when E_NAVIGATOR_HOMELAB_APPLY=1\n' >&2
-    exit 2
-  fi
-  image_pull_secret="${E_NAVIGATOR_HOMELAB_IMAGE_PULL_SECRET:-}"
   helm_args=(
     --set namespace.create=false
     --set namespace.name="$namespace"
@@ -405,6 +436,7 @@ run_capture rendered-manifest helm --kube-context "$context" template "$release"
 run_capture helm-values helm --kube-context "$context" get values "$release" --namespace "$namespace" --all
 run_capture helm-manifest helm --kube-context "$context" get manifest "$release" --namespace "$namespace"
 run_capture namespace "${kubectl_cmd[@]}" get namespace "$namespace" -o yaml
+run_capture rollout "${kubectl_cmd[@]}" -n "$namespace" rollout status "daemonset/${release}" --timeout="${E_NAVIGATOR_HOMELAB_ROLLOUT_TIMEOUT:-120s}"
 run_capture pods "${kubectl_cmd[@]}" -n "$namespace" get pods -o wide
 run_capture daemonset "${kubectl_cmd[@]}" -n "$namespace" get daemonset -o wide
 run_capture daemonset-yaml "${kubectl_cmd[@]}" -n "$namespace" get daemonset "$release" -o yaml
@@ -412,7 +444,6 @@ run_capture configmap-yaml "${kubectl_cmd[@]}" -n "$namespace" get configmap "${
 capture_service_surfaces
 capture_prometheus_http_endpoints
 capture_prometheus_api_queries
-run_capture rollout "${kubectl_cmd[@]}" -n "$namespace" rollout status "daemonset/${release}" --timeout="${E_NAVIGATOR_HOMELAB_ROLLOUT_TIMEOUT:-120s}"
 run_capture pod-json "${kubectl_cmd[@]}" -n "$namespace" get pods -o json
 run_capture logs "${kubectl_cmd[@]}" -n "$namespace" logs -l app.kubernetes.io/name=e-navigator --all-containers --tail="${E_NAVIGATOR_HOMELAB_LOG_TAIL:-2000}" --prefix
 run_capture events "${kubectl_cmd[@]}" -n "$namespace" get events --sort-by=.lastTimestamp

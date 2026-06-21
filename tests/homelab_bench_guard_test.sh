@@ -46,12 +46,35 @@ if ! grep -Fq -- '--set-file' benchmarks/runner/homelab-collect.sh ||
   exit 1
 fi
 
+if ! grep -Fq 'in_config && $0 == "" { print ""; next }' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector does not preserve blank lines while extracting runtime config\n' >&2
+  exit 1
+fi
+
 if ! grep -Fq 'current context must be exactly staging' benchmarks/runner/homelab-collect.sh; then
   printf 'homelab collector does not hard-stop unless current context is staging\n' >&2
   exit 1
 fi
 
+rollout_line="$(grep -n 'run_capture rollout' benchmarks/runner/homelab-collect.sh | head -1 | cut -d: -f1)"
+service_capture_line="$(grep -n 'capture_service_surfaces' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
+prometheus_capture_line="$(grep -n 'capture_prometheus_http_endpoints' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
+if [ -z "$rollout_line" ] ||
+  [ -z "$service_capture_line" ] ||
+  [ -z "$prometheus_capture_line" ] ||
+  [ "$rollout_line" -ge "$service_capture_line" ] ||
+  [ "$rollout_line" -ge "$prometheus_capture_line" ]; then
+  printf 'homelab collector must wait for rollout before service and Prometheus endpoint captures\n' >&2
+  exit 1
+fi
+
 for expected in \
+  'required_image_repository="ghcr.io/guaracloud/e-navigator"' \
+  'required_image_tag="sha-8ab271c"' \
+  'run-metadata.txt' \
+  'Required image:' \
+  'Configured image:' \
+  'Image substitution:' \
   'summary.md' \
   'proof-matrix.md' \
   'namespace-apply' \

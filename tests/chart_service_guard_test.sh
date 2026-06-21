@@ -40,6 +40,10 @@ expect_no_kind() {
 render_chart default
 expect_no_kind "$tmp_dir/default.yaml" Service
 expect_no_kind "$tmp_dir/default.yaml" ServiceMonitor
+if ! grep -Fq 'checksum/config:' "$tmp_dir/default.yaml"; then
+  printf 'expected rendered DaemonSet pod template to include checksum/config annotation\n' >&2
+  exit 1
+fi
 
 render_chart service_only --set service.enabled=true
 expect_no_kind "$tmp_dir/service_only.yaml" Service

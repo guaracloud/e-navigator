@@ -107,16 +107,20 @@ E_NAVIGATOR_HOMELAB_CONTEXT=<context> \
 benchmarks/runner/homelab-collect.sh
 ```
 
-Apply-and-collect mode requires an explicit image:
+Apply-and-collect mode defaults to the required benchmark image
+`ghcr.io/guaracloud/e-navigator:sha-8ab271c`:
 
 ```bash
 E_NAVIGATOR_HOMELAB_CONFIRM=1 \
 E_NAVIGATOR_HOMELAB_APPLY=1 \
 E_NAVIGATOR_HOMELAB_CONTEXT=<context> \
-E_NAVIGATOR_HOMELAB_IMAGE_REPOSITORY=<repository> \
-E_NAVIGATOR_HOMELAB_IMAGE_TAG=<tag> \
 benchmarks/runner/homelab-collect.sh
 ```
+
+Override `E_NAVIGATOR_HOMELAB_IMAGE_REPOSITORY` or
+`E_NAVIGATOR_HOMELAB_IMAGE_TAG` only when the required image is unavailable.
+The collector records the required image, configured image, and whether an image
+substitution occurred in `run-metadata.txt`.
 
 Prometheus HTTP validation is opt-in because the chart must enable both the
 runtime sink and the Kubernetes HTTP surface. For a Prometheus endpoint run with
