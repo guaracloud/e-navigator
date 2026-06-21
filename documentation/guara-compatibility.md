@@ -52,8 +52,16 @@ Current implementation status:
   `beyla_network_flow_bytes_total`.
 - Bounded flow-series cardinality and dropped-series accounting exist in the
   projection generator.
+- Homelab run `20260621-220029-guara-compat-live` enabled
+  `generator.guara_compat` on `sha-5c417c0` in `staging/e-navigator-bench` and
+  proved the current live boundary: the E-Navigator `/metrics` endpoint and
+  Prometheus scrape path were healthy and reported other network metrics, but
+  `beyla_network_flow_bytes_total` had 0 direct endpoint lines and 0 Prometheus
+  query results because no live `network_flow_summary` records were observed.
 - Live Aya byte accounting, active-flow timeout flushing, and cross-node runtime
-  dedupe still require privileged Linux or Kubernetes proof.
+  dedupe still require privileged Linux or Kubernetes proof, followed by
+  positive runtime proof that `beyla_network_flow_bytes_total` is exported from
+  live traffic.
 
 ## Guara Scoping
 

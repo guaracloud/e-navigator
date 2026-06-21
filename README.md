@@ -164,6 +164,12 @@ Implemented with narrower or deferred runtime claims:
   terminating the runner or stopping Prometheus/JSON stdout. These runs are not
   upstream OTLP protobuf, Tempo, Pyroscope, Alloy, or production collector
   compatibility proof.
+- Guara Beyla L4 compatibility remains generator and formatter proven, with a
+  recorded live boundary. Homelab run `20260621-220029-guara-compat-live`
+  enabled `generator.guara_compat` while Prometheus scraping was healthy and
+  other network metrics were queryable, but `beyla_network_flow_bytes_total`
+  produced 0 direct endpoint lines and 0 Prometheus results because the live Aya
+  path did not emit `network_flow_summary` records.
 - CPU profile sampling is an explicit opt-in source. Homelab run
   `20260621-203358-profile-live` proved `source.aya_cpu_profile` samples and
   `generator.profiling` sessions for a controlled CPU workload, including
@@ -186,6 +192,7 @@ The following are intentionally not claimed as implemented production behavior:
 - production collector-accepted OTLP metric, trace, or profile export;
 - pprof or Pyroscope export;
 - complete Beyla replacement or alloy-profiles replacement;
+- live Beyla-compatible `beyla_network_flow_bytes_total` export from traffic;
 - profile storage, flamegraph rendering, or bottleneck analysis;
 - live HTTP/gRPC parsing from real traffic;
 - request route, retry, application error, or request-ID extraction;
