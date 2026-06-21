@@ -8,6 +8,9 @@ These invariants are part of the userspace quality gate. They are intentionally 
 - The local CLI and Kubernetes DaemonSet must use the same runner path.
 - At least one source and one sink are required for a runnable pipeline.
 - Source failures are fatal unless a future test proves a specific source is optional and non-fatal.
+- Sink write failures are non-fatal: the runner logs the failing sink, drops
+  that signal for that sink, and continues sending the same signal to remaining
+  sinks. This keeps collector/export outages from crashing live sources.
 - Generators must be bounded. A generator may not emit more than the runner's per-input derived-signal limit.
 - Queues, caches, aggregation maps, and seen-key sets must have explicit configured or local bounds.
 - Module authoring rules live in `documentation/module-authoring.md`.

@@ -1,4 +1,4 @@
-use e_navigator_core::{ConfigError, CoreError, CoreResult, ModuleMetadata, RuntimeConfig};
+use e_navigator_core::{ConfigError, CoreError, CoreResult, ModuleMetadata, RuntimeConfig, Signal};
 use e_navigator_signals::SignalEnvelope;
 use std::{collections::VecDeque, fmt};
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -203,9 +203,16 @@ impl Runner {
     async fn write_to_sinks(&self, signal: &SignalEnvelope) -> CoreResult<()> {
         for sink in self.registry.sinks() {
             let metadata = sink.metadata();
-            sink.write(signal)
-                .await
-                .map_err(|err| with_module_context(metadata, err))?;
+            if let Err(err) = sink.write(signal).await {
+                let module = metadata.name;
+                let err = with_module_context(metadata, err);
+                warn!(
+                    module,
+                    signal_kind = signal.kind(),
+                    error = %err,
+                    "sink write failed; dropping signal for this sink"
+                );
+            }
         }
 
         Ok(())
@@ -491,6 +498,22 @@ mod tests {
             sleep(self.delay).await;
             self.seen.lock().await.push(signal.clone());
             Ok(())
+        }
+    }
+
+    struct FailingSink;
+
+    #[async_trait]
+    impl Sink<SignalEnvelope> for FailingSink {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("sink.failing", ModuleKind::Sink)
+        }
+
+        async fn write(&self, _signal: &SignalEnvelope) -> CoreResult<()> {
+            Err(CoreError::ModuleFailed {
+                module: "sink.failing".to_string(),
+                message: "collector unavailable".to_string(),
+            })
         }
     }
 
@@ -834,6 +857,23 @@ mod tests {
         assert!(err.to_string().contains("source.signal_then_failing"));
         assert!(err.to_string().contains("source failed after send"));
         assert!(seen.lock().await.len() <= 1);
+    }
+
+    #[tokio::test]
+    async fn sink_failure_does_not_abort_the_runner_or_other_sinks() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(OneSignalSource))
+            .with_sink(Box::new(FailingSink))
+            .with_sink(Box::new(MemorySink { seen: seen.clone() }));
+        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
+
+        timeout(Duration::from_secs(1), runner.run())
+            .await
+            .expect("runner returns")
+            .expect("sink failure is non-fatal");
+
+        assert_eq!(seen.lock().await.len(), 1);
     }
 
     #[tokio::test]

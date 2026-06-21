@@ -130,6 +130,8 @@ Implemented and non-privileged proven:
 - Host resource source through procfs, sysfs, cgroup parser tests, and Docker
   synthetic fixtures.
 - Dependency graph generation through generator tests and runner fan-out tests.
+- Runner reliability for export outages through tests proving sink failures are
+  logged and non-fatal while source failures still propagate.
 - Trace and request foundations through schema, generator, formatter, fixture,
   and smoke tests.
 - CPU profiling foundations through raw decode, profile normalization, and
