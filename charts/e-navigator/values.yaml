@@ -123,11 +123,19 @@ config:
     enabled = true
 
     [[modules]]
+    name = "source.aya_dns"
+    enabled = false
+
+    [[modules]]
     name = "source.aya_cpu_profile"
     enabled = false
 
     [[modules]]
     name = "source.host_resource"
+    enabled = true
+
+    [[modules]]
+    name = "source.synthetic_exec"
     enabled = true
 
     [[modules]]
