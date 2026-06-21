@@ -148,8 +148,11 @@ Implemented with narrower or deferred runtime claims:
   an opt-in registered `source.aya_dns` boundary. Live eBPF DNS packet capture is
   not privileged-proven.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
-  `/healthz`, and `/readyz` tests. Prometheus scrape and active-target proof
-  require live validation.
+  `/healthz`, and `/readyz` tests. Homelab run `20260621-194840` proved live
+  endpoint reachability, ServiceMonitor discovery, and active Prometheus
+  targets for image `sha-b0ab524`, but emitted E-Navigator metric samples were
+  still empty (`scrape_samples_scraped=0`), so metric content correctness
+  remains deferred.
 - OTLP HTTP support is an opt-in registered sink over the current internal
   metric, trace, and profile record boundary with fake-collector retry tests. It
   is not Tempo or Pyroscope compatibility proof.
