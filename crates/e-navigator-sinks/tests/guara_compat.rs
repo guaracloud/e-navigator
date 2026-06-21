@@ -30,7 +30,7 @@ fn compatibility_metric_formats_for_prometheus_scrape_boundary() {
     let line = format_prometheus_compatibility_metric(&signal).expect("metric formats");
 
     assert_eq!(line.name, "beyla_network_flow_bytes_total");
-    assert_eq!(line.value, 4096);
+    assert_eq!(line.value, "4096");
     assert_eq!(line.labels["k8s_src_owner_type"], "deployment");
     assert_eq!(line.labels["k8s_dst_owner_type"], "statefulset");
 }

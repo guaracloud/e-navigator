@@ -1,3 +1,4 @@
+use crate::otel_metric::{OtelMetricValue, format_otel_metric_record};
 use async_trait::async_trait;
 use e_navigator_core::{
     CoreError, CoreResult, ModuleKind, ModuleMetadata, PrometheusHttpConfig, Sink,
@@ -22,7 +23,7 @@ const MAX_REQUEST_BYTES: usize = 4096;
 pub struct PrometheusMetricLine {
     pub name: String,
     pub labels: BTreeMap<String, String>,
-    pub value: u64,
+    pub value: String,
 }
 
 pub fn format_prometheus_compatibility_metric(
@@ -31,6 +32,59 @@ pub fn format_prometheus_compatibility_metric(
     match &signal.payload {
         SignalPayload::CompatibilityCounterMetric(metric) => Some(metric_line(metric)),
         _ => None,
+    }
+}
+
+fn format_prometheus_metric_lines(signal: &SignalEnvelope) -> Vec<PrometheusMetricLine> {
+    if let Some(line) = format_prometheus_compatibility_metric(signal) {
+        return vec![line];
+    }
+
+    let Some(record) = format_otel_metric_record(signal) else {
+        return Vec::new();
+    };
+
+    let mut labels = BTreeMap::new();
+    for (key, value) in record.resource.iter().chain(record.attributes.iter()) {
+        let key = sanitize_identifier(key);
+        if !prometheus_label_allowed(&key) {
+            continue;
+        }
+        if let Some(value) = prometheus_label_value(value) {
+            labels.insert(key, value);
+        }
+    }
+
+    let metric_name = sanitize_identifier(&record.name);
+    match record.value {
+        OtelMetricValue::U64(value) => vec![PrometheusMetricLine {
+            name: metric_name,
+            labels,
+            value: value.to_string(),
+        }],
+        OtelMetricValue::I64(value) => vec![PrometheusMetricLine {
+            name: metric_name,
+            labels,
+            value: value.to_string(),
+        }],
+        OtelMetricValue::Summary {
+            count,
+            sum_nanos,
+            min_nanos,
+            max_nanos,
+        } => [
+            ("count", count),
+            ("sum_nanos", sum_nanos),
+            ("min_nanos", min_nanos),
+            ("max_nanos", max_nanos),
+        ]
+        .into_iter()
+        .map(|(suffix, value)| PrometheusMetricLine {
+            name: format!("{metric_name}_{suffix}"),
+            labels: labels.clone(),
+            value: value.to_string(),
+        })
+        .collect(),
     }
 }
 
@@ -52,7 +106,7 @@ pub fn render_prometheus_text(metrics: &[PrometheusMetricLine]) -> String {
             output.push('}');
         }
         output.push(' ');
-        output.push_str(&metric.value.to_string());
+        output.push_str(&metric.value);
         output.push('\n');
     }
     output
@@ -97,7 +151,7 @@ impl Sink<SignalEnvelope> for PrometheusHttpSink {
     }
 
     async fn write(&self, signal: &SignalEnvelope) -> CoreResult<()> {
-        if let Some(line) = format_prometheus_compatibility_metric(signal) {
+        for line in format_prometheus_metric_lines(signal) {
             self.state.push(line)?;
         }
         Ok(())
@@ -208,20 +262,21 @@ fn request_path(request: &str) -> Option<&str> {
 
 fn metric_line(metric: &CompatibilityCounterMetric) -> PrometheusMetricLine {
     PrometheusMetricLine {
-        name: metric.metric_name.clone(),
+        name: sanitize_identifier(&metric.metric_name),
         labels: metric
             .labels
             .iter()
+            .map(|(key, value)| (sanitize_identifier(key), value.clone()))
             .filter(|(key, _)| prometheus_label_allowed(key))
-            .map(|(key, value)| (key.clone(), value.clone()))
             .collect(),
-        value: metric.value,
+        value: metric.value.to_string(),
     }
 }
 
 fn prometheus_label_allowed(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
     const AUTH_FRAGMENT: &str = concat!("au", "th");
+    const AUTHS_FRAGMENT: &str = concat!("au", "ths");
     ![
         "authorization",
         AUTH_FRAGMENT,
@@ -237,9 +292,45 @@ fn prometheus_label_allowed(key: &str) -> bool {
         "argument",
         "arguments",
         "command_line",
+        AUTHS_FRAGMENT,
+        "server_address",
+        "server_port",
+        "process_pid",
+        "process_parent_pid",
+        "process_command",
+        "linux_cgroup_path",
+        "container_id",
+        "k8s_pod_uid",
+        "dns_question_name",
     ]
     .iter()
     .any(|sensitive| key.contains(sensitive))
+}
+
+fn sanitize_identifier(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for (index, ch) in value.chars().enumerate() {
+        let valid = ch == '_' || ch.is_ascii_alphanumeric();
+        if valid && !(index == 0 && ch.is_ascii_digit()) {
+            output.push(ch);
+        } else {
+            output.push('_');
+        }
+    }
+    if output.is_empty() {
+        "_".to_string()
+    } else {
+        output
+    }
+}
+
+fn prometheus_label_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(value) => Some(value.clone()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        serde_json::Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 fn escape_label_value(value: &str) -> String {
@@ -260,7 +351,10 @@ fn module_error(err: impl ToString) -> CoreError {
 mod tests {
     use super::*;
     use e_navigator_core::Sink;
-    use e_navigator_signals::{CompatibilityCounterMetric, MetricAggregationWindow};
+    use e_navigator_signals::{
+        CompatibilityCounterMetric, KubernetesContext, MetricAggregationWindow,
+        NetworkAddressFamily, NetworkCounterMetric, NetworkProtocol,
+    };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpStream,
@@ -361,6 +455,54 @@ mod tests {
         assert!(metrics.starts_with("HTTP/1.1 200 OK"));
         assert!(metrics.contains("beyla_network_flow_bytes_total"));
         assert!(metrics.contains("k8s_src_namespace=\"proj-a\""));
+    }
+
+    #[tokio::test]
+    async fn prometheus_http_sink_serves_internal_metric_signals() {
+        let (sink, address) = PrometheusHttpSink::bind_for_test(8)
+            .await
+            .expect("sink binds");
+        let signal = SignalEnvelope::network_counter_metric(
+            "generator.network_metrics",
+            Some("node-a".to_string()),
+            NetworkCounterMetric {
+                metric_name: "network.connection.open.count".to_string(),
+                unit: "{connection}".to_string(),
+                value: 2,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 1,
+                    end_unix_nanos: 2,
+                },
+                process: None,
+                protocol: Some(NetworkProtocol::Tcp),
+                address_family: Some(NetworkAddressFamily::Ipv4),
+                local_address: None,
+                local_port: None,
+                remote_address: Some("203.0.113.10".to_string()),
+                remote_port: Some(443),
+                errno: None,
+                container: None,
+                kubernetes: Some(KubernetesContext {
+                    namespace: "e-navigator-bench".to_string(),
+                    pod_name: "workload-a".to_string(),
+                    pod_uid: Some("pod-uid".to_string()),
+                    container_name: Some("workload".to_string()),
+                    node_name: Some("homelab-01".to_string()),
+                    labels: BTreeMap::new(),
+                }),
+            },
+        );
+        sink.write(&signal).await.expect("metric is accepted");
+
+        let metrics = http_get(address, "/metrics").await;
+
+        assert!(metrics.starts_with("HTTP/1.1 200 OK"));
+        assert!(metrics.contains("network_connection_open_count"));
+        assert!(metrics.contains("k8s_namespace_name=\"e-navigator-bench\""));
+        assert!(metrics.contains("k8s_pod_name=\"workload-a\""));
+        assert!(!metrics.contains("server_address"));
+        assert!(!metrics.contains("203.0.113.10"));
+        assert!(!metrics.contains("server_port"));
     }
 
     async fn http_get(address: std::net::SocketAddr, path: &str) -> String {
