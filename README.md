@@ -158,8 +158,12 @@ Implemented with narrower or deferred runtime claims:
 - OTLP HTTP support is an opt-in registered sink over the current internal
   metric, trace, and profile record boundary. Homelab run
   `20260621-205344-otlp-live` proved live delivery to a namespace-local fake
-  collector for internal JSON records. It is not upstream OTLP protobuf, Tempo,
-  Pyroscope, Alloy, or production collector compatibility proof.
+  collector for internal JSON records. Homelab run
+  `20260621-214450-sink-failure-live` proved that HTTP 500 responses from a
+  namespace-local collector are logged and dropped for `sink.otlp_http` without
+  terminating the runner or stopping Prometheus/JSON stdout. These runs are not
+  upstream OTLP protobuf, Tempo, Pyroscope, Alloy, or production collector
+  compatibility proof.
 - CPU profile sampling is an explicit opt-in source. Homelab run
   `20260621-203358-profile-live` proved `source.aya_cpu_profile` samples and
   `generator.profiling` sessions for a controlled CPU workload, including
