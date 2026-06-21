@@ -164,6 +164,11 @@ The initial live proof should record:
   image `sha-5c417c0` delivered internal JSON metric, trace, and profile records
   to a namespace-local fake collector, then restored the release to
   Prometheus-enabled `aya-exec`;
+- `20260621-224414-alloy-otlp-boundary-live` pointed `sink.otlp_http` at real
+  homelab Alloy OTLP HTTP `/v1/traces`: deployed image `sha-5c417c0` crashed on
+  Alloy HTTP 400, while current local code loaded directly into both homelab
+  node runtimes logged and dropped the HTTP 400 sink failures with both pods
+  Ready, zero restarts, JSON stdout active, and Prometheus HTTP still reachable;
 - `20260621-222508-required-image-daemonset-live` is the first required-image
   DaemonSet runtime run: image `sha-8ab271c` rolled out on both homelab nodes,
   emitted live Aya network-derived JSON stdout records, and was then restored to
