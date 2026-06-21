@@ -118,6 +118,24 @@ E_NAVIGATOR_HOMELAB_IMAGE_TAG=<tag> \
 benchmarks/runner/homelab-collect.sh
 ```
 
+Prometheus HTTP validation is opt-in because the chart must enable both the
+runtime sink and the Kubernetes HTTP surface. For a Prometheus endpoint run with
+a current image that supports `sink.prometheus_http`, add:
+
+```bash
+E_NAVIGATOR_HOMELAB_ENABLE_PROMETHEUS_HTTP=1 \
+E_NAVIGATOR_HOMELAB_ENABLE_SERVICE_MONITOR=1 \
+benchmarks/runner/homelab-collect.sh
+```
+
+The collector writes `prometheus-http-runtime-config.toml` with
+`[prometheus_http] enabled = true` and `sink.prometheus_http` enabled, passes it
+to Helm with `--set-file config.toml=...`, renders the chart Service, and renders
+the ServiceMonitor when `E_NAVIGATOR_HOMELAB_ENABLE_SERVICE_MONITOR=1` is set.
+Only recorded `/healthz`, `/readyz`, `/metrics`, Prometheus active-target, and
+query artifacts can upgrade Prometheus claims. Config and render evidence alone
+remain non-privileged or inconclusive.
+
 The initial live proof should record:
 
 - DaemonSet schedules and remains Ready in `e-navigator-bench`;

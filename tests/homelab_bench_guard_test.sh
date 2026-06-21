@@ -35,6 +35,17 @@ if ! grep -Fq 'imagePullSecrets[0].name=$image_pull_secret' benchmarks/runner/ho
   exit 1
 fi
 
+if ! grep -q 'E_NAVIGATOR_HOMELAB_ENABLE_PROMETHEUS_HTTP' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector does not expose E_NAVIGATOR_HOMELAB_ENABLE_PROMETHEUS_HTTP\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq -- '--set-file' benchmarks/runner/homelab-collect.sh ||
+  ! grep -Fq 'config.toml=$prometheus_runtime_config' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector does not pass an explicit Prometheus runtime config to Helm\n' >&2
+  exit 1
+fi
+
 if ! grep -Fq 'current context must be exactly staging' benchmarks/runner/homelab-collect.sh; then
   printf 'homelab collector does not hard-stop unless current context is staging\n' >&2
   exit 1
@@ -51,6 +62,8 @@ for expected in \
   'prometheus-http-healthz' \
   'prometheus-http-readyz' \
   'prometheus-http-metrics' \
+  'sink\.prometheus_http' \
+  '\[prometheus_http\]' \
   '/healthz' \
   '/readyz' \
   '/metrics' \

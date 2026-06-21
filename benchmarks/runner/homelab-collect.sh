@@ -54,13 +54,34 @@ printf 'homelab validation target namespace: %s\n' "$namespace"
 printf 'homelab validation results: %s\n' "$results_dir"
 mkdir -p "$results_dir"
 
-run_capture() {
+log_command() {
   local name="$1"
   shift
   printf '\n==> %s\n' "$name" | tee -a "$results_dir/commands.txt"
   printf '%q ' "$@" | tee -a "$results_dir/commands.txt"
   printf '\n' | tee -a "$results_dir/commands.txt"
+}
+
+run_capture() {
+  local name="$1"
+  shift
+  log_command "$name" "$@"
   "$@" >"$results_dir/${name}.txt" 2>&1 || true
+}
+
+write_prometheus_http_runtime_config() {
+  local output="$1"
+
+  awk '
+    $0 == "  toml: |" { in_config = 1; next }
+    in_config && substr($0, 1, 4) == "    " { print substr($0, 5); next }
+    in_config { exit }
+  ' charts/e-navigator/values.yaml >"$output"
+
+  perl -0pi -e '
+    s/(\[prometheus_http\]\nenabled = )false/${1}true/;
+    s/(\[\[modules\]\]\nname = "sink\.prometheus_http"\nenabled = )false/${1}true/;
+  ' "$output"
 }
 
 top_samples="${E_NAVIGATOR_HOMELAB_TOP_SAMPLES:-10}"
@@ -292,6 +313,7 @@ itself; inspect the referenced evidence before updating documentation.
 - ConfigMap: \`configmap-yaml.txt\`
 - Services and endpoints: \`services-endpoints.txt\`
 - Prometheus monitor resources: \`monitoring-api-resources.txt\`, \`servicemonitors.txt\`, \`podmonitors.txt\`
+- Prometheus runtime config, when enabled: \`prometheus-http-runtime-config.toml\`
 - Prometheus HTTP endpoint checks: \`prometheus-http-port-forward.txt\`, \`prometheus-http-healthz.txt\`, \`prometheus-http-readyz.txt\`, \`prometheus-http-metrics.txt\`, or \`prometheus-http-skipped.txt\`
 - Prometheus API checks: \`prometheus-api-targets.txt\`, \`prometheus-api-query-up.txt\`, \`prometheus-api-query-e-navigator.txt\`, \`prometheus-api-series.txt\`, \`prometheus-api-port-forward.txt\`, or \`prometheus-api-skipped.txt\`
 - Logs: \`logs.txt\`
@@ -311,6 +333,7 @@ EOF
 | DaemonSet rollout | captured | \`rollout.txt\`, \`daemonset-yaml.txt\` | no production soak |
 | JSON logs | captured | \`logs.txt\` | logs must be inspected before claiming source/generator proof |
 | Services/endpoints | captured | \`services-endpoints.txt\`, \`servicemonitors.txt\`, \`podmonitors.txt\` | no Prometheus proof unless HTTP 200 and scrape evidence are present |
+| Prometheus runtime config | captured when enabled | \`prometheus-http-runtime-config.toml\` | config enablement does not prove scrape or queryability |
 | Prometheus HTTP endpoints | captured when Service exists | \`prometheus-http-healthz.txt\`, \`prometheus-http-readyz.txt\`, \`prometheus-http-metrics.txt\`, \`prometheus-http-port-forward.txt\`, or \`prometheus-http-skipped.txt\` | endpoint captures alone do not prove Prometheus active target or queryability |
 | Prometheus API queries | captured when configured | \`prometheus-api-targets.txt\`, \`prometheus-api-query-up.txt\`, \`prometheus-api-query-e-navigator.txt\`, \`prometheus-api-series.txt\`, \`prometheus-api-port-forward.txt\`, or \`prometheus-api-skipped.txt\` | empty query results are negative or inconclusive, not success |
 | Resource overhead | captured | \`top-pods-10-samples.txt\` | no reduced-overhead claim without a comparable baseline |
@@ -341,12 +364,31 @@ if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ]; then
   if [ -n "$image_pull_secret" ]; then
     helm_args+=(--set "imagePullSecrets[0].name=$image_pull_secret")
   fi
+
+  if [ "${E_NAVIGATOR_HOMELAB_ENABLE_PROMETHEUS_HTTP:-0}" = "1" ]; then
+    prometheus_runtime_config="$results_dir/prometheus-http-runtime-config.toml"
+    write_prometheus_http_runtime_config "$prometheus_runtime_config"
+    helm_args+=(
+      --set prometheusHttp.enabled=true
+      --set health.enabled=true
+      --set service.enabled=true
+      --set-file "config.toml=$prometheus_runtime_config"
+    )
+
+    if [ "${E_NAVIGATOR_HOMELAB_ENABLE_SERVICE_MONITOR:-0}" = "1" ]; then
+      helm_args+=(--set serviceMonitor.enabled=true)
+    fi
+  fi
   render_args+=("${helm_args[@]}")
 
+  log_command namespace-apply "${kubectl_cmd[@]}" create namespace "$namespace" --dry-run=client -o yaml
   "${kubectl_cmd[@]}" create namespace "$namespace" --dry-run=client -o yaml \
     | "${kubectl_cmd[@]}" apply -f -
+  log_command helm-upgrade-install helm --kube-context "$context" upgrade --install "$release" charts/e-navigator \
+    --namespace "$namespace" "${helm_args[@]}"
   helm --kube-context "$context" upgrade --install "$release" charts/e-navigator \
     --namespace "$namespace" "${helm_args[@]}"
+  log_command workload-apply "${kubectl_cmd[@]}" -n "$namespace" apply -f benchmarks/k8s/workload.yaml
   "${kubectl_cmd[@]}" -n "$namespace" apply -f benchmarks/k8s/workload.yaml
 fi
 
