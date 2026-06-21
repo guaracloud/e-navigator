@@ -34,3 +34,27 @@ if ! grep -Fq 'imagePullSecrets[0].name=$image_pull_secret' benchmarks/runner/ho
   printf 'homelab collector does not pass imagePullSecrets to Helm\n' >&2
   exit 1
 fi
+
+if ! grep -Fq 'current context must be exactly staging' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector does not hard-stop unless current context is staging\n' >&2
+  exit 1
+fi
+
+for expected in \
+  'summary.md' \
+  'proof-matrix.md' \
+  'rendered-manifest' \
+  'services-endpoints' \
+  'monitoring-api-resources' \
+  'servicemonitors' \
+  'podmonitors' \
+  'top-pods-10-samples' \
+  'capability-decode' \
+  '/proc/1/status' \
+  '/proc/1/mounts'
+do
+  if ! grep -Fq "$expected" benchmarks/runner/homelab-collect.sh; then
+    printf 'homelab collector does not capture required evidence surface: %s\n' "$expected" >&2
+    exit 1
+  fi
+done
