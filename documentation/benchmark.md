@@ -122,6 +122,13 @@ Override `E_NAVIGATOR_HOMELAB_IMAGE_REPOSITORY` or
 The collector records the required image, configured image, and whether an image
 substitution occurred in `run-metadata.txt`.
 
+Homelab run `20260621-221944-required-image-live` proved the required image is
+currently pullable in `staging/e-navigator-bench` with pull secret
+`ghcr-e-navigator-pull` and starts far enough to print CLI help. That is an
+image availability check only. It does not prove DaemonSet runtime behavior or
+feature parity with newer images used by later Prometheus, OTLP, DNS, Guara, or
+resource-baseline proof slices.
+
 Prometheus HTTP validation is opt-in because the chart must enable both the
 runtime sink and the Kubernetes HTTP surface. For a Prometheus endpoint run with
 a current image that supports `sink.prometheus_http`, add:
