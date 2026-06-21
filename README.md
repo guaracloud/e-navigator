@@ -217,6 +217,7 @@ docker run --rm e-navigator:local --source synthetic
 tests/smoke_docker.sh e-navigator:local
 tests/packaged_config_guard_test.sh
 tests/secret_pattern_guard_test.sh
+tests/chart_service_guard_test.sh
 kubeconform -strict -summary deploy/kubernetes/*.yaml
 helm template e-navigator charts/e-navigator | kubeconform -strict -summary -
 node website/check-links.mjs

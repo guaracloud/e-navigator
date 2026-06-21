@@ -50,6 +50,7 @@ if [ "${E_NAVIGATOR_SKIP_KUBERNETES:-0}" != "1" ]; then
   require_tool helm
   require_tool kubeconform
   run helm lint charts/e-navigator
+  run tests/chart_service_guard_test.sh
   run helm template e-navigator charts/e-navigator
   run kubeconform -strict -summary deploy/kubernetes/*.yaml
   run sh -c 'helm template e-navigator charts/e-navigator | kubeconform -strict -summary -'
