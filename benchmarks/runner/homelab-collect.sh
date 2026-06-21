@@ -154,6 +154,44 @@ capture_service_surfaces() {
   fi
 }
 
+capture_prometheus_http_endpoints() {
+  local service_name="$release"
+  local local_port="${E_NAVIGATOR_HOMELAB_PROMETHEUS_LOCAL_PORT:-19090}"
+  local port_forward_log="$results_dir/prometheus-http-port-forward.txt"
+
+  if ! "${kubectl_cmd[@]}" -n "$namespace" get service "$service_name" >/dev/null 2>&1; then
+    printf 'service %s not present; Prometheus HTTP endpoint checks skipped\n' "$service_name" \
+      >"$results_dir/prometheus-http-skipped.txt"
+    return
+  fi
+
+  printf '\n==> prometheus-http-port-forward\n' | tee -a "$results_dir/commands.txt"
+  printf 'kubectl --context %q -n %q port-forward service/%q %q:9090\n' \
+    "$context" "$namespace" "$service_name" "$local_port" | tee -a "$results_dir/commands.txt"
+  "${kubectl_cmd[@]}" -n "$namespace" port-forward "service/${service_name}" "${local_port}:9090" \
+    >"$port_forward_log" 2>&1 &
+  local port_forward_pid="$!"
+
+  sleep 2
+
+  capture_prometheus_http_path() {
+    local name="$1"
+    local path="$2"
+    local url="http://127.0.0.1:${local_port}${path}"
+
+    printf '\n==> %s\n' "$name" | tee -a "$results_dir/commands.txt"
+    printf 'curl -sS -i --max-time 5 %q\n' "$url" | tee -a "$results_dir/commands.txt"
+    curl -sS -i --max-time 5 "$url" >"$results_dir/${name}.txt" 2>&1 || true
+  }
+
+  capture_prometheus_http_path prometheus-http-healthz /healthz
+  capture_prometheus_http_path prometheus-http-readyz /readyz
+  capture_prometheus_http_path prometheus-http-metrics /metrics
+
+  kill "$port_forward_pid" >/dev/null 2>&1 || true
+  wait "$port_forward_pid" >/dev/null 2>&1 || true
+}
+
 write_summary_files() {
   cat >"$results_dir/summary.md" <<EOF
 # Homelab Validation Summary: ${timestamp}
@@ -178,6 +216,7 @@ itself; inspect the referenced evidence before updating documentation.
 - ConfigMap: \`configmap-yaml.txt\`
 - Services and endpoints: \`services-endpoints.txt\`
 - Prometheus monitor resources: \`monitoring-api-resources.txt\`, \`servicemonitors.txt\`, \`podmonitors.txt\`
+- Prometheus HTTP endpoint checks: \`prometheus-http-port-forward.txt\`, \`prometheus-http-healthz.txt\`, \`prometheus-http-readyz.txt\`, \`prometheus-http-metrics.txt\`, or \`prometheus-http-skipped.txt\`
 - Logs: \`logs.txt\`
 - Events: \`events.txt\`
 - Resource samples: \`top-pods-10-samples.txt\`
@@ -195,6 +234,7 @@ EOF
 | DaemonSet rollout | captured | \`rollout.txt\`, \`daemonset-yaml.txt\` | no production soak |
 | JSON logs | captured | \`logs.txt\` | logs must be inspected before claiming source/generator proof |
 | Services/endpoints | captured | \`services-endpoints.txt\`, \`servicemonitors.txt\`, \`podmonitors.txt\` | no Prometheus proof unless HTTP 200 and scrape evidence are present |
+| Prometheus HTTP endpoints | captured when Service exists | \`prometheus-http-healthz.txt\`, \`prometheus-http-readyz.txt\`, \`prometheus-http-metrics.txt\`, \`prometheus-http-port-forward.txt\`, or \`prometheus-http-skipped.txt\` | endpoint captures alone do not prove Prometheus active target or queryability |
 | Resource overhead | captured | \`top-pods-10-samples.txt\` | no reduced-overhead claim without a comparable baseline |
 | Capabilities | captured | \`capability-decode.txt\` | no reduced-privilege claim if CAP_SYS_ADMIN remains or seccomp is disabled |
 EOF
@@ -242,6 +282,7 @@ run_capture daemonset "${kubectl_cmd[@]}" -n "$namespace" get daemonset -o wide
 run_capture daemonset-yaml "${kubectl_cmd[@]}" -n "$namespace" get daemonset "$release" -o yaml
 run_capture configmap-yaml "${kubectl_cmd[@]}" -n "$namespace" get configmap "${release}-config" -o yaml
 capture_service_surfaces
+capture_prometheus_http_endpoints
 run_capture rollout "${kubectl_cmd[@]}" -n "$namespace" rollout status "daemonset/${release}" --timeout="${E_NAVIGATOR_HOMELAB_ROLLOUT_TIMEOUT:-120s}"
 run_capture pod-json "${kubectl_cmd[@]}" -n "$namespace" get pods -o json
 run_capture logs "${kubectl_cmd[@]}" -n "$namespace" logs -l app.kubernetes.io/name=e-navigator --all-containers --tail="${E_NAVIGATOR_HOMELAB_LOG_TAIL:-2000}" --prefix

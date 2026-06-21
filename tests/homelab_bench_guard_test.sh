@@ -48,6 +48,12 @@ for expected in \
   'monitoring-api-resources' \
   'servicemonitors' \
   'podmonitors' \
+  'prometheus-http-healthz' \
+  'prometheus-http-readyz' \
+  'prometheus-http-metrics' \
+  '/healthz' \
+  '/readyz' \
+  '/metrics' \
   'top-pods-10-samples' \
   'capability-decode' \
   '/proc/1/status' \
