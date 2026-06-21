@@ -133,11 +133,13 @@ boundaries plus reusable HTTP exporter foundations with:
 
 `sink.prometheus_http` serves local `/metrics`, `/healthz`, and `/readyz` tests.
 `sink.otlp_http` currently exports the repository's internal metric, trace, and
-profile records to a fake collector for transport testing. This is not yet a
-full OTLP protobuf implementation or collector compatibility proof. Metrics,
-traces, and profiles must be serialized to the exact upstream OTLP protocol and
-verified against a collector before claiming Tempo, Alloy, or Pyroscope
-compatibility.
+profile records to a fake collector for transport testing. Homelab run
+`20260621-205344-otlp-live` proved live delivery of those internal JSON records
+to a namespace-local fake collector, including metric, trace, and profile signal
+families. This is not yet a full OTLP protobuf implementation or production
+collector compatibility proof. Metrics, traces, and profiles must be serialized
+to the exact upstream OTLP protocol and verified against a real collector before
+claiming Tempo, Alloy, or Pyroscope compatibility.
 
 ## Kubernetes Packaging
 

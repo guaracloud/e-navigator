@@ -154,8 +154,10 @@ Implemented with narrower or deferred runtime claims:
   active Prometheus targets, nonzero scrape samples, and queryable
   E-Navigator metric series such as `network_connection_open_count`.
 - OTLP HTTP support is an opt-in registered sink over the current internal
-  metric, trace, and profile record boundary with fake-collector retry tests. It
-  is not Tempo or Pyroscope compatibility proof.
+  metric, trace, and profile record boundary. Homelab run
+  `20260621-205344-otlp-live` proved live delivery to a namespace-local fake
+  collector for internal JSON records. It is not upstream OTLP protobuf, Tempo,
+  Pyroscope, Alloy, or production collector compatibility proof.
 - CPU profile sampling is an explicit opt-in source. Homelab run
   `20260621-203358-profile-live` proved `source.aya_cpu_profile` samples and
   `generator.profiling` sessions for a controlled CPU workload, including

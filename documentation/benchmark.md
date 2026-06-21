@@ -153,6 +153,10 @@ The initial live proof should record:
   meaningful;
 - OTLP validation enables `sink.otlp_http` with an explicit endpoint and records
   collector evidence separately from fake-collector unit tests;
+- `20260621-205344-otlp-live` is the first homelab OTLP HTTP sink boundary run:
+  image `sha-5c417c0` delivered internal JSON metric, trace, and profile records
+  to a namespace-local fake collector, then restored the release to
+  Prometheus-enabled `aya-exec`;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in
