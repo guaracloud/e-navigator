@@ -175,6 +175,13 @@ Implemented with narrower or deferred runtime claims:
   `generator.profiling` sessions for a controlled CPU workload, including
   Kubernetes/container attribution.
 - Kubernetes packaging proof is separate from privileged eBPF runtime proof.
+- Resource and privilege evidence is currently a point-in-time baseline only.
+  Homelab run `20260621-221235-baseline-resource-live` captured 10
+  `kubectl top` samples per E-Navigator pod, Prometheus cAdvisor CPU and memory
+  series, rendered security context, and decoded capabilities. It does not
+  prove reduced overhead or reduced privilege because no equivalent baseline
+  comparison was captured and the pods still ran as UID 0 with `CAP_SYS_ADMIN`
+  and `Seccomp: 0`.
 - Persisted service maps, production exporters, storage, UI, and container
   vulnerability policy gates are deferred.
 
@@ -199,6 +206,7 @@ The following are intentionally not claimed as implemented production behavior:
 - privileged-proven runtime DNS packet capture;
 - full TCP state tracking, packet accounting, retransmits, or resets;
 - reduced-privilege Kubernetes eBPF operation.
+- reduced overhead versus existing homelab observability agents.
 
 Do not treat synthetic fixtures, Docker smoke tests, Kubernetes schema checks, and
 privileged Linux or cluster runtime evidence as interchangeable.
