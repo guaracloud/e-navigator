@@ -69,6 +69,13 @@ run_capture() {
   "$@" >"$results_dir/${name}.txt" 2>&1 || true
 }
 
+run_required_capture() {
+  local name="$1"
+  shift
+  log_command "$name" "$@"
+  "$@" >"$results_dir/${name}.txt" 2>&1
+}
+
 write_prometheus_http_runtime_config() {
   local output="$1"
 
@@ -304,6 +311,7 @@ itself; inspect the referenced evidence before updating documentation.
 ## Captured Evidence
 
 - Commands: \`commands.txt\`
+- Apply/install outputs, when apply mode is enabled: \`namespace-apply.txt\`, \`helm-upgrade-install.txt\`, \`workload-apply.txt\`
 - Rendered manifest: \`rendered-manifest.txt\`
 - Live Helm values: \`helm-values.txt\`
 - Live Helm manifest: \`helm-manifest.txt\`
@@ -320,6 +328,7 @@ itself; inspect the referenced evidence before updating documentation.
 - Events: \`events.txt\`
 - Resource samples: \`top-pods-10-samples.txt\`
 - Capability decode: \`capability-decode.txt\`
+- Cleanup outputs, when cleanup is enabled: \`cleanup-workload.txt\`, \`cleanup-helm-uninstall.txt\`
 EOF
 
   cat >"$results_dir/proof-matrix.md" <<EOF
@@ -329,6 +338,7 @@ EOF
 | --- | --- | --- | --- |
 | Context | captured | \`current-context.txt\` | no other context validated |
 | Namespace | captured | \`namespace.txt\` | no other namespace validated |
+| Apply/install commands | captured when apply mode is enabled | \`namespace-apply.txt\`, \`helm-upgrade-install.txt\`, \`workload-apply.txt\` | successful apply does not prove runtime behavior without rollout, logs, and endpoint evidence |
 | Rendered manifest | captured | \`rendered-manifest.txt\`, \`helm-manifest.txt\`, \`helm-values.txt\` | render does not prove runtime behavior |
 | DaemonSet rollout | captured | \`rollout.txt\`, \`daemonset-yaml.txt\` | no production soak |
 | JSON logs | captured | \`logs.txt\` | logs must be inspected before claiming source/generator proof |
@@ -338,6 +348,7 @@ EOF
 | Prometheus API queries | captured when configured | \`prometheus-api-targets.txt\`, \`prometheus-api-query-up.txt\`, \`prometheus-api-query-e-navigator.txt\`, \`prometheus-api-series.txt\`, \`prometheus-api-port-forward.txt\`, or \`prometheus-api-skipped.txt\` | empty query results are negative or inconclusive, not success |
 | Resource overhead | captured | \`top-pods-10-samples.txt\` | no reduced-overhead claim without a comparable baseline |
 | Capabilities | captured | \`capability-decode.txt\` | no reduced-privilege claim if CAP_SYS_ADMIN remains or seccomp is disabled |
+| Cleanup | captured when enabled | \`cleanup-workload.txt\`, \`cleanup-helm-uninstall.txt\` | no cleanup occurred unless cleanup artifacts or commands prove it |
 EOF
 }
 
@@ -381,15 +392,12 @@ if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ]; then
   fi
   render_args+=("${helm_args[@]}")
 
-  log_command namespace-apply "${kubectl_cmd[@]}" create namespace "$namespace" --dry-run=client -o yaml
-  "${kubectl_cmd[@]}" create namespace "$namespace" --dry-run=client -o yaml \
-    | "${kubectl_cmd[@]}" apply -f -
-  log_command helm-upgrade-install helm --kube-context "$context" upgrade --install "$release" charts/e-navigator \
+  run_required_capture namespace-apply bash -c \
+    'kubectl --context "$1" create namespace "$2" --dry-run=client -o yaml | kubectl --context "$1" apply -f -' \
+    _ "$context" "$namespace"
+  run_required_capture helm-upgrade-install helm --kube-context "$context" upgrade --install "$release" charts/e-navigator \
     --namespace "$namespace" "${helm_args[@]}"
-  helm --kube-context "$context" upgrade --install "$release" charts/e-navigator \
-    --namespace "$namespace" "${helm_args[@]}"
-  log_command workload-apply "${kubectl_cmd[@]}" -n "$namespace" apply -f benchmarks/k8s/workload.yaml
-  "${kubectl_cmd[@]}" -n "$namespace" apply -f benchmarks/k8s/workload.yaml
+  run_required_capture workload-apply "${kubectl_cmd[@]}" -n "$namespace" apply -f benchmarks/k8s/workload.yaml
 fi
 
 run_capture current-context kubectl config current-context
@@ -414,8 +422,8 @@ write_summary_files
 
 if [ "${E_NAVIGATOR_HOMELAB_CLEANUP:-0}" = "1" ]; then
   printf 'running namespace-scoped cleanup in %s\n' "$namespace"
-  "${kubectl_cmd[@]}" -n "$namespace" delete -f benchmarks/k8s/workload.yaml --ignore-not-found=true
-  helm --kube-context "$context" uninstall "$release" --namespace "$namespace" || true
+  run_capture cleanup-workload "${kubectl_cmd[@]}" -n "$namespace" delete -f benchmarks/k8s/workload.yaml --ignore-not-found=true
+  run_capture cleanup-helm-uninstall helm --kube-context "$context" uninstall "$release" --namespace "$namespace"
 fi
 
 printf 'homelab collection complete: %s\n' "$results_dir"

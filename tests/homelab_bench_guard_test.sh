@@ -54,6 +54,11 @@ fi
 for expected in \
   'summary.md' \
   'proof-matrix.md' \
+  'namespace-apply' \
+  'helm-upgrade-install' \
+  'workload-apply' \
+  'cleanup-workload' \
+  'cleanup-helm-uninstall' \
   'rendered-manifest' \
   'services-endpoints' \
   'monitoring-api-resources' \
