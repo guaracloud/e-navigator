@@ -164,6 +164,10 @@ The initial live proof should record:
   image `sha-5c417c0` delivered internal JSON metric, trace, and profile records
   to a namespace-local fake collector, then restored the release to
   Prometheus-enabled `aya-exec`;
+- `20260621-222508-required-image-daemonset-live` is the first required-image
+  DaemonSet runtime run: image `sha-8ab271c` rolled out on both homelab nodes,
+  emitted live Aya network-derived JSON stdout records, and was then restored to
+  the pre-run `sha-5c417c0` Prometheus-enabled release;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in
