@@ -10,7 +10,7 @@ separate runtime architecture.
 Guara compatibility must stay inside the existing static pipeline:
 
 ```text
-source.aya_network / source.aya_cpu_profile / request sources
+source.aya_network / source.aya_dns / source.aya_cpu_profile / request sources
   -> processor.container_attribution
   -> existing generators plus generator.guara_compat
   -> sink-layer exporters
@@ -118,7 +118,8 @@ Current implementation status:
 
 ## Exporter Boundary
 
-The sink crate now contains reusable HTTP exporter foundations with:
+The sink crate now contains registered Prometheus HTTP and OTLP HTTP sink
+boundaries plus reusable HTTP exporter foundations with:
 
 - batching
 - timeout
@@ -130,10 +131,13 @@ The sink crate now contains reusable HTTP exporter foundations with:
 - Rustls HTTP client construction
 - local fake-collector tests
 
-This is not yet a full OTLP protobuf implementation. The current Rust ecosystem
-and repository dependencies are treated as an internal export boundary until
-metrics, traces, and profiles are serialized to the exact upstream OTLP protocol
-and verified against a collector.
+`sink.prometheus_http` serves local `/metrics`, `/healthz`, and `/readyz` tests.
+`sink.otlp_http` currently exports the repository's internal metric, trace, and
+profile records to a fake collector for transport testing. This is not yet a
+full OTLP protobuf implementation or collector compatibility proof. Metrics,
+traces, and profiles must be serialized to the exact upstream OTLP protocol and
+verified against a collector before claiming Tempo, Alloy, or Pyroscope
+compatibility.
 
 ## Kubernetes Packaging
 
@@ -147,7 +151,8 @@ node with:
 - broad tolerations matching observability DaemonSet scheduling
 - feature flags for metrics, traces, profiles, Guara compatibility, and protocol
   probes
-- a metrics Service plus optional ServiceMonitor
+- an opt-in metrics Service plus optional ServiceMonitor, rendered only when a
+  real Prometheus HTTP surface is enabled
 
 Reduced-privilege eBPF operation is not privileged-runtime proven until tested
 on a capable Linux host or Kubernetes node.

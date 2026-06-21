@@ -96,6 +96,24 @@ config:
     max_warnings = 1024
     window_nanos = 30000000000
 
+    [prometheus_http]
+    enabled = false
+    bind_address = "0.0.0.0"
+    port = 9090
+    max_metric_lines = 4096
+
+    [otlp_http]
+    enabled = false
+    endpoint = ""
+    metrics_enabled = true
+    traces_enabled = true
+    profiles_enabled = true
+    queue_capacity = 1024
+    batch_size = 64
+    timeout_millis = 3000
+    max_retries = 2
+    tls_insecure_skip_verify = false
+
     [[modules]]
     name = "source.aya_exec"
     enabled = true
@@ -155,6 +173,14 @@ config:
     [[modules]]
     name = "sink.json_stdout"
     enabled = true
+
+    [[modules]]
+    name = "sink.prometheus_http"
+    enabled = false
+
+    [[modules]]
+    name = "sink.otlp_http"
+    enabled = false
 
 features:
   metrics: true
@@ -218,8 +244,14 @@ securityContext:
       - SYS_RESOURCE
       - SYSLOG
 
+prometheusHttp:
+  enabled: false
+
+health:
+  enabled: false
+
 service:
-  enabled: true
+  enabled: false
   type: ClusterIP
   port: 9090
   targetPort: 9090

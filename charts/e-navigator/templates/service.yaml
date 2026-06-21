@@ -1,4 +1,4 @@
-{{- if .Values.service.enabled }}
+{{- if and .Values.service.enabled (or .Values.prometheusHttp.enabled .Values.health.enabled) }}
 apiVersion: v1
 kind: Service
 metadata:

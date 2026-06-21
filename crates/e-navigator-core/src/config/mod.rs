@@ -6,7 +6,9 @@ mod error;
 mod kubernetes;
 mod modules;
 mod network_metrics;
+mod otlp_http;
 mod profiling;
+mod prometheus_http;
 mod request_correlation;
 mod resource_metrics;
 mod resource_source;
@@ -23,7 +25,9 @@ pub use modules::{
     KNOWN_MODULES, KnownModule, ModuleConfig, is_known_module_name, known_module_names,
 };
 pub use network_metrics::{NetworkEndpointConfig, NetworkMetricsConfig, RuntimeSecurityConfig};
+pub use otlp_http::OtlpHttpConfig;
 pub use profiling::ProfilingConfig;
+pub use prometheus_http::PrometheusHttpConfig;
 pub use request_correlation::RequestCorrelationConfig;
 pub use resource_metrics::ResourceMetricsConfig;
 pub use resource_source::ResourceSourceConfig;

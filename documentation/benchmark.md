@@ -126,6 +126,11 @@ The initial live proof should record:
 - host resource source reads mounted host paths;
 - controlled workload produces expected exec, TCP, DNS, HTTP, and profiling
   signal opportunities;
+- Prometheus HTTP validation enables both `sink.prometheus_http` in the runtime
+  config and chart Service/ServiceMonitor values before treating port `9090` as
+  meaningful;
+- OTLP validation enables `sink.otlp_http` with an explicit endpoint and records
+  collector evidence separately from fake-collector unit tests;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in
@@ -162,6 +167,7 @@ fixtures and compile-time benchmark health. They do not prove:
 - Kubernetes DaemonSet readiness;
 - real host procfs/sysfs/cgroup accuracy;
 - OTLP, Prometheus, Pyroscope, pprof, or production collector export;
+- DNS parser/raw decode tests as a substitute for runtime DNS packet capture;
 - replacement readiness for Beyla, Alloy, Tempo, Prometheus, or Pyroscope.
 
 Privileged runtime proof rules live in

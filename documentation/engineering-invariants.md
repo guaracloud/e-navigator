@@ -41,6 +41,8 @@ These invariants are part of the userspace quality gate. They are intentionally 
 ## Exporter Boundaries
 
 - OTEL metric/trace and profile formatter records are internal export boundaries.
+- Registered HTTP sinks must be distinguished from live collector/backend proof.
+  Local fake-collector tests prove transport behavior only.
 - Do not claim production OTLP, pprof, Pyroscope, exporter retry, exporter batching, or exporter storage behavior until real exporters and integration tests exist.
 - Exporters must define batching, timeout, retry, backpressure, bounded queues,
   auth/header handling, and drop accounting before adding protocol-specific

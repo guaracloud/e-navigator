@@ -4,9 +4,9 @@ use std::collections::BTreeSet;
 use super::modules::{default_modules, is_known_module_name, known_module_names};
 use super::{
     ArgvCaptureConfig, AttributionConfig, ConfigError, ConfigResult, CpuProfileSourceConfig,
-    DnsMetricsConfig, ModuleConfig, NetworkMetricsConfig, ProfilingConfig,
-    RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig, RuntimeSecurityConfig,
-    TraceCorrelationConfig,
+    DnsMetricsConfig, ModuleConfig, NetworkMetricsConfig, OtlpHttpConfig, ProfilingConfig,
+    PrometheusHttpConfig, RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig,
+    RuntimeSecurityConfig, TraceCorrelationConfig,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +43,10 @@ pub struct RuntimeConfig {
     pub request_correlation: RequestCorrelationConfig,
     #[serde(default)]
     pub profiling: ProfilingConfig,
+    #[serde(default)]
+    pub prometheus_http: PrometheusHttpConfig,
+    #[serde(default)]
+    pub otlp_http: OtlpHttpConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -64,6 +68,8 @@ impl Default for RuntimeConfig {
             trace_correlation: TraceCorrelationConfig::default(),
             request_correlation: RequestCorrelationConfig::default(),
             profiling: ProfilingConfig::default(),
+            prometheus_http: PrometheusHttpConfig::default(),
+            otlp_http: OtlpHttpConfig::default(),
         }
     }
 }
@@ -115,6 +121,10 @@ impl RuntimeConfig {
         self.trace_correlation.validate()?;
         self.request_correlation.validate()?;
         self.profiling.validate()?;
+        self.prometheus_http
+            .validate(self.module_enabled("sink.prometheus_http"))?;
+        self.otlp_http
+            .validate(self.module_enabled("sink.otlp_http"))?;
 
         Ok(())
     }

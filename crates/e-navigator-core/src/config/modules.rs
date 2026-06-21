@@ -55,6 +55,11 @@ pub const KNOWN_MODULES: &[KnownModule] = &[
         default_enabled: true,
     },
     KnownModule {
+        name: "source.aya_dns",
+        kind: ModuleKind::Source,
+        default_enabled: false,
+    },
+    KnownModule {
         name: "source.aya_cpu_profile",
         kind: ModuleKind::Source,
         default_enabled: false,
@@ -123,6 +128,16 @@ pub const KNOWN_MODULES: &[KnownModule] = &[
         name: "sink.json_stdout",
         kind: ModuleKind::Sink,
         default_enabled: true,
+    },
+    KnownModule {
+        name: "sink.prometheus_http",
+        kind: ModuleKind::Sink,
+        default_enabled: false,
+    },
+    KnownModule {
+        name: "sink.otlp_http",
+        kind: ModuleKind::Sink,
+        default_enabled: false,
     },
 ];
 

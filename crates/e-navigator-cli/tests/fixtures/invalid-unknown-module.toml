@@ -3,7 +3,7 @@ name = "source.synthetic_exec"
 enabled = true
 
 [[modules]]
-name = "source.aya_dns"
+name = "source.unknown_dns"
 enabled = true
 
 [[modules]]

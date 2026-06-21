@@ -39,6 +39,12 @@ For Kubernetes or homelab runs, record:
 - DaemonSet readiness and pod placement;
 - pod restarts before and after the soak;
 - logs or JSONL containing observed source events;
+- for Prometheus proof, Service endpoints, `/metrics` HTTP 200 output,
+  ServiceMonitor or PodMonitor state when enabled, Prometheus active targets,
+  and emitted E-Navigator metric series;
+- for OTLP proof, the registered sink config, collector receiver state, and
+  downstream collector/backend evidence; fake-collector unit tests are not
+  collector compatibility proof;
 - CPU and memory samples when metrics are available;
 - cleanup commands, if any.
 
@@ -57,6 +63,8 @@ Unless the exact proof is present in a recorded result set, do not claim:
 
 - privileged Aya exec or network runtime behavior;
 - DNS packet capture;
+- Prometheus scrape/export compatibility;
+- Tempo, Alloy, Pyroscope, pprof, or collector-ingested OTLP compatibility;
 - perf-event CPU profiling parity;
 - Kubernetes runtime readiness;
 - reduced-privilege eBPF operation;

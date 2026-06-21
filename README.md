@@ -7,7 +7,8 @@ runtime security, and diagnostics.
 registered signal pipeline, JSON stdout output, Kubernetes DaemonSet packaging,
 release-signing workflow, strict non-privileged quality gates, and bounded
 foundations for runtime, network, DNS fixture, resource, dependency, trace,
-request, profiling, Guara compatibility projection, and security signals. See
+  request, profiling, Guara compatibility projection, registered export
+  surfaces, and security signals. See
 [documentation/claims-matrix.md](documentation/claims-matrix.md) for the exact
 claim boundaries.
 
@@ -26,9 +27,9 @@ questions without application SDKs or sidecars:
 - Which observations are synthetic, fixture-backed, non-privileged proven, or
   privileged runtime proven?
 
-The default sink emits newline-delimited JSON. OpenTelemetry-compatible metric,
-trace, and profile formatter boundaries exist internally, but production OTLP,
-pprof, Pyroscope, storage, and UI exporters are still future work.
+The default sink emits newline-delimited JSON. Opt-in Prometheus HTTP and OTLP
+HTTP sink modules are registered, but live scrape, collector ingestion,
+Pyroscope, pprof, storage, and UI proof still require recorded runtime evidence.
 
 ## Architecture at a glance
 
@@ -41,15 +42,16 @@ Linux / Kubernetes node
 ```
 
 - **Sources:** synthetic fixtures, bounded host resource reads, Aya process
-  exec/exit, TCP-oriented network events, and opt-in CPU profile sampling.
+  exec/exit, TCP-oriented network events, opt-in DNS parser/source foundations,
+  and opt-in CPU profile sampling.
 - **Processors:** best-effort host, process, container, and Kubernetes
   attribution with structured warnings when context is missing.
 - **Generators:** runtime security findings, network/resource metrics,
   dependency edges, trace service paths, request spans, profiling windows, and
   optional Guara compatibility projections.
-- **Sinks:** JSON stdout today, with internal OpenTelemetry-compatible
-  formatter boundaries, Prometheus compatibility formatting, and HTTP exporter
-  foundations for future exporters.
+- **Sinks:** JSON stdout by default, plus opt-in Prometheus HTTP and OTLP HTTP
+  sink modules with bounded local tests. OTLP uses the current internal record
+  boundary and is not live Tempo/Pyroscope compatibility proof.
 
 The pipeline is statically registered by design. Runtime plugin loading is not
 part of the current architecture; see
@@ -141,9 +143,16 @@ Implemented and non-privileged proven:
 
 Implemented with narrower or deferred runtime claims:
 
-- Runtime DNS support currently means schemas, synthetic DNS fixtures, and
-  bounded DNS metric/dependency generation. eBPF DNS packet capture is
-  deferred.
+- Runtime DNS support currently means schemas, synthetic DNS fixtures, bounded
+  DNS metric/dependency generation, bounded packet parser/raw decode tests, and
+  an opt-in registered `source.aya_dns` boundary. Live eBPF DNS packet capture is
+  not privileged-proven.
+- Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
+  `/healthz`, and `/readyz` tests. Prometheus scrape and active-target proof
+  require live validation.
+- OTLP HTTP support is an opt-in registered sink over the current internal
+  metric, trace, and profile record boundary with fake-collector retry tests. It
+  is not Tempo or Pyroscope compatibility proof.
 - CPU profile sampling is an explicit opt-in source. Only exact observed Linux
   or homelab canaries count as privileged evidence.
 - Kubernetes packaging proof is separate from privileged eBPF runtime proof.
@@ -161,13 +170,13 @@ critical-path analysis engine.
 
 The following are intentionally not claimed as implemented production behavior:
 
-- production OTLP metric, trace, or profile export;
+- production collector-accepted OTLP metric, trace, or profile export;
 - pprof or Pyroscope export;
 - complete Beyla replacement or alloy-profiles replacement;
 - profile storage, flamegraph rendering, or bottleneck analysis;
 - live HTTP/gRPC parsing from real traffic;
 - request route, retry, application error, or request-ID extraction;
-- runtime DNS packet capture;
+- privileged-proven runtime DNS packet capture;
 - full TCP state tracking, packet accounting, retransmits, or resets;
 - reduced-privilege Kubernetes eBPF operation.
 

@@ -53,6 +53,22 @@ config:
     enabled = true
 ```
 
+The chart does not expose port `9090` by default. Enable the Service only when a
+real HTTP surface is configured, for example when `sink.prometheus_http` and
+`[prometheus_http] enabled = true` are present in `config.toml`:
+
+```yaml
+prometheusHttp:
+  enabled: true
+service:
+  enabled: true
+serviceMonitor:
+  enabled: true
+```
+
+`serviceMonitor.enabled=true` renders a `ServiceMonitor` only with both
+`service.enabled=true` and `prometheusHttp.enabled=true`.
+
 ## Raw Manifest Fallback
 
 Raw YAML remains in `deploy/kubernetes/` for development and review, but Helm is
@@ -74,5 +90,6 @@ helm template e-navigator charts/e-navigator \
 ```
 
 Helm rendering, schema validation, and successful installs do not prove live
-eBPF behavior. Privileged runtime proof requires a capable Linux node or cluster
-and observed Aya/eBPF output.
+eBPF behavior, Prometheus scrape success, OTLP ingestion, or replacement
+readiness. Privileged runtime proof requires a capable Linux node or cluster and
+observed Aya/eBPF output.

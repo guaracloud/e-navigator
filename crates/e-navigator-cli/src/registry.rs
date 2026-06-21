@@ -8,8 +8,10 @@ use e_navigator_generators::{
 };
 use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::ModuleRegistry;
-use e_navigator_sinks::JsonStdoutSink;
-use e_navigator_sources_ebpf_aya::{AyaCpuProfileSource, AyaExecSource, AyaNetworkSource};
+use e_navigator_sinks::{JsonStdoutSink, OtlpHttpSink, PrometheusHttpSink};
+use e_navigator_sources_ebpf_aya::{
+    AyaCpuProfileSource, AyaDnsSource, AyaExecSource, AyaNetworkSource,
+};
 use e_navigator_sources_host::{HostResourceConfig, HostResourceSource};
 
 pub(crate) fn build_registry(
@@ -47,6 +49,10 @@ pub(crate) fn build_registry(
             host.clone(),
             config.attribution.procfs_root.clone(),
         )));
+    }
+
+    if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.aya_dns") {
+        registry = registry.with_source(Box::new(AyaDnsSource::new(host.clone())));
     }
 
     if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.host_resource") {
@@ -126,6 +132,19 @@ pub(crate) fn build_registry(
 
     if config.module_enabled("sink.json_stdout") {
         registry = registry.with_sink(Box::new(JsonStdoutSink));
+    }
+
+    if config.module_enabled("sink.prometheus_http") && config.prometheus_http.enabled {
+        registry = registry.with_sink(Box::new(
+            PrometheusHttpSink::bind(config.prometheus_http.clone())
+                .expect("bind sink.prometheus_http"),
+        ));
+    }
+
+    if config.module_enabled("sink.otlp_http") && config.otlp_http.enabled {
+        registry = registry.with_sink(Box::new(
+            OtlpHttpSink::new(config.otlp_http.clone()).expect("build sink.otlp_http"),
+        ));
     }
 
     registry
@@ -242,6 +261,24 @@ mod tests {
     }
 
     #[test]
+    fn aya_exec_source_mode_registers_dns_source_when_explicitly_enabled() {
+        let mut config = RuntimeConfig::default();
+        set_module_enabled(&mut config, "source.aya_dns", true);
+
+        let registry = build_registry(&config, SourceMode::AyaExec, Some("node-a".to_string()));
+
+        assert_eq!(
+            source_names(&registry),
+            vec![
+                "source.aya_exec",
+                "source.aya_network",
+                "source.aya_dns",
+                "source.host_resource"
+            ]
+        );
+    }
+
+    #[test]
     fn cpu_profile_source_mode_registers_only_when_module_and_config_are_enabled() {
         let mut config = RuntimeConfig::default();
         config.cpu_profile_source.enabled = true;
@@ -286,6 +323,37 @@ mod tests {
         let registry = build_registry(&config, SourceMode::Synthetic, Some("node-a".to_string()));
 
         assert_eq!(sink_names(&registry), vec!["sink.json_stdout"]);
+    }
+
+    #[test]
+    fn registry_registers_prometheus_http_sink_when_enabled() {
+        let mut config = RuntimeConfig::default();
+        set_module_enabled(&mut config, "sink.prometheus_http", true);
+        config.prometheus_http.enabled = true;
+        config.prometheus_http.bind_address = "127.0.0.1".to_string();
+        config.prometheus_http.port = 0;
+
+        let registry = build_registry(&config, SourceMode::Synthetic, Some("node-a".to_string()));
+
+        assert_eq!(
+            sink_names(&registry),
+            vec!["sink.json_stdout", "sink.prometheus_http"]
+        );
+    }
+
+    #[test]
+    fn registry_registers_otlp_http_sink_when_enabled() {
+        let mut config = RuntimeConfig::default();
+        set_module_enabled(&mut config, "sink.otlp_http", true);
+        config.otlp_http.enabled = true;
+        config.otlp_http.endpoint = "http://127.0.0.1:4318/v1/metrics".to_string();
+
+        let registry = build_registry(&config, SourceMode::Synthetic, Some("node-a".to_string()));
+
+        assert_eq!(
+            sink_names(&registry),
+            vec!["sink.json_stdout", "sink.otlp_http"]
+        );
     }
 
     #[test]

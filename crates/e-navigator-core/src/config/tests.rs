@@ -30,6 +30,7 @@ fn default_config_is_valid_and_preserves_expected_modules() {
         vec![
             ModuleConfig::enabled("source.aya_exec"),
             ModuleConfig::enabled("source.aya_network"),
+            ModuleConfig::disabled("source.aya_dns"),
             ModuleConfig::disabled("source.aya_cpu_profile"),
             ModuleConfig::enabled("source.host_resource"),
             ModuleConfig::enabled("source.synthetic_exec"),
@@ -44,6 +45,8 @@ fn default_config_is_valid_and_preserves_expected_modules() {
             ModuleConfig::enabled("generator.runtime_security"),
             ModuleConfig::disabled("generator.guara_compat"),
             ModuleConfig::enabled("sink.json_stdout"),
+            ModuleConfig::disabled("sink.prometheus_http"),
+            ModuleConfig::disabled("sink.otlp_http"),
         ]
     );
 }
@@ -58,8 +61,11 @@ fn default_config_does_not_inflate_opt_in_module_claims() {
 }
 
 #[test]
-fn known_modules_keep_dns_as_schema_generator_support_not_runtime_capture_source() {
-    assert!(!is_known_module_name("source.aya_dns"));
+fn known_modules_include_opt_in_dns_runtime_source_without_default_runtime_claim() {
+    let config = RuntimeConfig::default();
+
+    assert!(is_known_module_name("source.aya_dns"));
+    assert!(!config.module_enabled("source.aya_dns"));
     assert!(is_known_module_name("generator.dns_metrics"));
 }
 
@@ -71,10 +77,204 @@ fn known_sinks_claim_only_json_stdout_as_concrete_registered_sink() {
         .map(|module| module.name)
         .collect::<Vec<_>>();
 
-    assert_eq!(sinks, vec!["sink.json_stdout"]);
-    assert!(!is_known_module_name("sink.otlp"));
+    assert_eq!(
+        sinks,
+        vec!["sink.json_stdout", "sink.prometheus_http", "sink.otlp_http"]
+    );
     assert!(!is_known_module_name("sink.pyroscope"));
     assert!(!is_known_module_name("sink.pprof"));
+}
+
+#[test]
+fn prometheus_http_sink_defaults_are_bounded_and_disabled() {
+    let config = RuntimeConfig::default();
+
+    assert!(!config.module_enabled("sink.prometheus_http"));
+    assert!(!config.prometheus_http.enabled);
+    assert_eq!(config.prometheus_http.bind_address, "0.0.0.0");
+    assert_eq!(config.prometheus_http.port, 9090);
+    assert_eq!(config.prometheus_http.max_metric_lines, 4096);
+}
+
+#[test]
+fn prometheus_http_sink_config_is_validated_when_enabled() {
+    assert_invalid(
+        RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.synthetic_exec"),
+                ModuleConfig::enabled("sink.prometheus_http"),
+            ],
+            prometheus_http: PrometheusHttpConfig {
+                enabled: true,
+                bind_address: String::new(),
+                ..PrometheusHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "prometheus_http.bind_address must not be empty when sink.prometheus_http is enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.synthetic_exec"),
+                ModuleConfig::enabled("sink.prometheus_http"),
+            ],
+            prometheus_http: PrometheusHttpConfig {
+                enabled: true,
+                port: 0,
+                ..PrometheusHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "prometheus_http.port must be greater than zero when sink.prometheus_http is enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.synthetic_exec"),
+                ModuleConfig::enabled("sink.prometheus_http"),
+            ],
+            prometheus_http: PrometheusHttpConfig {
+                enabled: true,
+                max_metric_lines: 0,
+                ..PrometheusHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "prometheus_http.max_metric_lines must be greater than zero when sink.prometheus_http is enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.synthetic_exec"),
+                ModuleConfig::disabled("sink.prometheus_http"),
+                ModuleConfig::enabled("sink.json_stdout"),
+            ],
+            prometheus_http: PrometheusHttpConfig {
+                enabled: true,
+                ..PrometheusHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "prometheus_http.enabled requires enabled sink.prometheus_http module",
+    );
+}
+
+#[test]
+fn otlp_http_sink_defaults_are_bounded_and_disabled() {
+    let config = RuntimeConfig::default();
+
+    assert!(!config.module_enabled("sink.otlp_http"));
+    assert!(!config.otlp_http.enabled);
+    assert_eq!(config.otlp_http.endpoint, "");
+    assert!(config.otlp_http.metrics_enabled);
+    assert!(config.otlp_http.traces_enabled);
+    assert!(config.otlp_http.profiles_enabled);
+    assert_eq!(config.otlp_http.queue_capacity, 1024);
+    assert_eq!(config.otlp_http.batch_size, 64);
+    assert_eq!(config.otlp_http.timeout_millis, 3000);
+    assert_eq!(config.otlp_http.max_retries, 2);
+}
+
+#[test]
+fn otlp_http_sink_config_is_validated_when_enabled() {
+    let enabled_modules = || {
+        vec![
+            ModuleConfig::enabled("source.synthetic_exec"),
+            ModuleConfig::enabled("sink.otlp_http"),
+        ]
+    };
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: String::new(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.endpoint is required when sink.otlp_http is enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                queue_capacity: 0,
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.queue_capacity must be greater than zero when sink.otlp_http is enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                batch_size: 0,
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.batch_size must be greater than zero when sink.otlp_http is enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                timeout_millis: 0,
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.timeout_millis must be greater than zero when sink.otlp_http is enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                metrics_enabled: false,
+                traces_enabled: false,
+                profiles_enabled: false,
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http must enable at least one signal family when sink.otlp_http is enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.synthetic_exec"),
+                ModuleConfig::disabled("sink.otlp_http"),
+                ModuleConfig::enabled("sink.json_stdout"),
+            ],
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.enabled requires enabled sink.otlp_http module",
+    );
 }
 
 #[test]
@@ -110,7 +310,7 @@ fn unknown_module_names_are_invalid_and_list_known_modules() {
             ],
             ..RuntimeConfig::default()
         },
-        "unknown module 'generator.dns_typo'; known modules: source.aya_exec, source.aya_network, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, generator.guara_compat, sink.json_stdout",
+        "unknown module 'generator.dns_typo'; known modules: source.aya_exec, source.aya_network, source.aya_dns, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, generator.guara_compat, sink.json_stdout, sink.prometheus_http, sink.otlp_http",
     );
 }
 
