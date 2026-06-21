@@ -124,6 +124,14 @@ Cleanup requested: ${E_NAVIGATOR_HOMELAB_CLEANUP:-0}
 EOF
 }
 
+workload_name="e-navigator-bench-workload-${timestamp}"
+workload_manifest="$results_dir/workload-manifest.yaml"
+
+write_workload_manifest() {
+  sed "s/name: e-navigator-bench-workload/name: ${workload_name}/" \
+    benchmarks/k8s/workload.yaml >"$workload_manifest"
+}
+
 top_samples="${E_NAVIGATOR_HOMELAB_TOP_SAMPLES:-10}"
 top_interval_seconds="${E_NAVIGATOR_HOMELAB_TOP_INTERVAL_SECONDS:-5}"
 
@@ -348,6 +356,7 @@ itself; inspect the referenced evidence before updating documentation.
 - Commands: \`commands.txt\`
 - Run metadata: \`run-metadata.txt\`
 - Apply/install outputs, when apply mode is enabled: \`namespace-apply.txt\`, \`helm-upgrade-install.txt\`, \`workload-apply.txt\`
+- Workload manifest: \`workload-manifest.yaml\`
 - Rendered manifest: \`rendered-manifest.txt\`
 - Live Helm values: \`helm-values.txt\`
 - Live Helm manifest: \`helm-manifest.txt\`
@@ -376,6 +385,7 @@ EOF
 | Namespace | captured | \`namespace.txt\` | no other namespace validated |
 | Run metadata | captured | \`run-metadata.txt\` | metadata records configured intent only; image, sink, and cleanup claims require the related runtime artifacts |
 | Apply/install commands | captured when apply mode is enabled | \`namespace-apply.txt\`, \`helm-upgrade-install.txt\`, \`workload-apply.txt\` | successful apply does not prove runtime behavior without rollout, logs, and endpoint evidence |
+| Controlled workload | captured when apply mode is enabled | \`workload-manifest.yaml\`, \`workload-apply.txt\`, \`events.txt\`, \`logs.txt\` | workload creation does not prove attribution unless logs contain matching workload context |
 | Rendered manifest | captured | \`rendered-manifest.txt\`, \`helm-manifest.txt\`, \`helm-values.txt\` | render does not prove runtime behavior |
 | DaemonSet rollout | captured | \`rollout.txt\`, \`daemonset-yaml.txt\` | no production soak |
 | JSON logs | captured | \`logs.txt\` | logs must be inspected before claiming source/generator proof |
@@ -391,6 +401,7 @@ EOF
 
 render_args=(--namespace "$namespace" --set namespace.create=false --set namespace.name="$namespace")
 write_run_metadata
+write_workload_manifest
 
 if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ]; then
   helm_args=(
@@ -428,7 +439,6 @@ if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ]; then
     _ "$context" "$namespace"
   run_required_capture helm-upgrade-install helm --kube-context "$context" upgrade --install "$release" charts/e-navigator \
     --namespace "$namespace" "${helm_args[@]}"
-  run_required_capture workload-apply "${kubectl_cmd[@]}" -n "$namespace" apply -f benchmarks/k8s/workload.yaml
 fi
 
 run_capture current-context kubectl config current-context
@@ -437,6 +447,9 @@ run_capture helm-values helm --kube-context "$context" get values "$release" --n
 run_capture helm-manifest helm --kube-context "$context" get manifest "$release" --namespace "$namespace"
 run_capture namespace "${kubectl_cmd[@]}" get namespace "$namespace" -o yaml
 run_capture rollout "${kubectl_cmd[@]}" -n "$namespace" rollout status "daemonset/${release}" --timeout="${E_NAVIGATOR_HOMELAB_ROLLOUT_TIMEOUT:-120s}"
+if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ]; then
+  run_required_capture workload-apply "${kubectl_cmd[@]}" -n "$namespace" apply -f "$workload_manifest"
+fi
 run_capture pods "${kubectl_cmd[@]}" -n "$namespace" get pods -o wide
 run_capture daemonset "${kubectl_cmd[@]}" -n "$namespace" get daemonset -o wide
 run_capture daemonset-yaml "${kubectl_cmd[@]}" -n "$namespace" get daemonset "$release" -o yaml
