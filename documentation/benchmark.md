@@ -169,6 +169,12 @@ The initial live proof should record:
   Alloy HTTP 400, while current local code loaded directly into both homelab
   node runtimes logged and dropped the HTTP 400 sink failures with both pods
   Ready, zero restarts, JSON stdout active, and Prometheus HTTP still reachable;
+- `20260621-233103-generator-resource-security-live` was a collection-only
+  current-release run that observed live `generator.dependency_graph` output,
+  `source.aya_network`, `source.aya_exec` process exits, network metrics,
+  trace-correlation records, Prometheus resource/network metric queries, 10
+  resource samples, and capability posture; it did not observe fresh
+  `runtime_security_finding` or `source.host_resource` JSON stdout lines;
 - `20260621-222508-required-image-daemonset-live` is the first required-image
   DaemonSet runtime run: image `sha-8ab271c` rolled out on both homelab nodes,
   emitted live Aya network-derived JSON stdout records, and was then restored to
