@@ -192,6 +192,82 @@ capture_prometheus_http_endpoints() {
   wait "$port_forward_pid" >/dev/null 2>&1 || true
 }
 
+sanitize_url_for_log() {
+  printf '%s' "$1" | sed -E 's#(https?://)[^/@]+@#\1[REDACTED]@#'
+}
+
+capture_prometheus_api_request() {
+  local name="$1"
+  local base_url="$2"
+  local api_path="$3"
+  shift 3
+  local url="${base_url%/}${api_path}"
+  local sanitized_url
+  sanitized_url="$(sanitize_url_for_log "$url")"
+
+  printf '\n==> %s\n' "$name" | tee -a "$results_dir/commands.txt"
+  printf 'curl -sS --get --max-time 10 %q' "$sanitized_url" | tee -a "$results_dir/commands.txt"
+  for arg in "$@"; do
+    printf ' --data-urlencode %q' "$arg" | tee -a "$results_dir/commands.txt"
+  done
+  printf '\n' | tee -a "$results_dir/commands.txt"
+
+  local curl_args=(curl -sS --get --max-time 10 "$url")
+  for arg in "$@"; do
+    curl_args+=(--data-urlencode "$arg")
+  done
+
+  "${curl_args[@]}" >"$results_dir/${name}.txt" 2>&1 || true
+}
+
+capture_prometheus_api_queries() {
+  local prometheus_url="${E_NAVIGATOR_HOMELAB_PROMETHEUS_URL:-}"
+  local prometheus_service="${E_NAVIGATOR_HOMELAB_PROMETHEUS_SERVICE:-}"
+  local prometheus_namespace="${E_NAVIGATOR_HOMELAB_PROMETHEUS_NAMESPACE:-observability-system}"
+  local prometheus_port="${E_NAVIGATOR_HOMELAB_PROMETHEUS_PORT:-9090}"
+  local prometheus_local_port="${E_NAVIGATOR_HOMELAB_PROMETHEUS_API_LOCAL_PORT:-19091}"
+  local port_forward_pid=""
+
+  if [ -n "$prometheus_url" ]; then
+    printf 'using configured Prometheus API URL\n' >"$results_dir/prometheus-api-source.txt"
+  elif [ -n "$prometheus_service" ]; then
+    printf '\n==> prometheus-api-port-forward\n' | tee -a "$results_dir/commands.txt"
+    printf 'kubectl --context %q -n %q port-forward service/%q %q:%q\n' \
+      "$context" "$prometheus_namespace" "$prometheus_service" "$prometheus_local_port" "$prometheus_port" \
+      | tee -a "$results_dir/commands.txt"
+    kubectl --context "$context" -n "$prometheus_namespace" port-forward \
+      "service/${prometheus_service}" "${prometheus_local_port}:${prometheus_port}" \
+      >"$results_dir/prometheus-api-port-forward.txt" 2>&1 &
+    port_forward_pid="$!"
+    prometheus_url="http://127.0.0.1:${prometheus_local_port}"
+    sleep 2
+  else
+    cat >"$results_dir/prometheus-api-skipped.txt" <<EOF
+Prometheus API checks skipped.
+Set E_NAVIGATOR_HOMELAB_PROMETHEUS_URL or E_NAVIGATOR_HOMELAB_PROMETHEUS_SERVICE to capture active targets and query results.
+EOF
+    return
+  fi
+
+  capture_prometheus_api_request prometheus-api-targets "$prometheus_url" \
+    /api/v1/targets \
+    state=active
+  capture_prometheus_api_request prometheus-api-query-up "$prometheus_url" \
+    /api/v1/query \
+    "query=up{namespace=\"${namespace}\"}"
+  capture_prometheus_api_request prometheus-api-query-e-navigator "$prometheus_url" \
+    /api/v1/query \
+    "query={namespace=\"${namespace}\"}"
+  capture_prometheus_api_request prometheus-api-series "$prometheus_url" \
+    /api/v1/series \
+    "match[]={namespace=\"${namespace}\"}"
+
+  if [ -n "$port_forward_pid" ]; then
+    kill "$port_forward_pid" >/dev/null 2>&1 || true
+    wait "$port_forward_pid" >/dev/null 2>&1 || true
+  fi
+}
+
 write_summary_files() {
   cat >"$results_dir/summary.md" <<EOF
 # Homelab Validation Summary: ${timestamp}
@@ -217,6 +293,7 @@ itself; inspect the referenced evidence before updating documentation.
 - Services and endpoints: \`services-endpoints.txt\`
 - Prometheus monitor resources: \`monitoring-api-resources.txt\`, \`servicemonitors.txt\`, \`podmonitors.txt\`
 - Prometheus HTTP endpoint checks: \`prometheus-http-port-forward.txt\`, \`prometheus-http-healthz.txt\`, \`prometheus-http-readyz.txt\`, \`prometheus-http-metrics.txt\`, or \`prometheus-http-skipped.txt\`
+- Prometheus API checks: \`prometheus-api-targets.txt\`, \`prometheus-api-query-up.txt\`, \`prometheus-api-query-e-navigator.txt\`, \`prometheus-api-series.txt\`, \`prometheus-api-port-forward.txt\`, or \`prometheus-api-skipped.txt\`
 - Logs: \`logs.txt\`
 - Events: \`events.txt\`
 - Resource samples: \`top-pods-10-samples.txt\`
@@ -235,6 +312,7 @@ EOF
 | JSON logs | captured | \`logs.txt\` | logs must be inspected before claiming source/generator proof |
 | Services/endpoints | captured | \`services-endpoints.txt\`, \`servicemonitors.txt\`, \`podmonitors.txt\` | no Prometheus proof unless HTTP 200 and scrape evidence are present |
 | Prometheus HTTP endpoints | captured when Service exists | \`prometheus-http-healthz.txt\`, \`prometheus-http-readyz.txt\`, \`prometheus-http-metrics.txt\`, \`prometheus-http-port-forward.txt\`, or \`prometheus-http-skipped.txt\` | endpoint captures alone do not prove Prometheus active target or queryability |
+| Prometheus API queries | captured when configured | \`prometheus-api-targets.txt\`, \`prometheus-api-query-up.txt\`, \`prometheus-api-query-e-navigator.txt\`, \`prometheus-api-series.txt\`, \`prometheus-api-port-forward.txt\`, or \`prometheus-api-skipped.txt\` | empty query results are negative or inconclusive, not success |
 | Resource overhead | captured | \`top-pods-10-samples.txt\` | no reduced-overhead claim without a comparable baseline |
 | Capabilities | captured | \`capability-decode.txt\` | no reduced-privilege claim if CAP_SYS_ADMIN remains or seccomp is disabled |
 EOF
@@ -283,6 +361,7 @@ run_capture daemonset-yaml "${kubectl_cmd[@]}" -n "$namespace" get daemonset "$r
 run_capture configmap-yaml "${kubectl_cmd[@]}" -n "$namespace" get configmap "${release}-config" -o yaml
 capture_service_surfaces
 capture_prometheus_http_endpoints
+capture_prometheus_api_queries
 run_capture rollout "${kubectl_cmd[@]}" -n "$namespace" rollout status "daemonset/${release}" --timeout="${E_NAVIGATOR_HOMELAB_ROLLOUT_TIMEOUT:-120s}"
 run_capture pod-json "${kubectl_cmd[@]}" -n "$namespace" get pods -o json
 run_capture logs "${kubectl_cmd[@]}" -n "$namespace" logs -l app.kubernetes.io/name=e-navigator --all-containers --tail="${E_NAVIGATOR_HOMELAB_LOG_TAIL:-2000}" --prefix

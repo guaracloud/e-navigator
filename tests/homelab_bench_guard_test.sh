@@ -54,6 +54,13 @@ for expected in \
   '/healthz' \
   '/readyz' \
   '/metrics' \
+  'E_NAVIGATOR_HOMELAB_PROMETHEUS_URL' \
+  'prometheus-api-targets' \
+  'prometheus-api-query-up' \
+  'prometheus-api-series' \
+  '/api/v1/targets' \
+  '/api/v1/query' \
+  '/api/v1/series' \
   'top-pods-10-samples' \
   'capability-decode' \
   '/proc/1/status' \
