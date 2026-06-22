@@ -333,7 +333,19 @@ pub fn tracepoint_write_exit(ctx: TracePointContext) -> u32 {
 
 #[tracepoint]
 pub fn tracepoint_sendto_enter(ctx: TracePointContext) -> u32 {
-    match try_tracepoint_sendto_enter(ctx) {
+    let ret = match try_tracepoint_network_io_enter(&ctx, NETWORK_IO_WRITE) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    };
+    match try_tracepoint_dns_sendto_enter(&ctx) {
+        Ok(_) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_sendto_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_sendto_exit(ctx) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
@@ -341,23 +353,43 @@ pub fn tracepoint_sendto_enter(ctx: TracePointContext) -> u32 {
 
 #[tracepoint]
 pub fn tracepoint_recvfrom_enter(ctx: TracePointContext) -> u32 {
-    match try_tracepoint_recvfrom_enter(ctx) {
+    let ret = match try_tracepoint_network_io_enter(&ctx, NETWORK_IO_READ) {
         Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    };
+    match try_tracepoint_dns_recvfrom_enter(&ctx) {
+        Ok(_) => ret,
         Err(ret) => ret as u32,
     }
 }
 
 #[tracepoint]
 pub fn tracepoint_recvfrom_exit(ctx: TracePointContext) -> u32 {
-    match try_tracepoint_recvfrom_exit(&ctx) {
+    let ret = match try_tracepoint_network_io_exit(&ctx) {
         Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    };
+    match try_tracepoint_dns_recvfrom_exit(&ctx) {
+        Ok(_) => ret,
         Err(ret) => ret as u32,
     }
 }
 
 #[tracepoint]
 pub fn tracepoint_sendmsg_enter(ctx: TracePointContext) -> u32 {
-    match try_tracepoint_sendmsg_enter(ctx) {
+    let ret = match try_tracepoint_network_io_enter(&ctx, NETWORK_IO_WRITE) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    };
+    match try_tracepoint_dns_sendmsg_enter(&ctx) {
+        Ok(_) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_sendmsg_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_sendmsg_exit(ctx) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
@@ -365,16 +397,24 @@ pub fn tracepoint_sendmsg_enter(ctx: TracePointContext) -> u32 {
 
 #[tracepoint]
 pub fn tracepoint_recvmsg_enter(ctx: TracePointContext) -> u32 {
-    match try_tracepoint_recvmsg_enter(ctx) {
+    let ret = match try_tracepoint_network_io_enter(&ctx, NETWORK_IO_READ) {
         Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    };
+    match try_tracepoint_dns_recvmsg_enter(&ctx) {
+        Ok(_) => ret,
         Err(ret) => ret as u32,
     }
 }
 
 #[tracepoint]
 pub fn tracepoint_recvmsg_exit(ctx: TracePointContext) -> u32 {
-    match try_tracepoint_recvmsg_exit(ctx) {
+    let ret = match try_tracepoint_network_io_exit(&ctx) {
         Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    };
+    match try_tracepoint_dns_recvmsg_exit(&ctx) {
+        Ok(_) => ret,
         Err(ret) => ret as u32,
     }
 }
@@ -688,18 +728,22 @@ fn try_tracepoint_network_io_exit(ctx: &TracePointContext) -> Result<u32, i64> {
     Ok(0)
 }
 
-fn try_tracepoint_sendto_enter(ctx: TracePointContext) -> Result<u32, i64> {
+fn try_tracepoint_dns_sendto_enter(ctx: &TracePointContext) -> Result<u32, i64> {
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
     let buffer = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
     let len = unsafe { ctx.read_at::<u64>(32) }.map_err(|err| err as i64)?;
     let sockaddr = unsafe { ctx.read_at::<*const u8>(48) }.map_err(|err| err as i64)?;
     if sockaddr.is_null() {
-        return emit_dns_connected_send_event(&ctx, fd, buffer, len);
+        return emit_dns_connected_send_event(ctx, fd, buffer, len);
     }
-    emit_dns_send_event(&ctx, buffer, len, sockaddr)
+    emit_dns_send_event(ctx, buffer, len, sockaddr)
 }
 
-fn try_tracepoint_sendmsg_enter(ctx: TracePointContext) -> Result<u32, i64> {
+fn try_tracepoint_sendto_exit(ctx: TracePointContext) -> Result<u32, i64> {
+    try_tracepoint_network_io_exit(&ctx)
+}
+
+fn try_tracepoint_dns_sendmsg_enter(ctx: &TracePointContext) -> Result<u32, i64> {
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
     let message = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
     if message.is_null() {
@@ -709,9 +753,13 @@ fn try_tracepoint_sendmsg_enter(ctx: TracePointContext) -> Result<u32, i64> {
     let sockaddr = read_msghdr_name(message)?;
     let (buffer, len) = read_msghdr_first_iov(message)?;
     if sockaddr.is_null() {
-        return emit_dns_connected_send_event(&ctx, fd, buffer, len);
+        return emit_dns_connected_send_event(ctx, fd, buffer, len);
     }
-    emit_dns_send_event(&ctx, buffer, len, sockaddr)
+    emit_dns_send_event(ctx, buffer, len, sockaddr)
+}
+
+fn try_tracepoint_sendmsg_exit(ctx: TracePointContext) -> Result<u32, i64> {
+    try_tracepoint_network_io_exit(&ctx)
 }
 
 fn try_tracepoint_dns_write_enter(ctx: &TracePointContext) -> Result<u32, i64> {
@@ -839,7 +887,7 @@ fn connected_dns_peer(fd: i32) -> Option<PendingConnect> {
     Some(peer)
 }
 
-fn try_tracepoint_recvfrom_enter(ctx: TracePointContext) -> Result<u32, i64> {
+fn try_tracepoint_dns_recvfrom_enter(ctx: &TracePointContext) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let uid_gid = bpf_get_current_uid_gid();
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
@@ -867,7 +915,7 @@ fn try_tracepoint_recvfrom_enter(ctx: TracePointContext) -> Result<u32, i64> {
     Ok(0)
 }
 
-fn try_tracepoint_recvfrom_exit(ctx: &TracePointContext) -> Result<u32, i64> {
+fn try_tracepoint_dns_recvfrom_exit(ctx: &TracePointContext) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let retval = unsafe { ctx.read_at::<i64>(16) }.map_err(|err| err as i64)?;
     let pending = match unsafe { PENDING_DNS_RECVS.get(&pid_tgid) } {
@@ -914,10 +962,10 @@ fn try_tracepoint_recvfrom_exit(ctx: &TracePointContext) -> Result<u32, i64> {
 }
 
 fn try_tracepoint_dns_read_exit(ctx: &TracePointContext) -> Result<u32, i64> {
-    try_tracepoint_recvfrom_exit(ctx)
+    try_tracepoint_dns_recvfrom_exit(ctx)
 }
 
-fn try_tracepoint_recvmsg_enter(ctx: TracePointContext) -> Result<u32, i64> {
+fn try_tracepoint_dns_recvmsg_enter(ctx: &TracePointContext) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let uid_gid = bpf_get_current_uid_gid();
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
@@ -949,8 +997,8 @@ fn try_tracepoint_recvmsg_enter(ctx: TracePointContext) -> Result<u32, i64> {
     Ok(0)
 }
 
-fn try_tracepoint_recvmsg_exit(ctx: TracePointContext) -> Result<u32, i64> {
-    try_tracepoint_recvfrom_exit(&ctx)
+fn try_tracepoint_dns_recvmsg_exit(ctx: &TracePointContext) -> Result<u32, i64> {
+    try_tracepoint_dns_recvfrom_exit(ctx)
 }
 
 fn read_msghdr_name(message: *const u8) -> Result<*const u8, i64> {

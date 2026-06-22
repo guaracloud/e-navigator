@@ -328,6 +328,54 @@ mod platform {
                 "syscalls",
                 "sys_exit_write",
             )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_sendto_enter",
+                "syscalls",
+                "sys_enter_sendto",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_sendto_exit",
+                "syscalls",
+                "sys_exit_sendto",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_sendmsg_enter",
+                "syscalls",
+                "sys_enter_sendmsg",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_sendmsg_exit",
+                "syscalls",
+                "sys_exit_sendmsg",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_recvfrom_enter",
+                "syscalls",
+                "sys_enter_recvfrom",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_recvfrom_exit",
+                "syscalls",
+                "sys_exit_recvfrom",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_recvmsg_enter",
+                "syscalls",
+                "sys_enter_recvmsg",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_recvmsg_exit",
+                "syscalls",
+                "sys_exit_recvmsg",
+            )?;
 
             let mut perf_array =
                 PerfEventArray::try_from(ebpf.take_map("NETWORK_EVENTS").ok_or_else(|| {
