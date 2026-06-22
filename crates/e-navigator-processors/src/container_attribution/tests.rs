@@ -1663,6 +1663,137 @@ async fn retries_kubernetes_metadata_refresh_after_requested_container_miss() {
 }
 
 #[tokio::test]
+async fn refreshes_kubernetes_metadata_for_new_container_miss_after_successful_refresh() {
+    let known_container_id = "3434343434343434343434343434343434343434343434343434343434343434";
+    let new_container_id = "5656565656565656565656565656565656565656565656565656565656565656";
+    let root = std::env::temp_dir().join(format!(
+        "e-navigator-attribution-new-container-refresh-test-{}",
+        std::process::id()
+    ));
+    let pid_dir = root.join("123");
+    fs::create_dir_all(&pid_dir).expect("pid dir is created");
+    fs::write(
+        pid_dir.join("cgroup"),
+        format!("0::/kubepods.slice/cri-containerd-{new_container_id}.scope\n"),
+    )
+    .expect("cgroup fixture is written");
+
+    let known_cache = KubernetesMetadataCache::from_contexts([(
+        known_container_id.to_string(),
+        kube_context("existing-workload"),
+    )]);
+    let refreshed_cache = KubernetesMetadataCache::from_contexts([
+        (
+            known_container_id.to_string(),
+            kube_context("existing-workload"),
+        ),
+        (
+            new_container_id.to_string(),
+            kube_context("new-socket-client"),
+        ),
+    ]);
+    let processor = ContainerAttributionProcessor::with_cache_and_provider(
+        AttributionConfig {
+            procfs_root: root.clone(),
+            cgroup_root: root.clone(),
+            kubernetes: KubernetesAttributionConfig {
+                enabled: true,
+                ..Default::default()
+            },
+        },
+        known_cache.clone(),
+        SequencedKubernetesMetadataProvider::new([known_cache, refreshed_cache]),
+    );
+
+    let primed = processor
+        .process(exec_with_container(known_container_id))
+        .await
+        .expect("processor succeeds")
+        .expect("signal remains");
+    let SignalPayload::Exec(primed_event) = primed.payload else {
+        panic!("expected exec payload");
+    };
+    assert_eq!(
+        primed_event
+            .kubernetes
+            .as_ref()
+            .expect("known container has cached kubernetes")
+            .pod_name,
+        "existing-workload"
+    );
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let signal = || {
+        SignalEnvelope::network_connection_close(
+            "source.test",
+            Some("homelab-02".to_string()),
+            NetworkConnectionCloseEvent {
+                process: NetworkProcessIdentity {
+                    pid: 123,
+                    ppid: None,
+                    uid: Some(1000),
+                    command: "python".to_string(),
+                    executable: None,
+                    cgroup_id: None,
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.42.134.23".to_string()),
+                local_port: Some(43512),
+                remote_address: "10.42.134.22".to_string(),
+                remote_port: 8080,
+                fd: Some(3),
+                opened_at_unix_nanos: Some(100),
+                closed_at_unix_nanos: 900,
+                duration_nanos: Some(800),
+                bytes_sent: Some(243),
+                bytes_received: Some(1372),
+                container: None,
+                kubernetes: None,
+            },
+        )
+    };
+
+    let first = processor
+        .process(signal())
+        .await
+        .expect("processor succeeds")
+        .expect("signal remains");
+    let SignalPayload::NetworkConnectionClose(first_event) = first.payload else {
+        panic!("expected network close payload");
+    };
+    assert_eq!(
+        first_event
+            .container
+            .as_ref()
+            .expect("container")
+            .container_id,
+        new_container_id
+    );
+    assert!(first_event.kubernetes.is_none());
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let second = processor
+        .process(signal())
+        .await
+        .expect("processor succeeds")
+        .expect("signal remains");
+    let SignalPayload::NetworkConnectionClose(second_event) = second.payload else {
+        panic!("expected network close payload");
+    };
+    assert_eq!(
+        second_event
+            .kubernetes
+            .as_ref()
+            .expect("new container refreshes despite fresh previous cache")
+            .pod_name,
+        "new-socket-client"
+    );
+
+    fs::remove_dir_all(root).expect("fixture cleanup succeeds");
+}
+
+#[tokio::test]
 async fn enriches_dependency_edge_endpoint_from_existing_container_context() {
     let container_id = "3434343434343434343434343434343434343434343434343434343434343434";
     let processor = ContainerAttributionProcessor::with_cache(

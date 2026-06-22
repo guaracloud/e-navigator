@@ -71,7 +71,7 @@ impl KubernetesAttribution {
                 .fetch_add(1, Ordering::Relaxed);
         }
 
-        if self.config.enabled && self.start_refresh_if_needed(container_id) {
+        if self.config.enabled && self.start_refresh_if_needed(container_id, cached.is_some()) {
             self.spawn_refresh(container_id.to_string());
         } else if cached.is_none() {
             self.diagnostics
@@ -108,7 +108,7 @@ impl KubernetesAttribution {
         })
     }
 
-    fn start_refresh_if_needed(&self, container_id: &str) -> bool {
+    fn start_refresh_if_needed(&self, container_id: &str, cache_hit: bool) -> bool {
         let Ok(mut last_refresh) = self.last_refresh.lock() else {
             return false;
         };
@@ -131,8 +131,12 @@ impl KubernetesAttribution {
             return false;
         }
 
-        let should_refresh = if state.requested_container_found {
-            now.duration_since(state.refreshed_at) >= MIN_KUBERNETES_METADATA_REFRESH_INTERVAL
+        let should_refresh = if cache_hit {
+            state.requested_container_found
+                && now.duration_since(state.refreshed_at)
+                    >= MIN_KUBERNETES_METADATA_REFRESH_INTERVAL
+        } else if state.requested_container_found {
+            true
         } else {
             state.immediate_retry_available
                 || now.duration_since(state.refreshed_at)
