@@ -234,10 +234,13 @@ The following are intentionally not claimed as implemented production behavior:
 - complete Beyla replacement or alloy-profiles replacement;
 - live Beyla-compatible `beyla_network_flow_bytes_total` export from traffic;
 - profile storage, flamegraph rendering, or bottleneck analysis;
-- live HTTP/gRPC parsing from real traffic;
-- request route templates, retry, application error extraction, or live
-  request-ID extraction from real traffic;
-- privileged-proven runtime DNS packet capture;
+- complete live HTTP/gRPC parsing from real traffic; `source.aya_http` has
+  bounded opt-in live proof for observed cleartext cluster traffic, but not
+  controlled application-client coverage, TLS, gRPC framing, inbound
+  server-side parsing, status-code extraction, route templates, retries,
+  application errors, or live request-ID extraction;
+- privileged-proven runtime DNS packet capture beyond the exact recorded live
+  DNS runs;
 - full TCP state tracking, packet accounting, retransmits, or resets;
 - reduced-privilege Kubernetes eBPF operation.
 - reduced overhead versus existing homelab observability agents.

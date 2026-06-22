@@ -336,6 +336,23 @@ The initial live proof should record:
   fragments, secret headers, unsupported schemes, userinfo authorities,
   oversized hosts, invalid ports, or out-of-range ports; this is not live HTTP
   traffic capture or production service-topology proof;
+- `20260622-231600-http-live` records a bounded live HTTP-source proof on
+  `staging/e-navigator-bench`: commit `cfd7ea8` passed `scripts/quality.sh`,
+  GitHub CI run `27989986288`, and image publication run `27989986293`, then
+  pushed image `ghcr.io/guaracloud/e-navigator:sha-cfd7ea8` digest
+  `sha256:c2c850cffcc1209bebfce2e9915728718b4ab2e04a6873f9b25c59dc884e968c`
+  was rolled out as Helm revision 52 with `source.aya_http` and
+  `generator.request_correlation` enabled. Both homelab DaemonSet pods stayed
+  Ready, and JSON stdout showed `protocol_request_observation` records from
+  `source.aya_http` plus `request_span_observation` records from
+  `generator.request_correlation` for real cluster traffic, including
+  Kubernetes-attributed CoreDNS `GET /health` on `homelab-02`. The controlled
+  Python client completed 50 HTTP requests and the controlled BusyBox `nc`
+  client completed 80 HTTP requests, but neither controlled client produced
+  matching protocol or request-span records in the collected E-Navigator logs.
+  The release was rolled back to revision 53, restored to digest
+  `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`,
+  and the temporary HTTP proof Job, pod, and Service resources were deleted;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in
@@ -370,6 +387,8 @@ fixtures and compile-time benchmark health. They do not prove:
 - privileged Aya/eBPF attachment;
 - runtime DNS packet capture beyond the exact recorded live DNS runs;
 - controlled client workload DNS attribution;
+- controlled application-client HTTP request capture beyond the exact ambient
+  cluster traffic observed in `20260622-231600-http-live`;
 - Kubernetes DaemonSet readiness;
 - real host procfs/sysfs/cgroup accuracy;
 - OTLP, Prometheus, Pyroscope, pprof, or production collector export;
