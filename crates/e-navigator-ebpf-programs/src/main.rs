@@ -267,6 +267,30 @@ pub fn tracepoint_recvfrom_exit(ctx: TracePointContext) -> u32 {
     }
 }
 
+#[tracepoint]
+pub fn tracepoint_sendmsg_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_sendmsg_enter(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_recvmsg_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_recvmsg_enter(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_recvmsg_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_recvmsg_exit(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
 #[perf_event]
 pub fn sample_cpu_profile(ctx: PerfEventContext) -> u32 {
     match try_sample_cpu_profile(ctx) {
@@ -480,11 +504,29 @@ fn try_tracepoint_close_enter(ctx: TracePointContext) -> Result<u32, i64> {
 }
 
 fn try_tracepoint_sendto_enter(ctx: TracePointContext) -> Result<u32, i64> {
-    let pid_tgid = bpf_get_current_pid_tgid();
-    let uid_gid = bpf_get_current_uid_gid();
     let buffer = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
     let len = unsafe { ctx.read_at::<u64>(32) }.map_err(|err| err as i64)?;
     let sockaddr = unsafe { ctx.read_at::<*const u8>(48) }.map_err(|err| err as i64)?;
+    emit_dns_send_event(&ctx, buffer, len, sockaddr)
+}
+
+fn try_tracepoint_sendmsg_enter(ctx: TracePointContext) -> Result<u32, i64> {
+    let message = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    if message.is_null() {
+        return Ok(0);
+    }
+
+    let sockaddr = read_msghdr_name(message)?;
+    let (buffer, len) = read_msghdr_first_iov(message)?;
+    emit_dns_send_event(&ctx, buffer, len, sockaddr)
+}
+
+fn emit_dns_send_event(
+    ctx: &TracePointContext,
+    buffer: *const u8,
+    len: u64,
+    sockaddr: *const u8,
+) -> Result<u32, i64> {
     if buffer.is_null() || sockaddr.is_null() || len == 0 {
         return Ok(0);
     }
@@ -501,6 +543,8 @@ fn try_tracepoint_sendto_enter(ctx: TracePointContext) -> Result<u32, i64> {
         return Ok(0);
     }
 
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let uid_gid = bpf_get_current_uid_gid();
     let event = dns_event_scratch()?;
     event.pid = (pid_tgid >> 32) as u32;
     event.uid = uid_gid as u32;
@@ -512,7 +556,7 @@ fn try_tracepoint_sendto_enter(ctx: TracePointContext) -> Result<u32, i64> {
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     copy_dns_packet(buffer, len, event)?;
-    DNS_EVENTS.output(&ctx, &*event, 0);
+    DNS_EVENTS.output(ctx, &*event, 0);
     Ok(0)
 }
 
@@ -583,6 +627,58 @@ fn try_tracepoint_recvfrom_exit(ctx: TracePointContext) -> Result<u32, i64> {
     copy_dns_packet(pending.buffer_ptr as *const u8, retval as u64, event)?;
     DNS_EVENTS.output(&ctx, &*event, 0);
     Ok(0)
+}
+
+fn try_tracepoint_recvmsg_enter(ctx: TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let uid_gid = bpf_get_current_uid_gid();
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let message = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    if message.is_null() {
+        return Ok(0);
+    }
+
+    let (buffer, _) = read_msghdr_first_iov(message)?;
+    if buffer.is_null() {
+        return Ok(0);
+    }
+
+    let pending = PendingDnsRecv {
+        pid: (pid_tgid >> 32) as u32,
+        uid: uid_gid as u32,
+        cgroup_id: current_cgroup_id(),
+        fd,
+        buffer_ptr: buffer as u64,
+        server_addr_ptr: read_msghdr_name(message)? as u64,
+        started_at_nanos: unsafe { bpf_ktime_get_ns() },
+        command: bpf_get_current_comm().map_err(|err| err as i64)?,
+    };
+    PENDING_DNS_RECVS
+        .insert(&pid_tgid, &pending, 0)
+        .map_err(|err| err as i64)?;
+    Ok(0)
+}
+
+fn try_tracepoint_recvmsg_exit(ctx: TracePointContext) -> Result<u32, i64> {
+    try_tracepoint_recvfrom_exit(ctx)
+}
+
+fn read_msghdr_name(message: *const u8) -> Result<*const u8, i64> {
+    unsafe { bpf_probe_read_user::<*const u8>(message.cast::<*const u8>()) }
+        .map_err(|err| err as i64)
+}
+
+fn read_msghdr_first_iov(message: *const u8) -> Result<(*const u8, u64), i64> {
+    let iov = unsafe { bpf_probe_read_user::<*const u8>(message.add(16).cast::<*const u8>()) }
+        .map_err(|err| err as i64)?;
+    if iov.is_null() {
+        return Ok((core::ptr::null(), 0));
+    }
+    let buffer = unsafe { bpf_probe_read_user::<*const u8>(iov.cast::<*const u8>()) }
+        .map_err(|err| err as i64)?;
+    let len = unsafe { bpf_probe_read_user::<u64>(iov.add(8).cast::<u64>()) }
+        .map_err(|err| err as i64)?;
+    Ok((buffer, len))
 }
 
 fn read_exec_arguments(
