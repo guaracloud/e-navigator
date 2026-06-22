@@ -175,6 +175,12 @@ The initial live proof should record:
   trace-correlation records, Prometheus resource/network metric queries, 10
   resource samples, and capability posture; it did not observe fresh
   `runtime_security_finding` or `source.host_resource` JSON stdout lines;
+- `20260621-234159-runtime-security-live` was a current-release runtime-security
+  proof run with workloads pinned to both homelab nodes: it observed 209 live
+  `runtime_security_finding` records from `generator.runtime_security`,
+  including `runtime.network_tool_exec`, `runtime.shell_in_container`, and
+  `network.kubernetes_api_from_workload`, while both E-Navigator pods stayed
+  Ready and Prometheus returned `up` plus workload-labelled network metrics;
 - `20260621-222508-required-image-daemonset-live` is the first required-image
   DaemonSet runtime run: image `sha-8ab271c` rolled out on both homelab nodes,
   emitted live Aya network-derived JSON stdout records, and was then restored to
