@@ -5,27 +5,28 @@ use serde::Serialize;
 use tokio::sync::Mutex;
 
 use crate::{
-    HttpExporterConfig, HttpJsonExporter, ProfileRecord, format_otel_metric_record,
-    format_otel_trace_record, format_profile_record,
+    HttpExporterConfig, HttpJsonExporter, HttpProtobufExporter, ProfileRecord,
+    format_otel_metric_record, format_otel_trace_record, format_profile_record,
+    otlp_trace_proto::{encode_trace_export_request, trace_record_has_valid_ids},
 };
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case", tag = "signal_family", content = "record")]
 enum OtlpHttpRecord {
     Metric(crate::OtelMetricRecord),
-    Trace(crate::OtelTraceRecord),
     Profile(ProfileRecord),
 }
 
 #[derive(Debug)]
 pub struct OtlpHttpSink {
     config: OtlpHttpConfig,
-    exporter: Mutex<HttpJsonExporter<OtlpHttpRecord>>,
+    json_exporter: Mutex<HttpJsonExporter<OtlpHttpRecord>>,
+    trace_exporter: Mutex<HttpProtobufExporter<crate::OtelTraceRecord>>,
 }
 
 impl OtlpHttpSink {
     pub fn new(config: OtlpHttpConfig) -> CoreResult<Self> {
-        let exporter = HttpJsonExporter::new(HttpExporterConfig {
+        let exporter_config = HttpExporterConfig {
             endpoint: config.endpoint.clone(),
             headers: Vec::new(),
             batch_size: config.batch_size,
@@ -33,15 +34,25 @@ impl OtlpHttpSink {
             timeout_millis: config.timeout_millis,
             max_retries: config.max_retries,
             tls_insecure_skip_verify: config.tls_insecure_skip_verify,
-        })
-        .map_err(|err| e_navigator_core::CoreError::ModuleFailed {
-            module: "sink.otlp_http".to_string(),
-            message: err.to_string(),
+        };
+        let json_exporter = HttpJsonExporter::new(exporter_config.clone()).map_err(|err| {
+            e_navigator_core::CoreError::ModuleFailed {
+                module: "sink.otlp_http".to_string(),
+                message: err.to_string(),
+            }
         })?;
+        let trace_exporter =
+            HttpProtobufExporter::new(exporter_config, encode_trace_export_request).map_err(
+                |err| e_navigator_core::CoreError::ModuleFailed {
+                    module: "sink.otlp_http".to_string(),
+                    message: err.to_string(),
+                },
+            )?;
 
         Ok(Self {
             config,
-            exporter: Mutex::new(exporter),
+            json_exporter: Mutex::new(json_exporter),
+            trace_exporter: Mutex::new(trace_exporter),
         })
     }
 }
@@ -53,18 +64,28 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
     }
 
     async fn write(&self, signal: &SignalEnvelope) -> CoreResult<()> {
+        if self.config.traces_enabled
+            && let Some(record) = format_otel_trace_record(signal)
+        {
+            if !trace_record_has_valid_ids(&record) {
+                return Ok(());
+            }
+
+            let mut exporter = self.trace_exporter.lock().await;
+            exporter.enqueue(record);
+            return exporter.flush_once().await.map_err(|err| {
+                e_navigator_core::CoreError::ModuleFailed {
+                    module: "sink.otlp_http".to_string(),
+                    message: err.to_string(),
+                }
+            });
+        }
+
         let record = if self.config.metrics_enabled {
             format_otel_metric_record(signal).map(OtlpHttpRecord::Metric)
         } else {
             None
         }
-        .or_else(|| {
-            if self.config.traces_enabled {
-                format_otel_trace_record(signal).map(OtlpHttpRecord::Trace)
-            } else {
-                None
-            }
-        })
         .or_else(|| {
             if self.config.profiles_enabled {
                 format_profile_record(signal).map(OtlpHttpRecord::Profile)
@@ -77,7 +98,7 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
             return Ok(());
         };
 
-        let mut exporter = self.exporter.lock().await;
+        let mut exporter = self.json_exporter.lock().await;
         exporter.enqueue(record);
         exporter
             .flush_once()
@@ -94,9 +115,13 @@ mod tests {
     use super::*;
     use e_navigator_core::Sink;
     use e_navigator_signals::{
-        MetricAggregationWindow, NetworkAddressFamily, NetworkCounterMetric, NetworkProtocol,
-        SignalEnvelope,
+        ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkAddressFamily,
+        NetworkCounterMetric, NetworkProtocol, RequestSpanObservation, SignalEnvelope,
+        TraceConfidence, TraceCorrelationKind,
     };
+    use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+    use prost::Message;
+    use std::collections::BTreeMap;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -183,6 +208,56 @@ mod tests {
         assert!(collector.try_next_request().is_none());
     }
 
+    #[tokio::test]
+    async fn otlp_http_sink_exports_trace_records_as_otlp_protobuf() {
+        let collector = FakeCollector::spawn(vec![200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            endpoint: collector.url(),
+            metrics_enabled: false,
+            traces_enabled: true,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&request_span())
+            .await
+            .expect("trace export succeeds");
+        let request = collector.next_request().await;
+
+        assert!(request.contains("content-type: application/x-protobuf"));
+        assert!(!request.contains("signal_family"));
+        let decoded =
+            ExportTraceServiceRequest::decode(request.body()).expect("OTLP trace request decodes");
+        let resource_spans = decoded.resource_spans.first().expect("resource spans");
+        let scope_spans = resource_spans
+            .scope_spans
+            .first()
+            .expect("scope spans are present");
+        let span = scope_spans.spans.first().expect("span is present");
+
+        assert_eq!(span.name, "GET /checkout");
+        assert_eq!(
+            lower_hex(&span.trace_id),
+            "4bf92f3577b34da6a3ce929d0e0e4736"
+        );
+        assert_eq!(lower_hex(&span.span_id), "00f067aa0ba902b7");
+        let resource = resource_spans.resource.as_ref().expect("resource");
+        assert!(resource.attributes.iter().any(|attribute| {
+            attribute.key == "service.name"
+                && format!("{:?}", attribute.value).contains("checkout-api")
+        }));
+        assert!(span.attributes.iter().any(|attribute| {
+            attribute.key == "http.request.method"
+                && format!("{:?}", attribute.value).contains("GET")
+        }));
+    }
+
     fn network_metric() -> SignalEnvelope {
         SignalEnvelope::network_counter_metric(
             "generator.network_metrics",
@@ -209,10 +284,72 @@ mod tests {
         )
     }
 
+    fn request_span() -> SignalEnvelope {
+        SignalEnvelope::request_span_observation(
+            "generator.request_correlation",
+            Some("node-a".to_string()),
+            RequestSpanObservation {
+                name: "GET /checkout".to_string(),
+                protocol: e_navigator_signals::ProtocolKind::Http,
+                trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+                span_id: Some("00f067aa0ba902b7".to_string()),
+                parent_span_id: None,
+                start_unix_nanos: 1_000,
+                end_unix_nanos: Some(2_000),
+                duration_nanos: Some(1_000),
+                correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+                confidence: TraceConfidence::High,
+                service_name: Some("checkout-api".to_string()),
+                method: Some("GET".to_string()),
+                status_code: Some(200),
+                process: None,
+                container: Some(ContainerContext {
+                    container_id: "container-a".to_string(),
+                    runtime: Some("containerd".to_string()),
+                }),
+                kubernetes: Some(KubernetesContext {
+                    namespace: "default".to_string(),
+                    pod_name: "checkout-123".to_string(),
+                    pod_uid: Some("pod-uid".to_string()),
+                    container_name: Some("checkout".to_string()),
+                    node_name: Some("node-a".to_string()),
+                    labels: BTreeMap::new(),
+                }),
+                peer: None,
+                attributes: Vec::new(),
+            },
+        )
+    }
+
+    fn lower_hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    #[derive(Debug, Clone)]
+    struct RecordedRequest {
+        raw: Vec<u8>,
+    }
+
+    impl RecordedRequest {
+        fn contains(&self, needle: &str) -> bool {
+            String::from_utf8_lossy(&self.raw).contains(needle)
+        }
+
+        fn body(&self) -> &[u8] {
+            let split_at = self
+                .raw
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .expect("request has body separator")
+                + 4;
+            &self.raw[split_at..]
+        }
+    }
+
     #[derive(Debug)]
     struct FakeCollector {
         address: std::net::SocketAddr,
-        requests: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<String>>,
+        requests: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<RecordedRequest>>,
     }
 
     impl FakeCollector {
@@ -227,7 +364,9 @@ mod tests {
                     let (mut socket, _) = listener.accept().await.expect("accept request");
                     let mut buffer = vec![0; 8192];
                     let bytes = socket.read(&mut buffer).await.expect("read request");
-                    let request = String::from_utf8_lossy(&buffer[..bytes]).to_string();
+                    let request = RecordedRequest {
+                        raw: buffer[..bytes].to_vec(),
+                    };
                     let _ = tx.send(request).await;
                     let status_text = if status == 200 { "OK" } else { "ERR" };
                     let response = format!(
@@ -249,7 +388,7 @@ mod tests {
             format!("http://{}", self.address)
         }
 
-        async fn next_request(&self) -> String {
+        async fn next_request(&self) -> RecordedRequest {
             self.requests
                 .lock()
                 .await
@@ -258,7 +397,7 @@ mod tests {
                 .expect("request received")
         }
 
-        fn try_next_request(&self) -> Option<String> {
+        fn try_next_request(&self) -> Option<RecordedRequest> {
             self.requests.try_lock().ok()?.try_recv().ok()
         }
     }

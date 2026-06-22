@@ -6,10 +6,13 @@ pub mod json_stdout;
 pub mod otel_metric;
 pub mod otel_trace;
 pub mod otlp_http;
+mod otlp_trace_proto;
 pub mod profile_format;
 pub mod prometheus;
 
-pub use exporter::{ExporterCounters, ExporterError, HttpExporterConfig, HttpJsonExporter};
+pub use exporter::{
+    ExporterCounters, ExporterError, HttpExporterConfig, HttpJsonExporter, HttpProtobufExporter,
+};
 pub use json_stdout::JsonStdoutSink;
 pub use otel_metric::{
     OtelMetricKind, OtelMetricRecord, OtelMetricValue, format_otel_metric_record,

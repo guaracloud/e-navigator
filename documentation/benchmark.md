@@ -183,7 +183,9 @@ The initial live proof should record:
   config and chart Service/ServiceMonitor values before treating port `9090` as
   meaningful;
 - OTLP validation enables `sink.otlp_http` with an explicit endpoint and records
-  collector evidence separately from fake-collector unit tests;
+  collector evidence separately from fake-collector unit tests. Local
+  fake-collector tests can prove protobuf trace request encoding, but only live
+  collector logs or accepted requests can upgrade collector-ingestion claims;
 - `20260621-205344-otlp-live` is the first homelab OTLP HTTP sink boundary run:
   image `sha-5c417c0` delivered internal JSON metric, trace, and profile records
   to a namespace-local fake collector, then restored the release to

@@ -50,8 +50,10 @@ Linux / Kubernetes node
   dependency edges, trace service paths, request spans, profiling windows, and
   optional Guara compatibility projections.
 - **Sinks:** JSON stdout by default, plus opt-in Prometheus HTTP and OTLP HTTP
-  sink modules with bounded local tests. OTLP uses the current internal record
-  boundary and is not live Tempo/Pyroscope compatibility proof.
+  sink modules with bounded local tests. OTLP trace records with valid
+  trace/span IDs are encoded as protobuf `ExportTraceServiceRequest` payloads;
+  metrics and profiles still use the internal record boundary, and no live
+  Tempo/Pyroscope compatibility proof is claimed.
 
 The pipeline is statically registered by design. Runtime plugin loading is not
 part of the current architecture; see
@@ -157,8 +159,10 @@ Implemented with narrower or deferred runtime claims:
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,
   active Prometheus targets, nonzero scrape samples, and queryable
   E-Navigator metric series such as `network_connection_open_count`.
-- OTLP HTTP support is an opt-in registered sink over the current internal
-  metric, trace, and profile record boundary. Homelab run
+- OTLP HTTP support is an opt-in registered sink. Local fake-collector tests
+  prove trace records with valid trace/span IDs are posted as OTLP protobuf
+  `ExportTraceServiceRequest` payloads with `application/x-protobuf`. Metrics
+  and profiles still use the internal JSON record boundary. Homelab run
   `20260621-205344-otlp-live` proved live delivery to a namespace-local fake
   collector for internal JSON records. Homelab run
   `20260621-214450-sink-failure-live` proved that HTTP 500 responses from a
@@ -166,9 +170,8 @@ Implemented with narrower or deferred runtime claims:
   terminating the runner or stopping Prometheus/JSON stdout. Homelab run
   `20260622-001716-published-image-live` repeated the real Alloy HTTP 400
   failure boundary with pushed GHCR image `sha-d3167e3` and kept both pods Ready
-  with JSON stdout and Prometheus HTTP active. These runs are not upstream OTLP
-  protobuf, Tempo, Pyroscope, Alloy, or production collector compatibility
-  proof.
+  with JSON stdout and Prometheus HTTP active. These runs are not successful
+  Tempo, Pyroscope, Alloy, or production collector compatibility proof.
 - Guara Beyla L4 compatibility remains generator and formatter proven, with a
   recorded live boundary. Homelab run `20260621-220029-guara-compat-live`
   enabled `generator.guara_compat` while Prometheus scraping was healthy and

@@ -1,4 +1,7 @@
-use reqwest::{Client, header::HeaderMap};
+use reqwest::{
+    Client,
+    header::{CONTENT_TYPE, HeaderMap},
+};
 use serde::Serialize;
 use std::{collections::VecDeque, time::Duration};
 use thiserror::Error;
@@ -54,6 +57,15 @@ pub struct HttpJsonExporter<T> {
     queue: VecDeque<T>,
     counters: ExporterCounters,
     client: Client,
+}
+
+#[derive(Debug)]
+pub struct HttpProtobufExporter<T> {
+    config: HttpExporterConfig,
+    queue: VecDeque<T>,
+    counters: ExporterCounters,
+    client: Client,
+    encode_batch: fn(&[T]) -> Result<Vec<u8>, ExporterError>,
 }
 
 impl<T> HttpJsonExporter<T>
@@ -148,6 +160,104 @@ where
     }
 }
 
+impl<T> HttpProtobufExporter<T>
+where
+    T: Clone,
+{
+    pub fn new(
+        config: HttpExporterConfig,
+        encode_batch: fn(&[T]) -> Result<Vec<u8>, ExporterError>,
+    ) -> Result<Self, ExporterError> {
+        config.validate()?;
+        let client = Client::builder()
+            .use_rustls_tls()
+            .danger_accept_invalid_certs(config.tls_insecure_skip_verify)
+            .build()
+            .map_err(ExporterError::BuildClient)?;
+        Ok(Self {
+            config,
+            queue: VecDeque::new(),
+            counters: ExporterCounters::default(),
+            client,
+            encode_batch,
+        })
+    }
+
+    pub fn enqueue(&mut self, item: T) {
+        if self.queue.len() >= self.config.queue_capacity {
+            self.counters.dropped_queue_full = self.counters.dropped_queue_full.saturating_add(1);
+            return;
+        }
+        self.queue.push_back(item);
+        self.counters.enqueued = self.counters.enqueued.saturating_add(1);
+    }
+
+    pub fn counters(&self) -> ExporterCounters {
+        self.counters
+    }
+
+    pub fn queued_len(&self) -> usize {
+        self.queue.len()
+    }
+
+    pub async fn flush_once(&mut self) -> Result<(), ExporterError> {
+        if self.queue.is_empty() {
+            return Ok(());
+        }
+
+        let batch_len = self.queue.len().min(self.config.batch_size);
+        let batch = self
+            .queue
+            .iter()
+            .take(batch_len)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut last_error = None;
+        for attempt in 0..=self.config.max_retries {
+            if attempt > 0 {
+                self.counters.retry_attempts = self.counters.retry_attempts.saturating_add(1);
+            }
+            match self.send_batch(&batch).await {
+                Ok(()) => {
+                    for _ in 0..batch_len {
+                        let _ = self.queue.pop_front();
+                    }
+                    self.counters.exported =
+                        self.counters.exported.saturating_add(batch_len as u64);
+                    return Ok(());
+                }
+                Err(err) => last_error = Some(err),
+            }
+        }
+
+        self.counters.failed_batches = self.counters.failed_batches.saturating_add(1);
+        Err(last_error.unwrap_or(ExporterError::RetriesExhausted))
+    }
+
+    async fn send_batch(&self, batch: &[T]) -> Result<(), ExporterError> {
+        let headers = header_map(&self.config.headers)?;
+        let body = (self.encode_batch)(batch)?;
+        let request = self
+            .client
+            .post(&self.config.endpoint)
+            .headers(headers)
+            .header(CONTENT_TYPE, "application/x-protobuf")
+            .body(body);
+        let response = timeout(
+            Duration::from_millis(self.config.timeout_millis),
+            request.send(),
+        )
+        .await
+        .map_err(|_| ExporterError::Timeout)??;
+
+        if !response.status().is_success() {
+            return Err(ExporterError::Status(response.status().as_u16()));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ExporterError {
     #[error("invalid exporter config: {0}")]
@@ -156,6 +266,8 @@ pub enum ExporterError {
     BuildClient(reqwest::Error),
     #[error("invalid header")]
     InvalidHeader,
+    #[error("failed to encode export payload: {0}")]
+    Encode(String),
     #[error("export request timed out")]
     Timeout,
     #[error("collector returned HTTP {0}")]
