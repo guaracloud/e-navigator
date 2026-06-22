@@ -181,6 +181,13 @@ The initial live proof should record:
   JSON stdout source/generator families, and proved Prometheus-level controlled
   workload network attribution for the workload pod; JSON stdout did not show
   that workload pod name and must not be used for that attribution claim;
+- `20260622-013602-dns-msg-live` pushed commit `10b81e6`, waited for GitHub CI
+  and GHCR image publication, rolled
+  `ghcr.io/guaracloud/e-navigator:sha-10b81e6` to
+  `staging/e-navigator-bench`, ran DNS workloads pinned to both homelab nodes,
+  observed live `source.aya_dns` plus `generator.dns_metrics` output from
+  CoreDNS and Pi-hole, and recorded that the controlled BusyBox
+  client-to-CoreDNS workload did not appear in DNS attribution;
 - `20260621-233103-generator-resource-security-live` was a collection-only
   current-release run that observed live `generator.dependency_graph` output,
   `source.aya_network`, `source.aya_exec` process exits, network metrics,
@@ -233,7 +240,8 @@ Current local benchmarks prove only repeatable userspace performance for fixed
 fixtures and compile-time benchmark health. They do not prove:
 
 - privileged Aya/eBPF attachment;
-- runtime DNS packet capture;
+- runtime DNS packet capture beyond the exact recorded live DNS runs;
+- controlled client workload DNS attribution;
 - Kubernetes DaemonSet readiness;
 - real host procfs/sysfs/cgroup accuracy;
 - OTLP, Prometheus, Pyroscope, pprof, or production collector export;

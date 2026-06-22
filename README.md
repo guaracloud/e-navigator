@@ -147,9 +147,11 @@ Implemented with narrower or deferred runtime claims:
 
 - Runtime DNS support currently means schemas, synthetic DNS fixtures, bounded
   DNS metric/dependency generation, bounded packet parser/raw decode tests, and
-  an opt-in registered `source.aya_dns` boundary. Live eBPF DNS packet capture is
-  not privileged-proven; homelab run `20260621-202849-dns-live` failed because
-  live kernel attachment is not implemented in this build.
+  opt-in live Aya DNS capture for observed UDP DNS packet paths. Homelab run
+  `20260622-013602-dns-msg-live` observed live `source.aya_dns` and
+  `generator.dns_metrics` output from CoreDNS and Pi-hole with Kubernetes or
+  container attribution. It did not attribute the controlled BusyBox
+  client-to-CoreDNS workload, so full workload DNS coverage is still not proven.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,
