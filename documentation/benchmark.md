@@ -259,6 +259,13 @@ The initial live proof should record:
   proof: the required preflight stopped before deployment because
   `kubectl config current-context` returned `kind-tentacle-alpha` instead of
   `staging`;
+- `20260622-165710-otlp-profile-protobuf-live` records a follow-up
+  `staging/e-navigator-bench` run with pushed image `sha-35ecc6c`, a
+  namespace-local OpenTelemetry Collector `0.130.0`, profile support enabled,
+  and endpoint `/v1development/profiles`; the one-shot Job completed and the
+  collector remained healthy, but the collector returned HTTP 400 for
+  E-Navigator's real profile protobuf, so live profile collector acceptance is
+  not proven; all temporary Job and collector resources were cleaned up;
 - `20260622-144636-http-request-path-local` records local request/protocol
   proof that the HTTP fixture parser extracts bounded origin-form `url.path`
   attributes without query or fragment values and that request-span dedupe
