@@ -275,6 +275,13 @@ The initial live proof should record:
   headers, malformed userinfo authorities, oversized hosts, invalid ports, or
   out-of-range ports; this is not live HTTP traffic capture or production
   service-topology proof;
+- `20260622-162915-http-absolute-target-local` records local request/protocol
+  proof that the HTTP fixture parser extracts bounded `url.path`,
+  `server.address`, and `server.port` attributes from valid absolute-form
+  `http://` and `https://` request targets without copying query strings,
+  fragments, secret headers, unsupported schemes, userinfo authorities,
+  oversized hosts, invalid ports, or out-of-range ports; this is not live HTTP
+  traffic capture or production service-topology proof;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in

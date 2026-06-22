@@ -44,7 +44,7 @@ pub fn parse_http_request(
     let mut traceparent = None;
     let mut tracestate = None;
     let mut request_id = None;
-    let mut host_authority = None;
+    let mut host_authority = request_line.authority;
 
     for line in lines {
         if line.is_empty() {
@@ -127,6 +127,7 @@ pub fn parse_http_request(
 struct ParsedRequestLine {
     method: Option<String>,
     path: Option<String>,
+    authority: Option<HostAuthority>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,8 +186,48 @@ fn parse_request_line(request_line: &str) -> Result<ParsedRequestLine, HttpExtra
     } else {
         Some(method.to_string())
     };
-    let path = method.as_ref().and_then(|_| request_target_path(target));
-    Ok(ParsedRequestLine { method, path })
+    let (path, authority) = if method.is_some() {
+        request_target_context(target)
+    } else {
+        (None, None)
+    };
+    Ok(ParsedRequestLine {
+        method,
+        path,
+        authority,
+    })
+}
+
+fn request_target_context(target: &str) -> (Option<String>, Option<HostAuthority>) {
+    if target.starts_with('/') {
+        return (request_target_path(target), None);
+    }
+
+    if let Some(remainder) = target.strip_prefix("http://") {
+        return absolute_form_target_context(remainder);
+    }
+    if let Some(remainder) = target.strip_prefix("https://") {
+        return absolute_form_target_context(remainder);
+    }
+
+    (None, None)
+}
+
+fn absolute_form_target_context(remainder: &str) -> (Option<String>, Option<HostAuthority>) {
+    let split_at = remainder.find(['/', '?', '#']).unwrap_or(remainder.len());
+    let authority = &remainder[..split_at];
+    let Some(authority) = bounded_host_authority(authority) else {
+        return (None, None);
+    };
+
+    let target_path = if split_at < remainder.len() {
+        let rest = &remainder[split_at..];
+        if rest.starts_with('/') { rest } else { "/" }
+    } else {
+        "/"
+    };
+
+    (request_target_path(target_path), Some(authority))
 }
 
 fn request_target_path(target: &str) -> Option<String> {

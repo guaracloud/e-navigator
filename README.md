@@ -140,7 +140,8 @@ Implemented and non-privileged proven:
   and smoke tests, including local HTTP fixture extraction of bounded
   `url.path` attributes without query or fragment values and bounded
   `http.request.id` attributes from request ID headers, plus bounded
-  `server.address` and `server.port` attributes from HTTP Host authorities.
+  `server.address` and `server.port` attributes from HTTP Host authorities and
+  absolute-form HTTP request targets.
 - CPU profiling foundations through raw decode, profile normalization, and
   generator tests.
 - Guara compatibility contracts for the Beyla L4 metric label set, Tempo
