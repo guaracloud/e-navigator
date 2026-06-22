@@ -264,6 +264,11 @@ The initial live proof should record:
   attributes without query or fragment values and that request-span dedupe
   distinguishes spanless requests with different path attributes; this is not
   live HTTP traffic capture or route-template proof;
+- `20260622-150549-http-request-id-local` records local request/protocol proof
+  that the HTTP fixture parser extracts bounded `http.request.id` attributes
+  from `X-Request-ID` or `Request-ID` headers without copying secret headers or
+  oversized request IDs; this is not live HTTP traffic capture or production
+  request-correlation proof;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in

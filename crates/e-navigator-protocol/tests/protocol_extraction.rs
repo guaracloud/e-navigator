@@ -233,6 +233,44 @@ fn extracts_http_request_path_without_query_or_fragment() {
 }
 
 #[test]
+fn extracts_bounded_http_request_id_without_secret_headers() {
+    let bytes = b"GET /checkout/123 HTTP/1.1\r\nHost: api.example.com\r\nTraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\nX-Request-ID: req-12345\r\nAuthorization: Bearer secret\r\nCookie: session=secret\r\n\r\n";
+
+    let extraction = parse_http_request(bytes, &ProtocolExtractionConfig::default())
+        .expect("http request parses");
+
+    assert!(
+        extraction.attributes.iter().any(|attribute| {
+            attribute.key == "http.request.id" && attribute.value == "req-12345"
+        })
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn drops_oversized_http_request_id_attribute() {
+    let request_id = "r".repeat(129);
+    let bytes = format!(
+        "GET /checkout/123 HTTP/1.1\r\nTraceparent: {VALID_TRACEPARENT}\r\nX-Request-ID: {request_id}\r\n\r\n"
+    );
+
+    let extraction = parse_http_request(bytes.as_bytes(), &ProtocolExtractionConfig::default())
+        .expect("http request parses");
+
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "http.request.id")
+    );
+}
+
+#[test]
 fn reports_missing_and_invalid_trace_context_without_inventing_ids() {
     let missing = parse_http_request(
         b"POST /orders HTTP/1.1\r\nHost: api.example.com\r\n\r\n",

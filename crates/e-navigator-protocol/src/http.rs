@@ -6,6 +6,7 @@ use crate::{
 };
 
 const MAX_HTTP_TARGET_PATH_ATTRIBUTE_BYTES: usize = 256;
+const MAX_HTTP_REQUEST_ID_ATTRIBUTE_BYTES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedHttpRequest {
@@ -41,6 +42,7 @@ pub fn parse_http_request(
     let request_line = parse_request_line(request_line)?;
     let mut traceparent = None;
     let mut tracestate = None;
+    let mut request_id = None;
 
     for line in lines {
         if line.is_empty() {
@@ -57,6 +59,8 @@ pub fn parse_http_request(
             && value.len() <= config.max_tracestate_bytes
         {
             tracestate = Some(value.to_string());
+        } else if is_request_id_header(key) {
+            request_id = bounded_request_id(value);
         }
     }
 
@@ -80,6 +84,12 @@ pub fn parse_http_request(
         config.max_attributes,
         "url.path",
         request_line.path.as_deref(),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "http.request.id",
+        request_id.as_deref(),
     );
 
     Ok(ParsedHttpRequest {
@@ -163,4 +173,18 @@ fn request_target_path(target: &str) -> Option<String> {
         return None;
     }
     Some(path.to_string())
+}
+
+fn is_request_id_header(key: &str) -> bool {
+    key.eq_ignore_ascii_case("x-request-id") || key.eq_ignore_ascii_case("request-id")
+}
+
+fn bounded_request_id(value: &str) -> Option<String> {
+    if value.is_empty()
+        || value.len() > MAX_HTTP_REQUEST_ID_ATTRIBUTE_BYTES
+        || value.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return None;
+    }
+    Some(value.to_string())
 }

@@ -259,6 +259,29 @@ async fn duplicate_suppression_distinguishes_spanless_request_paths() {
 }
 
 #[tokio::test]
+async fn request_span_preserves_bounded_request_id_attribute() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.attributes.push(TraceAttribute {
+        key: "http.request.id".to_string(),
+        value: "req-12345".to_string(),
+    });
+
+    let outputs = observe(&generator, &signal).await;
+
+    assert!(outputs.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::RequestSpanObservation(span)
+                if has_attribute(span.attributes.as_slice(), "http.request.id", "req-12345")
+        )
+    }));
+}
+
+#[tokio::test]
 async fn bounded_seen_state_evicts_oldest_fingerprint() {
     let generator = RequestCorrelationGenerator::with_limits(1, 8);
     let first = protocol_request_signal_at(1_000, Some(valid_traceparent()), true);
