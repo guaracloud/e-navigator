@@ -26,6 +26,7 @@ run tests/homelab_bench_guard_test.sh
 run tests/packaged_config_guard_test.sh
 run tests/secret_pattern_guard_test.sh
 run tests/network_einprogress_guard_test.sh
+run tests/dns_connected_udp_guard_test.sh
 
 if [ "${E_NAVIGATOR_SKIP_SUPPLY_CHAIN:-0}" != "1" ]; then
   require_tool cargo-deny

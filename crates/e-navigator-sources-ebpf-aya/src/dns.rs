@@ -316,6 +316,30 @@ mod platform {
                 "syscalls",
                 "sys_exit_recvmsg",
             )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_write_enter",
+                "syscalls",
+                "sys_enter_write",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_write_exit",
+                "syscalls",
+                "sys_exit_write",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_read_enter",
+                "syscalls",
+                "sys_enter_read",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_read_exit",
+                "syscalls",
+                "sys_exit_read",
+            )?;
 
             let mut perf_array =
                 PerfEventArray::try_from(ebpf.take_map("DNS_EVENTS").ok_or_else(|| {
