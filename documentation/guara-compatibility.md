@@ -72,10 +72,20 @@ Current implementation status:
   The server-IP records were captured as `EINPROGRESS` connection failures, not
   byte-bearing closes, and produced 0 controlled `network_flow_summary` rows and
   0 `beyla_network_flow_bytes_total` signals.
-- The current local tree handles Linux `-EINPROGRESS` nonblocking TCP connect
-  returns as open/active connections in the eBPF source path, guarded by
-  `tests/network_einprogress_guard_test.sh`. This is not live runtime proof
-  until deployed and recorded in the homelab namespace.
+- Homelab run `20260622-122803-guara-einprogress-live` deployed pushed image
+  `sha-622e1aa` digest
+  `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`
+  as Helm revision 42 after adding the Linux `-EINPROGRESS` source-path fix.
+  The Python clients completed 240 controlled nonblocking socket requests with
+  no application failures. Captured stdout proved the observed homelab-02 target
+  `10.42.134.6:8080` emitted 120 `network_connection_open` records and 120
+  `network_connection_close` records with 0 `network_connection_failure` and 0
+  errno 115 failures. Direct `/metrics` also exposed homelab-02 aggregate
+  controlled-client counters at 120. The same run did not prove byte-bearing
+  controlled closes, controlled `network_flow_summary`,
+  `beyla_network_flow_bytes_total`, Kubernetes attribution on the Python client
+  records, or stdout capture for the successful homelab-01 target
+  `10.42.248.200:8080`.
 - Positive `beyla_network_flow_bytes_total` proof still requires a controlled
   byte-bearing flow with Kubernetes attribution and an in-scope Guara
   `proj-*` paid tenant endpoint. The current homelab namespace boundary

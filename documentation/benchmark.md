@@ -155,17 +155,21 @@ generation, but they do not prove controlled workload `network_flow_summary` or
 `beyla_network_flow_bytes_total`. The BusyBox workload completed on both nodes
 without Kubernetes attribution on its byte-bearing close records, and the
 Python socket workload produced server-IP `EINPROGRESS` failure records rather
-than byte-bearing closes. Prometheus API queries were not run for this slice
-because no Prometheus server service exists in `e-navigator-bench` and the live
-boundary kept actions inside that namespace.
+than byte-bearing closes.
 
-The current local tree handles Linux `-EINPROGRESS` nonblocking TCP connect
-returns as open/active connections instead of failure-only records, with
-`tests/network_einprogress_guard_test.sh` included in `scripts/quality.sh`.
-This is local implementation evidence only. It does not upgrade the Guara L4
-runtime claim until a pushed image is deployed in `staging/e-navigator-bench`
-and records byte-bearing controlled workload closes, `network_flow_summary`, and
-`beyla_network_flow_bytes_total` evidence.
+Follow-up run `20260622-122803-guara-einprogress-live` deployed pushed image
+`sha-622e1aa` with the Linux `-EINPROGRESS` source-path fix included in
+`scripts/quality.sh`. Two Python nonblocking clients completed 240 total socket
+requests. Captured stdout proved the observed homelab-02 target
+`10.42.134.6:8080` emitted 120 opens and 120 closes with 0 failures and 0 errno
+115 failures, and direct `/metrics` exposed matching aggregate network counters
+for the homelab-02 container runtime path. The run did not prove byte-bearing
+controlled closes, controlled `network_flow_summary`,
+`beyla_network_flow_bytes_total`, Kubernetes attribution for the Python client
+records, or stdout capture for the successful homelab-01 client target.
+Prometheus API queries were not run for this slice because no Prometheus server
+service exists in `e-navigator-bench` and the live boundary kept actions inside
+that namespace.
 
 The initial live proof should record:
 
@@ -208,6 +212,14 @@ The initial live proof should record:
   observed live `source.aya_dns` plus `generator.dns_metrics` output from
   CoreDNS and Pi-hole, and recorded that the controlled BusyBox
   client-to-CoreDNS workload did not appear in DNS attribution;
+- `20260622-122803-guara-einprogress-live` pushed commit `622e1aa`, waited for
+  GHCR image publication, rolled
+  `ghcr.io/guaracloud/e-navigator:sha-622e1aa` to
+  `staging/e-navigator-bench`, ran nonblocking Python clients pinned to both
+  homelab nodes, proved the observed homelab-02 target no longer emitted
+  `EINPROGRESS` failure-only records, and recorded that byte-bearing controlled
+  closes, controlled flow summaries, Beyla projection, homelab-01 stdout
+  capture, and Kubernetes attribution remain unproven;
 - `20260621-233103-generator-resource-security-live` was a collection-only
   current-release run that observed live `generator.dependency_graph` output,
   `source.aya_network`, `source.aya_exec` process exits, network metrics,
