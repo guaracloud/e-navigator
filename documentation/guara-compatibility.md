@@ -97,6 +97,21 @@ Current implementation status:
   `bytes_sent=243` and `bytes_received=1372`. The same run still produced 0
   controlled `network_flow_summary` rows, 0 `beyla_network_flow_bytes_total`
   signals, and 0 Kubernetes-attributed controlled close records.
+- Homelab run `20260622-192821-new-container-attribution-live` deployed pushed
+  image `sha-dd67a3b` digest
+  `sha256:5082072c88fb2b525a5d860484cd1bf16a4c2d2870af2d31ff9bdb08819a638d`
+  as Helm revision 50 after adding immediate Kubernetes metadata refresh for a
+  new container miss following an earlier successful refresh. The corrected
+  Python workload ran on `homelab-02` in `e-navigator-bench` and completed
+  1,594 HTTP requests with no application failures. Captured stdout proved 34
+  byte-bearing controlled `network_connection_close` records and 34 controlled
+  `network_flow_summary` records with Kubernetes attribution for client pod
+  `e-nav-attrib-192821-r2-client-2zq4g`. Direct `/metrics` on the homelab-02
+  E-Navigator pod exposed Kubernetes-attributed aggregate counters for the same
+  client at 1,574 opens, destination observations, and duration samples. The
+  same run produced 0 `beyla_network_flow_bytes_total` JSON signals and 0 direct
+  `/metrics` Beyla lines because the temporary workload namespace is not in the
+  Guara `proj-*` scope.
 - Positive `beyla_network_flow_bytes_total` proof still requires a controlled
   byte-bearing flow with Kubernetes attribution and an in-scope Guara
   `proj-*` paid tenant endpoint. The current homelab namespace boundary

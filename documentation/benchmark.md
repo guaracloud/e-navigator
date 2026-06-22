@@ -183,6 +183,22 @@ The run still did not prove Kubernetes attribution for the Python client
 records, controlled `network_flow_summary`, `beyla_network_flow_bytes_total`, or
 symmetric controlled-client stdout capture across both nodes.
 
+Follow-up run `20260622-192821-new-container-attribution-live` deployed pushed
+image `sha-dd67a3b` with immediate Kubernetes metadata refresh on newly missed
+containers after a successful prior cache refresh. The corrected Python
+workload ran only in `staging/e-navigator-bench` on `homelab-02` and completed
+1,594 HTTP requests with zero application errors. Captured stdout proved 34
+byte-bearing controlled `network_connection_close` records with Kubernetes
+pod/container attribution for client pod
+`e-nav-attrib-192821-r2-client-2zq4g`, and 34 controlled
+`network_flow_summary` records for the same pod. Direct `/metrics` on the
+homelab-02 E-Navigator pod exposed Kubernetes-attributed aggregate counters for
+that client at 1,574 opens, destination observations, and duration samples. The
+run still did not prove `beyla_network_flow_bytes_total` because Guara
+compatibility scope excludes the `e-navigator-bench` temporary workload
+namespace, and no Prometheus server service exists inside that namespace for a
+bounded API query.
+
 The initial live proof should record:
 
 - DaemonSet schedules and remains Ready in `e-navigator-bench`;
