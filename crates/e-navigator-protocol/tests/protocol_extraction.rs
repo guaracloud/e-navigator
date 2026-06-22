@@ -271,6 +271,72 @@ fn drops_oversized_http_request_id_attribute() {
 }
 
 #[test]
+fn extracts_bounded_http_host_authority_without_secret_headers() {
+    let bytes = b"GET /checkout/123 HTTP/1.1\r\nHost: checkout.example.com:8443\r\nTraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\nAuthorization: Bearer secret\r\nCookie: session=secret\r\n\r\n";
+
+    let extraction = parse_http_request(bytes, &ProtocolExtractionConfig::default())
+        .expect("http request parses");
+
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "server.address"
+                && attribute.value == "checkout.example.com")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "server.port" && attribute.value == "8443")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn drops_malformed_and_oversized_http_host_authority_attributes() {
+    for host in [
+        "user:pass@checkout.example.com",
+        "checkout.example.com:not-a-port",
+        "checkout.example.com:70000",
+    ] {
+        let bytes = format!(
+            "GET /checkout/123 HTTP/1.1\r\nHost: {host}\r\nTraceparent: {VALID_TRACEPARENT}\r\n\r\n"
+        );
+
+        let extraction = parse_http_request(bytes.as_bytes(), &ProtocolExtractionConfig::default())
+            .expect("http request parses");
+
+        assert!(
+            !extraction.attributes.iter().any(
+                |attribute| attribute.key == "server.address" || attribute.key == "server.port"
+            ),
+            "{host:?}"
+        );
+    }
+
+    let oversized_host = "h".repeat(254);
+    let bytes = format!(
+        "GET /checkout/123 HTTP/1.1\r\nHost: {oversized_host}\r\nTraceparent: {VALID_TRACEPARENT}\r\n\r\n"
+    );
+
+    let extraction = parse_http_request(bytes.as_bytes(), &ProtocolExtractionConfig::default())
+        .expect("http request parses");
+
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "server.address" || attribute.key == "server.port")
+    );
+}
+
+#[test]
 fn reports_missing_and_invalid_trace_context_without_inventing_ids() {
     let missing = parse_http_request(
         b"POST /orders HTTP/1.1\r\nHost: api.example.com\r\n\r\n",

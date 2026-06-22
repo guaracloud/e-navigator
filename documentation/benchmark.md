@@ -269,6 +269,12 @@ The initial live proof should record:
   from `X-Request-ID` or `Request-ID` headers without copying secret headers or
   oversized request IDs; this is not live HTTP traffic capture or production
   request-correlation proof;
+- `20260622-154547-http-host-authority-local` records local request/protocol
+  proof that the HTTP fixture parser extracts bounded `server.address` and
+  `server.port` attributes from valid Host authorities without copying secret
+  headers, malformed userinfo authorities, oversized hosts, invalid ports, or
+  out-of-range ports; this is not live HTTP traffic capture or production
+  service-topology proof;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in

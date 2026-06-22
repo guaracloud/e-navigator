@@ -139,7 +139,8 @@ Implemented and non-privileged proven:
 - Trace and request foundations through schema, generator, formatter, fixture,
   and smoke tests, including local HTTP fixture extraction of bounded
   `url.path` attributes without query or fragment values and bounded
-  `http.request.id` attributes from request ID headers.
+  `http.request.id` attributes from request ID headers, plus bounded
+  `server.address` and `server.port` attributes from HTTP Host authorities.
 - CPU profiling foundations through raw decode, profile normalization, and
   generator tests.
 - Guara compatibility contracts for the Beyla L4 metric label set, Tempo

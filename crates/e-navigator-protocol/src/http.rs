@@ -7,6 +7,7 @@ use crate::{
 
 const MAX_HTTP_TARGET_PATH_ATTRIBUTE_BYTES: usize = 256;
 const MAX_HTTP_REQUEST_ID_ATTRIBUTE_BYTES: usize = 128;
+const MAX_HTTP_SERVER_ADDRESS_ATTRIBUTE_BYTES: usize = 253;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedHttpRequest {
@@ -43,6 +44,7 @@ pub fn parse_http_request(
     let mut traceparent = None;
     let mut tracestate = None;
     let mut request_id = None;
+    let mut host_authority = None;
 
     for line in lines {
         if line.is_empty() {
@@ -61,6 +63,8 @@ pub fn parse_http_request(
             tracestate = Some(value.to_string());
         } else if is_request_id_header(key) {
             request_id = bounded_request_id(value);
+        } else if key.eq_ignore_ascii_case("host") {
+            host_authority = bounded_host_authority(value);
         }
     }
 
@@ -91,6 +95,22 @@ pub fn parse_http_request(
         "http.request.id",
         request_id.as_deref(),
     );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "server.address",
+        host_authority
+            .as_ref()
+            .map(|authority| authority.address.as_str()),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "server.port",
+        host_authority
+            .as_ref()
+            .and_then(|authority| authority.port.as_deref()),
+    );
 
     Ok(ParsedHttpRequest {
         protocol: ProtocolKind::Http,
@@ -107,6 +127,12 @@ pub fn parse_http_request(
 struct ParsedRequestLine {
     method: Option<String>,
     path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HostAuthority {
+    address: String,
+    port: Option<String>,
 }
 
 fn push_attribute(
@@ -187,4 +213,57 @@ fn bounded_request_id(value: &str) -> Option<String> {
         return None;
     }
     Some(value.to_string())
+}
+
+fn bounded_host_authority(value: &str) -> Option<HostAuthority> {
+    if value.is_empty()
+        || value.contains('@')
+        || value
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || byte == b'/' || byte == b'\\')
+    {
+        return None;
+    }
+
+    let (address, port) = if let Some(rest) = value.strip_prefix('[') {
+        let (address, remainder) = rest.split_once(']')?;
+        let port = if remainder.is_empty() {
+            None
+        } else {
+            Some(remainder.strip_prefix(':')?)
+        };
+        (address, port)
+    } else if let Some((address, port)) = value.split_once(':') {
+        if port.contains(':') {
+            return None;
+        }
+        (address, Some(port))
+    } else {
+        (value, None)
+    };
+
+    if address.is_empty()
+        || address.len() > MAX_HTTP_SERVER_ADDRESS_ATTRIBUTE_BYTES
+        || address.bytes().any(|byte| byte.is_ascii_whitespace())
+    {
+        return None;
+    }
+
+    let port = match port {
+        Some(port) if bounded_port(port).is_some() => Some(port.to_string()),
+        Some(_) => return None,
+        None => None,
+    };
+
+    Some(HostAuthority {
+        address: address.to_string(),
+        port,
+    })
+}
+
+fn bounded_port(value: &str) -> Option<u16> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    value.parse().ok()
 }
