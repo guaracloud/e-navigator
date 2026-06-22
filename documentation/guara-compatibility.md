@@ -150,8 +150,11 @@ Current implementation status:
 - CPU profile source foundations, profile normalization, profile windows, and
   formatted profile records exist.
 - Pyroscope-compatible label formatting and sensitive-attribute filtering exist.
-- Symbolization, demangling, Pyroscope write transport, OTLP profile transport,
-  and real perf-event parity are not yet proven in this compatibility pass.
+- Development-status OTLP profile protobuf serialization exists in the OTLP HTTP
+  sink and is covered by local fake-collector decode tests.
+- Symbolization, demangling, Pyroscope write transport, live OTLP profile
+  collector ingestion, and real perf-event parity are not yet proven in this
+  compatibility pass.
 
 ## Exporter Boundary
 
@@ -172,18 +175,23 @@ boundaries plus reusable HTTP exporter foundations with:
 `sink.otlp_http` now sends metric records as OTLP protobuf
 `ExportMetricsServiceRequest` payloads and trace records with valid trace/span
 IDs as OTLP protobuf `ExportTraceServiceRequest` payloads with
-`application/x-protobuf`. Profiles still use the repository's internal JSON
-record boundary. Homelab run `20260622-135450-otlp-metric-protobuf-live`
+`application/x-protobuf`. Profile records are serialized as development-status
+OTLP protobuf `ExportProfilesServiceRequest` payloads in local fake-collector
+tests. Homelab run `20260622-135450-otlp-metric-protobuf-live`
 proved pushed image `sha-e7016b5` can deliver synthetic network, DNS, system,
 process, and container metrics to a namespace-local OpenTelemetry Collector as
 accepted OTLP protobuf. Homelab run
 `20260622-160350-otlp-trace-protobuf-live` proved pushed image `sha-c00a7d5`
 can deliver synthetic trace/request spans to a namespace-local OpenTelemetry
-Collector as accepted OTLP protobuf. Homelab run `20260621-205344-otlp-live`
+Collector as accepted OTLP protobuf. Commit `a66e1ca` published image
+`ghcr.io/guaracloud/e-navigator:sha-a66e1ca`, but no live profile collector
+claim is made because the Kubernetes preflight found context
+`kind-tentacle-alpha` instead of required context `staging` and stopped before
+deployment. Homelab run `20260621-205344-otlp-live`
 proved live delivery of the older internal JSON records to a namespace-local
 fake collector, including metric, trace, and profile signal families. This is
 not yet Tempo, Alloy, Pyroscope, or broad production collector compatibility
-proof. Profiles still need upstream OTLP serialization.
+proof.
 
 ## Kubernetes Packaging
 

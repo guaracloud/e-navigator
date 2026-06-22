@@ -53,8 +53,9 @@ Linux / Kubernetes node
   sink modules with bounded local tests. OTLP metric records are encoded as
   protobuf `ExportMetricsServiceRequest` payloads, and OTLP trace records with
   valid trace/span IDs are encoded as protobuf `ExportTraceServiceRequest`
-  payloads. Profiles still use the internal record boundary, and no live
-  Tempo/Pyroscope compatibility proof is claimed.
+  payloads. OTLP profile records are encoded as development-status
+  `ExportProfilesServiceRequest` payloads in local tests. No live OTLP profile
+  collector, Tempo, or Pyroscope compatibility proof is claimed.
 
 The pipeline is statically registered by design. Runtime plugin loading is not
 part of the current architecture; see
@@ -162,11 +163,18 @@ Implemented with narrower or deferred runtime claims:
   E-Navigator metric series such as `network_connection_open_count`.
 - OTLP HTTP support is an opt-in registered sink. Local fake-collector tests
   prove trace records with valid trace/span IDs are posted as OTLP protobuf
-  `ExportTraceServiceRequest` payloads with `application/x-protobuf`. Metrics
-  and profiles still use the internal JSON record boundary. Homelab run
+  `ExportTraceServiceRequest` payloads with `application/x-protobuf`, metric
+  records as `ExportMetricsServiceRequest`, and profile records as
+  development-status `ExportProfilesServiceRequest`. Homelab run
   `20260622-160350-otlp-trace-protobuf-live` proved that pushed image
   `sha-c00a7d5` delivered synthetic trace/request spans as OTLP protobuf to a
   namespace-local OpenTelemetry Collector. Homelab run
+  `20260622-135450-otlp-metric-protobuf-live` proved namespace-local
+  OpenTelemetry Collector acceptance of pushed image `sha-e7016b5` OTLP
+  protobuf metrics. Commit `a66e1ca` added profile protobuf export and
+  published image `ghcr.io/guaracloud/e-navigator:sha-a66e1ca`, but homelab
+  profile collector proof was not run because the Kubernetes preflight found
+  context `kind-tentacle-alpha` instead of required context `staging`. Homelab run
   `20260621-205344-otlp-live` proved live delivery to a namespace-local fake
   collector for internal JSON records. Homelab run
   `20260621-214450-sink-failure-live` proved that HTTP 500 responses from a

@@ -184,8 +184,9 @@ The initial live proof should record:
   meaningful;
 - OTLP validation enables `sink.otlp_http` with an explicit endpoint and records
   collector evidence separately from fake-collector unit tests. Local
-  fake-collector tests can prove protobuf trace request encoding, but only live
-  collector logs or accepted requests can upgrade collector-ingestion claims;
+  fake-collector tests can prove protobuf metric, trace, and profile request
+  encoding, but only live collector logs or accepted requests can upgrade
+  collector-ingestion claims;
 - `20260621-205344-otlp-live` is the first homelab OTLP HTTP sink boundary run:
   image `sha-5c417c0` delivered internal JSON metric, trace, and profile records
   to a namespace-local fake collector, then restored the release to
@@ -252,6 +253,12 @@ The initial live proof should record:
   Job in `staging/e-navigator-bench`, proved collector acceptance of 45 OTLP
   protobuf metrics across network, DNS, system, process, and container
   families, and cleaned up the temporary Job and collector resources;
+- `20260622-142733-otlp-profile-protobuf-blocked` records local OTLP profile
+  protobuf proof for commit `a66e1ca` and published image
+  `ghcr.io/guaracloud/e-navigator:sha-a66e1ca`, but no homelab collector
+  proof: the required preflight stopped before deployment because
+  `kubectl config current-context` returned `kind-tentacle-alpha` instead of
+  `staging`;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in
