@@ -353,6 +353,30 @@ The initial live proof should record:
   The release was rolled back to revision 53, restored to digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`,
   and the temporary HTTP proof Job, pod, and Service resources were deleted;
+- `20260622-234023-http-writev-live` records the controlled-client follow-up
+  on `staging/e-navigator-bench`: commit `fb9a6d1` added `sys_enter_writev`
+  HTTP request capture, passed `scripts/quality.sh`, GitHub CI run
+  `27991365112`, and image publication run `27991365123`, then pushed image
+  `ghcr.io/guaracloud/e-navigator:sha-fb9a6d1` index digest
+  `sha256:dec316f7c02504ce99e0500e423adc35398482756f634e915fe14f421d2924e0`
+  and linux/amd64 digest
+  `sha256:2c984944dee476bfdb27ecaa473277152a4f7b304a0ed99d24b867a90dbba751`
+  rolled out as Helm revision 54 with `source.aya_http` and
+  `generator.request_correlation` enabled. A Python client and server pinned to
+  `homelab-02` completed 120 cleartext HTTP requests, with each complete
+  request written through `os.writev`. JSON stdout contained 120
+  `protocol_request_observation` records from `source.aya_http` and 120
+  `request_span_observation` records from `generator.request_correlation` for
+  `/proof/http-writev-20260622-234023`; 101 of each included Kubernetes
+  namespace, pod, and container attribution for client pod
+  `e-nav-http-writev-20260622-234023-client-msdw5`. This proves the bounded
+  outbound client-side cleartext writev path on the observed homelab-02 client,
+  including traceparent and request ID extraction. It does not prove symmetric
+  node coverage, TLS, gRPC, inbound parsing, status-code extraction, route
+  templates, retries, application errors, or multi-iovec HTTP header assembly.
+  The release was rolled back to revision 55/rollback-to-53, restored to digest
+  `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`,
+  and all temporary HTTP writev workload resources were deleted;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in
@@ -387,8 +411,9 @@ fixtures and compile-time benchmark health. They do not prove:
 - privileged Aya/eBPF attachment;
 - runtime DNS packet capture beyond the exact recorded live DNS runs;
 - controlled client workload DNS attribution;
-- controlled application-client HTTP request capture beyond the exact ambient
-  cluster traffic observed in `20260622-231600-http-live`;
+- controlled application-client HTTP request capture beyond the exact
+  homelab-02 writev client path observed in
+  `20260622-234023-http-writev-live`;
 - Kubernetes DaemonSet readiness;
 - real host procfs/sysfs/cgroup accuracy;
 - OTLP, Prometheus, Pyroscope, pprof, or production collector export;

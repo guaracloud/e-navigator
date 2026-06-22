@@ -235,10 +235,11 @@ The following are intentionally not claimed as implemented production behavior:
 - live Beyla-compatible `beyla_network_flow_bytes_total` export from traffic;
 - profile storage, flamegraph rendering, or bottleneck analysis;
 - complete live HTTP/gRPC parsing from real traffic; `source.aya_http` has
-  bounded opt-in live proof for observed cleartext cluster traffic, but not
-  controlled application-client coverage, TLS, gRPC framing, inbound
-  server-side parsing, status-code extraction, route templates, retries,
-  application errors, or live request-ID extraction;
+  bounded opt-in live proof for observed cleartext cluster traffic and one
+  controlled `homelab-02` client using `writev`, but not symmetric node
+  coverage, TLS, gRPC framing, inbound server-side parsing, status-code
+  extraction, route templates, retries, application errors, or multi-iovec HTTP
+  header assembly;
 - privileged-proven runtime DNS packet capture beyond the exact recorded live
   DNS runs;
 - full TCP state tracking, packet accounting, retransmits, or resets;

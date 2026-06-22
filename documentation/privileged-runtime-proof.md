@@ -63,10 +63,10 @@ Unless the exact proof is present in a recorded result set, do not claim:
 
 - privileged Aya exec or network runtime behavior;
 - DNS packet capture beyond the exact recorded live DNS runs;
-- HTTP request capture beyond the exact recorded live HTTP run, including
-  controlled application-client coverage, TLS, gRPC framing, inbound
-  server-side parsing, status-code extraction, route templates, retries,
-  application errors, or live request ID extraction;
+- HTTP request capture beyond the exact recorded live HTTP runs, including
+  symmetric node coverage, TLS, gRPC framing, inbound server-side parsing,
+  status-code extraction, route templates, retries, application errors, or
+  multi-iovec HTTP header assembly;
 - Prometheus scrape/export compatibility;
 - Tempo, Alloy, Pyroscope, pprof, or collector-ingested OTLP compatibility;
 - perf-event CPU profiling parity;
