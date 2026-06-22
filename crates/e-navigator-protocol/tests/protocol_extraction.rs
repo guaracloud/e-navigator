@@ -200,9 +200,36 @@ fn extracts_http_request_trace_context_from_bounded_fixture() {
         "00f067aa0ba902b7"
     );
     assert_eq!(extraction.tracestate.as_deref(), Some("vendor=value"));
-    assert_eq!(extraction.attributes.len(), 1);
-    assert_eq!(extraction.attributes[0].key, "http.request.method");
-    assert_eq!(extraction.attributes[0].value, "GET");
+    assert!(
+        extraction.attributes.iter().any(|attribute| {
+            attribute.key == "http.request.method" && attribute.value == "GET"
+        })
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| { attribute.key == "url.path" && attribute.value == "/checkout/123" })
+    );
+}
+
+#[test]
+fn extracts_http_request_path_without_query_or_fragment() {
+    let bytes = b"GET /checkout/123?token=secret#frag HTTP/1.1\r\nHost: api.example.com\r\nTraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\n\r\n";
+
+    let extraction = parse_http_request(bytes, &ProtocolExtractionConfig::default())
+        .expect("http request parses");
+
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| { attribute.key == "url.path" && attribute.value == "/checkout/123" })
+    );
+    assert!(!extraction
+        .attributes
+        .iter()
+        .any(|attribute| attribute.value.contains("secret") || attribute.value.contains("frag")));
 }
 
 #[test]

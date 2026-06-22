@@ -5,6 +5,8 @@ use crate::{
     trace_context::{TraceContext, parse_traceparent},
 };
 
+const MAX_HTTP_TARGET_PATH_ATTRIBUTE_BYTES: usize = 256;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedHttpRequest {
     pub protocol: ProtocolKind,
@@ -36,7 +38,7 @@ pub fn parse_http_request(
     if request_line.len() > config.max_request_line_bytes {
         return Err(HttpExtraction::RequestLineTooLong);
     }
-    let method = parse_method(request_line)?;
+    let request_line = parse_request_line(request_line)?;
     let mut traceparent = None;
     let mut tracestate = None;
 
@@ -67,24 +69,51 @@ pub fn parse_http_request(
     };
 
     let mut attributes = Vec::new();
-    if config.max_attributes > 0
-        && let Some(method) = &method
-    {
-        attributes.push(TraceAttribute {
-            key: "http.request.method".to_string(),
-            value: method.clone(),
-        });
-    }
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "http.request.method",
+        request_line.method.as_deref(),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "url.path",
+        request_line.path.as_deref(),
+    );
 
     Ok(ParsedHttpRequest {
         protocol: ProtocolKind::Http,
-        method,
+        method: request_line.method,
         trace_context,
         traceparent,
         tracestate,
         warning,
         attributes,
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedRequestLine {
+    method: Option<String>,
+    path: Option<String>,
+}
+
+fn push_attribute(
+    attributes: &mut Vec<TraceAttribute>,
+    max_attributes: usize,
+    key: &str,
+    value: Option<&str>,
+) {
+    if attributes.len() >= max_attributes {
+        return;
+    }
+    if let Some(value) = value {
+        attributes.push(TraceAttribute {
+            key: key.to_string(),
+            value: value.to_string(),
+        });
+    }
 }
 
 fn header_end(bytes: &[u8], max_header_bytes: usize) -> Result<usize, HttpExtraction> {
@@ -100,20 +129,38 @@ fn header_end(bytes: &[u8], max_header_bytes: usize) -> Result<usize, HttpExtrac
     Err(HttpExtraction::HeadersTooLong)
 }
 
-fn parse_method(request_line: &str) -> Result<Option<String>, HttpExtraction> {
+fn parse_request_line(request_line: &str) -> Result<ParsedRequestLine, HttpExtraction> {
     let mut fields = request_line.split_whitespace();
     let Some(method) = fields.next() else {
         return Err(HttpExtraction::MalformedRequestLine);
     };
-    if fields.next().is_none() || fields.next().is_none() {
+    let Some(target) = fields.next() else {
+        return Err(HttpExtraction::MalformedRequestLine);
+    };
+    if fields.next().is_none() {
         return Err(HttpExtraction::MalformedRequestLine);
     }
-    if method.is_empty()
+    let method = if method.is_empty()
         || !method
             .bytes()
             .all(|byte| byte.is_ascii_uppercase() || byte == b'-')
     {
-        return Ok(None);
+        None
+    } else {
+        Some(method.to_string())
+    };
+    let path = method.as_ref().and_then(|_| request_target_path(target));
+    Ok(ParsedRequestLine { method, path })
+}
+
+fn request_target_path(target: &str) -> Option<String> {
+    if !target.starts_with('/') || target.bytes().any(|byte| byte.is_ascii_control()) {
+        return None;
     }
-    Ok(Some(method.to_string()))
+    let end = target.find(['?', '#']).unwrap_or(target.len());
+    let path = &target[..end];
+    if path.is_empty() || path.len() > MAX_HTTP_TARGET_PATH_ATTRIBUTE_BYTES {
+        return None;
+    }
+    Some(path.to_string())
 }

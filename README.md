@@ -137,7 +137,8 @@ Implemented and non-privileged proven:
 - Runner reliability for export outages through tests proving sink failures are
   logged and non-fatal while source failures still propagate.
 - Trace and request foundations through schema, generator, formatter, fixture,
-  and smoke tests.
+  and smoke tests, including local HTTP fixture extraction of bounded
+  `url.path` attributes without query or fragment values.
 - CPU profiling foundations through raw decode, profile normalization, and
   generator tests.
 - Guara compatibility contracts for the Beyla L4 metric label set, Tempo
@@ -224,7 +225,7 @@ The following are intentionally not claimed as implemented production behavior:
 - live Beyla-compatible `beyla_network_flow_bytes_total` export from traffic;
 - profile storage, flamegraph rendering, or bottleneck analysis;
 - live HTTP/gRPC parsing from real traffic;
-- request route, retry, application error, or request-ID extraction;
+- request route templates, retry, application error, or request-ID extraction;
 - privileged-proven runtime DNS packet capture;
 - full TCP state tracking, packet accounting, retransmits, or resets;
 - reduced-privilege Kubernetes eBPF operation.

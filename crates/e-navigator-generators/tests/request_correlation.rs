@@ -232,6 +232,33 @@ async fn duplicate_protocol_request_is_suppressed_deterministically() {
 }
 
 #[tokio::test]
+async fn duplicate_suppression_distinguishes_spanless_request_paths() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut checkout = protocol_request_signal_at(1_000, None, true);
+    let mut orders = protocol_request_signal_at(1_000, None, true);
+    set_request_path(&mut checkout, "/checkout/123");
+    set_request_path(&mut orders, "/orders/456");
+
+    let first = observe(&generator, &checkout).await;
+    let second = observe(&generator, &orders).await;
+
+    assert!(first.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::RequestSpanObservation(span)
+                if has_attribute(span.attributes.as_slice(), "url.path", "/checkout/123")
+        )
+    }));
+    assert!(second.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::RequestSpanObservation(span)
+                if has_attribute(span.attributes.as_slice(), "url.path", "/orders/456")
+        )
+    }));
+}
+
+#[tokio::test]
 async fn bounded_seen_state_evicts_oldest_fingerprint() {
     let generator = RequestCorrelationGenerator::with_limits(1, 8);
     let first = protocol_request_signal_at(1_000, Some(valid_traceparent()), true);
@@ -286,6 +313,22 @@ fn assert_request_warning(outputs: &[SignalEnvelope], warning_type: &str) {
                 if found == warning_type
         )
     }));
+}
+
+fn has_attribute(attributes: &[TraceAttribute], key: &str, value: &str) -> bool {
+    attributes
+        .iter()
+        .any(|attribute| attribute.key == key && attribute.value == value)
+}
+
+fn set_request_path(signal: &mut SignalEnvelope, path: &str) {
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.attributes.push(TraceAttribute {
+        key: "url.path".to_string(),
+        value: path.to_string(),
+    });
 }
 
 fn protocol_request_signal(traceparent: Option<String>, attributed: bool) -> SignalEnvelope {

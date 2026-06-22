@@ -215,6 +215,7 @@ struct RequestFingerprint {
     span_id_hash: Option<u64>,
     method: Option<String>,
     status_code: Option<u16>,
+    request_target_hash: Option<u64>,
     peer_key: String,
 }
 
@@ -238,6 +239,7 @@ impl RequestFingerprint {
                 .map(|value| stable_hash64(value.as_bytes())),
             method: request.method.as_deref().map(bounded_fingerprint_value),
             status_code: request.status_code,
+            request_target_hash: request_target_fingerprint(&request.attributes),
             peer_key: peer_key(request),
         }
     }
@@ -325,6 +327,20 @@ fn bounded_fingerprint_value(value: &str) -> String {
     } else {
         format!("hash:{:016x}", stable_hash64(value.as_bytes()))
     }
+}
+
+fn request_target_fingerprint(attributes: &[TraceAttribute]) -> Option<u64> {
+    attributes.iter().find_map(|attribute| {
+        if !matches!(
+            attribute.key.as_str(),
+            "url.path" | "http.route" | "http.request.target"
+        ) || attribute.key.len() > MAX_REQUEST_ATTRIBUTE_KEY_BYTES
+            || attribute.value.len() > MAX_REQUEST_ATTRIBUTE_VALUE_BYTES
+        {
+            return None;
+        }
+        Some(stable_hash64(attribute.value.as_bytes()))
+    })
 }
 
 fn valid_trace_id(value: &str) -> bool {

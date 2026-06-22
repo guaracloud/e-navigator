@@ -259,6 +259,11 @@ The initial live proof should record:
   proof: the required preflight stopped before deployment because
   `kubectl config current-context` returned `kind-tentacle-alpha` instead of
   `staging`;
+- `20260622-144636-http-request-path-local` records local request/protocol
+  proof that the HTTP fixture parser extracts bounded origin-form `url.path`
+  attributes without query or fragment values and that request-span dedupe
+  distinguishes spanless requests with different path attributes; this is not
+  live HTTP traffic capture or route-template proof;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in
