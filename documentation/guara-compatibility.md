@@ -172,12 +172,14 @@ boundaries plus reusable HTTP exporter foundations with:
 `sink.otlp_http` now sends trace records with valid trace/span IDs as OTLP
 protobuf `ExportTraceServiceRequest` payloads with
 `application/x-protobuf`. Metrics and profiles still use the repository's
-internal JSON record boundary. Homelab run `20260621-205344-otlp-live` proved
-live delivery of the older internal JSON records to a namespace-local fake
-collector, including metric, trace, and profile signal families. This is not
-yet production collector compatibility proof. Metrics and profiles still need
-upstream OTLP serialization, and trace protobuf output must be verified against
-a real collector before claiming Tempo, Alloy, or Pyroscope compatibility.
+internal JSON record boundary. Homelab run
+`20260622-160350-otlp-trace-protobuf-live` proved pushed image `sha-c00a7d5`
+can deliver synthetic trace/request spans to a namespace-local OpenTelemetry
+Collector as accepted OTLP protobuf. Homelab run `20260621-205344-otlp-live`
+proved live delivery of the older internal JSON records to a namespace-local
+fake collector, including metric, trace, and profile signal families. This is
+not yet Tempo, Alloy, Pyroscope, or broad production collector compatibility
+proof. Metrics and profiles still need upstream OTLP serialization.
 
 ## Kubernetes Packaging
 

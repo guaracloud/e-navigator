@@ -163,6 +163,9 @@ Implemented with narrower or deferred runtime claims:
   prove trace records with valid trace/span IDs are posted as OTLP protobuf
   `ExportTraceServiceRequest` payloads with `application/x-protobuf`. Metrics
   and profiles still use the internal JSON record boundary. Homelab run
+  `20260622-160350-otlp-trace-protobuf-live` proved that pushed image
+  `sha-c00a7d5` delivered synthetic trace/request spans as OTLP protobuf to a
+  namespace-local OpenTelemetry Collector. Homelab run
   `20260621-205344-otlp-live` proved live delivery to a namespace-local fake
   collector for internal JSON records. Homelab run
   `20260621-214450-sink-failure-live` proved that HTTP 500 responses from a
@@ -170,8 +173,8 @@ Implemented with narrower or deferred runtime claims:
   terminating the runner or stopping Prometheus/JSON stdout. Homelab run
   `20260622-001716-published-image-live` repeated the real Alloy HTTP 400
   failure boundary with pushed GHCR image `sha-d3167e3` and kept both pods Ready
-  with JSON stdout and Prometheus HTTP active. These runs are not successful
-  Tempo, Pyroscope, Alloy, or production collector compatibility proof.
+  with JSON stdout and Prometheus HTTP active. These runs are not Tempo,
+  Pyroscope, Alloy, or broad production collector compatibility proof.
 - Guara Beyla L4 compatibility remains generator and formatter proven, with a
   recorded live boundary. Homelab run `20260621-220029-guara-compat-live`
   enabled `generator.guara_compat` while Prometheus scraping was healthy and

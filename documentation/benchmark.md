@@ -242,6 +242,11 @@ The initial live proof should record:
   `sha-d3167e3` with the baseline config restored and both homelab pods Ready;
 - `20260622-004011-current-head-live` left the Helm release on current pushed
   image `sha-c89f345` with both homelab pods Ready;
+- `20260622-160350-otlp-trace-protobuf-live` ran a namespace-local
+  OpenTelemetry Collector plus one-shot pushed image `sha-c00a7d5` synthetic
+  Job in `staging/e-navigator-bench`, proved collector acceptance of two OTLP
+  protobuf trace spans, and cleaned up the temporary Job and collector
+  resources;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in
