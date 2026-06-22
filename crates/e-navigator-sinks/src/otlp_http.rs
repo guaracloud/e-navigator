@@ -7,13 +7,13 @@ use tokio::sync::Mutex;
 use crate::{
     HttpExporterConfig, HttpJsonExporter, HttpProtobufExporter, ProfileRecord,
     format_otel_metric_record, format_otel_trace_record, format_profile_record,
+    otlp_metric_proto::encode_metric_export_request,
     otlp_trace_proto::{encode_trace_export_request, trace_record_has_valid_ids},
 };
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case", tag = "signal_family", content = "record")]
 enum OtlpHttpRecord {
-    Metric(crate::OtelMetricRecord),
     Profile(ProfileRecord),
 }
 
@@ -21,6 +21,7 @@ enum OtlpHttpRecord {
 pub struct OtlpHttpSink {
     config: OtlpHttpConfig,
     json_exporter: Mutex<HttpJsonExporter<OtlpHttpRecord>>,
+    metric_exporter: Mutex<HttpProtobufExporter<crate::OtelMetricRecord>>,
     trace_exporter: Mutex<HttpProtobufExporter<crate::OtelTraceRecord>>,
 }
 
@@ -41,6 +42,12 @@ impl OtlpHttpSink {
                 message: err.to_string(),
             }
         })?;
+        let metric_exporter =
+            HttpProtobufExporter::new(exporter_config.clone(), encode_metric_export_request)
+                .map_err(|err| e_navigator_core::CoreError::ModuleFailed {
+                    module: "sink.otlp_http".to_string(),
+                    message: err.to_string(),
+                })?;
         let trace_exporter =
             HttpProtobufExporter::new(exporter_config, encode_trace_export_request).map_err(
                 |err| e_navigator_core::CoreError::ModuleFailed {
@@ -52,6 +59,7 @@ impl OtlpHttpSink {
         Ok(Self {
             config,
             json_exporter: Mutex::new(json_exporter),
+            metric_exporter: Mutex::new(metric_exporter),
             trace_exporter: Mutex::new(trace_exporter),
         })
     }
@@ -81,18 +89,24 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
             });
         }
 
-        let record = if self.config.metrics_enabled {
-            format_otel_metric_record(signal).map(OtlpHttpRecord::Metric)
+        if self.config.metrics_enabled
+            && let Some(record) = format_otel_metric_record(signal)
+        {
+            let mut exporter = self.metric_exporter.lock().await;
+            exporter.enqueue(record);
+            return exporter.flush_once().await.map_err(|err| {
+                e_navigator_core::CoreError::ModuleFailed {
+                    module: "sink.otlp_http".to_string(),
+                    message: err.to_string(),
+                }
+            });
+        }
+
+        let record = if self.config.profiles_enabled {
+            format_profile_record(signal).map(OtlpHttpRecord::Profile)
         } else {
             None
-        }
-        .or_else(|| {
-            if self.config.profiles_enabled {
-                format_profile_record(signal).map(OtlpHttpRecord::Profile)
-            } else {
-                None
-            }
-        });
+        };
 
         let Some(record) = record else {
             return Ok(());
@@ -119,7 +133,12 @@ mod tests {
         NetworkCounterMetric, NetworkProtocol, RequestSpanObservation, SignalEnvelope,
         TraceConfidence, TraceCorrelationKind,
     };
-    use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+    use opentelemetry_proto::tonic::{
+        collector::{
+            metrics::v1::ExportMetricsServiceRequest, trace::v1::ExportTraceServiceRequest,
+        },
+        metrics::v1::{metric::Data, number_data_point},
+    };
     use prost::Message;
     use std::collections::BTreeMap;
     use tokio::{
@@ -128,11 +147,14 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn otlp_http_sink_exports_metric_records_to_fake_collector() {
+    async fn otlp_http_sink_exports_metric_records_as_otlp_protobuf() {
         let collector = FakeCollector::spawn(vec![200]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
             enabled: true,
             endpoint: collector.url(),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
             batch_size: 1,
             queue_capacity: 2,
             timeout_millis: 1_000,
@@ -147,9 +169,31 @@ mod tests {
         let request = collector.next_request().await;
 
         assert!(request.contains("POST / HTTP/1.1"));
-        assert!(request.contains("network.connection.open.count"));
-        assert!(request.contains("signal_family"));
-        assert!(request.contains("metric"));
+        assert!(request.contains("content-type: application/x-protobuf"));
+        assert!(!request.contains("signal_family"));
+        let decoded = ExportMetricsServiceRequest::decode(request.body())
+            .expect("OTLP metrics request decodes");
+        let resource_metrics = decoded.resource_metrics.first().expect("resource metrics");
+        let scope_metrics = resource_metrics
+            .scope_metrics
+            .first()
+            .expect("scope metrics are present");
+        let metric = scope_metrics.metrics.first().expect("metric is present");
+
+        assert_eq!(metric.name, "network.connection.open.count");
+        assert_eq!(metric.unit, "{connection}");
+        let Some(Data::Sum(sum)) = metric.data.as_ref() else {
+            panic!("metric is exported as OTLP Sum");
+        };
+        let point = sum.data_points.first().expect("sum data point");
+        assert_eq!(point.value, Some(number_data_point::Value::AsInt(1)));
+        assert!(point.attributes.iter().any(|attribute| {
+            attribute.key == "net.transport" && format!("{:?}", attribute.value).contains("tcp")
+        }));
+        let resource = resource_metrics.resource.as_ref().expect("resource");
+        assert!(resource.attributes.iter().any(|attribute| {
+            attribute.key == "host.name" && format!("{:?}", attribute.value).contains("node-a")
+        }));
     }
 
     #[tokio::test]

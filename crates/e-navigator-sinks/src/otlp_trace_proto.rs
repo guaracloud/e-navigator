@@ -1,13 +1,11 @@
-use crate::{ExporterError, OtelTraceRecord, OtelTraceRecordKind};
+use crate::{ExporterError, OtelTraceRecord, OtelTraceRecordKind, otlp_common::key_values};
 use opentelemetry_proto::tonic::{
     collector::trace::v1::ExportTraceServiceRequest,
-    common::v1::{AnyValue, InstrumentationScope, KeyValue, any_value},
+    common::v1::InstrumentationScope,
     resource::v1::Resource,
     trace::v1::{ResourceSpans, ScopeSpans, Span, span},
 };
 use prost::Message;
-use serde_json::Value;
-use std::collections::BTreeMap;
 
 pub(crate) fn trace_record_has_valid_ids(record: &OtelTraceRecord) -> bool {
     record
@@ -97,40 +95,6 @@ fn span_kind(kind: &OtelTraceRecordKind) -> span::SpanKind {
         | OtelTraceRecordKind::CorrelationWarning
         | OtelTraceRecordKind::RequestWarning => span::SpanKind::Internal,
     }
-}
-
-fn key_values(attributes: &BTreeMap<String, Value>) -> Vec<KeyValue> {
-    attributes
-        .iter()
-        .map(|(key, value)| KeyValue {
-            key: key.clone(),
-            value: Some(to_any_value(value)),
-            key_strindex: 0,
-        })
-        .collect()
-}
-
-fn to_any_value(value: &Value) -> AnyValue {
-    let value = match value {
-        Value::Bool(value) => any_value::Value::BoolValue(*value),
-        Value::Number(value) => {
-            if let Some(value) = value.as_i64() {
-                any_value::Value::IntValue(value)
-            } else if let Some(value) = value.as_u64() {
-                match i64::try_from(value) {
-                    Ok(value) => any_value::Value::IntValue(value),
-                    Err(_) => any_value::Value::StringValue(value.to_string()),
-                }
-            } else {
-                any_value::Value::DoubleValue(value.as_f64().unwrap_or_default())
-            }
-        }
-        Value::String(value) => any_value::Value::StringValue(value.clone()),
-        Value::Null | Value::Array(_) | Value::Object(_) => {
-            any_value::Value::StringValue(value.to_string())
-        }
-    };
-    AnyValue { value: Some(value) }
 }
 
 fn hex_to_bytes(value: &str, expected_len: usize) -> Option<Vec<u8>> {
