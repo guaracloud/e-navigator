@@ -215,6 +215,17 @@ The initial live proof should record:
   observed live `source.aya_dns` plus `generator.dns_metrics` output from
   CoreDNS and Pi-hole, and recorded that the controlled BusyBox
   client-to-CoreDNS workload did not appear in DNS attribution;
+- `20260622-213109-dns-connected-udp-live-r2` pushed commit `94e808c`, waited
+  for GitHub CI and GHCR image publication, rolled
+  `ghcr.io/guaracloud/e-navigator:sha-94e808c` to
+  `staging/e-navigator-bench`, enabled `source.aya_dns` and
+  `generator.dns_metrics`, ran connected-UDP Python DNS clients pinned to both
+  homelab nodes, and proved the observed warmed `homelab-02` client pod emitted
+  attributed `dns_query`, `dns_response`, `dns_counter_metric`, and
+  `dns_latency_metric` records for `10.43.0.10:53`; the `homelab-01`
+  controlled client completed but did not produce matching controlled-client DNS
+  records in the final structured pass, and dropped DNS perf events mean the run
+  is not lossless capture proof;
 - `20260622-122803-guara-einprogress-live` pushed commit `622e1aa`, waited for
   GHCR image publication, rolled
   `ghcr.io/guaracloud/e-navigator:sha-622e1aa` to
