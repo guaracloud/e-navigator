@@ -25,6 +25,7 @@ run cargo run --locked -p e-navigator-cli -- --source synthetic
 run tests/homelab_bench_guard_test.sh
 run tests/packaged_config_guard_test.sh
 run tests/secret_pattern_guard_test.sh
+run tests/network_einprogress_guard_test.sh
 
 if [ "${E_NAVIGATOR_SKIP_SUPPLY_CHAIN:-0}" != "1" ]; then
   require_tool cargo-deny

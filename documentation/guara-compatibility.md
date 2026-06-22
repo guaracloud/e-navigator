@@ -72,6 +72,10 @@ Current implementation status:
   The server-IP records were captured as `EINPROGRESS` connection failures, not
   byte-bearing closes, and produced 0 controlled `network_flow_summary` rows and
   0 `beyla_network_flow_bytes_total` signals.
+- The current local tree handles Linux `-EINPROGRESS` nonblocking TCP connect
+  returns as open/active connections in the eBPF source path, guarded by
+  `tests/network_einprogress_guard_test.sh`. This is not live runtime proof
+  until deployed and recorded in the homelab namespace.
 - Positive `beyla_network_flow_bytes_total` proof still requires a controlled
   byte-bearing flow with Kubernetes attribution and an in-scope Guara
   `proj-*` paid tenant endpoint. The current homelab namespace boundary

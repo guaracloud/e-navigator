@@ -27,6 +27,7 @@ const NETWORK_EVENT_CLOSE: u32 = 2;
 const NETWORK_EVENT_FAILURE: u32 = 3;
 const NETWORK_IO_READ: u32 = 1;
 const NETWORK_IO_WRITE: u32 = 2;
+const NEG_EINPROGRESS: i64 = -115;
 const EXEC_EVENT_SOURCE_SYSCALL_ENTER: u32 = 1;
 const EXEC_EVENT_SOURCE_SCHED_EXEC: u32 = 2;
 const CPU_PROFILE_MAX_FRAMES: usize = 4;
@@ -511,7 +512,7 @@ fn try_tracepoint_connect_exit(ctx: TracePointContext) -> Result<u32, i64> {
     copy_pending_to_event(&pending, event);
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
 
-    if retval < 0 {
+    if retval < 0 && retval != NEG_EINPROGRESS {
         event.event_type = NETWORK_EVENT_FAILURE;
         event.errno = (-retval) as i32;
         NETWORK_EVENTS.output(&ctx, &*event, 0);

@@ -159,6 +159,14 @@ than byte-bearing closes. Prometheus API queries were not run for this slice
 because no Prometheus server service exists in `e-navigator-bench` and the live
 boundary kept actions inside that namespace.
 
+The current local tree handles Linux `-EINPROGRESS` nonblocking TCP connect
+returns as open/active connections instead of failure-only records, with
+`tests/network_einprogress_guard_test.sh` included in `scripts/quality.sh`.
+This is local implementation evidence only. It does not upgrade the Guara L4
+runtime claim until a pushed image is deployed in `staging/e-navigator-bench`
+and records byte-bearing controlled workload closes, `network_flow_summary`, and
+`beyla_network_flow_bytes_total` evidence.
+
 The initial live proof should record:
 
 - DaemonSet schedules and remains Ready in `e-navigator-bench`;
