@@ -546,6 +546,8 @@ fn network_close_signal(timestamp: u64) -> SignalEnvelope {
             opened_at_unix_nanos: Some(timestamp.saturating_sub(500)),
             closed_at_unix_nanos: timestamp,
             duration_nanos: Some(500),
+            bytes_sent: None,
+            bytes_received: None,
             container: Some(container()),
             kubernetes: Some(kubernetes("api")),
         },

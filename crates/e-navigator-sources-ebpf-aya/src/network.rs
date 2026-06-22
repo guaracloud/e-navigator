@@ -41,6 +41,8 @@ pub(crate) struct RawNetworkEvent {
     pub local_addr_v6: [u8; 16],
     pub timestamp_unix_nanos: u64,
     pub duration_nanos: u64,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
     pub command: [u8; 16],
 }
 
@@ -122,6 +124,8 @@ fn raw_network_to_signal_with_clock_and_procfs(
                     .filter(|_| raw.duration_nanos != 0),
                 closed_at_unix_nanos: observed_unix_nanos,
                 duration_nanos: (raw.duration_nanos != 0).then_some(raw.duration_nanos),
+                bytes_sent: (raw.bytes_sent != 0).then_some(raw.bytes_sent),
+                bytes_received: (raw.bytes_received != 0).then_some(raw.bytes_received),
                 container: container.clone(),
                 kubernetes: None,
             },
@@ -299,6 +303,30 @@ mod platform {
                 "tracepoint_close_enter",
                 "syscalls",
                 "sys_enter_close",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_read_enter",
+                "syscalls",
+                "sys_enter_read",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_read_exit",
+                "syscalls",
+                "sys_exit_read",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_write_enter",
+                "syscalls",
+                "sys_enter_write",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_write_exit",
+                "syscalls",
+                "sys_exit_write",
             )?;
 
             let mut perf_array =
@@ -742,6 +770,8 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 1_000,
             duration_nanos: 0,
+            bytes_sent: 0,
+            bytes_received: 0,
             command: fixed_command("api"),
         };
 
@@ -786,6 +816,8 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 1_000,
             duration_nanos: 0,
+            bytes_sent: 0,
+            bytes_received: 0,
             command: fixed_command("api"),
         };
 
@@ -819,6 +851,8 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 1_000,
             duration_nanos: 200,
+            bytes_sent: 0,
+            bytes_received: 0,
             command: fixed_command("api"),
         };
 
@@ -856,6 +890,8 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 2_000,
             duration_nanos: 0,
+            bytes_sent: 0,
+            bytes_received: 0,
             command: fixed_command("worker"),
         };
 
@@ -892,6 +928,8 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 3_000,
             duration_nanos: 2_000,
+            bytes_sent: 0,
+            bytes_received: 0,
             command: fixed_command("api"),
         };
 
@@ -907,6 +945,41 @@ mod tests {
         assert_eq!(event.duration_nanos, Some(2_000));
         assert_eq!(event.closed_at_unix_nanos, 3_000);
         assert_eq!(event.opened_at_unix_nanos, Some(1_000));
+    }
+
+    #[test]
+    fn decodes_raw_close_byte_counters() {
+        let raw = RawNetworkEvent {
+            event_type: RAW_NETWORK_EVENT_CLOSE,
+            pid: 42,
+            uid: 1000,
+            cgroup_id: 0,
+            fd: 7,
+            errno: 0,
+            family: RAW_AF_INET,
+            protocol: RAW_PROTO_TCP,
+            remote_port_be: 5432_u16.to_be(),
+            local_port_be: 43512_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([10, 0, 0, 20]),
+            local_addr_v4: u32::from_ne_bytes([10, 0, 0, 5]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 3_000,
+            duration_nanos: 2_000,
+            bytes_sent: 512,
+            bytes_received: 1024,
+            command: fixed_command("api"),
+        };
+
+        let signal =
+            raw_network_to_signal_with_clock(raw_as_bytes(&raw), Some("node-a".to_string()), 3_000)
+                .expect("raw event decodes");
+
+        let SignalPayload::NetworkConnectionClose(event) = signal.payload else {
+            panic!("expected network close payload");
+        };
+        assert_eq!(event.bytes_sent, Some(512));
+        assert_eq!(event.bytes_received, Some(1024));
     }
 
     #[test]
@@ -930,6 +1003,8 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 1_000,
             duration_nanos: 0,
+            bytes_sent: 0,
+            bytes_received: 0,
             command: fixed_command("api"),
         };
 
@@ -945,7 +1020,7 @@ mod tests {
 
     #[test]
     fn raw_network_event_layout_size_matches_ebpf_abi() {
-        assert_eq!(std::mem::size_of::<RawNetworkEvent>(), 120);
+        assert_eq!(std::mem::size_of::<RawNetworkEvent>(), 136);
     }
 
     #[test]

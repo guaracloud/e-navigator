@@ -1227,6 +1227,8 @@ mod tests {
                 opened_at_unix_nanos: Some(300),
                 closed_at_unix_nanos: 900,
                 duration_nanos: Some(600),
+                bytes_sent: None,
+                bytes_received: None,
                 container: None,
                 kubernetes: None,
             },

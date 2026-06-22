@@ -82,6 +82,13 @@ impl KubernetesAttribution {
         cached
     }
 
+    pub(super) fn context_for_pod_ip(&self, pod_ip: &str) -> Option<KubernetesContext> {
+        self.cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get_by_pod_ip(pod_ip))
+    }
+
     fn cached_context(&self, container_id: &str) -> Option<KubernetesContext> {
         self.cache
             .lock()
@@ -266,17 +273,31 @@ impl KubernetesMetadataProvider for InClusterKubernetesMetadataProvider {
 #[derive(Debug, Clone, Default)]
 pub struct KubernetesMetadataCache {
     by_container_id: BTreeMap<String, KubernetesContext>,
+    by_pod_ip: BTreeMap<String, KubernetesContext>,
 }
 
 impl KubernetesMetadataCache {
     pub fn from_contexts(contexts: impl IntoIterator<Item = (String, KubernetesContext)>) -> Self {
         Self {
             by_container_id: contexts.into_iter().collect(),
+            by_pod_ip: BTreeMap::new(),
+        }
+    }
+
+    pub fn from_contexts_and_pod_ips(
+        contexts: impl IntoIterator<Item = (String, KubernetesContext)>,
+        pod_ips: impl IntoIterator<Item = (String, KubernetesContext)>,
+    ) -> Self {
+        Self {
+            by_container_id: contexts.into_iter().collect(),
+            by_pod_ip: pod_ips.into_iter().collect(),
         }
     }
 
     pub(super) fn len(&self) -> usize {
-        self.by_container_id.len()
+        self.by_container_id
+            .len()
+            .saturating_add(self.by_pod_ip.len())
     }
 
     pub(super) fn contains_container(&self, container_id: &str) -> bool {
@@ -285,6 +306,10 @@ impl KubernetesMetadataCache {
 
     pub(super) fn get(&self, container_id: &str) -> Option<KubernetesContext> {
         self.by_container_id.get(container_id).cloned()
+    }
+
+    pub(super) fn get_by_pod_ip(&self, pod_ip: &str) -> Option<KubernetesContext> {
+        self.by_pod_ip.get(pod_ip).cloned()
     }
 
     pub(super) async fn from_in_cluster(
@@ -324,6 +349,7 @@ impl KubernetesMetadataCache {
 
     fn from_pod_list(pod_list: PodList, config: &KubernetesAttributionConfig) -> Self {
         let mut by_container_id = BTreeMap::new();
+        let mut by_pod_ip = BTreeMap::new();
 
         for pod in pod_list.items.into_iter().take(config.max_pods) {
             let namespace = pod.metadata.namespace.unwrap_or_default();
@@ -332,35 +358,45 @@ impl KubernetesMetadataCache {
             let labels = bounded_labels(pod.metadata.labels.unwrap_or_default(), config);
             let node_name = pod.spec.and_then(|spec| spec.node_name);
             if let Some(status) = pod.status {
+                let pod_ip = status.pod_ip;
                 for container in status.container_statuses.unwrap_or_default() {
                     if by_container_id.len() >= config.max_cache_entries {
                         warn!(
                             max_cache_entries = config.max_cache_entries,
                             "kubernetes metadata cache entry limit reached"
                         );
-                        return Self { by_container_id };
+                        return Self {
+                            by_container_id,
+                            by_pod_ip,
+                        };
                     }
                     if let Some(container_id) = container.container_id {
                         let Some((_, id)) = container_id.split_once("://") else {
                             continue;
                         };
-                        by_container_id.insert(
-                            id.to_string(),
-                            KubernetesContext {
-                                namespace: namespace.clone(),
-                                pod_name: pod_name.clone(),
-                                pod_uid: pod_uid.clone(),
-                                container_name: Some(container.name),
-                                node_name: node_name.clone(),
-                                labels: labels.clone(),
-                            },
-                        );
+                        let context = KubernetesContext {
+                            namespace: namespace.clone(),
+                            pod_name: pod_name.clone(),
+                            pod_uid: pod_uid.clone(),
+                            container_name: Some(container.name),
+                            node_name: node_name.clone(),
+                            labels: labels.clone(),
+                        };
+                        if let Some(pod_ip) = pod_ip.as_ref().filter(|value| !value.is_empty()) {
+                            by_pod_ip
+                                .entry(pod_ip.clone())
+                                .or_insert_with(|| context.clone());
+                        }
+                        by_container_id.insert(id.to_string(), context);
                     }
                 }
             }
         }
 
-        Self { by_container_id }
+        Self {
+            by_container_id,
+            by_pod_ip,
+        }
     }
 }
 
@@ -451,6 +487,7 @@ struct PodSpec {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PodStatus {
+    pod_ip: Option<String>,
     container_statuses: Option<Vec<ContainerStatus>>,
 }
 
@@ -483,6 +520,7 @@ mod tests {
                     node_name: Some("homelab-01".to_string()),
                 }),
                 status: Some(PodStatus {
+                    pod_ip: None,
                     container_statuses: Some(vec![ContainerStatus {
                         name: "known-live-loop".to_string(),
                         container_id: Some(
@@ -596,6 +634,7 @@ mod tests {
                         node_name: Some("node-a".to_string()),
                     }),
                     status: Some(PodStatus {
+                        pod_ip: None,
                         container_statuses: Some(vec![ContainerStatus {
                             name: "app".to_string(),
                             container_id: Some(format!("containerd://container-{index}")),
@@ -635,6 +674,7 @@ mod tests {
                     node_name: Some("node-a".to_string()),
                 }),
                 status: Some(PodStatus {
+                    pod_ip: None,
                     container_statuses: Some(vec![ContainerStatus {
                         name: "api".to_string(),
                         container_id: Some("containerd://container-api".to_string()),
@@ -673,6 +713,7 @@ mod tests {
                     },
                     spec: None,
                     status: Some(PodStatus {
+                        pod_ip: None,
                         container_statuses: Some(vec![ContainerStatus {
                             name: "app".to_string(),
                             container_id: Some(format!("containerd://container-{index}")),

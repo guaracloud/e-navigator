@@ -138,6 +138,10 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                 )
                 .await;
             }
+            SignalPayload::NetworkFlowSummary(event) => {
+                self.enrich_network_flow_endpoint(&mut event.source);
+                self.enrich_network_flow_endpoint(&mut event.destination);
+            }
             SignalPayload::DnsQuery(event) => {
                 self.enrich_context(
                     event.process.pid,
@@ -283,6 +287,26 @@ impl ContainerAttributionProcessor {
         }
     }
 
+    fn enrich_network_flow_endpoint(
+        &self,
+        endpoint: &mut e_navigator_signals::NetworkFlowEndpoint,
+    ) {
+        if endpoint.kubernetes.is_none() {
+            endpoint.kubernetes = endpoint
+                .container
+                .as_ref()
+                .and_then(|container| {
+                    self.kubernetes_context_for_container(&container.container_id)
+                })
+                .or_else(|| {
+                    endpoint
+                        .address
+                        .as_ref()
+                        .and_then(|address| self.kubernetes_context_for_pod_ip(address))
+                });
+        }
+    }
+
     async fn enrich_profile_context(
         &self,
         pid: Option<u32>,
@@ -342,5 +366,9 @@ impl ContainerAttributionProcessor {
 
     fn kubernetes_context_for_container(&self, container_id: &str) -> Option<KubernetesContext> {
         self.kubernetes.context_for_container(container_id)
+    }
+
+    fn kubernetes_context_for_pod_ip(&self, pod_ip: &str) -> Option<KubernetesContext> {
+        self.kubernetes.context_for_pod_ip(pod_ip)
     }
 }

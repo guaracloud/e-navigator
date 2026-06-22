@@ -11,8 +11,9 @@ use e_navigator_generators::{
 use e_navigator_signals::{
     ContainerContext, DependencyEdgeEvent, DependencyEndpoint, DnsQueryEvent, DnsQueryType,
     ExecEvent, KubernetesContext, NetworkAddressFamily, NetworkConnectionCloseEvent,
-    NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol, ProcessExitEvent,
-    ProtocolKind, ProtocolRequestObservation, SignalEnvelope, SignalPayload, TraceConfidence,
+    NetworkConnectionOpenEvent, NetworkFlowDirection, NetworkFlowEndpoint, NetworkFlowSummaryEvent,
+    NetworkProcessIdentity, NetworkProtocol, ProcessExitEvent, ProtocolKind,
+    ProtocolRequestObservation, SignalEnvelope, SignalPayload, TraceConfidence,
     TraceCorrelationKind, TracePeerContext,
 };
 use std::{
@@ -912,6 +913,8 @@ async fn trace_correlation_uses_processor_enriched_attribution() {
             opened_at_unix_nanos: Some(100),
             closed_at_unix_nanos: 300,
             duration_nanos: Some(200),
+            bytes_sent: None,
+            bytes_received: None,
             container: None,
             kubernetes: None,
         },
@@ -948,6 +951,78 @@ async fn trace_correlation_uses_processor_enriched_attribution() {
     assert_eq!(span.process.as_ref().expect("process").pid, 91);
 
     fs::remove_dir_all(root).expect("fixture cleanup succeeds");
+}
+
+#[tokio::test]
+async fn network_flow_summary_enriches_destination_from_pod_ip_cache() {
+    let source_container_id = "abababababababababababababababababababababababababababababababab";
+    let destination_container_id =
+        "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+    let source_kubernetes = kube_context("api-pod");
+    let destination_kubernetes = kube_context("redis-pod");
+    let processor = ContainerAttributionProcessor::with_cache(
+        AttributionConfig {
+            kubernetes: KubernetesAttributionConfig {
+                enabled: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        KubernetesMetadataCache::from_contexts_and_pod_ips(
+            [
+                (source_container_id.to_string(), source_kubernetes.clone()),
+                (
+                    destination_container_id.to_string(),
+                    destination_kubernetes.clone(),
+                ),
+            ],
+            [("10.0.0.20".to_string(), destination_kubernetes.clone())],
+        ),
+    );
+    let signal = SignalEnvelope::network_flow_summary(
+        "generator.network_metrics",
+        Some("node-a".to_string()),
+        NetworkFlowSummaryEvent {
+            source: NetworkFlowEndpoint {
+                address: Some("10.0.0.5".to_string()),
+                port: Some(43512),
+                owner_name: None,
+                owner_type: None,
+                container: Some(ContainerContext {
+                    container_id: source_container_id.to_string(),
+                    runtime: Some("containerd".to_string()),
+                }),
+                kubernetes: None,
+            },
+            destination: NetworkFlowEndpoint {
+                address: Some("10.0.0.20".to_string()),
+                port: Some(6379),
+                owner_name: None,
+                owner_type: None,
+                container: None,
+                kubernetes: None,
+            },
+            protocol: NetworkProtocol::Tcp,
+            address_family: NetworkAddressFamily::Ipv4,
+            bytes: 1536,
+            packets: None,
+            direction: NetworkFlowDirection::Egress,
+            first_seen_unix_nanos: 100,
+            last_seen_unix_nanos: 900,
+        },
+    );
+
+    let processed = processor
+        .process(signal)
+        .await
+        .expect("processor succeeds")
+        .expect("signal is retained");
+
+    let SignalPayload::NetworkFlowSummary(flow) = processed.payload else {
+        panic!("expected network flow summary");
+    };
+    assert_eq!(flow.source.kubernetes, Some(source_kubernetes));
+    assert_eq!(flow.destination.kubernetes, Some(destination_kubernetes));
 }
 
 #[tokio::test]

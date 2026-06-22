@@ -352,6 +352,8 @@ fn network_close_signal() -> SignalEnvelope {
             opened_at_unix_nanos: Some(1_000),
             closed_at_unix_nanos: 2_000,
             duration_nanos: Some(1_000),
+            bytes_sent: None,
+            bytes_received: None,
             container: Some(container()),
             kubernetes: Some(kubernetes()),
         },

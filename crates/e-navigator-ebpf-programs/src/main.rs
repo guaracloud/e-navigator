@@ -25,6 +25,8 @@ const DNS_PACKET_BYTES: usize = 512;
 const NETWORK_EVENT_OPEN: u32 = 1;
 const NETWORK_EVENT_CLOSE: u32 = 2;
 const NETWORK_EVENT_FAILURE: u32 = 3;
+const NETWORK_IO_READ: u32 = 1;
+const NETWORK_IO_WRITE: u32 = 2;
 const EXEC_EVENT_SOURCE_SYSCALL_ENTER: u32 = 1;
 const EXEC_EVENT_SOURCE_SCHED_EXEC: u32 = 2;
 const CPU_PROFILE_MAX_FRAMES: usize = 4;
@@ -71,6 +73,8 @@ pub struct RawNetworkEvent {
     pub local_addr_v6: [u8; 16],
     pub timestamp_unix_nanos: u64,
     pub duration_nanos: u64,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
     pub command: [u8; 16],
 }
 
@@ -120,7 +124,17 @@ pub struct PendingConnect {
     pub remote_addr_v6: [u8; 16],
     pub local_addr_v6: [u8; 16],
     pub started_at_nanos: u64,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
     pub command: [u8; 16],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PendingNetworkIo {
+    pub tgid: u32,
+    pub fd: i32,
+    pub direction: u32,
 }
 
 #[repr(C)]
@@ -185,6 +199,9 @@ static ACTIVE_CONNECTIONS: HashMap<ConnectionKey, PendingConnect> =
     HashMap::with_max_entries(16384, 0);
 
 #[map]
+static PENDING_NETWORK_IO: HashMap<u64, PendingNetworkIo> = HashMap::with_max_entries(8192, 0);
+
+#[map]
 static PENDING_DNS_RECVS: HashMap<u64, PendingDnsRecv> = HashMap::with_max_entries(4096, 0);
 
 #[tracepoint]
@@ -238,6 +255,38 @@ pub fn tracepoint_connect_exit(ctx: TracePointContext) -> u32 {
 #[tracepoint]
 pub fn tracepoint_close_enter(ctx: TracePointContext) -> u32 {
     match try_tracepoint_close_enter(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_read_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_io_enter(ctx, NETWORK_IO_READ) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_read_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_io_exit(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_write_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_io_enter(ctx, NETWORK_IO_WRITE) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_write_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_io_exit(ctx) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
@@ -430,6 +479,8 @@ fn try_tracepoint_connect_enter(ctx: TracePointContext) -> Result<u32, i64> {
         remote_addr_v6: [0; 16],
         local_addr_v6: [0; 16],
         started_at_nanos: unsafe { bpf_ktime_get_ns() },
+        bytes_sent: 0,
+        bytes_received: 0,
         command: bpf_get_current_comm().map_err(|err| err as i64)?,
     };
 
@@ -500,6 +551,59 @@ fn try_tracepoint_close_enter(ctx: TracePointContext) -> Result<u32, i64> {
     event.timestamp_unix_nanos = now;
     event.duration_nanos = now - pending.started_at_nanos;
     NETWORK_EVENTS.output(&ctx, &*event, 0);
+    Ok(0)
+}
+
+fn try_tracepoint_network_io_enter(ctx: TracePointContext, direction: u32) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let key = ConnectionKey {
+        tgid: (pid_tgid >> 32) as u32,
+        fd,
+    };
+    if unsafe { ACTIVE_CONNECTIONS.get(&key) }.is_none() {
+        return Ok(0);
+    }
+
+    let pending = PendingNetworkIo {
+        tgid: key.tgid,
+        fd,
+        direction,
+    };
+    PENDING_NETWORK_IO
+        .insert(&pid_tgid, &pending, 0)
+        .map_err(|err| err as i64)?;
+    Ok(0)
+}
+
+fn try_tracepoint_network_io_exit(ctx: TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let retval = unsafe { ctx.read_at::<i64>(16) }.map_err(|err| err as i64)?;
+    let pending = match unsafe { PENDING_NETWORK_IO.get(&pid_tgid) } {
+        Some(value) => *value,
+        None => return Ok(0),
+    };
+    PENDING_NETWORK_IO.remove(&pid_tgid).ok();
+    if retval <= 0 {
+        return Ok(0);
+    }
+
+    let key = ConnectionKey {
+        tgid: pending.tgid,
+        fd: pending.fd,
+    };
+    let mut connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
+        Some(value) => *value,
+        None => return Ok(0),
+    };
+    if pending.direction == NETWORK_IO_WRITE {
+        connection.bytes_sent = connection.bytes_sent.saturating_add(retval as u64);
+    } else if pending.direction == NETWORK_IO_READ {
+        connection.bytes_received = connection.bytes_received.saturating_add(retval as u64);
+    }
+    ACTIVE_CONNECTIONS
+        .insert(&key, &connection, 0)
+        .map_err(|err| err as i64)?;
     Ok(0)
 }
 
@@ -741,6 +845,8 @@ fn network_event_scratch() -> Result<&'static mut RawNetworkEvent, i64> {
     event.local_addr_v6 = [0; 16];
     event.timestamp_unix_nanos = 0;
     event.duration_nanos = 0;
+    event.bytes_sent = 0;
+    event.bytes_received = 0;
     event.command = [0; 16];
     Ok(event)
 }
@@ -794,6 +900,8 @@ fn copy_pending_to_event(pending: &PendingConnect, event: &mut RawNetworkEvent) 
     event.local_addr_v4 = pending.local_addr_v4;
     event.remote_addr_v6 = pending.remote_addr_v6;
     event.local_addr_v6 = pending.local_addr_v6;
+    event.bytes_sent = pending.bytes_sent;
+    event.bytes_received = pending.bytes_received;
     event.command = pending.command;
 }
 

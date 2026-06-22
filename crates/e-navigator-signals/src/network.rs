@@ -30,6 +30,10 @@ pub struct NetworkConnectionCloseEvent {
     pub opened_at_unix_nanos: Option<u64>,
     pub closed_at_unix_nanos: u64,
     pub duration_nanos: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_sent: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_received: Option<u64>,
     pub container: Option<ContainerContext>,
     pub kubernetes: Option<KubernetesContext>,
 }

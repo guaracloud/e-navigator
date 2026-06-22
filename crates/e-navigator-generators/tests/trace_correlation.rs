@@ -326,6 +326,8 @@ fn network_close_signal(
             opened_at_unix_nanos: Some(opened_at),
             closed_at_unix_nanos: closed_at,
             duration_nanos: Some(closed_at.saturating_sub(opened_at)),
+            bytes_sent: None,
+            bytes_received: None,
             container,
             kubernetes,
         },

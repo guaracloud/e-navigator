@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata};
 use e_navigator_signals::{
     MetricAggregationWindow, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
-    NetworkConnectionOpenEvent, NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric,
-    NetworkProcessIdentity, SignalEnvelope, SignalPayload,
+    NetworkConnectionOpenEvent, NetworkCounterMetric, NetworkDurationMetric, NetworkFlowDirection,
+    NetworkFlowEndpoint, NetworkFlowSummaryEvent, NetworkGaugeMetric, NetworkProcessIdentity,
+    SignalEnvelope, SignalPayload,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -158,6 +159,9 @@ impl NetworkMetricsGenerator {
         }
         if let Some(metric) = self.track_active_close(event, signal.host.clone())? {
             metrics.push(metric);
+        }
+        if let Some(summary) = flow_summary_from_close(signal, event) {
+            metrics.push(summary);
         }
 
         Ok(metrics)
@@ -402,6 +406,52 @@ impl NetworkMetricsGenerator {
     fn seen_events(&self) -> CoreResult<MutexGuard<'_, BTreeSet<EventFingerprint>>> {
         self.seen_events.lock().map_err(module_error)
     }
+}
+
+fn flow_summary_from_close(
+    signal: &SignalEnvelope,
+    event: &NetworkConnectionCloseEvent,
+) -> Option<SignalEnvelope> {
+    event.kubernetes.as_ref()?;
+    let bytes = event
+        .bytes_sent
+        .unwrap_or(0)
+        .saturating_add(event.bytes_received.unwrap_or(0));
+    if bytes == 0 {
+        return None;
+    }
+
+    Some(SignalEnvelope::network_flow_summary(
+        "generator.network_metrics",
+        signal.host.clone(),
+        NetworkFlowSummaryEvent {
+            source: NetworkFlowEndpoint {
+                address: event.local_address.clone(),
+                port: event.local_port,
+                owner_name: None,
+                owner_type: None,
+                container: event.container.clone(),
+                kubernetes: event.kubernetes.clone(),
+            },
+            destination: NetworkFlowEndpoint {
+                address: Some(event.remote_address.clone()),
+                port: Some(event.remote_port),
+                owner_name: None,
+                owner_type: None,
+                container: None,
+                kubernetes: None,
+            },
+            protocol: event.protocol,
+            address_family: event.address_family,
+            bytes,
+            packets: None,
+            direction: NetworkFlowDirection::Egress,
+            first_seen_unix_nanos: event
+                .opened_at_unix_nanos
+                .unwrap_or(event.closed_at_unix_nanos),
+            last_seen_unix_nanos: event.closed_at_unix_nanos,
+        },
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -936,6 +986,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn emits_network_flow_summary_from_close_byte_counters() {
+        let generator = NetworkMetricsGenerator::default();
+        let close =
+            network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
+
+        let outputs = observe(&generator, &close).await;
+        let flow = network_flow_summary(&outputs);
+
+        assert_eq!(flow.bytes, 1536);
+        assert_eq!(flow.packets, None);
+        assert_eq!(flow.protocol, NetworkProtocol::Tcp);
+        assert_eq!(flow.address_family, NetworkAddressFamily::Ipv4);
+        assert_eq!(flow.source.address.as_deref(), Some("10.0.0.5"));
+        assert_eq!(flow.source.port, Some(43512));
+        assert_eq!(flow.source.container, Some(container_context()));
+        assert_eq!(flow.source.kubernetes, Some(kubernetes_context()));
+        assert_eq!(flow.destination.address.as_deref(), Some("10.0.0.20"));
+        assert_eq!(flow.destination.port, Some(5432));
+        assert_eq!(flow.first_seen_unix_nanos, 100);
+        assert_eq!(flow.last_seen_unix_nanos, 900);
+    }
+
+    #[tokio::test]
     async fn emits_failure_counter_metric() {
         let generator = NetworkMetricsGenerator::default();
         let failure = network_failure_signal("203.0.113.10", 443, 111, 150);
@@ -1172,6 +1245,18 @@ mod tests {
         })
     }
 
+    fn network_flow_summary(
+        metrics: &[SignalEnvelope],
+    ) -> &e_navigator_signals::NetworkFlowSummaryEvent {
+        metrics
+            .iter()
+            .find_map(|signal| match &signal.payload {
+                SignalPayload::NetworkFlowSummary(flow) => Some(flow),
+                _ => None,
+            })
+            .expect("network flow summary exists")
+    }
+
     fn network_open_signal(
         remote_address: &str,
         remote_port: u16,
@@ -1219,6 +1304,40 @@ mod tests {
                 opened_at_unix_nanos: Some(opened_at),
                 closed_at_unix_nanos: closed_at,
                 duration_nanos: Some(closed_at.saturating_sub(opened_at)),
+                bytes_sent: None,
+                bytes_received: None,
+                container: Some(container_context()),
+                kubernetes: Some(kubernetes_context()),
+            },
+        )
+    }
+
+    fn network_close_signal_with_bytes(
+        remote_address: &str,
+        remote_port: u16,
+        opened_at: u64,
+        closed_at: u64,
+        fd: Option<i32>,
+        bytes_sent: u64,
+        bytes_received: u64,
+    ) -> SignalEnvelope {
+        SignalEnvelope::network_connection_close(
+            "source.test",
+            Some("node-a".to_string()),
+            NetworkConnectionCloseEvent {
+                process: network_process(),
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.0.0.5".to_string()),
+                local_port: Some(43512),
+                remote_address: remote_address.to_string(),
+                remote_port,
+                fd,
+                opened_at_unix_nanos: Some(opened_at),
+                closed_at_unix_nanos: closed_at,
+                duration_nanos: Some(closed_at.saturating_sub(opened_at)),
+                bytes_sent: Some(bytes_sent),
+                bytes_received: Some(bytes_received),
                 container: Some(container_context()),
                 kubernetes: Some(kubernetes_context()),
             },

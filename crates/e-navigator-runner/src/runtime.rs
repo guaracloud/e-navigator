@@ -458,6 +458,8 @@ mod tests {
                     opened_at_unix_nanos: Some(opened_at),
                     closed_at_unix_nanos: opened_at + 2_000,
                     duration_nanos: Some(2_000),
+                    bytes_sent: None,
+                    bytes_received: None,
                     container,
                     kubernetes,
                 },

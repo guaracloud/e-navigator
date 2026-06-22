@@ -52,6 +52,8 @@ pub(super) fn close_signal(
             opened_at_unix_nanos: Some(opened_at),
             closed_at_unix_nanos: opened_at.saturating_add(duration_nanos),
             duration_nanos: Some(duration_nanos),
+            bytes_sent: None,
+            bytes_received: None,
             container: Some(container),
             kubernetes: Some(kubernetes),
         },
