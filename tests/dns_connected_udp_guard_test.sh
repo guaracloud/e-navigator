@@ -8,6 +8,9 @@ program="crates/e-navigator-ebpf-programs/src/main.rs"
 source_file="crates/e-navigator-sources-ebpf-aya/src/dns.rs"
 
 for expected in \
+  "try_tracepoint_dns_connect_enter" \
+  "try_tracepoint_dns_connect_exit" \
+  "try_tracepoint_dns_close_enter" \
   "try_tracepoint_dns_write_enter" \
   "try_tracepoint_dns_read_enter" \
   "connected_dns_peer" \
@@ -19,6 +22,12 @@ for expected in \
 done
 
 for expected in \
+  "tracepoint_dns_connect_enter" \
+  "sys_enter_connect" \
+  "tracepoint_dns_connect_exit" \
+  "sys_exit_connect" \
+  "tracepoint_dns_close_enter" \
+  "sys_enter_close" \
   "tracepoint_write_enter" \
   "sys_enter_write" \
   "tracepoint_write_exit" \

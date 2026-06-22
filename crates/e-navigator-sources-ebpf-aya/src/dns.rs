@@ -318,6 +318,24 @@ mod platform {
             )?;
             attach_tracepoint(
                 &mut ebpf,
+                "tracepoint_dns_connect_enter",
+                "syscalls",
+                "sys_enter_connect",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_dns_connect_exit",
+                "syscalls",
+                "sys_exit_connect",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_dns_close_enter",
+                "syscalls",
+                "sys_enter_close",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
                 "tracepoint_write_enter",
                 "syscalls",
                 "sys_enter_write",

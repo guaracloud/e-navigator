@@ -264,6 +264,30 @@ pub fn tracepoint_close_enter(ctx: TracePointContext) -> u32 {
 }
 
 #[tracepoint]
+pub fn tracepoint_dns_connect_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_dns_connect_enter(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_dns_connect_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_dns_connect_exit(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_dns_close_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_dns_close_enter(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
 pub fn tracepoint_read_enter(ctx: TracePointContext) -> u32 {
     let ret = match try_tracepoint_network_io_enter(&ctx, NETWORK_IO_READ) {
         Ok(ret) => ret,
@@ -473,6 +497,10 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
 }
 
 fn try_tracepoint_connect_enter(ctx: TracePointContext) -> Result<u32, i64> {
+    track_connect_enter(&ctx)
+}
+
+fn track_connect_enter(ctx: &TracePointContext) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let uid_gid = bpf_get_current_uid_gid();
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
@@ -546,6 +574,33 @@ fn try_tracepoint_connect_exit(ctx: TracePointContext) -> Result<u32, i64> {
     Ok(0)
 }
 
+fn try_tracepoint_dns_connect_enter(ctx: TracePointContext) -> Result<u32, i64> {
+    track_connect_enter(&ctx)
+}
+
+fn try_tracepoint_dns_connect_exit(ctx: TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let retval = unsafe { ctx.read_at::<i64>(16) }.map_err(|err| err as i64)?;
+    let pending = match unsafe { PENDING_CONNECTS.get(&pid_tgid) } {
+        Some(value) => *value,
+        None => return Ok(0),
+    };
+    PENDING_CONNECTS.remove(&pid_tgid).ok();
+
+    if retval < 0 && retval != NEG_EINPROGRESS {
+        return Ok(0);
+    }
+
+    let key = ConnectionKey {
+        tgid: pending.pid,
+        fd: pending.fd,
+    };
+    ACTIVE_CONNECTIONS
+        .insert(&key, &pending, 0)
+        .map_err(|err| err as i64)?;
+    Ok(0)
+}
+
 fn try_tracepoint_close_enter(ctx: TracePointContext) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
@@ -566,6 +621,17 @@ fn try_tracepoint_close_enter(ctx: TracePointContext) -> Result<u32, i64> {
     event.timestamp_unix_nanos = now;
     event.duration_nanos = now - pending.started_at_nanos;
     NETWORK_EVENTS.output(&ctx, &*event, 0);
+    Ok(0)
+}
+
+fn try_tracepoint_dns_close_enter(ctx: TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let key = ConnectionKey {
+        tgid: (pid_tgid >> 32) as u32,
+        fd,
+    };
+    ACTIVE_CONNECTIONS.remove(&key).ok();
     Ok(0)
 }
 
