@@ -14,6 +14,7 @@ for expected in \
   "tracepoint_http_connect_exit" \
   "tracepoint_http_close_enter" \
   "tracepoint_http_write_enter" \
+  "tracepoint_http_writev_enter" \
   "tracepoint_http_sendto_enter" \
   "tracepoint_http_sendmsg_enter" \
   "emit_http_request_event" \
@@ -34,6 +35,8 @@ for expected in \
   "sys_enter_close" \
   "tracepoint_http_write_enter" \
   "sys_enter_write" \
+  "tracepoint_http_writev_enter" \
+  "sys_enter_writev" \
   "tracepoint_http_sendto_enter" \
   "sys_enter_sendto" \
   "tracepoint_http_sendmsg_enter" \

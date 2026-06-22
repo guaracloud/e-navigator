@@ -348,6 +348,14 @@ pub fn tracepoint_http_write_enter(ctx: TracePointContext) -> u32 {
 }
 
 #[tracepoint]
+pub fn tracepoint_http_writev_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_http_writev_enter(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
 pub fn tracepoint_http_sendto_enter(ctx: TracePointContext) -> u32 {
     match try_tracepoint_http_sendto_enter(ctx) {
         Ok(ret) => ret,
@@ -777,6 +785,17 @@ fn try_tracepoint_http_write_enter(ctx: TracePointContext) -> Result<u32, i64> {
     emit_http_request_event(&ctx, fd, buffer, len)
 }
 
+fn try_tracepoint_http_writev_enter(ctx: TracePointContext) -> Result<u32, i64> {
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let iov = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    if iov.is_null() {
+        return Ok(0);
+    }
+
+    let (buffer, len) = read_first_iov(iov)?;
+    emit_http_request_event(&ctx, fd, buffer, len)
+}
+
 fn try_tracepoint_http_sendto_enter(ctx: TracePointContext) -> Result<u32, i64> {
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
     let buffer = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
@@ -1200,6 +1219,10 @@ fn read_msghdr_first_iov(message: *const u8) -> Result<(*const u8, u64), i64> {
     if iov.is_null() {
         return Ok((core::ptr::null(), 0));
     }
+    read_first_iov(iov)
+}
+
+fn read_first_iov(iov: *const u8) -> Result<(*const u8, u64), i64> {
     let buffer = unsafe { bpf_probe_read_user::<*const u8>(iov.cast::<*const u8>()) }
         .map_err(|err| err as i64)?;
     let len = unsafe { bpf_probe_read_user::<u64>(iov.add(8).cast::<u64>()) }

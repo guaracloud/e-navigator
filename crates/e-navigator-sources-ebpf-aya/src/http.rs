@@ -259,6 +259,12 @@ mod platform {
             )?;
             attach_tracepoint(
                 &mut ebpf,
+                "tracepoint_http_writev_enter",
+                "syscalls",
+                "sys_enter_writev",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
                 "tracepoint_http_sendto_enter",
                 "syscalls",
                 "sys_enter_sendto",
