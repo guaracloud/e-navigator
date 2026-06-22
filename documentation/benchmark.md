@@ -171,6 +171,18 @@ Prometheus API queries were not run for this slice because no Prometheus server
 service exists in `e-navigator-bench` and the live boundary kept actions inside
 that namespace.
 
+Follow-up run `20260622-220427-socket-bytes-live` deployed pushed image
+`sha-86b3fce` with socket send/recv byte accounting for `sendto`, `sendmsg`,
+`recvfrom`, and `recvmsg` tracepoints. Two Python nonblocking clients again
+completed 240 total socket requests. Captured stdout proved the observed
+homelab-02 target `10.42.134.22:8080` emitted 120 byte-bearing controlled
+`network_connection_close` records, each with `bytes_sent=243` and
+`bytes_received=1372`. Direct `/healthz` returned `ok`, `/readyz` returned
+`ready`, and `/metrics` exposed aggregate controlled network counters at 120.
+The run still did not prove Kubernetes attribution for the Python client
+records, controlled `network_flow_summary`, `beyla_network_flow_bytes_total`, or
+symmetric controlled-client stdout capture across both nodes.
+
 The initial live proof should record:
 
 - DaemonSet schedules and remains Ready in `e-navigator-bench`;

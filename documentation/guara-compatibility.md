@@ -86,6 +86,17 @@ Current implementation status:
   `beyla_network_flow_bytes_total`, Kubernetes attribution on the Python client
   records, or stdout capture for the successful homelab-01 target
   `10.42.248.200:8080`.
+- Homelab run `20260622-220427-socket-bytes-live` deployed pushed image
+  `sha-86b3fce` digest
+  `sha256:72acf600c86be7b9a2a0c4ca8ae905e065232e26125e1cdf575f515c53668a48`
+  as Helm revision 48 after adding socket send/recv byte accounting for
+  `sendto`, `sendmsg`, `recvfrom`, and `recvmsg`. The Python clients completed
+  240 controlled nonblocking socket requests with no application failures.
+  Captured stdout proved the observed homelab-02 target `10.42.134.22:8080`
+  emitted 120 byte-bearing `network_connection_close` records with
+  `bytes_sent=243` and `bytes_received=1372`. The same run still produced 0
+  controlled `network_flow_summary` rows, 0 `beyla_network_flow_bytes_total`
+  signals, and 0 Kubernetes-attributed controlled close records.
 - Positive `beyla_network_flow_bytes_total` proof still requires a controlled
   byte-bearing flow with Kubernetes attribution and an in-scope Guara
   `proj-*` paid tenant endpoint. The current homelab namespace boundary
