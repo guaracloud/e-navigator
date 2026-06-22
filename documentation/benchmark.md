@@ -247,6 +247,11 @@ The initial live proof should record:
   Job in `staging/e-navigator-bench`, proved collector acceptance of two OTLP
   protobuf trace spans, and cleaned up the temporary Job and collector
   resources;
+- `20260622-135450-otlp-metric-protobuf-live` ran a namespace-local
+  OpenTelemetry Collector plus one-shot pushed image `sha-e7016b5` synthetic
+  Job in `staging/e-navigator-bench`, proved collector acceptance of 45 OTLP
+  protobuf metrics across network, DNS, system, process, and container
+  families, and cleaned up the temporary Job and collector resources;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in

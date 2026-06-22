@@ -50,9 +50,10 @@ Linux / Kubernetes node
   dependency edges, trace service paths, request spans, profiling windows, and
   optional Guara compatibility projections.
 - **Sinks:** JSON stdout by default, plus opt-in Prometheus HTTP and OTLP HTTP
-  sink modules with bounded local tests. OTLP trace records with valid
-  trace/span IDs are encoded as protobuf `ExportTraceServiceRequest` payloads;
-  metrics and profiles still use the internal record boundary, and no live
+  sink modules with bounded local tests. OTLP metric records are encoded as
+  protobuf `ExportMetricsServiceRequest` payloads, and OTLP trace records with
+  valid trace/span IDs are encoded as protobuf `ExportTraceServiceRequest`
+  payloads. Profiles still use the internal record boundary, and no live
   Tempo/Pyroscope compatibility proof is claimed.
 
 The pipeline is statically registered by design. Runtime plugin loading is not
