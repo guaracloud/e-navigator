@@ -152,12 +152,12 @@ Current implementation status:
 - Pyroscope-compatible label formatting and sensitive-attribute filtering exist.
 - Development-status OTLP profile protobuf serialization exists in the OTLP HTTP
   sink and is covered by local fake-collector decode tests.
-- Symbolization, demangling, Pyroscope write transport, live OTLP profile
-  collector ingestion, and real perf-event parity are not yet proven in this
-  compatibility pass. Homelab run
-  `20260622-165710-otlp-profile-protobuf-live` reached a namespace-local
-  OpenTelemetry Collector profile pipeline, but the collector returned HTTP 400
-  for E-Navigator's profile protobuf.
+- Homelab run `20260622-204027-otlp-profile-protobuf-live` proved
+  namespace-local OpenTelemetry Collector `0.130.0` acceptance of synthetic
+  development-status profile protobuf records from pushed image `sha-796b980`.
+- Symbolization, demangling, Pyroscope write transport, live Aya/eBPF profile
+  export through the OTLP HTTP sink, and real perf-event parity are not yet
+  proven in this compatibility pass.
 
 ## Exporter Boundary
 
@@ -186,12 +186,11 @@ process, and container metrics to a namespace-local OpenTelemetry Collector as
 accepted OTLP protobuf. Homelab run
 `20260622-160350-otlp-trace-protobuf-live` proved pushed image `sha-c00a7d5`
 can deliver synthetic trace/request spans to a namespace-local OpenTelemetry
-Collector as accepted OTLP protobuf. Commit `a66e1ca` published image
-`ghcr.io/guaracloud/e-navigator:sha-a66e1ca`; follow-up homelab run
-`20260622-165710-otlp-profile-protobuf-live` used pushed image `sha-35ecc6c`
-with a namespace-local OpenTelemetry Collector `0.130.0`, profile support
-enabled, and endpoint `/v1development/profiles`, but the collector returned
-HTTP 400 for E-Navigator's real profile protobuf. Homelab run
+Collector as accepted OTLP protobuf. Homelab run
+`20260622-204027-otlp-profile-protobuf-live` proved pushed image `sha-796b980`
+can deliver synthetic profile records to a namespace-local OpenTelemetry
+Collector `0.130.0` as accepted development-status OTLP protobuf with profile
+support enabled and endpoint `/v1development/profiles`. Homelab run
 `20260621-205344-otlp-live`
 proved live delivery of the older internal JSON records to a namespace-local
 fake collector, including metric, trace, and profile signal families. This is

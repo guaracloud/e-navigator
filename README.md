@@ -54,11 +54,11 @@ Linux / Kubernetes node
   protobuf `ExportMetricsServiceRequest` payloads, and OTLP trace records with
   valid trace/span IDs are encoded as protobuf `ExportTraceServiceRequest`
   payloads. OTLP profile records are encoded as development-status
-  `ExportProfilesServiceRequest` payloads in local tests, but homelab run
-  `20260622-165710-otlp-profile-protobuf-live` reached a namespace-local
-  OpenTelemetry Collector and the collector returned HTTP 400 for the real
-  profile protobuf. No live OTLP profile collector, Tempo, or Pyroscope
-  compatibility proof is claimed.
+  `ExportProfilesServiceRequest` payloads in local tests, and homelab run
+  `20260622-204027-otlp-profile-protobuf-live` proved namespace-local
+  OpenTelemetry Collector `0.130.0` acceptance of synthetic profile protobuf
+  from pushed image `sha-796b980`. No Tempo, Pyroscope, pprof, or profile
+  storage compatibility proof is claimed.
 
 The pipeline is statically registered by design. Runtime plugin loading is not
 part of the current architecture; see
@@ -178,13 +178,14 @@ Implemented with narrower or deferred runtime claims:
   namespace-local OpenTelemetry Collector. Homelab run
   `20260622-135450-otlp-metric-protobuf-live` proved namespace-local
   OpenTelemetry Collector acceptance of pushed image `sha-e7016b5` OTLP
-  protobuf metrics. Commit `a66e1ca` added profile protobuf export and
-  published image `ghcr.io/guaracloud/e-navigator:sha-a66e1ca`; follow-up
-  homelab run `20260622-165710-otlp-profile-protobuf-live` used pushed image
-  `sha-35ecc6c` against a namespace-local OpenTelemetry Collector `0.130.0`
-  with profile support enabled and the `/v1development/profiles` route, but the
-  collector returned HTTP 400 for E-Navigator's real profile protobuf, so live
-  profile collector acceptance remains not proven. Homelab run
+  protobuf metrics. Commit `796b980` aligned development-status profile
+  protobuf encoding with the OpenTelemetry Collector `0.130.0` profile schema;
+  homelab run `20260622-204027-otlp-profile-protobuf-live` used pushed image
+  `sha-796b980` against a namespace-local Collector with profile support
+  enabled and the `/v1development/profiles` route, the one-shot Job completed,
+  no sink failure markers were logged, and the Collector debug exporter decoded
+  `ResourceProfiles` with synthetic stack frame names and populated location
+  indices. Homelab run
   `20260621-205344-otlp-live` proved live delivery to a namespace-local fake
   collector for internal JSON records. Homelab run
   `20260621-214450-sink-failure-live` proved that HTTP 500 responses from a
@@ -228,7 +229,7 @@ critical-path analysis engine.
 
 The following are intentionally not claimed as implemented production behavior:
 
-- production collector-accepted OTLP metric, trace, or profile export;
+- production collector or backend OTLP deployment compatibility;
 - pprof or Pyroscope export;
 - complete Beyla replacement or alloy-profiles replacement;
 - live Beyla-compatible `beyla_network_flow_bytes_total` export from traffic;

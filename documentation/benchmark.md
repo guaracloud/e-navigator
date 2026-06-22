@@ -266,6 +266,14 @@ The initial live proof should record:
   collector remained healthy, but the collector returned HTTP 400 for
   E-Navigator's real profile protobuf, so live profile collector acceptance is
   not proven; all temporary Job and collector resources were cleaned up;
+- `20260622-204027-otlp-profile-protobuf-live` records the corrected
+  `staging/e-navigator-bench` run with pushed image `sha-796b980`, a
+  namespace-local OpenTelemetry Collector `0.130.0`, profile support enabled,
+  and endpoint `/v1development/profiles`; the one-shot Job completed, the
+  Collector debug exporter decoded `ResourceProfiles` with synthetic stack
+  frame names and populated location indices, no sink failure or HTTP 400/404
+  markers were found, and all temporary Job and collector resources were
+  cleaned up;
 - `20260622-144636-http-request-path-local` records local request/protocol
   proof that the HTTP fixture parser extracts bounded origin-form `url.path`
   attributes without query or fragment values and that request-span dedupe
