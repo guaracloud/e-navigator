@@ -20,6 +20,8 @@ const ARG_LEN: usize = 64;
 const AF_INET: u32 = 2;
 const AF_INET6: u32 = 10;
 const IPPROTO_TCP: u32 = 6;
+const IPPROTO_UDP: u32 = 17;
+const DNS_PACKET_BYTES: usize = 512;
 const NETWORK_EVENT_OPEN: u32 = 1;
 const NETWORK_EVENT_CLOSE: u32 = 2;
 const NETWORK_EVENT_FAILURE: u32 = 3;
@@ -88,6 +90,22 @@ pub struct RawCpuProfileEvent {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct RawDnsEvent {
+    pub pid: u32,
+    pub uid: u32,
+    pub cgroup_id: u64,
+    pub protocol: u32,
+    pub server_port_be: u16,
+    pub server_addr_v4: u32,
+    pub timestamp_unix_nanos: u64,
+    pub latency_nanos: u64,
+    pub packet_len: u32,
+    pub command: [u8; 16],
+    pub packet: [u8; DNS_PACKET_BYTES],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct PendingConnect {
     pub pid: u32,
     pub uid: u32,
@@ -101,6 +119,19 @@ pub struct PendingConnect {
     pub local_addr_v4: u32,
     pub remote_addr_v6: [u8; 16],
     pub local_addr_v6: [u8; 16],
+    pub started_at_nanos: u64,
+    pub command: [u8; 16],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PendingDnsRecv {
+    pub pid: u32,
+    pub uid: u32,
+    pub cgroup_id: u64,
+    pub fd: i32,
+    pub buffer_ptr: u64,
+    pub server_addr_ptr: u64,
     pub started_at_nanos: u64,
     pub command: [u8; 16],
 }
@@ -125,6 +156,9 @@ static NETWORK_EVENTS: PerfEventArray<RawNetworkEvent> = PerfEventArray::new(0);
 static CPU_PROFILE_EVENTS: PerfEventArray<RawCpuProfileEvent> = PerfEventArray::new(0);
 
 #[map]
+static DNS_EVENTS: PerfEventArray<RawDnsEvent> = PerfEventArray::new(0);
+
+#[map]
 static EXEC_EVENT_SCRATCH: PerCpuArray<RawExecEvent> = PerCpuArray::with_max_entries(1, 0);
 
 #[map]
@@ -138,6 +172,9 @@ static CPU_PROFILE_EVENT_SCRATCH: PerCpuArray<RawCpuProfileEvent> =
     PerCpuArray::with_max_entries(1, 0);
 
 #[map]
+static DNS_EVENT_SCRATCH: PerCpuArray<RawDnsEvent> = PerCpuArray::with_max_entries(1, 0);
+
+#[map]
 static ARGV_CAPTURE_ENABLED: Array<u32> = Array::with_max_entries(1, 0);
 
 #[map]
@@ -146,6 +183,9 @@ static PENDING_CONNECTS: HashMap<u64, PendingConnect> = HashMap::with_max_entrie
 #[map]
 static ACTIVE_CONNECTIONS: HashMap<ConnectionKey, PendingConnect> =
     HashMap::with_max_entries(16384, 0);
+
+#[map]
+static PENDING_DNS_RECVS: HashMap<u64, PendingDnsRecv> = HashMap::with_max_entries(4096, 0);
 
 #[tracepoint]
 pub fn tracepoint_execve(ctx: TracePointContext) -> u32 {
@@ -198,6 +238,30 @@ pub fn tracepoint_connect_exit(ctx: TracePointContext) -> u32 {
 #[tracepoint]
 pub fn tracepoint_close_enter(ctx: TracePointContext) -> u32 {
     match try_tracepoint_close_enter(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_sendto_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_sendto_enter(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_recvfrom_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_recvfrom_enter(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_recvfrom_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_recvfrom_exit(ctx) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
@@ -415,6 +479,112 @@ fn try_tracepoint_close_enter(ctx: TracePointContext) -> Result<u32, i64> {
     Ok(0)
 }
 
+fn try_tracepoint_sendto_enter(ctx: TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let uid_gid = bpf_get_current_uid_gid();
+    let buffer = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    let len = unsafe { ctx.read_at::<u64>(32) }.map_err(|err| err as i64)?;
+    let sockaddr = unsafe { ctx.read_at::<*const u8>(48) }.map_err(|err| err as i64)?;
+    if buffer.is_null() || sockaddr.is_null() || len == 0 {
+        return Ok(0);
+    }
+
+    let family =
+        unsafe { bpf_probe_read_user::<u16>(sockaddr.cast::<u16>()) }.map_err(|err| err as i64)?;
+    if family as u32 != AF_INET {
+        return Ok(0);
+    }
+
+    let server_port_be = unsafe { bpf_probe_read_user::<u16>(sockaddr.add(2).cast::<u16>()) }
+        .map_err(|err| err as i64)?;
+    if u16::from_be(server_port_be) != 53 {
+        return Ok(0);
+    }
+
+    let event = dns_event_scratch()?;
+    event.pid = (pid_tgid >> 32) as u32;
+    event.uid = uid_gid as u32;
+    event.cgroup_id = current_cgroup_id();
+    event.protocol = IPPROTO_UDP;
+    event.server_port_be = server_port_be;
+    event.server_addr_v4 = unsafe { bpf_probe_read_user::<u32>(sockaddr.add(4).cast::<u32>()) }
+        .map_err(|err| err as i64)?;
+    event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
+    event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
+    copy_dns_packet(buffer, len, event)?;
+    DNS_EVENTS.output(&ctx, &*event, 0);
+    Ok(0)
+}
+
+fn try_tracepoint_recvfrom_enter(ctx: TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let uid_gid = bpf_get_current_uid_gid();
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let buffer = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    let sockaddr = unsafe { ctx.read_at::<*const u8>(48) }.map_err(|err| err as i64)?;
+    if buffer.is_null() {
+        return Ok(0);
+    }
+
+    let pending = PendingDnsRecv {
+        pid: (pid_tgid >> 32) as u32,
+        uid: uid_gid as u32,
+        cgroup_id: current_cgroup_id(),
+        fd,
+        buffer_ptr: buffer as u64,
+        server_addr_ptr: sockaddr as u64,
+        started_at_nanos: unsafe { bpf_ktime_get_ns() },
+        command: bpf_get_current_comm().map_err(|err| err as i64)?,
+    };
+    PENDING_DNS_RECVS
+        .insert(&pid_tgid, &pending, 0)
+        .map_err(|err| err as i64)?;
+    Ok(0)
+}
+
+fn try_tracepoint_recvfrom_exit(ctx: TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let retval = unsafe { ctx.read_at::<i64>(16) }.map_err(|err| err as i64)?;
+    let pending = match unsafe { PENDING_DNS_RECVS.get(&pid_tgid) } {
+        Some(value) => *value,
+        None => return Ok(0),
+    };
+    PENDING_DNS_RECVS.remove(&pid_tgid).ok();
+    if retval <= 0 {
+        return Ok(0);
+    }
+
+    let event = dns_event_scratch()?;
+    event.pid = pending.pid;
+    event.uid = pending.uid;
+    event.cgroup_id = pending.cgroup_id;
+    event.protocol = IPPROTO_UDP;
+    event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
+    event.latency_nanos = event.timestamp_unix_nanos - pending.started_at_nanos;
+    event.command = pending.command;
+
+    if pending.server_addr_ptr != 0 {
+        let sockaddr = pending.server_addr_ptr as *const u8;
+        let family = unsafe { bpf_probe_read_user::<u16>(sockaddr.cast::<u16>()) }
+            .map_err(|err| err as i64)?;
+        if family as u32 == AF_INET {
+            event.server_port_be =
+                unsafe { bpf_probe_read_user::<u16>(sockaddr.add(2).cast::<u16>()) }
+                    .map_err(|err| err as i64)?;
+            event.server_addr_v4 =
+                unsafe { bpf_probe_read_user::<u32>(sockaddr.add(4).cast::<u32>()) }
+                    .map_err(|err| err as i64)?;
+            if event.server_port_be != 0 && u16::from_be(event.server_port_be) != 53 {
+                return Ok(0);
+            }
+        }
+    }
+
+    copy_dns_packet(pending.buffer_ptr as *const u8, retval as u64, event)?;
+    DNS_EVENTS.output(&ctx, &*event, 0);
+    Ok(0)
+}
+
 fn read_exec_arguments(
     ctx: &TracePointContext,
     event: &mut RawExecEvent,
@@ -477,6 +647,42 @@ fn network_event_scratch() -> Result<&'static mut RawNetworkEvent, i64> {
     event.duration_nanos = 0;
     event.command = [0; 16];
     Ok(event)
+}
+
+fn dns_event_scratch() -> Result<&'static mut RawDnsEvent, i64> {
+    let ptr = DNS_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+    let event = unsafe { &mut *ptr };
+    event.pid = 0;
+    event.uid = 0;
+    event.cgroup_id = 0;
+    event.protocol = 0;
+    event.server_port_be = 0;
+    event.server_addr_v4 = 0;
+    event.timestamp_unix_nanos = 0;
+    event.latency_nanos = 0;
+    event.packet_len = 0;
+    event.command = [0; 16];
+    event.packet = [0; DNS_PACKET_BYTES];
+    Ok(event)
+}
+
+fn copy_dns_packet(buffer: *const u8, len: u64, event: &mut RawDnsEvent) -> Result<(), i64> {
+    let capped_len = if len > DNS_PACKET_BYTES as u64 {
+        DNS_PACKET_BYTES
+    } else {
+        len as usize
+    };
+    let mut index = 0;
+    while index < DNS_PACKET_BYTES {
+        if index >= capped_len {
+            break;
+        }
+        event.packet[index] =
+            unsafe { bpf_probe_read_user::<u8>(buffer.add(index)) }.map_err(|err| err as i64)?;
+        index += 1;
+    }
+    event.packet_len = capped_len as u32;
+    Ok(())
 }
 
 fn copy_pending_to_event(pending: &PendingConnect, event: &mut RawNetworkEvent) {

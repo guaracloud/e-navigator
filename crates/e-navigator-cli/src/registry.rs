@@ -52,7 +52,10 @@ pub(crate) fn build_registry(
     }
 
     if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.aya_dns") {
-        registry = registry.with_source(Box::new(AyaDnsSource::new(host.clone())));
+        registry = registry.with_source(Box::new(AyaDnsSource::new(
+            host.clone(),
+            config.attribution.procfs_root.clone(),
+        )));
     }
 
     if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.host_resource") {

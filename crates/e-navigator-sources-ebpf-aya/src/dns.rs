@@ -12,6 +12,10 @@ pub(crate) const RAW_DNS_PACKET_BYTES: usize = 512;
 pub(crate) const RAW_DNS_PROTOCOL_UDP: u32 = 17;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_DNS_PROTOCOL_TCP: u32 = 6;
+#[cfg(any(target_os = "linux", test))]
+const PERF_BUFFER_PAGE_COUNT: usize = 64;
+#[cfg(any(target_os = "linux", test))]
+const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[repr(C)]
@@ -65,6 +69,21 @@ fn parse_dns_packet(packet: &[u8]) -> Option<ParsedDnsPacket> {
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn raw_dns_to_signal(bytes: &[u8], host: Option<String>) -> Option<SignalEnvelope> {
+    raw_dns_to_signal_with_clock_and_procfs(
+        bytes,
+        host,
+        now_unix_nanos(),
+        std::path::Path::new("/proc"),
+    )
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn raw_dns_to_signal_with_clock_and_procfs(
+    bytes: &[u8],
+    host: Option<String>,
+    observed_unix_nanos: u64,
+    procfs_root: &std::path::Path,
+) -> Option<SignalEnvelope> {
     if bytes.len() < core::mem::size_of::<RawDnsEvent>() {
         return None;
     }
@@ -89,6 +108,7 @@ fn raw_dns_to_signal(bytes: &[u8], host: Option<String>) -> Option<SignalEnvelop
         let port = u16::from_be(raw.server_port_be);
         (port != 0).then_some(port)
     };
+    let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
     if parsed.is_response {
         Some(SignalEnvelope::dns_response(
             "source.aya_dns",
@@ -102,8 +122,8 @@ fn raw_dns_to_signal(bytes: &[u8], host: Option<String>) -> Option<SignalEnvelop
                 transport_protocol,
                 server_address,
                 server_port,
-                timestamp_unix_nanos: raw.timestamp_unix_nanos,
-                container: None,
+                timestamp_unix_nanos: observed_unix_nanos,
+                container,
                 kubernetes: None,
             },
         ))
@@ -118,12 +138,21 @@ fn raw_dns_to_signal(bytes: &[u8], host: Option<String>) -> Option<SignalEnvelop
                 transport_protocol,
                 server_address,
                 server_port,
-                timestamp_unix_nanos: raw.timestamp_unix_nanos,
-                container: None,
+                timestamp_unix_nanos: observed_unix_nanos,
+                container,
                 kubernetes: None,
             },
         ))
     }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn now_unix_nanos() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -198,19 +227,38 @@ fn bytes_to_string(bytes: &[u8]) -> String {
 
 #[cfg(target_os = "linux")]
 mod platform {
+    use crate::diagnostics::SourceDiagnostics;
+    use crate::perf_sample::perf_sample_bytes;
+    use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
-    use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Source};
+    use aya::{
+        Ebpf, include_bytes_aligned,
+        maps::perf::{PerfEvent, PerfEventArray},
+        programs::TracePoint,
+        util::online_cpus,
+    };
+    use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Signal, Source};
     use e_navigator_signals::SignalEnvelope;
+    use std::{
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+    };
     use tokio::sync::mpsc;
+    use tokio::task::JoinHandle;
+    use tracing::{debug, info, warn};
 
     #[derive(Debug, Default)]
     pub struct AyaDnsSource {
         host: Option<String>,
+        procfs_root: PathBuf,
     }
 
     impl AyaDnsSource {
-        pub fn new(host: Option<String>) -> Self {
-            Self { host }
+        pub fn new(host: Option<String>, procfs_root: PathBuf) -> Self {
+            Self { host, procfs_root }
         }
     }
 
@@ -220,14 +268,204 @@ mod platform {
             ModuleMetadata::new("source.aya_dns", ModuleKind::Source)
         }
 
-        async fn run(self: Box<Self>, _tx: mpsc::Sender<SignalEnvelope>) -> CoreResult<()> {
-            Err(CoreError::ModuleFailed {
+        async fn run(self: Box<Self>, tx: mpsc::Sender<SignalEnvelope>) -> CoreResult<()> {
+            bump_memlock_rlimit();
+            let shutdown = ReaderShutdown::new();
+            let mut reader_handles = Vec::new();
+            let diagnostics = SourceDiagnostics::from_env();
+            let telemetry = Arc::new(SourceTelemetry::new("source.aya_dns"));
+            let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
+                env!("OUT_DIR"),
+                "/e-navigator-ebpf-programs"
+            )))
+            .map_err(module_error)?;
+
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_sendto_enter",
+                "syscalls",
+                "sys_enter_sendto",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_recvfrom_enter",
+                "syscalls",
+                "sys_enter_recvfrom",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_recvfrom_exit",
+                "syscalls",
+                "sys_exit_recvfrom",
+            )?;
+
+            let mut perf_array =
+                PerfEventArray::try_from(ebpf.take_map("DNS_EVENTS").ok_or_else(|| {
+                    CoreError::ModuleFailed {
+                        module: "source.aya_dns".to_string(),
+                        message: "missing DNS_EVENTS map".to_string(),
+                    }
+                })?)
+                .map_err(module_error)?;
+
+            let cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
+            for cpu_id in cpus {
+                let mut buffer = perf_array
+                    .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
+                    .map_err(module_error)?;
+                let cpu_tx = tx.clone();
+                let host = self.host.clone();
+                let procfs_root = self.procfs_root.clone();
+                let reader_shutdown = shutdown.clone();
+                let diagnostics = diagnostics.clone();
+                let telemetry = telemetry.clone();
+
+                reader_handles.push(tokio::task::spawn_blocking(move || {
+                    let mut closed = false;
+
+                    while !reader_shutdown.is_stopped() {
+                        buffer.for_each(|event| {
+                            if closed {
+                                return;
+                            }
+
+                            match event {
+                                PerfEvent::Sample { head, tail } => {
+                                    let bytes = perf_sample_bytes(head, tail);
+                                    if let Some(signal) =
+                                        super::raw_dns_to_signal_with_clock_and_procfs(
+                                            bytes.as_ref(),
+                                            host.clone(),
+                                            super::now_unix_nanos(),
+                                            &procfs_root,
+                                        )
+                                    {
+                                        telemetry.record_decoded_sample();
+                                        if diagnostics.enabled()
+                                            && diagnostics.sample_decision_for(&[signal.kind()])
+                                                == crate::diagnostics::DiagnosticSampleDecision::Matched
+                                        {
+                                            info!(
+                                                target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                                                source = "source.aya_dns",
+                                                raw_event = signal.kind(),
+                                                "source diagnostic raw event decoded"
+                                            );
+                                        }
+                                        if cpu_tx.blocking_send(signal).is_err() {
+                                            telemetry.record_send_failure();
+                                            closed = true;
+                                        } else {
+                                            telemetry.record_sent_signal();
+                                        }
+                                    } else {
+                                        telemetry.record_invalid_sample();
+                                    }
+                                }
+                                PerfEvent::Lost { count } => {
+                                    telemetry.record_lost_perf_events(count);
+                                    warn!(count, "lost dns perf events");
+                                }
+                            }
+                            telemetry.maybe_log_summary();
+                        });
+
+                        if closed {
+                            return;
+                        }
+
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            super::PERF_READER_POLL_INTERVAL_MS,
+                        ));
+                    }
+                }));
+            }
+
+            if diagnostics.enabled() {
+                info!(
+                    source = "source.aya_dns",
+                    remaining_samples = diagnostics.remaining_samples(),
+                    filtered_preview_remaining_samples =
+                        diagnostics.remaining_filtered_preview_samples(),
+                    "source diagnostics enabled"
+                );
+            }
+            debug!("aya dns source attached");
+            tokio::signal::ctrl_c().await.map_err(module_error)?;
+            shutdown.stop();
+            join_reader_handles(reader_handles).await
+        }
+    }
+
+    fn attach_tracepoint(
+        ebpf: &mut Ebpf,
+        program_name: &'static str,
+        category: &'static str,
+        name: &'static str,
+    ) -> CoreResult<()> {
+        let program: &mut TracePoint = ebpf
+            .program_mut(program_name)
+            .ok_or_else(|| CoreError::ModuleFailed {
                 module: "source.aya_dns".to_string(),
-                message: format!(
-                    "Aya DNS packet capture is registered but live kernel attachment is not implemented in this build; host={}",
-                    self.host.as_deref().unwrap_or("unknown")
-                ),
-            })
+                message: format!("missing {program_name} program"),
+            })?
+            .try_into()
+            .map_err(module_error)?;
+        program.load().map_err(module_error)?;
+        program.attach(category, name).map_err(module_error)?;
+        Ok(())
+    }
+
+    #[derive(Clone)]
+    struct ReaderShutdown {
+        stopped: Arc<AtomicBool>,
+    }
+
+    impl ReaderShutdown {
+        fn new() -> Self {
+            Self {
+                stopped: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        fn stop(&self) {
+            self.stopped.store(true, Ordering::SeqCst);
+        }
+
+        fn is_stopped(&self) -> bool {
+            self.stopped.load(Ordering::SeqCst)
+        }
+    }
+
+    impl Drop for ReaderShutdown {
+        fn drop(&mut self) {
+            self.stop();
+        }
+    }
+
+    async fn join_reader_handles(handles: Vec<JoinHandle<()>>) -> CoreResult<()> {
+        for handle in handles {
+            handle.await.map_err(module_error)?;
+        }
+
+        Ok(())
+    }
+
+    fn bump_memlock_rlimit() {
+        let rlimit = libc::rlimit {
+            rlim_cur: libc::RLIM_INFINITY,
+            rlim_max: libc::RLIM_INFINITY,
+        };
+        let ret = unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlimit) };
+        if ret != 0 {
+            debug!("failed to raise RLIMIT_MEMLOCK");
+        }
+    }
+
+    fn module_error(err: impl ToString) -> CoreError {
+        CoreError::ModuleFailed {
+            module: "source.aya_dns".to_string(),
+            message: err.to_string(),
         }
     }
 }
@@ -242,11 +480,15 @@ mod platform {
     #[derive(Debug, Default)]
     pub struct AyaDnsSource {
         host: Option<String>,
+        _procfs_root: std::path::PathBuf,
     }
 
     impl AyaDnsSource {
-        pub fn new(host: Option<String>) -> Self {
-            Self { host }
+        pub fn new(host: Option<String>, procfs_root: std::path::PathBuf) -> Self {
+            Self {
+                host,
+                _procfs_root: procfs_root,
+            }
         }
     }
 
@@ -356,6 +598,54 @@ mod tests {
         assert_eq!(event.server_port, Some(53));
     }
 
+    #[test]
+    fn raw_dns_event_preserves_source_time_container_attribution() {
+        const CONTAINER_ID: &str =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        let temp = test_temp_dir("dns-source-time-cgroup");
+        let cgroup = temp.join("42/cgroup");
+        std::fs::create_dir_all(cgroup.parent().expect("parent")).expect("mkdir");
+        std::fs::write(
+            &cgroup,
+            format!("0::/kubepods.slice/cri-containerd-{CONTAINER_ID}.scope\n"),
+        )
+        .expect("write cgroup");
+
+        let packet = dns_query_packet(0x1234, "api.example.com", 1);
+        let mut raw = RawDnsEvent {
+            pid: 42,
+            uid: 1000,
+            cgroup_id: 7,
+            protocol: RAW_DNS_PROTOCOL_UDP,
+            server_port_be: 53_u16.to_be(),
+            server_addr_v4: u32::from_ne_bytes([10, 96, 0, 10]),
+            timestamp_unix_nanos: 1_000,
+            latency_nanos: 0,
+            packet_len: packet.len() as u32,
+            command: fixed_command("api"),
+            packet: [0; RAW_DNS_PACKET_BYTES],
+        };
+        raw.packet[..packet.len()].copy_from_slice(&packet);
+
+        let signal = raw_dns_to_signal_with_clock_and_procfs(
+            raw_as_bytes(&raw),
+            Some("node-a".to_string()),
+            1_000,
+            &temp,
+        )
+        .expect("raw event decodes");
+
+        let e_navigator_signals::SignalPayload::DnsQuery(event) = signal.payload else {
+            panic!("expected dns query payload");
+        };
+        let container = event.container.expect("container attribution");
+        assert_eq!(container.container_id, CONTAINER_ID);
+        assert_eq!(container.runtime.as_deref(), Some("containerd"));
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
     fn dns_query_packet(id: u16, name: &str, query_type: u16) -> Vec<u8> {
         let mut packet = vec![
             (id >> 8) as u8,
@@ -396,5 +686,12 @@ mod tests {
                 core::mem::size_of::<RawDnsEvent>(),
             )
         }
+    }
+
+    fn test_temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("e-navigator-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
     }
 }
