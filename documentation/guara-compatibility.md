@@ -58,10 +58,25 @@ Current implementation status:
   Prometheus scrape path were healthy and reported other network metrics, but
   `beyla_network_flow_bytes_total` had 0 direct endpoint lines and 0 Prometheus
   query results because no live `network_flow_summary` records were observed.
-- Live Aya byte accounting, active-flow timeout flushing, and cross-node runtime
-  dedupe still require privileged Linux or Kubernetes proof, followed by
-  positive runtime proof that `beyla_network_flow_bytes_total` is exported from
-  live traffic.
+- Homelab run `20260622-111022-guara-flow-live` deployed pushed image
+  `sha-762561f` digest
+  `sha256:d520fd8b7bd0a4042c31513034d43f716b75407a888b47468f19ca3504629a5a`
+  as Helm revision 41 and proved live close-event byte counters plus ambient
+  close-derived `network_flow_summary` output: 234 byte-bearing
+  `network_connection_close` records and 53 `network_flow_summary` records were
+  captured. The same run did not prove controlled workload flow summaries:
+  BusyBox clients on both nodes completed 360 HTTP requests, but their
+  byte-bearing close records lacked Kubernetes attribution.
+- Homelab run `20260622-111448-guara-flow-python-client-live` kept Python
+  client pods alive after 160 controlled socket reads to test attribution timing.
+  The server-IP records were captured as `EINPROGRESS` connection failures, not
+  byte-bearing closes, and produced 0 controlled `network_flow_summary` rows and
+  0 `beyla_network_flow_bytes_total` signals.
+- Positive `beyla_network_flow_bytes_total` proof still requires a controlled
+  byte-bearing flow with Kubernetes attribution and an in-scope Guara
+  `proj-*` paid tenant endpoint. The current homelab namespace boundary
+  restricts temporary workloads to `e-navigator-bench`, so it cannot by itself
+  satisfy the Guara `proj-*` scope rule.
 
 ## Guara Scoping
 

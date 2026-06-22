@@ -147,6 +147,18 @@ Only recorded `/healthz`, `/readyz`, `/metrics`, Prometheus active-target, and
 query artifacts can upgrade Prometheus claims. Config and render evidence alone
 remain non-privileged or inconclusive.
 
+Guara L4 flow proof on `20260622-111022-guara-flow-live` and
+`20260622-111448-guara-flow-python-client-live` used the same guarded homelab
+boundary with pushed image `sha-762561f`. These runs prove live byte counters on
+some `network_connection_close` records and live ambient `network_flow_summary`
+generation, but they do not prove controlled workload `network_flow_summary` or
+`beyla_network_flow_bytes_total`. The BusyBox workload completed on both nodes
+without Kubernetes attribution on its byte-bearing close records, and the
+Python socket workload produced server-IP `EINPROGRESS` failure records rather
+than byte-bearing closes. Prometheus API queries were not run for this slice
+because no Prometheus server service exists in `e-navigator-bench` and the live
+boundary kept actions inside that namespace.
+
 The initial live proof should record:
 
 - DaemonSet schedules and remains Ready in `e-navigator-bench`;
