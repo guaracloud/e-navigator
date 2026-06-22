@@ -28,6 +28,7 @@ run tests/secret_pattern_guard_test.sh
 run tests/network_einprogress_guard_test.sh
 run tests/network_socket_io_guard_test.sh
 run tests/dns_connected_udp_guard_test.sh
+run tests/http_request_capture_guard_test.sh
 
 if [ "${E_NAVIGATOR_SKIP_SUPPLY_CHAIN:-0}" != "1" ]; then
   require_tool cargo-deny

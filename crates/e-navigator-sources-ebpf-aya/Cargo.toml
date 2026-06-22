@@ -22,6 +22,7 @@ fuzzing = []
 [dependencies]
 async-trait = { workspace = true }
 e-navigator-core = { path = "../e-navigator-core" }
+e-navigator-protocol = { path = "../e-navigator-protocol" }
 e-navigator-profiling = { path = "../e-navigator-profiling" }
 e-navigator-signals = { path = "../e-navigator-signals" }
 tokio = { workspace = true, features = ["io-util"] }

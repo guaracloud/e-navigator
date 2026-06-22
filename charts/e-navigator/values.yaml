@@ -127,6 +127,10 @@ config:
     enabled = false
 
     [[modules]]
+    name = "source.aya_http"
+    enabled = false
+
+    [[modules]]
     name = "source.aya_cpu_profile"
     enabled = false
 

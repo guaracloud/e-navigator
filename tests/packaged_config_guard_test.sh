@@ -8,6 +8,7 @@ known_modules=(
   "source.aya_exec"
   "source.aya_network"
   "source.aya_dns"
+  "source.aya_http"
   "source.aya_cpu_profile"
   "source.host_resource"
   "source.synthetic_exec"

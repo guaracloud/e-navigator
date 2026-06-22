@@ -31,6 +31,7 @@ fn default_config_is_valid_and_preserves_expected_modules() {
             ModuleConfig::enabled("source.aya_exec"),
             ModuleConfig::enabled("source.aya_network"),
             ModuleConfig::disabled("source.aya_dns"),
+            ModuleConfig::disabled("source.aya_http"),
             ModuleConfig::disabled("source.aya_cpu_profile"),
             ModuleConfig::enabled("source.host_resource"),
             ModuleConfig::enabled("source.synthetic_exec"),
@@ -66,6 +67,8 @@ fn known_modules_include_opt_in_dns_runtime_source_without_default_runtime_claim
 
     assert!(is_known_module_name("source.aya_dns"));
     assert!(!config.module_enabled("source.aya_dns"));
+    assert!(is_known_module_name("source.aya_http"));
+    assert!(!config.module_enabled("source.aya_http"));
     assert!(is_known_module_name("generator.dns_metrics"));
 }
 
@@ -310,7 +313,7 @@ fn unknown_module_names_are_invalid_and_list_known_modules() {
             ],
             ..RuntimeConfig::default()
         },
-        "unknown module 'generator.dns_typo'; known modules: source.aya_exec, source.aya_network, source.aya_dns, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, generator.guara_compat, sink.json_stdout, sink.prometheus_http, sink.otlp_http",
+        "unknown module 'generator.dns_typo'; known modules: source.aya_exec, source.aya_network, source.aya_dns, source.aya_http, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, generator.guara_compat, sink.json_stdout, sink.prometheus_http, sink.otlp_http",
     );
 }
 

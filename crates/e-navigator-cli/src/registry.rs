@@ -10,7 +10,7 @@ use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::ModuleRegistry;
 use e_navigator_sinks::{JsonStdoutSink, OtlpHttpSink, PrometheusHttpSink};
 use e_navigator_sources_ebpf_aya::{
-    AyaCpuProfileSource, AyaDnsSource, AyaExecSource, AyaNetworkSource,
+    AyaCpuProfileSource, AyaDnsSource, AyaExecSource, AyaHttpSource, AyaNetworkSource,
 };
 use e_navigator_sources_host::{HostResourceConfig, HostResourceSource};
 
@@ -53,6 +53,13 @@ pub(crate) fn build_registry(
 
     if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.aya_dns") {
         registry = registry.with_source(Box::new(AyaDnsSource::new(
+            host.clone(),
+            config.attribution.procfs_root.clone(),
+        )));
+    }
+
+    if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.aya_http") {
+        registry = registry.with_source(Box::new(AyaHttpSource::new(
             host.clone(),
             config.attribution.procfs_root.clone(),
         )));
@@ -276,6 +283,24 @@ mod tests {
                 "source.aya_exec",
                 "source.aya_network",
                 "source.aya_dns",
+                "source.host_resource"
+            ]
+        );
+    }
+
+    #[test]
+    fn aya_exec_source_mode_registers_http_source_when_explicitly_enabled() {
+        let mut config = RuntimeConfig::default();
+        set_module_enabled(&mut config, "source.aya_http", true);
+
+        let registry = build_registry(&config, SourceMode::AyaExec, Some("node-a".to_string()));
+
+        assert_eq!(
+            source_names(&registry),
+            vec![
+                "source.aya_exec",
+                "source.aya_network",
+                "source.aya_http",
                 "source.host_resource"
             ]
         );
