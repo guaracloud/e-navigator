@@ -1,27 +1,21 @@
 use async_trait::async_trait;
 use e_navigator_core::{CoreResult, ModuleKind, ModuleMetadata, OtlpHttpConfig, Sink};
 use e_navigator_signals::SignalEnvelope;
-use serde::Serialize;
 use tokio::sync::Mutex;
 
 use crate::{
-    HttpExporterConfig, HttpJsonExporter, HttpProtobufExporter, ProfileRecord,
-    format_otel_metric_record, format_otel_trace_record, format_profile_record,
+    HttpExporterConfig, HttpProtobufExporter, format_otel_metric_record,
+    format_otel_profile_record, format_otel_trace_record,
     otlp_metric_proto::encode_metric_export_request,
+    otlp_profile_proto::encode_profile_export_request,
     otlp_trace_proto::{encode_trace_export_request, trace_record_has_valid_ids},
 };
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "snake_case", tag = "signal_family", content = "record")]
-enum OtlpHttpRecord {
-    Profile(ProfileRecord),
-}
 
 #[derive(Debug)]
 pub struct OtlpHttpSink {
     config: OtlpHttpConfig,
-    json_exporter: Mutex<HttpJsonExporter<OtlpHttpRecord>>,
     metric_exporter: Mutex<HttpProtobufExporter<crate::OtelMetricRecord>>,
+    profile_exporter: Mutex<HttpProtobufExporter<crate::OtelProfileRecord>>,
     trace_exporter: Mutex<HttpProtobufExporter<crate::OtelTraceRecord>>,
 }
 
@@ -36,14 +30,14 @@ impl OtlpHttpSink {
             max_retries: config.max_retries,
             tls_insecure_skip_verify: config.tls_insecure_skip_verify,
         };
-        let json_exporter = HttpJsonExporter::new(exporter_config.clone()).map_err(|err| {
-            e_navigator_core::CoreError::ModuleFailed {
-                module: "sink.otlp_http".to_string(),
-                message: err.to_string(),
-            }
-        })?;
         let metric_exporter =
             HttpProtobufExporter::new(exporter_config.clone(), encode_metric_export_request)
+                .map_err(|err| e_navigator_core::CoreError::ModuleFailed {
+                    module: "sink.otlp_http".to_string(),
+                    message: err.to_string(),
+                })?;
+        let profile_exporter =
+            HttpProtobufExporter::new(exporter_config.clone(), encode_profile_export_request)
                 .map_err(|err| e_navigator_core::CoreError::ModuleFailed {
                     module: "sink.otlp_http".to_string(),
                     message: err.to_string(),
@@ -58,8 +52,8 @@ impl OtlpHttpSink {
 
         Ok(Self {
             config,
-            json_exporter: Mutex::new(json_exporter),
             metric_exporter: Mutex::new(metric_exporter),
+            profile_exporter: Mutex::new(profile_exporter),
             trace_exporter: Mutex::new(trace_exporter),
         })
     }
@@ -102,25 +96,20 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
             });
         }
 
-        let record = if self.config.profiles_enabled {
-            format_profile_record(signal).map(OtlpHttpRecord::Profile)
-        } else {
-            None
-        };
+        if self.config.profiles_enabled
+            && let Some(record) = format_otel_profile_record(signal)
+        {
+            let mut exporter = self.profile_exporter.lock().await;
+            exporter.enqueue(record);
+            return exporter.flush_once().await.map_err(|err| {
+                e_navigator_core::CoreError::ModuleFailed {
+                    module: "sink.otlp_http".to_string(),
+                    message: err.to_string(),
+                }
+            });
+        }
 
-        let Some(record) = record else {
-            return Ok(());
-        };
-
-        let mut exporter = self.json_exporter.lock().await;
-        exporter.enqueue(record);
-        exporter
-            .flush_once()
-            .await
-            .map_err(|err| e_navigator_core::CoreError::ModuleFailed {
-                module: "sink.otlp_http".to_string(),
-                message: err.to_string(),
-            })
+        Ok(())
     }
 }
 
@@ -130,12 +119,16 @@ mod tests {
     use e_navigator_core::Sink;
     use e_navigator_signals::{
         ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkAddressFamily,
-        NetworkCounterMetric, NetworkProtocol, RequestSpanObservation, SignalEnvelope,
-        TraceConfidence, TraceCorrelationKind,
+        NetworkCounterMetric, NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation,
+        ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
+        ProfilingKind, RequestSpanObservation, SignalEnvelope, TraceConfidence,
+        TraceCorrelationKind,
     };
     use opentelemetry_proto::tonic::{
         collector::{
-            metrics::v1::ExportMetricsServiceRequest, trace::v1::ExportTraceServiceRequest,
+            metrics::v1::ExportMetricsServiceRequest,
+            profiles::v1development::ExportProfilesServiceRequest,
+            trace::v1::ExportTraceServiceRequest,
         },
         metrics::v1::{metric::Data, number_data_point},
     };
@@ -302,6 +295,61 @@ mod tests {
         }));
     }
 
+    #[tokio::test]
+    async fn otlp_http_sink_exports_profile_records_as_otlp_protobuf() {
+        let collector = FakeCollector::spawn(vec![200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            endpoint: collector.url(),
+            metrics_enabled: false,
+            traces_enabled: false,
+            profiles_enabled: true,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&profile_sample())
+            .await
+            .expect("profile export succeeds");
+        let request = collector.next_request().await;
+
+        assert!(request.contains("content-type: application/x-protobuf"));
+        assert!(!request.contains("signal_family"));
+        let decoded = ExportProfilesServiceRequest::decode(request.body())
+            .expect("OTLP profile request decodes");
+        let dictionary = decoded.dictionary.as_ref().expect("profile dictionary");
+        let resource_profiles = decoded
+            .resource_profiles
+            .first()
+            .expect("resource profiles are present");
+        let scope_profiles = resource_profiles
+            .scope_profiles
+            .first()
+            .expect("scope profiles are present");
+        let profile = scope_profiles.profiles.first().expect("profile is present");
+        let sample = profile.samples.first().expect("sample is present");
+
+        assert!(dictionary.string_table.contains(&"cpu".to_string()));
+        assert!(dictionary.string_table.contains(&"nanoseconds".to_string()));
+        assert!(
+            dictionary
+                .string_table
+                .contains(&"checkout::handler".to_string())
+        );
+        assert_eq!(sample.values, vec![2]);
+        assert_eq!(sample.timestamps_unix_nano, vec![1_000]);
+        assert_eq!(profile.period, 10_000_000);
+        let resource = resource_profiles.resource.as_ref().expect("resource");
+        assert!(resource.attributes.iter().any(|attribute| {
+            attribute.key == "k8s.pod.name"
+                && format!("{:?}", attribute.value).contains("checkout-123")
+        }));
+    }
+
     fn network_metric() -> SignalEnvelope {
         SignalEnvelope::network_counter_metric(
             "generator.network_metrics",
@@ -361,6 +409,54 @@ mod tests {
                 }),
                 peer: None,
                 attributes: Vec::new(),
+            },
+        )
+    }
+
+    fn profile_sample() -> SignalEnvelope {
+        SignalEnvelope::profile_sample_observation(
+            "source.synthetic_exec",
+            Some("node-a".to_string()),
+            ProfileSampleObservation {
+                timestamp_unix_nanos: 1_000,
+                profiling_kind: ProfilingKind::Cpu,
+                correlation_kind: ProfilingCorrelationKind::Synthetic,
+                confidence: ProfilingConfidence::High,
+                sample_count: 2,
+                sampling_period_nanos: Some(10_000_000),
+                stack_id: "stack:abc".to_string(),
+                stack_frames: vec![ProfilingFrame {
+                    symbol: Some("checkout::handler".to_string()),
+                    module: Some("checkout".to_string()),
+                    file: Some("/src/checkout.rs".to_string()),
+                    line: Some(42),
+                }],
+                process: Some(NetworkProcessIdentity {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "checkout-api".to_string(),
+                    executable: Some("/app/checkout-api".to_string()),
+                    cgroup_id: None,
+                }),
+                container: Some(ContainerContext {
+                    container_id: "container-a".to_string(),
+                    runtime: Some("containerd".to_string()),
+                }),
+                kubernetes: Some(KubernetesContext {
+                    namespace: "default".to_string(),
+                    pod_name: "checkout-123".to_string(),
+                    pod_uid: Some("pod-uid".to_string()),
+                    container_name: Some("checkout".to_string()),
+                    node_name: Some("node-a".to_string()),
+                    labels: BTreeMap::new(),
+                }),
+                thread_id: Some(7),
+                thread_name: Some("worker".to_string()),
+                attributes: vec![ProfilingAttribute {
+                    key: "profiling.synthetic.fixture".to_string(),
+                    value: "cpu_sample".to_string(),
+                }],
             },
         )
     }

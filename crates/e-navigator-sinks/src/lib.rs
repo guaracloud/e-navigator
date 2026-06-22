@@ -4,10 +4,12 @@
 pub mod exporter;
 pub mod json_stdout;
 pub mod otel_metric;
+pub mod otel_profile;
 pub mod otel_trace;
 mod otlp_common;
 pub mod otlp_http;
 mod otlp_metric_proto;
+mod otlp_profile_proto;
 mod otlp_trace_proto;
 pub mod profile_format;
 pub mod prometheus;
@@ -19,6 +21,7 @@ pub use json_stdout::JsonStdoutSink;
 pub use otel_metric::{
     OtelMetricKind, OtelMetricRecord, OtelMetricValue, format_otel_metric_record,
 };
+pub use otel_profile::{OtelProfileFrame, OtelProfileRecord, format_otel_profile_record};
 pub use otel_trace::{OtelTraceRecord, OtelTraceRecordKind, format_otel_trace_record};
 pub use otlp_http::OtlpHttpSink;
 pub use profile_format::{PYROSCOPE_CPU_PROFILE_IDENTITY, ProfileRecord, format_profile_record};

@@ -11,7 +11,7 @@ workspace = true
 async-trait = { workspace = true }
 e-navigator-core = { path = "../e-navigator-core" }
 e-navigator-signals = { path = "../e-navigator-signals" }
-opentelemetry-proto = { version = "0.32.0", default-features = false, features = ["gen-tonic-messages", "metrics", "trace"] }
+opentelemetry-proto = { version = "0.32.0", default-features = false, features = ["gen-tonic-messages", "metrics", "profiles", "trace"] }
 prost = "0.14.4"
 reqwest = { workspace = true }
 serde = { workspace = true }

@@ -13,7 +13,7 @@ pub(crate) fn key_values(attributes: &BTreeMap<String, Value>) -> Vec<KeyValue> 
         .collect()
 }
 
-fn to_any_value(value: &Value) -> AnyValue {
+pub(crate) fn to_any_value(value: &Value) -> AnyValue {
     let value = match value {
         Value::Bool(value) => any_value::Value::BoolValue(*value),
         Value::Number(value) => {
