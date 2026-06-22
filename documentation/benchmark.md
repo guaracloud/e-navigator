@@ -175,6 +175,12 @@ The initial live proof should record:
   repeated the real Alloy HTTP 400 boundary with the published image, restored
   the baseline config, and recorded Prometheus scrape proof, JSON stdout counts,
   resource samples, and capability posture;
+- `20260622-004011-current-head-live` rolled current pushed `main` image
+  `sha-c89f345` to `staging/e-navigator-bench`, ran a controlled BusyBox
+  workload, proved the DaemonSet stayed `2/2` Ready with zero restarts, captured
+  JSON stdout source/generator families, and proved Prometheus-level controlled
+  workload network attribution for the workload pod; JSON stdout did not show
+  that workload pod name and must not be used for that attribution claim;
 - `20260621-233103-generator-resource-security-live` was a collection-only
   current-release run that observed live `generator.dependency_graph` output,
   `source.aya_network`, `source.aya_exec` process exits, network metrics,
@@ -193,6 +199,8 @@ The initial live proof should record:
   the pre-run `sha-5c417c0` Prometheus-enabled release;
 - `20260622-001716-published-image-live` left the Helm release on pushed image
   `sha-d3167e3` with the baseline config restored and both homelab pods Ready;
+- `20260622-004011-current-head-live` left the Helm release on current pushed
+  image `sha-c89f345` with both homelab pods Ready;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in
