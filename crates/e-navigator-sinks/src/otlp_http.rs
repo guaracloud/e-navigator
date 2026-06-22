@@ -126,9 +126,7 @@ mod tests {
     };
     use opentelemetry_proto::tonic::{
         collector::{
-            metrics::v1::ExportMetricsServiceRequest,
-            profiles::v1development::ExportProfilesServiceRequest,
-            trace::v1::ExportTraceServiceRequest,
+            metrics::v1::ExportMetricsServiceRequest, trace::v1::ExportTraceServiceRequest,
         },
         metrics::v1::{metric::Data, number_data_point},
     };
@@ -319,7 +317,7 @@ mod tests {
 
         assert!(request.contains("content-type: application/x-protobuf"));
         assert!(!request.contains("signal_family"));
-        let decoded = ExportProfilesServiceRequest::decode(request.body())
+        let decoded = collector_profile_proto::ExportProfilesServiceRequest::decode(request.body())
             .expect("OTLP profile request decodes");
         let dictionary = decoded.dictionary.as_ref().expect("profile dictionary");
         let resource_profiles = decoded
@@ -331,7 +329,7 @@ mod tests {
             .first()
             .expect("scope profiles are present");
         let profile = scope_profiles.profiles.first().expect("profile is present");
-        let sample = profile.samples.first().expect("sample is present");
+        let sample = profile.sample.first().expect("sample is present");
 
         assert!(dictionary.string_table.contains(&"cpu".to_string()));
         assert!(dictionary.string_table.contains(&"nanoseconds".to_string()));
@@ -340,7 +338,10 @@ mod tests {
                 .string_table
                 .contains(&"checkout::handler".to_string())
         );
-        assert_eq!(sample.values, vec![2]);
+        assert_eq!(sample.value, vec![2]);
+        assert_eq!(sample.locations_start_index, 0);
+        assert_eq!(sample.locations_length, 1);
+        assert_eq!(profile.location_indices, vec![1]);
         assert_eq!(sample.timestamps_unix_nano, vec![1_000]);
         assert_eq!(profile.period, 10_000_000);
         let resource = resource_profiles.resource.as_ref().expect("resource");
@@ -539,6 +540,200 @@ mod tests {
 
         fn try_next_request(&self) -> Option<RecordedRequest> {
             self.requests.try_lock().ok()?.try_recv().ok()
+        }
+    }
+
+    mod collector_profile_proto {
+        use opentelemetry_proto::tonic::{
+            common::v1::{InstrumentationScope, KeyValue},
+            resource::v1::Resource,
+        };
+        use prost::Message;
+
+        #[derive(Clone, PartialEq, Message)]
+        pub(super) struct ExportProfilesServiceRequest {
+            #[prost(message, repeated, tag = "1")]
+            pub resource_profiles: Vec<ResourceProfiles>,
+            #[prost(message, optional, tag = "2")]
+            pub dictionary: Option<ProfilesDictionary>,
+        }
+
+        #[derive(Clone, PartialEq, Message)]
+        pub(super) struct ProfilesDictionary {
+            #[prost(message, repeated, tag = "1")]
+            pub mapping_table: Vec<Mapping>,
+            #[prost(message, repeated, tag = "2")]
+            pub location_table: Vec<Location>,
+            #[prost(message, repeated, tag = "3")]
+            pub function_table: Vec<Function>,
+            #[prost(message, repeated, tag = "4")]
+            pub link_table: Vec<Link>,
+            #[prost(string, repeated, tag = "5")]
+            pub string_table: Vec<String>,
+            #[prost(message, repeated, tag = "6")]
+            pub attribute_table: Vec<KeyValue>,
+            #[prost(message, repeated, tag = "7")]
+            pub attribute_units: Vec<AttributeUnit>,
+        }
+
+        #[derive(Clone, PartialEq, Message)]
+        pub(super) struct ResourceProfiles {
+            #[prost(message, optional, tag = "1")]
+            pub resource: Option<Resource>,
+            #[prost(message, repeated, tag = "2")]
+            pub scope_profiles: Vec<ScopeProfiles>,
+            #[prost(string, tag = "3")]
+            pub schema_url: String,
+        }
+
+        #[derive(Clone, PartialEq, Message)]
+        pub(super) struct ScopeProfiles {
+            #[prost(message, optional, tag = "1")]
+            pub scope: Option<InstrumentationScope>,
+            #[prost(message, repeated, tag = "2")]
+            pub profiles: Vec<Profile>,
+            #[prost(string, tag = "3")]
+            pub schema_url: String,
+        }
+
+        #[derive(Clone, PartialEq, Message)]
+        pub(super) struct Profile {
+            #[prost(message, repeated, tag = "1")]
+            pub sample_type: Vec<ValueType>,
+            #[prost(message, repeated, tag = "2")]
+            pub sample: Vec<Sample>,
+            #[prost(int32, repeated, packed = "true", tag = "3")]
+            pub location_indices: Vec<i32>,
+            #[prost(int64, tag = "4")]
+            pub time_nanos: i64,
+            #[prost(int64, tag = "5")]
+            pub duration_nanos: i64,
+            #[prost(message, optional, tag = "6")]
+            pub period_type: Option<ValueType>,
+            #[prost(int64, tag = "7")]
+            pub period: i64,
+            #[prost(int32, repeated, packed = "true", tag = "8")]
+            pub comment_strindices: Vec<i32>,
+            #[prost(int32, tag = "9")]
+            pub default_sample_type_index: i32,
+            #[prost(bytes = "vec", tag = "10")]
+            pub profile_id: Vec<u8>,
+            #[prost(uint32, tag = "11")]
+            pub dropped_attributes_count: u32,
+            #[prost(string, tag = "12")]
+            pub original_payload_format: String,
+            #[prost(bytes = "vec", tag = "13")]
+            pub original_payload: Vec<u8>,
+            #[prost(int32, repeated, packed = "true", tag = "14")]
+            pub attribute_indices: Vec<i32>,
+        }
+
+        #[derive(Clone, PartialEq, Message)]
+        pub(super) struct AttributeUnit {
+            #[prost(int32, tag = "1")]
+            pub attribute_key_strindex: i32,
+            #[prost(int32, tag = "2")]
+            pub unit_strindex: i32,
+        }
+
+        #[derive(Clone, PartialEq, Message)]
+        pub(super) struct Link {
+            #[prost(bytes = "vec", tag = "1")]
+            pub trace_id: Vec<u8>,
+            #[prost(bytes = "vec", tag = "2")]
+            pub span_id: Vec<u8>,
+        }
+
+        #[derive(Clone, PartialEq, Message)]
+        pub(super) struct ValueType {
+            #[prost(int32, tag = "1")]
+            pub type_strindex: i32,
+            #[prost(int32, tag = "2")]
+            pub unit_strindex: i32,
+            #[prost(enumeration = "AggregationTemporality", tag = "3")]
+            pub aggregation_temporality: i32,
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, prost::Enumeration)]
+        #[repr(i32)]
+        pub(super) enum AggregationTemporality {
+            Unspecified = 0,
+            Delta = 1,
+            Cumulative = 2,
+        }
+
+        #[derive(Clone, PartialEq, Message)]
+        pub(super) struct Sample {
+            #[prost(int32, tag = "1")]
+            pub locations_start_index: i32,
+            #[prost(int32, tag = "2")]
+            pub locations_length: i32,
+            #[prost(int64, repeated, packed = "true", tag = "3")]
+            pub value: Vec<i64>,
+            #[prost(int32, repeated, packed = "true", tag = "4")]
+            pub attribute_indices: Vec<i32>,
+            #[prost(int32, optional, tag = "5")]
+            pub link_index: Option<i32>,
+            #[prost(uint64, repeated, packed = "true", tag = "6")]
+            pub timestamps_unix_nano: Vec<u64>,
+        }
+
+        #[derive(Clone, PartialEq, Message)]
+        pub(super) struct Mapping {
+            #[prost(uint64, tag = "1")]
+            pub memory_start: u64,
+            #[prost(uint64, tag = "2")]
+            pub memory_limit: u64,
+            #[prost(uint64, tag = "3")]
+            pub file_offset: u64,
+            #[prost(int32, tag = "4")]
+            pub filename_strindex: i32,
+            #[prost(int32, repeated, packed = "true", tag = "5")]
+            pub attribute_indices: Vec<i32>,
+            #[prost(bool, tag = "6")]
+            pub has_functions: bool,
+            #[prost(bool, tag = "7")]
+            pub has_filenames: bool,
+            #[prost(bool, tag = "8")]
+            pub has_line_numbers: bool,
+            #[prost(bool, tag = "9")]
+            pub has_inline_frames: bool,
+        }
+
+        #[derive(Clone, PartialEq, Message)]
+        pub(super) struct Location {
+            #[prost(int32, optional, tag = "1")]
+            pub mapping_index: Option<i32>,
+            #[prost(uint64, tag = "2")]
+            pub address: u64,
+            #[prost(message, repeated, tag = "3")]
+            pub line: Vec<Line>,
+            #[prost(bool, tag = "4")]
+            pub is_folded: bool,
+            #[prost(int32, repeated, packed = "true", tag = "5")]
+            pub attribute_indices: Vec<i32>,
+        }
+
+        #[derive(Clone, PartialEq, Message)]
+        pub(super) struct Line {
+            #[prost(int32, tag = "1")]
+            pub function_index: i32,
+            #[prost(int64, tag = "2")]
+            pub line: i64,
+            #[prost(int64, tag = "3")]
+            pub column: i64,
+        }
+
+        #[derive(Clone, PartialEq, Message)]
+        pub(super) struct Function {
+            #[prost(int32, tag = "1")]
+            pub name_strindex: i32,
+            #[prost(int32, tag = "2")]
+            pub system_name_strindex: i32,
+            #[prost(int32, tag = "3")]
+            pub filename_strindex: i32,
+            #[prost(int64, tag = "4")]
+            pub start_line: i64,
         }
     }
 }
