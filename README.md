@@ -161,9 +161,12 @@ Implemented with narrower or deferred runtime claims:
   collector for internal JSON records. Homelab run
   `20260621-214450-sink-failure-live` proved that HTTP 500 responses from a
   namespace-local collector are logged and dropped for `sink.otlp_http` without
-  terminating the runner or stopping Prometheus/JSON stdout. These runs are not
-  upstream OTLP protobuf, Tempo, Pyroscope, Alloy, or production collector
-  compatibility proof.
+  terminating the runner or stopping Prometheus/JSON stdout. Homelab run
+  `20260622-001716-published-image-live` repeated the real Alloy HTTP 400
+  failure boundary with pushed GHCR image `sha-d3167e3` and kept both pods Ready
+  with JSON stdout and Prometheus HTTP active. These runs are not upstream OTLP
+  protobuf, Tempo, Pyroscope, Alloy, or production collector compatibility
+  proof.
 - Guara Beyla L4 compatibility remains generator and formatter proven, with a
   recorded live boundary. Homelab run `20260621-220029-guara-compat-live`
   enabled `generator.guara_compat` while Prometheus scraping was healthy and
@@ -178,7 +181,9 @@ Implemented with narrower or deferred runtime claims:
 - Resource and privilege evidence is currently a point-in-time baseline only.
   Homelab run `20260621-221235-baseline-resource-live` captured 10
   `kubectl top` samples per E-Navigator pod, Prometheus cAdvisor CPU and memory
-  series, rendered security context, and decoded capabilities. It does not
+  series, rendered security context, and decoded capabilities. Homelab run
+  `20260622-001716-published-image-live` repeated resource and capability
+  capture on pushed image `sha-d3167e3`. It does not
   prove reduced overhead or reduced privilege because no equivalent baseline
   comparison was captured and the pods still ran as UID 0 with `CAP_SYS_ADMIN`
   and `Seccomp: 0`.

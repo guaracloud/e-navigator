@@ -169,6 +169,12 @@ The initial live proof should record:
   Alloy HTTP 400, while current local code loaded directly into both homelab
   node runtimes logged and dropped the HTTP 400 sink failures with both pods
   Ready, zero restarts, JSON stdout active, and Prometheus HTTP still reachable;
+- `20260622-001716-published-image-live` pushed commit `d3167e3`, waited for
+  GitHub image publication, deployed
+  `ghcr.io/guaracloud/e-navigator:sha-d3167e3` to `staging/e-navigator-bench`,
+  repeated the real Alloy HTTP 400 boundary with the published image, restored
+  the baseline config, and recorded Prometheus scrape proof, JSON stdout counts,
+  resource samples, and capability posture;
 - `20260621-233103-generator-resource-security-live` was a collection-only
   current-release run that observed live `generator.dependency_graph` output,
   `source.aya_network`, `source.aya_exec` process exits, network metrics,
@@ -185,6 +191,8 @@ The initial live proof should record:
   DaemonSet runtime run: image `sha-8ab271c` rolled out on both homelab nodes,
   emitted live Aya network-derived JSON stdout records, and was then restored to
   the pre-run `sha-5c417c0` Prometheus-enabled release;
+- `20260622-001716-published-image-live` left the Helm release on pushed image
+  `sha-d3167e3` with the baseline config restored and both homelab pods Ready;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in
