@@ -254,6 +254,13 @@ The initial live proof should record:
   controlled client completed but did not produce matching controlled-client DNS
   records in the final structured pass, and dropped DNS perf events mean the run
   is not lossless capture proof;
+- `20260623-045808-dns-bpf-drop-diagnostics-not-proven` rolled three pushed
+  DNS diagnostic images only to `staging/e-navigator-bench`; the first two
+  failed BPF loading in `source.aya_dns` at `tracepoint_recvfrom_exit`, the
+  third failed BPF loading in `source.aya_network` at `tracepoint_read_exit`,
+  the diagnostic changes were reverted in `e3bc6f2`, and the release was
+  restored to the previous baseline digest; this is negative verifier proof, not
+  DNS capture progress;
 - `20260622-122803-guara-einprogress-live` pushed commit `622e1aa`, waited for
   GHCR image publication, rolled
   `ghcr.io/guaracloud/e-navigator:sha-622e1aa` to

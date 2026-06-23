@@ -36,3 +36,15 @@ CoreDNS responses from `10.43.0.10:53`, but found zero matching E-Navigator
 records by pod name, pod IP, container ID, command, or exact query names. It is
 negative evidence for `homelab-01` controlled-client DNS capture and does not
 change the existing symmetric/lossless/full-coverage deferred claims.
+
+DNS diagnostic follow-up note:
+`20260623-045808-dns-bpf-drop-diagnostics-not-proven` rolled three pushed
+diagnostic images only to `staging`/`e-navigator-bench`. The first two images
+failed BPF loading in `source.aya_dns` with verifier output pointing at
+`tracepoint_recvfrom_exit` and `try_tracepoint_dns_recvfrom_exit`; the third
+failed BPF loading in `source.aya_network` at `tracepoint_read_exit`. Commit
+`e3bc6f2` reverted the diagnostics, GitHub `CI` run `28004511957` and
+`publish-images` run `28004511962` succeeded for the revert, and the release was
+restored to the previous baseline digest. This does not prove DNS diagnostic
+events, the root cause of the missing `homelab-01` controlled-client records,
+or any wider DNS readiness claim.

@@ -166,7 +166,10 @@ Implemented with narrower or deferred runtime claims:
   connected-UDP Python client, while
   `20260623-005331-dns-homelab01-negative-live` still did not prove
   `homelab-01` controlled-client DNS capture. Full workload DNS coverage is
-  still not proven.
+  still not proven. Follow-up run
+  `20260623-045808-dns-bpf-drop-diagnostics-not-proven` showed that the
+  attempted BPF drop-diagnostic path was verifier-hostile on the homelab kernel
+  and was reverted in `e3bc6f2`.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,
