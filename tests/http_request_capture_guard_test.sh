@@ -18,9 +18,10 @@ for expected in \
   "tracepoint_http_sendto_enter" \
   "tracepoint_http_sendmsg_enter" \
   "HTTP_MAX_IOVECS" \
-  "HTTP_IOVEC_REQUEST_BYTES" \
+  "HTTP_IOVEC_CHUNK_BYTES" \
   "copy_http_request_iovecs" \
   "copy_http_request_iovec_chunk" \
+  "request_iovec_lens" \
   "read_msghdr_iovecs" \
   "prepare_http_request_iovecs_event" \
   "emit_http_request_event" \
@@ -41,13 +42,18 @@ if ! grep -Fq "HTTP_MAX_IOVECS: usize = 2" "$program"; then
   exit 1
 fi
 
-if ! grep -Fq "HTTP_IOVEC_REQUEST_BYTES: usize = 160" "$program"; then
-  printf 'expected %s to keep split HTTP iovec copies under a verifier-bounded request prefix\n' "$program" >&2
+if ! grep -Fq "HTTP_IOVEC_CHUNK_BYTES: usize = HTTP_REQUEST_BYTES / HTTP_MAX_IOVECS" "$program"; then
+  printf 'expected %s to keep split HTTP iovec copies in fixed verifier-bounded slots\n' "$program" >&2
   exit 1
 fi
 
 if ! grep -Fq "bpf_probe_read_user_buf(" "$program"; then
   printf 'expected %s to keep contiguous HTTP request copies on the bounded bulk helper\n' "$program" >&2
+  exit 1
+fi
+
+if ! grep -Fq "compact_raw_http_request" "$source_file"; then
+  printf 'expected %s to compact fixed-slot split HTTP iovecs before parsing\n' "$source_file" >&2
   exit 1
 fi
 

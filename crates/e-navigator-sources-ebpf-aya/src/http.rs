@@ -36,6 +36,7 @@ pub(crate) struct RawHttpRequestEvent {
     pub local_addr_v6: [u8; 16],
     pub timestamp_unix_nanos: u64,
     pub request_len: u32,
+    pub request_iovec_lens: [u16; 2],
     pub command: [u8; 16],
     pub request: [u8; RAW_HTTP_REQUEST_BYTES],
 }
@@ -52,12 +53,8 @@ fn raw_http_request_to_signal_with_clock_and_procfs(
     }
 
     let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawHttpRequestEvent>()) };
-    let request_len = (raw.request_len as usize).min(RAW_HTTP_REQUEST_BYTES);
-    let parsed = parse_http_request(
-        &raw.request[..request_len],
-        &ProtocolExtractionConfig::default(),
-    )
-    .ok()?;
+    let request = compact_raw_http_request(&raw);
+    let parsed = parse_http_request(&request, &ProtocolExtractionConfig::default()).ok()?;
     let trace_context = parsed.trace_context.as_ref();
     let peer = peer_context(&raw, &parsed.attributes);
     let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
@@ -99,6 +96,28 @@ fn raw_http_request_to_signal_with_clock_and_procfs(
             attributes: parsed.attributes,
         },
     ))
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn compact_raw_http_request(raw: &RawHttpRequestEvent) -> Vec<u8> {
+    let request_len = (raw.request_len as usize).min(RAW_HTTP_REQUEST_BYTES);
+    if raw.request_iovec_lens.iter().all(|len| *len == 0) {
+        return raw.request[..request_len].to_vec();
+    }
+
+    let mut request = Vec::with_capacity(request_len);
+    for (index, len) in raw.request_iovec_lens.iter().enumerate() {
+        let start = index * (RAW_HTTP_REQUEST_BYTES / raw.request_iovec_lens.len());
+        let end = (start + usize::from(*len)).min(RAW_HTTP_REQUEST_BYTES);
+        if start >= end || request.len() >= request_len {
+            continue;
+        }
+
+        let remaining = request_len - request.len();
+        let segment = &raw.request[start..end];
+        request.extend_from_slice(&segment[..segment.len().min(remaining)]);
+    }
+    request
 }
 
 #[cfg(feature = "fuzzing")]
@@ -541,6 +560,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 0,
             request_len: request.len() as u32,
+            request_iovec_lens: [0; 2],
             command: fixed_command("curl"),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
@@ -593,6 +613,65 @@ mod tests {
     }
 
     #[test]
+    fn split_iovec_raw_http_request_compacts_before_decode() {
+        let part1 = b"GET /split-iovec";
+        let part2 = concat!(
+            " HTTP/1.1\r\n",
+            "Host: split.example.test\r\n",
+            "X-Request-Id: req-split\r\n",
+            "\r\n"
+        )
+        .as_bytes();
+        let mut raw = RawHttpRequestEvent {
+            pid: 42,
+            uid: 1000,
+            cgroup_id: 7,
+            fd: 9,
+            family: RAW_HTTP_AF_INET,
+            remote_port_be: 8080_u16.to_be(),
+            local_port_be: 39000_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([10, 43, 0, 77]),
+            local_addr_v4: u32::from_ne_bytes([10, 42, 1, 23]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 0,
+            request_len: (part1.len() + part2.len()) as u32,
+            request_iovec_lens: [part1.len() as u16, part2.len() as u16],
+            command: fixed_command("curl"),
+            request: [0; RAW_HTTP_REQUEST_BYTES],
+        };
+        raw.request[..part1.len()].copy_from_slice(part1);
+        let second_offset = RAW_HTTP_REQUEST_BYTES / raw.request_iovec_lens.len();
+        raw.request[second_offset..second_offset + part2.len()].copy_from_slice(part2);
+
+        let signal = raw_http_request_to_signal_with_clock_and_procfs(
+            raw_as_bytes(&raw),
+            Some("node-a".to_string()),
+            1_000,
+            std::path::Path::new("/proc"),
+        )
+        .expect("split raw event decodes");
+
+        let SignalPayload::ProtocolRequestObservation(event) = signal.payload else {
+            panic!("expected protocol request observation");
+        };
+        assert_eq!(event.method.as_deref(), Some("GET"));
+        assert!(
+            event
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "url.path" && attribute.value == "/split-iovec")
+        );
+        assert!(
+            event
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "http.request.id"
+                    && attribute.value == "req-split")
+        );
+    }
+
+    #[test]
     fn non_http_payload_is_ignored() {
         let payload = b"not an http request";
         let mut raw = RawHttpRequestEvent {
@@ -609,6 +688,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 0,
             request_len: payload.len() as u32,
+            request_iovec_lens: [0; 2],
             command: fixed_command("curl"),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };

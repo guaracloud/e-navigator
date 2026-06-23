@@ -24,7 +24,7 @@ const IPPROTO_UDP: u32 = 17;
 const DNS_PACKET_BYTES: usize = 512;
 const HTTP_REQUEST_BYTES: usize = 512;
 const HTTP_MAX_IOVECS: usize = 2;
-const HTTP_IOVEC_REQUEST_BYTES: usize = 160;
+const HTTP_IOVEC_CHUNK_BYTES: usize = HTTP_REQUEST_BYTES / HTTP_MAX_IOVECS;
 const NETWORK_EVENT_OPEN: u32 = 1;
 const NETWORK_EVENT_CLOSE: u32 = 2;
 const NETWORK_EVENT_FAILURE: u32 = 3;
@@ -128,6 +128,7 @@ pub struct RawHttpRequestEvent {
     pub local_addr_v6: [u8; 16],
     pub timestamp_unix_nanos: u64,
     pub request_len: u32,
+    pub request_iovec_lens: [u16; HTTP_MAX_IOVECS],
     pub command: [u8; 16],
     pub request: [u8; HTTP_REQUEST_BYTES],
 }
@@ -1385,6 +1386,7 @@ fn http_request_event_scratch() -> Result<&'static mut RawHttpRequestEvent, i64>
     event.local_addr_v6 = [0; 16];
     event.timestamp_unix_nanos = 0;
     event.request_len = 0;
+    event.request_iovec_lens = [0; HTTP_MAX_IOVECS];
     event.command = [0; 16];
     event.request = [0; HTTP_REQUEST_BYTES];
     Ok(event)
@@ -1473,7 +1475,9 @@ fn copy_http_request_iovecs(
         let len = unsafe { bpf_probe_read_user::<u64>(iov_entry.add(8).cast::<u64>()) }
             .map_err(|err| err as i64)?;
         if !buffer.is_null() && len > 0 {
-            output_index += copy_http_request_iovec_chunk(buffer, len, event, output_index)?;
+            let copied = copy_http_request_iovec_chunk(buffer, len, event, iov_index)?;
+            event.request_iovec_lens[iov_index] = copied as u16;
+            output_index += copied;
         }
 
         iov_index += 1;
@@ -1486,28 +1490,30 @@ fn copy_http_request_iovec_chunk(
     buffer: *const u8,
     len: u64,
     event: &mut RawHttpRequestEvent,
-    output_index: usize,
+    iov_index: usize,
 ) -> Result<usize, i64> {
-    if output_index >= HTTP_IOVEC_REQUEST_BYTES {
+    if iov_index >= HTTP_MAX_IOVECS {
         return Ok(0);
     }
 
-    let remaining = HTTP_IOVEC_REQUEST_BYTES - output_index;
-    let capped_len = if len > remaining as u64 {
-        remaining
+    let capped_len = if len > HTTP_IOVEC_CHUNK_BYTES as u64 {
+        HTTP_IOVEC_CHUNK_BYTES
     } else {
         len as usize
     };
-    let mut copied = 0;
-    while copied < HTTP_IOVEC_REQUEST_BYTES {
-        if copied >= capped_len {
-            break;
-        }
-        event.request[output_index + copied] =
-            unsafe { bpf_probe_read_user::<u8>(buffer.add(copied)) }.map_err(|err| err as i64)?;
-        copied += 1;
+    if capped_len == 0 {
+        return Ok(0);
     }
-    Ok(copied)
+
+    let output_index = iov_index * HTTP_IOVEC_CHUNK_BYTES;
+    unsafe {
+        bpf_probe_read_user_buf(
+            buffer,
+            &mut event.request[output_index..output_index + capped_len],
+        )
+    }
+    .map_err(|err| err as i64)?;
+    Ok(capped_len)
 }
 
 fn copy_pending_to_event(pending: &PendingConnect, event: &mut RawNetworkEvent) {
