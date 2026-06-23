@@ -413,6 +413,22 @@ The initial live proof should record:
   production replacement readiness. The temporary Jobs were deleted, and the
   release was rolled back to revision 73/rollback-to-71 with baseline digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
+- `20260623-030344-http-three-iovec-live` records the three-slot split-iovec
+  follow-up on `staging/e-navigator-bench`: commit `396e70d` added local
+  decoder and structural guard coverage for three bounded HTTP `writev` iovec
+  slots, passed `scripts/quality.sh`, GitHub CI run `28005540728`, and image
+  publication run `28005540720`, then pushed image
+  `ghcr.io/guaracloud/e-navigator:sha-396e70d` index digest
+  `sha256:5f2060de32c6206b07868e43cccaa59ebf2489fae34edf2d6646b565354ce84a`
+  and linux/amd64 digest
+  `sha256:64ee132ff66b21c8f9d449ff701372858bde37258e1502f900e9d1afe806959a`.
+  Helm revision 92 rolled out the corrected live config, but `source.aya_http`
+  failed BPF verifier loading with `BPF program is too large. Processed
+  1000001 insn` and `processed 1000001 insns (limit 1000000)`. No controlled
+  three-iovec workload was run. The release was rolled back to revision
+  93/rollback-to-91 with baseline digest
+  `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  Three-slot HTTP capture remains not proven live;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in

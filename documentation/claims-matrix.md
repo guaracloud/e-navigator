@@ -48,3 +48,16 @@ failed BPF loading in `source.aya_network` at `tracepoint_read_exit`. Commit
 restored to the previous baseline digest. This does not prove DNS diagnostic
 events, the root cause of the missing `homelab-01` controlled-client records,
 or any wider DNS readiness claim.
+
+HTTP three-iovec follow-up note:
+`20260623-030344-http-three-iovec-live` rolled image `sha-396e70d` only
+to `staging`/`e-navigator-bench` after local three-slot decoder and structural
+guard coverage passed `scripts/quality.sh`, GitHub `CI` run `28005540728`, and
+`publish-images` run `28005540720`. The corrected Helm revision 92 rollout
+failed live HTTP source loading on the homelab kernel with
+`BPF program is too large. Processed 1000001 insn` and `processed 1000001 insns
+(limit 1000000)`, so no controlled three-iovec workload was run. The release was
+restored to baseline digest
+`sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc` as
+Helm revision 93. This does not prove live HTTP capture beyond the earlier
+two-slot split-iovec proof.
