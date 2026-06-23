@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-use e_navigator_protocol::{ProtocolExtractionConfig, http::parse_http_request};
+use e_navigator_protocol::{
+    ProtocolExtractionConfig,
+    http::{HttpExtraction, parse_http_request},
+};
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_signals::{
     NetworkProcessIdentity, ProtocolRequestObservation, SignalEnvelope, TraceConfidence,
@@ -112,19 +115,50 @@ pub(crate) struct RawHttpRequestEvent {
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RawHttpDecodeError {
+    RawSampleTooShort,
+    HttpExtraction(HttpExtraction),
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+impl RawHttpDecodeError {
+    fn reason_name(self) -> &'static str {
+        match self {
+            Self::RawSampleTooShort => "raw_sample_too_short",
+            Self::HttpExtraction(HttpExtraction::HeadersTooLong) => "headers_too_long",
+            Self::HttpExtraction(HttpExtraction::InvalidUtf8) => "invalid_utf8",
+            Self::HttpExtraction(HttpExtraction::RequestLineTooLong) => "request_line_too_long",
+            Self::HttpExtraction(HttpExtraction::MalformedRequestLine) => "malformed_request_line",
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn raw_http_request_to_signal_with_clock_and_procfs(
     bytes: &[u8],
     host: Option<String>,
     observed_unix_nanos: u64,
     procfs_root: &std::path::Path,
 ) -> Option<SignalEnvelope> {
+    raw_http_request_to_signal_result(bytes, host, observed_unix_nanos, procfs_root).ok()
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn raw_http_request_to_signal_result(
+    bytes: &[u8],
+    host: Option<String>,
+    observed_unix_nanos: u64,
+    procfs_root: &std::path::Path,
+) -> Result<SignalEnvelope, RawHttpDecodeError> {
     if bytes.len() < core::mem::size_of::<RawHttpRequestEvent>() {
-        return None;
+        return Err(RawHttpDecodeError::RawSampleTooShort);
     }
 
     let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawHttpRequestEvent>()) };
     let request = compact_raw_http_request(&raw);
-    let parsed = parse_http_request(&request, &ProtocolExtractionConfig::default()).ok()?;
+    let parsed = parse_http_request(&request, &ProtocolExtractionConfig::default())
+        .map_err(RawHttpDecodeError::HttpExtraction)?;
     let trace_context = parsed.trace_context.as_ref();
     let peer = peer_context(&raw, &parsed.attributes);
     let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
@@ -137,7 +171,7 @@ fn raw_http_request_to_signal_with_clock_and_procfs(
         cgroup_id: (raw.cgroup_id != 0).then_some(raw.cgroup_id),
     };
 
-    Some(SignalEnvelope::protocol_request_observation(
+    Ok(SignalEnvelope::protocol_request_observation(
         "source.aya_http",
         host,
         ProtocolRequestObservation {
@@ -422,26 +456,35 @@ mod platform {
                             match event {
                                 PerfEvent::Sample { head, tail } => {
                                     let bytes = perf_sample_bytes(head, tail);
-                                    if let Some(signal) =
-                                        super::raw_http_request_to_signal_with_clock_and_procfs(
-                                            bytes.as_ref(),
-                                            host.clone(),
-                                            super::now_unix_nanos(),
-                                            &procfs_root,
-                                        )
-                                    {
-                                        telemetry.record_decoded_sample();
-                                        let diagnostic_decision =
-                                            log_signal_diagnostic(&diagnostics, &signal);
-                                        telemetry.record_diagnostic_decision(diagnostic_decision);
-                                        if cpu_tx.blocking_send(signal).is_err() {
-                                            telemetry.record_send_failure();
-                                            closed = true;
-                                        } else {
-                                            telemetry.record_sent_signal();
+                                    match super::raw_http_request_to_signal_result(
+                                        bytes.as_ref(),
+                                        host.clone(),
+                                        super::now_unix_nanos(),
+                                        &procfs_root,
+                                    ) {
+                                        Ok(signal) => {
+                                            telemetry.record_decoded_sample();
+                                            let diagnostic_decision =
+                                                log_signal_diagnostic(&diagnostics, &signal);
+                                            telemetry
+                                                .record_diagnostic_decision(diagnostic_decision);
+                                            if cpu_tx.blocking_send(signal).is_err() {
+                                                telemetry.record_send_failure();
+                                                closed = true;
+                                            } else {
+                                                telemetry.record_sent_signal();
+                                            }
                                         }
-                                    } else {
-                                        telemetry.record_invalid_sample();
+                                        Err(err) => {
+                                            telemetry.record_invalid_sample();
+                                            let diagnostic_decision =
+                                                log_invalid_http_sample_diagnostic(
+                                                    &diagnostics,
+                                                    err,
+                                                );
+                                            telemetry
+                                                .record_diagnostic_decision(diagnostic_decision);
+                                        }
                                     }
                                 }
                                 PerfEvent::Lost { count } => {
@@ -507,6 +550,26 @@ mod platform {
             peer_address = ?event.peer.as_ref().and_then(|peer| peer.address.as_deref()),
             peer_port = ?event.peer.as_ref().and_then(|peer| peer.port),
             "source diagnostic raw event decoded"
+        );
+        DiagnosticSampleDecision::Matched
+    }
+
+    fn log_invalid_http_sample_diagnostic(
+        diagnostics: &SourceDiagnostics,
+        err: super::RawHttpDecodeError,
+    ) -> DiagnosticSampleDecision {
+        let reason = err.reason_name();
+        let decision = diagnostics.sample_decision_for(&[reason]);
+        if decision != DiagnosticSampleDecision::Matched {
+            return decision;
+        }
+
+        info!(
+            target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+            source = "source.aya_http",
+            raw_event = "invalid_http_request_sample",
+            invalid_reason = reason,
+            "source diagnostic raw event invalid"
         );
         DiagnosticSampleDecision::Matched
     }
@@ -928,6 +991,54 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn raw_http_decode_result_classifies_short_samples() {
+        let err =
+            raw_http_request_to_signal_result(&[], None, 1_000, std::path::Path::new("/proc"))
+                .expect_err("short raw samples are invalid");
+
+        assert_eq!(err, RawHttpDecodeError::RawSampleTooShort);
+        assert_eq!(err.reason_name(), "raw_sample_too_short");
+    }
+
+    #[test]
+    fn raw_http_decode_result_classifies_non_http_payloads() {
+        let payload = b"not an http request";
+        let mut raw = RawHttpRequestEvent {
+            pid: 42,
+            uid: 1000,
+            cgroup_id: 7,
+            fd: 9,
+            family: RAW_HTTP_AF_INET,
+            remote_port_be: 8080_u16.to_be(),
+            local_port_be: 39000_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([10, 43, 0, 77]),
+            local_addr_v4: u32::from_ne_bytes([10, 42, 1, 23]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 0,
+            request_len: payload.len() as u32,
+            request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
+            command: fixed_command("curl"),
+            request: [0; RAW_HTTP_REQUEST_BYTES],
+        };
+        raw.request[..payload.len()].copy_from_slice(payload);
+
+        let err = raw_http_request_to_signal_result(
+            raw_as_bytes(&raw),
+            None,
+            1_000,
+            std::path::Path::new("/proc"),
+        )
+        .expect_err("non-http payloads are invalid");
+
+        assert_eq!(
+            err,
+            RawHttpDecodeError::HttpExtraction(HttpExtraction::HeadersTooLong)
+        );
+        assert_eq!(err.reason_name(), "headers_too_long");
     }
 
     #[test]
