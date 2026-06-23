@@ -243,7 +243,11 @@ Implemented with narrower or deferred runtime claims:
   Kubernetes/container attribution. Homelab run
   `20260623-065356-live-profile-otlp-aya` proved that live Aya profile records
   can also flow through the OTLP HTTP profile sink to a namespace-local
-  OpenTelemetry Collector.
+  OpenTelemetry Collector. Homelab run
+  `20260623-084626-profile-seccomp-workload-live` then proved controlled hot
+  Python CPU workload attribution under chart `RuntimeDefault` seccomp on
+  `homelab-02`, while a lighter shell-loop workload in the same run remained
+  non-proving.
 - Kubernetes packaging proof is separate from privileged eBPF runtime proof.
 - Resource and privilege evidence is currently a set of point-in-time runtime
   samples, not a reduced-privilege or reduced-overhead proof.
@@ -254,9 +258,11 @@ Implemented with narrower or deferred runtime claims:
   capture on pushed image `sha-d3167e3`. Homelab runs
   `20260623-041434-runtime-default-seccomp-live`,
   `20260623-043123-profile-seccomp-live`, and
-  `20260623-045606-http-seccomp-live`, and
-  `20260623-051700-dns-seccomp-live` proved kernel-applied `Seccomp: 2` for
-  selected network, CPU profile, HTTP, and DNS source modes. These runs still
+  `20260623-045606-http-seccomp-live`,
+  `20260623-051700-dns-seccomp-live`, and
+  `20260623-084626-profile-seccomp-workload-live` proved selected network, CPU
+  profile, HTTP, and DNS source modes under kernel-applied `Seccomp: 2`. These
+  runs still
   do not prove reduced overhead or reduced privilege because no equivalent
   baseline comparison was captured and the pods still ran as UID 0 with
   `CAP_SYS_ADMIN`.

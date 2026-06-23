@@ -69,7 +69,8 @@ Unless the exact proof is present in a recorded result set, do not claim:
   multi-iovec HTTP header assembly;
 - Prometheus scrape/export compatibility;
 - Tempo, Alloy, Pyroscope, pprof, or collector-ingested OTLP compatibility;
-- perf-event CPU profiling parity;
+- perf-event CPU profiling parity beyond the exact recorded live CPU profile
+  runs;
 - Kubernetes runtime readiness;
 - reduced-privilege eBPF operation beyond the exact recorded RuntimeDefault
   seccomp proofs, including the exact recorded network, HTTP, CPU profile, and

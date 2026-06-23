@@ -270,6 +270,16 @@ The initial live proof should record:
   `dns_response`, 296 `dns_counter_metric`, and 148 `dns_latency_metric`
   records for the workload after attribution warmup; the release was rolled
   back to revision `103` and no run-labeled resources remained;
+- `20260623-084626-profile-seccomp-workload-live` rolled pushed image
+  `sha-7d772fc` to `staging/e-navigator-bench` with
+  `source.aya_cpu_profile`, `generator.profiling`, and chart
+  `RuntimeDefault` seccomp enabled; both E-Navigator pods reported
+  `Seccomp: 2` and `NoNewPrivs: 1`, a lighter shell-loop workload completed
+  without matching profile records, and a four-worker hot Python workload on
+  `homelab-02` produced 726 Kubernetes-attributed `profile_sample_observation`
+  records plus 726 Kubernetes-attributed `profiling_session_observation`
+  records with zero precise failure markers; the release was rolled back to
+  revision `105` and no run-labeled resources remained;
 - `20260622-122803-guara-einprogress-live` pushed commit `622e1aa`, waited for
   GHCR image publication, rolled
   `ghcr.io/guaracloud/e-navigator:sha-622e1aa` to
