@@ -829,8 +829,15 @@ fn try_tracepoint_http_sendto_enter(ctx: TracePointContext) -> Result<u32, i64> 
 
 fn try_tracepoint_http_sendmsg_enter(ctx: TracePointContext) -> Result<u32, i64> {
     record_http_diagnostic(HTTP_DIAG_SENDMSG_ENTER);
-    let _ = ctx;
-    Ok(0)
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let message = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    if message.is_null() {
+        record_http_diagnostic(HTTP_DIAG_NULL_OR_EMPTY);
+        return Ok(0);
+    }
+
+    let (iov, iov_len) = read_msghdr_iovecs(message)?;
+    emit_http_request_iovecs_event(&ctx, fd, iov, iov_len)
 }
 
 fn try_tracepoint_network_io_enter(ctx: &TracePointContext, direction: u32) -> Result<u32, i64> {

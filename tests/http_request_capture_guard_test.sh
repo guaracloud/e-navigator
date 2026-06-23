@@ -53,6 +53,16 @@ if ! grep -Fq "copy_http_request_iovecs(iov, iov_len, event)" "$program"; then
   exit 1
 fi
 
+if ! grep -Fq "read_msghdr_iovecs(message)" "$program"; then
+  printf 'expected %s to read HTTP sendmsg msghdr iovecs before bounded request capture\n' "$program" >&2
+  exit 1
+fi
+
+if ! grep -Fq "emit_http_request_iovecs_event(&ctx, fd, iov, iov_len)" "$program"; then
+  printf 'expected %s to route HTTP sendmsg through bounded iovec request capture\n' "$program" >&2
+  exit 1
+fi
+
 if ! grep -Fq "HTTP_MAX_IOVECS: usize = 3" "$program"; then
   printf 'expected %s to keep split HTTP iovec verifier complexity bounded to three iovecs\n' "$program" >&2
   exit 1
@@ -98,8 +108,13 @@ if ! grep -Fq "compact_raw_http_request" "$source_file"; then
   exit 1
 fi
 
-if ! grep -Fq "fn try_tracepoint_http_sendmsg_enter(ctx: TracePointContext) -> Result<u32, i64>" "$program"; then
-  printf 'expected %s to keep the HTTP sendmsg tracepoint attached as a no-op verifier boundary\n' "$program" >&2
+if awk '
+  /fn try_tracepoint_http_sendmsg_enter\(ctx: TracePointContext\) -> Result<u32, i64>/ { in_sendmsg = 1 }
+  in_sendmsg && /fn try_tracepoint_network_io_enter\(/ { in_sendmsg = 0 }
+  in_sendmsg && /let _ = ctx;/ { found = 1 }
+  END { exit found ? 0 : 1 }
+' "$program"; then
+  printf 'expected %s to capture HTTP sendmsg rather than leave it as a no-op verifier boundary\n' "$program" >&2
   exit 1
 fi
 
