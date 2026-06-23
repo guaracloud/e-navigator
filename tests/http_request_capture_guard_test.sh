@@ -18,6 +18,7 @@ for expected in \
   "tracepoint_http_sendto_enter" \
   "tracepoint_http_sendmsg_enter" \
   "HTTP_MAX_IOVECS" \
+  "HTTP_IOVEC_CHUNK_BYTES" \
   "copy_http_request_iovecs" \
   "read_msghdr_iovecs" \
   "prepare_http_request_iovecs_event" \
@@ -36,6 +37,11 @@ fi
 
 if ! grep -Fq "HTTP_MAX_IOVECS: usize = 2" "$program"; then
   printf 'expected %s to keep split HTTP iovec verifier complexity bounded to two iovecs\n' "$program" >&2
+  exit 1
+fi
+
+if ! grep -Fq "HTTP_IOVEC_CHUNK_BYTES: usize = HTTP_REQUEST_BYTES / HTTP_MAX_IOVECS" "$program"; then
+  printf 'expected %s to keep split HTTP iovec bulk copies inside verifier-proven buffer bounds\n' "$program" >&2
   exit 1
 fi
 
