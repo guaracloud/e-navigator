@@ -233,7 +233,16 @@ Implemented with narrower or deferred runtime claims:
   buckets emitted live, including a captured line with
   `fallback_output_attempt=916`, but JSON stdout still had zero exact-path
   protocol/request-span rows and no fallback Host-derived peer rows. Exact-path
-  fallback HTTP capture remains unproven.
+  fallback HTTP capture remains unproven. Follow-up
+  `20260623-111601-http-sendmsg-live` deployed pushed image `sha-e8f8575`
+  after local guards proved `sys_enter_sendmsg` was wired through bounded
+  `msghdr`/iovec HTTP request copying rather than the previous no-op boundary.
+  The `homelab-01` `socket.sendmsg` proof job completed `ok=80/80`, while the
+  `homelab-02` job did not schedule because the node still carried the
+  untolerated control-plane taint. Live diagnostics emitted nonzero
+  `sendmsg_enter` and `fallback_output_attempt` counters, but JSON stdout still
+  had zero exact-path protocol/request-span rows and zero rows attributed to
+  the proof pod. Exact-path sendmsg HTTP capture remains unproven.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,
@@ -354,8 +363,10 @@ The following are intentionally not claimed as implemented production behavior:
   controlled `homelab-02` clients using `writev` with up to three explicit
   96-byte iovec slots, including one run under kernel-applied `Seccomp: 2`, but
   the symmetric run `20260623-072108-http-symmetric-iovec-live` produced zero
-  controlled `homelab-01` network or HTTP records. It does not prove symmetric
-  node coverage, TLS, gRPC framing, inbound server-side parsing,
+  controlled `homelab-01` network or HTTP records, and the sendmsg follow-up
+  `20260623-111601-http-sendmsg-live` produced zero exact-path controlled
+  protocol/request-span records. It does not prove symmetric node coverage,
+  TLS, gRPC framing, inbound server-side parsing,
   status-code extraction, route templates, retries, application errors, more
   than three iovec slots, chunks larger than 96 bytes per slot, or broader
   multi-iovec HTTP header assembly;

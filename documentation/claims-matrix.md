@@ -62,6 +62,29 @@ diagnostic buckets emitted live, including a captured line with
 bounded fallback output attempts, but it does not prove exact-path fallback HTTP
 capture or Host-derived live peer context.
 
+HTTP sendmsg follow-up note:
+`20260623-111601-http-sendmsg-live` deployed pushed image `sha-e8f8575` to
+`staging`/`e-navigator-bench` after local structural guards proved
+`sys_enter_sendmsg` was wired through bounded `msghdr`/iovec HTTP request
+copying instead of the previous no-op boundary. Helm revision `130` rolled out
+successfully with HTTP source diagnostics enabled. The `homelab-01`
+`socket.sendmsg` workload completed `ok=80/80`; the `homelab-02` workload did
+not schedule because the target node had the untolerated
+`node-role.kubernetes.io/control-plane` taint. Captured JSON stdout contained
+zero exact-path `protocol_request_observation` records, zero exact-path
+`request_span_observation` records, and zero signal rows attributed to pod
+`http-sendmsg-111601-h01-jnjvb`. The diagnostic counters did emit live
+`sendmsg_enter` and bounded output activity, including captured lines with
+`sendmsg_enter=26`/`fallback_output_attempt=102`,
+`sendmsg_enter=137`/`fallback_output_attempt=42`, and
+`sendmsg_enter=548`/`fallback_output_attempt=84`. This proves the live sendmsg
+tracepoint is no longer inert, but it does not prove exact-path controlled
+sendmsg HTTP capture, request-span generation, pod attribution, or symmetric
+node coverage. Temporary Jobs were deleted, rollback completed to revision
+`131`/rollback-to-129, and the DaemonSet verified `2/2` Ready on baseline
+digest
+`sha256:3abcd8d1c9b9b890801eeab94252f8cc507cd0dba665ddcc449cf409275b90d0`.
+
 DNS follow-up note: `20260623-005331-dns-homelab01-negative-live` deployed
 pushed image `sha-635819e` to `staging`/`e-navigator-bench` with
 `source.aya_dns` and `generator.dns_metrics` enabled, verified controlled

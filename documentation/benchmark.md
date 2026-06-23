@@ -709,6 +709,34 @@ The initial live proof should record:
   `127`/rollback-to-125, and the DaemonSet verified `2/2` Ready on baseline
   digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
+- `20260623-111601-http-sendmsg-live` records the `sys_enter_sendmsg` HTTP
+  follow-up on `staging/e-navigator-bench` using pushed image `sha-e8f8575`
+  index digest
+  `sha256:5957f2656ba975cebdf6f655cff53eeab108a1a70605c6a9c2b026cb6b37ba20`
+  and linux/amd64 digest
+  `sha256:ec34257b72019c6802d338c8f310f2e2d5e5788dec7289a245d79c7f2e2c9ce1`.
+  Local guards first proved the sendmsg tracepoint was wired through bounded
+  `msghdr`/iovec HTTP request copying instead of remaining a no-op. CI run
+  `28032489334` and image publish run `28032489764` succeeded before rollout.
+  Helm revision `130` rolled out successfully with HTTP source diagnostics
+  enabled. The `homelab-01` controlled `socket.sendmsg` job completed
+  `ok=80/80`; the `homelab-02` job did not schedule because `homelab-02` had
+  the untolerated control-plane taint. Captured JSON stdout contained zero
+  exact-path `protocol_request_observation` records, zero exact-path
+  `request_span_observation` records, and zero rows attributed to pod
+  `http-sendmsg-111601-h01-jnjvb`. Source telemetry still reported live HTTP
+  decode activity with zero lost perf events or send failures in sampled
+  windows, and the diagnostic counters emitted nonzero `sendmsg_enter` plus
+  bounded output activity, including captured lines with
+  `sendmsg_enter=26`/`fallback_output_attempt=102`,
+  `sendmsg_enter=137`/`fallback_output_attempt=42`, and
+  `sendmsg_enter=548`/`fallback_output_attempt=84`. This proves the live
+  sendmsg tracepoint is no longer inert, but it does not prove exact-path
+  controlled sendmsg HTTP capture, request-span generation, pod attribution,
+  or symmetric node coverage. Temporary Jobs were deleted, rollback completed
+  to revision `131`/rollback-to-129, and the DaemonSet verified `2/2` Ready on
+  baseline digest
+  `sha256:3abcd8d1c9b9b890801eeab94252f8cc507cd0dba665ddcc449cf409275b90d0`;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in
