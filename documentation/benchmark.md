@@ -628,6 +628,29 @@ The initial live proof should record:
   to revision 123/rollback-to-121, and the DaemonSet verified `2/2` Ready on
   baseline digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
+- `20260623-122906-http-fallback-peer-live` records the bounded fallback HTTP
+  follow-up on `staging/e-navigator-bench` using pushed image `sha-ef74874`
+  index digest
+  `sha256:e7a8bde9969b8f643433a55b3bb0ca658fc9013e97e09f428331b134cd418591`
+  and linux/amd64 digest
+  `sha256:674f2c50139bde031c09d840ec4d7ee497780dd2504b7b9469ce72b98de1aed6`.
+  Local `scripts/quality.sh`, CI run `28025951181`, and image publish run
+  `28025951829` succeeded before rollout. The first rollout failed as revision
+  `124` because the run values omitted `ghcr-e-navigator-pull` and GHCR
+  returned `403 Forbidden`; rollback restored the release as revision `125`,
+  then corrected revision `126` rolled out successfully. Both controlled
+  workloads completed 80 proof requests with zero workload errors. Captured
+  JSON stdout contained zero exact-path `protocol_request_observation` records,
+  zero exact-path `request_span_observation` records, and zero decoded records
+  with the fallback Host domains. Direct `/metrics` did expose
+  Kubernetes-attributed proof-pod network counters at value `109` on
+  `homelab-01` and `79` on `homelab-02`. The new fallback diagnostic buckets
+  emitted live; one captured line included `fallback_candidate=109405`,
+  `fallback_non_http_start=108488`, and `fallback_output_attempt=916`.
+  Temporary Jobs were deleted, rollback completed to revision
+  `127`/rollback-to-125, and the DaemonSet verified `2/2` Ready on baseline
+  digest
+  `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in

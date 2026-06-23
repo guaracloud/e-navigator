@@ -45,6 +45,23 @@ with the latest captured line including `writev_enter=27`,
 and narrows the next HTTP investigation to connection-state correlation, but it
 does not prove exact-path controlled HTTP capture in that run.
 
+HTTP fallback follow-up note:
+`20260623-122906-http-fallback-peer-live` deployed pushed image `sha-ef74874`
+to `staging`/`e-navigator-bench` with bounded fallback HTTP emission when
+socket peer metadata is missing. The first rollout failed because the run
+values omitted the GHCR pull secret; the corrected rollout used
+`ghcr-e-navigator-pull` and succeeded as Helm revision `126`. Both controlled
+jobs completed `ok=80/80`. JSON stdout contained zero exact-path
+`protocol_request_observation` records, zero exact-path
+`request_span_observation` records, and no fallback Host-derived peer rows.
+Direct `/metrics` still exposed Kubernetes-attributed proof-pod network
+counters at `109` on `homelab-01` and `79` on `homelab-02`. The new fallback
+diagnostic buckets emitted live, including a captured line with
+`fallback_candidate=109405`, `fallback_non_http_start=108488`, and
+`fallback_output_attempt=916`. This proves live fallback counter execution and
+bounded fallback output attempts, but it does not prove exact-path fallback HTTP
+capture or Host-derived live peer context.
+
 DNS follow-up note: `20260623-005331-dns-homelab01-negative-live` deployed
 pushed image `sha-635819e` to `staging`/`e-navigator-bench` with
 `source.aya_dns` and `generator.dns_metrics` enabled, verified controlled

@@ -224,7 +224,16 @@ Implemented with narrower or deferred runtime claims:
   proof paths. The new diagnostic counters emitted live and showed write/copy
   activity plus a large `active_connection_miss` bucket, narrowing the next
   investigation to connection-state correlation rather than workload network
-  attribution.
+  attribution. Follow-up `20260623-122906-http-fallback-peer-live` deployed
+  pushed image `sha-ef74874` with bounded fallback emission when socket peer
+  metadata is missing. After correcting an omitted GHCR pull secret, Helm
+  revision 126 rolled out successfully, both proof jobs completed `ok=80/80`,
+  and direct `/metrics` exposed attributed proof-pod network counters
+  (`109` on `homelab-01`, `79` on `homelab-02`). The new fallback diagnostic
+  buckets emitted live, including a captured line with
+  `fallback_output_attempt=916`, but JSON stdout still had zero exact-path
+  protocol/request-span rows and no fallback Host-derived peer rows. Exact-path
+  fallback HTTP capture remains unproven.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,
