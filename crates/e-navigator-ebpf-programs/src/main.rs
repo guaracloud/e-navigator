@@ -25,6 +25,19 @@ const DNS_PACKET_BYTES: usize = 512;
 const HTTP_MAX_IOVECS: usize = 3;
 const HTTP_IOVEC_CHUNK_BYTES: usize = 96;
 const HTTP_REQUEST_BYTES: usize = HTTP_IOVEC_CHUNK_BYTES * HTTP_MAX_IOVECS;
+const HTTP_DIAG_CONNECT_ENTER: u32 = 0;
+const HTTP_DIAG_CONNECT_ACTIVE: u32 = 1;
+const HTTP_DIAG_WRITE_ENTER: u32 = 2;
+const HTTP_DIAG_WRITEV_ENTER: u32 = 3;
+const HTTP_DIAG_SENDTO_ENTER: u32 = 4;
+const HTTP_DIAG_SENDMSG_ENTER: u32 = 5;
+const HTTP_DIAG_NULL_OR_EMPTY: u32 = 6;
+const HTTP_DIAG_ACTIVE_CONNECTION_MISS: u32 = 7;
+const HTTP_DIAG_NON_TCP_CONNECTION: u32 = 8;
+const HTTP_DIAG_COPY_SUCCESS: u32 = 9;
+const HTTP_DIAG_COPY_EMPTY: u32 = 10;
+const HTTP_DIAG_OUTPUT_ATTEMPT: u32 = 11;
+const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 12;
 const NETWORK_EVENT_OPEN: u32 = 1;
 const NETWORK_EVENT_CLOSE: u32 = 2;
 const NETWORK_EVENT_FAILURE: u32 = 3;
@@ -201,6 +214,10 @@ static DNS_EVENTS: PerfEventArray<RawDnsEvent> = PerfEventArray::new(0);
 
 #[map]
 static HTTP_REQUEST_EVENTS: PerfEventArray<RawHttpRequestEvent> = PerfEventArray::new(0);
+
+#[map]
+static HTTP_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
+    PerCpuArray::with_max_entries(HTTP_DIAGNOSTIC_COUNTERS_LEN, 0);
 
 #[map]
 static EXEC_EVENT_SCRATCH: PerCpuArray<RawExecEvent> = PerCpuArray::with_max_entries(1, 0);
@@ -763,6 +780,7 @@ fn try_tracepoint_dns_close_enter(ctx: TracePointContext) -> Result<u32, i64> {
 }
 
 fn try_tracepoint_http_connect_enter(ctx: TracePointContext) -> Result<u32, i64> {
+    record_http_diagnostic(HTTP_DIAG_CONNECT_ENTER);
     track_connect_enter(&ctx)
 }
 
@@ -782,6 +800,7 @@ fn try_tracepoint_http_close_enter(ctx: TracePointContext) -> Result<u32, i64> {
 }
 
 fn try_tracepoint_http_write_enter(ctx: TracePointContext) -> Result<u32, i64> {
+    record_http_diagnostic(HTTP_DIAG_WRITE_ENTER);
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
     let buffer = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
     let len = unsafe { ctx.read_at::<u64>(32) }.map_err(|err| err as i64)?;
@@ -789,6 +808,7 @@ fn try_tracepoint_http_write_enter(ctx: TracePointContext) -> Result<u32, i64> {
 }
 
 fn try_tracepoint_http_writev_enter(ctx: TracePointContext) -> Result<u32, i64> {
+    record_http_diagnostic(HTTP_DIAG_WRITEV_ENTER);
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
     let iov = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
     let iov_len = unsafe { ctx.read_at::<u64>(32) }.map_err(|err| err as i64)?;
@@ -796,6 +816,7 @@ fn try_tracepoint_http_writev_enter(ctx: TracePointContext) -> Result<u32, i64> 
 }
 
 fn try_tracepoint_http_sendto_enter(ctx: TracePointContext) -> Result<u32, i64> {
+    record_http_diagnostic(HTTP_DIAG_SENDTO_ENTER);
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
     let buffer = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
     let len = unsafe { ctx.read_at::<u64>(32) }.map_err(|err| err as i64)?;
@@ -803,6 +824,7 @@ fn try_tracepoint_http_sendto_enter(ctx: TracePointContext) -> Result<u32, i64> 
 }
 
 fn try_tracepoint_http_sendmsg_enter(ctx: TracePointContext) -> Result<u32, i64> {
+    record_http_diagnostic(HTTP_DIAG_SENDMSG_ENTER);
     let _ = ctx;
     Ok(0)
 }
@@ -883,6 +905,7 @@ fn track_connected_tcp_exit(ctx: &TracePointContext) -> Result<u32, i64> {
     ACTIVE_CONNECTIONS
         .insert(&key, &pending, 0)
         .map_err(|err| err as i64)?;
+    record_http_diagnostic(HTTP_DIAG_CONNECT_ACTIVE);
     Ok(0)
 }
 
@@ -893,6 +916,7 @@ fn emit_http_request_event(
     len: u64,
 ) -> Result<u32, i64> {
     if buffer.is_null() || len == 0 {
+        record_http_diagnostic(HTTP_DIAG_NULL_OR_EMPTY);
         return Ok(0);
     }
 
@@ -903,9 +927,13 @@ fn emit_http_request_event(
     };
     let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
         Some(value) => *value,
-        None => return Ok(0),
+        None => {
+            record_http_diagnostic(HTTP_DIAG_ACTIVE_CONNECTION_MISS);
+            return Ok(0);
+        }
     };
     if connection.protocol != IPPROTO_TCP {
+        record_http_diagnostic(HTTP_DIAG_NON_TCP_CONNECTION);
         return Ok(0);
     }
 
@@ -924,6 +952,12 @@ fn emit_http_request_event(
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     copy_http_request(buffer, len, event)?;
+    if event.request_len == 0 {
+        record_http_diagnostic(HTTP_DIAG_COPY_EMPTY);
+        return Ok(0);
+    }
+    record_http_diagnostic(HTTP_DIAG_COPY_SUCCESS);
+    record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
     HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
     Ok(0)
 }
@@ -936,6 +970,7 @@ fn emit_http_request_iovecs_event(
     iov_len: u64,
 ) -> Result<u32, i64> {
     if iov.is_null() || iov_len == 0 {
+        record_http_diagnostic(HTTP_DIAG_NULL_OR_EMPTY);
         return Ok(0);
     }
 
@@ -946,9 +981,13 @@ fn emit_http_request_iovecs_event(
     };
     let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
         Some(value) => *value,
-        None => return Ok(0),
+        None => {
+            record_http_diagnostic(HTTP_DIAG_ACTIVE_CONNECTION_MISS);
+            return Ok(0);
+        }
     };
     if connection.protocol != IPPROTO_TCP {
+        record_http_diagnostic(HTTP_DIAG_NON_TCP_CONNECTION);
         return Ok(0);
     }
 
@@ -968,8 +1007,11 @@ fn emit_http_request_iovecs_event(
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     copy_http_request_iovecs(iov, iov_len, event)?;
     if event.request_len == 0 {
+        record_http_diagnostic(HTTP_DIAG_COPY_EMPTY);
         return Ok(0);
     }
+    record_http_diagnostic(HTTP_DIAG_COPY_SUCCESS);
+    record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
     HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
     Ok(0)
 }
@@ -1409,6 +1451,15 @@ fn http_request_event_scratch() -> Result<&'static mut RawHttpRequestEvent, i64>
     event.command = [0; 16];
     event.request = [0; HTTP_REQUEST_BYTES];
     Ok(event)
+}
+
+#[inline(always)]
+fn record_http_diagnostic(stage: u32) {
+    if let Some(counter) = HTTP_DIAGNOSTIC_COUNTERS.get_ptr_mut(stage) {
+        unsafe {
+            *counter = (*counter).wrapping_add(1);
+        }
+    }
 }
 
 fn copy_dns_packet(buffer: *const u8, len: u64, event: &mut RawDnsEvent) -> Result<(), i64> {

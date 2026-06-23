@@ -22,6 +22,69 @@ pub(crate) const RAW_HTTP_AF_INET6: u32 = 10;
 const PERF_BUFFER_PAGE_COUNT: usize = 64;
 #[cfg(any(target_os = "linux", test))]
 const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
+#[cfg(any(target_os = "linux", test))]
+const HTTP_DIAGNOSTIC_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+#[cfg(any(target_os = "linux", test))]
+const HTTP_DIAGNOSTIC_COUNTERS_LEN: usize = 12;
+#[cfg(any(target_os = "linux", test))]
+const HTTP_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_DIAGNOSTIC_COUNTERS_LEN] = [
+    "connect_enter",
+    "connect_active",
+    "write_enter",
+    "writev_enter",
+    "sendto_enter",
+    "sendmsg_enter",
+    "null_or_empty",
+    "active_connection_miss",
+    "non_tcp_connection",
+    "copy_success",
+    "copy_empty",
+    "output_attempt",
+];
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct HttpDiagnosticCounterSnapshot {
+    counters: [u64; HTTP_DIAGNOSTIC_COUNTERS_LEN],
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl HttpDiagnosticCounterSnapshot {
+    fn from_counters(counters: [u64; HTTP_DIAGNOSTIC_COUNTERS_LEN]) -> Self {
+        Self { counters }
+    }
+
+    fn delta_since(&self, previous: &Self) -> Self {
+        let mut counters = [0_u64; HTTP_DIAGNOSTIC_COUNTERS_LEN];
+        for (index, counter) in counters.iter_mut().enumerate() {
+            *counter = self.counters[index].saturating_sub(previous.counters[index]);
+        }
+        Self { counters }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.counters.iter().all(|counter| *counter == 0)
+    }
+
+    fn get(&self, index: usize) -> u64 {
+        self.counters[index]
+    }
+
+    #[cfg(test)]
+    fn nonzero_stage_names(&self) -> Vec<&'static str> {
+        self.counters
+            .iter()
+            .enumerate()
+            .filter_map(|(index, counter)| {
+                if *counter > 0 {
+                    Some(HTTP_DIAGNOSTIC_COUNTER_NAMES[index])
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[repr(C)]
@@ -210,7 +273,10 @@ mod platform {
     use async_trait::async_trait;
     use aya::{
         Ebpf, include_bytes_aligned,
-        maps::perf::{PerfEvent, PerfEventArray},
+        maps::{
+            Map, PerCpuArray,
+            perf::{PerfEvent, PerfEventArray},
+        },
         programs::TracePoint,
         util::online_cpus,
     };
@@ -298,6 +364,21 @@ mod platform {
                 "syscalls",
                 "sys_enter_sendmsg",
             )?;
+
+            if diagnostics.enabled() {
+                let diagnostic_counters =
+                    PerCpuArray::try_from(ebpf.take_map("HTTP_DIAGNOSTIC_COUNTERS").ok_or_else(
+                        || CoreError::ModuleFailed {
+                            module: "source.aya_http".to_string(),
+                            message: "missing HTTP_DIAGNOSTIC_COUNTERS map".to_string(),
+                        },
+                    )?)
+                    .map_err(module_error)?;
+                reader_handles.push(spawn_http_diagnostic_counter_logger(
+                    diagnostic_counters,
+                    shutdown.clone(),
+                ));
+            }
 
             let mut perf_array = PerfEventArray::try_from(
                 ebpf.take_map("HTTP_REQUEST_EVENTS")
@@ -419,6 +500,68 @@ mod platform {
             "source diagnostic raw event decoded"
         );
         DiagnosticSampleDecision::Matched
+    }
+
+    fn spawn_http_diagnostic_counter_logger(
+        counters: PerCpuArray<Map, u64>,
+        shutdown: ReaderShutdown,
+    ) -> JoinHandle<()> {
+        tokio::task::spawn_blocking(move || {
+            let mut previous = super::HttpDiagnosticCounterSnapshot::default();
+
+            while !shutdown.is_stopped() {
+                std::thread::sleep(super::HTTP_DIAGNOSTIC_POLL_INTERVAL);
+                if shutdown.is_stopped() {
+                    break;
+                }
+
+                match read_http_diagnostic_counters(&counters) {
+                    Ok(snapshot) => {
+                        let delta = snapshot.delta_since(&previous);
+                        previous = snapshot;
+                        if delta.is_empty() {
+                            continue;
+                        }
+
+                        info!(
+                            target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                            source = "source.aya_http",
+                            connect_enter = delta.get(0),
+                            connect_active = delta.get(1),
+                            write_enter = delta.get(2),
+                            writev_enter = delta.get(3),
+                            sendto_enter = delta.get(4),
+                            sendmsg_enter = delta.get(5),
+                            null_or_empty = delta.get(6),
+                            active_connection_miss = delta.get(7),
+                            non_tcp_connection = delta.get(8),
+                            copy_success = delta.get(9),
+                            copy_empty = delta.get(10),
+                            output_attempt = delta.get(11),
+                            stage_names = ?super::HTTP_DIAGNOSTIC_COUNTER_NAMES,
+                            "source diagnostic http stage counters"
+                        );
+                    }
+                    Err(err) => {
+                        warn!(error = %err, "failed to read http diagnostic counters");
+                    }
+                }
+            }
+        })
+    }
+
+    fn read_http_diagnostic_counters(
+        counters: &PerCpuArray<Map, u64>,
+    ) -> Result<super::HttpDiagnosticCounterSnapshot, aya::maps::MapError> {
+        let mut totals = [0_u64; super::HTTP_DIAGNOSTIC_COUNTERS_LEN];
+        for (index, total) in totals.iter_mut().enumerate() {
+            let per_cpu = counters.get(&(index as u32), 0)?;
+            *total = per_cpu
+                .iter()
+                .fold(0_u64, |sum, value| sum.saturating_add(*value));
+        }
+
+        Ok(super::HttpDiagnosticCounterSnapshot::from_counters(totals))
     }
 
     fn attach_tracepoint(
@@ -773,6 +916,47 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn http_diagnostic_counter_snapshot_returns_stage_deltas() {
+        let previous = HttpDiagnosticCounterSnapshot::from_counters([
+            10, 5, 100, 30, 1, 0, 2, 7, 0, 20, 3, 20,
+        ]);
+        let current = HttpDiagnosticCounterSnapshot::from_counters([
+            12, 8, 100, 45, 1, 4, 2, 11, 0, 35, 3, 35,
+        ]);
+
+        let delta = current.delta_since(&previous);
+
+        assert_eq!(delta.get(0), 2);
+        assert_eq!(delta.get(1), 3);
+        assert_eq!(delta.get(2), 0);
+        assert_eq!(delta.get(3), 15);
+        assert_eq!(delta.get(5), 4);
+        assert_eq!(delta.get(7), 4);
+        assert_eq!(delta.get(9), 15);
+        assert_eq!(delta.get(11), 15);
+        assert_eq!(
+            delta.nonzero_stage_names(),
+            vec![
+                "connect_enter",
+                "connect_active",
+                "writev_enter",
+                "sendmsg_enter",
+                "active_connection_miss",
+                "copy_success",
+                "output_attempt",
+            ]
+        );
+    }
+
+    #[test]
+    fn http_diagnostic_counter_snapshot_ignores_empty_delta() {
+        let snapshot =
+            HttpDiagnosticCounterSnapshot::from_counters([0; HTTP_DIAGNOSTIC_COUNTERS_LEN]);
+
+        assert!(snapshot.delta_since(&snapshot).is_empty());
     }
 
     fn fixed_command(value: &str) -> [u8; 16] {
