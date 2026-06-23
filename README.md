@@ -242,7 +242,16 @@ Implemented with narrower or deferred runtime claims:
   untolerated control-plane taint. Live diagnostics emitted nonzero
   `sendmsg_enter` and `fallback_output_attempt` counters, but JSON stdout still
   had zero exact-path protocol/request-span rows and zero rows attributed to
-  the proof pod. Exact-path sendmsg HTTP capture remains unproven.
+  the proof pod. Exact-path sendmsg HTTP capture remains unproven. Follow-up
+  `20260623-154408-http-invalid-reason-live` deployed pushed image
+  `sha-9c6463a` with structured invalid HTTP decode reasons. Both h01/h02
+  three-iovec workloads completed 30 warmups plus 80 proof requests with zero
+  workload errors. The `homelab-02` proof path again produced 80 exact-path
+  protocol records and 80 request spans with Kubernetes attribution, while
+  `homelab-01` still produced zero exact-path protocol/request-span records.
+  Diagnostics sampled `headers_too_long` as the invalid HTTP reason, so the
+  remaining symmetric blocker is still h01 HTTP/protocol capture rather than
+  workload execution or h02 regression.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,

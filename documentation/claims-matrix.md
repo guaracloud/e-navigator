@@ -265,6 +265,23 @@ protocol/request-span records plus zero signal rows attributed to that pod.
 This strengthens the current blocker: homelab-01 HTTP/protocol capture remains
 missing even when homelab-01 network-metric attribution is present.
 
+HTTP invalid-reason diagnostic follow-up note:
+`20260623-154408-http-invalid-reason-live` deployed pushed image `sha-9c6463a`
+to `staging`/`e-navigator-bench` with structured invalid HTTP decode reasons.
+CI run `28037630005` and image publish run `28037630364` succeeded before
+rollout. Both h01/h02 controlled three-iovec workloads completed 30 warmups and
+80 measured proof requests with zero workload errors. The `homelab-02` proof
+path `/proof/iovec3-stage-085800-h02` produced 80 exact-path
+`protocol_request_observation` records plus 80 exact-path
+`request_span_observation` records, all attributed to pod
+`http-stage-085800-h02-mqrtt`. The matching `homelab-01` proof path still
+produced zero exact-path protocol/request-span rows. The new invalid diagnostic
+path emitted bounded `headers_too_long` reasons, so the current HTTP state is
+h02 three-iovec proof preserved, h01 exact-path HTTP still missing, and invalid
+sample cause now observable instead of collapsed into an undifferentiated
+counter. Temporary Jobs were deleted and Helm rolled back to the pre-proof
+revision.
+
 DNS seccomp follow-up note:
 `20260623-051700-dns-seccomp-live` deployed pushed image `sha-beec11d` to
 `staging`/`e-navigator-bench` with `source.aya_dns`, `source.aya_network`,

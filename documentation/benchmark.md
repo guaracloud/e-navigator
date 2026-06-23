@@ -777,6 +777,30 @@ The initial live proof should record:
   to revision `131`/rollback-to-129, and the DaemonSet verified `2/2` Ready on
   baseline digest
   `sha256:3abcd8d1c9b9b890801eeab94252f8cc507cd0dba665ddcc449cf409275b90d0`;
+- `20260623-154408-http-invalid-reason-live` records the structured invalid
+  HTTP decode diagnostic follow-up on `staging/e-navigator-bench` using pushed
+  image `sha-9c6463a` index digest
+  `sha256:dad05511f63ebf80548e46c28d92e0de335f8c1e800bb649a2ba569c881b4362`
+  and linux/amd64 digest
+  `sha256:727e098764ba13cbb2d4dfcc402d8eb689f1b818985218451bb22a1919c93bfb`.
+  Local focused tests, crate clippy, guards, and non-Docker quality stages
+  passed; the local Docker build blocked on the Docker daemon and was
+  terminated, while CI run `28037630005` and image publish run `28037630364`
+  succeeded before rollout. Helm revision `135` rolled out successfully with
+  HTTP diagnostics enabled. Both h01/h02 controlled three-iovec workloads
+  completed 30 warmups and 80 measured proof requests with zero workload
+  errors. Captured JSON stdout contained 80 exact-path
+  `protocol_request_observation` records plus 80 exact-path
+  `request_span_observation` records for `/proof/iovec3-stage-085800-h02`, all
+  attributed to pod `http-stage-085800-h02-mqrtt` on `homelab-02`. The matching
+  h01 proof path `/proof/iovec3-stage-085800-h01` still produced zero
+  exact-path protocol/request-span rows. Structured invalid diagnostics emitted
+  `invalid_reason="headers_too_long"` samples, with 301 captured diagnostic
+  lines in the bounded log sample, and HTTP telemetry still showed zero send
+  failures and zero lost perf events in sampled windows. Temporary Jobs were
+  deleted, rollback completed to revision `136`/rollback-to-134, final context
+  remained `staging`, and the DaemonSet verified `2/2` Ready on
+  `sha-6c15296`;
 - `20260623-143751-homelab-workload-toleration-smoke` records a harness-only
   scheduling and cleanup proof. The shared workload template now includes an
   `operator: Exists` toleration so generated proof workloads can schedule on
