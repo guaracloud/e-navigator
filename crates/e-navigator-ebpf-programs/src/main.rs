@@ -38,7 +38,10 @@ const HTTP_DIAG_NON_TCP_CONNECTION: u32 = 8;
 const HTTP_DIAG_COPY_SUCCESS: u32 = 9;
 const HTTP_DIAG_COPY_EMPTY: u32 = 10;
 const HTTP_DIAG_OUTPUT_ATTEMPT: u32 = 11;
-const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 12;
+const HTTP_DIAG_FALLBACK_CANDIDATE: u32 = 12;
+const HTTP_DIAG_FALLBACK_NON_HTTP_START: u32 = 13;
+const HTTP_DIAG_FALLBACK_OUTPUT_ATTEMPT: u32 = 14;
+const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 15;
 const NETWORK_EVENT_OPEN: u32 = 1;
 const NETWORK_EVENT_CLOSE: u32 = 2;
 const NETWORK_EVENT_FAILURE: u32 = 3;
@@ -930,7 +933,7 @@ fn emit_http_request_event(
         Some(value) => *value,
         None => {
             record_http_diagnostic(HTTP_DIAG_ACTIVE_CONNECTION_MISS);
-            return Ok(0);
+            return emit_http_request_event_without_connection(ctx, fd, buffer, len);
         }
     };
     if connection.protocol != IPPROTO_TCP {
@@ -963,6 +966,39 @@ fn emit_http_request_event(
     Ok(0)
 }
 
+fn emit_http_request_event_without_connection(
+    ctx: &TracePointContext,
+    fd: i32,
+    buffer: *const u8,
+    len: u64,
+) -> Result<u32, i64> {
+    record_http_diagnostic(HTTP_DIAG_FALLBACK_CANDIDATE);
+    if !http_buffer_starts_like_request(buffer)? {
+        record_http_diagnostic(HTTP_DIAG_FALLBACK_NON_HTTP_START);
+        return Ok(0);
+    }
+
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let uid_gid = bpf_get_current_uid_gid();
+    let event = http_request_event_scratch()?;
+    event.pid = (pid_tgid >> 32) as u32;
+    event.uid = uid_gid as u32;
+    event.cgroup_id = current_cgroup_id();
+    event.fd = fd;
+    event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
+    event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
+    copy_http_request(buffer, len, event)?;
+    if event.request_len == 0 {
+        record_http_diagnostic(HTTP_DIAG_COPY_EMPTY);
+        return Ok(0);
+    }
+    record_http_diagnostic(HTTP_DIAG_COPY_SUCCESS);
+    record_http_diagnostic(HTTP_DIAG_FALLBACK_OUTPUT_ATTEMPT);
+    record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
+    HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
+    Ok(0)
+}
+
 #[inline(never)]
 fn emit_http_request_iovecs_event(
     ctx: &TracePointContext,
@@ -984,7 +1020,7 @@ fn emit_http_request_iovecs_event(
         Some(value) => *value,
         None => {
             record_http_diagnostic(HTTP_DIAG_ACTIVE_CONNECTION_MISS);
-            return Ok(0);
+            return emit_http_request_iovecs_event_without_connection(ctx, fd, iov, iov_len);
         }
     };
     if connection.protocol != IPPROTO_TCP {
@@ -1012,6 +1048,39 @@ fn emit_http_request_iovecs_event(
         return Ok(0);
     }
     record_http_diagnostic(HTTP_DIAG_COPY_SUCCESS);
+    record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
+    HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
+    Ok(0)
+}
+
+#[inline(never)]
+fn emit_http_request_iovecs_event_without_connection(
+    ctx: &TracePointContext,
+    fd: i32,
+    iov: *const u8,
+    iov_len: u64,
+) -> Result<u32, i64> {
+    record_http_diagnostic(HTTP_DIAG_FALLBACK_CANDIDATE);
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let uid_gid = bpf_get_current_uid_gid();
+    let event = http_request_event_scratch()?;
+    event.pid = (pid_tgid >> 32) as u32;
+    event.uid = uid_gid as u32;
+    event.cgroup_id = current_cgroup_id();
+    event.fd = fd;
+    event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
+    event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
+    copy_http_request_iovecs(iov, iov_len, event)?;
+    if event.request_len == 0 {
+        record_http_diagnostic(HTTP_DIAG_COPY_EMPTY);
+        return Ok(0);
+    }
+    if !http_request_event_starts_like_request(event) {
+        record_http_diagnostic(HTTP_DIAG_FALLBACK_NON_HTTP_START);
+        return Ok(0);
+    }
+    record_http_diagnostic(HTTP_DIAG_COPY_SUCCESS);
+    record_http_diagnostic(HTTP_DIAG_FALLBACK_OUTPUT_ATTEMPT);
     record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
     HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
     Ok(0)
@@ -1461,6 +1530,29 @@ fn record_http_diagnostic(stage: u32) {
             *counter = (*counter).wrapping_add(1);
         }
     }
+}
+
+fn http_buffer_starts_like_request(buffer: *const u8) -> Result<bool, i64> {
+    let first = unsafe { bpf_probe_read_user::<u8>(buffer) }.map_err(|err| err as i64)?;
+    Ok(http_method_start_likely(first))
+}
+
+fn http_request_event_starts_like_request(event: &RawHttpRequestEvent) -> bool {
+    if event.request_len == 0 {
+        return false;
+    }
+    http_method_start_likely(event.request[0])
+}
+
+#[inline(always)]
+fn http_method_start_likely(first: u8) -> bool {
+    first == b'C'
+        || first == b'D'
+        || first == b'G'
+        || first == b'H'
+        || first == b'O'
+        || first == b'P'
+        || first == b'T'
 }
 
 fn copy_dns_packet(buffer: *const u8, len: u64, event: &mut RawDnsEvent) -> Result<(), i64> {

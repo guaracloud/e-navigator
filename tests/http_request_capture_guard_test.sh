@@ -25,13 +25,28 @@ for expected in \
   "copy_http_request_iovec_slot2" \
   "request_iovec_lens" \
   "emit_http_request_iovecs_event" \
+  "emit_http_request_iovecs_event_without_connection" \
   "emit_http_request_event" \
+  "emit_http_request_event_without_connection" \
+  "HTTP_DIAG_FALLBACK_CANDIDATE" \
+  "HTTP_DIAG_FALLBACK_OUTPUT_ATTEMPT" \
+  "http_method_start_likely" \
   "copy_http_request"; do
   if ! grep -Fq "$expected" "$program"; then
     printf 'expected %s to support HTTP request capture: missing %s\n' "$program" "$expected" >&2
     exit 1
   fi
 done
+
+if ! grep -Fq "return emit_http_request_event_without_connection(ctx, fd, buffer, len)" "$program"; then
+  printf 'expected %s to emit bounded HTTP request candidates when socket peer metadata is missing\n' "$program" >&2
+  exit 1
+fi
+
+if ! grep -Fq "return emit_http_request_iovecs_event_without_connection(ctx, fd, iov, iov_len)" "$program"; then
+  printf 'expected %s to emit bounded split HTTP request candidates when socket peer metadata is missing\n' "$program" >&2
+  exit 1
+fi
 
 if ! grep -Fq "copy_http_request_iovecs(iov, iov_len, event)" "$program"; then
   printf 'expected %s to assemble split HTTP writev requests across bounded iovecs\n' "$program" >&2

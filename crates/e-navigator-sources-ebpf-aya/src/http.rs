@@ -25,7 +25,7 @@ const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
 #[cfg(any(target_os = "linux", test))]
 const HTTP_DIAGNOSTIC_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 #[cfg(any(target_os = "linux", test))]
-const HTTP_DIAGNOSTIC_COUNTERS_LEN: usize = 12;
+const HTTP_DIAGNOSTIC_COUNTERS_LEN: usize = 15;
 #[cfg(any(target_os = "linux", test))]
 const HTTP_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_DIAGNOSTIC_COUNTERS_LEN] = [
     "connect_enter",
@@ -40,6 +40,9 @@ const HTTP_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_DIAGNOSTIC_COUNTERS_LEN] = [
     "copy_success",
     "copy_empty",
     "output_attempt",
+    "fallback_candidate",
+    "fallback_non_http_start",
+    "fallback_output_attempt",
 ];
 
 #[cfg(any(target_os = "linux", test))]
@@ -211,15 +214,21 @@ fn peer_context(
         RAW_HTTP_AF_INET6 => Some(ipv6_to_string(raw.remote_addr_v6)),
         _ => None,
     };
+    let domain = attribute_value(attributes, "server.address").map(ToString::to_string);
     let port = u16::from_be(raw.remote_port_be);
-    if address.is_none() && port == 0 {
+    let port = if port != 0 {
+        Some(port)
+    } else {
+        attribute_value(attributes, "server.port").and_then(|value| value.parse::<u16>().ok())
+    };
+    if address.is_none() && domain.is_none() && port.is_none() {
         return None;
     }
 
     Some(TracePeerContext {
         address,
-        port: (port != 0).then_some(port),
-        domain: attribute_value(attributes, "server.address").map(ToString::to_string),
+        port,
+        domain,
         workload: None,
         container: None,
     })
@@ -538,6 +547,9 @@ mod platform {
                             copy_success = delta.get(9),
                             copy_empty = delta.get(10),
                             output_attempt = delta.get(11),
+                            fallback_candidate = delta.get(12),
+                            fallback_non_http_start = delta.get(13),
+                            fallback_output_attempt = delta.get(14),
                             stage_names = ?super::HTTP_DIAGNOSTIC_COUNTER_NAMES,
                             "source diagnostic http stage counters"
                         );
@@ -919,12 +931,57 @@ mod tests {
     }
 
     #[test]
+    fn unknown_socket_peer_uses_host_authority_for_peer_context() {
+        let request = concat!(
+            "GET /fallback-peer HTTP/1.1\r\n",
+            "Host: fallback.example.test:18083\r\n",
+            "\r\n"
+        );
+        let mut raw = RawHttpRequestEvent {
+            pid: 42,
+            uid: 1000,
+            cgroup_id: 7,
+            fd: 9,
+            family: 0,
+            remote_port_be: 0,
+            local_port_be: 0,
+            remote_addr_v4: 0,
+            local_addr_v4: 0,
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 0,
+            request_len: request.len() as u32,
+            request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
+            command: fixed_command("curl"),
+            request: [0; RAW_HTTP_REQUEST_BYTES],
+        };
+        raw.request[..request.len()].copy_from_slice(request.as_bytes());
+
+        let signal = raw_http_request_to_signal_with_clock_and_procfs(
+            raw_as_bytes(&raw),
+            Some("node-a".to_string()),
+            1_000,
+            std::path::Path::new("/proc"),
+        )
+        .expect("raw event decodes without socket peer metadata");
+
+        let SignalPayload::ProtocolRequestObservation(event) = signal.payload else {
+            panic!("expected protocol request observation");
+        };
+        assert_eq!(event.method.as_deref(), Some("GET"));
+        let peer = event.peer.expect("host authority peer context");
+        assert_eq!(peer.address, None);
+        assert_eq!(peer.domain.as_deref(), Some("fallback.example.test"));
+        assert_eq!(peer.port, Some(18083));
+    }
+
+    #[test]
     fn http_diagnostic_counter_snapshot_returns_stage_deltas() {
         let previous = HttpDiagnosticCounterSnapshot::from_counters([
-            10, 5, 100, 30, 1, 0, 2, 7, 0, 20, 3, 20,
+            10, 5, 100, 30, 1, 0, 2, 7, 0, 20, 3, 20, 4, 3, 1,
         ]);
         let current = HttpDiagnosticCounterSnapshot::from_counters([
-            12, 8, 100, 45, 1, 4, 2, 11, 0, 35, 3, 35,
+            12, 8, 100, 45, 1, 4, 2, 11, 0, 35, 3, 35, 10, 8, 2,
         ]);
 
         let delta = current.delta_since(&previous);
@@ -937,6 +994,9 @@ mod tests {
         assert_eq!(delta.get(7), 4);
         assert_eq!(delta.get(9), 15);
         assert_eq!(delta.get(11), 15);
+        assert_eq!(delta.get(12), 6);
+        assert_eq!(delta.get(13), 5);
+        assert_eq!(delta.get(14), 1);
         assert_eq!(
             delta.nonzero_stage_names(),
             vec![
@@ -947,6 +1007,9 @@ mod tests {
                 "active_connection_miss",
                 "copy_success",
                 "output_attempt",
+                "fallback_candidate",
+                "fallback_non_http_start",
+                "fallback_output_attempt",
             ]
         );
     }
