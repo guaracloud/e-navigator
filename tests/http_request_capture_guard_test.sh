@@ -43,8 +43,23 @@ if ! grep -Fq "HTTP_MAX_IOVECS: usize = 3" "$program"; then
   exit 1
 fi
 
-if ! grep -Fq "HTTP_IOVEC_CHUNK_BYTES: usize = HTTP_REQUEST_BYTES / HTTP_MAX_IOVECS" "$program"; then
-  printf 'expected %s to keep split HTTP iovec copies in fixed verifier-bounded slots\n' "$program" >&2
+if ! grep -Fq "HTTP_IOVEC_CHUNK_BYTES: usize = 96" "$program"; then
+  printf 'expected %s to keep split HTTP iovec copies in explicit verifier-bounded 96-byte slots\n' "$program" >&2
+  exit 1
+fi
+
+if ! grep -Fq "HTTP_REQUEST_BYTES: usize = HTTP_IOVEC_CHUNK_BYTES * HTTP_MAX_IOVECS" "$program"; then
+  printf 'expected %s to derive split HTTP request bytes from the fixed iovec slot bound\n' "$program" >&2
+  exit 1
+fi
+
+if ! grep -Fq "RAW_HTTP_IOVEC_CHUNK_BYTES: usize = 96" "$source_file"; then
+  printf 'expected %s to decode the same explicit HTTP iovec slot bound as the BPF event\n' "$source_file" >&2
+  exit 1
+fi
+
+if ! grep -Fq "RAW_HTTP_REQUEST_BYTES: usize = RAW_HTTP_IOVEC_CHUNK_BYTES * RAW_HTTP_MAX_IOVECS" "$source_file"; then
+  printf 'expected %s to derive raw HTTP request bytes from the fixed iovec slot bound\n' "$source_file" >&2
   exit 1
 fi
 

@@ -9,9 +9,11 @@ use e_navigator_signals::{
 };
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-pub(crate) const RAW_HTTP_REQUEST_BYTES: usize = 512;
-#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 const RAW_HTTP_MAX_IOVECS: usize = 3;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+const RAW_HTTP_IOVEC_CHUNK_BYTES: usize = 96;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_HTTP_REQUEST_BYTES: usize = RAW_HTTP_IOVEC_CHUNK_BYTES * RAW_HTTP_MAX_IOVECS;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_HTTP_AF_INET: u32 = 2;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -109,7 +111,7 @@ fn compact_raw_http_request(raw: &RawHttpRequestEvent) -> Vec<u8> {
 
     let mut request = Vec::with_capacity(request_len);
     for (index, len) in raw.request_iovec_lens.iter().enumerate() {
-        let start = index * (RAW_HTTP_REQUEST_BYTES / raw.request_iovec_lens.len());
+        let start = index * RAW_HTTP_IOVEC_CHUNK_BYTES;
         let end = (start + usize::from(*len)).min(RAW_HTTP_REQUEST_BYTES);
         if start >= end || request.len() >= request_len {
             continue;
@@ -698,6 +700,10 @@ mod tests {
         };
         raw.request[..part1.len()].copy_from_slice(part1);
         let slot_len = RAW_HTTP_REQUEST_BYTES / raw.request_iovec_lens.len();
+        assert_eq!(slot_len, RAW_HTTP_IOVEC_CHUNK_BYTES);
+        assert!(part1.len() <= RAW_HTTP_IOVEC_CHUNK_BYTES);
+        assert!(part2.len() <= RAW_HTTP_IOVEC_CHUNK_BYTES);
+        assert!(part3.len() <= RAW_HTTP_IOVEC_CHUNK_BYTES);
         raw.request[slot_len..slot_len + part2.len()].copy_from_slice(part2);
         raw.request[(slot_len * 2)..(slot_len * 2) + part3.len()].copy_from_slice(part3);
 
