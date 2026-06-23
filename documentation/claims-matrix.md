@@ -27,3 +27,12 @@
 | Kubernetes packaging | yes | no | `helm lint`, `helm template`, `kubeconform -strict -summary`, packaged config guards that verify embedded TOML lists every registered module as enabled or disabled and validates through the CLI parser, chart Service/ServiceMonitor exposure guards, and a ConfigMap checksum rollout guard | guarded homelab runs `20260619-205746`, `20260621-170331-live-validation`, `20260621-193917`, `20260621-194840`, and `20260621-201246` rolled out the DaemonSet Ready on both homelab nodes; `20260621-201246` ran image `sha-5c417c0` with a namespace GHCR pull secret, `privileged: false`, `allowPrivilegeEscalation: false`, `NoNewPrivs: 1`, and `Seccomp: 0`, but still ran as root with `SYS_ADMIN` | reduced-privilege eBPF hardening, production rollout proof |
 
 `Privileged-proven` must remain `no` unless the exact privileged smoke command or guarded homelab canary is run on a real Linux host or Kubernetes cluster and the observed output is recorded.
+
+DNS follow-up note: `20260623-005331-dns-homelab01-negative-live` deployed
+pushed image `sha-635819e` to `staging`/`e-navigator-bench` with
+`source.aya_dns` and `generator.dns_metrics` enabled, verified controlled
+connected and explicit-sockaddr Python DNS clients on `homelab-01` received
+CoreDNS responses from `10.43.0.10:53`, but found zero matching E-Navigator
+records by pod name, pod IP, container ID, command, or exact query names. It is
+negative evidence for `homelab-01` controlled-client DNS capture and does not
+change the existing symmetric/lossless/full-coverage deferred claims.

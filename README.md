@@ -161,8 +161,12 @@ Implemented with narrower or deferred runtime claims:
   opt-in live Aya DNS capture for observed UDP DNS packet paths. Homelab run
   `20260622-013602-dns-msg-live` observed live `source.aya_dns` and
   `generator.dns_metrics` output from CoreDNS and Pi-hole with Kubernetes or
-  container attribution. It did not attribute the controlled BusyBox
-  client-to-CoreDNS workload, so full workload DNS coverage is still not proven.
+  container attribution. Homelab run
+  `20260622-213109-dns-connected-udp-live-r2` proved an observed `homelab-02`
+  connected-UDP Python client, while
+  `20260623-005331-dns-homelab01-negative-live` still did not prove
+  `homelab-01` controlled-client DNS capture. Full workload DNS coverage is
+  still not proven.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,
@@ -241,7 +245,8 @@ The following are intentionally not claimed as implemented production behavior:
   extraction, route templates, retries, application errors, or multi-iovec HTTP
   header assembly;
 - privileged-proven runtime DNS packet capture beyond the exact recorded live
-  DNS runs;
+  DNS runs; controlled-client DNS remains proven only for the recorded
+  `homelab-02` path, not symmetrically across both homelab nodes;
 - full TCP state tracking, packet accounting, retransmits, or resets;
 - reduced-privilege Kubernetes eBPF operation.
 - reduced overhead versus existing homelab observability agents.
