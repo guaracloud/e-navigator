@@ -320,6 +320,15 @@ The initial live proof should record:
   `generator.resource_metrics` gauges/counters from both nodes, recorded
   `Seccomp: 2` plus `NoNewPrivs: 1` in both pods, and was rolled back to the
   pre-run revision `109`;
+- `20260623-094439-required-image-profile-live` is the focused required-image
+  CPU profile run: image `sha-8ab271c` digest
+  `sha256:249ad67fa8578ade9ecc1279bcf52a52ae6038a342b7c68844ebfd7a38d4e34e`
+  rolled out on both homelab nodes under chart `RuntimeDefault` seccomp,
+  emitted 9,038 `profile_sample_observation` records and 8,991
+  `profiling_session_observation` records across both nodes, recorded
+  `Seccomp: 2` plus `NoNewPrivs: 1` in both pods, and was rolled back to the
+  pre-run revision `111`; the controlled hot Python workload completed but did
+  not appear in captured profile records;
 - `20260622-001716-published-image-live` left the Helm release on pushed image
   `sha-d3167e3` with the baseline config restored and both homelab pods Ready;
 - `20260622-004011-current-head-live` left the Helm release on current pushed
