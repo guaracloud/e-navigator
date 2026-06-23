@@ -560,6 +560,31 @@ The initial live proof should record:
   completed to revision 117/rollback-to-115, and the DaemonSet verified `2/2`
   Ready on baseline digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
+- `20260623-075814-http-sequential-iovec-live` records a sequential follow-up
+  on `staging/e-navigator-bench` using pushed image `sha-90111f5` index digest
+  `sha256:deafa27690d9c987ae1ffe5d72bfdfc909547549fb51407919727bab958d2072`
+  and linux/amd64 digest
+  `sha256:7cbf02d0480ee542ed0201e6533801285c05ac7124c9298b5366087c59fa88ab`.
+  CI run `28020995828` and image publish run `28020995805` succeeded before
+  rollout. Helm revision 118 enabled the same HTTP, network,
+  request-correlation, network-metric, JSON stdout, and Prometheus HTTP modules
+  under `RuntimeDefault` seccomp. After a 60-second source warmup, the
+  homelab-02 control job completed 30 warmups and 80 measured three-iovec
+  proof requests with zero errors, and JSON stdout contained 80 exact-path
+  `protocol_request_observation` records plus 80 exact-path
+  `request_span_observation` records for `/proof/iovec3-seq-075814-h02`, all
+  with Kubernetes namespace, pod, and container attribution and 80 unique proof
+  request IDs. The matching homelab-01 job also completed 30 warmups and 80
+  measured proof requests with zero errors, but JSON stdout contained zero
+  exact-path protocol/request-span records and zero rows attributed to pod
+  `http-seq-075814-h01-vv6r2`. Direct `/metrics` exposed
+  Kubernetes-attributed network counters at value `109` for both workload pods.
+  This confirms the current boundary: homelab-01 network-metric attribution is
+  present for the sequential workload shape, while homelab-01 HTTP protocol
+  capture remains unproven. Temporary Jobs were deleted, rollback completed to
+  revision 119/rollback-to-117, and the DaemonSet verified `2/2` Ready on
+  baseline digest
+  `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in

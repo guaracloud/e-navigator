@@ -129,6 +129,25 @@ this run. This narrows the earlier homelab-01 gap to HTTP/protocol capture for
 the observed run rather than total controlled workload network-metric capture,
 but symmetric controlled-client HTTP coverage remains unproven.
 
+HTTP sequential-node follow-up note:
+`20260623-075814-http-sequential-iovec-live` deployed pushed image
+`sha-90111f5` to `staging`/`e-navigator-bench` with `source.aya_http`,
+`source.aya_network`, `generator.request_correlation`,
+`generator.network_metrics`, `sink.json_stdout`, and `sink.prometheus_http`
+enabled under chart `RuntimeDefault` seccomp. The sequential `homelab-02`
+control workload completed 80 measured three-iovec proof HTTP requests and
+produced 80 exact-path `protocol_request_observation` records plus 80
+exact-path `request_span_observation` records for
+`/proof/iovec3-seq-075814-h02`, all with Kubernetes namespace, pod, and
+container attribution and 80 unique proof request IDs. The matching
+`homelab-01` workload completed 80 measured proof requests and direct
+homelab-01 `/metrics` exposed Kubernetes-attributed network counters at value
+`109` for pod `http-seq-075814-h01-vv6r2`, but JSON stdout contained zero
+exact-path protocol/request-span records and zero signal rows attributed to
+that pod. This confirms the current symmetric HTTP blocker is homelab-01
+HTTP/protocol capture for the observed workload shape, not homelab-01
+network-metric attribution for that shape.
+
 DNS seccomp follow-up note:
 `20260623-051700-dns-seccomp-live` deployed pushed image `sha-beec11d` to
 `staging`/`e-navigator-bench` with `source.aya_dns`, `source.aya_network`,

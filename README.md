@@ -204,7 +204,14 @@ Implemented with narrower or deferred runtime claims:
   self-connect `sendall`, and split client/server `writev` workloads, but
   captured JSON stdout still contained zero exact-path protocol/request-span
   records, and the homelab-02 control did not reproduce a fresh positive HTTP
-  capture in that run.
+  capture in that run. Sequential follow-up
+  `20260623-075814-http-sequential-iovec-live` removed that control weakness:
+  `homelab-02` again produced 80 attributed protocol records plus 80 attributed
+  request spans, while the matching `homelab-01` workload produced direct
+  Kubernetes-attributed network counters at `109` but zero exact-path
+  protocol/request-span records. Symmetric HTTP remains unproven and is now
+  bounded to homelab-01 HTTP/protocol capture rather than network metric
+  attribution for this shape.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,
