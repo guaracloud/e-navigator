@@ -19,6 +19,7 @@ image_pull_secret="${E_NAVIGATOR_HOMELAB_IMAGE_PULL_SECRET:-}"
 cleanup_all_requested="${E_NAVIGATOR_HOMELAB_CLEANUP:-0}"
 cleanup_workload_requested="${E_NAVIGATOR_HOMELAB_CLEANUP_WORKLOAD:-$cleanup_all_requested}"
 uninstall_release_requested="${E_NAVIGATOR_HOMELAB_UNINSTALL_RELEASE:-$cleanup_all_requested}"
+workload_wait_timeout="${E_NAVIGATOR_HOMELAB_WORKLOAD_WAIT_TIMEOUT:-300s}"
 
 if [ "${E_NAVIGATOR_HOMELAB_CONFIRM:-0}" != "1" ]; then
   cat >&2 <<MSG
@@ -126,15 +127,24 @@ Prometheus API configured: $([ -n "${E_NAVIGATOR_HOMELAB_PROMETHEUS_URL:-}${E_NA
 Cleanup requested: ${E_NAVIGATOR_HOMELAB_CLEANUP:-0}
 Cleanup workload requested: ${cleanup_workload_requested}
 Uninstall release requested: ${uninstall_release_requested}
+Workload wait timeout: ${workload_wait_timeout}
 EOF
 }
 
 workload_name="e-navigator-bench-workload-${timestamp}"
 workload_manifest="$results_dir/workload-manifest.yaml"
+workload_selector="app.kubernetes.io/name=${workload_name}"
 
 write_workload_manifest() {
   sed "s/name: e-navigator-bench-workload/name: ${workload_name}/" \
     benchmarks/k8s/workload.yaml >"$workload_manifest"
+}
+
+capture_workload_artifacts() {
+  run_capture workload-pods "${kubectl_cmd[@]}" -n "$namespace" get pods -l "$workload_selector" -o wide
+  run_capture workload-pod-json "${kubectl_cmd[@]}" -n "$namespace" get pods -l "$workload_selector" -o json
+  run_capture workload-describe "${kubectl_cmd[@]}" -n "$namespace" describe pods -l "$workload_selector"
+  run_capture workload-logs "${kubectl_cmd[@]}" -n "$namespace" logs -l "$workload_selector" --all-containers --tail="${E_NAVIGATOR_HOMELAB_WORKLOAD_LOG_TAIL:-2000}" --prefix
 }
 
 top_samples="${E_NAVIGATOR_HOMELAB_TOP_SAMPLES:-10}"
@@ -354,6 +364,7 @@ write_summary_files() {
 - Cleanup requested: \`${E_NAVIGATOR_HOMELAB_CLEANUP:-0}\`
 - Cleanup workload requested: \`${cleanup_workload_requested}\`
 - Uninstall release requested: \`${uninstall_release_requested}\`
+- Workload wait timeout: \`${workload_wait_timeout}\`
 
 This generated summary is an artifact index. It does not upgrade any claim by
 itself; inspect the referenced evidence before updating documentation.
@@ -363,7 +374,7 @@ itself; inspect the referenced evidence before updating documentation.
 - Commands: \`commands.txt\`
 - Run metadata: \`run-metadata.txt\`
 - Apply/install outputs, when apply mode is enabled: \`namespace-apply.txt\`, \`helm-upgrade-install.txt\`, \`workload-apply.txt\`
-- Workload manifest: \`workload-manifest.yaml\`
+- Workload manifest and runtime artifacts: \`workload-manifest.yaml\`, \`workload-wait.txt\`, \`workload-pods.txt\`, \`workload-pod-json.txt\`, \`workload-describe.txt\`, \`workload-logs.txt\`
 - Rendered manifest: \`rendered-manifest.txt\`
 - Live Helm values: \`helm-values.txt\`
 - Live Helm manifest: \`helm-manifest.txt\`
@@ -392,7 +403,7 @@ EOF
 | Namespace | captured | \`namespace.txt\` | no other namespace validated |
 | Run metadata | captured | \`run-metadata.txt\` | metadata records configured intent only; image, sink, and cleanup claims require the related runtime artifacts |
 | Apply/install commands | captured when apply mode is enabled | \`namespace-apply.txt\`, \`helm-upgrade-install.txt\`, \`workload-apply.txt\` | successful apply does not prove runtime behavior without rollout, logs, and endpoint evidence |
-| Controlled workload | captured when apply mode is enabled | \`workload-manifest.yaml\`, \`workload-apply.txt\`, \`events.txt\`, \`logs.txt\` | workload creation does not prove attribution unless logs contain matching workload context |
+| Controlled workload | captured when apply mode is enabled | \`workload-manifest.yaml\`, \`workload-apply.txt\`, \`workload-wait.txt\`, \`workload-pods.txt\`, \`workload-pod-json.txt\`, \`workload-describe.txt\`, \`workload-logs.txt\`, \`events.txt\`, \`logs.txt\` | workload completion and workload logs do not prove E-Navigator attribution unless collector logs contain matching workload context |
 | Rendered manifest | captured | \`rendered-manifest.txt\`, \`helm-manifest.txt\`, \`helm-values.txt\` | render does not prove runtime behavior |
 | DaemonSet rollout | captured | \`rollout.txt\`, \`daemonset-yaml.txt\` | no production soak |
 | JSON logs | captured | \`logs.txt\` | logs must be inspected before claiming source/generator proof |
@@ -456,6 +467,8 @@ run_capture namespace "${kubectl_cmd[@]}" get namespace "$namespace" -o yaml
 run_capture rollout "${kubectl_cmd[@]}" -n "$namespace" rollout status "daemonset/${release}" --timeout="${E_NAVIGATOR_HOMELAB_ROLLOUT_TIMEOUT:-120s}"
 if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ]; then
   run_required_capture workload-apply "${kubectl_cmd[@]}" -n "$namespace" apply -f "$workload_manifest"
+  run_capture workload-wait "${kubectl_cmd[@]}" -n "$namespace" wait --for=condition=complete "job/${workload_name}" --timeout="$workload_wait_timeout"
+  capture_workload_artifacts
 fi
 run_capture pods "${kubectl_cmd[@]}" -n "$namespace" get pods -o wide
 run_capture daemonset "${kubectl_cmd[@]}" -n "$namespace" get daemonset -o wide

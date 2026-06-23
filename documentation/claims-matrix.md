@@ -54,6 +54,25 @@ workload manifest, and final exact-name inventory showed no remaining Job or
 pod for that run. This proves repeatable workload-only cleanup for standing
 benchmark releases; it does not prove new signal-family behavior, Prometheus
 server scrape/queryability, or reduced privilege.
+Follow-up `20260623-151140-collector-workload-wait-live` added a bounded
+workload completion wait and exact workload pod artifacts to the guarded
+collector. The first live attempt with `180s` timed out after the workload had
+emitted all 60 expected log lines, so the default was raised to `300s`. The
+successful guarded rerun in `staging`/`e-navigator-bench` upgraded the standing
+release to published image `sha-6c15296` as revision `134`, recorded
+`job.batch/e-navigator-bench-workload-20260623-151140 condition met`, captured
+pod `e-navigator-bench-workload-20260623-151140-4vl4l` on `homelab-02` as
+`Succeeded` with exit code `0`, captured all 60 workload log lines, deleted
+only the generated workload manifest, and left Helm deployed. E-Navigator JSON
+stdout contained 261 records with the generated workload name, including
+workload-attributed `network_connection_open`, `network_connection_close`,
+network metric, dependency graph, trace-service-path, service interaction,
+runtime-security, exec, and 18 egress TCP `network_flow_summary` records with
+source-side Kubernetes attribution and total `bytes=5358`. This proves the
+collector wait/artifact slice and observed homelab-02 controlled workload
+attribution for those families; it does not prove symmetric node coverage,
+destination workload attribution on flow summaries, `beyla_network_flow_bytes_total`,
+Prometheus server scrape/queryability, or reduced privilege.
 
 HTTP follow-up note: `20260623-085800-http-stage-diagnostics-live` deployed
 pushed image `sha-8ed766a` to `staging`/`e-navigator-bench` with

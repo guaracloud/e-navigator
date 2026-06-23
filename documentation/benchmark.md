@@ -367,6 +367,25 @@ The initial live proof should record:
   while Helm revision `132` remained deployed. This proves collector
   workload-only cleanup repeatability for standing benchmark releases, not
   controlled workload signal attribution or Prometheus server queryability;
+- `20260623-151140-collector-workload-wait-live` added a bounded workload wait
+  and exact workload pod artifact capture to the guarded collector. The first
+  live attempt with a `180s` wait timed out after the workload had emitted all
+  60 expected lines, so the collector default was raised to `300s`. The
+  successful rerun upgraded the standing Helm release to published image
+  `sha-6c15296` as revision `134`, recorded
+  `job.batch/e-navigator-bench-workload-20260623-151140 condition met`,
+  captured pod `e-navigator-bench-workload-20260623-151140-4vl4l` on
+  `homelab-02` as `Succeeded` with exit code `0`, captured all 60 workload log
+  lines, and deleted only the generated workload manifest while leaving Helm
+  deployed. E-Navigator JSON stdout contained 261 records with the generated
+  workload name, including workload-attributed opens, closes, network metrics,
+  dependency graph, trace-service-path, service interaction, runtime-security,
+  exec, and 18 egress TCP `network_flow_summary` records with source-side
+  Kubernetes attribution and total `bytes=5358`. This proves the collector
+  wait/artifact slice and observed homelab-02 controlled workload attribution
+  for those families, not symmetric node coverage, destination workload
+  attribution on flow summaries, `beyla_network_flow_bytes_total`, Prometheus
+  server queryability, or reduced privilege;
 - `20260622-122803-guara-einprogress-live` pushed commit `622e1aa`, waited for
   GHCR image publication, rolled
   `ghcr.io/guaracloud/e-navigator:sha-622e1aa` to

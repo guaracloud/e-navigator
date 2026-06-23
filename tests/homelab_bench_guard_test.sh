@@ -66,6 +66,21 @@ if ! grep -Fq 'delete -f "$workload_manifest"' benchmarks/runner/homelab-collect
   exit 1
 fi
 
+if ! grep -q 'E_NAVIGATOR_HOMELAB_WORKLOAD_WAIT_TIMEOUT' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector must expose a bounded workload wait timeout\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'wait --for=condition=complete "job/${workload_name}"' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector must wait for the generated workload Job to complete\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'app.kubernetes.io/name=${workload_name}' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector must select the exact generated workload pods\n' >&2
+  exit 1
+fi
+
 if ! grep -Fq 'E_NAVIGATOR_HOMELAB_CLEANUP_WORKLOAD' benchmarks/runner/homelab-collect.sh; then
   printf 'homelab collector must expose workload-only cleanup for standing benchmark releases\n' >&2
   exit 1
@@ -101,16 +116,22 @@ fi
 
 rollout_line="$(grep -n 'run_capture rollout' benchmarks/runner/homelab-collect.sh | head -1 | cut -d: -f1)"
 workload_apply_line="$(grep -n 'workload-apply' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
+workload_wait_line="$(grep -n 'wait --for=condition=complete "job/${workload_name}"' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
+workload_capture_line="$(grep -n 'capture_workload_artifacts' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
 service_capture_line="$(grep -n 'capture_service_surfaces' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
 prometheus_capture_line="$(grep -n 'capture_prometheus_http_endpoints' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
 if [ -z "$rollout_line" ] ||
   [ -z "$workload_apply_line" ] ||
+  [ -z "$workload_wait_line" ] ||
+  [ -z "$workload_capture_line" ] ||
   [ -z "$service_capture_line" ] ||
   [ -z "$prometheus_capture_line" ] ||
   [ "$rollout_line" -ge "$workload_apply_line" ] ||
-  [ "$workload_apply_line" -ge "$service_capture_line" ] ||
+  [ "$workload_apply_line" -ge "$workload_wait_line" ] ||
+  [ "$workload_wait_line" -ge "$workload_capture_line" ] ||
+  [ "$workload_capture_line" -ge "$service_capture_line" ] ||
   [ "$rollout_line" -ge "$prometheus_capture_line" ]; then
-  printf 'homelab collector must wait for rollout before workload, service, and Prometheus endpoint captures\n' >&2
+  printf 'homelab collector must wait for rollout and workload completion before service and Prometheus endpoint captures\n' >&2
   exit 1
 fi
 
@@ -122,6 +143,10 @@ for expected in \
   'Configured image:' \
   'Image substitution:' \
   'workload-manifest.yaml' \
+  'workload-wait' \
+  'workload-pods' \
+  'workload-pod-json' \
+  'workload-logs' \
   'summary.md' \
   'proof-matrix.md' \
   'namespace-apply' \

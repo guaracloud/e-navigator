@@ -290,7 +290,13 @@ Implemented with narrower or deferred runtime claims:
   enabled `generator.guara_compat` while Prometheus scraping was healthy and
   other network metrics were queryable, but `beyla_network_flow_bytes_total`
   produced 0 direct endpoint lines and 0 Prometheus results because the live Aya
-  path did not emit `network_flow_summary` records.
+  path did not emit `network_flow_summary` records. Later homelab runs proved
+  ambient and controlled `network_flow_summary` records, including
+  `20260623-151140-collector-workload-wait-live`, which observed 18 egress TCP
+  flow summaries with source-side Kubernetes attribution for the generated
+  workload on `homelab-02`. Positive `beyla_network_flow_bytes_total` export,
+  destination workload attribution, Guara `proj-*` scope, Prometheus server
+  queryability, and symmetric-node controlled capture remain unproven.
 - CPU profile sampling is an explicit opt-in source. Homelab run
   `20260621-203358-profile-live` proved `source.aya_cpu_profile` samples and
   `generator.profiling` sessions for a controlled CPU workload, including

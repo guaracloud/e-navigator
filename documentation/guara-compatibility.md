@@ -112,6 +112,17 @@ Current implementation status:
   same run produced 0 `beyla_network_flow_bytes_total` JSON signals and 0 direct
   `/metrics` Beyla lines because the temporary workload namespace is not in the
   Guara `proj-*` scope.
+- Homelab run `20260623-151140-collector-workload-wait-live` used the guarded
+  collector's bounded workload wait and exact workload pod artifact capture on
+  published image `sha-6c15296` digest
+  `sha256:2e512f069c0beb18bc16d600ef8386f4d98b1f42728c201a61db7a2dce108b57`
+  as Helm revision 134. The generated workload Job completed on `homelab-02`
+  and E-Navigator JSON stdout contained 18 egress TCP
+  `network_flow_summary` records with source-side Kubernetes attribution for
+  pod `e-navigator-bench-workload-20260623-151140-4vl4l` and total
+  `bytes=5358`. Destination workload attribution, symmetric node coverage,
+  `beyla_network_flow_bytes_total`, and Prometheus server query proof were not
+  proven.
 - Positive `beyla_network_flow_bytes_total` proof still requires a controlled
   byte-bearing flow with Kubernetes attribution and an in-scope Guara
   `proj-*` paid tenant endpoint. The current homelab namespace boundary
