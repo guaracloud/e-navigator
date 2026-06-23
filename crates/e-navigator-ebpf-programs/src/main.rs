@@ -1133,6 +1133,10 @@ fn connected_dns_peer(fd: i32) -> Option<PendingConnect> {
     Some(peer)
 }
 
+fn connected_dns_recv_peer(fd: i32) -> Option<PendingConnect> {
+    connected_dns_peer(fd)
+}
+
 fn try_tracepoint_dns_recvfrom_enter(ctx: &TracePointContext) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let uid_gid = bpf_get_current_uid_gid();
@@ -1143,15 +1147,28 @@ fn try_tracepoint_dns_recvfrom_enter(ctx: &TracePointContext) -> Result<u32, i64
         return Ok(0);
     }
 
+    let mut server_addr_ptr = sockaddr as u64;
+    let mut server_port_be = 0;
+    let mut server_addr_v4 = 0;
+    if sockaddr.is_null() {
+        let peer = match connected_dns_recv_peer(fd) {
+            Some(value) => value,
+            None => return Ok(0),
+        };
+        server_addr_ptr = 0;
+        server_port_be = peer.remote_port_be;
+        server_addr_v4 = peer.remote_addr_v4;
+    }
+
     let pending = PendingDnsRecv {
         pid: (pid_tgid >> 32) as u32,
         uid: uid_gid as u32,
         cgroup_id: current_cgroup_id(),
         fd,
         buffer_ptr: buffer as u64,
-        server_addr_ptr: sockaddr as u64,
-        server_port_be: 0,
-        server_addr_v4: 0,
+        server_addr_ptr,
+        server_port_be,
+        server_addr_v4,
         started_at_nanos: unsafe { bpf_ktime_get_ns() },
         command: bpf_get_current_comm().map_err(|err| err as i64)?,
     };
@@ -1224,6 +1241,19 @@ fn try_tracepoint_dns_recvmsg_enter(ctx: &TracePointContext) -> Result<u32, i64>
     if buffer.is_null() {
         return Ok(0);
     }
+    let sockaddr = read_msghdr_name(message)?;
+    let mut server_addr_ptr = sockaddr as u64;
+    let mut server_port_be = 0;
+    let mut server_addr_v4 = 0;
+    if sockaddr.is_null() {
+        let peer = match connected_dns_recv_peer(fd) {
+            Some(value) => value,
+            None => return Ok(0),
+        };
+        server_addr_ptr = 0;
+        server_port_be = peer.remote_port_be;
+        server_addr_v4 = peer.remote_addr_v4;
+    }
 
     let pending = PendingDnsRecv {
         pid: (pid_tgid >> 32) as u32,
@@ -1231,9 +1261,9 @@ fn try_tracepoint_dns_recvmsg_enter(ctx: &TracePointContext) -> Result<u32, i64>
         cgroup_id: current_cgroup_id(),
         fd,
         buffer_ptr: buffer as u64,
-        server_addr_ptr: read_msghdr_name(message)? as u64,
-        server_port_be: 0,
-        server_addr_v4: 0,
+        server_addr_ptr,
+        server_port_be,
+        server_addr_v4,
         started_at_nanos: unsafe { bpf_ktime_get_ns() },
         command: bpf_get_current_comm().map_err(|err| err as i64)?,
     };

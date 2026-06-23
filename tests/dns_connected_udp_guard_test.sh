@@ -13,6 +13,7 @@ for expected in \
   "try_tracepoint_dns_close_enter" \
   "try_tracepoint_dns_write_enter" \
   "try_tracepoint_dns_read_enter" \
+  "connected_dns_recv_peer" \
   "connected_dns_peer" \
   "emit_dns_connected_send_event"; do
   if ! grep -Fq "$expected" "$program"; then
