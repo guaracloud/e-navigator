@@ -148,6 +148,20 @@ that pod. This confirms the current symmetric HTTP blocker is homelab-01
 HTTP/protocol capture for the observed workload shape, not homelab-01
 network-metric attribution for that shape.
 
+HTTP sequential-node rerun note:
+`20260623-111825-http-sequential-rerun-live` repeated the same three-iovec
+workload shape on `staging`/`e-navigator-bench` using pushed image
+`sha-90111f5`. The `homelab-02` control job completed 80 measured proof
+requests and again produced 80 exact-path `protocol_request_observation`
+records plus 80 exact-path `request_span_observation` records for
+`/proof/iovec3-seq-111825-h02`. The matching `homelab-01` job completed 80
+measured proof requests, direct homelab-01 `/metrics` exposed
+Kubernetes-attributed network counters at value `110` for pod
+`http-seq-111825-h01-tgtbm`, and JSON stdout still contained zero exact-path
+protocol/request-span records plus zero signal rows attributed to that pod.
+This strengthens the current blocker: homelab-01 HTTP/protocol capture remains
+missing even when homelab-01 network-metric attribution is present.
+
 DNS seccomp follow-up note:
 `20260623-051700-dns-seccomp-live` deployed pushed image `sha-beec11d` to
 `staging`/`e-navigator-bench` with `source.aya_dns`, `source.aya_network`,

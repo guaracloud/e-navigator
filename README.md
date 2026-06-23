@@ -211,7 +211,11 @@ Implemented with narrower or deferred runtime claims:
   Kubernetes-attributed network counters at `109` but zero exact-path
   protocol/request-span records. Symmetric HTTP remains unproven and is now
   bounded to homelab-01 HTTP/protocol capture rather than network metric
-  attribution for this shape.
+  attribution for this shape. Rerun
+  `20260623-111825-http-sequential-rerun-live` reproduced the same boundary:
+  `homelab-02` again produced 80 exact-path protocol records and 80 request
+  spans, while `homelab-01` produced direct network counters at `110` and zero
+  exact-path protocol/request-span records.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,
