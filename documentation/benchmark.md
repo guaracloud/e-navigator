@@ -335,6 +335,14 @@ The initial live proof should record:
   `ghcr.io/guaracloud/e-navigator:sha-8ab271c` rejected the same config with
   `unknown module 'source.aya_dns'`; this means live DNS source output cannot be
   proven on the required image without changing the required benchmark image;
+- `20260623-101950-required-image-exporter-version-boundary` is a local parser
+  boundary check for the required image export surfaces: current-head accepted
+  configs enabling `sink.prometheus_http` and `sink.otlp_http`, but
+  `ghcr.io/guaracloud/e-navigator:sha-8ab271c` rejected them with
+  `unknown module 'sink.prometheus_http'` and
+  `unknown module 'sink.otlp_http'`; this means Prometheus and OTLP export
+  cannot be proven on the required image without changing the required
+  benchmark image;
 - `20260622-001716-published-image-live` left the Helm release on pushed image
   `sha-d3167e3` with the baseline config restored and both homelab pods Ready;
 - `20260622-004011-current-head-live` left the Helm release on current pushed
