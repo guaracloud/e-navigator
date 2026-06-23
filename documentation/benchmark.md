@@ -540,6 +540,26 @@ The initial live proof should record:
   rollback completed to revision 115/rollback-to-113, and the DaemonSet verified
   `2/2` Ready on baseline digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
+- `20260623-073736-http-homelab01-diagnostics-live` records a follow-up
+  homelab-01 diagnostic on `staging/e-navigator-bench` using pushed image
+  `sha-d83e5bf` index digest
+  `sha256:5dffedd5d3d23942cff39c4943c4ff6a7be76cef1673b29dedfe6abb535927b5`.
+  Helm revision 116 enabled the same HTTP, network, request-correlation,
+  network-metric, JSON stdout, and Prometheus HTTP modules under
+  `RuntimeDefault` seccomp. Three homelab-01 workloads completed successfully:
+  self-connect three-iovec `writev` (`60` measured requests), self-connect
+  `sendall` (`60` measured requests), and split client/server three-iovec
+  `writev` (`60` measured requests). Direct homelab-01 `/metrics` exposed
+  Kubernetes-attributed controlled workload network counters for all three
+  pods, with open/protocol-open/destination/duration counts of `60`, `67`, and
+  `95` respectively. Captured JSON stdout still contained zero exact-path
+  protocol/request-span records for the diagnostic proof paths, and the
+  homelab-02 control workload also did not produce exact-path protocol output in
+  this run. Events recorded transient apiserver/Calico sandbox teardown warnings
+  during the workload window. Temporary resources were deleted, rollback
+  completed to revision 117/rollback-to-115, and the DaemonSet verified `2/2`
+  Ready on baseline digest
+  `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in

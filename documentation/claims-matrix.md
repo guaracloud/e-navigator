@@ -112,6 +112,23 @@ network-source or network-metric records for pod
 reported ambient HTTP/network activity with zero lost perf events. This keeps
 symmetric controlled-client HTTP coverage unproven.
 
+HTTP homelab-01 diagnostics follow-up note:
+`20260623-073736-http-homelab01-diagnostics-live` deployed pushed image
+`sha-d83e5bf` to `staging`/`e-navigator-bench` with `source.aya_http`,
+`source.aya_network`, `generator.request_correlation`,
+`generator.network_metrics`, `sink.json_stdout`, and `sink.prometheus_http`
+enabled under chart `RuntimeDefault` seccomp. Three `homelab-01` diagnostic
+workloads completed successfully: self-connect three-iovec `writev`,
+self-connect `sendall`, and split client/server three-iovec `writev`. Direct
+homelab-01 `/metrics` exposed Kubernetes-attributed controlled workload
+network counters for all three pods at counts `60`, `67`, and `95`
+respectively. Captured JSON stdout still contained zero exact-path
+protocol/request-span records for the diagnostic proof paths, and the
+homelab-02 control workload did not produce fresh exact-path protocol output in
+this run. This narrows the earlier homelab-01 gap to HTTP/protocol capture for
+the observed run rather than total controlled workload network-metric capture,
+but symmetric controlled-client HTTP coverage remains unproven.
+
 DNS seccomp follow-up note:
 `20260623-051700-dns-seccomp-live` deployed pushed image `sha-beec11d` to
 `staging`/`e-navigator-bench` with `source.aya_dns`, `source.aya_network`,

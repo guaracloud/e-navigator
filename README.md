@@ -197,6 +197,14 @@ Implemented with narrower or deferred runtime claims:
   protocol request records plus 80 attributed request spans, but the
   `homelab-01` workload completed 80 proof requests with zero matching network,
   protocol, or request-span records. Symmetric HTTP coverage remains unproven.
+  Follow-up diagnostic run
+  `20260623-073736-http-homelab01-diagnostics-live` narrowed the
+  `homelab-01` boundary: direct `/metrics` exposed Kubernetes-attributed
+  controlled workload network counters for homelab-01 self-connect `writev`,
+  self-connect `sendall`, and split client/server `writev` workloads, but
+  captured JSON stdout still contained zero exact-path protocol/request-span
+  records, and the homelab-02 control did not reproduce a fresh positive HTTP
+  capture in that run.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,
