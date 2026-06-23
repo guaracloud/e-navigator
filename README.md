@@ -261,8 +261,10 @@ Implemented with narrower or deferred runtime claims:
   `20260623-045606-http-seccomp-live`,
   `20260623-051700-dns-seccomp-live`, and
   `20260623-084626-profile-seccomp-workload-live` proved selected network, CPU
-  profile, HTTP, and DNS source modes under kernel-applied `Seccomp: 2`. These
-  runs still
+  profile, HTTP, and DNS source modes under kernel-applied `Seccomp: 2`.
+  Homelab run `20260623-091319-host-resource-seccomp-live` then proved
+  `source.host_resource` and `generator.resource_metrics` under the same
+  seccomp boundary on both homelab nodes. These runs still
   do not prove reduced overhead or reduced privilege because no equivalent
   baseline comparison was captured and the pods still ran as UID 0 with
   `CAP_SYS_ADMIN`.

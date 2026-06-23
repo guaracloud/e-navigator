@@ -280,6 +280,14 @@ The initial live proof should record:
   records plus 726 Kubernetes-attributed `profiling_session_observation`
   records with zero precise failure markers; the release was rolled back to
   revision `105` and no run-labeled resources remained;
+- `20260623-091319-host-resource-seccomp-live` rolled pushed image
+  `sha-ab19ab5` to `staging/e-navigator-bench` with `source.host_resource`,
+  `generator.resource_metrics`, `sink.prometheus_http`, and chart
+  `RuntimeDefault` seccomp enabled; both E-Navigator pods reported
+  `Seccomp: 2` and `NoNewPrivs: 1`, JSON stdout contained node, process, and
+  cgroup host resource observations plus derived resource gauges and counters
+  from both homelab nodes, direct `/metrics` returned 163 lines including
+  resource series, and the release was rolled back to revision `107`;
 - `20260622-122803-guara-einprogress-live` pushed commit `622e1aa`, waited for
   GHCR image publication, rolled
   `ghcr.io/guaracloud/e-navigator:sha-622e1aa` to

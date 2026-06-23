@@ -76,6 +76,8 @@ Unless the exact proof is present in a recorded result set, do not claim:
   seccomp proofs, including the exact recorded network, HTTP, CPU profile, and
   DNS source-mode runs; non-root and reduced-capability operation remain
   separate claims;
+- host resource accuracy, lossless process/cgroup enumeration, or warning-free
+  collection beyond the exact recorded host resource runs;
 - production OTLP, pprof, Pyroscope, Prometheus, or Tempo export;
 - Beyla, Alloy, Tempo, Prometheus, or Pyroscope replacement readiness.
 
