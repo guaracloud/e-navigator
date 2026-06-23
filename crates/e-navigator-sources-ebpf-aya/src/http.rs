@@ -11,6 +11,8 @@ use e_navigator_signals::{
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_HTTP_REQUEST_BYTES: usize = 512;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+const RAW_HTTP_MAX_IOVECS: usize = 3;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_HTTP_AF_INET: u32 = 2;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_HTTP_AF_INET6: u32 = 10;
@@ -36,7 +38,7 @@ pub(crate) struct RawHttpRequestEvent {
     pub local_addr_v6: [u8; 16],
     pub timestamp_unix_nanos: u64,
     pub request_len: u32,
-    pub request_iovec_lens: [u16; 2],
+    pub request_iovec_lens: [u16; RAW_HTTP_MAX_IOVECS],
     pub command: [u8; 16],
     pub request: [u8; RAW_HTTP_REQUEST_BYTES],
 }
@@ -560,7 +562,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 0,
             request_len: request.len() as u32,
-            request_iovec_lens: [0; 2],
+            request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("curl"),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
@@ -636,7 +638,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 0,
             request_len: (part1.len() + part2.len()) as u32,
-            request_iovec_lens: [part1.len() as u16, part2.len() as u16],
+            request_iovec_lens: [part1.len() as u16, part2.len() as u16, 0],
             command: fixed_command("curl"),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
@@ -672,6 +674,68 @@ mod tests {
     }
 
     #[test]
+    fn three_iovec_raw_http_request_compacts_before_decode() {
+        let part1 = b"GET /three";
+        let part2 = b"-iovec HTTP/1.1\r\nHost: three.example.test\r\n";
+        let part3 = b"X-Request-Id: req-three\r\n\r\n";
+        let mut raw = RawHttpRequestEvent {
+            pid: 42,
+            uid: 1000,
+            cgroup_id: 7,
+            fd: 9,
+            family: RAW_HTTP_AF_INET,
+            remote_port_be: 8080_u16.to_be(),
+            local_port_be: 39000_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([10, 43, 0, 77]),
+            local_addr_v4: u32::from_ne_bytes([10, 42, 1, 23]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 0,
+            request_len: (part1.len() + part2.len() + part3.len()) as u32,
+            request_iovec_lens: [part1.len() as u16, part2.len() as u16, part3.len() as u16],
+            command: fixed_command("curl"),
+            request: [0; RAW_HTTP_REQUEST_BYTES],
+        };
+        raw.request[..part1.len()].copy_from_slice(part1);
+        let slot_len = RAW_HTTP_REQUEST_BYTES / raw.request_iovec_lens.len();
+        raw.request[slot_len..slot_len + part2.len()].copy_from_slice(part2);
+        raw.request[(slot_len * 2)..(slot_len * 2) + part3.len()].copy_from_slice(part3);
+
+        let signal = raw_http_request_to_signal_with_clock_and_procfs(
+            raw_as_bytes(&raw),
+            Some("node-a".to_string()),
+            1_000,
+            std::path::Path::new("/proc"),
+        )
+        .expect("three-slot split raw event decodes");
+
+        let SignalPayload::ProtocolRequestObservation(event) = signal.payload else {
+            panic!("expected protocol request observation");
+        };
+        assert_eq!(event.method.as_deref(), Some("GET"));
+        assert!(
+            event
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "url.path" && attribute.value == "/three-iovec")
+        );
+        assert!(
+            event
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "server.address"
+                    && attribute.value == "three.example.test")
+        );
+        assert!(
+            event
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "http.request.id"
+                    && attribute.value == "req-three")
+        );
+    }
+
+    #[test]
     fn non_http_payload_is_ignored() {
         let payload = b"not an http request";
         let mut raw = RawHttpRequestEvent {
@@ -688,7 +752,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 0,
             request_len: payload.len() as u32,
-            request_iovec_lens: [0; 2],
+            request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("curl"),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };

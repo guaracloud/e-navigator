@@ -23,7 +23,7 @@ const IPPROTO_TCP: u32 = 6;
 const IPPROTO_UDP: u32 = 17;
 const DNS_PACKET_BYTES: usize = 512;
 const HTTP_REQUEST_BYTES: usize = 512;
-const HTTP_MAX_IOVECS: usize = 2;
+const HTTP_MAX_IOVECS: usize = 3;
 const HTTP_IOVEC_CHUNK_BYTES: usize = HTTP_REQUEST_BYTES / HTTP_MAX_IOVECS;
 const NETWORK_EVENT_OPEN: u32 = 1;
 const NETWORK_EVENT_CLOSE: u32 = 2;
@@ -1510,6 +1510,19 @@ fn copy_http_request_iovecs(
         }
     }
 
+    if iov_len > 2 && output_index < HTTP_REQUEST_BYTES {
+        let iov_entry = unsafe { iov.add(32) };
+        let buffer = unsafe { bpf_probe_read_user::<*const u8>(iov_entry.cast::<*const u8>()) }
+            .map_err(|err| err as i64)?;
+        let len = unsafe { bpf_probe_read_user::<u64>(iov_entry.add(8).cast::<u64>()) }
+            .map_err(|err| err as i64)?;
+        if !buffer.is_null() && len > 0 {
+            let copied = copy_http_request_iovec_slot2(buffer, len, event)?;
+            event.request_iovec_lens[2] = copied as u16;
+            output_index += copied;
+        }
+    }
+
     event.request_len = output_index as u32;
     Ok(())
 }
@@ -1561,6 +1574,37 @@ fn copy_http_request_iovec_slot1(
     }
 
     let request = unsafe { event.request.as_mut_ptr().add(HTTP_IOVEC_CHUNK_BYTES) };
+    let mut index = 0;
+    while index < HTTP_IOVEC_CHUNK_BYTES {
+        if index >= capped_len {
+            break;
+        }
+        let byte =
+            unsafe { bpf_probe_read_user::<u8>(buffer.add(index)) }.map_err(|err| err as i64)?;
+        unsafe {
+            *request.add(index) = byte;
+        }
+        index += 1;
+    }
+    Ok(capped_len)
+}
+
+#[inline(never)]
+fn copy_http_request_iovec_slot2(
+    buffer: *const u8,
+    len: u64,
+    event: &mut RawHttpRequestEvent,
+) -> Result<usize, i64> {
+    let capped_len = if len > HTTP_IOVEC_CHUNK_BYTES as u64 {
+        HTTP_IOVEC_CHUNK_BYTES
+    } else {
+        len as usize
+    };
+    if capped_len == 0 {
+        return Ok(0);
+    }
+
+    let request = unsafe { event.request.as_mut_ptr().add(HTTP_IOVEC_CHUNK_BYTES * 2) };
     let mut index = 0;
     while index < HTTP_IOVEC_CHUNK_BYTES {
         if index >= capped_len {

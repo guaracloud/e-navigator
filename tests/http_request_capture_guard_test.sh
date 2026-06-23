@@ -22,6 +22,7 @@ for expected in \
   "copy_http_request_iovecs" \
   "copy_http_request_iovec_slot0" \
   "copy_http_request_iovec_slot1" \
+  "copy_http_request_iovec_slot2" \
   "request_iovec_lens" \
   "emit_http_request_iovecs_event" \
   "emit_http_request_event" \
@@ -37,8 +38,8 @@ if ! grep -Fq "copy_http_request_iovecs(iov, iov_len, event)" "$program"; then
   exit 1
 fi
 
-if ! grep -Fq "HTTP_MAX_IOVECS: usize = 2" "$program"; then
-  printf 'expected %s to keep split HTTP iovec verifier complexity bounded to two iovecs\n' "$program" >&2
+if ! grep -Fq "HTTP_MAX_IOVECS: usize = 3" "$program"; then
+  printf 'expected %s to keep split HTTP iovec verifier complexity bounded to three iovecs\n' "$program" >&2
   exit 1
 fi
 
