@@ -261,6 +261,15 @@ The initial live proof should record:
   the diagnostic changes were reverted in `e3bc6f2`, and the release was
   restored to the previous baseline digest; this is negative verifier proof, not
   DNS capture progress;
+- `20260623-051700-dns-seccomp-live` rolled pushed image `sha-beec11d` to
+  `staging/e-navigator-bench` with `source.aya_dns`, `generator.dns_metrics`,
+  and chart `RuntimeDefault` seccomp enabled; both E-Navigator pods reported
+  `Seccomp: 2`, a controlled connected-UDP Python `os.write`/`os.read` DNS
+  workload on `homelab-02` completed 120 measured responses with zero errors,
+  and E-Navigator captured 148 Kubernetes-attributed `dns_query`, 148
+  `dns_response`, 296 `dns_counter_metric`, and 148 `dns_latency_metric`
+  records for the workload after attribution warmup; the release was rolled
+  back to revision `103` and no run-labeled resources remained;
 - `20260622-122803-guara-einprogress-live` pushed commit `622e1aa`, waited for
   GHCR image publication, rolled
   `ghcr.io/guaracloud/e-navigator:sha-622e1aa` to

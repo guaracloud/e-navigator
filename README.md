@@ -170,7 +170,12 @@ Implemented with narrower or deferred runtime claims:
   connected-UDP Python client, while
   `20260623-005331-dns-homelab01-negative-live` still did not prove
   `homelab-01` controlled-client DNS capture. Full workload DNS coverage is
-  still not proven. Follow-up run
+  still not proven. Homelab run
+  `20260623-051700-dns-seccomp-live` proved the observed `homelab-02`
+  connected-UDP Python `os.write`/`os.read` DNS path under chart
+  `RuntimeDefault` seccomp, with both E-Navigator pods reporting `Seccomp: 2`
+  and 148 attributed controlled `dns_query` plus 148 attributed controlled
+  `dns_response` records after attribution warmup. Follow-up run
   `20260623-045808-dns-bpf-drop-diagnostics-not-proven` showed that the
   attempted BPF drop-diagnostic path was verifier-hostile on the homelab kernel
   and was reverted in `e3bc6f2`.
@@ -249,10 +254,12 @@ Implemented with narrower or deferred runtime claims:
   capture on pushed image `sha-d3167e3`. Homelab runs
   `20260623-041434-runtime-default-seccomp-live`,
   `20260623-043123-profile-seccomp-live`, and
-  `20260623-045606-http-seccomp-live` proved kernel-applied `Seccomp: 2` for
-  selected network, CPU profile, and HTTP source modes. These runs still do not
-  prove reduced overhead or reduced privilege because no equivalent baseline
-  comparison was captured and the pods still ran as UID 0 with `CAP_SYS_ADMIN`.
+  `20260623-045606-http-seccomp-live`, and
+  `20260623-051700-dns-seccomp-live` proved kernel-applied `Seccomp: 2` for
+  selected network, CPU profile, HTTP, and DNS source modes. These runs still
+  do not prove reduced overhead or reduced privilege because no equivalent
+  baseline comparison was captured and the pods still ran as UID 0 with
+  `CAP_SYS_ADMIN`.
 - Persisted service maps, production exporters, storage, UI, and container
   vulnerability policy gates are deferred.
 
