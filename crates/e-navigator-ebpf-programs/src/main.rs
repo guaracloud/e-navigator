@@ -23,6 +23,7 @@ const IPPROTO_TCP: u32 = 6;
 const IPPROTO_UDP: u32 = 17;
 const DNS_PACKET_BYTES: usize = 512;
 const HTTP_REQUEST_BYTES: usize = 512;
+const HTTP_MAX_IOVECS: usize = 4;
 const NETWORK_EVENT_OPEN: u32 = 1;
 const NETWORK_EVENT_CLOSE: u32 = 2;
 const NETWORK_EVENT_FAILURE: u32 = 3;
@@ -788,12 +789,12 @@ fn try_tracepoint_http_write_enter(ctx: TracePointContext) -> Result<u32, i64> {
 fn try_tracepoint_http_writev_enter(ctx: TracePointContext) -> Result<u32, i64> {
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
     let iov = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    let iov_len = unsafe { ctx.read_at::<u64>(32) }.map_err(|err| err as i64)?;
     if iov.is_null() {
         return Ok(0);
     }
 
-    let (buffer, len) = read_first_iov(iov)?;
-    emit_http_request_event(&ctx, fd, buffer, len)
+    emit_http_request_iovecs_event(&ctx, fd, iov, iov_len)
 }
 
 fn try_tracepoint_http_sendto_enter(ctx: TracePointContext) -> Result<u32, i64> {
@@ -810,8 +811,8 @@ fn try_tracepoint_http_sendmsg_enter(ctx: TracePointContext) -> Result<u32, i64>
         return Ok(0);
     }
 
-    let (buffer, len) = read_msghdr_first_iov(message)?;
-    emit_http_request_event(&ctx, fd, buffer, len)
+    let (iov, iov_len) = read_msghdr_iovecs(message)?;
+    emit_http_request_iovecs_event(&ctx, fd, iov, iov_len)
 }
 
 fn try_tracepoint_network_io_enter(ctx: &TracePointContext, direction: u32) -> Result<u32, i64> {
@@ -931,6 +932,51 @@ fn emit_http_request_event(
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     copy_http_request(buffer, len, event)?;
+    HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
+    Ok(0)
+}
+
+fn emit_http_request_iovecs_event(
+    ctx: &TracePointContext,
+    fd: i32,
+    iov: *const u8,
+    iov_len: u64,
+) -> Result<u32, i64> {
+    if iov.is_null() || iov_len == 0 {
+        return Ok(0);
+    }
+
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let key = ConnectionKey {
+        tgid: (pid_tgid >> 32) as u32,
+        fd,
+    };
+    let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
+        Some(value) => *value,
+        None => return Ok(0),
+    };
+    if connection.protocol != IPPROTO_TCP {
+        return Ok(0);
+    }
+
+    let event = http_request_event_scratch()?;
+    event.pid = connection.pid;
+    event.uid = connection.uid;
+    event.cgroup_id = current_cgroup_id();
+    event.fd = fd;
+    event.family = connection.family;
+    event.remote_port_be = connection.remote_port_be;
+    event.local_port_be = connection.local_port_be;
+    event.remote_addr_v4 = connection.remote_addr_v4;
+    event.local_addr_v4 = connection.local_addr_v4;
+    event.remote_addr_v6 = connection.remote_addr_v6;
+    event.local_addr_v6 = connection.local_addr_v6;
+    event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
+    event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
+    copy_http_request_iovecs(iov, iov_len, event)?;
+    if event.request_len == 0 {
+        return Ok(0);
+    }
     HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
     Ok(0)
 }
@@ -1214,12 +1260,19 @@ fn read_msghdr_name(message: *const u8) -> Result<*const u8, i64> {
 }
 
 fn read_msghdr_first_iov(message: *const u8) -> Result<(*const u8, u64), i64> {
-    let iov = unsafe { bpf_probe_read_user::<*const u8>(message.add(16).cast::<*const u8>()) }
-        .map_err(|err| err as i64)?;
+    let (iov, _) = read_msghdr_iovecs(message)?;
     if iov.is_null() {
         return Ok((core::ptr::null(), 0));
     }
     read_first_iov(iov)
+}
+
+fn read_msghdr_iovecs(message: *const u8) -> Result<(*const u8, u64), i64> {
+    let iov = unsafe { bpf_probe_read_user::<*const u8>(message.add(16).cast::<*const u8>()) }
+        .map_err(|err| err as i64)?;
+    let iov_len = unsafe { bpf_probe_read_user::<u64>(message.add(24).cast::<u64>()) }
+        .map_err(|err| err as i64)?;
+    Ok((iov, iov_len))
 }
 
 fn read_first_iov(iov: *const u8) -> Result<(*const u8, u64), i64> {
@@ -1373,6 +1426,43 @@ fn copy_http_request(
         index += 1;
     }
     event.request_len = capped_len as u32;
+    Ok(())
+}
+
+fn copy_http_request_iovecs(
+    iov: *const u8,
+    iov_len: u64,
+    event: &mut RawHttpRequestEvent,
+) -> Result<(), i64> {
+    let mut output_index = 0;
+    let mut iov_index = 0;
+    while iov_index < HTTP_MAX_IOVECS {
+        if iov_index as u64 >= iov_len || output_index >= HTTP_REQUEST_BYTES {
+            break;
+        }
+
+        let iov_entry = unsafe { iov.add(iov_index * 16) };
+        let buffer = unsafe { bpf_probe_read_user::<*const u8>(iov_entry.cast::<*const u8>()) }
+            .map_err(|err| err as i64)?;
+        let len = unsafe { bpf_probe_read_user::<u64>(iov_entry.add(8).cast::<u64>()) }
+            .map_err(|err| err as i64)?;
+        if !buffer.is_null() && len > 0 {
+            let mut input_index = 0;
+            while input_index < HTTP_REQUEST_BYTES {
+                if input_index as u64 >= len || output_index >= HTTP_REQUEST_BYTES {
+                    break;
+                }
+                event.request[output_index] =
+                    unsafe { bpf_probe_read_user::<u8>(buffer.add(input_index)) }
+                        .map_err(|err| err as i64)?;
+                input_index += 1;
+                output_index += 1;
+            }
+        }
+
+        iov_index += 1;
+    }
+    event.request_len = output_index as u32;
     Ok(())
 }
 
