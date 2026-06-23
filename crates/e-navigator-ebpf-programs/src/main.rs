@@ -794,7 +794,11 @@ fn try_tracepoint_http_writev_enter(ctx: TracePointContext) -> Result<u32, i64> 
         return Ok(0);
     }
 
-    emit_http_request_iovecs_event(&ctx, fd, iov, iov_len)
+    if prepare_http_request_iovecs_event(fd, iov, iov_len)? {
+        let event = http_request_event_scratch()?;
+        HTTP_REQUEST_EVENTS.output(&ctx, &*event, 0);
+    }
+    Ok(0)
 }
 
 fn try_tracepoint_http_sendto_enter(ctx: TracePointContext) -> Result<u32, i64> {
@@ -812,7 +816,11 @@ fn try_tracepoint_http_sendmsg_enter(ctx: TracePointContext) -> Result<u32, i64>
     }
 
     let (iov, iov_len) = read_msghdr_iovecs(message)?;
-    emit_http_request_iovecs_event(&ctx, fd, iov, iov_len)
+    if prepare_http_request_iovecs_event(fd, iov, iov_len)? {
+        let event = http_request_event_scratch()?;
+        HTTP_REQUEST_EVENTS.output(&ctx, &*event, 0);
+    }
+    Ok(0)
 }
 
 fn try_tracepoint_network_io_enter(ctx: &TracePointContext, direction: u32) -> Result<u32, i64> {
@@ -936,14 +944,9 @@ fn emit_http_request_event(
     Ok(0)
 }
 
-fn emit_http_request_iovecs_event(
-    ctx: &TracePointContext,
-    fd: i32,
-    iov: *const u8,
-    iov_len: u64,
-) -> Result<u32, i64> {
+fn prepare_http_request_iovecs_event(fd: i32, iov: *const u8, iov_len: u64) -> Result<bool, i64> {
     if iov.is_null() || iov_len == 0 {
-        return Ok(0);
+        return Ok(false);
     }
 
     let pid_tgid = bpf_get_current_pid_tgid();
@@ -953,10 +956,10 @@ fn emit_http_request_iovecs_event(
     };
     let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
         Some(value) => *value,
-        None => return Ok(0),
+        None => return Ok(false),
     };
     if connection.protocol != IPPROTO_TCP {
-        return Ok(0);
+        return Ok(false);
     }
 
     let event = http_request_event_scratch()?;
@@ -975,10 +978,9 @@ fn emit_http_request_iovecs_event(
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     copy_http_request_iovecs(iov, iov_len, event)?;
     if event.request_len == 0 {
-        return Ok(0);
+        return Ok(false);
     }
-    HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
-    Ok(0)
+    Ok(true)
 }
 
 fn try_tracepoint_dns_sendto_enter(ctx: &TracePointContext) -> Result<u32, i64> {

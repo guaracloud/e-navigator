@@ -20,6 +20,7 @@ for expected in \
   "HTTP_MAX_IOVECS" \
   "copy_http_request_iovecs" \
   "read_msghdr_iovecs" \
+  "prepare_http_request_iovecs_event" \
   "emit_http_request_event" \
   "copy_http_request"; do
   if ! grep -Fq "$expected" "$program"; then
@@ -35,6 +36,11 @@ fi
 
 if ! grep -Fq "read_msghdr_iovecs(message)" "$program"; then
   printf 'expected %s to assemble split HTTP sendmsg requests across bounded iovecs\n' "$program" >&2
+  exit 1
+fi
+
+if grep -Fq "emit_http_request_iovecs_event(&ctx" "$program"; then
+  printf 'expected %s to avoid passing tracepoint context through the split-iovec helper\n' "$program" >&2
   exit 1
 fi
 
