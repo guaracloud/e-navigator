@@ -282,6 +282,26 @@ sample cause now observable instead of collapsed into an undifferentiated
 counter. Temporary Jobs were deleted and Helm rolled back to the pre-proof
 revision.
 
+HTTP invalid-sample metadata follow-up note:
+`20260623-160619-http-invalid-metadata-live` deployed pushed image `sha-5cb242d`
+to `staging`/`e-navigator-bench` with bounded invalid HTTP sample metadata
+logging for rejected samples. CI run `28038902204` and image publish run
+`28038901119` succeeded before rollout. Helm revision `137` first enabled the
+metadata build, and revision `138` added a `python` diagnostic filter with a
+higher bounded diagnostic limit. After an initial capture accidentally used the
+`kubectl logs` selector default tail, a stable rerun recollected with
+`--tail=-1` and saved `20,594` collector log lines. The h02 workload completed
+30 warmups and 80 proof requests with zero workload errors and produced `110`
+exact-path `protocol_request_observation` rows plus `110` exact-path
+`request_span_observation` rows for `/proof/invalid-meta-160619b-h02`. The h01
+workload completed the same request count with zero workload errors but
+produced zero exact-path protocol/request-span rows and zero
+`invalid_http_request_sample` metadata lines. This proves the metadata build did
+not regress the h02 three-iovec path, but it does not prove h01 invalid-sample
+attribution; the current h01 blocker remains before or at HTTP sample
+emission/correlation. Temporary workloads were deleted and Helm rolled back to
+revision `136`, creating deployed revision `139`.
+
 DNS seccomp follow-up note:
 `20260623-051700-dns-seccomp-live` deployed pushed image `sha-beec11d` to
 `staging`/`e-navigator-bench` with `source.aya_dns`, `source.aya_network`,

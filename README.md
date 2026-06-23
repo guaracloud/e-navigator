@@ -251,7 +251,16 @@ Implemented with narrower or deferred runtime claims:
   `homelab-01` still produced zero exact-path protocol/request-span records.
   Diagnostics sampled `headers_too_long` as the invalid HTTP reason, so the
   remaining symmetric blocker is still h01 HTTP/protocol capture rather than
-  workload execution or h02 regression.
+  workload execution or h02 regression. Follow-up
+  `20260623-160619-http-invalid-metadata-live` deployed pushed image
+  `sha-5cb242d` with bounded invalid-sample metadata logging for rejected HTTP
+  samples. After correcting the log capture to use `kubectl logs --tail=-1`,
+  the stable rerun captured 110 exact-path protocol records and 110 exact-path
+  request spans for the h02 Python workload, matching 30 warmups plus 80 proof
+  requests. The h01 workload again completed successfully but produced zero
+  exact-path rows and zero invalid-sample metadata lines, so the live result
+  confirms h02 preservation and keeps h01 sample emission/correlation as the
+  current blocker.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,

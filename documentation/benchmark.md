@@ -801,6 +801,29 @@ The initial live proof should record:
   deleted, rollback completed to revision `136`/rollback-to-134, final context
   remained `staging`, and the DaemonSet verified `2/2` Ready on
   `sha-6c15296`;
+- `20260623-160619-http-invalid-metadata-live` records the bounded invalid HTTP
+  sample metadata follow-up on `staging/e-navigator-bench` using pushed image
+  `sha-5cb242d` index digest
+  `sha256:37d9b68cb78d18c76e99e348e536f76280a22edb207ac89f14009cab5c859dc6`
+  and linux/amd64 digest
+  `sha256:5a734b3e13a07727868b3433e2e6f77e1cff015b8f1a35ef9290c02bf519bbcd`.
+  Local focused test, guard, crate tests, workspace clippy, workspace tests,
+  synthetic CLI, Helm lint/template, and `git diff --check` passed; CI run
+  `28038902204` and image publish run `28038901119` succeeded before rollout.
+  Helm revision `137` rolled the metadata build, then revision `138` added a
+  bounded `python` diagnostic filter. A stable rerun after collector warmup
+  completed 30 warmups and 80 measured proof requests on both h01 and h02 with
+  zero workload errors. Full collector log capture required `kubectl logs
+  --tail=-1` because selector-based log collection otherwise returned only the
+  default tail. The corrected capture contained 20,594 lines, 110 exact-path
+  `protocol_request_observation` records plus 110 exact-path
+  `request_span_observation` records for `/proof/invalid-meta-160619b-h02`, and
+  zero exact-path rows for `/proof/invalid-meta-160619b-h01`. It also contained
+  zero `invalid_http_request_sample` metadata lines, so this run proves h02
+  preservation on the metadata build but does not prove h01 rejected-sample
+  attribution. Temporary workloads were deleted, rollback completed to revision
+  `139`/rollback-to-136, final context remained `staging`, and no
+  `http-invalid-metadata-160619*` resources remained;
 - `20260623-143751-homelab-workload-toleration-smoke` records a harness-only
   scheduling and cleanup proof. The shared workload template now includes an
   `operator: Exists` toleration so generated proof workloads can schedule on
