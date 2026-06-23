@@ -602,6 +602,32 @@ The initial live proof should record:
   completed to revision 121/rollback-to-119, and the DaemonSet verified `2/2`
   Ready on baseline digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
+- `20260623-085800-http-stage-diagnostics-live` records the next diagnostic
+  follow-up on `staging/e-navigator-bench` using pushed image `sha-8ed766a`
+  index digest
+  `sha256:87010498798c297c6ddd7f1f3672c312824b76281ff944f3d6f5697ba218f8bb`
+  and linux/amd64 digest
+  `sha256:c616e55ff011e5145648cf6e54231a7b43368600753ed75e8da5a36e24d3ee81`.
+  CI run `28023920841` and image publish run `28023920824` succeeded before
+  rollout. Helm revision 122 enabled the HTTP, network, request-correlation,
+  network-metric, JSON stdout, Prometheus HTTP, and HTTP source diagnostic
+  paths. Matching controlled workloads on `homelab-01` and `homelab-02`
+  completed 30 warmups and 80 measured three-iovec proof requests each with
+  zero errors. Captured JSON stdout contained zero exact-path
+  `protocol_request_observation` records, zero exact-path
+  `request_span_observation` records, and zero rows attributed to either
+  workload pod, so this run did not reproduce the positive homelab-02 HTTP
+  control. Direct `/metrics` did expose Kubernetes-attributed workload network
+  counters at value `109` for both pods. The new diagnostic logger emitted six
+  `source diagnostic http stage counters` lines; the latest captured line
+  included `writev_enter=27`, `copy_success=1168`, `output_attempt=1168`, and
+  `active_connection_miss=10116`. This proves the diagnostic counter path and
+  narrows the next HTTP investigation to connection-state correlation. It does
+  not prove exact-path controlled HTTP capture in this run. Temporary Jobs were
+  deleted after transient apiserver/etcd leadership errors, rollback completed
+  to revision 123/rollback-to-121, and the DaemonSet verified `2/2` Ready on
+  baseline digest
+  `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in

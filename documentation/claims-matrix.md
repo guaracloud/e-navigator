@@ -28,6 +28,23 @@
 
 `Privileged-proven` must remain `no` unless the exact privileged smoke command or guarded homelab canary is run on a real Linux host or Kubernetes cluster and the observed output is recorded.
 
+HTTP follow-up note: `20260623-085800-http-stage-diagnostics-live` deployed
+pushed image `sha-8ed766a` to `staging`/`e-navigator-bench` with
+`source.aya_http`, `source.aya_network`, request correlation, network metrics,
+JSON stdout, Prometheus HTTP, and HTTP source diagnostics enabled. Matching
+three-iovec controlled workloads on `homelab-01` and `homelab-02` completed 30
+warmups plus 80 proof requests each with zero workload errors. Captured JSON
+stdout contained zero exact-path `protocol_request_observation` records, zero
+exact-path `request_span_observation` records, and zero rows attributed to
+either workload pod. Direct `/metrics` still exposed Kubernetes-attributed
+network counters at value `109` for each controlled workload pod. The new
+diagnostic logger emitted six `source diagnostic http stage counters` lines,
+with the latest captured line including `writev_enter=27`,
+`copy_success=1168`, `output_attempt=1168`, and
+`active_connection_miss=10116`. This proves the live diagnostic counter path
+and narrows the next HTTP investigation to connection-state correlation, but it
+does not prove exact-path controlled HTTP capture in that run.
+
 DNS follow-up note: `20260623-005331-dns-homelab01-negative-live` deployed
 pushed image `sha-635819e` to `staging`/`e-navigator-bench` with
 `source.aya_dns` and `generator.dns_metrics` enabled, verified controlled

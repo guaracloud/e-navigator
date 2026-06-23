@@ -215,7 +215,16 @@ Implemented with narrower or deferred runtime claims:
   `20260623-111825-http-sequential-rerun-live` reproduced the same boundary:
   `homelab-02` again produced 80 exact-path protocol records and 80 request
   spans, while `homelab-01` produced direct network counters at `110` and zero
-  exact-path protocol/request-span records.
+  exact-path protocol/request-span records. Diagnostic follow-up
+  `20260623-085800-http-stage-diagnostics-live` deployed pushed image
+  `sha-8ed766a` with HTTP source stage counters enabled. Both controlled
+  workloads completed 30 warmups plus 80 proof requests and both produced
+  Kubernetes-attributed direct `/metrics` network counters at `109`, but
+  captured JSON stdout had zero exact-path protocol/request-span rows for both
+  proof paths. The new diagnostic counters emitted live and showed write/copy
+  activity plus a large `active_connection_miss` bucket, narrowing the next
+  investigation to connection-state correlation rather than workload network
+  attribution.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,
