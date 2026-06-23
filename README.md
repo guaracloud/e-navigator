@@ -57,8 +57,12 @@ Linux / Kubernetes node
   `ExportProfilesServiceRequest` payloads in local tests, and homelab run
   `20260622-204027-otlp-profile-protobuf-live` proved namespace-local
   OpenTelemetry Collector `0.130.0` acceptance of synthetic profile protobuf
-  from pushed image `sha-796b980`. No Tempo, Pyroscope, pprof, or profile
-  storage compatibility proof is claimed.
+  from pushed image `sha-796b980`. Homelab run
+  `20260623-065356-live-profile-otlp-aya` then proved live Aya CPU profile
+  observations and generated profiling sessions flowing through
+  `sink.otlp_http` as development-status OTLP profile protobuf accepted by a
+  namespace-local Collector from pushed image `sha-6037089`. No Tempo,
+  Pyroscope, pprof, or profile storage compatibility proof is claimed.
 
 The pipeline is statically registered by design. Runtime plugin loading is not
 part of the current architecture; see
@@ -200,7 +204,14 @@ Implemented with narrower or deferred runtime claims:
   enabled and the `/v1development/profiles` route, the one-shot Job completed,
   no sink failure markers were logged, and the Collector debug exporter decoded
   `ResourceProfiles` with synthetic stack frame names and populated location
-  indices. Homelab run
+  indices. Homelab run `20260623-065356-live-profile-otlp-aya` deployed pushed
+  image `sha-6037089` as a DaemonSet with `source.aya_cpu_profile`,
+  `generator.profiling`, and profile-only `sink.otlp_http` enabled, ran a
+  controlled CPU workload on `homelab-02`, observed 33 workload-attributed
+  profile samples plus 33 workload-attributed profiling sessions in JSON stdout,
+  and the namespace-local Collector decoded 1,874 `ResourceProfiles` from live
+  OTLP profile protobuf with no sink failure, HTTP 400/404, or wire-type
+  markers. Homelab run
   `20260621-205344-otlp-live` proved live delivery to a namespace-local fake
   collector for internal JSON records. Homelab run
   `20260621-214450-sink-failure-live` proved that HTTP 500 responses from a
@@ -219,7 +230,10 @@ Implemented with narrower or deferred runtime claims:
 - CPU profile sampling is an explicit opt-in source. Homelab run
   `20260621-203358-profile-live` proved `source.aya_cpu_profile` samples and
   `generator.profiling` sessions for a controlled CPU workload, including
-  Kubernetes/container attribution.
+  Kubernetes/container attribution. Homelab run
+  `20260623-065356-live-profile-otlp-aya` proved that live Aya profile records
+  can also flow through the OTLP HTTP profile sink to a namespace-local
+  OpenTelemetry Collector.
 - Kubernetes packaging proof is separate from privileged eBPF runtime proof.
 - Resource and privilege evidence is currently a point-in-time baseline only.
   Homelab run `20260621-221235-baseline-resource-live` captured 10

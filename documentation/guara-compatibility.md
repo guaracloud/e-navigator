@@ -181,9 +181,14 @@ Current implementation status:
 - Homelab run `20260622-204027-otlp-profile-protobuf-live` proved
   namespace-local OpenTelemetry Collector `0.130.0` acceptance of synthetic
   development-status profile protobuf records from pushed image `sha-796b980`.
-- Symbolization, demangling, Pyroscope write transport, live Aya/eBPF profile
-  export through the OTLP HTTP sink, and real perf-event parity are not yet
-  proven in this compatibility pass.
+- Homelab run `20260623-065356-live-profile-otlp-aya` proved live Aya/eBPF CPU
+  profile samples and generated profiling sessions flowing through
+  `sink.otlp_http` as development-status OTLP profile protobuf accepted by a
+  namespace-local OpenTelemetry Collector `0.130.0` from pushed image
+  `sha-6037089`.
+- Symbolization, demangling, Pyroscope write transport, exact controlled
+  workload pod identity in Collector debug output, and real perf-event parity
+  against another profiler are not yet proven in this compatibility pass.
 
 ## Exporter Boundary
 
@@ -217,6 +222,10 @@ Collector as accepted OTLP protobuf. Homelab run
 can deliver synthetic profile records to a namespace-local OpenTelemetry
 Collector `0.130.0` as accepted development-status OTLP protobuf with profile
 support enabled and endpoint `/v1development/profiles`. Homelab run
+`20260623-065356-live-profile-otlp-aya` proved pushed image `sha-6037089` can
+deliver live Aya/eBPF CPU profile samples and generated profiling sessions to a
+namespace-local OpenTelemetry Collector as accepted development-status OTLP
+profile protobuf. Homelab run
 `20260621-205344-otlp-live`
 proved live delivery of the older internal JSON records to a namespace-local
 fake collector, including metric, trace, and profile signal families. This is

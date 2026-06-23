@@ -320,6 +320,16 @@ The initial live proof should record:
   frame names and populated location indices, no sink failure or HTTP 400/404
   markers were found, and all temporary Job and collector resources were
   cleaned up;
+- `20260623-065356-live-profile-otlp-aya` records a DaemonSet-based
+  `staging/e-navigator-bench` run with pushed image `sha-6037089`,
+  `source.aya_cpu_profile`, `generator.profiling`, and profile-only
+  `sink.otlp_http` enabled against a namespace-local OpenTelemetry Collector
+  `0.130.0`; a controlled CPU workload on `homelab-02` completed, E-Navigator
+  JSON stdout captured 33 workload-attributed profile samples plus 33
+  workload-attributed profiling sessions, the Collector debug exporter decoded
+  1,874 live `ResourceProfiles`, no precise sink or Collector failure markers
+  were found, all temporary Collector/workload resources were cleaned up, and
+  the Helm release was rolled back to the previous baseline digest;
 - `20260622-144636-http-request-path-local` records local request/protocol
   proof that the HTTP fixture parser extracts bounded origin-form `url.path`
   attributes without query or fragment values and that request-span dedupe
