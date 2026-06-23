@@ -147,6 +147,46 @@ fn raw_dns_to_signal_with_clock_and_procfs(
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn raw_dns_diagnostic_values(bytes: &[u8]) -> Option<Vec<String>> {
+    if bytes.len() < core::mem::size_of::<RawDnsEvent>() {
+        return None;
+    }
+    let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawDnsEvent>()) };
+    let packet_len = (raw.packet_len as usize).min(RAW_DNS_PACKET_BYTES);
+    let mut values = vec![
+        bytes_to_string(&raw.command),
+        raw.protocol.to_string(),
+        u16::from_be(raw.server_port_be).to_string(),
+    ];
+
+    if raw.server_addr_v4 != 0 {
+        values.push(ipv4_to_string(raw.server_addr_v4));
+    }
+    if packet_len > 0 {
+        values.push(dns_packet_ascii_preview(&raw.packet[..packet_len]));
+    }
+
+    Some(values)
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn dns_packet_ascii_preview(packet: &[u8]) -> String {
+    const MAX_PREVIEW_BYTES: usize = 160;
+
+    packet
+        .iter()
+        .take(MAX_PREVIEW_BYTES)
+        .map(|byte| {
+            if byte.is_ascii_graphic() || *byte == b' ' {
+                char::from(*byte)
+            } else {
+                '.'
+            }
+        })
+        .collect()
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn now_unix_nanos() -> u64 {
     std::time::SystemTime::now()
@@ -392,26 +432,23 @@ mod platform {
                             match event {
                                 PerfEvent::Sample { head, tail } => {
                                     let bytes = perf_sample_bytes(head, tail);
+                                    let sample = bytes.as_ref();
                                     if let Some(signal) =
                                         super::raw_dns_to_signal_with_clock_and_procfs(
-                                            bytes.as_ref(),
+                                            sample,
                                             host.clone(),
                                             super::now_unix_nanos(),
                                             &procfs_root,
                                         )
                                     {
                                         telemetry.record_decoded_sample();
-                                        if diagnostics.enabled()
-                                            && diagnostics.sample_decision_for(&[signal.kind()])
-                                                == crate::diagnostics::DiagnosticSampleDecision::Matched
-                                        {
-                                            info!(
-                                                target: "e_navigator_sources_ebpf_aya::source_diagnostics",
-                                                source = "source.aya_dns",
-                                                raw_event = signal.kind(),
-                                                "source diagnostic raw event decoded"
-                                            );
-                                        }
+                                        log_dns_sample_diagnostic(
+                                            &diagnostics,
+                                            &telemetry,
+                                            signal.kind(),
+                                            sample,
+                                            true,
+                                        );
                                         if cpu_tx.blocking_send(signal).is_err() {
                                             telemetry.record_send_failure();
                                             closed = true;
@@ -419,6 +456,13 @@ mod platform {
                                             telemetry.record_sent_signal();
                                         }
                                     } else {
+                                        log_dns_sample_diagnostic(
+                                            &diagnostics,
+                                            &telemetry,
+                                            "dns_invalid_sample",
+                                            sample,
+                                            false,
+                                        );
                                         telemetry.record_invalid_sample();
                                     }
                                 }
@@ -454,6 +498,56 @@ mod platform {
             tokio::signal::ctrl_c().await.map_err(module_error)?;
             shutdown.stop();
             join_reader_handles(reader_handles).await
+        }
+    }
+
+    fn log_dns_sample_diagnostic(
+        diagnostics: &SourceDiagnostics,
+        telemetry: &SourceTelemetry,
+        raw_event: &str,
+        sample: &[u8],
+        decoded: bool,
+    ) {
+        if !diagnostics.enabled() {
+            return;
+        }
+
+        let mut values = super::raw_dns_diagnostic_values(sample).unwrap_or_default();
+        values.push(raw_event.to_string());
+        let filter_values = values.iter().map(String::as_str).collect::<Vec<_>>();
+        let decision = diagnostics.sample_decision_for(&filter_values);
+        telemetry.record_diagnostic_decision(decision);
+
+        match decision {
+            crate::diagnostics::DiagnosticSampleDecision::Matched => {
+                let redacted_values = diagnostics.redact_values(filter_values.iter().copied());
+                info!(
+                    target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                    source = "source.aya_dns",
+                    raw_event,
+                    diagnostic_decision = ?decision,
+                    decoded,
+                    filter_values = ?redacted_values,
+                    "source diagnostic raw dns event"
+                );
+            }
+            crate::diagnostics::DiagnosticSampleDecision::Filtered
+                if diagnostics.try_acquire_filtered_preview() =>
+            {
+                let redacted_values = diagnostics.redact_values(filter_values.iter().copied());
+                info!(
+                    target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                    source = "source.aya_dns",
+                    raw_event,
+                    diagnostic_decision = ?decision,
+                    decoded,
+                    filter_values = ?redacted_values,
+                    "source diagnostic raw dns event filtered"
+                );
+            }
+            crate::diagnostics::DiagnosticSampleDecision::Disabled
+            | crate::diagnostics::DiagnosticSampleDecision::Filtered
+            | crate::diagnostics::DiagnosticSampleDecision::Exhausted => {}
         }
     }
 
@@ -704,6 +798,32 @@ mod tests {
         assert_eq!(container.runtime.as_deref(), Some("containerd"));
 
         let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn raw_dns_diagnostic_values_include_command_server_and_packet_preview() {
+        let packet = dns_query_packet(0x1234, "r14-proof-0.e-navigator-bench.svc.cluster.local", 1);
+        let mut raw = RawDnsEvent {
+            pid: 42,
+            uid: 1000,
+            cgroup_id: 7,
+            protocol: RAW_DNS_PROTOCOL_UDP,
+            server_port_be: 53_u16.to_be(),
+            server_addr_v4: u32::from_ne_bytes([10, 43, 0, 10]),
+            timestamp_unix_nanos: 1_000,
+            latency_nanos: 0,
+            packet_len: packet.len() as u32,
+            command: fixed_command("python"),
+            packet: [0; RAW_DNS_PACKET_BYTES],
+        };
+        raw.packet[..packet.len()].copy_from_slice(&packet);
+
+        let values = raw_dns_diagnostic_values(raw_as_bytes(&raw)).expect("diagnostic values");
+
+        assert!(values.iter().any(|value| value == "python"));
+        assert!(values.iter().any(|value| value == "10.43.0.10"));
+        assert!(values.iter().any(|value| value == "53"));
+        assert!(values.iter().any(|value| value.contains("r14-proof-0")));
     }
 
     fn dns_query_packet(id: u16, name: &str, query_type: u16) -> Vec<u8> {
