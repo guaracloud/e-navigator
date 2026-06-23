@@ -323,6 +323,13 @@ Implemented with narrower or deferred runtime claims:
   DaemonSet `2/2` Ready with direct Prometheus HTTP `200 OK`, and left the
   release on revision `128`; it does not prove Prometheus server scrape or
   Guara-compatible byte-flow export.
+- The published-image follow-up `20260623-135438-profile-formatter-image-live`
+  upgraded the homelab benchmark release to image `sha-6c04aaa`, kept the
+  DaemonSet `2/2` Ready with direct Prometheus HTTP `200 OK`, and left the
+  release on revision `129`; it proves only the pushed image's default runtime
+  smoke. The profile formatter improvement remains local Criterion evidence
+  because the live baseline did not enable profile source/generator/export
+  paths and captured zero profile records.
 - Persisted service maps, production exporters, storage, UI, and container
   vulnerability policy gates are deferred.
 

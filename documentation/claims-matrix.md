@@ -326,3 +326,15 @@ contained network source and generator output. Prometheus API checks were
 skipped, no `beyla_network_flow_bytes_total` lines were observed, and both pods
 still reported UID `0`, `Seccomp: 0`, and `CAP_SYS_ADMIN`, so this proves only
 published-image live baseline health for the formatter change.
+
+Follow-up `20260623-135438-profile-formatter-image-live` deployed pushed
+commit `6c04aaa` as image `sha-6c04aaa` to the existing
+`staging`/`e-navigator-bench` release, upgrading Helm from revision `128` to
+revision `129`. The DaemonSet stayed `2/2` Ready on linux/amd64 digest
+`sha256:3abcd8d1c9b9b890801eeab94252f8cc507cd0dba665ddcc449cf409275b90d0`,
+direct Prometheus HTTP probes returned `200 OK`, direct `/metrics` exposed 233
+network metric lines across 9 network metric families, and JSON stdout
+contained network source and generator output. This proves only pushed-image
+default runtime health for the profile formatter change; profile
+source/generator/export paths were not enabled and the captured logs contained
+zero profile records.

@@ -334,6 +334,18 @@ The initial live proof should record:
   and JSON stdout contained network source and generator output. Prometheus API
   checks were skipped, no `beyla_network_flow_bytes_total` lines were observed,
   and both pods still reported UID `0`, `Seccomp: 0`, and `CAP_SYS_ADMIN`;
+- `20260623-135438-profile-formatter-image-live` deployed the published
+  profile-formatter image `sha-6c04aaa` to the existing
+  `staging/e-navigator-bench` Helm release as revision `129`, preserving the
+  existing Prometheus-enabled network/Guara-compatible config. The DaemonSet
+  stayed `2/2` Ready on linux/amd64 digest
+  `sha256:3abcd8d1c9b9b890801eeab94252f8cc507cd0dba665ddcc449cf409275b90d0`,
+  direct `/healthz`, `/readyz`, and `/metrics` returned `200 OK`, direct
+  `/metrics` exposed 233 network metric lines across 9 network metric
+  families, and JSON stdout contained network source and generator output. This
+  proves the pushed image's default runtime smoke only. It does not prove live
+  profile formatter behavior because profile source/generator/export paths were
+  not enabled and the captured logs contained zero profile records;
 - `20260622-122803-guara-einprogress-live` pushed commit `622e1aa`, waited for
   GHCR image publication, rolled
   `ghcr.io/guaracloud/e-navigator:sha-622e1aa` to
