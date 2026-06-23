@@ -170,12 +170,14 @@ Implemented with narrower or deferred runtime claims:
   `20260623-045808-dns-bpf-drop-diagnostics-not-proven` showed that the
   attempted BPF drop-diagnostic path was verifier-hostile on the homelab kernel
   and was reverted in `e3bc6f2`.
-- HTTP `writev` capture has live proof for an observed `homelab-02` client with
-  request data split across two bounded iovec slots. Follow-up
-  `20260623-030344-http-three-iovec-live` added local coverage for three slots,
-  but the pushed image `sha-396e70d` failed homelab BPF verifier loading with
-  `processed 1000001 insns (limit 1000000)`, so live three-slot HTTP capture
-  remains not proven.
+- HTTP `writev` capture has live proof for observed `homelab-02` clients with
+  request data split across two bounded iovec slots and, in follow-up
+  `20260623-033542-http-three-iovec-bounded-live`, across three explicit
+  96-byte iovec slots. The three-slot run deployed pushed image `sha-30c2026`,
+  kept `source.aya_http` verifier-loadable on the homelab kernel, and observed
+  80 measured `protocol_request_observation` plus 80 measured
+  `request_span_observation` records with 80 unique request IDs and Kubernetes
+  attribution for the controlled workload.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,
@@ -248,12 +250,12 @@ The following are intentionally not claimed as implemented production behavior:
 - live Beyla-compatible `beyla_network_flow_bytes_total` export from traffic;
 - profile storage, flamegraph rendering, or bottleneck analysis;
 - complete live HTTP/gRPC parsing from real traffic; `source.aya_http` has
-  bounded opt-in live proof for observed cleartext cluster traffic and one
-  controlled `homelab-02` client using `writev` with up to two bounded iovec
-  slots, but not symmetric node coverage, TLS, gRPC framing, inbound
-  server-side parsing, status-code extraction, route templates, retries,
-  application errors, more than two iovec slots, or broader multi-iovec HTTP
-  header assembly;
+  bounded opt-in live proof for observed cleartext cluster traffic and
+  controlled `homelab-02` clients using `writev` with up to three explicit
+  96-byte iovec slots, but not symmetric node coverage, TLS, gRPC framing,
+  inbound server-side parsing, status-code extraction, route templates,
+  retries, application errors, more than three iovec slots, chunks larger than
+  96 bytes per slot, or broader multi-iovec HTTP header assembly;
 - privileged-proven runtime DNS packet capture beyond the exact recorded live
   DNS runs; controlled-client DNS remains proven only for the recorded
   `homelab-02` path, not symmetrically across both homelab nodes;

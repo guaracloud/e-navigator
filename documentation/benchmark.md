@@ -428,7 +428,30 @@ The initial live proof should record:
   three-iovec workload was run. The release was rolled back to revision
   93/rollback-to-91 with baseline digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
-  Three-slot HTTP capture remains not proven live;
+- `20260623-033542-http-three-iovec-bounded-live` records the bounded
+  three-slot follow-up on `staging/e-navigator-bench`: commit `30c2026`
+  changed the split `writev` event shape to three explicit 96-byte iovec slots,
+  passed `scripts/quality.sh`, GitHub CI run `28006891441`, and image
+  publication run `28006891438`, then pushed image
+  `ghcr.io/guaracloud/e-navigator:sha-30c2026` index digest
+  `sha256:6dfffd7dd40a76a1c18573c8a4f85677518228a2c45ac8a4ee042f30ad11d000`
+  and linux/amd64 digest
+  `sha256:2d17c1e7aeccc59c3ac73ef7b32684b9215b8b0db4f138376b0f0f32ef24778c`.
+  Helm revision 94 kept both homelab pods Ready with `source.aya_http` and
+  `generator.request_correlation` enabled. A Python workload pinned to
+  `homelab-02` completed 20 warmups and 80 measured requests through
+  `os.writev` with request-line, Host, and request-ID data split across three
+  iovecs of 24, 27, and 71 bytes. JSON stdout contained 80 measured
+  `protocol_request_observation` records plus 80 measured
+  `request_span_observation` records for `/proof/iovec3-033542`, 80 unique
+  `i3-proof-*` request IDs, and Kubernetes namespace `e-navigator-bench`, pod
+  `http-iovec3-033542-gsbxx`, and container `workload` on every measured proof
+  record. A two-iovec control also produced 20 protocol and 20 request-span
+  records on the same pushed image. Temporary proof/control Jobs were deleted.
+  Cleanup briefly saw `staging` API readiness/refusal flapping, then rollback
+  completed to revision 95/rollback-to-93 with baseline digest
+  `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`
+  and the DaemonSet verified `2/2` Ready;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in
@@ -466,7 +489,8 @@ fixtures and compile-time benchmark health. They do not prove:
 - controlled application-client HTTP request capture beyond the exact
   homelab-02 writev client paths observed in
   `20260622-234023-http-writev-live` and
-  `20260623-030630-http-iovec-live-r9`;
+  `20260623-030630-http-iovec-live-r9`, plus the exact bounded three-slot
+  follow-up in `20260623-033542-http-three-iovec-bounded-live`;
 - Kubernetes DaemonSet readiness;
 - real host procfs/sysfs/cgroup accuracy;
 - OTLP, Prometheus, Pyroscope, pprof, or production collector export;
