@@ -49,6 +49,21 @@ that. The benchmarks use fixed in-memory fixtures only. They must not read live
 `/proc`, `/sys`, Kubernetes, network sockets, Docker, or host files inside a
 Criterion measurement.
 
+Recent local smoke evidence:
+
+- `20260623-125022` compiled and ran the deterministic hot-path suite, but
+  reported regressions in CPU profile decode, host CPU/load parsing, HTTP
+  fixture parsing, JSON serialization, and Prometheus compatibility formatting.
+  This run did not support a positive performance claim.
+- `20260623-130410` followed up on Prometheus compatibility formatting after
+  sink-local formatter changes. Targeted sink tests, sink clippy, and workspace
+  tests passed. Criterion reported `formatter/prometheus_compat` improved with
+  median change `-64.030%` and measured interval `2.0792 us` to `2.5384 us`.
+  The same smoke still reported unrelated regressions in
+  `protocol/http_fixture_parse`, `generator/guara_compat`, and
+  `formatter/profile_record`, so the outcome remains partial rather than a
+  whole-harness performance improvement.
+
 ## Result Artifact Policy
 
 Local benchmark scripts write to:

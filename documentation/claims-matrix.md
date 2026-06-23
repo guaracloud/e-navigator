@@ -294,6 +294,14 @@ decode, generator, formatter, and queue fixtures. Criterion reported
 regressions in CPU profile decode, host CPU/load parsing, HTTP fixture parsing,
 JSON serialization, and Prometheus compatibility formatting, so this run does
 not support a positive performance claim until those paths are investigated.
+Follow-up `20260623-130410-prometheus-formatter-smoke` optimized the
+Prometheus compatibility formatter and passed targeted sink tests, sink clippy,
+the local benchmark smoke, and the workspace test suite. Criterion reported
+`formatter/prometheus_compat` improved with median change `-64.030%` and
+measured interval `2.0792 us` to `2.5384 us`. The same smoke still reported
+unrelated regressions in HTTP fixture parsing, Guara compatibility generation,
+and profile-record formatting, so this proves only the focused Prometheus
+formatter improvement, not whole-harness performance recovery.
 
 Baseline collection follow-up note:
 `20260623-125209-baseline-collection-live` ran the guarded homelab collector in

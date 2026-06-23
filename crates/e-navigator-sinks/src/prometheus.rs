@@ -274,10 +274,9 @@ fn metric_line(metric: &CompatibilityCounterMetric) -> PrometheusMetricLine {
 }
 
 fn prometheus_label_allowed(key: &str) -> bool {
-    let key = key.to_ascii_lowercase();
     const AUTH_FRAGMENT: &str = concat!("au", "th");
     const AUTHS_FRAGMENT: &str = concat!("au", "ths");
-    ![
+    const SENSITIVE_FRAGMENTS: &[&str] = &[
         "authorization",
         AUTH_FRAGMENT,
         "token",
@@ -302,12 +301,18 @@ fn prometheus_label_allowed(key: &str) -> bool {
         "container_id",
         "k8s_pod_uid",
         "dns_question_name",
-    ]
-    .iter()
-    .any(|sensitive| key.contains(sensitive))
+    ];
+
+    !SENSITIVE_FRAGMENTS
+        .iter()
+        .any(|sensitive| contains_ascii_case_insensitive(key, sensitive))
 }
 
 fn sanitize_identifier(value: &str) -> String {
+    if prometheus_identifier_is_already_valid(value) {
+        return value.to_string();
+    }
+
     let mut output = String::with_capacity(value.len());
     for (index, ch) in value.chars().enumerate() {
         let valid = ch == '_' || ch.is_ascii_alphanumeric();
@@ -322,6 +327,24 @@ fn sanitize_identifier(value: &str) -> String {
     } else {
         output
     }
+}
+
+fn prometheus_identifier_is_already_valid(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+    if !(first == b'_' || first.is_ascii_alphabetic()) {
+        return false;
+    }
+    bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
+}
+
+fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 fn prometheus_label_value(value: &serde_json::Value) -> Option<String> {
@@ -423,6 +446,37 @@ mod tests {
         assert!(!rendered.contains("api_token"));
         assert!(!rendered.contains("argv"));
         assert!(!rendered.contains("secret"));
+    }
+
+    #[test]
+    fn keeps_safe_prometheus_identifiers_and_filters_mixed_case_sensitive_labels() {
+        let signal = SignalEnvelope::compatibility_counter_metric(
+            "generator.guara_compat",
+            Some("node-a".to_string()),
+            CompatibilityCounterMetric {
+                metric_name: "beyla_network_flow_bytes_total".to_string(),
+                unit: "By".to_string(),
+                value: 1,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 1,
+                    end_unix_nanos: 2,
+                },
+                labels: BTreeMap::from([
+                    ("k8s_src_namespace".to_string(), "proj-a".to_string()),
+                    ("k8s_src_owner_name".to_string(), "api".to_string()),
+                    ("API_TOKEN".to_string(), "abc123".to_string()),
+                    ("Process_Command".to_string(), "curl".to_string()),
+                ]),
+            },
+        );
+
+        let line = format_prometheus_compatibility_metric(&signal).expect("metric formats");
+
+        assert_eq!(line.name, "beyla_network_flow_bytes_total");
+        assert_eq!(line.labels["k8s_src_namespace"], "proj-a");
+        assert_eq!(line.labels["k8s_src_owner_name"], "api");
+        assert!(!line.labels.contains_key("API_TOKEN"));
+        assert!(!line.labels.contains_key("Process_Command"));
     }
 
     #[tokio::test]
