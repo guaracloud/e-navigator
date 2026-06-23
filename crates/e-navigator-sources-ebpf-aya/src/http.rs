@@ -116,9 +116,45 @@ pub(crate) struct RawHttpRequestEvent {
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RawHttpInvalidSampleMetadata {
+    pid: u32,
+    uid: u32,
+    cgroup_id: u64,
+    fd: i32,
+    family: u32,
+    remote_port_be: u16,
+    local_port_be: u16,
+    request_len: u32,
+    request_iovec_lens: [u16; RAW_HTTP_MAX_IOVECS],
+    command: [u8; 16],
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+impl RawHttpInvalidSampleMetadata {
+    fn from_raw(raw: &RawHttpRequestEvent) -> Self {
+        Self {
+            pid: raw.pid,
+            uid: raw.uid,
+            cgroup_id: raw.cgroup_id,
+            fd: raw.fd,
+            family: raw.family,
+            remote_port_be: raw.remote_port_be,
+            local_port_be: raw.local_port_be,
+            request_len: raw.request_len,
+            request_iovec_lens: raw.request_iovec_lens,
+            command: raw.command,
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RawHttpDecodeError {
     RawSampleTooShort,
-    HttpExtraction(HttpExtraction),
+    HttpExtraction {
+        reason: HttpExtraction,
+        sample: RawHttpInvalidSampleMetadata,
+    },
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -126,10 +162,29 @@ impl RawHttpDecodeError {
     fn reason_name(self) -> &'static str {
         match self {
             Self::RawSampleTooShort => "raw_sample_too_short",
-            Self::HttpExtraction(HttpExtraction::HeadersTooLong) => "headers_too_long",
-            Self::HttpExtraction(HttpExtraction::InvalidUtf8) => "invalid_utf8",
-            Self::HttpExtraction(HttpExtraction::RequestLineTooLong) => "request_line_too_long",
-            Self::HttpExtraction(HttpExtraction::MalformedRequestLine) => "malformed_request_line",
+            Self::HttpExtraction {
+                reason: HttpExtraction::HeadersTooLong,
+                ..
+            } => "headers_too_long",
+            Self::HttpExtraction {
+                reason: HttpExtraction::InvalidUtf8,
+                ..
+            } => "invalid_utf8",
+            Self::HttpExtraction {
+                reason: HttpExtraction::RequestLineTooLong,
+                ..
+            } => "request_line_too_long",
+            Self::HttpExtraction {
+                reason: HttpExtraction::MalformedRequestLine,
+                ..
+            } => "malformed_request_line",
+        }
+    }
+
+    fn sample_metadata(self) -> Option<RawHttpInvalidSampleMetadata> {
+        match self {
+            Self::RawSampleTooShort => None,
+            Self::HttpExtraction { sample, .. } => Some(sample),
         }
     }
 }
@@ -157,8 +212,13 @@ fn raw_http_request_to_signal_result(
 
     let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawHttpRequestEvent>()) };
     let request = compact_raw_http_request(&raw);
-    let parsed = parse_http_request(&request, &ProtocolExtractionConfig::default())
-        .map_err(RawHttpDecodeError::HttpExtraction)?;
+    let parsed =
+        parse_http_request(&request, &ProtocolExtractionConfig::default()).map_err(|reason| {
+            RawHttpDecodeError::HttpExtraction {
+                reason,
+                sample: RawHttpInvalidSampleMetadata::from_raw(&raw),
+            }
+        })?;
     let trace_context = parsed.trace_context.as_ref();
     let peer = peer_context(&raw, &parsed.attributes);
     let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
@@ -559,16 +619,37 @@ mod platform {
         err: super::RawHttpDecodeError,
     ) -> DiagnosticSampleDecision {
         let reason = err.reason_name();
-        let decision = diagnostics.sample_decision_for(&[reason]);
+        let sample = err.sample_metadata();
+        let command = sample
+            .map(|sample| super::bytes_to_string(&sample.command))
+            .unwrap_or_default();
+        let decision = diagnostics.sample_decision_for(&[reason, command.as_str()]);
         if decision != DiagnosticSampleDecision::Matched {
             return decision;
         }
 
+        let redacted_command = sample.map(|sample| {
+            let command = super::bytes_to_string(&sample.command);
+            diagnostics.redact_value(&command)
+        });
+        let cgroup_id =
+            sample.and_then(|sample| (sample.cgroup_id != 0).then_some(sample.cgroup_id));
+        let request_iovec_lens = sample.map(|sample| sample.request_iovec_lens);
         info!(
             target: "e_navigator_sources_ebpf_aya::source_diagnostics",
             source = "source.aya_http",
             raw_event = "invalid_http_request_sample",
             invalid_reason = reason,
+            pid = ?sample.map(|sample| sample.pid),
+            uid = ?sample.map(|sample| sample.uid),
+            command = ?redacted_command,
+            cgroup_id = ?diagnostics.redact_optional_u64(cgroup_id),
+            fd = ?sample.map(|sample| sample.fd),
+            family = ?sample.map(|sample| sample.family),
+            remote_port = ?sample.map(|sample| u16::from_be(sample.remote_port_be)),
+            local_port = ?sample.map(|sample| u16::from_be(sample.local_port_be)),
+            request_len = ?sample.map(|sample| sample.request_len),
+            request_iovec_lens = ?request_iovec_lens,
             "source diagnostic raw event invalid"
         );
         DiagnosticSampleDecision::Matched
@@ -1034,11 +1115,60 @@ mod tests {
         )
         .expect_err("non-http payloads are invalid");
 
-        assert_eq!(
+        assert!(matches!(
             err,
-            RawHttpDecodeError::HttpExtraction(HttpExtraction::HeadersTooLong)
-        );
+            RawHttpDecodeError::HttpExtraction {
+                reason: HttpExtraction::HeadersTooLong,
+                ..
+            }
+        ));
         assert_eq!(err.reason_name(), "headers_too_long");
+    }
+
+    #[test]
+    fn raw_http_decode_result_preserves_invalid_sample_metadata() {
+        let payload = b"not an http request";
+        let mut raw = RawHttpRequestEvent {
+            pid: 42,
+            uid: 1000,
+            cgroup_id: 7,
+            fd: 9,
+            family: RAW_HTTP_AF_INET,
+            remote_port_be: 8080_u16.to_be(),
+            local_port_be: 39000_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([10, 43, 0, 77]),
+            local_addr_v4: u32::from_ne_bytes([10, 42, 1, 23]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 0,
+            request_len: payload.len() as u32,
+            request_iovec_lens: [3, 5, 7],
+            command: fixed_command("curl"),
+            request: [0; RAW_HTTP_REQUEST_BYTES],
+        };
+        raw.request[..payload.len()].copy_from_slice(payload);
+
+        let err = raw_http_request_to_signal_result(
+            raw_as_bytes(&raw),
+            None,
+            1_000,
+            std::path::Path::new("/proc"),
+        )
+        .expect_err("non-http payloads are invalid");
+        let sample = err
+            .sample_metadata()
+            .expect("invalid raw HTTP samples preserve bounded metadata");
+
+        assert_eq!(sample.pid, 42);
+        assert_eq!(sample.uid, 1000);
+        assert_eq!(sample.cgroup_id, 7);
+        assert_eq!(sample.fd, 9);
+        assert_eq!(sample.family, RAW_HTTP_AF_INET);
+        assert_eq!(u16::from_be(sample.remote_port_be), 8080);
+        assert_eq!(u16::from_be(sample.local_port_be), 39000);
+        assert_eq!(sample.request_len, payload.len() as u32);
+        assert_eq!(sample.request_iovec_lens, [3, 5, 7]);
+        assert_eq!(bytes_to_string(&sample.command), "curl");
     }
 
     #[test]
