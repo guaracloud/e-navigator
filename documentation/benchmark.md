@@ -146,6 +146,14 @@ Override `E_NAVIGATOR_HOMELAB_IMAGE_REPOSITORY` or
 The collector records the required image, configured image, and whether an image
 substitution occurred in `run-metadata.txt`.
 
+Cleanup controls are intentionally split. For standing benchmark releases, use
+`E_NAVIGATOR_HOMELAB_CLEANUP_WORKLOAD=1` to delete only the generated
+timestamped workload manifest after evidence capture. Use
+`E_NAVIGATOR_HOMELAB_UNINSTALL_RELEASE=1` only when the run should uninstall
+the Helm release. The older `E_NAVIGATOR_HOMELAB_CLEANUP=1` remains a
+backward-compatible full cleanup switch and enables both workload cleanup and
+release uninstall when the split flags are not set.
+
 Homelab run `20260621-221944-required-image-live` proved the required image is
 currently pullable in `staging/e-navigator-bench` with pull secret
 `ghcr-e-navigator-pull` and starts far enough to print CLI help. That is an
@@ -346,6 +354,19 @@ The initial live proof should record:
   proves the pushed image's default runtime smoke only. It does not prove live
   profile formatter behavior because profile source/generator/export paths were
   not enabled and the captured logs contained zero profile records;
+- `20260623-145037-collector-workload-cleanup-live` used the guarded collector
+  with `E_NAVIGATOR_HOMELAB_CLEANUP_WORKLOAD=1` and
+  `E_NAVIGATOR_HOMELAB_UNINSTALL_RELEASE=0` against
+  `staging/e-navigator-bench`. The run upgraded the standing Helm release to
+  published image `sha-6080e38` as revision `132`, captured rendered/live Helm
+  values, Service and ServiceMonitor state, direct `/healthz`, `/readyz`, and
+  `/metrics` `200 OK` responses, ten `kubectl top` samples, capability decode,
+  and JSON stdout counts. It applied temporary Job
+  `e-navigator-bench-workload-20260623-145037`, then deleted only the generated
+  workload manifest; final exact-name inventory showed no remaining Job or pod,
+  while Helm revision `132` remained deployed. This proves collector
+  workload-only cleanup repeatability for standing benchmark releases, not
+  controlled workload signal attribution or Prometheus server queryability;
 - `20260622-122803-guara-einprogress-live` pushed commit `622e1aa`, waited for
   GHCR image publication, rolled
   `ghcr.io/guaracloud/e-navigator:sha-622e1aa` to

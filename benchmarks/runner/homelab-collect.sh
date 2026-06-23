@@ -16,6 +16,9 @@ required_image_tag="sha-8ab271c"
 image_repository="${E_NAVIGATOR_HOMELAB_IMAGE_REPOSITORY:-$required_image_repository}"
 image_tag="${E_NAVIGATOR_HOMELAB_IMAGE_TAG:-$required_image_tag}"
 image_pull_secret="${E_NAVIGATOR_HOMELAB_IMAGE_PULL_SECRET:-}"
+cleanup_all_requested="${E_NAVIGATOR_HOMELAB_CLEANUP:-0}"
+cleanup_workload_requested="${E_NAVIGATOR_HOMELAB_CLEANUP_WORKLOAD:-$cleanup_all_requested}"
+uninstall_release_requested="${E_NAVIGATOR_HOMELAB_UNINSTALL_RELEASE:-$cleanup_all_requested}"
 
 if [ "${E_NAVIGATOR_HOMELAB_CONFIRM:-0}" != "1" ]; then
   cat >&2 <<MSG
@@ -121,6 +124,8 @@ Prometheus HTTP opt-in: ${E_NAVIGATOR_HOMELAB_ENABLE_PROMETHEUS_HTTP:-0}
 ServiceMonitor opt-in: ${E_NAVIGATOR_HOMELAB_ENABLE_SERVICE_MONITOR:-0}
 Prometheus API configured: $([ -n "${E_NAVIGATOR_HOMELAB_PROMETHEUS_URL:-}${E_NAVIGATOR_HOMELAB_PROMETHEUS_SERVICE:-}" ] && printf 'yes' || printf 'no')
 Cleanup requested: ${E_NAVIGATOR_HOMELAB_CLEANUP:-0}
+Cleanup workload requested: ${cleanup_workload_requested}
+Uninstall release requested: ${uninstall_release_requested}
 EOF
 }
 
@@ -347,6 +352,8 @@ write_summary_files() {
 - Required image: \`${required_image_repository}:${required_image_tag}\`
 - Configured image: \`${image_repository}:${image_tag}\`
 - Cleanup requested: \`${E_NAVIGATOR_HOMELAB_CLEANUP:-0}\`
+- Cleanup workload requested: \`${cleanup_workload_requested}\`
+- Uninstall release requested: \`${uninstall_release_requested}\`
 
 This generated summary is an artifact index. It does not upgrade any claim by
 itself; inspect the referenced evidence before updating documentation.
@@ -464,9 +471,13 @@ capture_top_samples
 capture_capabilities
 write_summary_files
 
-if [ "${E_NAVIGATOR_HOMELAB_CLEANUP:-0}" = "1" ]; then
-  printf 'running namespace-scoped cleanup in %s\n' "$namespace"
+if [ "$cleanup_workload_requested" = "1" ]; then
+  printf 'running workload cleanup in %s\n' "$namespace"
   run_capture cleanup-workload "${kubectl_cmd[@]}" -n "$namespace" delete -f "$workload_manifest" --ignore-not-found=true
+fi
+
+if [ "$uninstall_release_requested" = "1" ]; then
+  printf 'uninstalling Helm release %s in %s\n' "$release" "$namespace"
   run_capture cleanup-helm-uninstall helm --kube-context "$context" uninstall "$release" --namespace "$namespace"
 fi
 

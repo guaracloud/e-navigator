@@ -42,6 +42,18 @@ cleanup to delete the generated timestamped workload manifest. Local
 `toleration-smoke-ok`, and left no run-labeled resources after cleanup. This
 proves the harness scheduling and cleanup slice only; it does not prove any
 E-Navigator signal-family runtime behavior or symmetric capture.
+Follow-up `20260623-145037-collector-workload-cleanup-live` split collector
+cleanup into workload-only cleanup and explicit Helm-release uninstall
+decisions. Local guards now require `E_NAVIGATOR_HOMELAB_CLEANUP_WORKLOAD`,
+`E_NAVIGATOR_HOMELAB_UNINSTALL_RELEASE`, recorded metadata for both decisions,
+and workload cleanup before any optional uninstall. A guarded live run in
+`staging`/`e-navigator-bench` upgraded the standing release to published image
+`sha-6080e38`, kept Helm revision `132` deployed, applied temporary Job
+`e-navigator-bench-workload-20260623-145037`, deleted only that generated
+workload manifest, and final exact-name inventory showed no remaining Job or
+pod for that run. This proves repeatable workload-only cleanup for standing
+benchmark releases; it does not prove new signal-family behavior, Prometheus
+server scrape/queryability, or reduced privilege.
 
 HTTP follow-up note: `20260623-085800-http-stage-diagnostics-live` deployed
 pushed image `sha-8ed766a` to `staging`/`e-navigator-bench` with

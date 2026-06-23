@@ -66,6 +66,39 @@ if ! grep -Fq 'delete -f "$workload_manifest"' benchmarks/runner/homelab-collect
   exit 1
 fi
 
+if ! grep -Fq 'E_NAVIGATOR_HOMELAB_CLEANUP_WORKLOAD' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector must expose workload-only cleanup for standing benchmark releases\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'E_NAVIGATOR_HOMELAB_UNINSTALL_RELEASE' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector must require an explicit release-uninstall flag separate from workload cleanup\n' >&2
+  exit 1
+fi
+
+cleanup_workload_line="$(grep -n 'cleanup_workload_requested=' benchmarks/runner/homelab-collect.sh | head -1 | cut -d: -f1)"
+uninstall_release_line="$(grep -n 'uninstall_release_requested=' benchmarks/runner/homelab-collect.sh | head -1 | cut -d: -f1)"
+cleanup_workload_if_line="$(grep -n 'cleanup_workload_requested' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
+uninstall_release_if_line="$(grep -n 'uninstall_release_requested' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
+if [ -z "$cleanup_workload_line" ] ||
+  [ -z "$uninstall_release_line" ] ||
+  [ -z "$cleanup_workload_if_line" ] ||
+  [ -z "$uninstall_release_if_line" ] ||
+  [ "$cleanup_workload_line" -ge "$cleanup_workload_if_line" ] ||
+  [ "$uninstall_release_line" -ge "$uninstall_release_if_line" ]; then
+  printf 'homelab collector must derive and use separate workload cleanup and release uninstall decisions\n' >&2
+  exit 1
+fi
+
+cleanup_workload_run_line="$(grep -n 'run_capture cleanup-workload' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
+cleanup_helm_run_line="$(grep -n 'run_capture cleanup-helm-uninstall' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
+if [ -z "$cleanup_workload_run_line" ] ||
+  [ -z "$cleanup_helm_run_line" ] ||
+  [ "$cleanup_workload_run_line" -ge "$cleanup_helm_run_line" ]; then
+  printf 'homelab collector must clean workload before any optional Helm uninstall\n' >&2
+  exit 1
+fi
+
 rollout_line="$(grep -n 'run_capture rollout' benchmarks/runner/homelab-collect.sh | head -1 | cut -d: -f1)"
 workload_apply_line="$(grep -n 'workload-apply' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
 service_capture_line="$(grep -n 'capture_service_surfaces' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
