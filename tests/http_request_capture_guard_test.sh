@@ -34,6 +34,11 @@ if ! grep -Fq "copy_http_request_iovecs(iov, iov_len, event)" "$program"; then
   exit 1
 fi
 
+if ! grep -Fq "HTTP_MAX_IOVECS: usize = 2" "$program"; then
+  printf 'expected %s to keep split HTTP iovec verifier complexity bounded to two iovecs\n' "$program" >&2
+  exit 1
+fi
+
 if ! grep -Fq "read_msghdr_iovecs(message)" "$program"; then
   printf 'expected %s to assemble split HTTP sendmsg requests across bounded iovecs\n' "$program" >&2
   exit 1
