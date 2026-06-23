@@ -10,6 +10,8 @@ pub const PYROSCOPE_CPU_PROFILE_IDENTITY: &str = "process_cpu:cpu:nanoseconds:cp
 const MAX_ATTRIBUTES: usize = 16;
 const MAX_KEY_BYTES: usize = 64;
 const MAX_VALUE_BYTES: usize = 256;
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325_u64;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProfileRecord {
@@ -71,24 +73,7 @@ fn session_record(
 }
 
 fn sample_record(signal: &SignalEnvelope, observation: &ProfileSampleObservation) -> ProfileRecord {
-    let profile_id = format!(
-        "profile-sample:{:016x}",
-        stable_hash64(
-            format!(
-                "{}|{}|{}|{}",
-                signal.source,
-                observation.timestamp_unix_nanos,
-                profile_identity(
-                    signal,
-                    observation.process.as_ref(),
-                    observation.container.as_ref(),
-                    observation.kubernetes.as_ref(),
-                ),
-                observation.stack_id
-            )
-            .as_bytes(),
-        )
-    );
+    let profile_id = sample_profile_id(signal, observation);
 
     ProfileRecord {
         schema: PROFILE_SCHEMA.to_string(),
@@ -196,47 +181,97 @@ fn bounded_attributes(attributes: &[ProfilingAttribute]) -> BTreeMap<String, Str
     mapped
 }
 
-fn profile_identity(
+fn sample_profile_id(signal: &SignalEnvelope, observation: &ProfileSampleObservation) -> String {
+    let hash = profile_sample_hash(
+        signal,
+        observation.timestamp_unix_nanos,
+        observation.process.as_ref(),
+        observation.container.as_ref(),
+        observation.kubernetes.as_ref(),
+        &observation.stack_id,
+    );
+    format!("profile-sample:{hash:016x}")
+}
+
+fn profile_sample_hash(
     signal: &SignalEnvelope,
+    timestamp_unix_nanos: u64,
     process: Option<&e_navigator_signals::NetworkProcessIdentity>,
     container: Option<&e_navigator_signals::ContainerContext>,
     kubernetes: Option<&e_navigator_signals::KubernetesContext>,
-) -> String {
-    format!(
-        "{}|{}|{}|{}|{}|{}",
-        signal.host.as_deref().unwrap_or(""),
-        process
-            .map(|process| process.pid.to_string())
-            .unwrap_or_default(),
-        process
-            .and_then(|process| process.uid)
-            .map(|uid| uid.to_string())
-            .unwrap_or_default(),
+    stack_id: &str,
+) -> u64 {
+    let mut hash = FNV_OFFSET_BASIS;
+    hash_str(&mut hash, &signal.source);
+    hash_separator(&mut hash);
+    hash_decimal(&mut hash, timestamp_unix_nanos);
+    hash_separator(&mut hash);
+    hash_str(&mut hash, signal.host.as_deref().unwrap_or(""));
+    hash_separator(&mut hash);
+    if let Some(process) = process {
+        hash_decimal(&mut hash, u64::from(process.pid));
+    }
+    hash_separator(&mut hash);
+    if let Some(uid) = process.and_then(|process| process.uid) {
+        hash_decimal(&mut hash, u64::from(uid));
+    }
+    hash_separator(&mut hash);
+    hash_str(
+        &mut hash,
         container
             .map(|container| container.container_id.as_str())
             .unwrap_or(""),
+    );
+    hash_separator(&mut hash);
+    hash_str(
+        &mut hash,
         kubernetes
             .and_then(|kubernetes| kubernetes.pod_uid.as_deref())
             .unwrap_or(""),
+    );
+    hash_separator(&mut hash);
+    hash_str(
+        &mut hash,
         kubernetes
             .and_then(|kubernetes| kubernetes.container_name.as_deref())
-            .unwrap_or("")
-    )
+            .unwrap_or(""),
+    );
+    hash_separator(&mut hash);
+    hash_str(&mut hash, stack_id);
+    hash
 }
 
 fn should_drop_attribute(key: &str) -> bool {
-    let canonical_key = key.to_ascii_lowercase();
-    matches!(
-        canonical_key.as_str(),
-        "schema"
-            | "profile_id"
-            | "profile_kind"
-            | "correlation_kind"
-            | "confidence"
-            | "sample_count"
-            | "stack_id"
-            | "frame_count"
-    ) || e_navigator_signals::is_sensitive_profiling_attribute_key(key)
+    const CANONICAL_FIELDS: &[&str] = &[
+        "schema",
+        "profile_id",
+        "profile_kind",
+        "correlation_kind",
+        "confidence",
+        "sample_count",
+        "stack_id",
+        "frame_count",
+    ];
+    const SENSITIVE_FRAGMENTS: &[&str] = &[
+        "token",
+        "authorization",
+        "cookie",
+        "password",
+        "secret",
+        "api_key",
+        "apikey",
+        "x-api-key",
+        "credential",
+        "private_key",
+        "jwt",
+    ];
+
+    CANONICAL_FIELDS
+        .iter()
+        .any(|field| key.eq_ignore_ascii_case(field))
+        || SENSITIVE_FRAGMENTS
+            .iter()
+            .any(|fragment| contains_ascii_case_insensitive(key, fragment))
 }
 
 fn profiling_kind_name(kind: e_navigator_signals::ProfilingKind) -> &'static str {
@@ -269,13 +304,43 @@ fn confidence_name(kind: e_navigator_signals::ProfilingConfidence) -> &'static s
     }
 }
 
-fn stable_hash64(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+fn hash_str(hash: &mut u64, value: &str) {
+    for byte in value.as_bytes() {
+        hash_byte(hash, *byte);
     }
-    hash
+}
+
+fn hash_decimal(hash: &mut u64, value: u64) {
+    let mut buffer = [0_u8; 20];
+    let mut index = buffer.len();
+    let mut remaining = value;
+    loop {
+        index -= 1;
+        buffer[index] = b'0' + (remaining % 10) as u8;
+        remaining /= 10;
+        if remaining == 0 {
+            break;
+        }
+    }
+    for byte in &buffer[index..] {
+        hash_byte(hash, *byte);
+    }
+}
+
+fn hash_separator(hash: &mut u64) {
+    hash_byte(hash, b'|');
+}
+
+fn hash_byte(hash: &mut u64, byte: u8) {
+    *hash ^= u64::from(byte);
+    *hash = hash.wrapping_mul(FNV_PRIME);
+}
+
+fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 fn truncate_utf8(value: &str, max_bytes: usize) -> String {

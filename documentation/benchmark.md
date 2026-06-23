@@ -63,6 +63,15 @@ Recent local smoke evidence:
   `protocol/http_fixture_parse`, `generator/guara_compat`, and
   `formatter/profile_record`, so the outcome remains partial rather than a
   whole-harness performance improvement.
+- `20260623-133016` followed up on profile formatting after replacing nested
+  profile ID formatting with streamed hashing and allocation-free mixed-case
+  sensitive-key checks. Targeted profile formatter tests, sink clippy,
+  workspace tests, and the Docker-skipped quality gate passed. Criterion
+  reported `formatter/profile_record` improved with median change `-61.889%`
+  and measured interval `1.7037 us` to `1.7230 us`. The same smoke still
+  reported unrelated or noisy regressions in host parser and generator targets,
+  so the outcome remains partial rather than a whole-harness performance
+  improvement.
 
 ## Result Artifact Policy
 

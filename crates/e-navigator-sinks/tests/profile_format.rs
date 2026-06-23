@@ -94,6 +94,7 @@ fn sample_profile_ids_include_host_and_workload_identity() {
     let right = profile_sample_signal(Some("node-b"), Some("container-b"), Some("pod-b"));
     let left_record = format_profile_record(&left).expect("left formats");
     let right_record = format_profile_record(&right).expect("right formats");
+    assert_eq!(left_record.profile_id, "profile-sample:d41180ea1f8882c9");
     assert_ne!(left_record.profile_id, right_record.profile_id);
 
     if let e_navigator_signals::SignalPayload::ProfileSampleObservation(sample) = &mut left.payload
@@ -168,7 +169,9 @@ fn bounds_attributes_and_filters_sensitive_keys() {
             source: "source.synthetic_profile".to_string(),
             attributes: vec![
                 attr("authorization", "Bearer token"),
+                attr("Authorization", "Bearer token"),
                 attr("x-api-key", "secret"),
+                attr("X-API-Key", "secret"),
                 attr("private_key", "secret"),
                 attr("jwt", "secret"),
                 attr("alpha", "one"),
@@ -184,8 +187,10 @@ fn bounds_attributes_and_filters_sensitive_keys() {
     assert_eq!(record.attributes.len(), 3);
     assert_eq!(record.attributes["alpha"], "one");
     assert!(!record.attributes.contains_key("authorization"));
+    assert!(!record.attributes.contains_key("Authorization"));
     assert!(!record.attributes.contains_key("cookie"));
     assert!(!record.attributes.contains_key("x-api-key"));
+    assert!(!record.attributes.contains_key("X-API-Key"));
     assert!(!record.attributes.contains_key("private_key"));
     assert!(!record.attributes.contains_key("jwt"));
 }
