@@ -20,7 +20,8 @@ for expected in \
   "HTTP_MAX_IOVECS" \
   "HTTP_IOVEC_CHUNK_BYTES" \
   "copy_http_request_iovecs" \
-  "copy_http_request_iovec_chunk" \
+  "copy_http_request_iovec_slot0" \
+  "copy_http_request_iovec_slot1" \
   "request_iovec_lens" \
   "emit_http_request_iovecs_event" \
   "emit_http_request_event" \
@@ -48,6 +49,16 @@ fi
 
 if ! grep -Fq "bpf_probe_read_user_buf(" "$program"; then
   printf 'expected %s to keep contiguous HTTP request copies on the bounded bulk helper\n' "$program" >&2
+  exit 1
+fi
+
+if awk '
+  /fn copy_http_request_iovec_slot0\(/ { in_iovec_chunk = 1 }
+  in_iovec_chunk && /fn copy_pending_to_event\(/ { in_iovec_chunk = 0 }
+  in_iovec_chunk && /event\.request\[.*\.\./ { found = 1 }
+  END { exit found ? 0 : 1 }
+' "$program"; then
+  printf 'expected %s to avoid dynamic HTTP request slices that emit BPF panic bounds checks\n' "$program" >&2
   exit 1
 fi
 

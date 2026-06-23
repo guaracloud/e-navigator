@@ -1453,40 +1453,43 @@ fn copy_http_request_iovecs(
     event: &mut RawHttpRequestEvent,
 ) -> Result<(), i64> {
     let mut output_index = 0;
-    let mut iov_index = 0;
-    while iov_index < HTTP_MAX_IOVECS {
-        if iov_index as u64 >= iov_len || output_index >= HTTP_REQUEST_BYTES {
-            break;
-        }
 
-        let iov_entry = unsafe { iov.add(iov_index * 16) };
+    if iov_len > 0 {
+        let iov_entry = iov;
         let buffer = unsafe { bpf_probe_read_user::<*const u8>(iov_entry.cast::<*const u8>()) }
             .map_err(|err| err as i64)?;
         let len = unsafe { bpf_probe_read_user::<u64>(iov_entry.add(8).cast::<u64>()) }
             .map_err(|err| err as i64)?;
         if !buffer.is_null() && len > 0 {
-            let copied = copy_http_request_iovec_chunk(buffer, len, event, iov_index)?;
-            event.request_iovec_lens[iov_index] = copied as u16;
+            let copied = copy_http_request_iovec_slot0(buffer, len, event)?;
+            event.request_iovec_lens[0] = copied as u16;
             output_index += copied;
         }
-
-        iov_index += 1;
     }
+
+    if iov_len > 1 && output_index < HTTP_REQUEST_BYTES {
+        let iov_entry = unsafe { iov.add(16) };
+        let buffer = unsafe { bpf_probe_read_user::<*const u8>(iov_entry.cast::<*const u8>()) }
+            .map_err(|err| err as i64)?;
+        let len = unsafe { bpf_probe_read_user::<u64>(iov_entry.add(8).cast::<u64>()) }
+            .map_err(|err| err as i64)?;
+        if !buffer.is_null() && len > 0 {
+            let copied = copy_http_request_iovec_slot1(buffer, len, event)?;
+            event.request_iovec_lens[1] = copied as u16;
+            output_index += copied;
+        }
+    }
+
     event.request_len = output_index as u32;
     Ok(())
 }
 
 #[inline(never)]
-fn copy_http_request_iovec_chunk(
+fn copy_http_request_iovec_slot0(
     buffer: *const u8,
     len: u64,
     event: &mut RawHttpRequestEvent,
-    iov_index: usize,
 ) -> Result<usize, i64> {
-    if iov_index >= HTTP_MAX_IOVECS {
-        return Ok(0);
-    }
-
     let capped_len = if len > HTTP_IOVEC_CHUNK_BYTES as u64 {
         HTTP_IOVEC_CHUNK_BYTES
     } else {
@@ -1496,14 +1499,50 @@ fn copy_http_request_iovec_chunk(
         return Ok(0);
     }
 
-    let output_index = iov_index * HTTP_IOVEC_CHUNK_BYTES;
-    unsafe {
-        bpf_probe_read_user_buf(
-            buffer,
-            &mut event.request[output_index..output_index + capped_len],
-        )
+    let request = event.request.as_mut_ptr();
+    let mut index = 0;
+    while index < HTTP_IOVEC_CHUNK_BYTES {
+        if index >= capped_len {
+            break;
+        }
+        let byte =
+            unsafe { bpf_probe_read_user::<u8>(buffer.add(index)) }.map_err(|err| err as i64)?;
+        unsafe {
+            *request.add(index) = byte;
+        }
+        index += 1;
     }
-    .map_err(|err| err as i64)?;
+    Ok(capped_len)
+}
+
+#[inline(never)]
+fn copy_http_request_iovec_slot1(
+    buffer: *const u8,
+    len: u64,
+    event: &mut RawHttpRequestEvent,
+) -> Result<usize, i64> {
+    let capped_len = if len > HTTP_IOVEC_CHUNK_BYTES as u64 {
+        HTTP_IOVEC_CHUNK_BYTES
+    } else {
+        len as usize
+    };
+    if capped_len == 0 {
+        return Ok(0);
+    }
+
+    let request = unsafe { event.request.as_mut_ptr().add(HTTP_IOVEC_CHUNK_BYTES) };
+    let mut index = 0;
+    while index < HTTP_IOVEC_CHUNK_BYTES {
+        if index >= capped_len {
+            break;
+        }
+        let byte =
+            unsafe { bpf_probe_read_user::<u8>(buffer.add(index)) }.map_err(|err| err as i64)?;
+        unsafe {
+            *request.add(index) = byte;
+        }
+        index += 1;
+    }
     Ok(capped_len)
 }
 
