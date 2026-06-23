@@ -238,7 +238,10 @@ Implemented with narrower or deferred runtime claims:
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,
   active Prometheus targets, nonzero scrape samples, and queryable
-  E-Navigator metric series such as `network_connection_open_count`.
+  E-Navigator metric series such as `network_connection_open_count`. Follow-up
+  `20260623-131846` deployed published image `sha-5469a11` and kept the direct
+  Prometheus HTTP endpoint plus network metric output healthy, but did not run
+  Prometheus API checks or prove `beyla_network_flow_bytes_total`.
 - OTLP HTTP support is an opt-in registered sink. Local fake-collector tests
   prove trace records with valid trace/span IDs are posted as OTLP protobuf
   `ExportTraceServiceRequest` payloads with `application/x-protobuf`, metric
@@ -315,6 +318,11 @@ Implemented with narrower or deferred runtime claims:
   DaemonSet as `2/2` Ready with direct Prometheus HTTP `200 OK` responses,
   network JSON/stdout output, and ten resource samples, but it also confirmed
   the live baseline still runs as UID 0 with `Seccomp: 0` and `CAP_SYS_ADMIN`.
+- The published-image follow-up `20260623-131846-prometheus-formatter-live`
+  upgraded the homelab benchmark release to image `sha-5469a11`, kept the
+  DaemonSet `2/2` Ready with direct Prometheus HTTP `200 OK`, and left the
+  release on revision `128`; it does not prove Prometheus server scrape or
+  Guara-compatible byte-flow export.
 - Persisted service maps, production exporters, storage, UI, and container
   vulnerability policy gates are deferred.
 

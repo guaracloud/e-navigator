@@ -314,6 +314,17 @@ The initial live proof should record:
   on `homelab-02`. Prometheus API checks were skipped, older proof pods and
   fake collector services were observed but not modified, and both pods still
   reported UID `0`, `Seccomp: 0`, and `CAP_SYS_ADMIN`;
+- `20260623-131846-prometheus-formatter-live` deployed the published
+  formatter-change image `sha-5469a11` to the existing
+  `staging/e-navigator-bench` Helm release as revision `128`, preserving the
+  existing Prometheus-enabled network/Guara-compatible config. The DaemonSet
+  stayed `2/2` Ready on digest
+  `sha256:2de950aece9580dcb5c896d5df386899d12f76ccfd34b97535a34d8a3edc8738`,
+  direct `/healthz`, `/readyz`, and `/metrics` returned `200 OK`, direct
+  `/metrics` exposed 40 network metric lines across 8 network metric families,
+  and JSON stdout contained network source and generator output. Prometheus API
+  checks were skipped, no `beyla_network_flow_bytes_total` lines were observed,
+  and both pods still reported UID `0`, `Seccomp: 0`, and `CAP_SYS_ADMIN`;
 - `20260622-122803-guara-einprogress-live` pushed commit `622e1aa`, waited for
   GHCR image publication, rolled
   `ghcr.io/guaracloud/e-navigator:sha-622e1aa` to

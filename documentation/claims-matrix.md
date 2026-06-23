@@ -315,3 +315,14 @@ network source and generator output, and ten `kubectl top` samples recorded
 `homelab-02`. Prometheus API checks were skipped, and both pods still reported
 UID `0`, `Seccomp: 0`, and `CAP_SYS_ADMIN`, so this is not reduced-privilege,
 reduced-overhead, or Prometheus server scrape proof.
+Follow-up `20260623-131846-prometheus-formatter-live` deployed pushed commit
+`5469a11` as image `sha-5469a11` to the existing `staging`/`e-navigator-bench`
+release, upgrading Helm from revision `127` to revision `128`. The DaemonSet
+stayed `2/2` Ready on digest
+`sha256:2de950aece9580dcb5c896d5df386899d12f76ccfd34b97535a34d8a3edc8738`,
+direct Prometheus HTTP probes returned `200 OK`, direct `/metrics` exposed 40
+network metric lines across 8 network metric families, and JSON stdout
+contained network source and generator output. Prometheus API checks were
+skipped, no `beyla_network_flow_bytes_total` lines were observed, and both pods
+still reported UID `0`, `Seccomp: 0`, and `CAP_SYS_ADMIN`, so this proves only
+published-image live baseline health for the formatter change.
