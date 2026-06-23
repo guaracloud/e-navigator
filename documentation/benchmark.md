@@ -377,6 +377,35 @@ The initial live proof should record:
   The release was rolled back to revision 55/rollback-to-53, restored to digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`,
   and all temporary HTTP writev workload resources were deleted;
+- `20260623-030630-http-iovec-live-r9` records the split-iovec controlled
+  follow-up on `staging/e-navigator-bench`: commit `7ac7ef2` removed the
+  verifier-panic-prone dynamic request slice from split-iovec BPF request
+  copying, passed `scripts/quality.sh`, GitHub CI run `27999145227`, and image
+  publication run `27999145243`, then pushed image
+  `ghcr.io/guaracloud/e-navigator:sha-7ac7ef2` index digest
+  `sha256:c8fe0da75d741e2ce2993e7006d5384fe6f76904e4d00b10e8fbdc30bc7c5c48`
+  and linux/amd64 digest
+  `sha256:7967acb8ca974c6e0fbdd578c33d1229bfb04b8112ebbc7c546eccaea3b99818`
+  rolled out as Helm revision 72 with `source.aya_http` and
+  `generator.request_correlation` enabled. The DaemonSet stayed `2/2` Ready
+  with zero restarts, and the startup-log scan found none of the previous BPF
+  verifier failure markers. A first Python job completed 80 requests whose
+  request line was split across two `writev` iovecs and produced 80
+  `protocol_request_observation` plus 80 `request_span_observation` records for
+  `/proof/http-iovec-r9-20260623-030630`, with 80 unique request IDs but no
+  Kubernetes fields. A paced follow-up job completed 20 warmups and 80 measured
+  split-iovec proof requests for `/proof/http-iovec-r9b-20260623-030630`; all
+  80 measured protocol records and all 80 measured request-span records
+  included Kubernetes namespace `e-navigator-bench`, pod
+  `http-iovec-r9b-dptfg`, and container `workload`. This proves bounded
+  two-slot split `writev` request assembly, request-span generation, request ID
+  extraction, and Host extraction on the observed homelab-02 client. It does
+  not prove symmetric node coverage, more than two iovec slots, chunks larger
+  than the configured bounded slot size, TLS, gRPC, inbound parsing,
+  status-code extraction, route templates, retries, application errors, or
+  production replacement readiness. The temporary Jobs were deleted, and the
+  release was rolled back to revision 73/rollback-to-71 with baseline digest
+  `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in
@@ -412,8 +441,9 @@ fixtures and compile-time benchmark health. They do not prove:
 - runtime DNS packet capture beyond the exact recorded live DNS runs;
 - controlled client workload DNS attribution;
 - controlled application-client HTTP request capture beyond the exact
-  homelab-02 writev client path observed in
-  `20260622-234023-http-writev-live`;
+  homelab-02 writev client paths observed in
+  `20260622-234023-http-writev-live` and
+  `20260623-030630-http-iovec-live-r9`;
 - Kubernetes DaemonSet readiness;
 - real host procfs/sysfs/cgroup accuracy;
 - OTLP, Prometheus, Pyroscope, pprof, or production collector export;
