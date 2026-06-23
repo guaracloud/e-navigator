@@ -329,6 +329,12 @@ The initial live proof should record:
   `Seccomp: 2` plus `NoNewPrivs: 1` in both pods, and was rolled back to the
   pre-run revision `111`; the controlled hot Python workload completed but did
   not appear in captured profile records;
+- `20260623-101215-required-image-dns-version-boundary` is a local parser
+  boundary check for the required image: current-head accepted a config enabling
+  `source.aya_dns`, but
+  `ghcr.io/guaracloud/e-navigator:sha-8ab271c` rejected the same config with
+  `unknown module 'source.aya_dns'`; this means live DNS source output cannot be
+  proven on the required image without changing the required benchmark image;
 - `20260622-001716-published-image-live` left the Helm release on pushed image
   `sha-d3167e3` with the baseline config restored and both homelab pods Ready;
 - `20260622-004011-current-head-live` left the Helm release on current pushed
