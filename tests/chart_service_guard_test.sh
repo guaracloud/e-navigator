@@ -44,6 +44,10 @@ if ! grep -Fq 'checksum/config:' "$tmp_dir/default.yaml"; then
   printf 'expected rendered DaemonSet pod template to include checksum/config annotation\n' >&2
   exit 1
 fi
+if ! grep -Fq 'seccompProfile:' "$tmp_dir/default.yaml" || ! grep -Fq 'type: RuntimeDefault' "$tmp_dir/default.yaml"; then
+  printf 'expected rendered DaemonSet container securityContext to use RuntimeDefault seccomp\n' >&2
+  exit 1
+fi
 
 render_chart service_only --set service.enabled=true
 expect_no_kind "$tmp_dir/service_only.yaml" Service

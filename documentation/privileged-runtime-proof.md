@@ -71,7 +71,9 @@ Unless the exact proof is present in a recorded result set, do not claim:
 - Tempo, Alloy, Pyroscope, pprof, or collector-ingested OTLP compatibility;
 - perf-event CPU profiling parity;
 - Kubernetes runtime readiness;
-- reduced-privilege eBPF operation;
+- reduced-privilege eBPF operation beyond the exact recorded RuntimeDefault
+  seccomp proof; non-root and reduced-capability operation remain separate
+  claims;
 - production OTLP, pprof, Pyroscope, Prometheus, or Tempo export;
 - Beyla, Alloy, Tempo, Prometheus, or Pyroscope replacement readiness.
 
