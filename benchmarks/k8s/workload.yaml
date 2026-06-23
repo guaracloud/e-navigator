@@ -15,6 +15,8 @@ spec:
         app.kubernetes.io/part-of: e-navigator-validation
     spec:
       restartPolicy: Never
+      tolerations:
+        - operator: Exists
       containers:
         - name: workload
           image: docker.io/busybox:1.36

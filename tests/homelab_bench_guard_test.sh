@@ -56,6 +56,16 @@ if ! grep -Fq 'current context must be exactly staging' benchmarks/runner/homela
   exit 1
 fi
 
+if ! grep -Fq 'operator: Exists' benchmarks/k8s/workload.yaml; then
+  printf 'homelab workload template must tolerate homelab control-plane taints for symmetric proof scheduling\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'delete -f "$workload_manifest"' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector cleanup must delete the generated timestamped workload manifest\n' >&2
+  exit 1
+fi
+
 rollout_line="$(grep -n 'run_capture rollout' benchmarks/runner/homelab-collect.sh | head -1 | cut -d: -f1)"
 workload_apply_line="$(grep -n 'workload-apply' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
 service_capture_line="$(grep -n 'capture_service_surfaces' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"

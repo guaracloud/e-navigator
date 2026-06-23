@@ -737,6 +737,21 @@ The initial live proof should record:
   to revision `131`/rollback-to-129, and the DaemonSet verified `2/2` Ready on
   baseline digest
   `sha256:3abcd8d1c9b9b890801eeab94252f8cc507cd0dba665ddcc449cf409275b90d0`;
+- `20260623-143751-homelab-workload-toleration-smoke` records a harness-only
+  scheduling and cleanup proof. The shared workload template now includes an
+  `operator: Exists` toleration so generated proof workloads can schedule on
+  tainted homelab nodes such as `homelab-02`, and
+  `benchmarks/runner/homelab-collect.sh` cleanup now deletes the generated
+  timestamped workload manifest instead of the static template name. The guard
+  failed before the toleration change, then passed after the fix. `kubeconform`
+  validated `benchmarks/k8s/workload.yaml`, Docker-skipped `scripts/quality.sh`
+  passed, and a bounded live smoke created pod
+  `e-nav-toleration-smoke-20260623-143751` only in
+  `staging/e-navigator-bench` with `nodeSelector` pinned to `homelab-02` plus
+  the `Exists` toleration. The pod completed on `homelab-02`, logged
+  `toleration-smoke-ok`, and label-scoped cleanup left no resources. This
+  proves only harness scheduling and cleanup behavior, not E-Navigator runtime
+  signal capture;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in

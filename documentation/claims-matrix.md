@@ -28,6 +28,21 @@
 
 `Privileged-proven` must remain `no` unless the exact privileged smoke command or guarded homelab canary is run on a real Linux host or Kubernetes cluster and the observed output is recorded.
 
+Homelab harness follow-up note:
+`20260623-143751-homelab-workload-toleration-smoke` fixed the shared benchmark
+workload template and collector cleanup path after repeated live evidence showed
+proof workloads could remain Pending on the tainted `homelab-02` node. The
+local guard now requires `benchmarks/k8s/workload.yaml` to carry an
+`operator: Exists` toleration and requires `benchmarks/runner/homelab-collect.sh`
+cleanup to delete the generated timestamped workload manifest. Local
+`kubeconform` validated the workload manifest, Docker-skipped
+`scripts/quality.sh` passed, and a bounded live smoke in
+`staging`/`e-navigator-bench` scheduled pod
+`e-nav-toleration-smoke-20260623-143751` onto `homelab-02`, completed with log
+`toleration-smoke-ok`, and left no run-labeled resources after cleanup. This
+proves the harness scheduling and cleanup slice only; it does not prove any
+E-Navigator signal-family runtime behavior or symmetric capture.
+
 HTTP follow-up note: `20260623-085800-http-stage-diagnostics-live` deployed
 pushed image `sha-8ed766a` to `staging`/`e-navigator-bench` with
 `source.aya_http`, `source.aya_network`, request correlation, network metrics,

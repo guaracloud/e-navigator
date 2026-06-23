@@ -466,7 +466,7 @@ write_summary_files
 
 if [ "${E_NAVIGATOR_HOMELAB_CLEANUP:-0}" = "1" ]; then
   printf 'running namespace-scoped cleanup in %s\n' "$namespace"
-  run_capture cleanup-workload "${kubectl_cmd[@]}" -n "$namespace" delete -f benchmarks/k8s/workload.yaml --ignore-not-found=true
+  run_capture cleanup-workload "${kubectl_cmd[@]}" -n "$namespace" delete -f "$workload_manifest" --ignore-not-found=true
   run_capture cleanup-helm-uninstall helm --kube-context "$context" uninstall "$release" --namespace "$namespace"
 fi
 
