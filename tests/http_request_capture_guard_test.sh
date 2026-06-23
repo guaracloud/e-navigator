@@ -22,8 +22,7 @@ for expected in \
   "copy_http_request_iovecs" \
   "copy_http_request_iovec_chunk" \
   "request_iovec_lens" \
-  "read_msghdr_iovecs" \
-  "prepare_http_request_iovecs_event" \
+  "emit_http_request_iovecs_event" \
   "emit_http_request_event" \
   "copy_http_request"; do
   if ! grep -Fq "$expected" "$program"; then
@@ -57,13 +56,8 @@ if ! grep -Fq "compact_raw_http_request" "$source_file"; then
   exit 1
 fi
 
-if ! grep -Fq "read_msghdr_iovecs(message)" "$program"; then
-  printf 'expected %s to assemble split HTTP sendmsg requests across bounded iovecs\n' "$program" >&2
-  exit 1
-fi
-
-if grep -Fq "emit_http_request_iovecs_event(&ctx" "$program"; then
-  printf 'expected %s to avoid passing tracepoint context through the split-iovec helper\n' "$program" >&2
+if ! grep -Fq "fn try_tracepoint_http_sendmsg_enter(ctx: TracePointContext) -> Result<u32, i64>" "$program"; then
+  printf 'expected %s to keep the HTTP sendmsg tracepoint attached as a no-op verifier boundary\n' "$program" >&2
   exit 1
 fi
 

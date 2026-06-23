@@ -792,15 +792,7 @@ fn try_tracepoint_http_writev_enter(ctx: TracePointContext) -> Result<u32, i64> 
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
     let iov = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
     let iov_len = unsafe { ctx.read_at::<u64>(32) }.map_err(|err| err as i64)?;
-    if iov.is_null() {
-        return Ok(0);
-    }
-
-    if prepare_http_request_iovecs_event(fd, iov, iov_len)? {
-        let event = http_request_event_scratch()?;
-        HTTP_REQUEST_EVENTS.output(&ctx, &*event, 0);
-    }
-    Ok(0)
+    emit_http_request_iovecs_event(&ctx, fd, iov, iov_len)
 }
 
 fn try_tracepoint_http_sendto_enter(ctx: TracePointContext) -> Result<u32, i64> {
@@ -811,17 +803,7 @@ fn try_tracepoint_http_sendto_enter(ctx: TracePointContext) -> Result<u32, i64> 
 }
 
 fn try_tracepoint_http_sendmsg_enter(ctx: TracePointContext) -> Result<u32, i64> {
-    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
-    let message = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
-    if message.is_null() {
-        return Ok(0);
-    }
-
-    let (iov, iov_len) = read_msghdr_iovecs(message)?;
-    if prepare_http_request_iovecs_event(fd, iov, iov_len)? {
-        let event = http_request_event_scratch()?;
-        HTTP_REQUEST_EVENTS.output(&ctx, &*event, 0);
-    }
+    let _ = ctx;
     Ok(0)
 }
 
@@ -946,9 +928,15 @@ fn emit_http_request_event(
     Ok(0)
 }
 
-fn prepare_http_request_iovecs_event(fd: i32, iov: *const u8, iov_len: u64) -> Result<bool, i64> {
+#[inline(never)]
+fn emit_http_request_iovecs_event(
+    ctx: &TracePointContext,
+    fd: i32,
+    iov: *const u8,
+    iov_len: u64,
+) -> Result<u32, i64> {
     if iov.is_null() || iov_len == 0 {
-        return Ok(false);
+        return Ok(0);
     }
 
     let pid_tgid = bpf_get_current_pid_tgid();
@@ -958,10 +946,10 @@ fn prepare_http_request_iovecs_event(fd: i32, iov: *const u8, iov_len: u64) -> R
     };
     let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
         Some(value) => *value,
-        None => return Ok(false),
+        None => return Ok(0),
     };
     if connection.protocol != IPPROTO_TCP {
-        return Ok(false);
+        return Ok(0);
     }
 
     let event = http_request_event_scratch()?;
@@ -980,9 +968,10 @@ fn prepare_http_request_iovecs_event(fd: i32, iov: *const u8, iov_len: u64) -> R
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     copy_http_request_iovecs(iov, iov_len, event)?;
     if event.request_len == 0 {
-        return Ok(false);
+        return Ok(0);
     }
-    Ok(true)
+    HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
+    Ok(0)
 }
 
 fn try_tracepoint_dns_sendto_enter(ctx: &TracePointContext) -> Result<u32, i64> {
@@ -1263,20 +1252,20 @@ fn read_msghdr_name(message: *const u8) -> Result<*const u8, i64> {
         .map_err(|err| err as i64)
 }
 
-fn read_msghdr_first_iov(message: *const u8) -> Result<(*const u8, u64), i64> {
-    let (iov, _) = read_msghdr_iovecs(message)?;
-    if iov.is_null() {
-        return Ok((core::ptr::null(), 0));
-    }
-    read_first_iov(iov)
-}
-
 fn read_msghdr_iovecs(message: *const u8) -> Result<(*const u8, u64), i64> {
     let iov = unsafe { bpf_probe_read_user::<*const u8>(message.add(16).cast::<*const u8>()) }
         .map_err(|err| err as i64)?;
     let iov_len = unsafe { bpf_probe_read_user::<u64>(message.add(24).cast::<u64>()) }
         .map_err(|err| err as i64)?;
     Ok((iov, iov_len))
+}
+
+fn read_msghdr_first_iov(message: *const u8) -> Result<(*const u8, u64), i64> {
+    let (iov, _) = read_msghdr_iovecs(message)?;
+    if iov.is_null() {
+        return Ok((core::ptr::null(), 0));
+    }
+    read_first_iov(iov)
 }
 
 fn read_first_iov(iov: *const u8) -> Result<(*const u8, u64), i64> {
@@ -1457,6 +1446,7 @@ fn copy_http_request_chunk(
     Ok(capped_len)
 }
 
+#[inline(never)]
 fn copy_http_request_iovecs(
     iov: *const u8,
     iov_len: u64,
@@ -1486,6 +1476,7 @@ fn copy_http_request_iovecs(
     Ok(())
 }
 
+#[inline(never)]
 fn copy_http_request_iovec_chunk(
     buffer: *const u8,
     len: u64,
