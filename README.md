@@ -181,7 +181,12 @@ Implemented with narrower or deferred runtime claims:
   kept `source.aya_http` verifier-loadable on the homelab kernel, and observed
   80 measured `protocol_request_observation` plus 80 measured
   `request_span_observation` records with 80 unique request IDs and Kubernetes
-  attribution for the controlled workload.
+  attribution for the controlled workload. Homelab run
+  `20260623-045606-http-seccomp-live` repeated the bounded three-slot proof
+  under chart `RuntimeDefault` seccomp from pushed image `sha-643ea37`; both
+  E-Navigator pods reported `Seccomp: 2`, and the controlled workload again
+  produced 80 attributed protocol request records plus 80 attributed request
+  spans.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,
@@ -235,15 +240,19 @@ Implemented with narrower or deferred runtime claims:
   can also flow through the OTLP HTTP profile sink to a namespace-local
   OpenTelemetry Collector.
 - Kubernetes packaging proof is separate from privileged eBPF runtime proof.
-- Resource and privilege evidence is currently a point-in-time baseline only.
+- Resource and privilege evidence is currently a set of point-in-time runtime
+  samples, not a reduced-privilege or reduced-overhead proof.
   Homelab run `20260621-221235-baseline-resource-live` captured 10
   `kubectl top` samples per E-Navigator pod, Prometheus cAdvisor CPU and memory
   series, rendered security context, and decoded capabilities. Homelab run
   `20260622-001716-published-image-live` repeated resource and capability
-  capture on pushed image `sha-d3167e3`. It does not
+  capture on pushed image `sha-d3167e3`. Homelab runs
+  `20260623-041434-runtime-default-seccomp-live`,
+  `20260623-043123-profile-seccomp-live`, and
+  `20260623-045606-http-seccomp-live` proved kernel-applied `Seccomp: 2` for
+  selected network, CPU profile, and HTTP source modes. These runs still do not
   prove reduced overhead or reduced privilege because no equivalent baseline
-  comparison was captured and the pods still ran as UID 0 with `CAP_SYS_ADMIN`
-  and `Seccomp: 0`.
+  comparison was captured and the pods still ran as UID 0 with `CAP_SYS_ADMIN`.
 - Persisted service maps, production exporters, storage, UI, and container
   vulnerability policy gates are deferred.
 
@@ -266,10 +275,11 @@ The following are intentionally not claimed as implemented production behavior:
 - complete live HTTP/gRPC parsing from real traffic; `source.aya_http` has
   bounded opt-in live proof for observed cleartext cluster traffic and
   controlled `homelab-02` clients using `writev` with up to three explicit
-  96-byte iovec slots, but not symmetric node coverage, TLS, gRPC framing,
-  inbound server-side parsing, status-code extraction, route templates,
-  retries, application errors, more than three iovec slots, chunks larger than
-  96 bytes per slot, or broader multi-iovec HTTP header assembly;
+  96-byte iovec slots, including one run under kernel-applied `Seccomp: 2`, but
+  not symmetric node coverage, TLS, gRPC framing, inbound server-side parsing,
+  status-code extraction, route templates, retries, application errors, more
+  than three iovec slots, chunks larger than 96 bytes per slot, or broader
+  multi-iovec HTTP header assembly;
 - privileged-proven runtime DNS packet capture beyond the exact recorded live
   DNS runs; controlled-client DNS remains proven only for the recorded
   `homelab-02` path, not symmetrically across both homelab nodes;
