@@ -16,6 +16,18 @@ pub(crate) const RAW_DNS_PROTOCOL_TCP: u32 = 6;
 const PERF_BUFFER_PAGE_COUNT: usize = 64;
 #[cfg(any(target_os = "linux", test))]
 const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+const RAW_DNS_DIAGNOSTIC_CONNECTED_SEND_MISSING_PEER: u32 = 1;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+const RAW_DNS_DIAGNOSTIC_CONNECTED_RECV_MISSING_PEER: u32 = 2;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+const RAW_DNS_DIAGNOSTIC_SEND_SOCKADDR_READ_FAILED: u32 = 3;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+const RAW_DNS_DIAGNOSTIC_SEND_NON_INET: u32 = 4;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+const RAW_DNS_DIAGNOSTIC_SEND_NON_DNS_PORT: u32 = 5;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+const RAW_DNS_DIAGNOSTIC_PACKET_COPY_FAILED: u32 = 6;
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[repr(C)]
@@ -29,6 +41,23 @@ pub(crate) struct RawDnsEvent {
     pub server_addr_v4: u32,
     pub timestamp_unix_nanos: u64,
     pub latency_nanos: u64,
+    pub packet_len: u32,
+    pub command: [u8; 16],
+    pub packet: [u8; RAW_DNS_PACKET_BYTES],
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct RawDnsDiagnosticEvent {
+    pub pid: u32,
+    pub uid: u32,
+    pub cgroup_id: u64,
+    pub fd: i32,
+    pub reason: u32,
+    pub protocol: u32,
+    pub server_port_be: u16,
+    pub server_addr_v4: u32,
     pub packet_len: u32,
     pub command: [u8; 16],
     pub packet: [u8; RAW_DNS_PACKET_BYTES],
@@ -170,6 +199,44 @@ fn raw_dns_diagnostic_values(bytes: &[u8]) -> Option<Vec<String>> {
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn raw_dns_drop_diagnostic_values(bytes: &[u8]) -> Option<Vec<String>> {
+    if bytes.len() < core::mem::size_of::<RawDnsDiagnosticEvent>() {
+        return None;
+    }
+    let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawDnsDiagnosticEvent>()) };
+    let packet_len = (raw.packet_len as usize).min(RAW_DNS_PACKET_BYTES);
+    let mut values = vec![
+        dns_diagnostic_reason(raw.reason).to_string(),
+        bytes_to_string(&raw.command),
+        raw.fd.to_string(),
+        raw.protocol.to_string(),
+        u16::from_be(raw.server_port_be).to_string(),
+    ];
+
+    if raw.server_addr_v4 != 0 {
+        values.push(ipv4_to_string(raw.server_addr_v4));
+    }
+    if packet_len > 0 {
+        values.push(dns_packet_ascii_preview(&raw.packet[..packet_len]));
+    }
+
+    Some(values)
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn dns_diagnostic_reason(reason: u32) -> &'static str {
+    match reason {
+        RAW_DNS_DIAGNOSTIC_CONNECTED_SEND_MISSING_PEER => "connected_send_missing_peer",
+        RAW_DNS_DIAGNOSTIC_CONNECTED_RECV_MISSING_PEER => "connected_recv_missing_peer",
+        RAW_DNS_DIAGNOSTIC_SEND_SOCKADDR_READ_FAILED => "send_sockaddr_read_failed",
+        RAW_DNS_DIAGNOSTIC_SEND_NON_INET => "send_non_inet",
+        RAW_DNS_DIAGNOSTIC_SEND_NON_DNS_PORT => "send_non_dns_port",
+        RAW_DNS_DIAGNOSTIC_PACKET_COPY_FAILED => "packet_copy_failed",
+        _ => "unknown",
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn dns_packet_ascii_preview(packet: &[u8]) -> String {
     const MAX_PREVIEW_BYTES: usize = 160;
 
@@ -273,7 +340,10 @@ mod platform {
     use async_trait::async_trait;
     use aya::{
         Ebpf, include_bytes_aligned,
-        maps::perf::{PerfEvent, PerfEventArray},
+        maps::{
+            Array,
+            perf::{PerfEvent, PerfEventArray},
+        },
         programs::TracePoint,
         util::online_cpus,
     };
@@ -319,6 +389,7 @@ mod platform {
                 "/e-navigator-ebpf-programs"
             )))
             .map_err(module_error)?;
+            configure_dns_diagnostics(&mut ebpf, diagnostics.enabled())?;
 
             attach_tracepoint(
                 &mut ebpf,
@@ -407,9 +478,22 @@ mod platform {
                     }
                 })?)
                 .map_err(module_error)?;
+            let mut diagnostic_perf_array = if diagnostics.enabled() {
+                Some(
+                    PerfEventArray::try_from(ebpf.take_map("DNS_DIAGNOSTIC_EVENTS").ok_or_else(
+                        || CoreError::ModuleFailed {
+                            module: "source.aya_dns".to_string(),
+                            message: "missing DNS_DIAGNOSTIC_EVENTS map".to_string(),
+                        },
+                    )?)
+                    .map_err(module_error)?,
+                )
+            } else {
+                None
+            };
 
             let cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
-            for cpu_id in cpus {
+            for cpu_id in cpus.iter().copied() {
                 let mut buffer = perf_array
                     .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
                     .map_err(module_error)?;
@@ -485,6 +569,43 @@ mod platform {
                 }));
             }
 
+            if let Some(diagnostic_perf_array) = diagnostic_perf_array.as_mut() {
+                for cpu_id in cpus {
+                    let mut buffer = diagnostic_perf_array
+                        .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
+                        .map_err(module_error)?;
+                    let reader_shutdown = shutdown.clone();
+                    let diagnostics = diagnostics.clone();
+                    let telemetry = telemetry.clone();
+
+                    reader_handles.push(tokio::task::spawn_blocking(move || {
+                        while !reader_shutdown.is_stopped() {
+                            buffer.for_each(|event| {
+                                match event {
+                                    PerfEvent::Sample { head, tail } => {
+                                        let bytes = perf_sample_bytes(head, tail);
+                                        log_dns_drop_diagnostic(
+                                            &diagnostics,
+                                            &telemetry,
+                                            bytes.as_ref(),
+                                        );
+                                    }
+                                    PerfEvent::Lost { count } => {
+                                        telemetry.record_lost_perf_events(count);
+                                        warn!(count, "lost dns diagnostic perf events");
+                                    }
+                                }
+                                telemetry.maybe_log_summary();
+                            });
+
+                            std::thread::sleep(std::time::Duration::from_millis(
+                                super::PERF_READER_POLL_INTERVAL_MS,
+                            ));
+                        }
+                    }));
+                }
+            }
+
             if diagnostics.enabled() {
                 info!(
                     source = "source.aya_dns",
@@ -549,6 +670,63 @@ mod platform {
             | crate::diagnostics::DiagnosticSampleDecision::Filtered
             | crate::diagnostics::DiagnosticSampleDecision::Exhausted => {}
         }
+    }
+
+    fn log_dns_drop_diagnostic(
+        diagnostics: &SourceDiagnostics,
+        telemetry: &SourceTelemetry,
+        sample: &[u8],
+    ) {
+        if !diagnostics.enabled() {
+            return;
+        }
+
+        let mut values = super::raw_dns_drop_diagnostic_values(sample).unwrap_or_default();
+        values.push("dns_drop_diagnostic".to_string());
+        let filter_values = values.iter().map(String::as_str).collect::<Vec<_>>();
+        let decision = diagnostics.sample_decision_for(&filter_values);
+        telemetry.record_diagnostic_decision(decision);
+
+        match decision {
+            crate::diagnostics::DiagnosticSampleDecision::Matched => {
+                let redacted_values = diagnostics.redact_values(filter_values.iter().copied());
+                info!(
+                    target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                    source = "source.aya_dns",
+                    diagnostic_decision = ?decision,
+                    filter_values = ?redacted_values,
+                    "source diagnostic dns drop event"
+                );
+            }
+            crate::diagnostics::DiagnosticSampleDecision::Filtered
+                if diagnostics.try_acquire_filtered_preview() =>
+            {
+                let redacted_values = diagnostics.redact_values(filter_values.iter().copied());
+                info!(
+                    target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+                    source = "source.aya_dns",
+                    diagnostic_decision = ?decision,
+                    filter_values = ?redacted_values,
+                    "source diagnostic dns drop event filtered"
+                );
+            }
+            crate::diagnostics::DiagnosticSampleDecision::Disabled
+            | crate::diagnostics::DiagnosticSampleDecision::Filtered
+            | crate::diagnostics::DiagnosticSampleDecision::Exhausted => {}
+        }
+    }
+
+    fn configure_dns_diagnostics(ebpf: &mut Ebpf, enabled: bool) -> CoreResult<()> {
+        let mut map =
+            Array::try_from(ebpf.map_mut("DNS_DIAGNOSTICS_ENABLED").ok_or_else(|| {
+                CoreError::ModuleFailed {
+                    module: "source.aya_dns".to_string(),
+                    message: "missing DNS_DIAGNOSTICS_ENABLED map".to_string(),
+                }
+            })?)
+            .map_err(module_error)?;
+
+        map.set(0, u32::from(enabled), 0).map_err(module_error)
     }
 
     fn attach_tracepoint(
@@ -826,6 +1004,38 @@ mod tests {
         assert!(values.iter().any(|value| value.contains("r14-proof-0")));
     }
 
+    #[test]
+    fn raw_dns_drop_diagnostic_values_include_reason_command_peer_and_packet_preview() {
+        let packet = dns_query_packet(0x1234, "r16-proof-0.e-navigator-bench.svc.cluster.local", 1);
+        let mut raw = RawDnsDiagnosticEvent {
+            pid: 42,
+            uid: 1000,
+            cgroup_id: 7,
+            fd: 3,
+            reason: RAW_DNS_DIAGNOSTIC_CONNECTED_SEND_MISSING_PEER,
+            protocol: RAW_DNS_PROTOCOL_UDP,
+            server_port_be: 53_u16.to_be(),
+            server_addr_v4: u32::from_ne_bytes([10, 43, 0, 10]),
+            packet_len: packet.len() as u32,
+            command: fixed_command("python"),
+            packet: [0; RAW_DNS_PACKET_BYTES],
+        };
+        raw.packet[..packet.len()].copy_from_slice(&packet);
+
+        let values = raw_dns_drop_diagnostic_values(raw_diagnostic_as_bytes(&raw))
+            .expect("drop diagnostic values");
+
+        assert!(
+            values
+                .iter()
+                .any(|value| value == "connected_send_missing_peer")
+        );
+        assert!(values.iter().any(|value| value == "python"));
+        assert!(values.iter().any(|value| value == "10.43.0.10"));
+        assert!(values.iter().any(|value| value == "53"));
+        assert!(values.iter().any(|value| value.contains("r16-proof-0")));
+    }
+
     fn dns_query_packet(id: u16, name: &str, query_type: u16) -> Vec<u8> {
         let mut packet = vec![
             (id >> 8) as u8,
@@ -864,6 +1074,15 @@ mod tests {
             core::slice::from_raw_parts(
                 core::ptr::from_ref(raw).cast::<u8>(),
                 core::mem::size_of::<RawDnsEvent>(),
+            )
+        }
+    }
+
+    fn raw_diagnostic_as_bytes(raw: &RawDnsDiagnosticEvent) -> &[u8] {
+        unsafe {
+            core::slice::from_raw_parts(
+                core::ptr::from_ref(raw).cast::<u8>(),
+                core::mem::size_of::<RawDnsDiagnosticEvent>(),
             )
         }
     }

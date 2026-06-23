@@ -34,6 +34,12 @@ const NEG_EINPROGRESS: i64 = -115;
 const EXEC_EVENT_SOURCE_SYSCALL_ENTER: u32 = 1;
 const EXEC_EVENT_SOURCE_SCHED_EXEC: u32 = 2;
 const CPU_PROFILE_MAX_FRAMES: usize = 4;
+const DNS_DIAGNOSTIC_CONNECTED_SEND_MISSING_PEER: u32 = 1;
+const DNS_DIAGNOSTIC_CONNECTED_RECV_MISSING_PEER: u32 = 2;
+const DNS_DIAGNOSTIC_SEND_SOCKADDR_READ_FAILED: u32 = 3;
+const DNS_DIAGNOSTIC_SEND_NON_INET: u32 = 4;
+const DNS_DIAGNOSTIC_SEND_NON_DNS_PORT: u32 = 5;
+const DNS_DIAGNOSTIC_PACKET_COPY_FAILED: u32 = 6;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -107,6 +113,22 @@ pub struct RawDnsEvent {
     pub server_addr_v4: u32,
     pub timestamp_unix_nanos: u64,
     pub latency_nanos: u64,
+    pub packet_len: u32,
+    pub command: [u8; 16],
+    pub packet: [u8; DNS_PACKET_BYTES],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RawDnsDiagnosticEvent {
+    pub pid: u32,
+    pub uid: u32,
+    pub cgroup_id: u64,
+    pub fd: i32,
+    pub reason: u32,
+    pub protocol: u32,
+    pub server_port_be: u16,
+    pub server_addr_v4: u32,
     pub packet_len: u32,
     pub command: [u8; 16],
     pub packet: [u8; DNS_PACKET_BYTES],
@@ -200,6 +222,9 @@ static CPU_PROFILE_EVENTS: PerfEventArray<RawCpuProfileEvent> = PerfEventArray::
 static DNS_EVENTS: PerfEventArray<RawDnsEvent> = PerfEventArray::new(0);
 
 #[map]
+static DNS_DIAGNOSTIC_EVENTS: PerfEventArray<RawDnsDiagnosticEvent> = PerfEventArray::new(0);
+
+#[map]
 static HTTP_REQUEST_EVENTS: PerfEventArray<RawHttpRequestEvent> = PerfEventArray::new(0);
 
 #[map]
@@ -219,11 +244,18 @@ static CPU_PROFILE_EVENT_SCRATCH: PerCpuArray<RawCpuProfileEvent> =
 static DNS_EVENT_SCRATCH: PerCpuArray<RawDnsEvent> = PerCpuArray::with_max_entries(1, 0);
 
 #[map]
+static DNS_DIAGNOSTIC_EVENT_SCRATCH: PerCpuArray<RawDnsDiagnosticEvent> =
+    PerCpuArray::with_max_entries(1, 0);
+
+#[map]
 static HTTP_REQUEST_EVENT_SCRATCH: PerCpuArray<RawHttpRequestEvent> =
     PerCpuArray::with_max_entries(1, 0);
 
 #[map]
 static ARGV_CAPTURE_ENABLED: Array<u32> = Array::with_max_entries(1, 0);
+
+#[map]
+static DNS_DIAGNOSTICS_ENABLED: Array<u32> = Array::with_max_entries(1, 0);
 
 #[map]
 static PENDING_CONNECTS: HashMap<u64, PendingConnect> = HashMap::with_max_entries(4096, 0);
@@ -1025,15 +1057,54 @@ fn emit_dns_send_event(
         return Ok(0);
     }
 
-    let family =
-        unsafe { bpf_probe_read_user::<u16>(sockaddr.cast::<u16>()) }.map_err(|err| err as i64)?;
+    let family = match unsafe { bpf_probe_read_user::<u16>(sockaddr.cast::<u16>()) } {
+        Ok(value) => value,
+        Err(_) => {
+            emit_dns_diagnostic_event(
+                ctx,
+                DNS_DIAGNOSTIC_SEND_SOCKADDR_READ_FAILED,
+                -1,
+                buffer,
+                len,
+            );
+            return Ok(0);
+        }
+    };
     if family as u32 != AF_INET {
+        emit_dns_diagnostic_event(ctx, DNS_DIAGNOSTIC_SEND_NON_INET, -1, buffer, len);
         return Ok(0);
     }
 
-    let server_port_be = unsafe { bpf_probe_read_user::<u16>(sockaddr.add(2).cast::<u16>()) }
-        .map_err(|err| err as i64)?;
+    let server_port_be = match unsafe { bpf_probe_read_user::<u16>(sockaddr.add(2).cast::<u16>()) }
+    {
+        Ok(value) => value,
+        Err(_) => {
+            emit_dns_diagnostic_event(
+                ctx,
+                DNS_DIAGNOSTIC_SEND_SOCKADDR_READ_FAILED,
+                -1,
+                buffer,
+                len,
+            );
+            return Ok(0);
+        }
+    };
+    let server_addr_v4 = match unsafe { bpf_probe_read_user::<u32>(sockaddr.add(4).cast::<u32>()) }
+    {
+        Ok(value) => value,
+        Err(_) => {
+            emit_dns_diagnostic_event(
+                ctx,
+                DNS_DIAGNOSTIC_SEND_SOCKADDR_READ_FAILED,
+                -1,
+                buffer,
+                len,
+            );
+            return Ok(0);
+        }
+    };
     if u16::from_be(server_port_be) != 53 {
+        emit_dns_diagnostic_event(ctx, DNS_DIAGNOSTIC_SEND_NON_DNS_PORT, -1, buffer, len);
         return Ok(0);
     }
 
@@ -1045,11 +1116,13 @@ fn emit_dns_send_event(
     event.cgroup_id = current_cgroup_id();
     event.protocol = IPPROTO_UDP;
     event.server_port_be = server_port_be;
-    event.server_addr_v4 = unsafe { bpf_probe_read_user::<u32>(sockaddr.add(4).cast::<u32>()) }
-        .map_err(|err| err as i64)?;
+    event.server_addr_v4 = server_addr_v4;
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
-    copy_dns_packet(buffer, len, event)?;
+    if copy_dns_packet(buffer, len, event).is_err() {
+        emit_dns_diagnostic_event(ctx, DNS_DIAGNOSTIC_PACKET_COPY_FAILED, -1, buffer, len);
+        return Ok(0);
+    }
     DNS_EVENTS.output(ctx, &*event, 0);
     Ok(0)
 }
@@ -1066,7 +1139,16 @@ fn emit_dns_connected_send_event(
 
     let peer = match connected_dns_peer(fd) {
         Some(value) => value,
-        None => return Ok(0),
+        None => {
+            emit_dns_diagnostic_event(
+                ctx,
+                DNS_DIAGNOSTIC_CONNECTED_SEND_MISSING_PEER,
+                fd,
+                buffer,
+                len,
+            );
+            return Ok(0);
+        }
     };
 
     let pid_tgid = bpf_get_current_pid_tgid();
@@ -1080,7 +1162,10 @@ fn emit_dns_connected_send_event(
     event.server_addr_v4 = peer.remote_addr_v4;
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
-    copy_dns_packet(buffer, len, event)?;
+    if copy_dns_packet(buffer, len, event).is_err() {
+        emit_dns_diagnostic_event(ctx, DNS_DIAGNOSTIC_PACKET_COPY_FAILED, fd, buffer, len);
+        return Ok(0);
+    }
     DNS_EVENTS.output(ctx, &*event, 0);
     Ok(0)
 }
@@ -1096,7 +1181,16 @@ fn try_tracepoint_dns_read_enter(ctx: &TracePointContext) -> Result<u32, i64> {
 
     let peer = match connected_dns_peer(fd) {
         Some(value) => value,
-        None => return Ok(0),
+        None => {
+            emit_dns_diagnostic_event(
+                ctx,
+                DNS_DIAGNOSTIC_CONNECTED_RECV_MISSING_PEER,
+                fd,
+                buffer,
+                0,
+            );
+            return Ok(0);
+        }
     };
 
     let pending = PendingDnsRecv {
@@ -1153,7 +1247,16 @@ fn try_tracepoint_dns_recvfrom_enter(ctx: &TracePointContext) -> Result<u32, i64
     if sockaddr.is_null() {
         let peer = match connected_dns_recv_peer(fd) {
             Some(value) => value,
-            None => return Ok(0),
+            None => {
+                emit_dns_diagnostic_event(
+                    ctx,
+                    DNS_DIAGNOSTIC_CONNECTED_RECV_MISSING_PEER,
+                    fd,
+                    buffer,
+                    0,
+                );
+                return Ok(0);
+            }
         };
         server_addr_ptr = 0;
         server_port_be = peer.remote_port_be;
@@ -1219,7 +1322,16 @@ fn try_tracepoint_dns_recvfrom_exit(ctx: &TracePointContext) -> Result<u32, i64>
         event.server_addr_v4 = pending.server_addr_v4;
     }
 
-    copy_dns_packet(pending.buffer_ptr as *const u8, retval as u64, event)?;
+    if copy_dns_packet(pending.buffer_ptr as *const u8, retval as u64, event).is_err() {
+        emit_dns_diagnostic_event(
+            ctx,
+            DNS_DIAGNOSTIC_PACKET_COPY_FAILED,
+            pending.fd,
+            pending.buffer_ptr as *const u8,
+            retval as u64,
+        );
+        return Ok(0);
+    }
     DNS_EVENTS.output(ctx, &*event, 0);
     Ok(0)
 }
@@ -1248,7 +1360,16 @@ fn try_tracepoint_dns_recvmsg_enter(ctx: &TracePointContext) -> Result<u32, i64>
     if sockaddr.is_null() {
         let peer = match connected_dns_recv_peer(fd) {
             Some(value) => value,
-            None => return Ok(0),
+            None => {
+                emit_dns_diagnostic_event(
+                    ctx,
+                    DNS_DIAGNOSTIC_CONNECTED_RECV_MISSING_PEER,
+                    fd,
+                    buffer,
+                    0,
+                );
+                return Ok(0);
+            }
         };
         server_addr_ptr = 0;
         server_port_be = peer.remote_port_be;
@@ -1389,6 +1510,59 @@ fn dns_event_scratch() -> Result<&'static mut RawDnsEvent, i64> {
     Ok(event)
 }
 
+fn dns_diagnostic_event_scratch() -> Result<&'static mut RawDnsDiagnosticEvent, i64> {
+    let ptr = DNS_DIAGNOSTIC_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+    let event = unsafe { &mut *ptr };
+    event.pid = 0;
+    event.uid = 0;
+    event.cgroup_id = 0;
+    event.fd = -1;
+    event.reason = 0;
+    event.protocol = 0;
+    event.server_port_be = 0;
+    event.server_addr_v4 = 0;
+    event.packet_len = 0;
+    event.command = [0; 16];
+    event.packet = [0; DNS_PACKET_BYTES];
+    Ok(event)
+}
+
+fn dns_diagnostics_enabled() -> bool {
+    DNS_DIAGNOSTICS_ENABLED.get(0).copied().unwrap_or(0) != 0
+}
+
+fn emit_dns_diagnostic_event(
+    ctx: &TracePointContext,
+    reason: u32,
+    fd: i32,
+    buffer: *const u8,
+    len: u64,
+) {
+    if !dns_diagnostics_enabled() {
+        return;
+    }
+
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let uid_gid = bpf_get_current_uid_gid();
+    let event = match dns_diagnostic_event_scratch() {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    event.pid = (pid_tgid >> 32) as u32;
+    event.uid = uid_gid as u32;
+    event.cgroup_id = current_cgroup_id();
+    event.fd = fd;
+    event.reason = reason;
+    event.protocol = IPPROTO_UDP;
+    event.server_port_be = 0;
+    event.server_addr_v4 = 0;
+    event.command = bpf_get_current_comm().unwrap_or([0; 16]);
+    if !buffer.is_null() && len > 0 {
+        let _ = copy_dns_diagnostic_packet(buffer, len, event);
+    }
+    DNS_DIAGNOSTIC_EVENTS.output(ctx, &*event, 0);
+}
+
 fn http_request_event_scratch() -> Result<&'static mut RawHttpRequestEvent, i64> {
     let ptr = HTTP_REQUEST_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
     let event = unsafe { &mut *ptr };
@@ -1412,6 +1586,29 @@ fn http_request_event_scratch() -> Result<&'static mut RawHttpRequestEvent, i64>
 }
 
 fn copy_dns_packet(buffer: *const u8, len: u64, event: &mut RawDnsEvent) -> Result<(), i64> {
+    let capped_len = if len > DNS_PACKET_BYTES as u64 {
+        DNS_PACKET_BYTES
+    } else {
+        len as usize
+    };
+    let mut index = 0;
+    while index < DNS_PACKET_BYTES {
+        if index >= capped_len {
+            break;
+        }
+        event.packet[index] =
+            unsafe { bpf_probe_read_user::<u8>(buffer.add(index)) }.map_err(|err| err as i64)?;
+        index += 1;
+    }
+    event.packet_len = capped_len as u32;
+    Ok(())
+}
+
+fn copy_dns_diagnostic_packet(
+    buffer: *const u8,
+    len: u64,
+    event: &mut RawDnsDiagnosticEvent,
+) -> Result<(), i64> {
     let capped_len = if len > DNS_PACKET_BYTES as u64 {
         DNS_PACKET_BYTES
     } else {
