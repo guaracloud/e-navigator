@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![allow(clippy::needless_borrows_for_generic_args)]
 
 use aya_ebpf::{
     EbpfContext,
