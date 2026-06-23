@@ -274,7 +274,7 @@ mod platform {
     use aya::{
         Ebpf, include_bytes_aligned,
         maps::{
-            Map, PerCpuArray,
+            MapData, PerCpuArray,
             perf::{PerfEvent, PerfEventArray},
         },
         programs::TracePoint,
@@ -503,7 +503,7 @@ mod platform {
     }
 
     fn spawn_http_diagnostic_counter_logger(
-        counters: PerCpuArray<Map, u64>,
+        counters: PerCpuArray<MapData, u64>,
         shutdown: ReaderShutdown,
     ) -> JoinHandle<()> {
         tokio::task::spawn_blocking(move || {
@@ -551,7 +551,7 @@ mod platform {
     }
 
     fn read_http_diagnostic_counters(
-        counters: &PerCpuArray<Map, u64>,
+        counters: &PerCpuArray<MapData, u64>,
     ) -> Result<super::HttpDiagnosticCounterSnapshot, aya::maps::MapError> {
         let mut totals = [0_u64; super::HTTP_DIAGNOSTIC_COUNTERS_LEN];
         for (index, total) in totals.iter_mut().enumerate() {
