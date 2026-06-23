@@ -94,6 +94,24 @@ observed homelab-02 workload; it does not prove DNS source modes beyond the
 exact recorded DNS run, symmetric HTTP coverage, TLS, gRPC, inbound parsing,
 or reduced capabilities.
 
+HTTP symmetric-node follow-up note:
+`20260623-072108-http-symmetric-iovec-live` deployed pushed image `sha-416e88c`
+to `staging`/`e-navigator-bench` with `source.aya_http`,
+`source.aya_network`, `generator.request_correlation`,
+`generator.network_metrics`, `sink.json_stdout`, and `sink.prometheus_http`
+enabled under chart `RuntimeDefault` seccomp. Both E-Navigator pods stayed
+Ready and reported `Seccomp: 2` plus `NoNewPrivs: 1`. Two controlled Python
+workloads completed 80 measured three-iovec proof requests each, one pinned to
+`homelab-01` and one pinned to `homelab-02`. The `homelab-02` workload produced
+80 `protocol_request_observation` records plus 80 `request_span_observation`
+records for `/proof/iovec3-sym-072108-h02`, all with Kubernetes namespace, pod,
+and container attribution. The `homelab-01` workload completed successfully but
+produced zero exact-path protocol/request-span records and zero matching
+network-source or network-metric records for pod
+`http-iovec3-sym-072108-h01-7xwvf`, while the `homelab-01` sources still
+reported ambient HTTP/network activity with zero lost perf events. This keeps
+symmetric controlled-client HTTP coverage unproven.
+
 DNS seccomp follow-up note:
 `20260623-051700-dns-seccomp-live` deployed pushed image `sha-beec11d` to
 `staging`/`e-navigator-bench` with `source.aya_dns`, `source.aya_network`,

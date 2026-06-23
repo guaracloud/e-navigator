@@ -520,6 +520,26 @@ The initial live proof should record:
   completed to revision 95/rollback-to-93 with baseline digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`
   and the DaemonSet verified `2/2` Ready;
+- `20260623-072108-http-symmetric-iovec-live` records a symmetric-node boundary
+  pass on `staging/e-navigator-bench` using pushed image `sha-416e88c` index
+  digest
+  `sha256:2b6094593c71313f9e2a50cc24fb4247e975243d4c86bd9c0d60a94a27eabd0a`.
+  Helm revision 114 enabled `source.aya_http`, `source.aya_network`,
+  `generator.request_correlation`, `generator.network_metrics`,
+  `sink.json_stdout`, and `sink.prometheus_http` under `RuntimeDefault`
+  seccomp. Two Python Jobs completed 20 warmups and 80 measured three-iovec
+  proof requests each, one pinned to `homelab-01` and one pinned to
+  `homelab-02`. The `homelab-02` workload produced 80
+  `protocol_request_observation` records plus 80 `request_span_observation`
+  records with Kubernetes namespace, pod, and container attribution on every
+  measured proof record, and direct `/metrics` exposed controlled workload
+  network counters at value `100`. The `homelab-01` workload completed
+  successfully but produced zero exact-path protocol/request-span records and
+  zero matching network-source or network-metric records for its pod. The run
+  was therefore partial, not symmetric HTTP proof. Temporary Jobs were deleted,
+  rollback completed to revision 115/rollback-to-113, and the DaemonSet verified
+  `2/2` Ready on baseline digest
+  `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
 - no E-Navigator pod restarts during a short soak;
 - CPU and RSS are recorded from `kubectl top` when metrics are available;
 - logs, pod JSON, events, and command output are stored in

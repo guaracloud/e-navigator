@@ -191,7 +191,12 @@ Implemented with narrower or deferred runtime claims:
   under chart `RuntimeDefault` seccomp from pushed image `sha-643ea37`; both
   E-Navigator pods reported `Seccomp: 2`, and the controlled workload again
   produced 80 attributed protocol request records plus 80 attributed request
-  spans.
+  spans. Homelab run `20260623-072108-http-symmetric-iovec-live` then tested
+  the same three-iovec workload shape on both homelab nodes from pushed image
+  `sha-416e88c`: the `homelab-02` workload again produced 80 attributed
+  protocol request records plus 80 attributed request spans, but the
+  `homelab-01` workload completed 80 proof requests with zero matching network,
+  protocol, or request-span records. Symmetric HTTP coverage remains unproven.
 - Prometheus HTTP support is an opt-in registered sink with local `/metrics`,
   `/healthz`, and `/readyz` tests. Homelab run `20260621-201246` deployed image
   `sha-5c417c0`, proved live endpoint reachability, ServiceMonitor discovery,
@@ -291,7 +296,9 @@ The following are intentionally not claimed as implemented production behavior:
   bounded opt-in live proof for observed cleartext cluster traffic and
   controlled `homelab-02` clients using `writev` with up to three explicit
   96-byte iovec slots, including one run under kernel-applied `Seccomp: 2`, but
-  not symmetric node coverage, TLS, gRPC framing, inbound server-side parsing,
+  the symmetric run `20260623-072108-http-symmetric-iovec-live` produced zero
+  controlled `homelab-01` network or HTTP records. It does not prove symmetric
+  node coverage, TLS, gRPC framing, inbound server-side parsing,
   status-code extraction, route templates, retries, application errors, more
   than three iovec slots, chunks larger than 96 bytes per slot, or broader
   multi-iovec HTTP header assembly;
