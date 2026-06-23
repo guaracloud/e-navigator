@@ -6,8 +6,8 @@ use aya_ebpf::{
     bindings::BPF_F_USER_STACK,
     helpers::{
         bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_get_stack,
-        bpf_ktime_get_ns, bpf_probe_read_user, bpf_probe_read_user_str_bytes,
-        generated::bpf_get_current_cgroup_id,
+        bpf_ktime_get_ns, bpf_probe_read_user, bpf_probe_read_user_buf,
+        bpf_probe_read_user_str_bytes, generated::bpf_get_current_cgroup_id,
     },
     macros::{map, perf_event, tracepoint},
     maps::{Array, HashMap, PerCpuArray, PerfEventArray},
@@ -1413,22 +1413,39 @@ fn copy_http_request(
     len: u64,
     event: &mut RawHttpRequestEvent,
 ) -> Result<(), i64> {
-    let capped_len = if len > HTTP_REQUEST_BYTES as u64 {
-        HTTP_REQUEST_BYTES
+    let copied = copy_http_request_chunk(buffer, len, event, 0)?;
+    event.request_len = copied as u32;
+    Ok(())
+}
+
+fn copy_http_request_chunk(
+    buffer: *const u8,
+    len: u64,
+    event: &mut RawHttpRequestEvent,
+    output_index: usize,
+) -> Result<usize, i64> {
+    if output_index >= HTTP_REQUEST_BYTES {
+        return Ok(0);
+    }
+
+    let remaining = HTTP_REQUEST_BYTES - output_index;
+    let capped_len = if len > remaining as u64 {
+        remaining
     } else {
         len as usize
     };
-    let mut index = 0;
-    while index < HTTP_REQUEST_BYTES {
-        if index >= capped_len {
-            break;
-        }
-        event.request[index] =
-            unsafe { bpf_probe_read_user::<u8>(buffer.add(index)) }.map_err(|err| err as i64)?;
-        index += 1;
+    if capped_len == 0 {
+        return Ok(0);
     }
-    event.request_len = capped_len as u32;
-    Ok(())
+
+    unsafe {
+        bpf_probe_read_user_buf(
+            buffer,
+            &mut event.request[output_index..output_index + capped_len],
+        )
+    }
+    .map_err(|err| err as i64)?;
+    Ok(capped_len)
 }
 
 fn copy_http_request_iovecs(
@@ -1449,17 +1466,7 @@ fn copy_http_request_iovecs(
         let len = unsafe { bpf_probe_read_user::<u64>(iov_entry.add(8).cast::<u64>()) }
             .map_err(|err| err as i64)?;
         if !buffer.is_null() && len > 0 {
-            let mut input_index = 0;
-            while input_index < HTTP_REQUEST_BYTES {
-                if input_index as u64 >= len || output_index >= HTTP_REQUEST_BYTES {
-                    break;
-                }
-                event.request[output_index] =
-                    unsafe { bpf_probe_read_user::<u8>(buffer.add(input_index)) }
-                        .map_err(|err| err as i64)?;
-                input_index += 1;
-                output_index += 1;
-            }
+            output_index += copy_http_request_chunk(buffer, len, event, output_index)?;
         }
 
         iov_index += 1;

@@ -39,6 +39,11 @@ if ! grep -Fq "HTTP_MAX_IOVECS: usize = 2" "$program"; then
   exit 1
 fi
 
+if ! grep -Fq "bpf_probe_read_user_buf(" "$program"; then
+  printf 'expected %s to avoid byte-at-a-time HTTP request copies in verifier-sensitive paths\n' "$program" >&2
+  exit 1
+fi
+
 if ! grep -Fq "read_msghdr_iovecs(message)" "$program"; then
   printf 'expected %s to assemble split HTTP sendmsg requests across bounded iovecs\n' "$program" >&2
   exit 1
