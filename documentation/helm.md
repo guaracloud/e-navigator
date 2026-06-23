@@ -90,6 +90,6 @@ helm template e-navigator charts/e-navigator \
 ```
 
 Helm rendering, schema validation, and successful installs do not prove live
-eBPF behavior, Prometheus scrape success, OTLP ingestion, or replacement
-readiness. Privileged runtime proof requires a capable Linux node or cluster and
+eBPF behavior, Prometheus scrape success, OTLP ingestion, reduced privilege, or
+production readiness. Runtime proof requires a capable Linux node or cluster and
 observed Aya/eBPF output.

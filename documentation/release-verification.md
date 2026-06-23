@@ -74,7 +74,8 @@ sha256sum -c "e-navigator-${VERSION#v}.tgz.sha256"
 ```
 
 The chart digest is recorded in `release-manifest.json` under
-`helm_chart.digest`.
+`helm_chart.digest`. Use the digest from the manifest when pinning production
+deployments.
 
 ## Verify The Release Manifest
 

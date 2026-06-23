@@ -10,8 +10,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/guaracloud/e-navigator
-  CHART_REPOSITORY: oci://ghcr.io/guaracloud/charts
+  IMAGE: ghcr.io/e-navigator/e-navigator
+  CHART_REPOSITORY: oci://ghcr.io/e-navigator/charts
 
 jobs:
   publish-and-sign:
@@ -107,7 +107,7 @@ jobs:
             cosign verify-blob \
               --signature "$artifact.sig" \
               --certificate "$artifact.pem" \
-              --certificate-identity-regexp '^https://github\.com/guaracloud/e-navigator/' \
+              --certificate-identity-regexp '^https://github\.com/e-navigator/e-navigator/' \
               --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
               "$artifact"
           done
@@ -133,7 +133,7 @@ jobs:
           manifest = {
               "schema": "e-navigator.release-manifest/v1",
               "tag": os.environ["TAG"],
-              "repository": "guaracloud/e-navigator",
+              "repository": "e-navigator/e-navigator",
               "artifacts": artifacts,
               "images": [
                   {
@@ -170,7 +170,7 @@ jobs:
           cosign verify-blob \
             --signature release-manifest.json.sig \
             --certificate release-manifest.json.pem \
-            --certificate-identity-regexp '^https://github\.com/guaracloud/e-navigator/' \
+            --certificate-identity-regexp '^https://github\.com/e-navigator/e-navigator/' \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             release-manifest.json
 
@@ -219,7 +219,7 @@ jobs:
             cosign verify-blob \
               --signature "$sig" \
               --certificate "${artifact}.pem" \
-              --certificate-identity-regexp '^https://github\.com/guaracloud/e-navigator/' \
+              --certificate-identity-regexp '^https://github\.com/e-navigator/e-navigator/' \
               --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
               "$artifact"
           done
@@ -227,6 +227,6 @@ jobs:
             jq -e '.spdxVersion and .packages' "$sbom" >/dev/null
           done
           cosign verify \
-            --certificate-identity-regexp '^https://github\.com/guaracloud/e-navigator/' \
+            --certificate-identity-regexp '^https://github\.com/e-navigator/e-navigator/' \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             "${IMAGE}@${IMAGE_DIGEST}"
