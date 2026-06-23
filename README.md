@@ -310,6 +310,11 @@ Implemented with narrower or deferred runtime claims:
   do not prove reduced overhead or reduced privilege because no equivalent
   baseline comparison was captured and the pods still ran as UID 0 with
   `CAP_SYS_ADMIN`.
+- The collection-only baseline run
+  `20260623-125209-baseline-collection-live` recorded the current homelab
+  DaemonSet as `2/2` Ready with direct Prometheus HTTP `200 OK` responses,
+  network JSON/stdout output, and ten resource samples, but it also confirmed
+  the live baseline still runs as UID 0 with `Seccomp: 0` and `CAP_SYS_ADMIN`.
 - Persisted service maps, production exporters, storage, UI, and container
   vulnerability policy gates are deferred.
 

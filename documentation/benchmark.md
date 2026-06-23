@@ -288,6 +288,17 @@ The initial live proof should record:
   cgroup host resource observations plus derived resource gauges and counters
   from both homelab nodes, direct `/metrics` returned 163 lines including
   resource series, and the release was rolled back to revision `107`;
+- `20260623-125209-baseline-collection-live` ran the guarded collector in
+  collection-only mode against `staging/e-navigator-bench`; it did not apply,
+  upgrade, roll back, or clean up resources. The live DaemonSet was `2/2`
+  Ready on digest
+  `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`,
+  direct `/healthz`, `/readyz`, and `/metrics` returned `200 OK`, JSON stdout
+  included network source and generator output, and ten `kubectl top` samples
+  recorded `41m`-`48m`/`31Mi` on `homelab-01` plus `9m`-`11m`/`21Mi`-`22Mi`
+  on `homelab-02`. Prometheus API checks were skipped, older proof pods and
+  fake collector services were observed but not modified, and both pods still
+  reported UID `0`, `Seccomp: 0`, and `CAP_SYS_ADMIN`;
 - `20260622-122803-guara-einprogress-live` pushed commit `622e1aa`, waited for
   GHCR image publication, rolled
   `ghcr.io/guaracloud/e-navigator:sha-622e1aa` to

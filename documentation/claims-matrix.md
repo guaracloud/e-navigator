@@ -285,3 +285,25 @@ and `unknown module 'sink.otlp_http'`. Its known module list contains
 export on `sha-8ab271c` are blocked by the image vintage, not merely missing
 homelab coverage. The run did not touch Kubernetes resources and does not prove
 any exporter runtime behavior on the required image.
+
+Local benchmark smoke note:
+`20260623-125022-benchmark-smoke` ran
+`benchmarks/runner/local-bench-smoke.sh` and exited `0`, proving the current
+deterministic local Criterion harness still compiles and runs across parser,
+decode, generator, formatter, and queue fixtures. Criterion reported
+regressions in CPU profile decode, host CPU/load parsing, HTTP fixture parsing,
+JSON serialization, and Prometheus compatibility formatting, so this run does
+not support a positive performance claim until those paths are investigated.
+
+Baseline collection follow-up note:
+`20260623-125209-baseline-collection-live` ran the guarded homelab collector in
+collection-only mode on `staging`/`e-navigator-bench`. It did not mutate the
+Helm release. The live DaemonSet stayed `2/2` Ready on digest
+`sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`,
+direct Prometheus HTTP probes returned `200 OK`, direct `/metrics` exposed 80
+network metric lines across 8 network metric families, JSON stdout contained
+network source and generator output, and ten `kubectl top` samples recorded
+`41m`-`48m`/`31Mi` on `homelab-01` plus `9m`-`11m`/`21Mi`-`22Mi` on
+`homelab-02`. Prometheus API checks were skipped, and both pods still reported
+UID `0`, `Seccomp: 0`, and `CAP_SYS_ADMIN`, so this is not reduced-privilege,
+reduced-overhead, or Prometheus server scrape proof.
