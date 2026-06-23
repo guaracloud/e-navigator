@@ -1506,7 +1506,6 @@ fn dns_event_scratch() -> Result<&'static mut RawDnsEvent, i64> {
     event.latency_nanos = 0;
     event.packet_len = 0;
     event.command = [0; 16];
-    event.packet = [0; DNS_PACKET_BYTES];
     Ok(event)
 }
 
@@ -1523,7 +1522,6 @@ fn dns_diagnostic_event_scratch() -> Result<&'static mut RawDnsDiagnosticEvent, 
     event.server_addr_v4 = 0;
     event.packet_len = 0;
     event.command = [0; 16];
-    event.packet = [0; DNS_PACKET_BYTES];
     Ok(event)
 }
 
