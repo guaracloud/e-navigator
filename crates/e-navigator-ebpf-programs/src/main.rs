@@ -1118,6 +1118,7 @@ fn emit_dns_send_event(
     event.server_port_be = server_port_be;
     event.server_addr_v4 = server_addr_v4;
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
+    event.latency_nanos = 0;
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     if copy_dns_packet(buffer, len, event).is_err() {
         emit_dns_diagnostic_event(ctx, DNS_DIAGNOSTIC_PACKET_COPY_FAILED, -1, buffer, len);
@@ -1161,6 +1162,7 @@ fn emit_dns_connected_send_event(
     event.server_port_be = peer.remote_port_be;
     event.server_addr_v4 = peer.remote_addr_v4;
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
+    event.latency_nanos = 0;
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     if copy_dns_packet(buffer, len, event).is_err() {
         emit_dns_diagnostic_event(ctx, DNS_DIAGNOSTIC_PACKET_COPY_FAILED, fd, buffer, len);
@@ -1298,6 +1300,8 @@ fn try_tracepoint_dns_recvfrom_exit(ctx: &TracePointContext) -> Result<u32, i64>
     event.uid = pending.uid;
     event.cgroup_id = pending.cgroup_id;
     event.protocol = IPPROTO_UDP;
+    event.server_port_be = 0;
+    event.server_addr_v4 = 0;
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.latency_nanos = event.timestamp_unix_nanos - pending.started_at_nanos;
     event.command = pending.command;
@@ -1495,34 +1499,12 @@ fn network_event_scratch() -> Result<&'static mut RawNetworkEvent, i64> {
 
 fn dns_event_scratch() -> Result<&'static mut RawDnsEvent, i64> {
     let ptr = DNS_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
-    let event = unsafe { &mut *ptr };
-    event.pid = 0;
-    event.uid = 0;
-    event.cgroup_id = 0;
-    event.protocol = 0;
-    event.server_port_be = 0;
-    event.server_addr_v4 = 0;
-    event.timestamp_unix_nanos = 0;
-    event.latency_nanos = 0;
-    event.packet_len = 0;
-    event.command = [0; 16];
-    Ok(event)
+    Ok(unsafe { &mut *ptr })
 }
 
 fn dns_diagnostic_event_scratch() -> Result<&'static mut RawDnsDiagnosticEvent, i64> {
     let ptr = DNS_DIAGNOSTIC_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
-    let event = unsafe { &mut *ptr };
-    event.pid = 0;
-    event.uid = 0;
-    event.cgroup_id = 0;
-    event.fd = -1;
-    event.reason = 0;
-    event.protocol = 0;
-    event.server_port_be = 0;
-    event.server_addr_v4 = 0;
-    event.packet_len = 0;
-    event.command = [0; 16];
-    Ok(event)
+    Ok(unsafe { &mut *ptr })
 }
 
 fn dns_diagnostics_enabled() -> bool {
@@ -1554,6 +1536,7 @@ fn emit_dns_diagnostic_event(
     event.protocol = IPPROTO_UDP;
     event.server_port_be = 0;
     event.server_addr_v4 = 0;
+    event.packet_len = 0;
     event.command = bpf_get_current_comm().unwrap_or([0; 16]);
     if !buffer.is_null() && len > 0 {
         let _ = copy_dns_diagnostic_packet(buffer, len, event);
