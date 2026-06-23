@@ -312,6 +312,14 @@ The initial live proof should record:
   DaemonSet runtime run: image `sha-8ab271c` rolled out on both homelab nodes,
   emitted live Aya network-derived JSON stdout records, and was then restored to
   the pre-run `sha-5c417c0` Prometheus-enabled release;
+- `20260623-092819-required-image-host-resource-live` is the focused
+  required-image host-resource run: image `sha-8ab271c` digest
+  `sha256:249ad67fa8578ade9ecc1279bcf52a52ae6038a342b7c68844ebfd7a38d4e34e`
+  rolled out on both homelab nodes under chart `RuntimeDefault` seccomp,
+  emitted `source.host_resource` node/process/cgroup observations and
+  `generator.resource_metrics` gauges/counters from both nodes, recorded
+  `Seccomp: 2` plus `NoNewPrivs: 1` in both pods, and was rolled back to the
+  pre-run revision `109`;
 - `20260622-001716-published-image-live` left the Helm release on pushed image
   `sha-d3167e3` with the baseline config restored and both homelab pods Ready;
 - `20260622-004011-current-head-live` left the Helm release on current pushed
