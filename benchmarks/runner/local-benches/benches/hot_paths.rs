@@ -1,27 +1,26 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
 use e_navigator_core::Generator;
 use e_navigator_generators::{
-    DependencyGraphGenerator, DnsMetricsGenerator, GuaraCompatibilityGenerator,
-    NetworkMetricsGenerator, ProfilingGenerator, RequestCorrelationGenerator,
-    ResourceMetricsGenerator, RuntimeSecurityGenerator, TraceCorrelationGenerator,
+    DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator, ProfilingGenerator,
+    RequestCorrelationGenerator, ResourceMetricsGenerator, RuntimeSecurityGenerator,
+    TraceCorrelationGenerator,
 };
 use e_navigator_profiling::model::{NormalizationLimits, parse_profile_fixture};
 use e_navigator_protocol::{
     ProtocolExtractionConfig, http::parse_http_request, trace_context::parse_traceparent,
 };
 use e_navigator_signals::{
-    CompatibilityCounterMetric, ContainerContext, DnsQueryEvent, DnsQueryType, DnsResponseCode,
-    DnsResponseEvent, ExecEvent, KubernetesContext, MetricAggregationWindow, NetworkAddressFamily,
-    NetworkConnectionCloseEvent, NetworkConnectionFailureEvent, NetworkConnectionOpenEvent,
-    NetworkFlowDirection, NetworkFlowEndpoint, NetworkFlowSummaryEvent, NetworkProcessIdentity,
-    NetworkProtocol, NodeCpuObservation, ProcessResourceContext, ProcessResourceObservation,
-    ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind,
-    ProfilingFrame, ProfilingKind, ProtocolKind, ProtocolRequestObservation, SignalEnvelope,
-    TraceAttribute, TraceConfidence, TraceCorrelationKind, TracePeerContext,
+    ContainerContext, DnsQueryEvent, DnsQueryType, DnsResponseCode, DnsResponseEvent, ExecEvent,
+    KubernetesContext, MetricAggregationWindow, NetworkAddressFamily, NetworkConnectionCloseEvent,
+    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkCounterMetric,
+    NetworkProcessIdentity, NetworkProtocol, NodeCpuObservation, ProcessResourceContext,
+    ProcessResourceObservation, ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence,
+    ProfilingCorrelationKind, ProfilingFrame, ProfilingKind, ProtocolKind,
+    ProtocolRequestObservation, SignalEnvelope, TraceAttribute, TraceConfidence,
+    TraceCorrelationKind, TracePeerContext,
 };
 use e_navigator_sinks::{
-    HttpExporterConfig, HttpJsonExporter, format_profile_record,
-    format_prometheus_compatibility_metric,
+    HttpExporterConfig, HttpJsonExporter, format_otel_metric_record, format_profile_record,
 };
 use e_navigator_sources_ebpf_aya::{
     cpu_profile::fuzz_decode_raw_cpu_profile_event, exec::fuzz_decode_raw_exec_event,
@@ -168,12 +167,6 @@ fn bench_generators(c: &mut Criterion) {
         RuntimeSecurityGenerator::with_kubernetes_api_endpoints([("10.43.0.1".to_string(), 443)]),
         security_signals(),
     );
-    bench_generator(
-        c,
-        "generator/guara_compat",
-        GuaraCompatibilityGenerator::with_limits(8192),
-        guara_signals(),
-    );
 }
 
 fn bench_generator<G>(
@@ -206,10 +199,10 @@ fn bench_serialization_and_exporter(c: &mut Criterion) {
         b.iter(|| serde_json::to_vec(black_box(&signal)).unwrap())
     });
 
-    let compat_metric = compatibility_metric_signal();
+    let network_metric = network_flow_metric_signal();
     let profile = profiling_signals().remove(0);
-    c.bench_function("formatter/prometheus_compat", |b| {
-        b.iter(|| format_prometheus_compatibility_metric(black_box(&compat_metric)).unwrap())
+    c.bench_function("formatter/otel_network_flow_metric", |b| {
+        b.iter(|| format_otel_metric_record(black_box(&network_metric)).unwrap())
     });
     c.bench_function("formatter/profile_record", |b| {
         b.iter(|| format_profile_record(black_box(&profile)).unwrap())
@@ -260,7 +253,7 @@ fn network_signals() -> Vec<SignalEnvelope> {
 fn dns_signals() -> Vec<SignalEnvelope> {
     (0..128)
         .flat_map(|index| {
-            let query = format!("api-{index}.proj-a.svc.cluster.local");
+            let query = format!("api-{index}.e-navigator-bench.svc.cluster.local");
             [
                 SignalEnvelope::dns_query(
                     "source.synthetic",
@@ -384,7 +377,7 @@ fn request_signals() -> Vec<SignalEnvelope> {
                     peer: Some(TracePeerContext {
                         address: Some("10.43.12.22".to_string()),
                         port: Some(8080),
-                        domain: Some("web.proj-a.svc.cluster.local".to_string()),
+                        domain: Some("web.e-navigator-bench.svc.cluster.local".to_string()),
                         workload: Some(kubernetes("web")),
                         container: None,
                     }),
@@ -467,45 +460,25 @@ fn security_signals() -> Vec<SignalEnvelope> {
         .collect()
 }
 
-fn guara_signals() -> Vec<SignalEnvelope> {
-    (0..128)
-        .map(|index| {
-            SignalEnvelope::network_flow_summary(
-                "generator.network_metrics",
-                Some("node-a".to_string()),
-                NetworkFlowSummaryEvent {
-                    source: flow_endpoint("api"),
-                    destination: flow_endpoint("redis"),
-                    protocol: NetworkProtocol::Tcp,
-                    address_family: NetworkAddressFamily::Ipv4,
-                    bytes: 1024 + index,
-                    packets: Some(8),
-                    direction: NetworkFlowDirection::Egress,
-                    first_seen_unix_nanos: 1_000 + index,
-                    last_seen_unix_nanos: 2_000 + index,
-                },
-            )
-        })
-        .collect()
-}
-
-fn compatibility_metric_signal() -> SignalEnvelope {
-    SignalEnvelope::compatibility_counter_metric(
-        "generator.guara_compat",
+fn network_flow_metric_signal() -> SignalEnvelope {
+    SignalEnvelope::network_counter_metric(
+        "generator.network_metrics",
         Some("node-a".to_string()),
-        CompatibilityCounterMetric {
-            metric_name: "beyla_network_flow_bytes_total".to_string(),
+        NetworkCounterMetric {
+            metric_name: "network.flow.bytes".to_string(),
             unit: "By".to_string(),
             value: 4096,
             window: window(1_000, 2_000),
-            labels: BTreeMap::from([
-                ("k8s_src_namespace".to_string(), "proj-a".to_string()),
-                ("k8s_src_owner_name".to_string(), "api".to_string()),
-                ("k8s_src_owner_type".to_string(), "deployment".to_string()),
-                ("k8s_dst_namespace".to_string(), "proj-a".to_string()),
-                ("k8s_dst_owner_name".to_string(), "redis".to_string()),
-                ("k8s_dst_owner_type".to_string(), "deployment".to_string()),
-            ]),
+            process: Some(process()),
+            protocol: Some(NetworkProtocol::Tcp),
+            address_family: Some(NetworkAddressFamily::Ipv4),
+            local_address: Some("10.42.0.10".to_string()),
+            local_port: Some(41234),
+            remote_address: Some("203.0.113.10".to_string()),
+            remote_port: Some(443),
+            errno: None,
+            container: Some(container()),
+            kubernetes: Some(kubernetes("api")),
         },
     )
 }
@@ -546,8 +519,8 @@ fn network_close_signal(timestamp: u64) -> SignalEnvelope {
             opened_at_unix_nanos: Some(timestamp.saturating_sub(500)),
             closed_at_unix_nanos: timestamp,
             duration_nanos: Some(500),
-            bytes_sent: None,
-            bytes_received: None,
+            bytes_sent: Some(512),
+            bytes_received: Some(1536),
             container: Some(container()),
             kubernetes: Some(kubernetes("api")),
         },
@@ -593,26 +566,12 @@ fn container() -> ContainerContext {
 
 fn kubernetes(app: &str) -> KubernetesContext {
     KubernetesContext {
-        namespace: "proj-a".to_string(),
+        namespace: "e-navigator-bench".to_string(),
         pod_name: format!("{app}-7d9c9f6d7b-a1b2c"),
         pod_uid: Some(format!("pod-{app}")),
         container_name: Some(app.to_string()),
         node_name: Some("homelab-01".to_string()),
-        labels: BTreeMap::from([
-            ("app.kubernetes.io/name".to_string(), app.to_string()),
-            ("guara.cloud/tier".to_string(), "pro".to_string()),
-        ]),
-    }
-}
-
-fn flow_endpoint(app: &str) -> NetworkFlowEndpoint {
-    NetworkFlowEndpoint {
-        address: Some("10.42.0.10".to_string()),
-        port: Some(8080),
-        owner_name: Some(app.to_string()),
-        owner_type: Some("deployment".to_string()),
-        container: Some(container()),
-        kubernetes: Some(kubernetes(app)),
+        labels: BTreeMap::from([("app.kubernetes.io/name".to_string(), app.to_string())]),
     }
 }
 

@@ -7,7 +7,7 @@
 - Target node: `homelab-01`
 - Helm release: `e-navigator-bench`
 - Baseline revision before this slice: `73`
-- Temporary proof revisions: `74`, `75`, and `76`
+- trace backendrary proof revisions: `74`, `75`, and `76`
 - Restored revision: `77`, described by Helm as `Rollback to 73`
 
 ## Code And Image
@@ -34,7 +34,7 @@ GitHub checks for `635819e` completed successfully:
 
 The published image used for the final live attempt was:
 
-- tag: `ghcr.io/guaracloud/e-navigator:sha-635819e`
+- tag: `ghcr.io/e-navigator/e-navigator:sha-635819e`
 - image index digest:
   `sha256:eb8a9c70560a4a7a3a94766963c272846bc66a613e1ef85edd46591bc3ef1485`
 - linux/amd64 manifest:
@@ -160,6 +160,6 @@ This run does not prove:
 - lossless DNS event capture;
 - complete connected-UDP DNS syscall coverage;
 - DNS replacement readiness;
-- Beyla, Tempo, Pyroscope, Prometheus, or Alloy replacement readiness;
+- external flow agent, trace backend, external profile backend, Prometheus, or Alloy replacement readiness;
 - reduced privilege;
 - reduced overhead versus the existing homelab observability stack.

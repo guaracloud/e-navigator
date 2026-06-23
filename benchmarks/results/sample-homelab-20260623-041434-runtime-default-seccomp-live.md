@@ -14,7 +14,7 @@ Change under proof:
 - The chart default container `securityContext` now renders
   `seccompProfile.type: RuntimeDefault`.
 - The live proof reused the current release values and baseline image
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
 - No image or runtime code change was part of this proof.
 
 Local proof before deployment:
@@ -29,7 +29,7 @@ Live configuration:
   `98` using the local chart plus the pre-upgrade release values.
 - The rendered upgrade contained `seccompProfile.type: RuntimeDefault`.
 - The release kept the existing `source.aya_network`,
-  `generator.network_metrics`, `generator.guara_compat`, `sink.json_stdout`,
+  `generator.network_metrics`, `generator.network_metrics`, `sink.json_stdout`,
   and `sink.prometheus_http` configuration.
 
 Observed evidence:

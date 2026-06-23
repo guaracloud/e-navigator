@@ -12,7 +12,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `7d772fca9a22bfb5c1a6ad93da0110a338c63407`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-7d772fc`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-7d772fc`
 - Image index digest:
   `sha256:029c384ba7d050feec2fee908fa7357a58dfb2bf20ff0b893b34142b93faa9b1`
 - Linux/amd64 digest:
@@ -37,7 +37,7 @@ Live configuration:
   `generator.profiling`, `sink.json_stdout`, and `sink.prometheus_http` were
   enabled.
 - `sink.otlp_http`, network, exec, DNS, HTTP, resource, trace, request,
-  runtime-security, and Guara compatibility modules were disabled for this run.
+  runtime-security, and native export modules were disabled for this run.
 
 Observed evidence:
 
@@ -48,7 +48,7 @@ Observed evidence:
 - `/proc/1/status` inside both pods reported `NoNewPrivs: 1` and
   `Seccomp: 2`.
 - Both pods ran
-  `ghcr.io/guaracloud/e-navigator@sha256:029c384ba7d050feec2fee908fa7357a58dfb2bf20ff0b893b34142b93faa9b1`.
+  `ghcr.io/e-navigator/e-navigator@sha256:029c384ba7d050feec2fee908fa7357a58dfb2bf20ff0b893b34142b93faa9b1`.
 - Single shell-loop Job `live-profile-seccomp-cpu-20260623-084626` completed
   on `homelab-02` as pod
   `live-profile-seccomp-cpu-20260623-084626-5ln6q` and logged `outer=315`, but
@@ -76,7 +76,7 @@ Cleanup:
 - Rolled Helm release `e-navigator-bench` back to revision `105`; Helm recorded
   revision `107` as `Rollback to 105`.
 - Final DaemonSet state was `2/2` Ready on the baseline image
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
 - Final label-scoped inventory for `e-nav-run in (20260623-084626,
   20260623-084626-hot)` reported no resources in `e-navigator-bench`.
 
@@ -89,6 +89,6 @@ Not proven:
   shapes; the single shell-loop workload in this run completed without matching
   profile records.
 - Symmetric node coverage for controlled CPU profile attribution.
-- Pyroscope write transport, pprof, profile storage, or flamegraph export.
+- external profile backend write transport, pprof, profile storage, or flamegraph export.
 - Symbolization or demangling quality beyond raw IP-style frames.
 - Non-root operation, capability reduction, or removal of `CAP_SYS_ADMIN`.

@@ -12,7 +12,7 @@ updated, or deleted for this run.
 
 Image:
 
-- Required benchmark tag: `ghcr.io/guaracloud/e-navigator:sha-8ab271c`
+- Required benchmark tag: `ghcr.io/e-navigator/e-navigator:sha-8ab271c`
 - Required benchmark image digest from prior live runs:
   `sha256:249ad67fa8578ade9ecc1279bcf52a52ae6038a342b7c68844ebfd7a38d4e34e`
 
@@ -26,7 +26,7 @@ Probe:
 Commands:
 
 - `cargo run --locked -p e-navigator-cli -- --source synthetic --config benchmarks/results/raw/20260623-101215-required-image-dns-version-boundary/dns-required-image-probe.toml --validate-config`
-- `docker run --rm --platform linux/amd64 -v "$PWD/benchmarks/results/raw/20260623-101215-required-image-dns-version-boundary/dns-required-image-probe.toml:/tmp/e-navigator.toml:ro" ghcr.io/guaracloud/e-navigator:sha-8ab271c --source synthetic --config /tmp/e-navigator.toml --validate-config`
+- `docker run --rm --platform linux/amd64 -v "$PWD/benchmarks/results/raw/20260623-101215-required-image-dns-version-boundary/dns-required-image-probe.toml:/tmp/e-navigator.toml:ro" ghcr.io/e-navigator/e-navigator:sha-8ab271c --source synthetic --config /tmp/e-navigator.toml --validate-config`
 
 Observed evidence:
 

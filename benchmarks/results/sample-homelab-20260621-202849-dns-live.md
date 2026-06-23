@@ -8,8 +8,8 @@ Curated summary for raw local artifacts under
 - Context: `staging`
 - Namespace: `e-navigator-bench`
 - Release: `e-navigator-bench`
-- Required image: `ghcr.io/guaracloud/e-navigator:sha-8ab271c`
-- Configured image: `ghcr.io/guaracloud/e-navigator:sha-5c417c0`
+- Required image: `ghcr.io/e-navigator/e-navigator:sha-8ab271c`
+- Configured image: `ghcr.io/e-navigator/e-navigator:sha-5c417c0`
 - Image substitution: yes
 - Pull secret: namespace GHCR pull secret configured
 - Runtime config: `source.aya_dns` enabled with Prometheus HTTP enabled

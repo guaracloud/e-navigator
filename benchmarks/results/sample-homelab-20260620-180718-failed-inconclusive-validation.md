@@ -8,7 +8,7 @@ This is a curated summary of the raw artifacts in
 - Context: `staging`
 - Namespace: `e-navigator-bench`
 - Release: `e-navigator-bench`
-- Image: `ghcr.io/guaracloud/e-navigator:sha-8ab271c`
+- Image: `ghcr.io/e-navigator/e-navigator:sha-8ab271c`
 - Pull secret: `ghcr-pull-secret` in `e-navigator-bench`
 - Observed nodes: `homelab-01` and `homelab-02`
 - Cleanup: not run
@@ -33,9 +33,9 @@ All requested preflight commands passed before live deployment:
 Code inspection still found only `sink.json_stdout` as a concrete registered
 runtime sink. OTEL metric, trace, Prometheus text, HTTP exporter, and profile
 formatting code exists as library and test surfaces, but there is no registered
-runtime OTLP, Tempo, Prometheus scrape, Pyroscope, or pprof sink in this release.
+runtime OTLP, trace backend, Prometheus scrape, external profile backend, or pprof sink in this release.
 
-This is the blocking boundary for OTLP/Tempo/Pyroscope/Prometheus export proof:
+This is the blocking boundary for OTLP/trace backend/external profile backend/Prometheus export proof:
 no sidecar or external transformer was counted as E-Navigator export.
 
 ## Service And Prometheus Scrape
@@ -58,14 +58,14 @@ Prometheus read-only queries showed:
 This proves kubelet/cAdvisor resource visibility only. It does not prove
 E-Navigator's own Prometheus scrape export.
 
-## OTLP, Tempo, And Pyroscope
+## OTLP, trace backend, And external profile backend
 
-Read-only observability inspection found Alloy, Prometheus, Tempo, Beyla, Loki,
+Read-only observability inspection found Alloy, Prometheus, trace backend, external flow agent, Loki,
 and node-exporter services in the homelab stack. Alloy exposes OTLP receivers on
-`4317` and `4318`, and Tempo exposes OTLP ports.
+`4317` and `4318`, and trace backend exposes OTLP ports.
 
 E-Navigator still did not export to those surfaces in this run because no
-registered runtime OTLP sink exists. Tempo ingestion, OTLP export, and Pyroscope
+registered runtime OTLP sink exists. trace backend ingestion, OTLP export, and external profile backend
 compatibility/export remain not proven.
 
 ## Controlled Workload And Runtime Signals
@@ -105,7 +105,7 @@ That proves the CPU profile source can emit sample records on the homelab when
 explicitly configured. The intended controlled CPU workload failed because the
 BusyBox shell lacked `SECONDS`; a corrected retry was blocked by a transient
 Kubernetes API `ServiceUnavailable` before applying the workload. Therefore
-controlled CPU-workload attribution, Pyroscope export, pprof export, and OTLP
+controlled CPU-workload attribution, external profile backend export, pprof export, and OTLP
 profile export remain not proven.
 
 The release was restored to default `--source aya-exec` mode after the canary.
@@ -126,7 +126,7 @@ resource metrics for E-Navigator containers, but included old, profile-canary,
 and restored pods over the 10-minute window.
 
 No reduced-overhead claim is made because there is still no equivalent
-Beyla/Alloy/Tempo/Prometheus/Pyroscope replacement workload and export parity.
+external flow agent/Alloy/trace backend/Prometheus/external profile backend replacement workload and export parity.
 
 ## Capabilities And Reduced Privilege
 
@@ -150,11 +150,11 @@ present and seccomp is disabled.
 
 | Target | Status | Evidence boundary |
 | --- | --- | --- |
-| Beyla L4 flow replacement | partial | Aya TCP events emitted, but no byte-accurate parity, scrape/export parity, or workload attribution |
+| external flow agent L4 flow replacement | partial | Aya TCP events emitted, but no byte-accurate parity, scrape/export parity, or workload attribution |
 | Alloy OTLP collector replacement | not proven | no registered runtime OTLP sink |
-| Tempo trace ingestion compatibility | not proven | no legitimate E-Navigator OTLP export path |
+| trace backend trace ingestion compatibility | not proven | no legitimate E-Navigator OTLP export path |
 | Prometheus scrape/export compatibility | not proven | port `9090` refused connections; no `ServiceMonitor`/`PodMonitor`; Prometheus `up` series empty |
-| Pyroscope/profile export compatibility | not proven | profile samples emitted, but no Pyroscope or pprof exporter |
+| external profile backend/profile export compatibility | not proven | profile samples emitted, but no external profile backend or pprof exporter |
 | DNS runtime capture | not proven | workload performed DNS lookups, but logs contained zero DNS runtime signal evidence |
 | CPU profile capture | proven for source emission | profile-mode canary emitted `source.aya_cpu_profile` sample records |
 | Workload attribution | not proven | workload completed, but emitted records did not include workload identity markers |
@@ -178,12 +178,12 @@ This run proves:
 
 This run does not prove:
 
-- E-Navigator OTLP export to Alloy or Tempo;
+- E-Navigator OTLP export to Alloy or trace backend;
 - E-Navigator Prometheus scrape export;
-- Tempo ingestion;
-- Pyroscope or pprof export;
+- trace backend ingestion;
+- external profile backend or pprof export;
 - DNS packet capture;
 - controlled workload attribution;
 - CPU profile attribution to a controlled workload;
-- Beyla, Alloy, Tempo, Prometheus, or Pyroscope replacement readiness;
+- external flow agent, Alloy, trace backend, Prometheus, or external profile backend replacement readiness;
 - reduced-overhead or reduced-privilege readiness.

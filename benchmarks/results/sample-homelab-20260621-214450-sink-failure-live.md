@@ -9,9 +9,9 @@ This is a curated summary of the raw artifacts in
 - Namespace: `e-navigator-bench`
 - Release: `e-navigator-bench`
 - Baseline image before and after the run:
-  `ghcr.io/guaracloud/e-navigator:sha-5c417c0`
+  `ghcr.io/e-navigator/e-navigator:sha-5c417c0`
 - Image tested during the run:
-  `ghcr.io/guaracloud/e-navigator:sha-56c4b4e`
+  `ghcr.io/e-navigator/e-navigator:sha-56c4b4e`
 - Pull secret present in the release values: `ghcr-e-navigator-pull`
 - Nodes observed: `homelab-01` and `homelab-02`, both `linux/amd64`
 
@@ -32,7 +32,7 @@ What was recorded:
   `sha256:99a1de3ccc088dc9a268a29e809fcb7929e878e2d54e0e383fedbad36d397a16`
   for `linux/amd64`.
 - The image was imported into both homelab node containerd stores as
-  `ghcr.io/guaracloud/e-navigator:sha-56c4b4e`.
+  `ghcr.io/e-navigator/e-navigator:sha-56c4b4e`.
 - A namespace-local fake OTLP collector was deployed and configured to return
   HTTP 500 for every POST.
 - Helm revision 20 rolled the DaemonSet to `sha-56c4b4e` with
@@ -42,7 +42,7 @@ What was recorded:
   - `e-navigator-bench-5mnts` on `homelab-02`
   - `e-navigator-bench-j2bdw` on `homelab-01`
 - Both live-test pods reported `ready=true`, `restarts=0`, and image
-  `ghcr.io/guaracloud/e-navigator:sha-56c4b4e`.
+  `ghcr.io/e-navigator/e-navigator:sha-56c4b4e`.
 - The failing collector logged `35,787` received POST events at
   `/v1/e-navigator`.
 - E-Navigator logs included `sink write failed; dropping signal for this sink`
@@ -89,7 +89,7 @@ This run does not prove:
 - GHCR publication for `sha-56c4b4e`;
 - production collector compatibility;
 - upstream OTLP protobuf metrics, traces, or profiles;
-- Tempo, Pyroscope, Alloy, or Prometheus replacement readiness;
+- trace backend, external profile backend, Alloy, or Prometheus replacement readiness;
 - reduced overhead or sustained overhead baselines;
 - reduced-privilege eBPF operation;
 - runtime DNS packet capture.

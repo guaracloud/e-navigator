@@ -59,10 +59,10 @@ Live smoke:
   - `namespace/e-navigator-bench`
   - existing E-Navigator DaemonSet `2/2` Ready on baseline digest
     `sha256:3abcd8d1c9b9b890801eeab94252f8cc507cd0dba665ddcc449cf409275b90d0`
-- Temporary pod:
+- trace backendrary pod:
   `e-nav-toleration-smoke-20260623-143751`
 - Label:
-  `e-navigator.guara.cloud/proof-run=20260623-143751-homelab-workload-toleration-smoke`
+  `e-navigator.e-navigator.io/proof-run=20260623-143751-homelab-workload-toleration-smoke`
 - Pod override:
   - `nodeSelector.kubernetes.io/hostname=homelab-02`
   - `tolerations[0].operator=Exists`
@@ -93,6 +93,6 @@ Not proven:
 
 - Any E-Navigator source, processor, generator, or sink behavior.
 - Symmetric HTTP, DNS, network, profile, or resource capture.
-- Prometheus server scrape, OTLP collector ingestion, or Guara compatibility
+- Prometheus server scrape, OTLP collector ingestion, or native export
   export.
 - Reduced privilege, reduced overhead, or production replacement readiness.

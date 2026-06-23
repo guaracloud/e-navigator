@@ -136,7 +136,7 @@ if [ -z "$rollout_line" ] ||
 fi
 
 for expected in \
-  'required_image_repository="ghcr.io/guaracloud/e-navigator"' \
+  'required_image_repository="ghcr.io/e-navigator/e-navigator"' \
   'required_image_tag="sha-8ab271c"' \
   'run-metadata.txt' \
   'Required image:' \

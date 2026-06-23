@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use e_navigator_core::{
     CoreError, CoreResult, ModuleKind, ModuleMetadata, PrometheusHttpConfig, Sink,
 };
-use e_navigator_signals::{CompatibilityCounterMetric, SignalEnvelope, SignalPayload};
+use e_navigator_signals::SignalEnvelope;
 use std::{
     collections::{BTreeMap, VecDeque},
     io,
@@ -26,20 +26,7 @@ pub struct PrometheusMetricLine {
     pub value: String,
 }
 
-pub fn format_prometheus_compatibility_metric(
-    signal: &SignalEnvelope,
-) -> Option<PrometheusMetricLine> {
-    match &signal.payload {
-        SignalPayload::CompatibilityCounterMetric(metric) => Some(metric_line(metric)),
-        _ => None,
-    }
-}
-
 fn format_prometheus_metric_lines(signal: &SignalEnvelope) -> Vec<PrometheusMetricLine> {
-    if let Some(line) = format_prometheus_compatibility_metric(signal) {
-        return vec![line];
-    }
-
     let Some(record) = format_otel_metric_record(signal) else {
         return Vec::new();
     };
@@ -260,19 +247,6 @@ fn request_path(request: &str) -> Option<&str> {
     }
 }
 
-fn metric_line(metric: &CompatibilityCounterMetric) -> PrometheusMetricLine {
-    PrometheusMetricLine {
-        name: sanitize_identifier(&metric.metric_name),
-        labels: metric
-            .labels
-            .iter()
-            .map(|(key, value)| (sanitize_identifier(key), value.clone()))
-            .filter(|(key, _)| prometheus_label_allowed(key))
-            .collect(),
-        value: metric.value.to_string(),
-    }
-}
-
 fn prometheus_label_allowed(key: &str) -> bool {
     const AUTH_FRAGMENT: &str = concat!("au", "th");
     const AUTHS_FRAGMENT: &str = concat!("au", "ths");
@@ -375,8 +349,8 @@ mod tests {
     use super::*;
     use e_navigator_core::Sink;
     use e_navigator_signals::{
-        CompatibilityCounterMetric, KubernetesContext, MetricAggregationWindow,
-        NetworkAddressFamily, NetworkCounterMetric, NetworkProtocol,
+        KubernetesContext, MetricAggregationWindow, NetworkAddressFamily, NetworkCounterMetric,
+        NetworkProtocol,
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -384,99 +358,49 @@ mod tests {
     };
 
     #[test]
-    fn renders_beyla_compatibility_counter_with_stable_labels() {
-        let signal = SignalEnvelope::compatibility_counter_metric(
-            "generator.guara_compat",
+    fn renders_native_network_counter_with_stable_labels() {
+        let signal = SignalEnvelope::network_counter_metric(
+            "generator.network_metrics",
             Some("node-a".to_string()),
-            CompatibilityCounterMetric {
-                metric_name: "beyla_network_flow_bytes_total".to_string(),
+            NetworkCounterMetric {
+                metric_name: "network.flow.bytes".to_string(),
                 unit: "By".to_string(),
                 value: 2048,
                 window: MetricAggregationWindow {
                     start_unix_nanos: 1,
                     end_unix_nanos: 2,
                 },
-                labels: BTreeMap::from([
-                    ("k8s_dst_namespace".to_string(), "proj-a".to_string()),
-                    ("k8s_dst_owner_name".to_string(), "redis".to_string()),
-                    ("k8s_dst_owner_type".to_string(), "statefulset".to_string()),
-                    ("k8s_src_namespace".to_string(), "proj-a".to_string()),
-                    ("k8s_src_owner_name".to_string(), "api".to_string()),
-                    ("k8s_src_owner_type".to_string(), "deployment".to_string()),
-                ]),
+                process: None,
+                protocol: Some(NetworkProtocol::Tcp),
+                address_family: Some(NetworkAddressFamily::Ipv4),
+                local_address: None,
+                local_port: None,
+                remote_address: None,
+                remote_port: None,
+                errno: None,
+                container: None,
+                kubernetes: Some(kubernetes_context()),
             },
         );
 
-        let line = format_prometheus_compatibility_metric(&signal).expect("metric formats");
+        let line = format_prometheus_metric_lines(&signal)
+            .into_iter()
+            .next()
+            .expect("metric formats");
         let rendered = render_prometheus_text(&[line]);
 
         assert_eq!(
             rendered,
-            "beyla_network_flow_bytes_total{k8s_dst_namespace=\"proj-a\",k8s_dst_owner_name=\"redis\",k8s_dst_owner_type=\"statefulset\",k8s_src_namespace=\"proj-a\",k8s_src_owner_name=\"api\",k8s_src_owner_type=\"deployment\"} 2048\n"
+            "network_flow_bytes{host_name=\"node-a\",k8s_container_name=\"workload\",k8s_namespace_name=\"e-navigator-bench\",k8s_node_name=\"homelab-01\",k8s_pod_name=\"workload-a\",net_transport=\"tcp\",network_type=\"ipv4\"} 2048\n"
         );
     }
 
     #[test]
-    fn drops_secret_like_labels_from_prometheus_text() {
-        let signal = SignalEnvelope::compatibility_counter_metric(
-            "generator.guara_compat",
-            Some("node-a".to_string()),
-            CompatibilityCounterMetric {
-                metric_name: "e_navigator_exported_records_total".to_string(),
-                unit: "{record}".to_string(),
-                value: 1,
-                window: MetricAggregationWindow {
-                    start_unix_nanos: 1,
-                    end_unix_nanos: 2,
-                },
-                labels: BTreeMap::from([
-                    ("k8s_namespace_name".to_string(), "default".to_string()),
-                    ("authorization".to_string(), "Bearer secret".to_string()),
-                    ("api_token".to_string(), "abc123".to_string()),
-                    ("argv".to_string(), "curl --password secret".to_string()),
-                ]),
-            },
-        );
-
-        let line = format_prometheus_compatibility_metric(&signal).expect("metric formats");
-        let rendered = render_prometheus_text(&[line]);
-
-        assert!(rendered.contains("k8s_namespace_name=\"default\""));
-        assert!(!rendered.contains("authorization"));
-        assert!(!rendered.contains("api_token"));
-        assert!(!rendered.contains("argv"));
-        assert!(!rendered.contains("secret"));
-    }
-
-    #[test]
-    fn keeps_safe_prometheus_identifiers_and_filters_mixed_case_sensitive_labels() {
-        let signal = SignalEnvelope::compatibility_counter_metric(
-            "generator.guara_compat",
-            Some("node-a".to_string()),
-            CompatibilityCounterMetric {
-                metric_name: "beyla_network_flow_bytes_total".to_string(),
-                unit: "By".to_string(),
-                value: 1,
-                window: MetricAggregationWindow {
-                    start_unix_nanos: 1,
-                    end_unix_nanos: 2,
-                },
-                labels: BTreeMap::from([
-                    ("k8s_src_namespace".to_string(), "proj-a".to_string()),
-                    ("k8s_src_owner_name".to_string(), "api".to_string()),
-                    ("API_TOKEN".to_string(), "abc123".to_string()),
-                    ("Process_Command".to_string(), "curl".to_string()),
-                ]),
-            },
-        );
-
-        let line = format_prometheus_compatibility_metric(&signal).expect("metric formats");
-
-        assert_eq!(line.name, "beyla_network_flow_bytes_total");
-        assert_eq!(line.labels["k8s_src_namespace"], "proj-a");
-        assert_eq!(line.labels["k8s_src_owner_name"], "api");
-        assert!(!line.labels.contains_key("API_TOKEN"));
-        assert!(!line.labels.contains_key("Process_Command"));
+    fn filters_secret_like_prometheus_labels_case_insensitively() {
+        assert!(!prometheus_label_allowed("authorization"));
+        assert!(!prometheus_label_allowed("API_TOKEN"));
+        assert!(!prometheus_label_allowed("Process_Command"));
+        assert!(prometheus_label_allowed("k8s_namespace_name"));
     }
 
     #[tokio::test]
@@ -484,18 +408,27 @@ mod tests {
         let (sink, address) = PrometheusHttpSink::bind_for_test(8)
             .await
             .expect("sink binds");
-        let signal = SignalEnvelope::compatibility_counter_metric(
-            "generator.guara_compat",
+        let signal = SignalEnvelope::network_counter_metric(
+            "generator.network_metrics",
             Some("node-a".to_string()),
-            CompatibilityCounterMetric {
-                metric_name: "beyla_network_flow_bytes_total".to_string(),
+            NetworkCounterMetric {
+                metric_name: "network.flow.bytes".to_string(),
                 unit: "By".to_string(),
                 value: 2048,
                 window: MetricAggregationWindow {
                     start_unix_nanos: 1,
                     end_unix_nanos: 2,
                 },
-                labels: BTreeMap::from([("k8s_src_namespace".to_string(), "proj-a".to_string())]),
+                process: None,
+                protocol: Some(NetworkProtocol::Tcp),
+                address_family: Some(NetworkAddressFamily::Ipv4),
+                local_address: None,
+                local_port: None,
+                remote_address: None,
+                remote_port: None,
+                errno: None,
+                container: None,
+                kubernetes: Some(kubernetes_context()),
             },
         );
         sink.write(&signal).await.expect("metric is accepted");
@@ -507,8 +440,8 @@ mod tests {
         assert!(healthz.starts_with("HTTP/1.1 200 OK"));
         assert!(readyz.starts_with("HTTP/1.1 200 OK"));
         assert!(metrics.starts_with("HTTP/1.1 200 OK"));
-        assert!(metrics.contains("beyla_network_flow_bytes_total"));
-        assert!(metrics.contains("k8s_src_namespace=\"proj-a\""));
+        assert!(metrics.contains("network_flow_bytes"));
+        assert!(metrics.contains("k8s_namespace_name=\"e-navigator-bench\""));
     }
 
     #[tokio::test]
@@ -571,5 +504,16 @@ mod tests {
             .await
             .expect("read response");
         response
+    }
+
+    fn kubernetes_context() -> KubernetesContext {
+        KubernetesContext {
+            namespace: "e-navigator-bench".to_string(),
+            pod_name: "workload-a".to_string(),
+            pod_uid: Some("pod-uid".to_string()),
+            container_name: Some("workload".to_string()),
+            node_name: Some("homelab-01".to_string()),
+            labels: BTreeMap::new(),
+        }
     }
 }

@@ -5,7 +5,7 @@
 - Context: `staging`
 - Namespace: `e-navigator-bench`
 - Commit: `396e70d38a814eb699c8507a60ac97667529f9d9`
-- Image tag: `ghcr.io/guaracloud/e-navigator:sha-396e70d`
+- Image tag: `ghcr.io/e-navigator/e-navigator:sha-396e70d`
 - Image index digest:
   `sha256:5f2060de32c6206b07868e43cccaa59ebf2489fae34edf2d6646b565354ce84a`
 - Linux amd64 digest:
@@ -60,7 +60,7 @@ was attempted for this image.
 - Rolled Helm back to revision 93, described by Helm as rollback to revision
   91.
 - Verified final DaemonSet image:
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
 - Verified final DaemonSet `2/2` Ready on `homelab-01` and `homelab-02` with
   zero restarts on the restored pods.
 - No proof workload Jobs were created for the corrected attempt.

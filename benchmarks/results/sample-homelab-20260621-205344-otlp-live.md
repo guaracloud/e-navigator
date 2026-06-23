@@ -5,15 +5,15 @@ Run: `20260621-205344-otlp-live`
 This run validated `sink.otlp_http` on the homelab Kubernetes cluster with a
 namespace-local fake HTTP collector. It proves live delivery of E-Navigator's
 internal JSON metric, trace, and profile records from the DaemonSet to an HTTP
-endpoint. It does not prove upstream OTLP protobuf compatibility, Tempo,
-Pyroscope, Alloy, or production collector ingestion.
+endpoint. It does not prove upstream OTLP protobuf compatibility, trace backend,
+external profile backend, Alloy, or production collector ingestion.
 
 ## Environment
 
 - Kubernetes context: `staging`
 - Namespace: `e-navigator-bench`
 - Helm release: `e-navigator-bench`
-- E-Navigator image: `ghcr.io/guaracloud/e-navigator:sha-5c417c0`
+- E-Navigator image: `ghcr.io/e-navigator/e-navigator:sha-5c417c0`
 - Fake collector: `e-navigator-otlp-fake-20260621-205344`
 - Endpoint: `http://e-navigator-otlp-fake-20260621-205344.e-navigator-bench.svc.cluster.local:4318/v1/e-navigator`
 - Exec workload: `e-navigator-bench-workload-20260621-205344-otlp`

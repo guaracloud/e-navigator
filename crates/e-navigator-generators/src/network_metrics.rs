@@ -163,6 +163,23 @@ impl NetworkMetricsGenerator {
         if let Some(summary) = flow_summary_from_close(signal, event) {
             metrics.push(summary);
         }
+        if event.kubernetes.is_some()
+            && let Some(metric) = self.update_counter_by(
+                CounterKey::flow_bytes(event),
+                CounterTemplate::flow_bytes(event),
+                event
+                    .opened_at_unix_nanos
+                    .unwrap_or(event.closed_at_unix_nanos),
+                event.closed_at_unix_nanos,
+                event
+                    .bytes_sent
+                    .unwrap_or(0)
+                    .saturating_add(event.bytes_received.unwrap_or(0)),
+                signal.host.clone(),
+            )?
+        {
+            metrics.push(metric);
+        }
 
         Ok(metrics)
     }
@@ -190,11 +207,26 @@ impl NetworkMetricsGenerator {
         timestamp: u64,
         host: Option<String>,
     ) -> CoreResult<Option<SignalEnvelope>> {
+        self.update_counter_by(key, template, timestamp, timestamp, 1, host)
+    }
+
+    fn update_counter_by(
+        &self,
+        key: CounterKey,
+        template: CounterTemplate,
+        window_start: u64,
+        window_end: u64,
+        value: u64,
+        host: Option<String>,
+    ) -> CoreResult<Option<SignalEnvelope>> {
+        if value == 0 {
+            return Ok(None);
+        }
         let mut counters = self.counters()?;
         if let Some(state) = counters.get_mut(&key) {
-            state.value = state.value.saturating_add(1);
-            state.window.start_unix_nanos = state.window.start_unix_nanos.min(timestamp);
-            state.window.end_unix_nanos = state.window.end_unix_nanos.max(timestamp);
+            state.value = state.value.saturating_add(value);
+            state.window.start_unix_nanos = state.window.start_unix_nanos.min(window_start);
+            state.window.end_unix_nanos = state.window.end_unix_nanos.max(window_end);
             return Ok(Some(state.to_signal(host)));
         }
 
@@ -206,10 +238,10 @@ impl NetworkMetricsGenerator {
 
         let state = CounterState {
             template,
-            value: 1,
+            value,
             window: MetricAggregationWindow {
-                start_unix_nanos: timestamp,
-                end_unix_nanos: timestamp,
+                start_unix_nanos: window_start,
+                end_unix_nanos: window_end,
             },
         };
         let signal = state.to_signal(host);
@@ -494,6 +526,22 @@ impl CounterKey {
             errno: Some(event.errno),
         }
     }
+
+    fn flow_bytes(event: &NetworkConnectionCloseEvent) -> Self {
+        CounterKey {
+            metric_name: "network.flow.bytes",
+            workload: event.kubernetes.as_ref().map(workload_key),
+            container: event
+                .container
+                .as_ref()
+                .map(|container| container.container_id.clone()),
+            protocol: Some(format!("{:?}", event.protocol)),
+            address_family: Some(format!("{:?}", event.address_family)),
+            remote_address: Some(event.remote_address.clone()),
+            remote_port: Some(event.remote_port),
+            errno: None,
+        }
+    }
 }
 
 fn metric_key(
@@ -558,6 +606,23 @@ impl CounterTemplate {
             remote_address: Some(event.remote_address.clone()),
             remote_port: Some(event.remote_port),
             errno: Some(event.errno),
+            container: event.container.clone(),
+            kubernetes: event.kubernetes.clone(),
+        }
+    }
+
+    fn flow_bytes(event: &NetworkConnectionCloseEvent) -> Self {
+        Self {
+            metric_name: "network.flow.bytes",
+            unit: "By",
+            process: Some(event.process.clone()),
+            protocol: Some(event.protocol),
+            address_family: Some(event.address_family),
+            local_address: event.local_address.clone(),
+            local_port: event.local_port,
+            remote_address: Some(event.remote_address.clone()),
+            remote_port: Some(event.remote_port),
+            errno: None,
             container: event.container.clone(),
             kubernetes: event.kubernetes.clone(),
         }
@@ -1006,6 +1071,24 @@ mod tests {
         assert_eq!(flow.destination.port, Some(5432));
         assert_eq!(flow.first_seen_unix_nanos, 100);
         assert_eq!(flow.last_seen_unix_nanos, 900);
+    }
+
+    #[tokio::test]
+    async fn emits_native_flow_byte_counter_from_close_byte_counters() {
+        let generator = NetworkMetricsGenerator::default();
+        let close =
+            network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
+
+        let outputs = observe(&generator, &close).await;
+        let metric = counter_metric(&outputs, "network.flow.bytes");
+
+        assert_eq!(metric.unit, "By");
+        assert_eq!(metric.value, 1536);
+        assert_eq!(metric.window.start_unix_nanos, 100);
+        assert_eq!(metric.window.end_unix_nanos, 900);
+        assert_eq!(metric.kubernetes, Some(kubernetes_context()));
+        assert_eq!(metric.remote_address.as_deref(), Some("10.0.0.20"));
+        assert_eq!(metric.remote_port, Some(5432));
     }
 
     #[tokio::test]

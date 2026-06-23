@@ -7,13 +7,13 @@ Raw evidence is under
 
 - Kubernetes context: `staging`
 - Namespace: `e-navigator-bench`
-- Image: `ghcr.io/guaracloud/e-navigator:sha-94e808c`
+- Image: `ghcr.io/e-navigator/e-navigator:sha-94e808c`
 - Image index digest:
   `sha256:583fa478c6944b0489170cdecc7c93d0ec9b43aee419a6406d276c452a5e4f6a`
 - Linux/amd64 manifest:
   `sha256:d38375108711bd747b42f2b13412decf99790146dd3c1210268c357852c4b8a2`
 - Helm release: `e-navigator-bench`
-- Temporary proof revision: `45`
+- trace backendrary proof revision: `45`
 - Restored revision: `46`, rollback to pre-proof revision `44`
 
 ## Code And Image
@@ -167,6 +167,6 @@ This run does not prove:
 - lossless DNS event capture under high volume;
 - complete DNS syscall/path coverage;
 - DNS replacement readiness;
-- Beyla, Tempo, Pyroscope, Prometheus, or Alloy replacement readiness;
+- external flow agent, trace backend, external profile backend, Prometheus, or Alloy replacement readiness;
 - reduced privilege;
 - reduced overhead versus the existing homelab observability stack.

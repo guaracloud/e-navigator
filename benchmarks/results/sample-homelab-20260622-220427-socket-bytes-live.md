@@ -7,7 +7,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `86b3fce`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-86b3fce`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-86b3fce`
 - Image index digest: `sha256:f37e493cee570c4e5c4aae64a8f148bf4e1ae8c7893ddc617756f4b7c106da75`
 - Deployed amd64 digest: `sha256:72acf600c86be7b9a2a0c4ca8ae905e065232e26125e1cdf575f515c53668a48`
 - GitHub Actions: CI run `27986601097` and publish-images run `27986601025` succeeded.
@@ -29,10 +29,10 @@ Deployment evidence:
 - Helm revision `48` rolled `sha-86b3fce` into the DaemonSet.
 - DaemonSet pods `e-navigator-bench-jmb52` on `homelab-01` and
   `e-navigator-bench-mp7cf` on `homelab-02` were Ready with zero restarts and
-  used `ghcr.io/guaracloud/e-navigator@sha256:72acf600c86be7b9a2a0c4ca8ae905e065232e26125e1cdf575f515c53668a48`.
+  used `ghcr.io/e-navigator/e-navigator@sha256:72acf600c86be7b9a2a0c4ca8ae905e065232e26125e1cdf575f515c53668a48`.
 - Direct `/healthz` returned `ok`; direct `/readyz` returned `ready`;
   `/metrics` returned 257 lines.
-- Temporary workload pods were deleted.
+- trace backendrary workload pods were deleted.
 - Helm revision `49` rolled the release back to revision `47`; the restored
   DaemonSet rolled out successfully.
 
@@ -50,12 +50,12 @@ Live workload:
   `bytes_sent=243` and `bytes_received=1372`.
 - Captured E-Navigator stdout had 0 controlled Kubernetes-attributed close
   records, 0 controlled `network_flow_summary` records, and 0
-  `beyla_network_flow_bytes_total` JSON signals.
+  `network_flow_bytes` JSON signals.
 - Direct `/metrics` exposed aggregate container-runtime network counters for the
   controlled traffic path, including `network_connection_open_count`,
   `network_traffic_destination_count`, and `network_connection_duration_count`
   at `120`.
-- Direct `/metrics` contained 0 `beyla_network_flow_bytes_total` lines.
+- Direct `/metrics` contained 0 `network_flow_bytes` lines.
 
 Outcome: `partial`.
 
@@ -74,12 +74,12 @@ Not proven:
 - Kubernetes pod/container attribution for the controlled Python client closes.
 - Controlled `network_flow_summary`; the generator still requires Kubernetes
   attribution on close events.
-- Direct or Prometheus `beyla_network_flow_bytes_total` export from controlled
+- Direct or Prometheus `network_flow_bytes` export from controlled
   live traffic.
 
 Non-claims:
 
-- No Beyla replacement claim.
+- No external flow agent replacement claim.
 - No production-ready claim.
 - No reduced-overhead claim.
 - No reduced-privilege claim.

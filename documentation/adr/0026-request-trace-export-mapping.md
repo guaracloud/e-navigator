@@ -16,4 +16,4 @@ Custom attributes are bounded by count, key bytes, and value bytes. Sensitive ke
 
 ## Consequences
 
-JSON stdout remains newline-delimited SignalEnvelope JSON. The formatter provides a stable future mapping point for OTLP trace export, but Phase 7 does not claim production OTLP export, Tempo replacement behavior, UI, storage, or critical path analysis.
+JSON stdout remains newline-delimited SignalEnvelope JSON. The formatter provides a stable future mapping point for OTLP trace export, but Phase 7 does not claim production OTLP export, trace-backend replacement behavior, UI, storage, or critical path analysis.

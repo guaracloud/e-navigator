@@ -36,4 +36,4 @@ Non-privileged CI covers config validation, static registration, raw event decod
 
 Privileged local Linux CPU profiling may only be claimed after running the explicit CPU profile source mode on a real privileged Linux host and observing `profile_sample_observation` records from `source.aya_cpu_profile`. Kubernetes CPU profiling may only be claimed after running the explicit CPU profile source mode on a privileged Kubernetes node or cluster and observing real `source.aya_cpu_profile` samples from that environment.
 
-Phase 9 does not implement or claim memory allocation profiling, lock profiling, pprof export, OTLP profile export, profile storage, flamegraph UI, trace/profile correlation, bottleneck analysis, Pyroscope replacement behavior, or full continuous profiling backend behavior.
+Phase 9 does not implement or claim memory allocation profiling, lock profiling, pprof export, OTLP profile export, profile storage, flamegraph UI, trace/profile correlation, bottleneck analysis, profile-backend replacement behavior, or full continuous profiling backend behavior.

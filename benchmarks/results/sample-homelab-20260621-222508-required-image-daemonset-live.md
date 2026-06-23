@@ -8,9 +8,9 @@ This is a curated summary of the raw artifacts in
 - Context: `staging`
 - Namespace: `e-navigator-bench`
 - Release: `e-navigator-bench`
-- Required image tested: `ghcr.io/guaracloud/e-navigator:sha-8ab271c`
+- Required image tested: `ghcr.io/e-navigator/e-navigator:sha-8ab271c`
 - Required image digest observed on both nodes:
-  `ghcr.io/guaracloud/e-navigator@sha256:249ad67fa8578ade9ecc1279bcf52a52ae6038a342b7c68844ebfd7a38d4e34e`
+  `ghcr.io/e-navigator/e-navigator@sha256:249ad67fa8578ade9ecc1279bcf52a52ae6038a342b7c68844ebfd7a38d4e34e`
 - Pull secret name used: `ghcr-e-navigator-pull`
 - Config: older compatible runtime config from
   `20260621-170331-live-validation`
@@ -82,9 +82,9 @@ This is not reduced-privilege proof.
 
 Helm revision `27` restored the release to the pre-run values:
 
-- image `ghcr.io/guaracloud/e-navigator:sha-5c417c0`
+- image `ghcr.io/e-navigator/e-navigator:sha-5c417c0`
 - digest
-  `ghcr.io/guaracloud/e-navigator@sha256:553f2008f53f6da5ec05b0a45102ab8eb1f8bf4c640b2d61ce4d958ed6470cc3`
+  `ghcr.io/e-navigator/e-navigator@sha256:553f2008f53f6da5ec05b0a45102ab8eb1f8bf4c640b2d61ce4d958ed6470cc3`
 - `2/2` Ready on `homelab-01` and `homelab-02`
 - `source.aya_dns`, `sink.prometheus_http`, and `sink.otlp_http` present again
   in the restored config
@@ -104,6 +104,6 @@ This run does not prove:
 - live CPU profile output;
 - live host-resource output;
 - Prometheus HTTP export on `sha-8ab271c`;
-- OTLP, Tempo, Pyroscope, Alloy, or Beyla compatibility;
+- OTLP, trace backend, external profile backend, Alloy, or external flow agent compatibility;
 - controlled workload attribution for `sha-8ab271c`;
 - reduced overhead or reduced privilege.

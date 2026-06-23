@@ -8,13 +8,13 @@ model.
 ## Install From OCI
 
 ```bash
-helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
+helm upgrade --install e-navigator oci://ghcr.io/e-navigator/charts/e-navigator \
   --version 0.1.0 \
   --namespace e-navigator-system \
   --create-namespace
 ```
 
-The default chart uses `ghcr.io/guaracloud/e-navigator:<chart appVersion>`. For
+The default chart uses `ghcr.io/e-navigator/e-navigator:<chart appVersion>`. For
 dev-channel testing before a release tag exists, use the rolling image:
 
 ```bash
@@ -30,7 +30,7 @@ After verifying `release-manifest.json`, pin the release digest:
 
 ```yaml
 image:
-  repository: ghcr.io/guaracloud/e-navigator
+  repository: ghcr.io/e-navigator/e-navigator
   digest: sha256:<image-digest>
 ```
 

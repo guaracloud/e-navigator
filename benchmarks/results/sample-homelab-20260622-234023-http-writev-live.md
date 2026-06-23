@@ -5,7 +5,7 @@
 - Context: `staging`
 - Namespace: `e-navigator-bench`
 - Commit: `fb9a6d1`
-- Image tag: `ghcr.io/guaracloud/e-navigator:sha-fb9a6d1`
+- Image tag: `ghcr.io/e-navigator/e-navigator:sha-fb9a6d1`
 - Image index digest:
   `sha256:dec316f7c02504ce99e0500e423adc35398482756f634e915fe14f421d2924e0`
 - Linux amd64 digest:
@@ -34,7 +34,7 @@
 - Test rollout: Helm revision 54 with `source.aya_http` and
   `generator.request_correlation` enabled.
 - Test image:
-  `ghcr.io/guaracloud/e-navigator@sha256:2c984944dee476bfdb27ecaa473277152a4f7b304a0ed99d24b867a90dbba751`
+  `ghcr.io/e-navigator/e-navigator@sha256:2c984944dee476bfdb27ecaa473277152a4f7b304a0ed99d24b867a90dbba751`
 - DaemonSet rollout completed and stayed `2/2` Ready with zero restarts.
 
 ## Workload
@@ -84,7 +84,7 @@ pairs as the controlled workload attribution evidence.
 - Deleted temporary Job, Deployment, and Service in `e-navigator-bench`.
 - Rolled Helm back to revision 55, described by Helm as rollback to revision 53.
 - Verified final DaemonSet image:
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`
 - Verified DaemonSet `2/2` Ready.
 - Verified no temporary workload resources remained for label
   `app=e-nav-http-writev-20260622-234023`.

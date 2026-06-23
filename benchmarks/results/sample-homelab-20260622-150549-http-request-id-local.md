@@ -42,5 +42,5 @@ Not proven:
 - Route-template extraction such as `/checkout/{id}`.
 - Retry or application error extraction.
 - Request ID extraction from live Kubernetes traffic.
-- Tempo, Alloy, OTLP collector, Pyroscope, or storage compatibility.
+- trace backend, Alloy, OTLP collector, external profile backend, or storage compatibility.
 - Reduced overhead or reduced privilege.

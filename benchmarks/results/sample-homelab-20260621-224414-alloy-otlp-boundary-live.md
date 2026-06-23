@@ -9,12 +9,12 @@ This is a curated summary of the raw artifacts in
 - Namespace: `e-navigator-bench`
 - Release: `e-navigator-bench`
 - Baseline image before and after the run:
-  `ghcr.io/guaracloud/e-navigator:sha-5c417c0`
+  `ghcr.io/e-navigator/e-navigator:sha-5c417c0`
 - Real receiver endpoint:
   `http://alloy.observability-system.svc.cluster.local:4318/v1/traces`
 - Pull secret present in the release values: `ghcr-e-navigator-pull`
 - Local substitution image tested for the current-code fix:
-  `ghcr.io/guaracloud/e-navigator:sha-fafb91a-alloy-boundary`
+  `ghcr.io/e-navigator/e-navigator:sha-fafb91a-alloy-boundary`
 - Nodes observed: `homelab-01` and `homelab-02`, both `linux/amd64`
 
 The requested required image `sha-8ab271c` was validated separately in the same
@@ -41,7 +41,7 @@ What was recorded:
 - The release was rolled back to the prior good revision and restored to
   `2/2` Ready.
 - Current local code was built as
-  `ghcr.io/guaracloud/e-navigator:sha-fafb91a-alloy-boundary`, saved as a
+  `ghcr.io/e-navigator/e-navigator:sha-fafb91a-alloy-boundary`, saved as a
   `linux/amd64` image, and imported into both homelab node runtimes.
 - Helm revision 30 rolled the DaemonSet to the local tag with
   `imagePullPolicy: Never`.
@@ -87,9 +87,9 @@ HTTP 400 rejection path.
 This run does not prove:
 
 - successful OTLP protobuf export;
-- Tempo trace ingestion;
-- Pyroscope profile ingestion;
+- trace backend trace ingestion;
+- external profile backend profile ingestion;
 - Alloy production compatibility;
-- replacement readiness for Alloy, Tempo, Pyroscope, Prometheus, or Beyla;
+- replacement readiness for Alloy, trace backend, external profile backend, Prometheus, or external flow agent;
 - DNS packet capture;
 - reduced overhead or reduced privileges.

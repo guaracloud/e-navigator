@@ -14,12 +14,12 @@ proof slice.
 - Namespace: `e-navigator-bench`
 - Helm release: `e-navigator-bench`
 - Commit: `c89f345`
-- Image: `ghcr.io/guaracloud/e-navigator:sha-c89f345`
+- Image: `ghcr.io/e-navigator/e-navigator:sha-c89f345`
 - Image index digest:
   `sha256:cd2300e3ed149c6d32e71dd25d70b96443b2f2bfb43443f2bcd1b18b1623a473`
 - Linux/amd64 manifest digest:
   `sha256:96e7ed5710bdb58273f41945cbaf402cce04a148a2d2f8541f0e9c02672e81f0`
-- Prior live image: `ghcr.io/guaracloud/e-navigator:sha-d3167e3`
+- Prior live image: `ghcr.io/e-navigator/e-navigator:sha-d3167e3`
 
 `c89f345` changed documentation and curated evidence only relative to
 `d3167e3`; the runtime code was unchanged, but this run still proves the
@@ -31,8 +31,8 @@ Helm revision 35 deployed `sha-c89f345`. Final pod state:
 
 | Pod | Node | Image ID | Restarts | Ready |
 | --- | --- | --- | --- | --- |
-| `e-navigator-bench-rczmn` | `homelab-02` | `ghcr.io/guaracloud/e-navigator@sha256:cd2300e3ed149c6d32e71dd25d70b96443b2f2bfb43443f2bcd1b18b1623a473` | `0` | `true` |
-| `e-navigator-bench-rjxnz` | `homelab-01` | `ghcr.io/guaracloud/e-navigator@sha256:cd2300e3ed149c6d32e71dd25d70b96443b2f2bfb43443f2bcd1b18b1623a473` | `0` | `true` |
+| `e-navigator-bench-rczmn` | `homelab-02` | `ghcr.io/e-navigator/e-navigator@sha256:cd2300e3ed149c6d32e71dd25d70b96443b2f2bfb43443f2bcd1b18b1623a473` | `0` | `true` |
+| `e-navigator-bench-rjxnz` | `homelab-01` | `ghcr.io/e-navigator/e-navigator@sha256:cd2300e3ed149c6d32e71dd25d70b96443b2f2bfb43443f2bcd1b18b1623a473` | `0` | `true` |
 
 The table above intentionally records the observed image ID string from
 Kubernetes. The expected current-head image index digest is listed in the target
@@ -137,9 +137,9 @@ This remains privilege posture evidence only. It is not reduced-privilege proof.
 This run does not prove:
 
 - successful upstream OTLP protobuf metrics, traces, or profiles;
-- Tempo ingestion;
-- Pyroscope or pprof export;
-- Beyla-compatible byte-accurate flow replacement;
+- trace backend ingestion;
+- external profile backend or pprof export;
+- native byte-accurate flow replacement;
 - runtime DNS eBPF packet capture;
 - controlled workload attribution in JSON stdout;
 - reduced overhead versus existing homelab observability agents;

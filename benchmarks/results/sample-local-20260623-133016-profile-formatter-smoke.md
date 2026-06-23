@@ -51,5 +51,5 @@ Not proven:
 - A whole-harness performance improvement.
 - Docker packaging on this workstation for this run.
 - Live eBPF attach behavior, kernel event volume, Kubernetes scheduling,
-  production exporter throughput, OTLP transport, Pyroscope export, or live
+  production exporter throughput, OTLP transport, external profile backend export, or live
   Prometheus scrape behavior.

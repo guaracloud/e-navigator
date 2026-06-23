@@ -6,7 +6,7 @@ Accepted.
 
 ## Context
 
-Phase 8 added a continuous profiling foundation. Phase 9 adds an explicit privileged CPU profiling source foundation without claiming allocation profiling, lock profiling, pprof export, OTLP profile export, storage, UI, trace/profile correlation, bottleneck analysis, or Pyroscope replacement behavior.
+Phase 8 added a continuous profiling foundation. Phase 9 adds an explicit privileged CPU profiling source foundation without claiming allocation profiling, lock profiling, pprof export, OTLP profile export, storage, UI, trace/profile correlation, bottleneck analysis, or profile-backend replacement behavior.
 
 ## Decision
 

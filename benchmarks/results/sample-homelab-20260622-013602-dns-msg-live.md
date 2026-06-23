@@ -6,7 +6,7 @@ Raw evidence is under `benchmarks/results/20260622-013602-dns-msg-live/`.
 
 - Kubernetes context: `staging`
 - Namespace: `e-navigator-bench`
-- Image: `ghcr.io/guaracloud/e-navigator:sha-10b81e6`
+- Image: `ghcr.io/e-navigator/e-navigator:sha-10b81e6`
 - Image index digest: `sha256:bef701f15eda33275c4275431dc4f4519200057c833a9d146fd127f04b54de35`
 - Linux/amd64 manifest: `sha256:ebd60a95b6aa66710afaac48ae9450300fba20393cfd995dbf660dbd8981e7c8`
 - Helm release: `e-navigator-bench`, revision `38`
@@ -37,7 +37,7 @@ The homelab DaemonSet rolled out successfully:
 - `e-navigator-bench-24chn` on `homelab-02`
 
 Both pods reported image ID
-`ghcr.io/guaracloud/e-navigator@sha256:bef701f15eda33275c4275431dc4f4519200057c833a9d146fd127f04b54de35`,
+`ghcr.io/e-navigator/e-navigator@sha256:bef701f15eda33275c4275431dc4f4519200057c833a9d146fd127f04b54de35`,
 restart count `0`, and Ready `true`.
 
 ## DNS Workload
@@ -132,6 +132,6 @@ This run does not prove:
 - controlled client workload DNS attribution;
 - complete DNS syscall/path coverage;
 - DNS replacement readiness;
-- Beyla, Tempo, Pyroscope, or Alloy replacement readiness;
+- external flow agent, trace backend, external profile backend, or Alloy replacement readiness;
 - reduced privilege;
 - reduced overhead versus the existing homelab observability stack.

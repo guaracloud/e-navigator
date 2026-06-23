@@ -51,7 +51,7 @@
           <a href="#signals">Signals</a>
           <a href="#kubernetes">Kubernetes</a>
           <a href="#proof">Proof</a>
-          <a href="https://github.com/guaracloud/e-navigator">GitHub</a>
+          <a href="https://github.com/e-navigator/e-navigator">GitHub</a>
         </div>
       </nav>
     </header>
@@ -99,17 +99,17 @@
           <article class="audience">
             <h3>Platform and SRE teams</h3>
             <p>Inspect Linux and Kubernetes workloads through node-local collection, bounded attribution, and explicit deployment proof.</p>
-            <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/helm.md">Open Helm guide</a>
+            <a href="https://github.com/e-navigator/e-navigator/blob/main/documentation/helm.md">Open Helm guide</a>
           </article>
           <article class="audience">
             <h3>Observability engineers</h3>
             <p>Unify resource, network, DNS fixture, dependency, request, trace, and profiling signals behind versioned envelopes.</p>
-            <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/engineering-invariants.md">Read invariants</a>
+            <a href="https://github.com/e-navigator/e-navigator/blob/main/documentation/engineering-invariants.md">Read invariants</a>
           </article>
           <article class="audience">
             <h3>Runtime security teams</h3>
             <p>Track process and network findings without blurring synthetic, dry-run, Docker, and privileged eBPF evidence.</p>
-            <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/claims-matrix.md">Review claims</a>
+            <a href="https://github.com/e-navigator/e-navigator/blob/main/documentation/claims-matrix.md">Review claims</a>
           </article>
         </div>
       </section>
@@ -181,7 +181,7 @@
             </div>
             <div class="command-code">
               <button class="copy-button" type="button">Copy</button>
-              <pre><code>helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
+              <pre><code>helm upgrade --install e-navigator oci://ghcr.io/e-navigator/charts/e-navigator \
   --version 0.1.0 \
   --namespace e-navigator-system \
   --create-namespace</code></pre>
@@ -194,7 +194,7 @@
             </div>
             <div class="command-code">
               <button class="copy-button" type="button">Copy</button>
-              <pre><code>gh release download v0.1.0 --repo guaracloud/e-navigator --dir e-navigator-release
+              <pre><code>gh release download v0.1.0 --repo e-navigator/e-navigator --dir e-navigator-release
 jq -r '.images[0].reference' e-navigator-release/release-manifest.json</code></pre>
             </div>
           </article>
@@ -240,7 +240,7 @@ helm template e-navigator charts/e-navigator | kubectl apply --dry-run=client -f
             <li>Privileged Linux proof</li>
             <li>Deferred exporters and UI</li>
           </ul>
-          <a class="button button-secondary" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/claims-matrix.md">Open claims matrix</a>
+          <a class="button button-secondary" href="https://github.com/e-navigator/e-navigator/blob/main/documentation/claims-matrix.md">Open claims matrix</a>
         </div>
 
         <div class="roadmap production-panel" aria-labelledby="roadmap-title">
@@ -264,12 +264,12 @@ helm template e-navigator charts/e-navigator | kubectl apply --dry-run=client -f
         <p>Apache-2.0 licensed Rust and eBPF observability foundation.</p>
       </div>
       <nav aria-label="Footer links">
-        <a href="https://github.com/guaracloud/e-navigator">GitHub</a>
-        <a href="https://github.com/guaracloud/e-navigator/blob/main/README.md">README</a>
-        <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/helm.md">Helm</a>
-        <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/vision.md">Vision</a>
-        <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/claims-matrix.md">Claims matrix</a>
-        <a href="https://github.com/guaracloud/e-navigator/blob/main/CONTRIBUTING.md">Contributing</a>
+        <a href="https://github.com/e-navigator/e-navigator">GitHub</a>
+        <a href="https://github.com/e-navigator/e-navigator/blob/main/README.md">README</a>
+        <a href="https://github.com/e-navigator/e-navigator/blob/main/documentation/helm.md">Helm</a>
+        <a href="https://github.com/e-navigator/e-navigator/blob/main/documentation/vision.md">Vision</a>
+        <a href="https://github.com/e-navigator/e-navigator/blob/main/documentation/claims-matrix.md">Claims matrix</a>
+        <a href="https://github.com/e-navigator/e-navigator/blob/main/CONTRIBUTING.md">Contributing</a>
       </nav>
     </footer>
     <script src="./script.js" defer></script>

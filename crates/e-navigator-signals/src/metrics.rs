@@ -4,7 +4,6 @@ use crate::{
     ContainerContext, KubernetesContext, NetworkAddressFamily, NetworkProcessIdentity,
     NetworkProtocol,
 };
-use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MetricAggregationWindow {
@@ -61,14 +60,4 @@ pub struct NetworkGaugeMetric {
     pub remote_port: Option<u16>,
     pub container: Option<ContainerContext>,
     pub kubernetes: Option<KubernetesContext>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CompatibilityCounterMetric {
-    pub metric_name: String,
-    pub unit: String,
-    pub value: u64,
-    pub window: MetricAggregationWindow,
-    pub labels: BTreeMap<String, String>,
 }

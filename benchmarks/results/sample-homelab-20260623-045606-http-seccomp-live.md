@@ -10,7 +10,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `643ea37`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-643ea37`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-643ea37`
 - Image index digest:
   `sha256:56a1148e6ef6016d9af490a8b4e03a8d9c47b8ac7b541eebb905d300bc96c500`
 - Linux/amd64 digest:
@@ -32,12 +32,12 @@ Deployment:
   `Rollback to 99`, with DaemonSet `2/2` Ready.
 - Test rollout: Helm revision `102`.
 - The rendered manifest used `seccompProfile.type: RuntimeDefault` and image
-  `ghcr.io/guaracloud/e-navigator@sha256:56a1148e6ef6016d9af490a8b4e03a8d9c47b8ac7b541eebb905d300bc96c500`.
+  `ghcr.io/e-navigator/e-navigator@sha256:56a1148e6ef6016d9af490a8b4e03a8d9c47b8ac7b541eebb905d300bc96c500`.
 - Runtime config enabled `source.aya_http`, `source.aya_network`,
   `processor.container_attribution`, `generator.request_correlation`,
   `generator.network_metrics`, `sink.json_stdout`, and
   `sink.prometheus_http`.
-- DNS, exec, host resource, trace, profiling, runtime security, Guara
+- DNS, exec, host resource, trace, profiling, runtime security, E-Navigator
   compatibility, and OTLP modules were disabled for this proof.
 
 Runtime security posture:
@@ -93,7 +93,7 @@ Cleanup:
 - Rolled Helm release `e-navigator-bench` back to revision `101`; Helm recorded
   final revision `103` as `Rollback to 101`.
 - Final DaemonSet state was `2/2` Ready on baseline image
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
 - Final label-scoped inventory for `e-nav-run=20260623-045606` reported no
   resources in `e-navigator-bench`.
 

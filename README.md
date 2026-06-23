@@ -7,8 +7,7 @@ runtime security, and diagnostics.
 registered signal pipeline, JSON stdout output, Kubernetes DaemonSet packaging,
 release-signing workflow, strict non-privileged quality gates, and bounded
 foundations for runtime, network, DNS fixture, resource, dependency, trace,
-  request, profiling, Guara compatibility projection, registered export
-  surfaces, and security signals. See
+request, profiling, registered export surfaces, and security signals. See
 [documentation/claims-matrix.md](documentation/claims-matrix.md) for the exact
 claim boundaries.
 
@@ -28,8 +27,8 @@ questions without application SDKs or sidecars:
   privileged runtime proven?
 
 The default sink emits newline-delimited JSON. Opt-in Prometheus HTTP and OTLP
-HTTP sink modules are registered, but live scrape, collector ingestion,
-Pyroscope, pprof, storage, and UI proof still require recorded runtime evidence.
+HTTP sink modules are registered, but production collector ingestion, pprof,
+storage, and UI proof still require recorded runtime evidence.
 
 ## Architecture at a glance
 
@@ -48,7 +47,7 @@ Linux / Kubernetes node
   attribution with structured warnings when context is missing.
 - **Generators:** runtime security findings, network/resource metrics,
   dependency edges, trace service paths, request spans, profiling windows, and
-  optional Guara compatibility projections.
+  native flow byte metrics.
 - **Sinks:** JSON stdout by default, plus opt-in Prometheus HTTP and OTLP HTTP
   sink modules with bounded local tests. OTLP metric records are encoded as
   protobuf `ExportMetricsServiceRequest` payloads, and OTLP trace records with
@@ -61,8 +60,8 @@ Linux / Kubernetes node
   `20260623-065356-live-profile-otlp-aya` then proved live Aya CPU profile
   observations and generated profiling sessions flowing through
   `sink.otlp_http` as development-status OTLP profile protobuf accepted by a
-  namespace-local Collector from pushed image `sha-6037089`. No Tempo,
-  Pyroscope, pprof, or profile storage compatibility proof is claimed.
+  namespace-local Collector from pushed image `sha-6037089`. No production
+  trace store, profile store, pprof, or UI proof is claimed.
 
 The pipeline is statically registered by design. Runtime plugin loading is not
 part of the current architecture; see
@@ -117,7 +116,7 @@ Tagged releases publish the container image, OCI Helm chart, SBOMs, checksums,
 signatures, and release manifest. After a release exists, install the chart with:
 
 ```bash
-helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
+helm upgrade --install e-navigator oci://ghcr.io/e-navigator/charts/e-navigator \
   --version 0.1.0 \
   --namespace e-navigator-system \
   --create-namespace
@@ -151,9 +150,9 @@ Implemented and non-privileged proven:
   absolute-form HTTP request targets.
 - CPU profiling foundations through raw decode, profile normalization, and
   generator tests.
-- Guara compatibility contracts for the Beyla L4 metric label set, Tempo
-  service-graph resource labels, Pyroscope CPU profile identity, and Guara
-  tenant scoping through golden/unit tests.
+- Native signal contracts for flow byte counters, trace service resources, CPU
+  profile metric identity, and bounded Kubernetes workload labels through
+  golden/unit tests.
 - Kubernetes packaging through Helm lint/template and schema validation.
 - Supply-chain checks through `cargo deny`, `cargo audit`, and
   `cargo machete`.
@@ -268,7 +267,7 @@ Implemented with narrower or deferred runtime claims:
   E-Navigator metric series such as `network_connection_open_count`. Follow-up
   `20260623-131846` deployed published image `sha-5469a11` and kept the direct
   Prometheus HTTP endpoint plus network metric output healthy, but did not run
-  Prometheus API checks or prove `beyla_network_flow_bytes_total`.
+  Prometheus API checks or prove `network_flow_bytes`.
 - OTLP HTTP support is an opt-in registered sink. Local fake-collector tests
   prove trace records with valid trace/span IDs are posted as OTLP protobuf
   `ExportTraceServiceRequest` payloads with `application/x-protobuf`, metric
@@ -301,20 +300,18 @@ Implemented with narrower or deferred runtime claims:
   terminating the runner or stopping Prometheus/JSON stdout. Homelab run
   `20260622-001716-published-image-live` repeated the real Alloy HTTP 400
   failure boundary with pushed GHCR image `sha-d3167e3` and kept both pods Ready
-  with JSON stdout and Prometheus HTTP active. These runs are not Tempo,
-  Pyroscope, Alloy, or broad production collector compatibility proof.
-- Guara Beyla L4 compatibility remains generator and formatter proven, with a
-  recorded live boundary. Homelab run `20260621-220029-guara-compat-live`
-  enabled `generator.guara_compat` while Prometheus scraping was healthy and
-  other network metrics were queryable, but `beyla_network_flow_bytes_total`
-  produced 0 direct endpoint lines and 0 Prometheus results because the live Aya
-  path did not emit `network_flow_summary` records. Later homelab runs proved
-  ambient and controlled `network_flow_summary` records, including
+  with JSON stdout and Prometheus HTTP active. These runs are not trace backend,
+  external profile backend, Alloy, or broad production collector compatibility proof.
+- Native L4 flow byte metrics are generator and formatter proven. The native
+  signal name is `network.flow.bytes`, and Prometheus renders it as
+  `network_flow_bytes`. Earlier homelab runs proved byte-bearing TCP close
+  records and Kubernetes-attributed `network_flow_summary` records, including
   `20260623-151140-collector-workload-wait-live`, which observed 18 egress TCP
   flow summaries with source-side Kubernetes attribution for the generated
-  workload on `homelab-02`. Positive `beyla_network_flow_bytes_total` export,
-  destination workload attribution, Guara `proj-*` scope, Prometheus server
-  queryability, and symmetric-node controlled capture remain unproven.
+  workload on `homelab-02`. Positive live `network.flow.bytes` export,
+  destination workload attribution, Prometheus server queryability, and
+  symmetric-node controlled capture remain unproven until rerun with the native
+  metric path.
 - CPU profile sampling is an explicit opt-in source. Homelab run
   `20260621-203358-profile-live` proved `source.aya_cpu_profile` samples and
   `generator.profiling` sessions for a controlled CPU workload, including
@@ -355,7 +352,7 @@ Implemented with narrower or deferred runtime claims:
   upgraded the homelab benchmark release to image `sha-5469a11`, kept the
   DaemonSet `2/2` Ready with direct Prometheus HTTP `200 OK`, and left the
   release on revision `128`; it does not prove Prometheus server scrape or
-  Guara-compatible byte-flow export.
+  native byte-flow export.
 - The published-image follow-up `20260623-135438-profile-formatter-image-live`
   upgraded the homelab benchmark release to image `sha-6c04aaa`, kept the
   DaemonSet `2/2` Ready with direct Prometheus HTTP `200 OK`, and left the
@@ -371,16 +368,14 @@ For the authoritative and more detailed version, use
 
 ## What is not claimed yet
 
-E-Navigator is not yet a full observability backend, Pyroscope replacement,
-Tempo replacement, pprof server, flamegraph UI, profile store, trace store, or
-critical-path analysis engine.
+E-Navigator is not yet a full observability backend, pprof server, flamegraph
+UI, profile store, trace store, or critical-path analysis engine.
 
 The following are intentionally not claimed as implemented production behavior:
 
 - production collector or backend OTLP deployment compatibility;
-- pprof or Pyroscope export;
-- complete Beyla replacement or alloy-profiles replacement;
-- live Beyla-compatible `beyla_network_flow_bytes_total` export from traffic;
+- pprof export;
+- live native `network.flow.bytes` export from traffic;
 - profile storage, flamegraph rendering, or bottleneck analysis;
 - complete live HTTP/gRPC parsing from real traffic; `source.aya_http` has
   bounded opt-in live proof for observed cleartext cluster traffic and

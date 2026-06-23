@@ -68,7 +68,7 @@ Unless the exact proof is present in a recorded result set, do not claim:
   status-code extraction, route templates, retries, application errors, or
   multi-iovec HTTP header assembly;
 - Prometheus scrape/export compatibility;
-- Tempo, Alloy, Pyroscope, pprof, or collector-ingested OTLP compatibility;
+- trace backend, Alloy, external profile backend, pprof, or collector-ingested OTLP compatibility;
 - perf-event CPU profiling parity beyond the exact recorded live CPU profile
   runs;
 - Kubernetes runtime readiness;
@@ -78,8 +78,8 @@ Unless the exact proof is present in a recorded result set, do not claim:
   separate claims;
 - host resource accuracy, lossless process/cgroup enumeration, or warning-free
   collection beyond the exact recorded host resource runs;
-- production OTLP, pprof, Pyroscope, Prometheus, or Tempo export;
-- Beyla, Alloy, Tempo, Prometheus, or Pyroscope replacement readiness.
+- production OTLP, pprof, external profile backend, Prometheus, or trace backend export;
+- external flow agent, Alloy, trace backend, Prometheus, or external profile backend replacement readiness.
 
 Synthetic fixtures, Docker smoke tests, Helm rendering, and kubeconform checks
 remain non-privileged evidence.

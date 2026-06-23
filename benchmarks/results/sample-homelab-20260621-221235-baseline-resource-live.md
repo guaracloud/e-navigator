@@ -9,9 +9,9 @@ This is a curated summary of the raw artifacts in
 - Namespace: `e-navigator-bench`
 - Release: `e-navigator-bench`
 - Mode: collection-only; no Helm upgrade was applied
-- Image observed in live values: `ghcr.io/guaracloud/e-navigator:sha-5c417c0`
+- Image observed in live values: `ghcr.io/e-navigator/e-navigator:sha-5c417c0`
 - Required image for the broader objective:
-  `ghcr.io/guaracloud/e-navigator:sha-8ab271c`
+  `ghcr.io/e-navigator/e-navigator:sha-8ab271c`
 - Image substitution: yes, because the live homelab release was running
   `sha-5c417c0`
 - Pull secret in live Helm values: `ghcr-e-navigator-pull`
@@ -124,8 +124,8 @@ This run does not prove:
 
 - reduced overhead;
 - reduced privilege;
-- Beyla replacement readiness;
-- Tempo, Pyroscope, Alloy, or production collector compatibility;
+- external flow agent replacement readiness;
+- trace backend, external profile backend, Alloy, or production collector compatibility;
 - runtime DNS packet capture;
-- live `beyla_network_flow_bytes_total` export;
+- live `network_flow_bytes` export;
 - a clean namespace free of older proof resources.

@@ -10,7 +10,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `90111f5730a431ed9dbf61629afc69230b1b0ae2`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-90111f5`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-90111f5`
 - Image index digest:
   `sha256:deafa27690d9c987ae1ffe5d72bfdfc909547549fb51407919727bab958d2072`
 - Linux/amd64 digest:
@@ -37,7 +37,7 @@ Deployment:
   `processor.container_attribution`, `generator.request_correlation`,
   `generator.network_metrics`, `sink.json_stdout`, and
   `sink.prometheus_http`.
-- DNS, exec, host resource, trace, profiling, runtime security, Guara
+- DNS, exec, host resource, trace, profiling, runtime security, E-Navigator
   compatibility, and OTLP modules were disabled for this proof.
 - Both E-Navigator pods stayed Ready and reported `Seccomp: 2`,
   `NoNewPrivs: 1`, UID `0`, and `CapEff: 000001c401283004`.

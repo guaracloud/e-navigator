@@ -4,14 +4,8 @@ description: Rust and eBPF signal plane for Linux and Kubernetes observability
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
-home: https://github.com/guaracloud/e-navigator
-sources:
-  - https://github.com/guaracloud/e-navigator
 keywords:
   - ebpf
   - observability
   - profiling
   - kubernetes
-maintainers:
-  - name: GuaraCloud
-    url: https://github.com/guaracloud

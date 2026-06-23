@@ -196,16 +196,6 @@ fn resource_attributes(
             .unwrap_or_else(|| kubernetes.pod_name.clone());
         resource.insert("service.name".to_string(), serde_json::json!(service_name));
         resource.insert("service_name".to_string(), serde_json::json!(service_name));
-        resource.insert(
-            "catalog_slug".to_string(),
-            serde_json::json!(
-                kubernetes
-                    .labels
-                    .get("guara.cloud/catalog-slug")
-                    .cloned()
-                    .unwrap_or_default()
-            ),
-        );
         resource.insert("source".to_string(), serde_json::json!("e-navigator"));
     }
     resource

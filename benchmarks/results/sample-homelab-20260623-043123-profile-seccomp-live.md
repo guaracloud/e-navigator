@@ -12,7 +12,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `6c739f8`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-6c739f8`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-6c739f8`
 - Image index digest:
   `sha256:124c622387a5355a9b5f05a6e133859a1f2f5f25d41beac53942d5d7cc3d1ccb`
 - Linux/amd64 digest:
@@ -39,7 +39,7 @@ Live configuration:
   `generator.profiling`, `sink.json_stdout`, and `sink.prometheus_http` were
   enabled.
 - `sink.otlp_http`, network, exec, DNS, HTTP, resource, trace, request,
-  runtime-security, and Guara compatibility modules were disabled for this run.
+  runtime-security, and native export modules were disabled for this run.
 
 Observed evidence:
 
@@ -80,7 +80,7 @@ Cleanup:
 - Rolled Helm release `e-navigator-bench` back to revision `99`; Helm recorded
   revision `101` as `Rollback to 99`.
 - Final DaemonSet state was `2/2` Ready on the baseline image
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
 - Final label-scoped inventory for `e-nav-run in (20260623-043123,
   20260623-043123-hot)` reported no resources in `e-navigator-bench`.
 
@@ -96,7 +96,7 @@ Not proven:
 
 - Controlled workload CPU profile attribution under RuntimeDefault seccomp.
 - Profile samples for the BusyBox controlled workloads.
-- Pyroscope write transport, pprof, profile storage, or flamegraph export.
+- external profile backend write transport, pprof, profile storage, or flamegraph export.
 - Symbolization or demangling quality beyond raw IP-style frames.
 - Non-root operation, capability reduction, or removal of `CAP_SYS_ADMIN`.
 - RuntimeDefault compatibility for DNS or HTTP source modes.

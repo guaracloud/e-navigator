@@ -24,8 +24,7 @@ pub use otel_metric::{
 pub use otel_profile::{OtelProfileFrame, OtelProfileRecord, format_otel_profile_record};
 pub use otel_trace::{OtelTraceRecord, OtelTraceRecordKind, format_otel_trace_record};
 pub use otlp_http::OtlpHttpSink;
-pub use profile_format::{PYROSCOPE_CPU_PROFILE_IDENTITY, ProfileRecord, format_profile_record};
-pub use prometheus::{
-    PrometheusHttpSink, PrometheusMetricLine, format_prometheus_compatibility_metric,
-    render_prometheus_text,
+pub use profile_format::{
+    E_NAVIGATOR_CPU_PROFILE_METRIC_NAME, ProfileRecord, format_profile_record,
 };
+pub use prometheus::{PrometheusHttpSink, PrometheusMetricLine, render_prometheus_text};

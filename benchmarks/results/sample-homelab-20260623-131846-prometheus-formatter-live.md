@@ -12,7 +12,7 @@ Preconditions:
 - Git commit: `5469a11`
 - CI run: `28028794649`, success
 - Image publication run: `28028794673`, success
-- Published tag: `ghcr.io/guaracloud/e-navigator:sha-5469a11`
+- Published tag: `ghcr.io/e-navigator/e-navigator:sha-5469a11`
 - Image index digest:
   `sha256:e5e7226fbbfce4ebb894dd3de5000c72f8f82e50eba520c72267b923f0bbe780`
 - Linux amd64 digest:
@@ -32,7 +32,7 @@ Observed evidence:
 - DaemonSet `e-navigator-bench` rolled out successfully and stayed `2/2` Ready
   on `homelab-01` and `homelab-02`.
 - The live DaemonSet image was
-  `ghcr.io/guaracloud/e-navigator@sha256:2de950aece9580dcb5c896d5df386899d12f76ccfd34b97535a34d8a3edc8738`.
+  `ghcr.io/e-navigator/e-navigator@sha256:2de950aece9580dcb5c896d5df386899d12f76ccfd34b97535a34d8a3edc8738`.
 - Direct Prometheus HTTP probes through the service returned `200 OK` for
   `/healthz`, `/readyz`, and `/metrics`.
 - Direct `/metrics` exposed 40 metric lines across 8 network metric families.
@@ -62,7 +62,7 @@ Not proven:
 
 - Prometheus server active-target or query proof; the collector did not have a
   Prometheus API URL or service configured.
-- `beyla_network_flow_bytes_total` live export; no controlled Guara-producing
+- `network_flow_bytes` live export; no controlled native metric-producing
   workload was run and no matching direct `/metrics` or JSON stdout lines were
   observed.
 - Reduced privilege, reduced overhead, production exporter throughput, or any

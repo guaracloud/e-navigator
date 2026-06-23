@@ -77,7 +77,7 @@ Live action:
   - `E_NAVIGATOR_HOMELAB_UNINSTALL_RELEASE=0`
 - Helm release `e-navigator-bench` upgraded to revision `134`.
 - Live pods ran published image tag `sha-6c15296` with image ID:
-  `ghcr.io/guaracloud/e-navigator@sha256:2e512f069c0beb18bc16d600ef8386f4d98b1f42728c201a61db7a2dce108b57`.
+  `ghcr.io/e-navigator/e-navigator@sha256:2e512f069c0beb18bc16d600ef8386f4d98b1f42728c201a61db7a2dce108b57`.
 - DaemonSet `e-navigator-bench` stayed `2/2` Ready on `homelab-01` and
   `homelab-02`.
 - `workload-wait.txt` recorded:
@@ -166,8 +166,8 @@ Partial:
 Not proven:
 
 - Symmetric controlled workload attribution across both homelab nodes.
-- `beyla_network_flow_bytes_total` live export.
+- `network_flow_bytes` live export.
 - Prometheus server active-target or query proof. The collector did not have a
   Prometheus API URL or service configured inside `e-navigator-bench`.
-- New HTTP, DNS, profile, OTLP, or Guara compatibility behavior.
+- New HTTP, DNS, profile, OTLP, or native export behavior.
 - Reduced privilege or reduced overhead.

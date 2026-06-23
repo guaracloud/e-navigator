@@ -8,7 +8,7 @@ This is a curated summary of the raw artifacts in
 - Context: `staging`
 - Namespace: `e-navigator-bench`
 - Release: `e-navigator-bench`
-- Image: `ghcr.io/guaracloud/e-navigator:sha-8ab271c`
+- Image: `ghcr.io/e-navigator/e-navigator:sha-8ab271c`
 - Pull secret: `ghcr-pull-secret` in `e-navigator-bench`
 - Observed nodes: `homelab-01` and `homelab-02`
 
@@ -51,9 +51,9 @@ Prometheus kubelet/cAdvisor queries also returned container resource metrics:
   - `e-navigator-bench-wbncb`: about `54.8Mi`
   - `e-navigator-bench-cmxkb`: about `40.6Mi`
 
-For context only, Prometheus returned Beyla 10-minute CPU averages of about
+For context only, Prometheus returned external flow agent 10-minute CPU averages of about
 `0.0088` and `0.0049` cores, and memory averages of about `258.3Mi` and
-`22.2Mi` for the two Beyla pods. This is not a replacement or reduced-overhead
+`22.2Mi` for the two external flow agent pods. This is not a replacement or reduced-overhead
 claim because the workloads, configuration, and signal responsibilities are not
 equivalent.
 
@@ -105,9 +105,9 @@ run, or controlled-workload attribution.
 
 ## OTEL And Collection Surfaces
 
-The homelab observability stack has Alloy, Prometheus, Tempo, Loki, Beyla, and
+The homelab observability stack has Alloy, Prometheus, trace backend, Loki, external flow agent, and
 node-exporter running in `observability-system`. Alloy exposes OTLP receivers on
-`4317` and `4318`, forwards traces to Tempo, and converts OTLP metrics to
+`4317` and `4318`, forwards traces to trace backend, and converts OTLP metrics to
 Prometheus remote write.
 
 E-Navigator did not export to that OTLP path in this run:
@@ -138,8 +138,8 @@ The following focused checks passed and their output was captured:
 - `cargo test --locked -p e-navigator-signals golden_signal_families_round_trip_without_schema_drift`
 
 The sink tests prove formatter and exporter-foundation behavior only. They do
-not prove production OTLP transport, Prometheus scrape export, Tempo ingestion,
-Pyroscope export, or replacement readiness.
+not prove production OTLP transport, Prometheus scrape export, trace backend ingestion,
+external profile backend export, or replacement readiness.
 
 ## Proof Boundary
 
@@ -150,16 +150,16 @@ This run proves:
 - Prometheus kubelet/cAdvisor resource metrics for E-Navigator containers;
 - rendered and effective Linux capabilities for the E-Navigator process;
 - live Aya exec, Aya network, and host resource signal emission;
-- the existence of the homelab Alloy OTLP receiver and Tempo endpoint;
+- the existence of the homelab Alloy OTLP receiver and trace backend endpoint;
 - local OTEL-compatible formatter and HTTP exporter-foundation tests.
 
 This run does not prove:
 
-- E-Navigator OTLP export to Alloy or Tempo;
+- E-Navigator OTLP export to Alloy or trace backend;
 - E-Navigator Prometheus scrape export;
 - DNS packet capture;
 - CPU profiling in this run;
 - controlled-workload attribution;
-- Pyroscope, pprof, Tempo, or production collector compatibility;
-- Beyla, Alloy, Tempo, Prometheus, or Pyroscope replacement readiness;
+- external profile backend, pprof, trace backend, or production collector compatibility;
+- external flow agent, Alloy, trace backend, Prometheus, or external profile backend replacement readiness;
 - reduced-overhead or reduced-privilege readiness.

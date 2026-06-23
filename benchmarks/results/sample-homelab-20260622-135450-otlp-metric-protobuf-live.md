@@ -10,7 +10,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `e7016b5808dbb269981e62aef288469810255bc0`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-e7016b5`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-e7016b5`
 - Image index digest: `sha256:d5697141e1b56ad8ba2e72ca541ccc096c24156e3a5e5c4b0bf1af13fb451c83`
 - Linux/amd64 digest: `sha256:09d329565302616fcef011ff22e9b9e7c896e0294cd3197bc0382f0bedec8d1c`
 - CI run: `27969101982`
@@ -54,7 +54,7 @@ Live workload:
 - The captured Job and collector logs contained no sink transport failure,
   HTTP 4xx/5xx, collector rejection, panic, or decode error text in the
   refined negative search.
-- Temporary Job, ConfigMap, Deployment, and Service resources were deleted;
+- trace backendrary Job, ConfigMap, Deployment, and Service resources were deleted;
   final label-scoped inventory reported no resources found.
 
 Outcome: `proven` for namespace-local OpenTelemetry Collector acceptance of
@@ -64,7 +64,7 @@ process, and container metric records.
 Not proven:
 
 - OTLP protobuf profiles.
-- Tempo, Prometheus remote-write, or Pyroscope storage/query behavior.
+- trace backend, Prometheus remote-write, or external profile backend storage/query behavior.
 - Live application HTTP/gRPC parsing.
 - Live Aya/eBPF generation of these metric records.
 - Production collector compatibility outside this namespace-local

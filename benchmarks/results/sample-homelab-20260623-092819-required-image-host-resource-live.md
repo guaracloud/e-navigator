@@ -12,7 +12,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Required benchmark image tag:
-  `ghcr.io/guaracloud/e-navigator:sha-8ab271c`
+  `ghcr.io/e-navigator/e-navigator:sha-8ab271c`
 - Image index digest:
   `sha256:249ad67fa8578ade9ecc1279bcf52a52ae6038a342b7c68844ebfd7a38d4e34e`
 - Linux/amd64 digest:
@@ -23,7 +23,7 @@ Local proof before deployment:
 - `cargo run --locked -p e-navigator-cli -- --source synthetic --config benchmarks/results/raw/20260623-092819-required-image-host-resource-live/e-navigator.toml --validate-config`
 - `helm lint charts/e-navigator -f benchmarks/results/raw/20260623-092819-required-image-host-resource-live/values.yaml`
 - `helm template e-navigator-bench charts/e-navigator -n e-navigator-bench -f benchmarks/results/raw/20260623-092819-required-image-host-resource-live/values.yaml`
-- `docker run --rm --platform linux/amd64 -v "$PWD/benchmarks/results/raw/20260623-092819-required-image-host-resource-live/e-navigator.toml:/tmp/e-navigator.toml:ro" ghcr.io/guaracloud/e-navigator:sha-8ab271c --source synthetic --config /tmp/e-navigator.toml --validate-config`
+- `docker run --rm --platform linux/amd64 -v "$PWD/benchmarks/results/raw/20260623-092819-required-image-host-resource-live/e-navigator.toml:/tmp/e-navigator.toml:ro" ghcr.io/e-navigator/e-navigator:sha-8ab271c --source synthetic --config /tmp/e-navigator.toml --validate-config`
 - `kubectl --context staging -n e-navigator-bench apply --dry-run=server -f benchmarks/results/raw/20260623-092819-required-image-host-resource-live/rendered.yaml`
 
 Live configuration:
@@ -49,7 +49,7 @@ Observed evidence:
   - `e-navigator-bench-cmf7v` on `homelab-02`
   - `e-navigator-bench-dd986` on `homelab-01`
 - Both pods ran
-  `ghcr.io/guaracloud/e-navigator@sha256:249ad67fa8578ade9ecc1279bcf52a52ae6038a342b7c68844ebfd7a38d4e34e`.
+  `ghcr.io/e-navigator/e-navigator@sha256:249ad67fa8578ade9ecc1279bcf52a52ae6038a342b7c68844ebfd7a38d4e34e`.
 - `/proc/1/status` inside both pods reported UID/GID `0`, `NoNewPrivs: 1`,
   `Seccomp: 2`, and `CapEff: 000001c401283004`.
 - Captured JSON stdout contained the following signal totals:
@@ -94,7 +94,7 @@ Cleanup:
 - Rolled Helm release `e-navigator-bench` back to revision `109`; Helm recorded
   revision `111` as `Rollback to 109`.
 - Final DaemonSet state was `2/2` Ready on the baseline image
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
 
 Outcome: `proven` for live `source.host_resource` output and
 `generator.resource_metrics` output on the required benchmark image
@@ -105,7 +105,7 @@ Not proven:
 
 - Prometheus HTTP export on `sha-8ab271c`; the required image predates the
   current `sink.prometheus_http` config path used in later runs.
-- DNS, HTTP, profile, OTLP, Tempo, Pyroscope, Alloy, or Beyla compatibility on
+- DNS, HTTP, profile, OTLP, trace backend, external profile backend, Alloy, or external flow agent compatibility on
   `sha-8ab271c`.
 - Warning-free host resource collection.
 - Host resource accuracy against an independent node-exporter or cAdvisor

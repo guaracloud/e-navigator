@@ -5,7 +5,7 @@
 - Context: `staging`
 - Namespace: `e-navigator-bench`
 - Commit: `7ac7ef2dc8b2fa14a25590d8bd85cb5328321591`
-- Image tag: `ghcr.io/guaracloud/e-navigator:sha-7ac7ef2`
+- Image tag: `ghcr.io/e-navigator/e-navigator:sha-7ac7ef2`
 - Image index digest:
   `sha256:c8fe0da75d741e2ce2993e7006d5384fe6f76904e4d00b10e8fbdc30bc7c5c48`
 - Linux amd64 digest:
@@ -36,7 +36,7 @@
 - Test rollout: Helm revision 72 with `source.aya_http` and
   `generator.request_correlation` enabled.
 - Test image:
-  `ghcr.io/guaracloud/e-navigator@sha256:7967acb8ca974c6e0fbdd578c33d1229bfb04b8112ebbc7c546eccaea3b99818`.
+  `ghcr.io/e-navigator/e-navigator@sha256:7967acb8ca974c6e0fbdd578c33d1229bfb04b8112ebbc7c546eccaea3b99818`.
 - DaemonSet rollout completed and stayed `2/2` Ready with zero restarts.
 - Startup-log scan found none of the previous verifier-failure markers:
   `BPF_PROG_LOAD`, `Invalid argument`, `last insn`, `processed 0 insns`, or
@@ -88,7 +88,7 @@ Filtered E-Navigator JSON stdout contained:
 - Rolled Helm back to revision 73, described by Helm as rollback to revision
   71.
 - Verified final DaemonSet image:
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
 - Verified final DaemonSet `2/2` Ready with zero restarts.
 - Verified both temporary proof Jobs were absent.
 

@@ -1,16 +1,16 @@
-# Homelab Sample: Guara L4 Flow Slice
+# Homelab Sample: E-Navigator L4 Flow Slice
 
 Runs:
 
-- `20260622-111022-guara-flow-live`
-- `20260622-111448-guara-flow-python-client-live`
+- `20260622-111022-flow-live`
+- `20260622-111448-flow-python-client-live`
 
 Scope: `staging` context, `e-navigator-bench` namespace only.
 
 Image:
 
 - Git SHA: `762561f1c7756637d14116213c781aa002f89a67`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-762561f`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-762561f`
 - Image index digest: `sha256:0aa3ff78df749d74973e1801b976c4e72aa351d1a4b0a758a85d148ae333c070`
 - Deployed amd64 digest: `sha256:d520fd8b7bd0a4042c31513034d43f716b75407a888b47468f19ca3504629a5a`
 - GitHub CI run: `27957831033`
@@ -21,7 +21,7 @@ Deployment evidence:
 - Helm release: `e-navigator-bench`
 - Helm revision after the main rollout: `41`
 - DaemonSet pods: `e-navigator-bench-xrsdw` on `homelab-01` and `e-navigator-bench-pgrw2` on `homelab-02`
-- Both DaemonSet pods used `ghcr.io/guaracloud/e-navigator@sha256:d520fd8b7bd0a4042c31513034d43f716b75407a888b47468f19ca3504629a5a`
+- Both DaemonSet pods used `ghcr.io/e-navigator/e-navigator@sha256:d520fd8b7bd0a4042c31513034d43f716b75407a888b47468f19ca3504629a5a`
 
 Local proof before deployment:
 
@@ -40,24 +40,24 @@ Local proof before deployment:
 - `scripts/quality.sh`
 - `git diff --check`
 
-Main live run `20260622-111022-guara-flow-live`:
+Main live run `20260622-111022-flow-live`:
 
 - Two BusyBox server pods and two BusyBox client pods ran in `e-navigator-bench`.
 - Client pods completed 180 HTTP requests each, 360 total, against `10.42.248.254:8080`.
-- Captured signal counts included 332 `network_connection_close`, 234 byte-bearing close records, 53 `network_flow_summary`, and 0 `beyla_network_flow_bytes_total` JSON signals.
+- Captured signal counts included 332 `network_connection_close`, 234 byte-bearing close records, 53 `network_flow_summary`, and 0 `network_flow_bytes` JSON signals.
 - Direct `/healthz` and `/readyz` were captured from both DaemonSet pods.
-- Direct `/metrics` exposed network metrics, but no `beyla_network_flow_bytes_total`.
+- Direct `/metrics` exposed network metrics, but no `network_flow_bytes`.
 - CPU/RSS samples showed `e-navigator-bench-xrsdw` at `17m`-`23m` CPU and `26Mi`-`27Mi` RSS, and `e-navigator-bench-pgrw2` at `6m` CPU and `20Mi` RSS during the sample window.
-- Temporary workload pods were deleted.
+- trace backendrary workload pods were deleted.
 
-Follow-up live run `20260622-111448-guara-flow-python-client-live`:
+Follow-up live run `20260622-111448-flow-python-client-live`:
 
 - Two Python client pods stayed alive after socket reads to test attribution timing.
 - Client pods reported 80 requests each, 160 total, against `10.42.248.240:8080`.
-- Captured signal counts included 853 `network_connection_close`, 400 `network_flow_summary`, and 0 `beyla_network_flow_bytes_total` JSON signals.
+- Captured signal counts included 853 `network_connection_close`, 400 `network_flow_summary`, and 0 `network_flow_bytes` JSON signals.
 - Server-IP records for the controlled Python workload were captured as `EINPROGRESS` connection failures, not byte-bearing closes.
-- Controlled evidence counts were 0 byte-bearing closes, 0 controlled `network_flow_summary` rows, and 0 Beyla JSON signals.
-- Temporary workload pods were deleted.
+- Controlled evidence counts were 0 byte-bearing closes, 0 controlled `network_flow_summary` rows, and 0 external flow agent JSON signals.
+- trace backendrary workload pods were deleted.
 
 Outcome: `partial`.
 
@@ -70,13 +70,13 @@ Proven:
 Not proven:
 
 - Controlled workload `network_flow_summary` with pod/container attribution.
-- Direct or Prometheus `beyla_network_flow_bytes_total` export from live traffic.
+- Direct or Prometheus `network_flow_bytes` export from live traffic.
 - Byte accounting completeness for nonblocking connect paths.
 - Prometheus API query evidence for this slice.
 
 Non-claims:
 
-- No Beyla replacement claim.
+- No external flow agent replacement claim.
 - No production-ready claim.
 - No reduced-overhead claim.
 - No reduced-privilege claim.

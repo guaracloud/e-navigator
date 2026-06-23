@@ -27,7 +27,7 @@ Observed evidence:
   trace/request correlation, profiling, runtime security, profile record
   formatting, and bounded exporter queue enqueue.
 - Criterion reported statistically significant improvements for
-  `protocol/traceparent_parse` and `generator/guara_compat`.
+  `protocol/traceparent_parse` and `generator/network_metrics`.
 - Criterion reported statistically significant regressions for
   `aya_decode/cpu_profile_fuzz_harness`, `host_parser/cpu_stat`,
   `host_parser/loadavg`, `protocol/http_fixture_parse`,

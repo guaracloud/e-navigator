@@ -24,7 +24,6 @@ fn golden_signal_families_round_trip_without_schema_drift() {
             "cgroup_file_descriptor_observation".to_string(),
             "cgroup_memory_observation".to_string(),
             "cgroup_pids_observation".to_string(),
-            "compatibility_counter_metric".to_string(),
             "dependency_edge".to_string(),
             "dns_counter_metric".to_string(),
             "dns_latency_metric".to_string(),

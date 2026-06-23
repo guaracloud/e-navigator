@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Produce live `network_flow_summary` records from attributed TCP close events with bounded byte counters, then let `generator.guara_compat` export `beyla_network_flow_bytes_total`.
+**Goal:** Produce live `network_flow_summary` records from attributed TCP close events with bounded byte counters, then let `generator.network_metrics` export `network_flow_bytes`.
 
-**Architecture:** Keep the static `Source -> Processor -> Generator -> Sink` pipeline. The Aya network source records byte counters on connected TCP file descriptors and includes them on close events; `generator.network_metrics` derives `network_flow_summary` after container/Kubernetes attribution; downstream `generator.guara_compat` projects the summary to the Beyla-compatible Prometheus metric.
+**Architecture:** Keep the static `Source -> Processor -> Generator -> Sink` pipeline. The Aya network source records byte counters on connected TCP file descriptors and includes them on close events; `generator.network_metrics` derives `network_flow_summary` after container/Kubernetes attribution; downstream `generator.network_metrics` projects the summary to the native Prometheus metric.
 
 **Tech Stack:** Rust 2024, Aya eBPF tracepoints, existing signal envelopes, existing generator fan-out, Prometheus HTTP sink, Helm homelab deployment.
 
@@ -29,11 +29,11 @@
   - Every `kubectl`/`helm` command uses namespace `e-navigator-bench`.
   - Pushed GHCR image is deployed by Helm and both DaemonSet pods are Ready with zero restarts.
   - E-Navigator logs contain live `network_flow_summary` records for controlled workload traffic.
-  - Direct `/metrics` contains nonzero `beyla_network_flow_bytes_total` lines.
-  - Homelab Prometheus returns nonzero `beyla_network_flow_bytes_total` results.
+  - Direct `/metrics` contains nonzero `network_flow_bytes` lines.
+  - Homelab Prometheus returns nonzero `network_flow_bytes` results.
 - Negative evidence:
   - No `network_flow_summary` lines in logs.
-  - `beyla_network_flow_bytes_total` absent or only zero.
+  - `network_flow_bytes` absent or only zero.
   - Controlled workload not represented in emitted summaries or Prometheus results.
   - DaemonSet restart/crash, sink failure flood, or context/namespace mismatch.
 
@@ -125,6 +125,6 @@ git diff --check
 
 - [ ] Commit with `feat: emit live network flow summaries`.
 - [ ] Push `main`, wait for CI and image publication, and record workflow run IDs.
-- [ ] Deploy only `ghcr.io/guaracloud/e-navigator:sha-<commit>` to `staging/e-navigator-bench`.
-- [ ] Record context, namespace, commit SHA, image digest, Helm revision, rendered values/manifests, rollout state, pod placement, pod restarts, workload manifest/logs, E-Navigator logs, `/healthz`, `/readyz`, `/metrics`, Prometheus queries, CPU/RSS samples, and cleanup/restore commands under `benchmarks/results/<timestamp>-guara-flow-live/`.
-- [ ] Update `documentation/claims-matrix.md`, `documentation/benchmark.md` if methodology changes, `documentation/guara-compatibility.md`, and a curated `benchmarks/results/sample-<timestamp>-guara-flow-live.md`.
+- [ ] Deploy only `ghcr.io/e-navigator/e-navigator:sha-<commit>` to `staging/e-navigator-bench`.
+- [ ] Record context, namespace, commit SHA, image digest, Helm revision, rendered values/manifests, rollout state, pod placement, pod restarts, workload manifest/logs, E-Navigator logs, `/healthz`, `/readyz`, `/metrics`, Prometheus queries, CPU/RSS samples, and cleanup/restore commands under `benchmarks/results/<timestamp>-flow-live/`.
+- [ ] Update `documentation/claims-matrix.md`, `documentation/benchmark.md` if methodology changes, `documentation/claims-matrix.md`, and a curated `benchmarks/results/sample-<timestamp>-flow-live.md`.

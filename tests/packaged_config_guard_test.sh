@@ -21,7 +21,6 @@ known_modules=(
   "generator.profiling"
   "generator.dependency_graph"
   "generator.runtime_security"
-  "generator.guara_compat"
   "sink.json_stdout"
   "sink.prometheus_http"
   "sink.otlp_http"

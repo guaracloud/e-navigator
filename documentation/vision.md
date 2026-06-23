@@ -16,7 +16,7 @@ The platform should require no SDKs, no sidecars, and minimal configuration when
 
 The main purpose is to be used within Kubernetes, but aimed to general use as well.
 
-In a perfect world and application, we want to replace Beyla, Pyroscope, Tempo with a single super eficient tool built with Rust.
+In a perfect world and application, we want to replace external flow agent, external profile backend, trace backend with a single super eficient tool built with Rust.
 
 ## Core Observability Pillars
 

@@ -43,5 +43,5 @@ Not proven:
 - Production service-topology extraction from live Kubernetes traffic.
 - Route-template extraction such as `/checkout/{id}`.
 - Retry, application error, or live request-ID extraction.
-- Tempo, Alloy, OTLP collector, Pyroscope, or storage compatibility.
+- trace backend, Alloy, OTLP collector, external profile backend, or storage compatibility.
 - Reduced overhead or reduced privilege.

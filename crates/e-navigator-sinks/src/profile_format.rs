@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 const PROFILE_SCHEMA: &str = "e-navigator.profile.internal.v1";
-pub const PYROSCOPE_CPU_PROFILE_IDENTITY: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
+pub const E_NAVIGATOR_CPU_PROFILE_METRIC_NAME: &str = "process.cpu.time";
 const MAX_ATTRIBUTES: usize = 16;
 const MAX_KEY_BYTES: usize = 64;
 const MAX_VALUE_BYTES: usize = 256;
@@ -147,14 +147,6 @@ fn resource_attributes(
                 .cloned()
                 .unwrap_or_else(|| kubernetes.pod_name.clone()),
         );
-        resource.insert(
-            "catalog_slug".to_string(),
-            kubernetes
-                .labels
-                .get("guara.cloud/catalog-slug")
-                .cloned()
-                .unwrap_or_default(),
-        );
         resource.insert("source".to_string(), "e-navigator".to_string());
     }
     resource
@@ -162,7 +154,9 @@ fn resource_attributes(
 
 fn profile_metric_name(kind: e_navigator_signals::ProfilingKind) -> Option<String> {
     match kind {
-        e_navigator_signals::ProfilingKind::Cpu => Some(PYROSCOPE_CPU_PROFILE_IDENTITY.to_string()),
+        e_navigator_signals::ProfilingKind::Cpu => {
+            Some(E_NAVIGATOR_CPU_PROFILE_METRIC_NAME.to_string())
+        }
         _ => None,
     }
 }

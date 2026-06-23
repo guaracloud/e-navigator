@@ -12,7 +12,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `6037089`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-6037089`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-6037089`
 - Image index digest:
   `sha256:75633eaeb8898f04d31a13898f1ceb5e37409dd39d1d06e1428626e4f24c1409`
 - Linux/amd64 digest:
@@ -33,7 +33,7 @@ Local proof before deployment:
 Live configuration:
 
 - Helm revision `96` deployed
-  `ghcr.io/guaracloud/e-navigator@sha256:75633eaeb8898f04d31a13898f1ceb5e37409dd39d1d06e1428626e4f24c1409`.
+  `ghcr.io/e-navigator/e-navigator@sha256:75633eaeb8898f04d31a13898f1ceb5e37409dd39d1d06e1428626e4f24c1409`.
 - Runtime args were `--source aya-cpu-profile --config /etc/e-navigator/e-navigator.toml`.
 - `source.aya_cpu_profile`, `generator.profiling`, `sink.json_stdout`,
   `sink.prometheus_http`, and `sink.otlp_http` were enabled.
@@ -74,7 +74,7 @@ Cleanup:
 - Rolled Helm release `e-navigator-bench` back to revision `97`, description
   `Rollback to 95`.
 - Final DaemonSet image was restored to
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
 - Final DaemonSet state was `2/2 ready`.
 - Final label-scoped inventory for `e-nav-run=20260623-065356` reported no
   resources in `e-navigator-bench`.
@@ -86,10 +86,10 @@ on the `/v1development/profiles` route.
 
 Not proven:
 
-- Pyroscope write transport, pprof, profile storage, or flamegraph export.
+- external profile backend write transport, pprof, profile storage, or flamegraph export.
 - Symbolization or demangling quality beyond raw IP-style live stack frame
   labels.
-- Broad production Collector, Tempo, Alloy, or Pyroscope compatibility.
+- Broad production Collector, trace backend, Alloy, or external profile backend compatibility.
 - Collector debug output preserving the controlled workload's exact pod name;
   the workload pod identity was proven in E-Navigator JSON stdout before export,
   while the captured Collector debug excerpts showed namespace/pod attributes

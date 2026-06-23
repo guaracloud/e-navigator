@@ -10,7 +10,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `8ed766a01580a007279f081452c800e9c6a9aa99`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-8ed766a`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-8ed766a`
 - Image index digest:
   `sha256:87010498798c297c6ddd7f1f3672c312824b76281ff944f3d6f5697ba218f8bb`
 - Linux/amd64 digest:

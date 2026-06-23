@@ -5,7 +5,7 @@
 - Context: `staging`
 - Namespace: `e-navigator-bench`
 - Commit: `30c202690ad7ff5282ed355bda54af8b28eca7b8`
-- Image tag: `ghcr.io/guaracloud/e-navigator:sha-30c2026`
+- Image tag: `ghcr.io/e-navigator/e-navigator:sha-30c2026`
 - Image index digest:
   `sha256:6dfffd7dd40a76a1c18573c8a4f85677518228a2c45ac8a4ee042f30ad11d000`
 - Linux amd64 digest:
@@ -38,7 +38,7 @@
 - Test rollout: Helm revision 94 with `source.aya_http` and
   `generator.request_correlation` enabled.
 - Test image:
-  `ghcr.io/guaracloud/e-navigator@sha256:6dfffd7dd40a76a1c18573c8a4f85677518228a2c45ac8a4ee042f30ad11d000`.
+  `ghcr.io/e-navigator/e-navigator@sha256:6dfffd7dd40a76a1c18573c8a4f85677518228a2c45ac8a4ee042f30ad11d000`.
 - The DaemonSet rolled out and stayed `2/2` Ready with zero restarts.
 - JSON stdout showed `protocol_request_observation` from `source.aya_http` and
   `request_span_observation` from `generator.request_correlation` after the
@@ -83,7 +83,7 @@ Filtered E-Navigator JSON stdout contained:
 - Rolled Helm back to revision 95, described by Helm as rollback to revision
   93.
 - Verified final DaemonSet image:
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
 - Verified final DaemonSet `2/2` Ready with zero restarts.
 - Verified both temporary proof Jobs were absent.
 

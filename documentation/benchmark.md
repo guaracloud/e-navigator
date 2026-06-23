@@ -40,7 +40,7 @@ The current benchmark targets are deterministic and non-privileged:
 - traceparent and HTTP fixture parsing;
 - profiling fixture normalization;
 - generator hot paths for network, DNS, resource, dependency graph, trace,
-  request, profiling, runtime security, and Guara compatibility;
+  request, profiling, runtime security, and native export;
 - JSON signal serialization, profile and Prometheus compatibility formatting,
   and bounded HTTP exporter queue enqueue behavior.
 
@@ -60,7 +60,7 @@ Recent local smoke evidence:
   tests passed. Criterion reported `formatter/prometheus_compat` improved with
   median change `-64.030%` and measured interval `2.0792 us` to `2.5384 us`.
   The same smoke still reported unrelated regressions in
-  `protocol/http_fixture_parse`, `generator/guara_compat`, and
+  `protocol/http_fixture_parse`, `generator/network_metrics`, and
   `formatter/profile_record`, so the outcome remains partial rather than a
   whole-harness performance improvement.
 - `20260623-133016` followed up on profile formatting after replacing nested
@@ -106,7 +106,7 @@ tests/smoke_docker.sh e-navigator:local
 
 These checks validate userspace wiring and packaged fixtures. They do not prove
 Aya/eBPF attach, DNS packet capture, perf-event profiling, Kubernetes runtime
-behavior, OTLP transport, Pyroscope export, or replacement readiness.
+behavior, OTLP transport, external profile backend export, or replacement readiness.
 
 ## Guarded Homelab Proof Plan
 
@@ -132,7 +132,7 @@ benchmarks/runner/homelab-collect.sh
 ```
 
 Apply-and-collect mode defaults to the required benchmark image
-`ghcr.io/guaracloud/e-navigator:sha-8ab271c`:
+`ghcr.io/e-navigator/e-navigator:sha-8ab271c`:
 
 ```bash
 E_NAVIGATOR_HOMELAB_CONFIRM=1 \
@@ -158,7 +158,7 @@ Homelab run `20260621-221944-required-image-live` proved the required image is
 currently pullable in `staging/e-navigator-bench` with pull secret
 `ghcr-e-navigator-pull` and starts far enough to print CLI help. That is an
 image availability check only. It does not prove DaemonSet runtime behavior or
-feature parity with newer images used by later Prometheus, OTLP, DNS, Guara, or
+feature parity with newer images used by later Prometheus, OTLP, DNS, E-Navigator, or
 resource-baseline proof slices.
 
 Prometheus HTTP validation is opt-in because the chart must enable both the
@@ -179,17 +179,17 @@ Only recorded `/healthz`, `/readyz`, `/metrics`, Prometheus active-target, and
 query artifacts can upgrade Prometheus claims. Config and render evidence alone
 remain non-privileged or inconclusive.
 
-Guara L4 flow proof on `20260622-111022-guara-flow-live` and
-`20260622-111448-guara-flow-python-client-live` used the same guarded homelab
+Native L4 flow proof on `20260622-111022-flow-live` and
+`20260622-111448-flow-python-client-live` used the same guarded homelab
 boundary with pushed image `sha-762561f`. These runs prove live byte counters on
 some `network_connection_close` records and live ambient `network_flow_summary`
 generation, but they do not prove controlled workload `network_flow_summary` or
-`beyla_network_flow_bytes_total`. The BusyBox workload completed on both nodes
+`network_flow_bytes`. The BusyBox workload completed on both nodes
 without Kubernetes attribution on its byte-bearing close records, and the
 Python socket workload produced server-IP `EINPROGRESS` failure records rather
 than byte-bearing closes.
 
-Follow-up run `20260622-122803-guara-einprogress-live` deployed pushed image
+Follow-up run `20260622-122803-flow-einprogress-live` deployed pushed image
 `sha-622e1aa` with the Linux `-EINPROGRESS` source-path fix included in
 `scripts/quality.sh`. Two Python nonblocking clients completed 240 total socket
 requests. Captured stdout proved the observed homelab-02 target
@@ -197,7 +197,7 @@ requests. Captured stdout proved the observed homelab-02 target
 115 failures, and direct `/metrics` exposed matching aggregate network counters
 for the homelab-02 container runtime path. The run did not prove byte-bearing
 controlled closes, controlled `network_flow_summary`,
-`beyla_network_flow_bytes_total`, Kubernetes attribution for the Python client
+`network_flow_bytes`, Kubernetes attribution for the Python client
 records, or stdout capture for the successful homelab-01 client target.
 Prometheus API queries were not run for this slice because no Prometheus server
 service exists in `e-navigator-bench` and the live boundary kept actions inside
@@ -212,7 +212,7 @@ homelab-02 target `10.42.134.22:8080` emitted 120 byte-bearing controlled
 `bytes_received=1372`. Direct `/healthz` returned `ok`, `/readyz` returned
 `ready`, and `/metrics` exposed aggregate controlled network counters at 120.
 The run still did not prove Kubernetes attribution for the Python client
-records, controlled `network_flow_summary`, `beyla_network_flow_bytes_total`, or
+records, controlled `network_flow_summary`, `network_flow_bytes`, or
 symmetric controlled-client stdout capture across both nodes.
 
 Follow-up run `20260622-192821-new-container-attribution-live` deployed pushed
@@ -226,7 +226,7 @@ pod/container attribution for client pod
 `network_flow_summary` records for the same pod. Direct `/metrics` on the
 homelab-02 E-Navigator pod exposed Kubernetes-attributed aggregate counters for
 that client at 1,574 opens, destination observations, and duration samples. The
-run still did not prove `beyla_network_flow_bytes_total` because Guara
+run still did not prove `network_flow_bytes` because E-Navigator
 compatibility scope excludes the `e-navigator-bench` temporary workload
 namespace, and no Prometheus server service exists inside that namespace for a
 bounded API query.
@@ -258,7 +258,7 @@ The initial live proof should record:
   Ready, zero restarts, JSON stdout active, and Prometheus HTTP still reachable;
 - `20260622-001716-published-image-live` pushed commit `d3167e3`, waited for
   GitHub image publication, deployed
-  `ghcr.io/guaracloud/e-navigator:sha-d3167e3` to `staging/e-navigator-bench`,
+  `ghcr.io/e-navigator/e-navigator:sha-d3167e3` to `staging/e-navigator-bench`,
   repeated the real Alloy HTTP 400 boundary with the published image, restored
   the baseline config, and recorded Prometheus scrape proof, JSON stdout counts,
   resource samples, and capability posture;
@@ -270,14 +270,14 @@ The initial live proof should record:
   that workload pod name and must not be used for that attribution claim;
 - `20260622-013602-dns-msg-live` pushed commit `10b81e6`, waited for GitHub CI
   and GHCR image publication, rolled
-  `ghcr.io/guaracloud/e-navigator:sha-10b81e6` to
+  `ghcr.io/e-navigator/e-navigator:sha-10b81e6` to
   `staging/e-navigator-bench`, ran DNS workloads pinned to both homelab nodes,
   observed live `source.aya_dns` plus `generator.dns_metrics` output from
   CoreDNS and Pi-hole, and recorded that the controlled BusyBox
   client-to-CoreDNS workload did not appear in DNS attribution;
 - `20260622-213109-dns-connected-udp-live-r2` pushed commit `94e808c`, waited
   for GitHub CI and GHCR image publication, rolled
-  `ghcr.io/guaracloud/e-navigator:sha-94e808c` to
+  `ghcr.io/e-navigator/e-navigator:sha-94e808c` to
   `staging/e-navigator-bench`, enabled `source.aya_dns` and
   `generator.dns_metrics`, ran connected-UDP Python DNS clients pinned to both
   homelab nodes, and proved the observed warmed `homelab-02` client pod emitted
@@ -334,18 +334,18 @@ The initial live proof should record:
 - `20260623-131846-prometheus-formatter-live` deployed the published
   formatter-change image `sha-5469a11` to the existing
   `staging/e-navigator-bench` Helm release as revision `128`, preserving the
-  existing Prometheus-enabled network/Guara-compatible config. The DaemonSet
+  existing Prometheus-enabled network/native config. The DaemonSet
   stayed `2/2` Ready on digest
   `sha256:2de950aece9580dcb5c896d5df386899d12f76ccfd34b97535a34d8a3edc8738`,
   direct `/healthz`, `/readyz`, and `/metrics` returned `200 OK`, direct
   `/metrics` exposed 40 network metric lines across 8 network metric families,
   and JSON stdout contained network source and generator output. Prometheus API
-  checks were skipped, no `beyla_network_flow_bytes_total` lines were observed,
+  checks were skipped, no `network_flow_bytes` lines were observed,
   and both pods still reported UID `0`, `Seccomp: 0`, and `CAP_SYS_ADMIN`;
 - `20260623-135438-profile-formatter-image-live` deployed the published
   profile-formatter image `sha-6c04aaa` to the existing
   `staging/e-navigator-bench` Helm release as revision `129`, preserving the
-  existing Prometheus-enabled network/Guara-compatible config. The DaemonSet
+  existing Prometheus-enabled network/native config. The DaemonSet
   stayed `2/2` Ready on linux/amd64 digest
   `sha256:3abcd8d1c9b9b890801eeab94252f8cc507cd0dba665ddcc449cf409275b90d0`,
   direct `/healthz`, `/readyz`, and `/metrics` returned `200 OK`, direct
@@ -384,15 +384,15 @@ The initial live proof should record:
   Kubernetes attribution and total `bytes=5358`. This proves the collector
   wait/artifact slice and observed homelab-02 controlled workload attribution
   for those families, not symmetric node coverage, destination workload
-  attribution on flow summaries, `beyla_network_flow_bytes_total`, Prometheus
+  attribution on flow summaries, `network_flow_bytes`, Prometheus
   server queryability, or reduced privilege;
-- `20260622-122803-guara-einprogress-live` pushed commit `622e1aa`, waited for
+- `20260622-122803-flow-einprogress-live` pushed commit `622e1aa`, waited for
   GHCR image publication, rolled
-  `ghcr.io/guaracloud/e-navigator:sha-622e1aa` to
+  `ghcr.io/e-navigator/e-navigator:sha-622e1aa` to
   `staging/e-navigator-bench`, ran nonblocking Python clients pinned to both
   homelab nodes, proved the observed homelab-02 target no longer emitted
   `EINPROGRESS` failure-only records, and recorded that byte-bearing controlled
-  closes, controlled flow summaries, Beyla projection, homelab-01 stdout
+  closes, controlled flow summaries, external flow agent projection, homelab-01 stdout
   capture, and Kubernetes attribution remain unproven;
 - `20260621-233103-generator-resource-security-live` was a collection-only
   current-release run that observed live `generator.dependency_graph` output,
@@ -430,13 +430,13 @@ The initial live proof should record:
 - `20260623-101215-required-image-dns-version-boundary` is a local parser
   boundary check for the required image: current-head accepted a config enabling
   `source.aya_dns`, but
-  `ghcr.io/guaracloud/e-navigator:sha-8ab271c` rejected the same config with
+  `ghcr.io/e-navigator/e-navigator:sha-8ab271c` rejected the same config with
   `unknown module 'source.aya_dns'`; this means live DNS source output cannot be
   proven on the required image without changing the required benchmark image;
 - `20260623-101950-required-image-exporter-version-boundary` is a local parser
   boundary check for the required image export surfaces: current-head accepted
   configs enabling `sink.prometheus_http` and `sink.otlp_http`, but
-  `ghcr.io/guaracloud/e-navigator:sha-8ab271c` rejected them with
+  `ghcr.io/e-navigator/e-navigator:sha-8ab271c` rejected them with
   `unknown module 'sink.prometheus_http'` and
   `unknown module 'sink.otlp_http'`; this means Prometheus and OTLP export
   cannot be proven on the required image without changing the required
@@ -457,7 +457,7 @@ The initial live proof should record:
   families, and cleaned up the temporary Job and collector resources;
 - `20260622-142733-otlp-profile-protobuf-blocked` records local OTLP profile
   protobuf proof for commit `a66e1ca` and published image
-  `ghcr.io/guaracloud/e-navigator:sha-a66e1ca`, but no homelab collector
+  `ghcr.io/e-navigator/e-navigator:sha-a66e1ca`, but no homelab collector
   proof: the required preflight stopped before deployment because
   `kubectl config current-context` returned `kind-tentacle-alpha` instead of
   `staging`;
@@ -512,7 +512,7 @@ The initial live proof should record:
 - `20260622-231600-http-live` records a bounded live HTTP-source proof on
   `staging/e-navigator-bench`: commit `cfd7ea8` passed `scripts/quality.sh`,
   GitHub CI run `27989986288`, and image publication run `27989986293`, then
-  pushed image `ghcr.io/guaracloud/e-navigator:sha-cfd7ea8` digest
+  pushed image `ghcr.io/e-navigator/e-navigator:sha-cfd7ea8` digest
   `sha256:c2c850cffcc1209bebfce2e9915728718b4ab2e04a6873f9b25c59dc884e968c`
   was rolled out as Helm revision 52 with `source.aya_http` and
   `generator.request_correlation` enabled. Both homelab DaemonSet pods stayed
@@ -530,7 +530,7 @@ The initial live proof should record:
   on `staging/e-navigator-bench`: commit `fb9a6d1` added `sys_enter_writev`
   HTTP request capture, passed `scripts/quality.sh`, GitHub CI run
   `27991365112`, and image publication run `27991365123`, then pushed image
-  `ghcr.io/guaracloud/e-navigator:sha-fb9a6d1` index digest
+  `ghcr.io/e-navigator/e-navigator:sha-fb9a6d1` index digest
   `sha256:dec316f7c02504ce99e0500e423adc35398482756f634e915fe14f421d2924e0`
   and linux/amd64 digest
   `sha256:2c984944dee476bfdb27ecaa473277152a4f7b304a0ed99d24b867a90dbba751`
@@ -555,7 +555,7 @@ The initial live proof should record:
   verifier-panic-prone dynamic request slice from split-iovec BPF request
   copying, passed `scripts/quality.sh`, GitHub CI run `27999145227`, and image
   publication run `27999145243`, then pushed image
-  `ghcr.io/guaracloud/e-navigator:sha-7ac7ef2` index digest
+  `ghcr.io/e-navigator/e-navigator:sha-7ac7ef2` index digest
   `sha256:c8fe0da75d741e2ce2993e7006d5384fe6f76904e4d00b10e8fbdc30bc7c5c48`
   and linux/amd64 digest
   `sha256:7967acb8ca974c6e0fbdd578c33d1229bfb04b8112ebbc7c546eccaea3b99818`
@@ -584,7 +584,7 @@ The initial live proof should record:
   decoder and structural guard coverage for three bounded HTTP `writev` iovec
   slots, passed `scripts/quality.sh`, GitHub CI run `28005540728`, and image
   publication run `28005540720`, then pushed image
-  `ghcr.io/guaracloud/e-navigator:sha-396e70d` index digest
+  `ghcr.io/e-navigator/e-navigator:sha-396e70d` index digest
   `sha256:5f2060de32c6206b07868e43cccaa59ebf2489fae34edf2d6646b565354ce84a`
   and linux/amd64 digest
   `sha256:64ee132ff66b21c8f9d449ff701372858bde37258e1502f900e9d1afe806959a`.
@@ -599,7 +599,7 @@ The initial live proof should record:
   changed the split `writev` event shape to three explicit 96-byte iovec slots,
   passed `scripts/quality.sh`, GitHub CI run `28006891441`, and image
   publication run `28006891438`, then pushed image
-  `ghcr.io/guaracloud/e-navigator:sha-30c2026` index digest
+  `ghcr.io/e-navigator/e-navigator:sha-30c2026` index digest
   `sha256:6dfffd7dd40a76a1c18573c8a4f85677518228a2c45ac8a4ee042f30ad11d000`
   and linux/amd64 digest
   `sha256:2d17c1e7aeccc59c3ac73ef7b32684b9215b8b0db4f138376b0f0f32ef24778c`.
@@ -613,7 +613,7 @@ The initial live proof should record:
   `i3-proof-*` request IDs, and Kubernetes namespace `e-navigator-bench`, pod
   `http-iovec3-033542-gsbxx`, and container `workload` on every measured proof
   record. A two-iovec control also produced 20 protocol and 20 request-span
-  records on the same pushed image. Temporary proof/control Jobs were deleted.
+  records on the same pushed image. trace backendrary proof/control Jobs were deleted.
   Cleanup briefly saw `staging` API readiness/refusal flapping, then rollback
   completed to revision 95/rollback-to-93 with baseline digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`
@@ -634,7 +634,7 @@ The initial live proof should record:
   network counters at value `100`. The `homelab-01` workload completed
   successfully but produced zero exact-path protocol/request-span records and
   zero matching network-source or network-metric records for its pod. The run
-  was therefore partial, not symmetric HTTP proof. Temporary Jobs were deleted,
+  was therefore partial, not symmetric HTTP proof. trace backendrary Jobs were deleted,
   rollback completed to revision 115/rollback-to-113, and the DaemonSet verified
   `2/2` Ready on baseline digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
@@ -654,7 +654,7 @@ The initial live proof should record:
   protocol/request-span records for the diagnostic proof paths, and the
   homelab-02 control workload also did not produce exact-path protocol output in
   this run. Events recorded transient apiserver/Calico sandbox teardown warnings
-  during the workload window. Temporary resources were deleted, rollback
+  during the workload window. trace backendrary resources were deleted, rollback
   completed to revision 117/rollback-to-115, and the DaemonSet verified `2/2`
   Ready on baseline digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
@@ -679,7 +679,7 @@ The initial live proof should record:
   Kubernetes-attributed network counters at value `109` for both workload pods.
   This confirms the current boundary: homelab-01 network-metric attribution is
   present for the sequential workload shape, while homelab-01 HTTP protocol
-  capture remains unproven. Temporary Jobs were deleted, rollback completed to
+  capture remains unproven. trace backendrary Jobs were deleted, rollback completed to
   revision 119/rollback-to-117, and the DaemonSet verified `2/2` Ready on
   baseline digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
@@ -696,7 +696,7 @@ The initial live proof should record:
   contained zero exact-path protocol/request-span records and zero rows
   attributed to pod `http-seq-111825-h01-tgtbm`. Direct `/metrics` exposed
   Kubernetes-attributed network counters at value `109` for the homelab-02 pod
-  and `110` for the homelab-01 pod. Temporary Jobs were deleted, rollback
+  and `110` for the homelab-01 pod. trace backendrary Jobs were deleted, rollback
   completed to revision 121/rollback-to-119, and the DaemonSet verified `2/2`
   Ready on baseline digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
@@ -721,7 +721,7 @@ The initial live proof should record:
   included `writev_enter=27`, `copy_success=1168`, `output_attempt=1168`, and
   `active_connection_miss=10116`. This proves the diagnostic counter path and
   narrows the next HTTP investigation to connection-state correlation. It does
-  not prove exact-path controlled HTTP capture in this run. Temporary Jobs were
+  not prove exact-path controlled HTTP capture in this run. trace backendrary Jobs were
   deleted after transient apiserver/etcd leadership errors, rollback completed
   to revision 123/rollback-to-121, and the DaemonSet verified `2/2` Ready on
   baseline digest
@@ -745,7 +745,7 @@ The initial live proof should record:
   `homelab-01` and `79` on `homelab-02`. The new fallback diagnostic buckets
   emitted live; one captured line included `fallback_candidate=109405`,
   `fallback_non_http_start=108488`, and `fallback_output_attempt=916`.
-  Temporary Jobs were deleted, rollback completed to revision
+  trace backendrary Jobs were deleted, rollback completed to revision
   `127`/rollback-to-125, and the DaemonSet verified `2/2` Ready on baseline
   digest
   `sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`;
@@ -773,7 +773,7 @@ The initial live proof should record:
   `sendmsg_enter=548`/`fallback_output_attempt=84`. This proves the live
   sendmsg tracepoint is no longer inert, but it does not prove exact-path
   controlled sendmsg HTTP capture, request-span generation, pod attribution,
-  or symmetric node coverage. Temporary Jobs were deleted, rollback completed
+  or symmetric node coverage. trace backendrary Jobs were deleted, rollback completed
   to revision `131`/rollback-to-129, and the DaemonSet verified `2/2` Ready on
   baseline digest
   `sha256:3abcd8d1c9b9b890801eeab94252f8cc507cd0dba665ddcc449cf409275b90d0`;
@@ -797,7 +797,7 @@ The initial live proof should record:
   exact-path protocol/request-span rows. Structured invalid diagnostics emitted
   `invalid_reason="headers_too_long"` samples, with 301 captured diagnostic
   lines in the bounded log sample, and HTTP telemetry still showed zero send
-  failures and zero lost perf events in sampled windows. Temporary Jobs were
+  failures and zero lost perf events in sampled windows. trace backendrary Jobs were
   deleted, rollback completed to revision `136`/rollback-to-134, final context
   remained `staging`, and the DaemonSet verified `2/2` Ready on
   `sha-6c15296`;
@@ -821,7 +821,7 @@ The initial live proof should record:
   zero exact-path rows for `/proof/invalid-meta-160619b-h01`. It also contained
   zero `invalid_http_request_sample` metadata lines, so this run proves h02
   preservation on the metadata build but does not prove h01 rejected-sample
-  attribution. Temporary workloads were deleted, rollback completed to revision
+  attribution. trace backendrary workloads were deleted, rollback completed to revision
   `139`/rollback-to-136, final context remained `staging`, and no
   `http-invalid-metadata-160619*` resources remained;
 - `20260623-143751-homelab-workload-toleration-smoke` records a harness-only
@@ -850,18 +850,18 @@ namespace.
 
 ## Homelab Observability Context
 
-The current homelab reference stack uses Beyla, Alloy, Tempo, and Prometheus:
+The current homelab reference stack uses external flow agent, Alloy, trace backend, and Prometheus:
 
-- Beyla instruments `proj-*` tenant namespaces and sends traces to Alloy;
-- Alloy receives OTLP on `4317` and `4318`, forwards traces to Tempo, and remote
+- external flow agent instruments `namespace-*` tenant namespaces and sends traces to Alloy;
+- Alloy receives OTLP on `4317` and `4318`, forwards traces to trace backend, and remote
   writes metrics to Prometheus;
-- Tempo has service graph and span metrics generation enabled with
+- trace backend has service graph and span metrics generation enabled with
   `k8s.namespace.name` as a service graph dimension;
 - Prometheus receives Alloy remote-write metrics and scrapes ServiceMonitors.
 
 Future E-Navigator live proof can compare resource overhead against those
 observability agents and can inspect whether controlled workload traffic appears
-in the expected Beyla/Tempo service graph topology. That comparison is not
+in the expected external flow agent/trace backend service graph topology. That comparison is not
 replacement proof until live E-Navigator signals, resource overhead, and
 collector/export parity are recorded.
 
@@ -880,9 +880,9 @@ fixtures and compile-time benchmark health. They do not prove:
   follow-up in `20260623-033542-http-three-iovec-bounded-live`;
 - Kubernetes DaemonSet readiness;
 - real host procfs/sysfs/cgroup accuracy;
-- OTLP, Prometheus, Pyroscope, pprof, or production collector export;
+- OTLP, Prometheus, external profile backend, pprof, or production collector export;
 - DNS parser/raw decode tests as a substitute for runtime DNS packet capture;
-- replacement readiness for Beyla, Alloy, Tempo, Prometheus, or Pyroscope.
+- replacement readiness for external flow agent, Alloy, trace backend, Prometheus, or external profile backend.
 
 Privileged runtime proof rules live in
 `documentation/privileged-runtime-proof.md`.

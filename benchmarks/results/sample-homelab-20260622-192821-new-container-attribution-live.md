@@ -7,7 +7,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `dd67a3b`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-dd67a3b`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-dd67a3b`
 - Image index digest: `sha256:42d61e6f63d6276e6c8932aff6dc38a803ca32c4cd74ce83c5495afdb65bb0c4`
 - Deployed amd64 digest: `sha256:5082072c88fb2b525a5d860484cd1bf16a4c2d2870af2d31ff9bdb08819a638d`
 - GitHub Actions: CI run `27988083319` and publish-images run `27988083329` succeeded.
@@ -34,10 +34,10 @@ Deployment evidence:
 - Helm revision `50` rolled `sha-dd67a3b` into the DaemonSet.
 - DaemonSet pods `e-navigator-bench-24h7w` on `homelab-01` and
   `e-navigator-bench-7qwbz` on `homelab-02` were Ready with zero restarts and
-  used `ghcr.io/guaracloud/e-navigator@sha256:5082072c88fb2b525a5d860484cd1bf16a4c2d2870af2d31ff9bdb08819a638d`.
-- Temporary proof workloads were deleted.
+  used `ghcr.io/e-navigator/e-navigator@sha256:5082072c88fb2b525a5d860484cd1bf16a4c2d2870af2d31ff9bdb08819a638d`.
+- trace backendrary proof workloads were deleted.
 - Helm rollback restored revision `49`; restored DaemonSet pods used
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
 - No resources remained with label
   `e-navigator-proof-run=20260622-192821-new-container-attribution-live`.
 
@@ -61,9 +61,9 @@ Live workload:
   Kubernetes-attributed aggregate client counters at 1,574 for
   `network_connection_open_count`, `network_traffic_destination_count`, and
   `network_connection_duration_count`.
-- Captured E-Navigator stdout contained 0 `beyla_network_flow_bytes_total` JSON
+- Captured E-Navigator stdout contained 0 `network_flow_bytes` JSON
   signals.
-- Direct `/metrics` contained 0 `beyla_network_flow_bytes_total` lines.
+- Direct `/metrics` contained 0 `network_flow_bytes` lines.
 
 Outcome: `partial`.
 
@@ -81,16 +81,16 @@ Proven:
 
 Not proven:
 
-- `beyla_network_flow_bytes_total` export from the controlled workload.
+- `network_flow_bytes` export from the controlled workload.
 - Prometheus-server API query proof; no Prometheus server service exists inside
   `e-navigator-bench`.
 - Symmetric controlled-client capture across both homelab nodes.
-- Beyla replacement readiness.
+- external flow agent replacement readiness.
 
 Non-claims:
 
-- No Beyla replacement claim.
+- No external flow agent replacement claim.
 - No production-ready claim.
 - No reduced-overhead claim.
 - No reduced-privilege claim.
-- No Guara `proj-*` tenant-scope proof.
+- No E-Navigator `namespace-*` tenant-scope proof.

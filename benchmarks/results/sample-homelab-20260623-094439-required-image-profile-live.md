@@ -11,14 +11,14 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 
 Image:
 
-- Required benchmark tag: `ghcr.io/guaracloud/e-navigator:sha-8ab271c`
+- Required benchmark tag: `ghcr.io/e-navigator/e-navigator:sha-8ab271c`
 - Image digest:
   `sha256:249ad67fa8578ade9ecc1279bcf52a52ae6038a342b7c68844ebfd7a38d4e34e`
 
 Local proof before deployment:
 
 - `cargo run --locked -p e-navigator-cli -- --source synthetic --config benchmarks/results/raw/20260623-094439-required-image-profile-live/e-navigator.toml --validate-config`
-- `docker run --rm --platform linux/amd64 -v "$PWD/benchmarks/results/raw/20260623-094439-required-image-profile-live/e-navigator.toml:/tmp/e-navigator.toml:ro" ghcr.io/guaracloud/e-navigator:sha-8ab271c --source aya-cpu-profile --config /tmp/e-navigator.toml --validate-config`
+- `docker run --rm --platform linux/amd64 -v "$PWD/benchmarks/results/raw/20260623-094439-required-image-profile-live/e-navigator.toml:/tmp/e-navigator.toml:ro" ghcr.io/e-navigator/e-navigator:sha-8ab271c --source aya-cpu-profile --config /tmp/e-navigator.toml --validate-config`
 - `helm lint charts/e-navigator -f benchmarks/results/raw/20260623-094439-required-image-profile-live/values.yaml --set-file config.toml=benchmarks/results/raw/20260623-094439-required-image-profile-live/e-navigator.toml`
 - `helm template e-navigator-bench charts/e-navigator -n e-navigator-bench -f benchmarks/results/raw/20260623-094439-required-image-profile-live/values.yaml --set-file config.toml=benchmarks/results/raw/20260623-094439-required-image-profile-live/e-navigator.toml`
 - `kubectl --context staging -n e-navigator-bench apply --dry-run=server -f benchmarks/results/raw/20260623-094439-required-image-profile-live/rendered.yaml`
@@ -32,7 +32,7 @@ Live configuration:
 - `source.aya_cpu_profile`, `processor.container_attribution`,
   `generator.profiling`, and `sink.json_stdout` were enabled.
 - Network, exec, host-resource, metrics, trace, request, runtime-security,
-  Guara compatibility, Prometheus, and OTLP modules were disabled for this
+  native export, Prometheus, and OTLP modules were disabled for this
   older-compatible profile run.
 
 Observed evidence:
@@ -44,7 +44,7 @@ Observed evidence:
 - `/proc/1/status` inside both pods reported `NoNewPrivs: 1`,
   `Seccomp: 2`, and `CapEff: 000001c401283004`.
 - Both pods ran
-  `ghcr.io/guaracloud/e-navigator@sha256:249ad67fa8578ade9ecc1279bcf52a52ae6038a342b7c68844ebfd7a38d4e34e`.
+  `ghcr.io/e-navigator/e-navigator@sha256:249ad67fa8578ade9ecc1279bcf52a52ae6038a342b7c68844ebfd7a38d4e34e`.
 - The captured E-Navigator window contained 9,038
   `profile_sample_observation` records and 8,991
   `profiling_session_observation` records.
@@ -71,7 +71,7 @@ Cleanup:
 - Rolled Helm release `e-navigator-bench` back to revision `111`; Helm recorded
   revision `113` as `Rollback to 111`.
 - Final DaemonSet state was `2/2` Ready on the baseline image
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
 - Final label-scoped inventory for `e-nav-run=20260623-094439-hot` reported no
   resources in `e-navigator-bench`.
 
@@ -85,7 +85,7 @@ Not proven:
 - Lossless CPU profile capture or deterministic capture for all CPU workload
   shapes.
 - Function symbolization or demangling beyond raw IP-style frames.
-- Pyroscope write transport, pprof, profile storage, flamegraph export,
+- external profile backend write transport, pprof, profile storage, flamegraph export,
   Prometheus export, or OTLP export on `sha-8ab271c`.
 - DNS output, non-root operation, capability reduction, or removal of
   `CAP_SYS_ADMIN` on `sha-8ab271c`.

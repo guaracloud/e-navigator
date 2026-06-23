@@ -3,17 +3,17 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 
 use crate::{
     CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
-    CgroupPidsObservation, CompatibilityCounterMetric, DependencyEdgeEvent, DnsCounterMetric,
-    DnsLatencyMetric, DnsQueryEvent, DnsResponseEvent, ExecEvent, ExtractedTraceContextObservation,
-    NetworkConnectionCloseEvent, NetworkConnectionFailureEvent, NetworkConnectionOpenEvent,
-    NetworkCounterMetric, NetworkDurationMetric, NetworkFlowSummaryEvent, NetworkGaugeMetric,
-    NodeCpuObservation, NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation,
-    NodeMemoryObservation, ProcessExitEvent, ProcessLifecycleDurationEvent,
-    ProcessResourceObservation, ProfileSampleObservation, ProfilingSessionObservation,
-    ProfilingStackTraceObservation, ProfilingWarningObservation, ProtocolRequestObservation,
-    RequestCorrelationWarning, RequestSpanObservation, ResourceCounterMetric, ResourceGaugeMetric,
-    RuntimeSecurityFinding, ServiceInteractionSpanObservation, TraceCorrelationWarning,
-    TraceServicePathObservation, TraceSpanObservation, sanitize_profiling_attributes,
+    CgroupPidsObservation, DependencyEdgeEvent, DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent,
+    DnsResponseEvent, ExecEvent, ExtractedTraceContextObservation, NetworkConnectionCloseEvent,
+    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkCounterMetric,
+    NetworkDurationMetric, NetworkFlowSummaryEvent, NetworkGaugeMetric, NodeCpuObservation,
+    NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation,
+    ProcessExitEvent, ProcessLifecycleDurationEvent, ProcessResourceObservation,
+    ProfileSampleObservation, ProfilingSessionObservation, ProfilingStackTraceObservation,
+    ProfilingWarningObservation, ProtocolRequestObservation, RequestCorrelationWarning,
+    RequestSpanObservation, ResourceCounterMetric, ResourceGaugeMetric, RuntimeSecurityFinding,
+    ServiceInteractionSpanObservation, TraceCorrelationWarning, TraceServicePathObservation,
+    TraceSpanObservation, sanitize_profiling_attributes,
 };
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
@@ -32,7 +32,6 @@ pub enum SignalKind {
     NetworkCounterMetric,
     NetworkDurationMetric,
     NetworkGaugeMetric,
-    CompatibilityCounterMetric,
     DnsQuery,
     DnsResponse,
     DnsCounterMetric,
@@ -79,7 +78,6 @@ pub enum SignalPayload {
     NetworkCounterMetric(NetworkCounterMetric),
     NetworkDurationMetric(NetworkDurationMetric),
     NetworkGaugeMetric(NetworkGaugeMetric),
-    CompatibilityCounterMetric(CompatibilityCounterMetric),
     DnsQuery(DnsQueryEvent),
     DnsResponse(DnsResponseEvent),
     DnsCounterMetric(DnsCounterMetric),
@@ -197,15 +195,6 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
                     .map(SignalPayload::NetworkGaugeMetric)
                     .map_err(|err| {
                         D::Error::custom(format!("invalid network_gauge_metric payload: {err}"))
-                    })?
-            }
-            SignalKind::CompatibilityCounterMetric => {
-                serde_json::from_value::<CompatibilityCounterMetric>(raw.payload)
-                    .map(SignalPayload::CompatibilityCounterMetric)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid compatibility_counter_metric payload: {err}"
-                        ))
                     })?
             }
             SignalKind::DnsQuery => serde_json::from_value::<DnsQueryEvent>(raw.payload)
@@ -592,20 +581,6 @@ impl SignalEnvelope {
             source: source.into(),
             host,
             payload: SignalPayload::NetworkGaugeMetric(metric),
-        }
-    }
-
-    pub fn compatibility_counter_metric(
-        source: impl Into<String>,
-        host: Option<String>,
-        metric: CompatibilityCounterMetric,
-    ) -> Self {
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::CompatibilityCounterMetric,
-            source: source.into(),
-            host,
-            payload: SignalPayload::CompatibilityCounterMetric(metric),
         }
     }
 
@@ -1028,7 +1003,6 @@ impl Signal for SignalEnvelope {
             SignalKind::NetworkCounterMetric => "network_counter_metric",
             SignalKind::NetworkDurationMetric => "network_duration_metric",
             SignalKind::NetworkGaugeMetric => "network_gauge_metric",
-            SignalKind::CompatibilityCounterMetric => "compatibility_counter_metric",
             SignalKind::DnsQuery => "dns_query",
             SignalKind::DnsResponse => "dns_response",
             SignalKind::DnsCounterMetric => "dns_counter_metric",

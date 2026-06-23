@@ -123,12 +123,7 @@ mod tests {
 
     #[test]
     fn config_fixtures_load_through_cli_config_path() {
-        for fixture in [
-            "default.toml",
-            "minimal.toml",
-            "profiling-enabled.toml",
-            "guara-compat-enabled.toml",
-        ] {
+        for fixture in ["default.toml", "minimal.toml", "profiling-enabled.toml"] {
             let path = fixture_path(fixture);
             let config = load_config(Some(&path)).unwrap_or_else(|err| {
                 panic!("fixture {fixture} should load through CLI config path: {err}")
@@ -149,16 +144,6 @@ mod tests {
             config.cpu_profile_source.module_name,
             "source.aya_cpu_profile"
         );
-    }
-
-    #[test]
-    fn guara_compat_fixture_keeps_cpu_profiling_disabled() {
-        let config = load_config(Some(&fixture_path("guara-compat-enabled.toml")))
-            .expect("guara compat fixture loads");
-
-        assert!(config.module_enabled("generator.guara_compat"));
-        assert!(!config.cpu_profile_source.enabled);
-        assert!(!config.module_enabled("source.aya_cpu_profile"));
     }
 
     #[test]

@@ -24,4 +24,4 @@ JSON stdout remains newline-delimited `SignalEnvelope` JSON. No production OTLP 
 
 ## Consequences
 
-Future OTLP trace, storage, UI, profiling correlation, dependency analysis, and critical path analysis work can use a stable formatting boundary without changing generators. Phase 6 does not claim Tempo replacement behavior.
+Future OTLP trace, storage, UI, profiling correlation, dependency analysis, and critical path analysis work can use a stable formatting boundary without changing generators. Phase 6 does not claim trace-backend replacement behavior.

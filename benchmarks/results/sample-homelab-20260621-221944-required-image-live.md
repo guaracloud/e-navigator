@@ -7,7 +7,7 @@ This is a curated summary of the raw artifacts in
 
 - Context: `staging`
 - Namespace: `e-navigator-bench`
-- Image checked: `ghcr.io/guaracloud/e-navigator:sha-8ab271c`
+- Image checked: `ghcr.io/e-navigator/e-navigator:sha-8ab271c`
 - Pod: `e-nav-image-check-8ab271c-20260621`
 - Pull secret name used: `ghcr-e-navigator-pull`
 - Helm release mutation: none
@@ -23,14 +23,14 @@ What was recorded:
 
 - The check Pod reached `Succeeded`.
 - Kubelet successfully pulled
-  `ghcr.io/guaracloud/e-navigator:sha-8ab271c`.
+  `ghcr.io/e-navigator/e-navigator:sha-8ab271c`.
 - The pulled image digest was
-  `ghcr.io/guaracloud/e-navigator@sha256:249ad67fa8578ade9ecc1279bcf52a52ae6038a342b7c68844ebfd7a38d4e34e`.
+  `ghcr.io/e-navigator/e-navigator@sha256:249ad67fa8578ade9ecc1279bcf52a52ae6038a342b7c68844ebfd7a38d4e34e`.
 - The container ran `/usr/local/bin/e-navigator --help`.
 - The container exited with code `0`.
 - Captured logs printed the E-Navigator CLI help.
 - The live Helm release was not changed and remained `2/2` Ready on
-  `ghcr.io/guaracloud/e-navigator:sha-5c417c0`.
+  `ghcr.io/e-navigator/e-navigator:sha-5c417c0`.
 
 ## Cleanup
 
@@ -49,6 +49,6 @@ This run does not prove:
 - DaemonSet rollout of `sha-8ab271c`;
 - live Aya exec, network, DNS, profile, or host-resource behavior on
   `sha-8ab271c`;
-- Prometheus HTTP, OTLP HTTP, Tempo, Pyroscope, Alloy, or Beyla compatibility;
+- Prometheus HTTP, OTLP HTTP, trace backend, external profile backend, Alloy, or external flow agent compatibility;
 - replacement readiness;
 - reduced overhead or reduced privilege.

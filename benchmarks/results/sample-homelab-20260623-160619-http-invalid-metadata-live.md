@@ -29,7 +29,7 @@ Proof criteria:
 - Live preflight records
   `pwd=/Users/victorbona/Daedalus/e-navigator` and
   `kubectl config current-context=staging`.
-- Helm rolls `ghcr.io/guaracloud/e-navigator:sha-5cb242d` only in
+- Helm rolls `ghcr.io/e-navigator/e-navigator:sha-5cb242d` only in
   `e-navigator-bench`.
 - Both h01/h02 proof Jobs complete 30 warmups and 80 measured three-iovec
   requests with zero workload errors.
@@ -38,7 +38,7 @@ Proof criteria:
 - The h01 proof path is counted separately.
 - Invalid-sample diagnostics, if emitted for the proof workloads, include
   bounded metadata fields and no request payload bytes.
-- Temporary workloads are deleted and the release is rolled back to the
+- trace backendrary workloads are deleted and the release is rolled back to the
   previous standing revision.
 
 Local verification:
@@ -62,7 +62,7 @@ Local verification:
 Publication:
 
 - Code commit: `5cb242d`
-- Image tag: `ghcr.io/guaracloud/e-navigator:sha-5cb242d`
+- Image tag: `ghcr.io/e-navigator/e-navigator:sha-5cb242d`
 - Image index digest:
   `sha256:37d9b68cb78d18c76e99e348e536f76280a22edb207ac89f14009cab5c859dc6`
 - Linux/amd64 digest:
@@ -125,7 +125,7 @@ Observed E-Navigator evidence:
 
 Cleanup:
 
-- Temporary proof resources were deleted from `e-navigator-bench`.
+- trace backendrary proof resources were deleted from `e-navigator-bench`.
 - Final resource query for `http-invalid-metadata-160619*` returned no matches.
 - Helm rollback to revision `136` succeeded, creating deployed revision `139`
   with description `Rollback to 136`.
@@ -139,7 +139,7 @@ Proven:
   path in the stable rerun.
 - Full log collection for selector-based `kubectl logs` must use `--tail=-1`
   for evidence-grade counts.
-- Temporary workloads were cleaned up and the standing release was restored.
+- trace backendrary workloads were cleaned up and the standing release was restored.
 
 Not proven:
 

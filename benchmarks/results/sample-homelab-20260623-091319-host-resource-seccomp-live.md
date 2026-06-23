@@ -12,7 +12,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `ab19ab5c1035d66e797a6358cd6e6f618e169096`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-ab19ab5`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-ab19ab5`
 - Image index digest:
   `sha256:15636a27455af55d027ce8b33c23c8f684f4528e94116a1232f73cff5475f40a`
 - Linux/amd64 digest:
@@ -39,7 +39,7 @@ Live configuration:
   `generator.resource_metrics`, `sink.json_stdout`, and
   `sink.prometheus_http` were enabled.
 - `source.aya_exec`, network, DNS, HTTP, CPU profile, trace, request,
-  profiling, dependency graph, runtime-security, Guara compatibility, and OTLP
+  profiling, dependency graph, runtime-security, native export, and OTLP
   modules were disabled for this focused run.
 - The host resource sampler used `/host/proc`, `/sys`, and `/host/cgroup` with
   a `5000` millisecond interval.
@@ -51,7 +51,7 @@ Observed evidence:
   - `e-navigator-bench-48znv` on `homelab-02`
   - `e-navigator-bench-cd4qf` on `homelab-01`
 - Both pods ran
-  `ghcr.io/guaracloud/e-navigator@sha256:15636a27455af55d027ce8b33c23c8f684f4528e94116a1232f73cff5475f40a`.
+  `ghcr.io/e-navigator/e-navigator@sha256:15636a27455af55d027ce8b33c23c8f684f4528e94116a1232f73cff5475f40a`.
 - `/proc/1/status` inside both pods reported UID/GID `0`, `NoNewPrivs: 1`,
   `Seccomp: 2`, and `CapEff: 000001c401283004`.
 - Captured JSON stdout contained the following signal totals:
@@ -102,7 +102,7 @@ Cleanup:
 - Rolled Helm release `e-navigator-bench` back to revision `107`; Helm recorded
   revision `109` as `Rollback to 107`.
 - Final DaemonSet state was `2/2` Ready on the baseline image
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
 
 Outcome: `proven` for host resource node, process, and cgroup observation plus
 derived resource metric generation under kernel-applied RuntimeDefault seccomp

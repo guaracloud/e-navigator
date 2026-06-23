@@ -140,10 +140,6 @@ data:
     enabled = true
 
     [[modules]]
-    name = "generator.guara_compat"
-    enabled = false
-
-    [[modules]]
     name = "sink.json_stdout"
     enabled = true
 

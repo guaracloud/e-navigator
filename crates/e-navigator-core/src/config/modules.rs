@@ -125,11 +125,6 @@ pub const KNOWN_MODULES: &[KnownModule] = &[
         default_enabled: true,
     },
     KnownModule {
-        name: "generator.guara_compat",
-        kind: ModuleKind::Generator,
-        default_enabled: false,
-    },
-    KnownModule {
         name: "sink.json_stdout",
         kind: ModuleKind::Sink,
         default_enabled: true,

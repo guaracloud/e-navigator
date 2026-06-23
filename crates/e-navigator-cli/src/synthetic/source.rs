@@ -232,10 +232,10 @@ mod tests {
         )));
         assert!(signals.iter().any(|signal| matches!(
             &signal.payload,
-            SignalPayload::NetworkFlowSummary(flow)
+                SignalPayload::NetworkFlowSummary(flow)
                 if flow.bytes == 4096
                     && flow.source.kubernetes.as_ref().map(|k| k.namespace.as_str())
-                        == Some("proj-smoke")
+                        == Some("e-navigator-smoke")
         )));
         assert!(signals.iter().any(|signal| matches!(
             &signal.payload,

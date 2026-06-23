@@ -10,7 +10,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `ef7487465a0a7aa51e3a1d4d971a99875a19de9b`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-ef74874`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-ef74874`
 - Image index digest:
   `sha256:e7a8bde9969b8f643433a55b3bb0ca658fc9013e97e09f428331b134cd418591`
 - Linux/amd64 digest:
@@ -79,7 +79,7 @@ Observed signals:
 Cleanup:
 
 - Deleted both proof Jobs with the run label
-  `e-navigator.guara.cloud/proof-run=20260623-122906-http-fallback-peer-live`.
+  `e-navigator.e-navigator.io/proof-run=20260623-122906-http-fallback-peer-live`.
 - Rolled Helm release `e-navigator-bench` back to revision `125`; Helm recorded
   final revision `127` as `Rollback to 125`.
 - Final label-scoped inventory reported no resources in `e-navigator-bench`.

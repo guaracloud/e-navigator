@@ -30,7 +30,7 @@ Proof criteria:
 - Live preflight records
   `pwd=/Users/victorbona/Daedalus/e-navigator` and
   `kubectl config current-context=staging`.
-- Helm rolls `ghcr.io/guaracloud/e-navigator:sha-9c6463a` only in
+- Helm rolls `ghcr.io/e-navigator/e-navigator:sha-9c6463a` only in
   `e-navigator-bench`.
 - Both pinned HTTP proof Jobs complete 30 warmups and 80 measured three-iovec
   requests with zero workload errors.
@@ -39,7 +39,7 @@ Proof criteria:
 - The `homelab-01` path is counted separately; zero exact-path rows remain
   negative evidence, not success.
 - Invalid HTTP samples emit bounded structured reasons.
-- Temporary Jobs are deleted and the release is rolled back to the previous
+- trace backendrary Jobs are deleted and the release is rolled back to the previous
   standing image.
 
 Local verification:
@@ -57,7 +57,7 @@ Local verification:
 Publication:
 
 - Code commit: `9c6463a`
-- Image tag: `ghcr.io/guaracloud/e-navigator:sha-9c6463a`
+- Image tag: `ghcr.io/e-navigator/e-navigator:sha-9c6463a`
 - Image index digest:
   `sha256:dad05511f63ebf80548e46c28d92e0de335f8c1e800bb649a2ba569c881b4362`
 - Linux/amd64 digest:
@@ -74,7 +74,7 @@ Live action:
 - Helm release `e-navigator-bench` upgraded from revision `134` to revision
   `135`.
 - `daemonset-after.yaml` rendered image
-  `ghcr.io/guaracloud/e-navigator:sha-9c6463a`.
+  `ghcr.io/e-navigator/e-navigator:sha-9c6463a`.
 - The rollout completed successfully with both DaemonSet pods Ready.
 - The two generated proof pods completed:
   - `http-stage-085800-h01-hhkvv` on `homelab-01`
@@ -114,7 +114,7 @@ Cleanup:
 - Helm rollback to revision `134` succeeded, creating deployed revision `136`
   with description `Rollback to 134`.
 - Post-rollback DaemonSet state was `2/2` Ready on standing image
-  `ghcr.io/guaracloud/e-navigator:sha-6c15296`.
+  `ghcr.io/e-navigator/e-navigator:sha-6c15296`.
 
 Outcome: `partial` for the HTTP invalid-reason diagnostic slice.
 
@@ -124,7 +124,7 @@ Proven:
   counter in this live run; bounded samples recorded `headers_too_long`.
 - The previously positive `homelab-02` bounded three-iovec HTTP proof path was
   preserved on the pushed image.
-- Temporary workloads were cleaned up and the standing release was restored.
+- trace backendrary workloads were cleaned up and the standing release was restored.
 
 Not proven:
 

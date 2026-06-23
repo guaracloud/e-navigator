@@ -22,8 +22,7 @@ pub use exec::{
     RuntimeSecuritySeverity,
 };
 pub use metrics::{
-    CompatibilityCounterMetric, MetricAggregationWindow, NetworkCounterMetric,
-    NetworkDurationMetric, NetworkGaugeMetric,
+    MetricAggregationWindow, NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric,
 };
 pub use network::{
     DependencyEdgeEvent, DependencyEndpoint, NetworkAddressFamily, NetworkConnectionCloseEvent,

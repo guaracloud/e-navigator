@@ -10,7 +10,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `beec11d`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-beec11d`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-beec11d`
 - Image index digest:
   `sha256:be48be97397513d7fad29a80cca7d81ed2be990ec5652de5c2a13b9860ff5013`
 - Linux/amd64 digest:
@@ -33,7 +33,7 @@ Deployment:
   `processor.container_attribution`, `generator.dns_metrics`,
   `generator.network_metrics`, `sink.json_stdout`, and
   `sink.prometheus_http`.
-- Exec, HTTP, host resource, trace, profiling, runtime security, Guara
+- Exec, HTTP, host resource, trace, profiling, runtime security, E-Navigator
   compatibility, and OTLP modules were disabled for this proof.
 
 Runtime security posture:
@@ -98,7 +98,7 @@ Cleanup:
 - Rolled Helm release `e-navigator-bench` back to revision `103`; Helm recorded
   final revision `105` as `Rollback to 103`.
 - Final DaemonSet state was `2/2` Ready on baseline image
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
 - Final label-scoped inventory for `e-nav-run=20260623-051700` reported no
   resources in `e-navigator-bench`.
 

@@ -12,7 +12,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `796b980`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-796b980`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-796b980`
 - Image index digest: `sha256:61d9761205ba29da86de0acea4cff102d6a6d8278eca41408e05b25a1772a908`
 - Linux/amd64 digest: `sha256:53e96917821745a6bb62c663d157a8aa2ab6df578b3bc8ae9700a431bfedf3ef`
 - CI run: `27982082852`
@@ -44,7 +44,7 @@ Live workload:
 - The Job completed with condition `Complete`.
 - The Collector rolled out successfully and remained Ready during capture.
 - The pulled Job image resolved to
-  `ghcr.io/guaracloud/e-navigator@sha256:61d9761205ba29da86de0acea4cff102d6a6d8278eca41408e05b25a1772a908`.
+  `ghcr.io/e-navigator/e-navigator@sha256:61d9761205ba29da86de0acea4cff102d6a6d8278eca41408e05b25a1772a908`.
 - `failure-marker-search.txt` was empty for `sink write failed`,
   `collector returned`, HTTP `400`, HTTP `404`, `wrong wireType`, `Bad Request`,
   and `DecodeError`.
@@ -71,8 +71,8 @@ development-status `/v1development/profiles` route.
 
 Not proven:
 
-- Pyroscope, pprof, or profile storage export.
-- Tempo, Alloy, or broad production collector compatibility.
+- external profile backend, pprof, or profile storage export.
+- trace backend, Alloy, or broad production collector compatibility.
 - Live Aya/eBPF profile export through the OTLP HTTP sink.
 - Symbolization or demangling quality in live profile export.
 - Reduced overhead or reduced privilege.

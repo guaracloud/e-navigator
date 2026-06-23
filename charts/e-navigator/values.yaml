@@ -8,7 +8,7 @@ namespace:
   labels: {}
 
 image:
-  repository: ghcr.io/guaracloud/e-navigator
+  repository: ghcr.io/e-navigator/e-navigator
   tag: ""
   digest: ""
   pullPolicy: IfNotPresent
@@ -179,10 +179,6 @@ config:
     enabled = true
 
     [[modules]]
-    name = "generator.guara_compat"
-    enabled = false
-
-    [[modules]]
     name = "sink.json_stdout"
     enabled = true
 
@@ -198,7 +194,6 @@ features:
   metrics: true
   traces: true
   profiles: false
-  guaraCompatibility: false
   protocolProbes: false
 
 args:
@@ -219,15 +214,7 @@ nodeSelector:
 tolerations:
   - operator: Exists
 
-affinity:
-  nodeAffinity:
-    requiredDuringSchedulingIgnoredDuringExecution:
-      nodeSelectorTerms:
-        - matchExpressions:
-            - key: guara.cloud/role
-              operator: NotIn
-              values:
-                - build
+affinity: {}
 
 resources: {}
 

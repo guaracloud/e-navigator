@@ -10,9 +10,9 @@ This is a curated summary of the raw artifacts in
 - Release: `e-navigator-bench`
 - Mode: collection-only with one controlled workload Job
 - Image observed:
-  `ghcr.io/guaracloud/e-navigator:sha-5c417c0`
+  `ghcr.io/e-navigator/e-navigator:sha-5c417c0`
 - Image digest observed on both E-Navigator pods:
-  `ghcr.io/guaracloud/e-navigator@sha256:553f2008f53f6da5ec05b0a45102ab8eb1f8bf4c640b2d61ce4d958ed6470cc3`
+  `ghcr.io/e-navigator/e-navigator@sha256:553f2008f53f6da5ec05b0a45102ab8eb1f8bf4c640b2d61ce4d958ed6470cc3`
 - Pull secret present in live Helm values: `ghcr-e-navigator-pull`
 - Nodes observed: `homelab-01` and `homelab-02`
 
@@ -95,7 +95,7 @@ This run does not prove:
 - controlled workload attribution for the workload Job itself;
 - runtime DNS packet capture;
 - successful OTLP protobuf export;
-- Tempo trace ingestion;
-- Pyroscope profile ingestion;
-- Beyla-compatible byte flow export;
+- trace backend trace ingestion;
+- external profile backend profile ingestion;
+- native byte flow export;
 - reduced overhead or reduced privilege.

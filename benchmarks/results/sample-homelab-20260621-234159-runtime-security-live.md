@@ -11,9 +11,9 @@ This is a curated summary of the raw artifacts in
 - Mode: collection-only plus two controlled workload Jobs pinned to the two
   homelab nodes
 - Image observed:
-  `ghcr.io/guaracloud/e-navigator:sha-5c417c0`
+  `ghcr.io/e-navigator/e-navigator:sha-5c417c0`
 - Image digest observed on both E-Navigator pods:
-  `ghcr.io/guaracloud/e-navigator@sha256:553f2008f53f6da5ec05b0a45102ab8eb1f8bf4c640b2d61ce4d958ed6470cc3`
+  `ghcr.io/e-navigator/e-navigator@sha256:553f2008f53f6da5ec05b0a45102ab8eb1f8bf4c640b2d61ce4d958ed6470cc3`
 - Pull secret present in live Helm values: `ghcr-e-navigator-pull`
 - Nodes observed: `homelab-01` and `homelab-02`
 
@@ -124,8 +124,8 @@ This run does not prove:
 - complete attribution for every runtime-security finding;
 - runtime DNS packet capture;
 - successful OTLP protobuf export;
-- Tempo trace ingestion;
-- Pyroscope profile ingestion;
-- Beyla-compatible byte flow export;
+- trace backend trace ingestion;
+- external profile backend profile ingestion;
+- native byte flow export;
 - reduced overhead or reduced privilege;
-- replacement readiness for Beyla, Alloy, Tempo, Prometheus, or Pyroscope.
+- replacement readiness for external flow agent, Alloy, trace backend, Prometheus, or external profile backend.

@@ -7,7 +7,7 @@ Curated summary for raw artifacts under
 
 - Context: `staging`
 - Namespace: `e-navigator-bench`
-- Image: `ghcr.io/guaracloud/e-navigator:sha-8ab271c`
+- Image: `ghcr.io/e-navigator/e-navigator:sha-8ab271c`
 - Pull secret: not used
 - Cleanup: not run
 
@@ -38,12 +38,12 @@ newer surfaces are not upgraded to live proof by this run.
   `dns_query` or `dns_response` records.
 - Prometheus export: no Service, Endpoints, ServiceMonitor, or PodMonitor existed
   in `e-navigator-bench`.
-- OTLP, Tempo, Pyroscope, and pprof export: no live E-Navigator export path was
+- OTLP, trace backend, external profile backend, and pprof export: no live E-Navigator export path was
   configured or observed.
 - Controlled CPU-workload attribution: the profile workload completed, but its
   identity was absent from profile logs.
 - Reduced overhead and reduced privilege.
-- Beyla, Alloy, Tempo, Prometheus, or Pyroscope replacement readiness.
+- external flow agent, Alloy, trace backend, Prometheus, or external profile backend replacement readiness.
 
 ## Resource Samples
 

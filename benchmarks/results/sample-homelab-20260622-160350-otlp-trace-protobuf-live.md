@@ -10,7 +10,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `c00a7d5ad71c42760f3271a8b460bc500509f6fb`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-c00a7d5`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-c00a7d5`
 - Image index digest: `sha256:4fd7c9b15969d93bdd54a4db776f2ceac4836789da110366b6fff38895c7f9ff`
 - Linux/amd64 digest: `sha256:3024bad4d5b7c76d15f4b57e7d415db3fcf9d5b2410921ba2fa811e15f8fa6ae`
 - CI run: `27966037985`
@@ -38,15 +38,15 @@ Live workload:
 - The collector decoded span `synthetic checkout` as OTLP kind `Internal`, trace ID `4bf92f3577b34da6a3ce929d0e0e4736`, span ID `00f067aa0ba902b7`, and resource `service.name = synthetic-api`.
 - The collector decoded span `http request` as OTLP kind `Server`, trace ID `4bf92f3577b34da6a3ce929d0e0e4736`, span ID `00f067aa0ba902b7`, resource `service.name = synthetic-api`, and attribute `http.request.method = GET`.
 - The captured Job and collector logs contained no `sink write failed`, HTTP 4xx/5xx, collector rejection, panic, or error text.
-- Temporary Job, ConfigMap, Deployment, and Service resources were deleted; final label-scoped inventory reported no resources found.
+- trace backendrary Job, ConfigMap, Deployment, and Service resources were deleted; final label-scoped inventory reported no resources found.
 
 Outcome: `proven` for namespace-local OpenTelemetry Collector acceptance of E-Navigator OTLP protobuf trace export from synthetic trace/request records with valid trace IDs.
 
 Not proven:
 
 - OTLP protobuf metrics or profiles.
-- Tempo storage/query behavior.
-- Pyroscope or pprof export.
+- trace backend storage/query behavior.
+- external profile backend or pprof export.
 - Live application HTTP/gRPC parsing.
 - Live Aya/eBPF generation of propagated trace IDs.
 - Production collector compatibility outside this namespace-local OpenTelemetry Collector.

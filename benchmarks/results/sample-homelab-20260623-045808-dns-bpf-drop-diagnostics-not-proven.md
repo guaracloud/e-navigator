@@ -24,17 +24,17 @@ The tested commits were:
 
 Each image was pushed and published before live rollout:
 
-- `ghcr.io/guaracloud/e-navigator:sha-0f5595e`
+- `ghcr.io/e-navigator/e-navigator:sha-0f5595e`
   - image index:
     `sha256:0a5c2439564cf140d99dce97250108dded3139bad61fde06cbc9bf70dbae5156`
   - linux/amd64:
     `sha256:af61da53a10844172d4f352b3810077fdb01c1aaa959fe602fc78d00ded60b54`
-- `ghcr.io/guaracloud/e-navigator:sha-8460cc4`
+- `ghcr.io/e-navigator/e-navigator:sha-8460cc4`
   - image index:
     `sha256:cb91f52fd22c7b3faa72a8cb3458fc240ec0826840dd0195b612c014e4d21bb2`
   - linux/amd64:
     `sha256:960f6cb602d6d428704c0904e78bbe99f0738dc7922ab6c601a705b8a9b11051`
-- `ghcr.io/guaracloud/e-navigator:sha-6686165`
+- `ghcr.io/e-navigator/e-navigator:sha-6686165`
   - image index:
     `sha256:54084a563523c54d119772c645be026adc20aebd651d272bd33781d7432f5f12`
   - linux/amd64:
@@ -79,7 +79,7 @@ GitHub checks for the revert completed successfully:
 
 The published revert image was:
 
-- tag: `ghcr.io/guaracloud/e-navigator:sha-e3bc6f2`
+- tag: `ghcr.io/e-navigator/e-navigator:sha-e3bc6f2`
 - image index:
   `sha256:8d328fc2ce9f0262a71974f695044c080b72c07cb1f7f60cd6628dfa225cf757`
 - linux/amd64:

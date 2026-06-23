@@ -121,14 +121,13 @@
         "owner_type": "deployment",
         "container": null,
         "kubernetes": {
-          "namespace": "proj-paid",
+          "namespace": "e-navigator-bench",
           "pod_name": "checkout-123",
           "pod_uid": "pod-uid",
           "container_name": "checkout",
           "node_name": "node-a",
           "labels": {
-            "app.kubernetes.io/name": "checkout",
-            "guara.cloud/tier": "pro"
+            "app.kubernetes.io/name": "checkout"
           }
         }
       },
@@ -139,15 +138,13 @@
         "owner_type": "statefulset",
         "container": null,
         "kubernetes": {
-          "namespace": "proj-paid",
+          "namespace": "e-navigator-bench",
           "pod_name": "redis-0",
           "pod_uid": "redis-pod-uid",
           "container_name": "redis",
           "node_name": "node-a",
           "labels": {
-            "app.kubernetes.io/name": "redis",
-            "guara.cloud/catalog-slug": "redis",
-            "guara.cloud/tier": "pro"
+            "app.kubernetes.io/name": "redis"
           }
         }
       },
@@ -225,22 +222,24 @@
   },
   {
     "schema_version": 1,
-    "kind": "compatibility_counter_metric",
+    "kind": "network_counter_metric",
     "source": "golden",
     "host": "node-a",
     "payload": {
-      "metric_name": "beyla_network_flow_bytes_total",
+      "metric_name": "network.flow.bytes",
       "unit": "By",
       "value": 2048,
       "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
-      "labels": {
-        "k8s_dst_namespace": "proj-paid",
-        "k8s_dst_owner_name": "redis",
-        "k8s_dst_owner_type": "statefulset",
-        "k8s_src_namespace": "proj-paid",
-        "k8s_src_owner_name": "checkout",
-        "k8s_src_owner_type": "deployment"
-      }
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "cgroup_id": null},
+      "protocol": "tcp",
+      "address_family": "ipv4",
+      "local_address": "10.0.0.5",
+      "local_port": 41000,
+      "remote_address": "203.0.113.10",
+      "remote_port": 443,
+      "errno": null,
+      "container": null,
+      "kubernetes": null
     }
   },
   {

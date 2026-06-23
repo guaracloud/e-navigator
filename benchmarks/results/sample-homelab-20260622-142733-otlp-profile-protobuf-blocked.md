@@ -7,7 +7,7 @@ Scope: intended `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `a66e1ca88ac77546678028af4a405a454a036f25`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-a66e1ca`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-a66e1ca`
 - Image index digest: `sha256:cca45ed8c6a1eaf54d1be8ee044cdde7019f18166c45d513fd421a502ba6f79e`
 - Linux/amd64 digest: `sha256:f3726ba5b1161515afa8cd6e0211c48ff5f1f420d1128d7222a17a30e2d35cdc`
 - CI run: `27971061684`
@@ -29,7 +29,7 @@ Published image proof:
 - Push commit: `a66e1ca`
 - GitHub CI run `27971061684`: success
 - GitHub image publish run `27971061481`: success
-- Published tags: `ghcr.io/guaracloud/e-navigator:main`, `ghcr.io/guaracloud/e-navigator:sha-a66e1ca`
+- Published tags: `ghcr.io/e-navigator/e-navigator:main`, `ghcr.io/e-navigator/e-navigator:sha-a66e1ca`
 
 Preflight:
 
@@ -45,7 +45,7 @@ Local result: `proven` for encoding E-Navigator profile records as OTLP protobuf
 Not proven:
 
 - Namespace-local OpenTelemetry Collector acceptance of OTLP profile protobuf.
-- Pyroscope, pprof, or profile storage export.
-- Tempo, Alloy, or broad production collector compatibility.
+- external profile backend, pprof, or profile storage export.
+- trace backend, Alloy, or broad production collector compatibility.
 - Live Aya/eBPF profile export through the OTLP HTTP sink.
 - Reduced overhead or reduced privilege.

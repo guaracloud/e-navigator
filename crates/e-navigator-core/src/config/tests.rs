@@ -44,7 +44,6 @@ fn default_config_is_valid_and_preserves_expected_modules() {
             ModuleConfig::enabled("generator.profiling"),
             ModuleConfig::enabled("generator.dependency_graph"),
             ModuleConfig::enabled("generator.runtime_security"),
-            ModuleConfig::disabled("generator.guara_compat"),
             ModuleConfig::enabled("sink.json_stdout"),
             ModuleConfig::disabled("sink.prometheus_http"),
             ModuleConfig::disabled("sink.otlp_http"),
@@ -58,7 +57,6 @@ fn default_config_does_not_inflate_opt_in_module_claims() {
 
     assert!(!config.module_enabled("source.aya_cpu_profile"));
     assert!(!config.cpu_profile_source.enabled);
-    assert!(!config.module_enabled("generator.guara_compat"));
 }
 
 #[test]
@@ -313,7 +311,7 @@ fn unknown_module_names_are_invalid_and_list_known_modules() {
             ],
             ..RuntimeConfig::default()
         },
-        "unknown module 'generator.dns_typo'; known modules: source.aya_exec, source.aya_network, source.aya_dns, source.aya_http, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, generator.guara_compat, sink.json_stdout, sink.prometheus_http, sink.otlp_http",
+        "unknown module 'generator.dns_typo'; known modules: source.aya_exec, source.aya_network, source.aya_dns, source.aya_http, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, sink.json_stdout, sink.prometheus_http, sink.otlp_http",
     );
 }
 

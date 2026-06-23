@@ -13,7 +13,7 @@ Scope: `staging` context, `e-navigator-bench` namespace only.
 Image:
 
 - Git SHA: `35ecc6c`
-- Tag: `ghcr.io/guaracloud/e-navigator:sha-35ecc6c`
+- Tag: `ghcr.io/e-navigator/e-navigator:sha-35ecc6c`
 - Image index digest: `sha256:c55bd7bd336d8fa7251db0bcd99a3fcf4d51bf5b49d7356d06a86d584f8eb6f8`
 - Linux/amd64 digest: `sha256:be54100409aa2fc6f3c520e7ee1cecf397dce6a126a44531a27092c230b00ec9`
 - CI run: `27979164318`
@@ -35,7 +35,7 @@ Live workload:
   `http://e-nav-otlp-profiles-20260622-165710:4318/v1development/profiles`.
 - The corrected Job completed `1/1` in 5 seconds with zero pod restarts.
 - The corrected Collector remained Ready with zero pod restarts.
-- Temporary Job, ConfigMap, Deployment, and Service resources were deleted; the
+- trace backendrary Job, ConfigMap, Deployment, and Service resources were deleted; the
   final label-scoped inventory reported no resources.
 
 Observed negative evidence:
@@ -63,7 +63,7 @@ decode with the local `opentelemetry-proto` Rust type.
 Not proven:
 
 - Live OpenTelemetry Collector acceptance of E-Navigator profile protobuf.
-- Pyroscope, pprof, or profile storage export.
-- Tempo, Alloy, or broad production collector compatibility.
+- external profile backend, pprof, or profile storage export.
+- trace backend, Alloy, or broad production collector compatibility.
 - Live Aya/eBPF profile export through the OTLP HTTP sink.
 - Reduced overhead or reduced privilege.

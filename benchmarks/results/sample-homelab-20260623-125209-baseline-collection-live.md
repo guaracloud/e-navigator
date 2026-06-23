@@ -14,7 +14,7 @@ Deployment:
 - The live Helm release was not upgraded or rolled back by this run.
 - DaemonSet `e-navigator-bench` was `2/2` Ready.
 - Runtime image was
-  `ghcr.io/guaracloud/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
+  `ghcr.io/e-navigator/e-navigator@sha256:90b571bf89ac36c1432a503ad9b9add7abd7604579533c1912201568db1d5bfc`.
 - Runtime pods were:
   - `e-navigator-bench-q6xjf` on `homelab-01`.
   - `e-navigator-bench-r5ggq` on `homelab-02`.

@@ -14,7 +14,7 @@ live Prometheus, log, resource, and capability evidence.
 - Namespace: `e-navigator-bench`
 - Helm release: `e-navigator-bench`
 - Commit: `d3167e3`
-- Image: `ghcr.io/guaracloud/e-navigator:sha-d3167e3`
+- Image: `ghcr.io/e-navigator/e-navigator:sha-d3167e3`
 - Image index digest:
   `sha256:f17ac298132fa75fea50d8f30e3f2d6a5de26d2ab0ad62e69b1a7ec044c64429`
 - Linux/amd64 manifest digest:
@@ -32,8 +32,8 @@ Final restored pods:
 
 | Pod | Node | Image ID | Restarts | Ready |
 | --- | --- | --- | --- | --- |
-| `e-navigator-bench-w6klr` | `homelab-01` | `ghcr.io/guaracloud/e-navigator@sha256:f17ac298132fa75fea50d8f30e3f2d6a5de26d2ab0ad62e69b1a7ec044c64429` | `0` | `true` |
-| `e-navigator-bench-wlsv9` | `homelab-02` | `ghcr.io/guaracloud/e-navigator@sha256:f17ac298132fa75fea50d8f30e3f2d6a5de26d2ab0ad62e69b1a7ec044c64429` | `0` | `true` |
+| `e-navigator-bench-w6klr` | `homelab-01` | `ghcr.io/e-navigator/e-navigator@sha256:f17ac298132fa75fea50d8f30e3f2d6a5de26d2ab0ad62e69b1a7ec044c64429` | `0` | `true` |
+| `e-navigator-bench-wlsv9` | `homelab-02` | `ghcr.io/e-navigator/e-navigator@sha256:f17ac298132fa75fea50d8f30e3f2d6a5de26d2ab0ad62e69b1a7ec044c64429` | `0` | `true` |
 
 ## Real Alloy OTLP Boundary
 
@@ -133,9 +133,9 @@ in `e-navigator-bench`. The pinned runtime-security jobs
 This run does not prove:
 
 - successful upstream OTLP protobuf metrics, traces, or profiles;
-- Tempo ingestion;
-- Pyroscope or pprof export;
-- Beyla-compatible byte-accurate flow replacement;
+- trace backend ingestion;
+- external profile backend or pprof export;
+- native byte-accurate flow replacement;
 - runtime DNS eBPF packet capture;
-- reduced overhead versus Beyla, Alloy, node-exporter, or Pyroscope;
+- reduced overhead versus external flow agent, Alloy, node-exporter, or external profile backend;
 - reduced-privilege Kubernetes eBPF operation.

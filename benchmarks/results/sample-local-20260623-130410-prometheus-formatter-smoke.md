@@ -24,14 +24,14 @@ Configuration:
 Observed evidence:
 
 - Prometheus compatibility sink tests passed, including the stable
-  `beyla_network_flow_bytes_total` text rendering test and the sensitive-label
+  `network_flow_bytes` text rendering test and the sensitive-label
   filtering tests.
 - The workspace test suite passed after the formatter change.
 - Criterion reported `formatter/prometheus_compat` improved from the previous
   local baseline: median change `-64.030%`, measured interval
   `2.0792 us` to `2.5384 us`.
 - The same smoke still reported unrelated regressions for
-  `protocol/http_fixture_parse`, `generator/guara_compat`, and
+  `protocol/http_fixture_parse`, `generator/network_metrics`, and
   `formatter/profile_record`.
 
 Outcome: `partial`.

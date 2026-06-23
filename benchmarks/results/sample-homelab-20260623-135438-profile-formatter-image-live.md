@@ -14,13 +14,13 @@ Preflight and rollout:
 - The only touched namespace was `e-navigator-bench`.
 - GitHub CI run `28031028689` passed for commit `6c04aaa`.
 - GitHub `publish-images` run `28031029226` passed for commit `6c04aaa`.
-- Published tag: `ghcr.io/guaracloud/e-navigator:sha-6c04aaa`.
+- Published tag: `ghcr.io/e-navigator/e-navigator:sha-6c04aaa`.
 - Published index digest:
   `sha256:dc2461ddf38253bf0d51668d7e28c515b44f56173a2bd4c1ad8cfbec7ecc5744`.
 - Published linux/amd64 digest:
   `sha256:3abcd8d1c9b9b890801eeab94252f8cc507cd0dba665ddcc449cf409275b90d0`.
 - Helm revision `129` rolled out with image
-  `ghcr.io/guaracloud/e-navigator@sha256:3abcd8d1c9b9b890801eeab94252f8cc507cd0dba665ddcc449cf409275b90d0`.
+  `ghcr.io/e-navigator/e-navigator@sha256:3abcd8d1c9b9b890801eeab94252f8cc507cd0dba665ddcc449cf409275b90d0`.
 
 Collector note:
 
@@ -64,11 +64,11 @@ Not proven:
 
 - Live profile formatter behavior. The baseline release did not enable
   `source.aya_cpu_profile`, `generator.profiling`, `sink.otlp_http`, or a
-  Pyroscope/profile export path, and the captured logs contained zero profile
+  external profile backend/profile export path, and the captured logs contained zero profile
   records.
 - Prometheus server scrape/queryability. No Prometheus API URL/service was
   configured for this collection.
-- `beyla_network_flow_bytes_total`; direct `/metrics` contained zero such
+- `network_flow_bytes`; direct `/metrics` contained zero such
   lines.
-- Reduced privilege, reduced overhead, profile storage, Pyroscope write
+- Reduced privilege, reduced overhead, profile storage, external profile backend write
   transport, symbolization, or production-readiness claims.
