@@ -14,47 +14,43 @@ use crate::{
 #[derive(Debug)]
 pub struct OtlpHttpSink {
     config: OtlpHttpConfig,
-    metric_exporter: Mutex<HttpProtobufExporter<crate::OtelMetricRecord>>,
-    profile_exporter: Mutex<HttpProtobufExporter<crate::OtelProfileRecord>>,
-    trace_exporter: Mutex<HttpProtobufExporter<crate::OtelTraceRecord>>,
+    metric_exporter: Option<Mutex<HttpProtobufExporter<crate::OtelMetricRecord>>>,
+    profile_exporter: Option<Mutex<HttpProtobufExporter<crate::OtelProfileRecord>>>,
+    trace_exporter: Option<Mutex<HttpProtobufExporter<crate::OtelTraceRecord>>>,
 }
 
 impl OtlpHttpSink {
     pub fn new(config: OtlpHttpConfig) -> CoreResult<Self> {
-        let exporter_config = HttpExporterConfig {
-            endpoint: config.endpoint.clone(),
-            headers: Vec::new(),
-            batch_size: config.batch_size,
-            queue_capacity: config.queue_capacity,
-            timeout_millis: config.timeout_millis,
-            max_retries: config.max_retries,
-            tls_insecure_skip_verify: config.tls_insecure_skip_verify,
+        let metric_exporter = if config.metrics_enabled {
+            Some(Mutex::new(build_exporter(
+                exporter_config_for(&config, required_metrics_endpoint(&config)?),
+                encode_metric_export_request,
+            )?))
+        } else {
+            None
         };
-        let metric_exporter =
-            HttpProtobufExporter::new(exporter_config.clone(), encode_metric_export_request)
-                .map_err(|err| e_navigator_core::CoreError::ModuleFailed {
-                    module: "sink.otlp_http".to_string(),
-                    message: err.to_string(),
-                })?;
-        let profile_exporter =
-            HttpProtobufExporter::new(exporter_config.clone(), encode_profile_export_request)
-                .map_err(|err| e_navigator_core::CoreError::ModuleFailed {
-                    module: "sink.otlp_http".to_string(),
-                    message: err.to_string(),
-                })?;
-        let trace_exporter =
-            HttpProtobufExporter::new(exporter_config, encode_trace_export_request).map_err(
-                |err| e_navigator_core::CoreError::ModuleFailed {
-                    module: "sink.otlp_http".to_string(),
-                    message: err.to_string(),
-                },
-            )?;
+        let profile_exporter = if config.profiles_enabled {
+            Some(Mutex::new(build_exporter(
+                exporter_config_for(&config, required_profiles_endpoint(&config)?),
+                encode_profile_export_request,
+            )?))
+        } else {
+            None
+        };
+        let trace_exporter = if config.traces_enabled {
+            Some(Mutex::new(build_exporter(
+                exporter_config_for(&config, required_traces_endpoint(&config)?),
+                encode_trace_export_request,
+            )?))
+        } else {
+            None
+        };
 
         Ok(Self {
             config,
-            metric_exporter: Mutex::new(metric_exporter),
-            profile_exporter: Mutex::new(profile_exporter),
-            trace_exporter: Mutex::new(trace_exporter),
+            metric_exporter,
+            profile_exporter,
+            trace_exporter,
         })
     }
 }
@@ -68,12 +64,13 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
     async fn write(&self, signal: &SignalEnvelope) -> CoreResult<()> {
         if self.config.traces_enabled
             && let Some(record) = format_otel_trace_record(signal)
+            && let Some(exporter) = &self.trace_exporter
         {
             if !trace_record_has_valid_ids(&record) {
                 return Ok(());
             }
 
-            let mut exporter = self.trace_exporter.lock().await;
+            let mut exporter = exporter.lock().await;
             exporter.enqueue(record);
             return exporter.flush_once().await.map_err(|err| {
                 e_navigator_core::CoreError::ModuleFailed {
@@ -85,8 +82,9 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
 
         if self.config.metrics_enabled
             && let Some(record) = format_otel_metric_record(signal)
+            && let Some(exporter) = &self.metric_exporter
         {
-            let mut exporter = self.metric_exporter.lock().await;
+            let mut exporter = exporter.lock().await;
             exporter.enqueue(record);
             return exporter.flush_once().await.map_err(|err| {
                 e_navigator_core::CoreError::ModuleFailed {
@@ -98,8 +96,9 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
 
         if self.config.profiles_enabled
             && let Some(record) = format_otel_profile_record(signal)
+            && let Some(exporter) = &self.profile_exporter
         {
-            let mut exporter = self.profile_exporter.lock().await;
+            let mut exporter = exporter.lock().await;
             exporter.enqueue(record);
             return exporter.flush_once().await.map_err(|err| {
                 e_navigator_core::CoreError::ModuleFailed {
@@ -111,6 +110,66 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
 
         Ok(())
     }
+}
+
+fn required_metrics_endpoint(config: &OtlpHttpConfig) -> CoreResult<&str> {
+    config.effective_metrics_endpoint().ok_or_else(|| {
+        e_navigator_core::CoreError::ModuleFailed {
+            module: "sink.otlp_http".to_string(),
+            message:
+                "otlp_http.metrics_endpoint or otlp_http.endpoint is required when OTLP metrics are enabled"
+                    .to_string(),
+        }
+    })
+}
+
+fn required_traces_endpoint(config: &OtlpHttpConfig) -> CoreResult<&str> {
+    config.effective_traces_endpoint().ok_or_else(|| {
+        e_navigator_core::CoreError::ModuleFailed {
+            module: "sink.otlp_http".to_string(),
+            message:
+                "otlp_http.traces_endpoint or otlp_http.endpoint is required when OTLP traces are enabled"
+                    .to_string(),
+        }
+    })
+}
+
+fn required_profiles_endpoint(config: &OtlpHttpConfig) -> CoreResult<&str> {
+    config.effective_profiles_endpoint().ok_or_else(|| {
+        e_navigator_core::CoreError::ModuleFailed {
+            module: "sink.otlp_http".to_string(),
+            message:
+                "otlp_http.profiles_endpoint or otlp_http.endpoint is required when OTLP profiles are enabled"
+                    .to_string(),
+        }
+    })
+}
+
+fn exporter_config_for(config: &OtlpHttpConfig, endpoint: &str) -> HttpExporterConfig {
+    HttpExporterConfig {
+        endpoint: endpoint.to_string(),
+        headers: Vec::new(),
+        batch_size: config.batch_size,
+        queue_capacity: config.queue_capacity,
+        timeout_millis: config.timeout_millis,
+        max_retries: config.max_retries,
+        tls_insecure_skip_verify: config.tls_insecure_skip_verify,
+    }
+}
+
+fn build_exporter<T>(
+    config: HttpExporterConfig,
+    encode_batch: fn(&[T]) -> Result<Vec<u8>, crate::ExporterError>,
+) -> CoreResult<HttpProtobufExporter<T>>
+where
+    T: Clone,
+{
+    HttpProtobufExporter::new(config, encode_batch).map_err(|err| {
+        e_navigator_core::CoreError::ModuleFailed {
+            module: "sink.otlp_http".to_string(),
+            message: err.to_string(),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -142,7 +201,7 @@ mod tests {
         let collector = FakeCollector::spawn(vec![200]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
             enabled: true,
-            endpoint: collector.url(),
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
             metrics_enabled: true,
             traces_enabled: false,
             profiles_enabled: false,
@@ -159,7 +218,7 @@ mod tests {
             .expect("metric export succeeds");
         let request = collector.next_request().await;
 
-        assert!(request.contains("POST / HTTP/1.1"));
+        assert!(request.contains("POST /v1/metrics HTTP/1.1"));
         assert!(request.contains("content-type: application/x-protobuf"));
         assert!(!request.contains("signal_family"));
         let decoded = ExportMetricsServiceRequest::decode(request.body())
@@ -224,10 +283,10 @@ mod tests {
         let collector = FakeCollector::spawn(vec![]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
             enabled: true,
-            endpoint: collector.url(),
+            traces_endpoint: collector.url_with_path("/v1/traces"),
             metrics_enabled: false,
             traces_enabled: true,
-            profiles_enabled: true,
+            profiles_enabled: false,
             batch_size: 1,
             queue_capacity: 2,
             timeout_millis: 50,
@@ -248,7 +307,7 @@ mod tests {
         let collector = FakeCollector::spawn(vec![200]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
             enabled: true,
-            endpoint: collector.url(),
+            traces_endpoint: collector.url_with_path("/v1/traces"),
             metrics_enabled: false,
             traces_enabled: true,
             profiles_enabled: false,
@@ -265,6 +324,7 @@ mod tests {
             .expect("trace export succeeds");
         let request = collector.next_request().await;
 
+        assert!(request.contains("POST /v1/traces HTTP/1.1"));
         assert!(request.contains("content-type: application/x-protobuf"));
         assert!(!request.contains("signal_family"));
         let decoded =
@@ -298,7 +358,7 @@ mod tests {
         let collector = FakeCollector::spawn(vec![200]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
             enabled: true,
-            endpoint: collector.url(),
+            profiles_endpoint: collector.url_with_path("/v1development/profiles"),
             metrics_enabled: false,
             traces_enabled: false,
             profiles_enabled: true,
@@ -315,6 +375,7 @@ mod tests {
             .expect("profile export succeeds");
         let request = collector.next_request().await;
 
+        assert!(request.contains("POST /v1development/profiles HTTP/1.1"));
         assert!(request.contains("content-type: application/x-protobuf"));
         assert!(!request.contains("signal_family"));
         let decoded = collector_profile_proto::ExportProfilesServiceRequest::decode(request.body())
@@ -349,6 +410,96 @@ mod tests {
             attribute.key == "k8s.pod.name"
                 && format!("{:?}", attribute.value).contains("checkout-123")
         }));
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_falls_back_to_single_endpoint_for_enabled_families() {
+        let collector = FakeCollector::spawn(vec![200, 200, 200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            endpoint: collector.url_with_path("/otlp"),
+            batch_size: 1,
+            queue_capacity: 4,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_metric())
+            .await
+            .expect("metric export succeeds");
+        sink.write(&request_span())
+            .await
+            .expect("trace export succeeds");
+        sink.write(&profile_sample())
+            .await
+            .expect("profile export succeeds");
+
+        assert!(
+            collector
+                .next_request()
+                .await
+                .contains("POST /otlp HTTP/1.1")
+        );
+        assert!(
+            collector
+                .next_request()
+                .await
+                .contains("POST /otlp HTTP/1.1")
+        );
+        assert!(
+            collector
+                .next_request()
+                .await
+                .contains("POST /otlp HTTP/1.1")
+        );
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_supports_mixed_family_specific_and_fallback_endpoints() {
+        let metrics_collector = FakeCollector::spawn(vec![200]).await;
+        let fallback_collector = FakeCollector::spawn(vec![200, 200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            endpoint: fallback_collector.url_with_path("/fallback"),
+            metrics_endpoint: metrics_collector.url_with_path("/v1/metrics"),
+            batch_size: 1,
+            queue_capacity: 4,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_metric())
+            .await
+            .expect("metric export succeeds");
+        sink.write(&request_span())
+            .await
+            .expect("trace export succeeds");
+        sink.write(&profile_sample())
+            .await
+            .expect("profile export succeeds");
+
+        assert!(
+            metrics_collector
+                .next_request()
+                .await
+                .contains("POST /v1/metrics HTTP/1.1")
+        );
+        assert!(
+            fallback_collector
+                .next_request()
+                .await
+                .contains("POST /fallback HTTP/1.1")
+        );
+        assert!(
+            fallback_collector
+                .next_request()
+                .await
+                .contains("POST /fallback HTTP/1.1")
+        );
     }
 
     fn network_metric() -> SignalEnvelope {
@@ -527,6 +678,10 @@ mod tests {
 
         fn url(&self) -> String {
             format!("http://{}", self.address)
+        }
+
+        fn url_with_path(&self, path: &str) -> String {
+            format!("http://{}{}", self.address, path)
         }
 
         async fn next_request(&self) -> RecordedRequest {

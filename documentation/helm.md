@@ -69,6 +69,27 @@ serviceMonitor:
 `serviceMonitor.enabled=true` renders a `ServiceMonitor` only with both
 `service.enabled=true` and `prometheusHttp.enabled=true`.
 
+OTLP HTTP export is configured inside the same `config.toml` override. The
+single `endpoint` remains the fallback for backward compatibility; set
+per-family endpoints only when metrics, traces, or profiles should route to
+different OTLP HTTP receivers:
+
+```toml
+[otlp_http]
+enabled = true
+endpoint = "http://otel-collector:4318"
+metrics_endpoint = "http://otel-collector:4318/v1/metrics"
+traces_endpoint = "http://otel-collector:4318/v1/traces"
+profiles_endpoint = "http://otel-collector:4318/v1development/profiles"
+metrics_enabled = true
+traces_enabled = true
+profiles_enabled = true
+```
+
+If a family-specific endpoint is omitted, that enabled family uses
+`otlp_http.endpoint`. Disabled families do not require an endpoint and do not
+export requests.
+
 ## Raw Manifest Fallback
 
 Raw YAML remains in `deploy/kubernetes/` for development and review, but Helm is

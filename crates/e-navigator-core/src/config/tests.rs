@@ -171,6 +171,9 @@ fn otlp_http_sink_defaults_are_bounded_and_disabled() {
     assert!(!config.module_enabled("sink.otlp_http"));
     assert!(!config.otlp_http.enabled);
     assert_eq!(config.otlp_http.endpoint, "");
+    assert_eq!(config.otlp_http.metrics_endpoint, "");
+    assert_eq!(config.otlp_http.traces_endpoint, "");
+    assert_eq!(config.otlp_http.profiles_endpoint, "");
     assert!(config.otlp_http.metrics_enabled);
     assert!(config.otlp_http.traces_enabled);
     assert!(config.otlp_http.profiles_enabled);
@@ -199,7 +202,39 @@ fn otlp_http_sink_config_is_validated_when_enabled() {
             },
             ..RuntimeConfig::default()
         },
-        "otlp_http.endpoint is required when sink.otlp_http is enabled",
+        "otlp_http.metrics_endpoint or otlp_http.endpoint is required when OTLP metrics are enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                metrics_enabled: false,
+                traces_enabled: true,
+                profiles_enabled: false,
+                traces_endpoint: String::new(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.traces_endpoint or otlp_http.endpoint is required when OTLP traces are enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                metrics_enabled: false,
+                traces_enabled: false,
+                profiles_enabled: true,
+                profiles_endpoint: String::new(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.profiles_endpoint or otlp_http.endpoint is required when OTLP profiles are enabled",
     );
 
     assert_invalid(
@@ -275,6 +310,64 @@ fn otlp_http_sink_config_is_validated_when_enabled() {
             ..RuntimeConfig::default()
         },
         "otlp_http.enabled requires enabled sink.otlp_http module",
+    );
+}
+
+#[test]
+fn otlp_http_sink_accepts_family_specific_and_fallback_endpoints() {
+    let enabled_modules = vec![
+        ModuleConfig::enabled("source.synthetic_exec"),
+        ModuleConfig::enabled("sink.otlp_http"),
+    ];
+
+    assert!(
+        RuntimeConfig {
+            modules: enabled_modules.clone(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: String::new(),
+                metrics_endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                traces_endpoint: "http://127.0.0.1:4318/v1/traces".to_string(),
+                profiles_endpoint: "http://127.0.0.1:4318/v1development/profiles".to_string(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        }
+        .validate()
+        .is_ok()
+    );
+
+    assert!(
+        RuntimeConfig {
+            modules: enabled_modules.clone(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318".to_string(),
+                metrics_endpoint: "http://127.0.0.1:4319/v1/metrics".to_string(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        }
+        .validate()
+        .is_ok()
+    );
+
+    assert!(
+        RuntimeConfig {
+            modules: enabled_modules,
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: String::new(),
+                metrics_enabled: false,
+                traces_enabled: true,
+                profiles_enabled: false,
+                traces_endpoint: "http://127.0.0.1:4318/v1/traces".to_string(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        }
+        .validate()
+        .is_ok()
     );
 }
 

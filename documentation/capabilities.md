@@ -20,7 +20,7 @@ when implementation and evidence change together.
 | CPU profiling source | Partial opt-in CPU profile sampling | raw decode/profile tests and selected live workload attribution | pprof export, storage, symbolization, flamegraphs, deterministic all-workload capture |
 | Native flow byte metrics | Implemented native `network.flow.bytes` signal and Prometheus rendering | generator/sink tests and golden schema coverage | positive live native metric export after migration |
 | Prometheus HTTP sink | Implemented opt-in HTTP surface | local `/metrics`, `/healthz`, `/readyz` tests and selected live scrape proof | longer soak, cardinality baseline, production-load correctness |
-| OTLP HTTP sink | Partial metric, trace, and development-status profile protobuf support | fake-collector tests and selected namespace-local Collector proof | broad production collector/backend compatibility |
+| OTLP HTTP sink | Partial metric, trace, development-status profile protobuf support, and per-family endpoint routing | fake-collector tests and selected namespace-local Collector proof | broad production collector/backend compatibility |
 | Kubernetes packaging | Implemented Helm chart and raw manifests | Helm lint/template, schema checks, guarded homelab rollouts | production rollout proof across environments |
 | Supply chain | Implemented release signing/SBOM workflow and local checks | release workflow, `cargo deny`, `cargo audit`, `cargo machete`, secret-pattern guard | container vulnerability policy gates |
 

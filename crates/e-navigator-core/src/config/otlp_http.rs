@@ -8,6 +8,12 @@ pub struct OtlpHttpConfig {
     pub enabled: bool,
     #[serde(default)]
     pub endpoint: String,
+    #[serde(default)]
+    pub metrics_endpoint: String,
+    #[serde(default)]
+    pub traces_endpoint: String,
+    #[serde(default)]
+    pub profiles_endpoint: String,
     #[serde(default = "default_signal_family_enabled")]
     pub metrics_enabled: bool,
     #[serde(default = "default_signal_family_enabled")]
@@ -31,6 +37,9 @@ impl Default for OtlpHttpConfig {
         Self {
             enabled: false,
             endpoint: String::new(),
+            metrics_endpoint: String::new(),
+            traces_endpoint: String::new(),
+            profiles_endpoint: String::new(),
             metrics_enabled: default_signal_family_enabled(),
             traces_enabled: default_signal_family_enabled(),
             profiles_enabled: default_signal_family_enabled(),
@@ -44,6 +53,18 @@ impl Default for OtlpHttpConfig {
 }
 
 impl OtlpHttpConfig {
+    pub fn effective_metrics_endpoint(&self) -> Option<&str> {
+        self.effective_endpoint(&self.metrics_endpoint)
+    }
+
+    pub fn effective_traces_endpoint(&self) -> Option<&str> {
+        self.effective_endpoint(&self.traces_endpoint)
+    }
+
+    pub fn effective_profiles_endpoint(&self) -> Option<&str> {
+        self.effective_endpoint(&self.profiles_endpoint)
+    }
+
     pub(super) fn validate(&self, module_enabled: bool) -> ConfigResult<()> {
         if !self.enabled {
             return Ok(());
@@ -52,12 +73,6 @@ impl OtlpHttpConfig {
             return Err(ConfigError::invalid_value(
                 "otlp_http.enabled",
                 "otlp_http.enabled requires enabled sink.otlp_http module",
-            ));
-        }
-        if self.endpoint.is_empty() {
-            return Err(ConfigError::invalid_value(
-                "otlp_http.endpoint",
-                "otlp_http.endpoint is required when sink.otlp_http is enabled",
             ));
         }
         if self.queue_capacity == 0 {
@@ -84,7 +99,35 @@ impl OtlpHttpConfig {
                 "otlp_http must enable at least one signal family when sink.otlp_http is enabled",
             ));
         }
+        if self.metrics_enabled && self.effective_metrics_endpoint().is_none() {
+            return Err(ConfigError::invalid_value(
+                "otlp_http.metrics_endpoint",
+                "otlp_http.metrics_endpoint or otlp_http.endpoint is required when OTLP metrics are enabled",
+            ));
+        }
+        if self.traces_enabled && self.effective_traces_endpoint().is_none() {
+            return Err(ConfigError::invalid_value(
+                "otlp_http.traces_endpoint",
+                "otlp_http.traces_endpoint or otlp_http.endpoint is required when OTLP traces are enabled",
+            ));
+        }
+        if self.profiles_enabled && self.effective_profiles_endpoint().is_none() {
+            return Err(ConfigError::invalid_value(
+                "otlp_http.profiles_endpoint",
+                "otlp_http.profiles_endpoint or otlp_http.endpoint is required when OTLP profiles are enabled",
+            ));
+        }
         Ok(())
+    }
+
+    fn effective_endpoint<'a>(&'a self, family_endpoint: &'a str) -> Option<&'a str> {
+        if !family_endpoint.is_empty() {
+            Some(family_endpoint)
+        } else if !self.endpoint.is_empty() {
+            Some(&self.endpoint)
+        } else {
+            None
+        }
     }
 }
 

@@ -75,6 +75,21 @@ data:
     max_warnings = 1024
     window_nanos = 30000000000
 
+    [otlp_http]
+    enabled = false
+    endpoint = ""
+    metrics_endpoint = ""
+    traces_endpoint = ""
+    profiles_endpoint = ""
+    metrics_enabled = true
+    traces_enabled = true
+    profiles_enabled = true
+    queue_capacity = 1024
+    batch_size = 64
+    timeout_millis = 3000
+    max_retries = 2
+    tls_insecure_skip_verify = false
+
     [[modules]]
     name = "source.aya_exec"
     enabled = true

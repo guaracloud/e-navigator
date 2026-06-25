@@ -105,6 +105,9 @@ config:
     [otlp_http]
     enabled = false
     endpoint = ""
+    metrics_endpoint = ""
+    traces_endpoint = ""
+    profiles_endpoint = ""
     metrics_enabled = true
     traces_enabled = true
     profiles_enabled = true

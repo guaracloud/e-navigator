@@ -28,8 +28,8 @@ or chart rendering:
   security generator behavior;
 - Prometheus HTTP formatting, health/readiness endpoints, and secret-like label
   filtering;
-- OTLP protobuf request encoding for metrics, traces, and development-status
-  profiles in fake-collector tests;
+- OTLP protobuf request encoding plus per-family endpoint routing for metrics,
+  traces, and development-status profiles in fake-collector tests;
 - Helm rendering, schema checks, and release verification workflow structure.
 
 ## Runtime-Proven Slices
@@ -87,6 +87,10 @@ Some proof attempts established useful boundaries rather than positive claims:
 - Older benchmark images rejected newer modules such as `source.aya_dns`,
   `sink.prometheus_http`, and `sink.otlp_http`; those are image-vintage
   boundaries, not current-head feature failures.
+- The 20260624 OTLP per-family endpoint homelab proof was blocked because the
+  checked DaemonSet image was not proven to include the local change and the
+  local Docker daemon did not respond for building a current image; local
+  fake-collector routing tests remain the evidence for that change.
 - Some BPF diagnostic experiments were verifier-hostile on the tested homelab
   kernel and were reverted.
 - Some controlled workloads completed successfully but produced no matching
