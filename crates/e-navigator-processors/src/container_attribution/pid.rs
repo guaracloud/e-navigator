@@ -1,12 +1,12 @@
 use e_navigator_signals::ContainerContext;
 use std::{
-    collections::BTreeMap,
     io,
     path::{Path, PathBuf},
     sync::{Mutex, MutexGuard},
 };
 use tracing::{debug, warn};
 
+use super::bounded_cache::BoundedContainerCache;
 use super::cgroup::{parse_container_from_cgroup, read_bounded_to_string};
 
 const MAX_CGROUP_BYTES: u64 = 16 * 1024;
@@ -14,7 +14,7 @@ const MAX_PID_ATTRIBUTION_CACHE_ENTRIES: usize = 4096;
 
 #[derive(Debug, Default)]
 pub(super) struct PidAttributionCache {
-    cache: Mutex<BTreeMap<u32, ContainerContext>>,
+    cache: Mutex<BoundedContainerCache<u32>>,
 }
 
 impl PidAttributionCache {
@@ -63,25 +63,17 @@ impl PidAttributionCache {
     }
 
     fn cached_container_for_pid(&self, pid: u32) -> Option<ContainerContext> {
-        self.pid_cache()
-            .ok()
-            .and_then(|cache| cache.get(&pid).cloned())
+        self.pid_cache().ok().and_then(|cache| cache.get(&pid))
     }
 
     fn store_cached_container_for_pid(&self, pid: u32, container: ContainerContext) {
         let Ok(mut cache) = self.pid_cache() else {
             return;
         };
-        if cache.len() >= MAX_PID_ATTRIBUTION_CACHE_ENTRIES
-            && !cache.contains_key(&pid)
-            && let Some(oldest_pid) = cache.keys().next().copied()
-        {
-            cache.remove(&oldest_pid);
-        }
-        cache.insert(pid, container);
+        cache.insert(pid, container, MAX_PID_ATTRIBUTION_CACHE_ENTRIES);
     }
 
-    fn pid_cache(&self) -> Result<MutexGuard<'_, BTreeMap<u32, ContainerContext>>, String> {
+    fn pid_cache(&self) -> Result<MutexGuard<'_, BoundedContainerCache<u32>>, String> {
         self.cache.lock().map_err(|err| err.to_string())
     }
 }

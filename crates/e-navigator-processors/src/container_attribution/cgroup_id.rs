@@ -10,6 +10,7 @@ use std::{
 };
 use tracing::warn;
 
+use super::bounded_cache::BoundedContainerCache;
 use super::cgroup::parse_container_from_cgroup;
 
 const MAX_CGROUP_ATTRIBUTION_CACHE_ENTRIES: usize = 4096;
@@ -18,7 +19,7 @@ const MIN_CGROUP_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Default)]
 pub(super) struct CgroupIdAttributionCache {
-    cache: Mutex<BTreeMap<u64, ContainerContext>>,
+    cache: Mutex<BoundedContainerCache<u64>>,
     last_refresh: Mutex<Option<Instant>>,
 }
 
@@ -52,12 +53,7 @@ impl CgroupIdAttributionCache {
             None => return,
         };
         if let Ok(mut cache) = self.cache.lock() {
-            insert_bounded(
-                &mut cache,
-                cgroup_id,
-                container,
-                MAX_CGROUP_ATTRIBUTION_CACHE_ENTRIES,
-            );
+            cache.insert(cgroup_id, container, MAX_CGROUP_ATTRIBUTION_CACHE_ENTRIES);
         }
     }
 
@@ -65,7 +61,7 @@ impl CgroupIdAttributionCache {
         self.cache
             .lock()
             .ok()
-            .and_then(|cache| cache.get(&cgroup_id).cloned())
+            .and_then(|cache| cache.get(&cgroup_id))
     }
 
     fn should_refresh_cgroup_cache(&self) -> bool {
@@ -87,7 +83,7 @@ impl CgroupIdAttributionCache {
             Ok(cache) if cache.is_empty() => {}
             Ok(cache) => {
                 if let Ok(mut cgroup_cache) = self.cache.lock() {
-                    *cgroup_cache = cache;
+                    cgroup_cache.replace_entries(cache);
                 }
             }
             Err(err) => {
