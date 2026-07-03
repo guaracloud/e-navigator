@@ -2204,6 +2204,46 @@ fn extracts_postgres_describe_message_without_statement_or_portal_name() {
 }
 
 #[test]
+fn extracts_postgres_close_message_without_statement_or_portal_name() {
+    for (target, name) in [
+        (b'S', b"prepared-secret-name".as_slice()),
+        (b'P', b"secret-portal-name".as_slice()),
+    ] {
+        let mut body = Vec::new();
+        body.push(target);
+        body.extend_from_slice(name);
+        body.push(0);
+        let bytes = postgres_frame(b'C', &body);
+
+        let extraction = parse_postgres_message(&bytes, &ProtocolExtractionConfig::default())
+            .expect("postgres close message parses");
+
+        assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+        assert_eq!(extraction.operation.as_deref(), Some("CLOSE"));
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "db.operation" && attribute.value == "CLOSE")
+        );
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "db.postgresql.message.type"
+                    && attribute.value == "close")
+        );
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("secret")
+                    || attribute.value.contains("prepared"))
+        );
+    }
+}
+
+#[test]
 fn extracts_postgres_execute_message_without_portal_name() {
     let mut body = Vec::new();
     body.extend_from_slice(b"secret-portal-name\0");
@@ -2572,6 +2612,14 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     assert_eq!(
         parse_postgres_message(&postgres_frame(b'D', &long_describe), &config).unwrap_err(),
         PostgresExtraction::QueryTooLong
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'C', b"Xsecret\0"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'C', b"Ssecret\0extra"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
     );
     assert_eq!(
         parse_postgres_message(&postgres_frame(b'E', b"portal"), &config).unwrap_err(),

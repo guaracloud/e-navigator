@@ -50,6 +50,7 @@ pub fn parse_postgres_message(
         b'P' => parse_parse_message(body, config.max_request_line_bytes)?,
         b'B' => parse_bind_message(body, config.max_request_line_bytes)?,
         b'D' => parse_describe_message(body)?,
+        b'C' => parse_close_message(body)?,
         b'E' => parse_execute_message(body)?,
         b'S' => parse_sync_message(body)?,
         b'H' => parse_flush_message(body)?,
@@ -59,6 +60,7 @@ pub fn parse_postgres_message(
     let operation = match bytes[0] {
         b'B' => Some("BIND".to_string()),
         b'D' => Some("DESCRIBE".to_string()),
+        b'C' => Some("CLOSE".to_string()),
         b'E' => Some("EXECUTE".to_string()),
         b'S' => Some("SYNC".to_string()),
         b'H' => Some("FLUSH".to_string()),
@@ -335,6 +337,16 @@ fn parse_bind_message(body: &[u8], max_parameter_bytes: usize) -> Result<&str, P
 }
 
 fn parse_describe_message(body: &[u8]) -> Result<&str, PostgresExtraction> {
+    parse_named_statement_or_portal_target(body)?;
+    Ok("DESCRIBE")
+}
+
+fn parse_close_message(body: &[u8]) -> Result<&str, PostgresExtraction> {
+    parse_named_statement_or_portal_target(body)?;
+    Ok("CLOSE")
+}
+
+fn parse_named_statement_or_portal_target(body: &[u8]) -> Result<(), PostgresExtraction> {
     if body.is_empty() {
         return Err(PostgresExtraction::MalformedFrame);
     }
@@ -346,7 +358,7 @@ fn parse_describe_message(body: &[u8]) -> Result<&str, PostgresExtraction> {
     if cursor != body.len() {
         return Err(PostgresExtraction::MalformedFrame);
     }
-    Ok("DESCRIBE")
+    Ok(())
 }
 
 fn parse_execute_message(body: &[u8]) -> Result<&str, PostgresExtraction> {
@@ -476,6 +488,7 @@ fn message_type_name(message_type: u8) -> &'static str {
         b'P' => "parse",
         b'B' => "bind",
         b'D' => "describe",
+        b'C' => "close",
         b'E' => "execute",
         b'S' => "sync",
         b'H' => "flush",
