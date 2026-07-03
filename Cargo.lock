@@ -552,6 +552,7 @@ dependencies = [
  "async-trait",
  "e-navigator-core",
  "e-navigator-generators",
+ "e-navigator-processors",
  "e-navigator-signals",
  "tokio",
  "tracing",

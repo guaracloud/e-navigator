@@ -313,9 +313,15 @@ fn with_module_context(metadata: ModuleMetadata, err: CoreError) -> CoreError {
 mod tests {
     use async_trait::async_trait;
     use e_navigator_core::{
-        CoreResult, Generator, ModuleKind, ModuleMetadata, Processor, Signal, Sink, Source,
+        AttributionConfig, CoreResult, Generator, KubernetesAttributionConfig, ModuleKind,
+        ModuleMetadata, Processor, Signal, Sink, Source,
     };
-    use e_navigator_generators::{DependencyGraphGenerator, TraceCorrelationGenerator};
+    use e_navigator_generators::{
+        DependencyGraphGenerator, NetworkMetricsGenerator, TraceCorrelationGenerator,
+    };
+    use e_navigator_processors::{
+        ContainerAttributionProcessor, container_attribution::KubernetesMetadataCache,
+    };
     use e_navigator_signals::{
         ContainerContext, ExecEvent, KubernetesContext, NetworkAddressFamily,
         NetworkConnectionCloseEvent, NetworkConnectionOpenEvent, NetworkProcessIdentity,
@@ -460,6 +466,57 @@ mod tests {
                     duration_nanos: Some(2_000),
                     bytes_sent: None,
                     bytes_received: None,
+                    container,
+                    kubernetes,
+                },
+            ))
+            .await
+            .map_err(|_| CoreError::PipelineClosed)
+        }
+    }
+
+    struct NetworkFlowBytesSource;
+
+    #[async_trait]
+    impl Source<SignalEnvelope> for NetworkFlowBytesSource {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("source.network_flow_bytes", ModuleKind::Source)
+        }
+
+        async fn run(self: Box<Self>, tx: mpsc::Sender<SignalEnvelope>) -> CoreResult<()> {
+            let process = NetworkProcessIdentity {
+                pid: 43,
+                ppid: Some(1),
+                uid: Some(1000),
+                command: "checkout-api".to_string(),
+                executable: Some("/app/checkout-api".to_string()),
+                cgroup_id: None,
+            };
+            let source_container_id =
+                "abababababababababababababababababababababababababababababababab";
+            let container = Some(ContainerContext {
+                container_id: source_container_id.to_string(),
+                runtime: Some("containerd".to_string()),
+            });
+            let kubernetes = Some(kubernetes_context("checkout-7d8f", "checkout"));
+
+            tx.send(SignalEnvelope::network_connection_close(
+                "source.network_flow_bytes",
+                Some("node-a".to_string()),
+                NetworkConnectionCloseEvent {
+                    process,
+                    protocol: NetworkProtocol::Tcp,
+                    address_family: NetworkAddressFamily::Ipv4,
+                    local_address: Some("10.0.0.5".to_string()),
+                    local_port: Some(41000),
+                    remote_address: "10.0.0.20".to_string(),
+                    remote_port: 6379,
+                    fd: Some(9),
+                    opened_at_unix_nanos: Some(1_000),
+                    closed_at_unix_nanos: 3_000,
+                    duration_nanos: Some(2_000),
+                    bytes_sent: Some(512),
+                    bytes_received: Some(1_024),
                     container,
                     kubernetes,
                 },
@@ -1068,6 +1125,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn generated_network_flow_summary_is_destination_attributed_before_sinks() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let destination = kubernetes_context("redis-0", "redis");
+        let processor = ContainerAttributionProcessor::with_cache(
+            AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    enabled: false,
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            KubernetesMetadataCache::from_contexts_and_pod_ips(
+                [],
+                [("10.0.0.20".to_string(), destination.clone())],
+            ),
+        );
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(NetworkFlowBytesSource))
+            .with_processor(Box::new(processor))
+            .with_generator(Box::new(NetworkMetricsGenerator::default()))
+            .with_sink(Box::new(MemorySink { seen: seen.clone() }));
+        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
+
+        runner
+            .run()
+            .await
+            .expect("runner exits after source closes");
+
+        let seen = seen.lock().await;
+        assert!(seen.iter().any(|signal| {
+            matches!(&signal.payload, SignalPayload::NetworkFlowSummary(flow)
+                if flow.bytes == 1536
+                    && flow.destination.address.as_deref() == Some("10.0.0.20")
+                    && flow.destination.port == Some(6379)
+                    && flow.destination.kubernetes.as_ref() == Some(&destination))
+        }));
+    }
+
+    #[tokio::test]
     async fn runner_adds_module_context_to_processor_errors() {
         let registry = ModuleRegistry::new()
             .with_source(Box::new(OneSignalSource))
@@ -1081,5 +1177,16 @@ mod tests {
 
         assert!(err.to_string().contains("processor.failing"));
         assert!(err.to_string().contains("pipeline closed"));
+    }
+
+    fn kubernetes_context(pod_name: &str, container_name: &str) -> KubernetesContext {
+        KubernetesContext {
+            namespace: "shop".to_string(),
+            pod_name: pod_name.to_string(),
+            pod_uid: Some(format!("{pod_name}-uid")),
+            container_name: Some(container_name.to_string()),
+            node_name: Some("node-a".to_string()),
+            labels: BTreeMap::new(),
+        }
     }
 }

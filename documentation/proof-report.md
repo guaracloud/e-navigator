@@ -41,7 +41,8 @@ or chart rendering:
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/error-span
   flow, deterministic service path keys, precise duplicate flow suppression,
-  flow-attribution warnings, deterministic profile session IDs, and
+  flow-attribution warnings, generated flow-summary destination pod-IP
+  attribution before sinks, deterministic profile session IDs, and
   dropped-profile-sample warnings;
 - Prometheus HTTP formatting, profile session aggregate rendering, profiling
   warning-count rendering, metric/profile family toggles, health/readiness
