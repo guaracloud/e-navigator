@@ -100,6 +100,10 @@ impl OtlpHttpConfig {
                 "otlp_http must enable at least one signal family when sink.otlp_http is enabled",
             ));
         }
+        validate_endpoint("otlp_http.endpoint", &self.endpoint)?;
+        validate_endpoint("otlp_http.metrics_endpoint", &self.metrics_endpoint)?;
+        validate_endpoint("otlp_http.traces_endpoint", &self.traces_endpoint)?;
+        validate_endpoint("otlp_http.profiles_endpoint", &self.profiles_endpoint)?;
         if self.metrics_enabled && self.effective_metrics_endpoint().is_none() {
             return Err(ConfigError::invalid_value(
                 "otlp_http.metrics_endpoint",
@@ -130,6 +134,34 @@ impl OtlpHttpConfig {
             None
         }
     }
+}
+
+fn validate_endpoint(path: &'static str, endpoint: &str) -> ConfigResult<()> {
+    if endpoint.is_empty() {
+        return Ok(());
+    }
+    if endpoint.trim() != endpoint || endpoint.chars().any(char::is_whitespace) {
+        return Err(ConfigError::invalid_value(
+            path,
+            format!("{path} must not contain whitespace"),
+        ));
+    }
+    let Some(rest) = endpoint
+        .strip_prefix("http://")
+        .or_else(|| endpoint.strip_prefix("https://"))
+    else {
+        return Err(ConfigError::invalid_value(
+            path,
+            format!("{path} must start with http:// or https://"),
+        ));
+    };
+    if rest.is_empty() {
+        return Err(ConfigError::invalid_value(
+            path,
+            format!("{path} must include a host or path after the scheme"),
+        ));
+    }
+    Ok(())
 }
 
 fn default_signal_family_enabled() -> bool {

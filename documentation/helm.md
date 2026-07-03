@@ -109,7 +109,8 @@ profiles_enabled = true
 
 If a family-specific endpoint is omitted, that enabled family uses
 `otlp_http.endpoint`. Disabled families do not require an endpoint and do not
-export requests.
+export requests. Every configured OTLP endpoint must be an `http://` or
+`https://` URL without whitespace.
 
 ## Raw Manifest Fallback
 

@@ -23,7 +23,8 @@ or chart rendering:
   MySQL, NATS, PostgreSQL, and Redis protocol request/error-span fixtures and
   flow-attribution warnings;
 - strict config validation with unknown-field rejection, packaged config guards,
-  and local Kubernetes attribution selector filtering;
+  OTLP HTTP endpoint-shape validation, and local Kubernetes attribution selector
+  filtering;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/DNS/HTTP/profile
   events, including build-checked DNS and HTTP raw decode fuzz targets;

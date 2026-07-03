@@ -377,6 +377,58 @@ fn otlp_http_sink_config_is_validated_when_enabled() {
 
     assert_invalid(
         RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: "grpc://127.0.0.1:4317".to_string(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.endpoint must start with http:// or https://",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: " http://127.0.0.1:4318".to_string(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.endpoint must not contain whitespace",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://".to_string(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.endpoint must include a host or path after the scheme",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                metrics_endpoint: "ftp://127.0.0.1:4318/v1/metrics".to_string(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.metrics_endpoint must start with http:// or https://",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
             modules: vec![
                 ModuleConfig::enabled("source.synthetic_exec"),
                 ModuleConfig::disabled("sink.otlp_http"),
