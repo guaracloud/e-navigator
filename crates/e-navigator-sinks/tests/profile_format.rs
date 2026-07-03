@@ -3,7 +3,9 @@ use e_navigator_signals::{
     ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind,
     ProfilingFrame, ProfilingKind, ProfilingSessionObservation, SignalEnvelope,
 };
-use e_navigator_sinks::{E_NAVIGATOR_CPU_PROFILE_METRIC_NAME, format_profile_record};
+use e_navigator_sinks::{
+    E_NAVIGATOR_CPU_PROFILE_METRIC_NAME, format_otel_profile_record, format_profile_record,
+};
 use std::collections::BTreeMap;
 
 #[test]
@@ -50,6 +52,69 @@ fn formats_profile_session_boundary_record() {
         record.attributes["profiling.synthetic.fixture"],
         "cpu_sample"
     );
+}
+
+#[test]
+fn formats_otel_profile_session_with_dropped_samples_and_safe_attributes() {
+    let signal = SignalEnvelope::profiling_session_observation(
+        "generator.profiling",
+        Some("node-a".to_string()),
+        ProfilingSessionObservation {
+            window: MetricAggregationWindow {
+                start_unix_nanos: 1_000,
+                end_unix_nanos: 3_000,
+            },
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::Medium,
+            profile_id: "profile:abc".to_string(),
+            observed_sample_count: 24,
+            dropped_sample_count: 76,
+            distinct_stack_count: 5,
+            sampling_period_nanos: Some(10_000_000),
+            process: Some(NetworkProcessIdentity {
+                pid: 42,
+                ppid: Some(1),
+                uid: Some(1000),
+                command: "checkout-api".to_string(),
+                executable: Some("/app/checkout-api".to_string()),
+                cgroup_id: None,
+            }),
+            container: None,
+            kubernetes: None,
+            source: "source.aya_cpu_profile".to_string(),
+            attributes: vec![
+                attr("profiling.synthetic.fixture", "cpu_sample"),
+                attr("authorization", "Bearer token"),
+                attr("profile_id", "evil"),
+            ],
+        },
+    );
+
+    let record = format_otel_profile_record(&signal).expect("OTLP profile record formats");
+
+    assert_eq!(record.profile_id, "profile:abc");
+    assert_eq!(record.profile_kind, "cpu");
+    assert_eq!(record.sample_count, 24);
+    assert_eq!(record.dropped_sample_count, 76);
+    assert_eq!(record.timestamp_unix_nanos, 3_000);
+    assert_eq!(record.duration_nanos, 2_000);
+    assert_eq!(record.sampling_period_nanos, Some(10_000_000));
+    assert_eq!(record.resource["host.name"], "node-a");
+    assert_eq!(record.resource["process.pid"], 42);
+    assert_eq!(record.attributes["profile.distinct_stack_count"], 5);
+    assert_eq!(record.attributes["profile.dropped_sample_count"], 76);
+    assert_eq!(
+        record.attributes["profile.source"],
+        "source.aya_cpu_profile"
+    );
+    assert_eq!(
+        record.attributes["profiling.synthetic.fixture"],
+        "cpu_sample"
+    );
+    assert!(!record.attributes.contains_key("authorization"));
+    assert!(!record.attributes.contains_key("profile_id"));
+    assert!(record.stack_frames.is_empty());
 }
 
 #[test]
