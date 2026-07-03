@@ -77,11 +77,11 @@ or chart rendering:
   Kafka request-header plus bounded ApiVersions, non-flexible AddOffsetsToTxn,
   DeleteRecords, DescribeGroups, DeleteGroups, EndTxn, FindCoordinator, Heartbeat,
   InitProducerId, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit,
-  OffsetFetch, and SyncGroup request bodies,
+  OffsetDelete, OffsetFetch, and SyncGroup request bodies,
   ApiVersions response, bounded Produce request/response, and bounded
   non-flexible AddOffsetsToTxn, DeleteRecords, DeleteGroups, DescribeGroups,
   EndTxn, Fetch, FindCoordinator, Heartbeat, InitProducerId, LeaveGroup, ListGroups,
-  ListOffsets, Metadata, OffsetCommit, OffsetFetch, and SyncGroup
+  ListOffsets, Metadata, OffsetCommit, OffsetDelete, OffsetFetch, and SyncGroup
   request/response-error parsing,
   MongoDB
   wire-message and response-error parsing with OP_MSG section and checksum
@@ -210,11 +210,11 @@ These areas remain explicitly partial:
   API keys, bounded ApiVersions request-body validation, bounded non-flexible
   Produce, Fetch, AddOffsetsToTxn, DeleteRecords, DeleteGroups, DescribeGroups, EndTxn,
   FindCoordinator, Heartbeat, InitProducerId, LeaveGroup, ListGroups,
-  ListOffsets, Metadata, OffsetCommit, OffsetFetch, and SyncGroup request-body
+  ListOffsets, Metadata, OffsetCommit, OffsetDelete, OffsetFetch, and SyncGroup request-body
   validation, and ApiVersions, Produce, and non-flexible AddOffsetsToTxn,
   DeleteRecords, DeleteGroups, DescribeGroups, EndTxn, Fetch, FindCoordinator, Heartbeat,
   InitProducerId, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit,
-  OffsetFetch, and SyncGroup
+  OffsetDelete, OffsetFetch, and SyncGroup
   response-error parsing is locally tested without exporting client IDs,
   coordinator keys, consumer group/member identifiers, assignment payloads,
   offset metadata, protocol metadata, software names, topics, record payloads,
