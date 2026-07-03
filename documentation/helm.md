@@ -86,8 +86,9 @@ pod_label_exclude_selector = { "observability.e-navigator.dev/exclude" = "true" 
 
 Kubernetes attribution also validates response and cache bounds before runtime:
 `attribution.kubernetes.max_response_bytes` must be at most 33,554,432,
-`max_pods` at most 65,536, `max_cache_entries` at most 262,144, and
-`max_labels_per_pod` at most 128.
+`max_pods` at most 65,536, `max_cache_entries` at most 262,144 across the
+combined container-ID and pod-IP metadata indexes, and `max_labels_per_pod` at
+most 128.
 Kubernetes selector lists and pod-label selector maps must each contain at most
 128 entries. Each selector string, key, or value must be non-empty, must not
 contain whitespace or control characters, and must be at most 253 bytes.
