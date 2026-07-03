@@ -7,7 +7,7 @@ use e_navigator_protocol::{
     mysql::{MysqlExtraction, parse_mysql_command},
     nats::{NatsExtraction, parse_nats_command},
     postgres::{PostgresExtraction, parse_postgres_message},
-    redis::{RedisExtraction, parse_redis_command},
+    redis::{RedisExtraction, parse_redis_command, parse_redis_response},
     trace_context::{TraceContextError, parse_traceparent},
 };
 use e_navigator_signals::ProtocolKind;
@@ -200,6 +200,44 @@ proptest! {
         };
 
         let _ = parse_redis_command(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_redis_response_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 4,
+            max_tracestate_bytes: 32,
+        };
+
+        let _ = parse_redis_response(&bytes, &config);
+    }
+
+    #[test]
+    fn redis_response_limits_are_respected(
+        status in "[A-Za-z0-9_-]{1,64}",
+        message in "[A-Za-z0-9_.=/%+-]{0,80}",
+    ) {
+        let bytes = format!("-{status} {message} secret-detail\r\n");
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        };
+
+        let parsed = parse_redis_response(bytes.as_bytes(), &config)
+            .expect("bounded redis error parses");
+        let expected_status = status.to_ascii_uppercase();
+        prop_assert_eq!(parsed.status_code.as_deref(), Some(expected_status.as_str()));
+        prop_assert!(parsed.error_type.is_some());
+        prop_assert!(parsed.attributes.len() <= config.max_attributes);
+        prop_assert!(!parsed
+            .attributes
+            .iter()
+            .any(|attribute| (!message.is_empty() && attribute.value.contains(&message))
+                || attribute.value.contains("secret")));
     }
 
     #[test]
@@ -933,6 +971,66 @@ fn extracts_redis_inline_command_without_raw_arguments() {
 }
 
 #[test]
+fn extracts_redis_simple_response_status_without_message_values() {
+    let extraction = parse_redis_response(
+        b"+OK password-reset-complete\r\n",
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("redis simple response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Redis);
+    assert_eq!(extraction.status_code.as_deref(), Some("OK"));
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.system" && attribute.value == "redis")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.response.status_code" && attribute.value == "OK")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("password"))
+    );
+}
+
+#[test]
+fn extracts_redis_error_type_without_raw_error_message() {
+    let extraction = parse_redis_response(
+        b"-WRONGTYPE Operation against a key holding the wrong kind of value secret-key\r\n",
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("redis error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Redis);
+    assert_eq!(extraction.status_code.as_deref(), Some("WRONGTYPE"));
+    assert_eq!(extraction.error_type.as_deref(), Some("redis_wrongtype"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.response.status_code"
+                && attribute.value == "WRONGTYPE")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "redis_wrongtype")
+    );
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("Operation") || attribute.value.contains("secret")
+    ));
+}
+
+#[test]
 fn enforces_redis_frame_attribute_and_bulk_bounds() {
     let bounded = parse_redis_command(
         b"*2\r\n$3\r\nGET\r\n$16\r\ncustomer:pii:123\r\n",
@@ -967,6 +1065,20 @@ fn enforces_redis_frame_attribute_and_bulk_bounds() {
         .unwrap_err(),
         RedisExtraction::FrameTooLong
     );
+
+    assert_eq!(
+        parse_redis_response(
+            b"+OK\r\n",
+            &ProtocolExtractionConfig {
+                max_header_bytes: 2,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        RedisExtraction::FrameTooLong
+    );
 }
 
 #[test]
@@ -988,6 +1100,18 @@ fn rejects_malformed_and_unsupported_redis_fixtures() {
     assert_eq!(
         parse_redis_command(b"*2\r\n$3\r\nGET\r\n$3\r\nkey", &config).unwrap_err(),
         RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b"+\r\n", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b"+O\xff\r\n", &config).unwrap_err(),
+        RedisExtraction::InvalidUtf8
+    );
+    assert_eq!(
+        parse_redis_response(b"$3\r\nkey\r\n", &config).unwrap_err(),
+        RedisExtraction::UnsupportedFrame
     );
 }
 

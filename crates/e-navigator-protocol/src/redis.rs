@@ -14,6 +14,14 @@ pub struct ParsedRedisCommand {
     pub attributes: Vec<TraceAttribute>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedRedisResponse {
+    pub protocol: ProtocolKind,
+    pub status_code: Option<String>,
+    pub error_type: Option<String>,
+    pub attributes: Vec<TraceAttribute>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RedisExtraction {
     FrameTooLong,
@@ -75,11 +83,78 @@ pub fn parse_redis_command(
     })
 }
 
+pub fn parse_redis_response(
+    bytes: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedRedisResponse, RedisExtraction> {
+    if bytes.len() > config.max_header_bytes {
+        return Err(RedisExtraction::FrameTooLong);
+    }
+    if bytes.is_empty() {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+
+    let response = match bytes[0] {
+        b'+' => {
+            let status = parse_simple_token(bytes, 1)?;
+            RedisResponseToken {
+                status_code: bounded_response_status(Some(&status)),
+                error_type: None,
+            }
+        }
+        b'-' => {
+            let status = parse_simple_token(bytes, 1)?;
+            let status_code = bounded_response_status(Some(&status));
+            let error_type = status_code
+                .as_ref()
+                .map(|status| format!("redis_{}", status.to_ascii_lowercase().replace('-', "_")));
+            RedisResponseToken {
+                status_code,
+                error_type,
+            }
+        }
+        _ => return Err(RedisExtraction::UnsupportedFrame),
+    };
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "db.system",
+        Some("redis"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "db.response.status_code",
+        response.status_code.as_deref(),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        response.error_type.as_deref(),
+    );
+
+    Ok(ParsedRedisResponse {
+        protocol: ProtocolKind::Redis,
+        status_code: response.status_code,
+        error_type: response.error_type,
+        attributes,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RedisFrame {
     command: Option<String>,
     argument_count: usize,
     key_present: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RedisResponseToken {
+    status_code: Option<String>,
+    error_type: Option<String>,
 }
 
 fn parse_resp_array(bytes: &[u8]) -> Result<RedisFrame, RedisExtraction> {
@@ -149,6 +224,16 @@ fn parse_inline_command(
     })
 }
 
+fn parse_simple_token(bytes: &[u8], start: usize) -> Result<String, RedisExtraction> {
+    let end = line_end(bytes, start).ok_or(RedisExtraction::MalformedFrame)?;
+    let line = std::str::from_utf8(&bytes[start..end]).map_err(|_| RedisExtraction::InvalidUtf8)?;
+    let token = line
+        .split_ascii_whitespace()
+        .next()
+        .ok_or(RedisExtraction::MalformedFrame)?;
+    Ok(token.to_string())
+}
+
 fn parse_decimal_line(bytes: &[u8], cursor: &mut usize) -> Result<isize, RedisExtraction> {
     let end = line_end(bytes, *cursor).ok_or(RedisExtraction::MalformedFrame)?;
     let value =
@@ -185,6 +270,19 @@ fn bounded_command(value: Option<&str>) -> Option<String> {
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+    {
+        return None;
+    }
+    Some(value.to_ascii_uppercase())
+}
+
+fn bounded_response_status(value: Option<&str>) -> Option<String> {
+    let value = value?;
+    if value.is_empty()
+        || value.len() > MAX_REDIS_COMMAND_BYTES
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
     {
         return None;
     }

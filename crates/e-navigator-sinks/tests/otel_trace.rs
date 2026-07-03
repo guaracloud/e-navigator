@@ -449,6 +449,95 @@ fn formats_redis_request_span_with_protocol_name() {
 }
 
 #[test]
+fn formats_redis_request_span_error_status_from_error_type_attribute() {
+    let signal = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "redis command".to_string(),
+            protocol: ProtocolKind::Redis,
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(1_500),
+            duration_nanos: Some(500),
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            service_name: Some("cache-client".to_string()),
+            method: Some("GET".to_string()),
+            status_code: None,
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(trace_peer_context()),
+            attributes: vec![
+                TraceAttribute {
+                    key: "db.system".to_string(),
+                    value: "redis".to_string(),
+                },
+                TraceAttribute {
+                    key: "db.response.status_code".to_string(),
+                    value: "WRONGTYPE".to_string(),
+                },
+                TraceAttribute {
+                    key: "error.type".to_string(),
+                    value: "redis_wrongtype".to_string(),
+                },
+            ],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("redis request span formats");
+
+    assert_eq!(
+        record.status,
+        Some(OtelSpanStatus::Error {
+            message: "redis_wrongtype".to_string()
+        })
+    );
+    assert_eq!(record.attributes["network.protocol.name"], "redis");
+    assert_eq!(record.attributes["db.response.status_code"], "WRONGTYPE");
+    assert_eq!(record.attributes["error.type"], "redis_wrongtype");
+}
+
+#[test]
+fn ignores_oversized_request_error_type_for_status() {
+    let signal = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "redis command".to_string(),
+            protocol: ProtocolKind::Redis,
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(1_500),
+            duration_nanos: Some(500),
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            service_name: Some("cache-client".to_string()),
+            method: Some("GET".to_string()),
+            status_code: None,
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(trace_peer_context()),
+            attributes: vec![TraceAttribute {
+                key: "error.type".to_string(),
+                value: "x".repeat(257),
+            }],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("redis request span formats");
+
+    assert_eq!(record.status, None);
+    assert!(!record.attributes.contains_key("error.type"));
+}
+
+#[test]
 fn formats_grpc_request_span_with_protocol_name() {
     let signal = SignalEnvelope::request_span_observation(
         "generator.request_correlation",

@@ -382,8 +382,20 @@ fn request_span_status(span: &RequestSpanObservation) -> Option<OtelSpanStatus> 
                 grpc_status_name(status_code)
             )))
         }
-        _ => None,
+        _ => request_error_type(span).map(error_status),
     }
+}
+
+fn request_error_type(span: &RequestSpanObservation) -> Option<&str> {
+    span.attributes
+        .iter()
+        .find(|attribute| attribute.key == "error.type")
+        .map(|attribute| attribute.value.as_str())
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= MAX_TRACE_ATTRIBUTE_VALUE_BYTES
+                && !value.bytes().any(|byte| byte.is_ascii_control())
+        })
 }
 
 fn error_status(message: &str) -> OtelSpanStatus {

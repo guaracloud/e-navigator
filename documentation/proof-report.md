@@ -30,16 +30,16 @@ or chart rendering:
   gRPC-over-HTTP/2 metadata and trailer-status parsing, Kafka request-header
   parsing, MongoDB wire-message parsing, MySQL command packet parsing, NATS
   text command parsing, PostgreSQL wire-message parsing, and Redis RESP command
-  parsing;
+  plus error-response parsing;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/span flow
   and flow-attribution warnings;
 - Prometheus HTTP formatting, health/readiness endpoints, and secret-like label
   filtering;
 - OTLP protobuf request encoding plus per-family endpoint routing for metrics,
-  traces with HTTP and gRPC request/error status mapping, local warning
-  trace-record formatting, and development-status profiles in fake-collector
-  tests;
+  traces with HTTP, gRPC, and `error.type` request/error status mapping, local
+  warning trace-record formatting, and development-status profiles in
+  fake-collector tests;
 - Helm rendering, schema checks, and release verification workflow structure.
 
 ## Runtime-Proven Slices
@@ -109,10 +109,10 @@ These areas remain explicitly partial:
   parsing is locally tested without exporting raw SQL text, but runtime capture,
   request/response matching, status/error extraction, and live PostgreSQL proof
   are not implemented or proven.
-- **Redis protocol observability:** bounded RESP command parsing is locally
-  tested without exporting raw key/value payloads, but runtime capture,
-  request/response matching, status/error extraction, and live Redis proof are
-  not implemented or proven.
+- **Redis protocol observability:** bounded RESP command and error-response
+  parsing is locally tested without exporting raw key/value payloads or raw
+  error messages, but runtime capture, request/response matching, broad response
+  coverage, and live Redis proof are not implemented or proven.
 - **DNS capture:** selected UDP paths work, but symmetric all-node capture and
   lossless DNS coverage are not proven.
 - **CPU profiling:** selected samples and sessions are proven, but deterministic

@@ -180,8 +180,8 @@ mod tests {
         ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkAddressFamily,
         NetworkCounterMetric, NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation,
         ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
-        ProfilingKind, ProtocolKind, RequestSpanObservation, SignalEnvelope, TraceConfidence,
-        TraceCorrelationKind,
+        ProfilingKind, ProtocolKind, RequestSpanObservation, SignalEnvelope, TraceAttribute,
+        TraceConfidence, TraceCorrelationKind,
     };
     use opentelemetry_proto::tonic::{
         collector::{
@@ -402,6 +402,51 @@ mod tests {
         let status = span.status.as_ref().expect("span status is present");
         assert_eq!(status.code, status::StatusCode::Error as i32);
         assert_eq!(status.message, "gRPC status code 13 (internal)");
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_exports_request_error_type_as_otlp_error_status() {
+        let collector = FakeCollector::spawn(vec![200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            traces_endpoint: collector.url_with_path("/v1/traces"),
+            metrics_enabled: false,
+            traces_enabled: true,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&redis_error_request_span())
+            .await
+            .expect("trace export succeeds");
+        let request = collector.next_request().await;
+
+        let decoded =
+            ExportTraceServiceRequest::decode(request.body()).expect("OTLP trace request decodes");
+        let span = decoded
+            .resource_spans
+            .first()
+            .and_then(|resource_spans| resource_spans.scope_spans.first())
+            .and_then(|scope_spans| scope_spans.spans.first())
+            .expect("span is present");
+
+        assert_eq!(span.name, "redis command");
+        assert!(span.attributes.iter().any(|attribute| {
+            attribute.key == "error.type"
+                && format!("{:?}", attribute.value).contains("redis_wrongtype")
+        }));
+        assert!(span.attributes.iter().any(|attribute| {
+            attribute.key == "db.response.status_code"
+                && format!("{:?}", attribute.value).contains("WRONGTYPE")
+        }));
+        let status = span.status.as_ref().expect("span status is present");
+        assert_eq!(status.code, status::StatusCode::Error as i32);
+        assert_eq!(status.message, "redis_wrongtype");
     }
 
     #[tokio::test]
@@ -649,6 +694,56 @@ mod tests {
                 }),
                 peer: None,
                 attributes: Vec::new(),
+            },
+        )
+    }
+
+    fn redis_error_request_span() -> SignalEnvelope {
+        SignalEnvelope::request_span_observation(
+            "generator.request_correlation",
+            Some("node-a".to_string()),
+            RequestSpanObservation {
+                name: "redis command".to_string(),
+                protocol: ProtocolKind::Redis,
+                trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+                span_id: Some("00f067aa0ba902b7".to_string()),
+                parent_span_id: None,
+                start_unix_nanos: 1_000,
+                end_unix_nanos: Some(2_000),
+                duration_nanos: Some(1_000),
+                correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+                confidence: TraceConfidence::High,
+                service_name: Some("cache-client".to_string()),
+                method: Some("GET".to_string()),
+                status_code: None,
+                process: None,
+                container: Some(ContainerContext {
+                    container_id: "container-a".to_string(),
+                    runtime: Some("containerd".to_string()),
+                }),
+                kubernetes: Some(KubernetesContext {
+                    namespace: "default".to_string(),
+                    pod_name: "redis-client-123".to_string(),
+                    pod_uid: Some("pod-uid".to_string()),
+                    container_name: Some("redis-client".to_string()),
+                    node_name: Some("node-a".to_string()),
+                    labels: BTreeMap::new(),
+                }),
+                peer: None,
+                attributes: vec![
+                    TraceAttribute {
+                        key: "db.system".to_string(),
+                        value: "redis".to_string(),
+                    },
+                    TraceAttribute {
+                        key: "db.response.status_code".to_string(),
+                        value: "WRONGTYPE".to_string(),
+                    },
+                    TraceAttribute {
+                        key: "error.type".to_string(),
+                        value: "redis_wrongtype".to_string(),
+                    },
+                ],
             },
         )
     }
