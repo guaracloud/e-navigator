@@ -174,6 +174,40 @@ async fn preserves_attribution_from_original_sample() {
 }
 
 #[tokio::test]
+async fn generated_sessions_filter_sensitive_profile_attributes() {
+    let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
+    let mut signal = sample_signal(1_500_000_000, Some(context()));
+    if let SignalPayload::ProfileSampleObservation(sample) = &mut signal.payload {
+        sample.attributes.extend([
+            ProfilingAttribute {
+                key: "authorization".to_string(),
+                value: "Bearer secret-token".to_string(),
+            },
+            ProfilingAttribute {
+                key: "profiling.phase".to_string(),
+                value: "steady_state".to_string(),
+            },
+        ]);
+    }
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::ProfilingSessionObservation(window) = &outputs[0].payload else {
+        panic!("expected profiling session");
+    };
+    assert!(window.attributes.iter().any(|attribute| {
+        attribute.key == "profiling.phase" && attribute.value == "steady_state"
+    }));
+    assert!(
+        !window
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "authorization"
+                || attribute.value.contains("secret-token"))
+    );
+}
+
+#[tokio::test]
 async fn later_attributed_samples_do_not_merge_with_unattributed_windows() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
 

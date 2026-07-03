@@ -43,7 +43,8 @@ or chart rendering:
   flow, deterministic service path keys, precise duplicate flow suppression,
   bounded flow-byte aggregation across remote destinations, flow-attribution
   warnings, generated flow-summary destination pod-IP attribution before sinks,
-  deterministic profile session IDs, and
+  deterministic profile session IDs, generated profile session
+  sensitive-attribute filtering, and
   dropped-profile-sample warnings;
 - Prometheus HTTP formatting, profile session aggregate rendering, profiling
   warning-count rendering, metric/profile family toggles, health/readiness
