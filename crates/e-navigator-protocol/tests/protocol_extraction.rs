@@ -2544,6 +2544,29 @@ fn extracts_mysql_stmt_execute_operation_without_statement_or_parameter_values()
 }
 
 #[test]
+fn extracts_mysql_ping_operation_without_payload_values() {
+    let bytes = mysql_packet(0x0e, b"");
+
+    let extraction = parse_mysql_command(&bytes, &ProtocolExtractionConfig::default())
+        .expect("mysql ping parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Mysql);
+    assert_eq!(extraction.operation.as_deref(), Some("PING"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.operation" && attribute.value == "PING")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.mysql.command" && attribute.value == "ping")
+    );
+}
+
+#[test]
 fn extracts_mysql_operation_after_comments() {
     let bytes = mysql_packet(
         0x03,
@@ -2784,6 +2807,10 @@ fn rejects_malformed_and_unsupported_mysql_fixtures() {
     );
     assert_eq!(
         parse_mysql_command(&mysql_packet(0x17, b"\x2a\0\0"), &config).unwrap_err(),
+        MysqlExtraction::MalformedPacket
+    );
+    assert_eq!(
+        parse_mysql_command(&mysql_packet(0x0e, b"secret"), &config).unwrap_err(),
         MysqlExtraction::MalformedPacket
     );
     assert_eq!(

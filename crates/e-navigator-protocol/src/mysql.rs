@@ -3,6 +3,7 @@ use e_navigator_signals::{ProtocolKind, TraceAttribute};
 use crate::ProtocolExtractionConfig;
 
 const MYSQL_COM_QUERY: u8 = 0x03;
+const MYSQL_COM_PING: u8 = 0x0e;
 const MYSQL_COM_STMT_PREPARE: u8 = 0x16;
 const MYSQL_COM_STMT_EXECUTE: u8 = 0x17;
 const MYSQL_OK_PACKET: u8 = 0x00;
@@ -56,6 +57,7 @@ pub fn parse_mysql_command(
             mysql_operation(query)
         }
         MYSQL_COM_STMT_EXECUTE => mysql_stmt_execute_operation(payload)?,
+        MYSQL_COM_PING => mysql_ping_operation(payload)?,
         _ => return Err(MysqlExtraction::UnsupportedCommand),
     };
 
@@ -136,6 +138,13 @@ fn mysql_stmt_execute_operation(payload: &[u8]) -> Result<Option<String>, MysqlE
         return Err(MysqlExtraction::MalformedPacket);
     }
     Ok(Some("EXECUTE".to_string()))
+}
+
+fn mysql_ping_operation(payload: &[u8]) -> Result<Option<String>, MysqlExtraction> {
+    if payload.len() != 1 {
+        return Err(MysqlExtraction::MalformedPacket);
+    }
+    Ok(Some("PING".to_string()))
 }
 
 fn mysql_eof_response(max_attributes: usize) -> ParsedMysqlResponse {
@@ -273,6 +282,7 @@ fn skip_sql_prefix(mut query: &str) -> &str {
 fn command_name(command: u8) -> &'static str {
     match command {
         MYSQL_COM_QUERY => "query",
+        MYSQL_COM_PING => "ping",
         MYSQL_COM_STMT_PREPARE => "stmt_prepare",
         MYSQL_COM_STMT_EXECUTE => "stmt_execute",
         _ => "unknown",
