@@ -356,6 +356,74 @@ fn bounds_trace_resource_attributes() {
 }
 
 #[test]
+fn bounds_trace_context_attributes() {
+    const MAX_VALUE_BYTES: usize = 256;
+
+    let long_value = "c".repeat(MAX_VALUE_BYTES + 64);
+    let mut process = network_process();
+    process.command = long_value.clone();
+    let mut workload = kubernetes_context();
+    workload.namespace = long_value.clone();
+    workload.pod_name = long_value.clone();
+    workload.pod_uid = Some(long_value.clone());
+    workload.container_name = Some(long_value.clone());
+    let container = ContainerContext {
+        container_id: long_value.clone(),
+        runtime: Some(long_value.clone()),
+    };
+    let peer = TracePeerContext {
+        address: Some(long_value.clone()),
+        port: Some(443),
+        domain: Some(long_value.clone()),
+        workload: Some(workload),
+        container: Some(container),
+    };
+    let signal = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "http request".to_string(),
+            protocol: ProtocolKind::Http,
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_000),
+            duration_nanos: Some(1_000),
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            service_name: Some("checkout-api".to_string()),
+            method: Some("GET".to_string()),
+            status_code: Some(200),
+            process: Some(process),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(peer),
+            attributes: vec![],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("request span formats");
+
+    for key in [
+        "process.command",
+        "server.address",
+        "dns.question.name",
+        "server.k8s.namespace.name",
+        "server.k8s.pod.name",
+        "server.k8s.pod.uid",
+        "server.k8s.container.name",
+        "server.container.id",
+        "server.container.runtime",
+    ] {
+        assert_eq!(
+            record.attributes[key].as_str().map(str::len),
+            Some(MAX_VALUE_BYTES)
+        );
+    }
+}
+
+#[test]
 fn formats_http_request_span_error_status_from_status_code() {
     let signal = SignalEnvelope::request_span_observation(
         "generator.request_correlation",

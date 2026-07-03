@@ -67,7 +67,7 @@ or chart rendering:
 - OTLP protobuf request encoding plus per-family endpoint routing and family
   toggle suppression for metrics, traces with HTTP, gRPC, and `error.type`
   request/error status mapping, server span kind and Kubernetes resource
-  attributes with bounded trace resource values
+  attributes with bounded trace resource/context values
   including Kafka, MongoDB, MySQL, NATS, PostgreSQL, and Redis request spans,
   local warning trace-record formatting for trace, request, network-flow, and
   profiling warnings, explicit no-ID profiling-warning trace export

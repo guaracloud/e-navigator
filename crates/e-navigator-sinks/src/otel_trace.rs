@@ -608,7 +608,7 @@ fn append_process_attributes(
         }
         attributes.insert(
             "process.command".to_string(),
-            serde_json::json!(process.command),
+            bounded_json_string(&process.command),
         );
     }
 }
@@ -619,13 +619,13 @@ fn append_endpoint_attributes(
     endpoint: &DependencyEndpoint,
 ) {
     if let Some(address) = &endpoint.address {
-        attributes.insert(format!("{prefix}.address"), serde_json::json!(address));
+        insert_string_attribute(attributes, format!("{prefix}.address"), address);
     }
     if let Some(port) = endpoint.port {
         attributes.insert(format!("{prefix}.port"), serde_json::json!(port));
     }
     if let Some(domain) = &endpoint.domain {
-        attributes.insert("dns.question.name".to_string(), serde_json::json!(domain));
+        insert_string_attribute(attributes, "dns.question.name", domain);
     }
     if let Some(workload) = &endpoint.workload {
         append_workload_attributes(attributes, prefix, workload);
@@ -641,13 +641,13 @@ fn append_peer_attributes(
 ) {
     if let Some(peer) = peer {
         if let Some(address) = &peer.address {
-            attributes.insert("server.address".to_string(), serde_json::json!(address));
+            insert_string_attribute(attributes, "server.address", address);
         }
         if let Some(port) = peer.port {
             attributes.insert("server.port".to_string(), serde_json::json!(port));
         }
         if let Some(domain) = &peer.domain {
-            attributes.insert("dns.question.name".to_string(), serde_json::json!(domain));
+            insert_string_attribute(attributes, "dns.question.name", domain);
         }
         if let Some(workload) = &peer.workload {
             append_workload_attributes(attributes, "server", workload);
@@ -663,21 +663,24 @@ fn append_workload_attributes(
     prefix: &str,
     workload: &KubernetesContext,
 ) {
-    attributes.insert(
+    insert_string_attribute(
+        attributes,
         format!("{prefix}.k8s.namespace.name"),
-        serde_json::json!(workload.namespace),
+        &workload.namespace,
     );
-    attributes.insert(
+    insert_string_attribute(
+        attributes,
         format!("{prefix}.k8s.pod.name"),
-        serde_json::json!(workload.pod_name),
+        &workload.pod_name,
     );
     if let Some(pod_uid) = &workload.pod_uid {
-        attributes.insert(format!("{prefix}.k8s.pod.uid"), serde_json::json!(pod_uid));
+        insert_string_attribute(attributes, format!("{prefix}.k8s.pod.uid"), pod_uid);
     }
     if let Some(container_name) = &workload.container_name {
-        attributes.insert(
+        insert_string_attribute(
+            attributes,
             format!("{prefix}.k8s.container.name"),
-            serde_json::json!(container_name),
+            container_name,
         );
     }
 }
@@ -687,16 +690,22 @@ fn append_container_attributes(
     prefix: &str,
     container: &ContainerContext,
 ) {
-    attributes.insert(
+    insert_string_attribute(
+        attributes,
         format!("{prefix}.container.id"),
-        serde_json::json!(container.container_id),
+        &container.container_id,
     );
     if let Some(runtime) = &container.runtime {
-        attributes.insert(
-            format!("{prefix}.container.runtime"),
-            serde_json::json!(runtime),
-        );
+        insert_string_attribute(attributes, format!("{prefix}.container.runtime"), runtime);
     }
+}
+
+fn insert_string_attribute(
+    attributes: &mut BTreeMap<String, serde_json::Value>,
+    key: impl Into<String>,
+    value: &str,
+) {
+    attributes.insert(key.into(), bounded_json_string(value));
 }
 
 fn append_trace_attributes(
