@@ -5,6 +5,7 @@ use crate::{ContainerContext, KubernetesContext, MetricAggregationWindow};
 const MAX_RESOURCE_METRIC_ATTRIBUTES: usize = 16;
 const MAX_RESOURCE_METRIC_ATTRIBUTE_KEY_BYTES: usize = 128;
 const MAX_RESOURCE_METRIC_ATTRIBUTE_VALUE_BYTES: usize = 256;
+const MAX_RESOURCE_SIGNAL_STRING_BYTES: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceContext {
@@ -202,6 +203,44 @@ pub fn sanitize_resource_metric_attributes(attributes: &mut Vec<ResourceMetricAt
         .take(MAX_RESOURCE_METRIC_ATTRIBUTES)
         .collect();
     *attributes = sanitized;
+}
+
+pub(crate) fn sanitize_node_cpu_observation(observation: &mut NodeCpuObservation) {
+    sanitize_resource_signal_string(&mut observation.metric_name);
+    sanitize_resource_signal_string(&mut observation.unit);
+}
+
+pub(crate) fn sanitize_node_load_observation(observation: &mut NodeLoadObservation) {
+    sanitize_resource_signal_string(&mut observation.metric_name);
+    sanitize_resource_signal_string(&mut observation.unit);
+}
+
+pub(crate) fn sanitize_node_memory_observation(observation: &mut NodeMemoryObservation) {
+    sanitize_resource_signal_string(&mut observation.metric_name);
+    sanitize_resource_signal_string(&mut observation.unit);
+}
+
+pub(crate) fn sanitize_node_filesystem_observation(observation: &mut NodeFilesystemObservation) {
+    sanitize_resource_signal_string(&mut observation.metric_name);
+    sanitize_resource_signal_string(&mut observation.unit);
+    sanitize_resource_signal_string(&mut observation.mount_point);
+    sanitize_optional_resource_signal_string(&mut observation.filesystem_type);
+}
+
+pub(crate) fn sanitize_node_disk_io_observation(observation: &mut NodeDiskIoObservation) {
+    sanitize_resource_signal_string(&mut observation.metric_name);
+    sanitize_resource_signal_string(&mut observation.unit);
+    sanitize_resource_signal_string(&mut observation.device);
+}
+
+fn sanitize_resource_signal_string(value: &mut String) {
+    *value = truncate_utf8(value, MAX_RESOURCE_SIGNAL_STRING_BYTES);
+}
+
+fn sanitize_optional_resource_signal_string(value: &mut Option<String>) {
+    if let Some(inner) = value {
+        sanitize_resource_signal_string(inner);
+    }
 }
 
 fn truncate_utf8(value: &str, max_bytes: usize) -> String {

@@ -15,7 +15,11 @@ use crate::network::{
     sanitize_network_flow_summary_event, sanitize_network_flow_warning,
 };
 use crate::profiling::{sanitize_optional_profiling_string, sanitize_profiling_string};
-use crate::resource::sanitize_resource_metric_attributes;
+use crate::resource::{
+    sanitize_node_cpu_observation, sanitize_node_disk_io_observation,
+    sanitize_node_filesystem_observation, sanitize_node_load_observation,
+    sanitize_node_memory_observation, sanitize_resource_metric_attributes,
+};
 use crate::trace::{
     sanitize_optional_trace_string, sanitize_trace_attributes, sanitize_trace_string,
 };
@@ -712,8 +716,9 @@ impl SignalEnvelope {
     pub fn node_cpu_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: NodeCpuObservation,
+        mut observation: NodeCpuObservation,
     ) -> Self {
+        sanitize_node_cpu_observation(&mut observation);
         Self::new(
             source,
             host,
@@ -725,8 +730,9 @@ impl SignalEnvelope {
     pub fn node_load_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: NodeLoadObservation,
+        mut observation: NodeLoadObservation,
     ) -> Self {
+        sanitize_node_load_observation(&mut observation);
         Self::new(
             source,
             host,
@@ -738,8 +744,9 @@ impl SignalEnvelope {
     pub fn node_memory_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: NodeMemoryObservation,
+        mut observation: NodeMemoryObservation,
     ) -> Self {
+        sanitize_node_memory_observation(&mut observation);
         Self::new(
             source,
             host,
@@ -751,8 +758,9 @@ impl SignalEnvelope {
     pub fn node_filesystem_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: NodeFilesystemObservation,
+        mut observation: NodeFilesystemObservation,
     ) -> Self {
+        sanitize_node_filesystem_observation(&mut observation);
         Self::new(
             source,
             host,
@@ -764,8 +772,9 @@ impl SignalEnvelope {
     pub fn node_disk_io_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: NodeDiskIoObservation,
+        mut observation: NodeDiskIoObservation,
     ) -> Self {
+        sanitize_node_disk_io_observation(&mut observation);
         Self::new(
             source,
             host,
@@ -2653,6 +2662,105 @@ mod tests {
             let decoded: SignalEnvelope = serde_json::from_value(json).expect("round trips");
             assert_eq!(decoded.schema_version, 1);
         }
+    }
+
+    #[test]
+    fn node_resource_constructors_bound_strings_before_json_stdout() {
+        let long = "r".repeat(320);
+        let window = MetricAggregationWindow {
+            start_unix_nanos: 1_000,
+            end_unix_nanos: 2_000,
+        };
+        let cpu = SignalEnvelope::node_cpu_observation(
+            "source.procfs_resource",
+            None,
+            NodeCpuObservation {
+                metric_name: long.clone(),
+                unit: long.clone(),
+                timestamp_unix_nanos: 2_000,
+                window: window.clone(),
+                user_nanos: 1_000,
+                system_nanos: 500,
+                idle_nanos: 5_000,
+                iowait_nanos: 100,
+                steal_nanos: 0,
+                runnable_tasks: Some(2),
+                blocked_tasks: Some(0),
+            },
+        );
+        let load = SignalEnvelope::node_load_observation(
+            "source.procfs_resource",
+            None,
+            NodeLoadObservation {
+                metric_name: long.clone(),
+                unit: long.clone(),
+                timestamp_unix_nanos: 2_000,
+                window: window.clone(),
+                load1: 0.25,
+                load5: 0.5,
+                load15: 0.75,
+                runnable_tasks: Some(2),
+                total_tasks: Some(200),
+            },
+        );
+        let memory = SignalEnvelope::node_memory_observation(
+            "source.procfs_resource",
+            None,
+            NodeMemoryObservation {
+                metric_name: long.clone(),
+                unit: long.clone(),
+                timestamp_unix_nanos: 2_000,
+                window: window.clone(),
+                mem_total_bytes: 8_192,
+                mem_available_bytes: Some(4_096),
+                mem_free_bytes: Some(2_048),
+                swap_total_bytes: Some(1_024),
+                swap_free_bytes: Some(512),
+            },
+        );
+        let filesystem = SignalEnvelope::node_filesystem_observation(
+            "source.procfs_resource",
+            None,
+            NodeFilesystemObservation {
+                metric_name: long.clone(),
+                unit: long.clone(),
+                timestamp_unix_nanos: 2_000,
+                window: window.clone(),
+                mount_point: long.clone(),
+                filesystem_type: Some(long.clone()),
+                total_bytes: 1_000_000,
+                available_bytes: 250_000,
+            },
+        );
+        let disk = SignalEnvelope::node_disk_io_observation(
+            "source.procfs_resource",
+            None,
+            NodeDiskIoObservation {
+                metric_name: long.clone(),
+                unit: long.clone(),
+                timestamp_unix_nanos: 2_000,
+                window,
+                device: long,
+                reads_completed: 10,
+                writes_completed: 20,
+                read_bytes: 4_096,
+                written_bytes: 8_192,
+            },
+        );
+
+        assert_payload_string_lengths(&cpu, &[&["metric_name"], &["unit"]]);
+        assert_payload_string_lengths(&load, &[&["metric_name"], &["unit"]]);
+        assert_payload_string_lengths(&memory, &[&["metric_name"], &["unit"]]);
+        assert_payload_string_lengths(
+            &filesystem,
+            &[
+                &["metric_name"],
+                &["unit"],
+                &["mount_point"],
+                &["filesystem_type"],
+            ],
+        );
+        assert_payload_string_lengths(&disk, &[&["metric_name"], &["unit"], &["device"]]);
     }
 
     #[test]
