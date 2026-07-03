@@ -2203,6 +2203,30 @@ fn extracts_postgres_flush_message_without_payload_values() {
 }
 
 #[test]
+fn extracts_postgres_terminate_message_without_payload_values() {
+    let bytes = postgres_frame(b'X', b"");
+
+    let extraction = parse_postgres_message(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres terminate message parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.operation.as_deref(), Some("TERMINATE"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.operation" && attribute.value == "TERMINATE")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.postgresql.message.type"
+                && attribute.value == "terminate")
+    );
+}
+
+#[test]
 fn extracts_postgres_operation_after_comments() {
     let bytes = postgres_frame(
         b'Q',
@@ -2411,7 +2435,7 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     );
     assert_eq!(
         parse_postgres_message(&postgres_frame(b'X', b"ignored\0"), &config).unwrap_err(),
-        PostgresExtraction::UnsupportedMessage
+        PostgresExtraction::MalformedFrame
     );
     assert_eq!(
         parse_postgres_message(&postgres_frame(b'Q', b"select 1"), &config).unwrap_err(),
@@ -2446,6 +2470,10 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     );
     assert_eq!(
         parse_postgres_message(&postgres_frame(b'H', b"secret"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'X', b"secret"), &config).unwrap_err(),
         PostgresExtraction::MalformedFrame
     );
     assert_eq!(

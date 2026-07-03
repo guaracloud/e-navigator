@@ -50,12 +50,14 @@ pub fn parse_postgres_message(
         b'E' => parse_execute_message(body)?,
         b'S' => parse_sync_message(body)?,
         b'H' => parse_flush_message(body)?,
+        b'X' => parse_terminate_message(body)?,
         _ => return Err(PostgresExtraction::UnsupportedMessage),
     };
     let operation = match bytes[0] {
         b'E' => Some("EXECUTE".to_string()),
         b'S' => Some("SYNC".to_string()),
         b'H' => Some("FLUSH".to_string()),
+        b'X' => Some("TERMINATE".to_string()),
         _ => postgres_operation(query),
     };
 
@@ -315,6 +317,13 @@ fn parse_flush_message(body: &[u8]) -> Result<&str, PostgresExtraction> {
     Ok("FLUSH")
 }
 
+fn parse_terminate_message(body: &[u8]) -> Result<&str, PostgresExtraction> {
+    if !body.is_empty() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    Ok("TERMINATE")
+}
+
 fn parse_cstring<'a>(
     bytes: &'a [u8],
     cursor: &mut usize,
@@ -374,6 +383,7 @@ fn message_type_name(message_type: u8) -> &'static str {
         b'E' => "execute",
         b'S' => "sync",
         b'H' => "flush",
+        b'X' => "terminate",
         _ => "unknown",
     }
 }
