@@ -1,9 +1,11 @@
 use e_navigator_signals::{
     ContainerContext, DependencyEndpoint, KubernetesContext, NetworkAddressFamily,
-    NetworkFlowWarning, NetworkProcessIdentity, NetworkProtocol, ProtocolKind,
-    RequestCorrelationWarning, RequestSpanObservation, ServiceInteractionSpanObservation,
-    SignalEnvelope, SignalPayload, TraceAttribute, TraceConfidence, TraceCorrelationKind,
-    TraceCorrelationWarning, TracePeerContext, TraceServicePathObservation, TraceSpanObservation,
+    NetworkFlowWarning, NetworkProcessIdentity, NetworkProtocol, ProfilingAttribute,
+    ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind, ProfilingWarningObservation,
+    ProtocolKind, RequestCorrelationWarning, RequestSpanObservation,
+    ServiceInteractionSpanObservation, SignalEnvelope, SignalPayload, TraceAttribute,
+    TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext,
+    TraceServicePathObservation, TraceSpanObservation,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -22,6 +24,7 @@ pub enum OtelTraceRecordKind {
     RequestSpan,
     RequestWarning,
     NetworkFlowWarning,
+    ProfilingWarning,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -61,6 +64,9 @@ pub fn format_otel_trace_record(signal: &SignalEnvelope) -> Option<OtelTraceReco
         }
         SignalPayload::NetworkFlowWarning(warning) => {
             Some(network_flow_warning_record(signal, warning))
+        }
+        SignalPayload::ProfilingWarningObservation(warning) => {
+            Some(profiling_warning_record(signal, warning))
         }
         _ => None,
     }
@@ -371,6 +377,62 @@ fn network_flow_warning_record(
     }
 }
 
+fn profiling_warning_record(
+    signal: &SignalEnvelope,
+    warning: &ProfilingWarningObservation,
+) -> OtelTraceRecord {
+    let mut attributes = BTreeMap::new();
+    attributes.insert(
+        "warning.type".to_string(),
+        serde_json::json!(warning.warning_type),
+    );
+    attributes.insert(
+        "warning.message".to_string(),
+        serde_json::json!(warning.message),
+    );
+    attributes.insert(
+        "trace.source.signal.kind".to_string(),
+        serde_json::json!(warning.source_signal_kind),
+    );
+    attributes.insert(
+        "trace.source.module".to_string(),
+        serde_json::json!(warning.source_module),
+    );
+    attributes.insert(
+        "profile.kind".to_string(),
+        serde_json::json!(profiling_kind_name(warning.profiling_kind)),
+    );
+    attributes.insert(
+        "profile.correlation.kind".to_string(),
+        serde_json::json!(profiling_correlation_kind_name(warning.correlation_kind)),
+    );
+    attributes.insert(
+        "profile.confidence".to_string(),
+        serde_json::json!(profiling_confidence_name(warning.confidence)),
+    );
+    append_process_attributes(&mut attributes, warning.process.as_ref());
+    append_profiling_attributes(&mut attributes, &warning.attributes);
+
+    OtelTraceRecord {
+        name: "profiling.warning".to_string(),
+        kind: OtelTraceRecordKind::ProfilingWarning,
+        status: None,
+        trace_id: None,
+        span_id: None,
+        parent_span_id: None,
+        start_unix_nanos: warning.timestamp_unix_nanos,
+        end_unix_nanos: Some(warning.timestamp_unix_nanos),
+        duration_nanos: Some(0),
+        resource: resource_attributes(
+            signal,
+            warning.container.as_ref(),
+            warning.kubernetes.as_ref(),
+            None,
+        ),
+        attributes,
+    }
+}
+
 fn request_span_status(span: &RequestSpanObservation) -> Option<OtelSpanStatus> {
     match (span.protocol, span.status_code) {
         (ProtocolKind::Http, Some(status_code)) if status_code >= 400 => {
@@ -651,6 +713,26 @@ fn append_trace_attributes(
     }
 }
 
+fn append_profiling_attributes(
+    attributes: &mut BTreeMap<String, serde_json::Value>,
+    source: &[ProfilingAttribute],
+) {
+    let mut accepted = 0;
+    for attribute in source {
+        if accepted >= MAX_FORMATTED_TRACE_ATTRIBUTES {
+            break;
+        }
+        if !profiling_attribute_allowed(attribute, attributes) {
+            continue;
+        }
+        attributes.insert(
+            attribute.key.clone(),
+            serde_json::json!(attribute.value.clone()),
+        );
+        accepted += 1;
+    }
+}
+
 fn trace_attribute_allowed(
     attribute: &TraceAttribute,
     existing: &BTreeMap<String, serde_json::Value>,
@@ -671,6 +753,34 @@ fn trace_attribute_allowed(
         "token",
         "authorization",
         "cookie",
+    ]
+    .iter()
+    .any(|sensitive| key.contains(sensitive))
+}
+
+fn profiling_attribute_allowed(
+    attribute: &ProfilingAttribute,
+    existing: &BTreeMap<String, serde_json::Value>,
+) -> bool {
+    if attribute.key.is_empty()
+        || attribute.key.len() > MAX_TRACE_ATTRIBUTE_KEY_BYTES
+        || attribute.value.len() > MAX_TRACE_ATTRIBUTE_VALUE_BYTES
+        || existing.contains_key(&attribute.key)
+    {
+        return false;
+    }
+
+    let key = attribute.key.to_ascii_lowercase();
+    ![
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "authorization",
+        "cookie",
+        "api_key",
+        "apikey",
+        "credential",
     ]
     .iter()
     .any(|sensitive| key.contains(sensitive))
@@ -704,6 +814,34 @@ fn address_family_name(address_family: NetworkAddressFamily) -> &'static str {
         NetworkAddressFamily::Ipv4 => "ipv4",
         NetworkAddressFamily::Ipv6 => "ipv6",
         _ => "other",
+    }
+}
+
+fn profiling_kind_name(kind: ProfilingKind) -> &'static str {
+    match kind {
+        ProfilingKind::Cpu => "cpu",
+        ProfilingKind::Memory => "memory",
+        ProfilingKind::Lock => "lock",
+        ProfilingKind::Unknown => "unknown",
+        _ => "unknown",
+    }
+}
+
+fn profiling_correlation_kind_name(kind: ProfilingCorrelationKind) -> &'static str {
+    match kind {
+        ProfilingCorrelationKind::ObservedProfileSample => "observed_profile_sample",
+        ProfilingCorrelationKind::Synthetic => "synthetic",
+        ProfilingCorrelationKind::RuntimeInferred => "runtime_inferred",
+        _ => "unknown",
+    }
+}
+
+fn profiling_confidence_name(kind: ProfilingConfidence) -> &'static str {
+    match kind {
+        ProfilingConfidence::Low => "low",
+        ProfilingConfidence::Medium => "medium",
+        ProfilingConfidence::High => "high",
+        _ => "unknown",
     }
 }
 

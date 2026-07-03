@@ -1,9 +1,11 @@
 use e_navigator_signals::{
     ContainerContext, DependencyEndpoint, KubernetesContext, NetworkAddressFamily,
-    NetworkFlowWarning, NetworkProcessIdentity, NetworkProtocol, ProtocolKind,
-    RequestCorrelationWarning, RequestSpanObservation, ServiceInteractionSpanObservation,
-    SignalEnvelope, TraceAttribute, TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning,
-    TracePeerContext, TraceServicePathObservation, TraceSpanObservation,
+    NetworkFlowWarning, NetworkProcessIdentity, NetworkProtocol, ProfilingAttribute,
+    ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind, ProfilingWarningObservation,
+    ProtocolKind, RequestCorrelationWarning, RequestSpanObservation,
+    ServiceInteractionSpanObservation, SignalEnvelope, TraceAttribute, TraceConfidence,
+    TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext, TraceServicePathObservation,
+    TraceSpanObservation,
 };
 use e_navigator_sinks::{OtelSpanStatus, OtelTraceRecordKind, format_otel_trace_record};
 use std::collections::BTreeMap;
@@ -995,6 +997,74 @@ fn formats_network_flow_warning_without_inventing_trace_ids() {
     assert_eq!(record.attributes["process.pid"], 42);
     assert_eq!(record.attributes["process.command"], "api");
     assert!(!record.attributes.contains_key("process.executable.path"));
+}
+
+#[test]
+fn formats_profiling_warning_without_inventing_trace_ids() {
+    let signal = SignalEnvelope::profiling_warning_observation(
+        "generator.profiling",
+        Some("node-a".to_string()),
+        ProfilingWarningObservation {
+            warning_type: "dropped_profile_samples".to_string(),
+            message: "profile samples were dropped by bounded aggregation".to_string(),
+            timestamp_unix_nanos: 1_500,
+            source_signal_kind: "profile_sample_observation".to_string(),
+            source_module: "source.aya_cpu_profile".to_string(),
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::Medium,
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            attributes: vec![
+                ProfilingAttribute {
+                    key: "profile.dropped_sample_count".to_string(),
+                    value: "12".to_string(),
+                },
+                ProfilingAttribute {
+                    key: "warning.type".to_string(),
+                    value: "evil".to_string(),
+                },
+                ProfilingAttribute {
+                    key: "authorization".to_string(),
+                    value: "Bearer token".to_string(),
+                },
+            ],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("profiling warning formats");
+
+    assert_eq!(record.kind, OtelTraceRecordKind::ProfilingWarning);
+    assert_eq!(record.name, "profiling.warning");
+    assert_eq!(record.trace_id, None);
+    assert_eq!(record.span_id, None);
+    assert_eq!(record.parent_span_id, None);
+    assert_eq!(record.start_unix_nanos, 1_500);
+    assert_eq!(record.end_unix_nanos, Some(1_500));
+    assert_eq!(record.duration_nanos, Some(0));
+    assert_eq!(record.resource["host.name"], "node-a");
+    assert_eq!(record.resource["k8s.namespace.name"], "default");
+    assert_eq!(record.attributes["warning.type"], "dropped_profile_samples");
+    assert_eq!(
+        record.attributes["trace.source.signal.kind"],
+        "profile_sample_observation"
+    );
+    assert_eq!(
+        record.attributes["trace.source.module"],
+        "source.aya_cpu_profile"
+    );
+    assert_eq!(record.attributes["profile.kind"], "cpu");
+    assert_eq!(
+        record.attributes["profile.correlation.kind"],
+        "observed_profile_sample"
+    );
+    assert_eq!(record.attributes["profile.confidence"], "medium");
+    assert_eq!(record.attributes["profile.dropped_sample_count"], "12");
+    assert_eq!(record.attributes["process.pid"], 42);
+    assert_eq!(record.attributes["process.command"], "api");
+    assert!(!record.attributes.contains_key("authorization"));
+    assert_eq!(record.attributes["warning.type"], "dropped_profile_samples");
 }
 
 #[test]
