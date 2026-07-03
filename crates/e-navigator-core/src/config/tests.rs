@@ -1039,6 +1039,17 @@ fn dns_source_limits_are_validated() {
         },
         "dns_source.max_preview_bytes must be between 1 and 160",
     );
+
+    assert_invalid(
+        RuntimeConfig {
+            dns_source: DnsSourceConfig {
+                max_packet_bytes: DnsSourceConfig::MIN_PACKET_BYTES_LIMIT,
+                max_preview_bytes: DnsSourceConfig::MIN_PACKET_BYTES_LIMIT + 1,
+            },
+            ..RuntimeConfig::default()
+        },
+        "dns_source.max_preview_bytes must be less than or equal to dns_source.max_packet_bytes",
+    );
 }
 
 #[test]

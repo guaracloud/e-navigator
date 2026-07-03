@@ -48,6 +48,12 @@ impl DnsSourceConfig {
                 ),
             ));
         }
+        if self.max_preview_bytes > self.max_packet_bytes {
+            return Err(ConfigError::invalid_value(
+                "dns_source.max_preview_bytes",
+                "dns_source.max_preview_bytes must be less than or equal to dns_source.max_packet_bytes",
+            ));
+        }
 
         Ok(())
     }

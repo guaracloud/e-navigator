@@ -53,6 +53,10 @@ config:
     enabled = true
 ```
 
+For DNS capture, `dns_source.max_preview_bytes` must be less than or equal to
+`dns_source.max_packet_bytes`; the preview limit is only for diagnostics and
+cannot exceed the packet capture bound.
+
 Kubernetes attribution can be scoped with generic selectors. Empty lists and
 maps keep the default permissive behavior; non-empty values are exact-match
 filters applied before pod metadata enters the attribution cache:

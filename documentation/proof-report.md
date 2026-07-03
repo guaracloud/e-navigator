@@ -29,7 +29,8 @@ or chart rendering:
 - raw userspace decode paths for selected Aya exec/network/DNS/HTTP/profile
   events, including build-checked DNS and HTTP raw decode fuzz targets;
 - bounded DNS request parsing with configurable packet and diagnostic preview
-  limits, bounded HTTP request parsing with configurable HTTP parser limits,
+  limits plus validated preview/packet relationships, bounded HTTP request
+  parsing with configurable HTTP parser limits,
   HTTP response-status fixture parsing with a build-checked parser fuzz target,
   decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with a
   build-checked parser fuzz target, Kafka request-header and ApiVersions
