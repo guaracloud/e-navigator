@@ -2,6 +2,7 @@ use e_navigator_core::Signal;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 
 use crate::profiling::{sanitize_optional_profiling_string, sanitize_profiling_string};
+use crate::resource::sanitize_resource_metric_attributes;
 use crate::trace::{
     sanitize_optional_trace_string, sanitize_trace_attributes, sanitize_trace_string,
 };
@@ -815,8 +816,9 @@ impl SignalEnvelope {
     pub fn resource_gauge_metric(
         source: impl Into<String>,
         host: Option<String>,
-        metric: ResourceGaugeMetric,
+        mut metric: ResourceGaugeMetric,
     ) -> Self {
+        sanitize_resource_metric_attributes(&mut metric.attributes);
         Self::new(
             source,
             host,
@@ -828,8 +830,9 @@ impl SignalEnvelope {
     pub fn resource_counter_metric(
         source: impl Into<String>,
         host: Option<String>,
-        metric: ResourceCounterMetric,
+        mut metric: ResourceCounterMetric,
     ) -> Self {
+        sanitize_resource_metric_attributes(&mut metric.attributes);
         Self::new(
             source,
             host,
@@ -2261,6 +2264,54 @@ mod tests {
     }
 
     #[test]
+    fn resource_metric_constructors_bound_dynamic_attributes_before_json_stdout() {
+        let attributes = oversized_resource_metric_attributes();
+        let window = MetricAggregationWindow {
+            start_unix_nanos: 1_000,
+            end_unix_nanos: 2_000,
+        };
+        let gauge = SignalEnvelope::resource_gauge_metric(
+            "generator.resource_metrics",
+            Some("node-a".to_string()),
+            ResourceGaugeMetric {
+                metric_name: "process.memory.usage".to_string(),
+                unit: "By".to_string(),
+                value: 4_096,
+                window: window.clone(),
+                resource: ResourceContext {
+                    host_name: Some("node-a".to_string()),
+                    container: None,
+                    kubernetes: None,
+                },
+                process: None,
+                cgroup: None,
+                attributes: attributes.clone(),
+            },
+        );
+        let counter = SignalEnvelope::resource_counter_metric(
+            "generator.resource_metrics",
+            Some("node-a".to_string()),
+            ResourceCounterMetric {
+                metric_name: "process.cpu.time".to_string(),
+                unit: "ns".to_string(),
+                value: 500,
+                window,
+                resource: ResourceContext {
+                    host_name: Some("node-a".to_string()),
+                    container: None,
+                    kubernetes: None,
+                },
+                process: None,
+                cgroup: None,
+                attributes,
+            },
+        );
+
+        assert_bounded_resource_metric_attributes(&gauge);
+        assert_bounded_resource_metric_attributes(&counter);
+    }
+
+    #[test]
     fn serializes_cgroup_resource_observation_signals() {
         let cgroup = CgroupResourceContext {
             cgroup_path: "/kubepods.slice/pod123/container.scope".to_string(),
@@ -2423,5 +2474,42 @@ mod tests {
         assert!(!json.to_string().contains("Bearer secret"));
         assert!(!json.to_string().contains(&"k".repeat(160)));
         assert!(!json.to_string().contains(&"v".repeat(320)));
+    }
+
+    fn oversized_resource_metric_attributes() -> Vec<ResourceMetricAttribute> {
+        let mut attributes = vec![
+            ResourceMetricAttribute {
+                key: String::new(),
+                value: "dropped".to_string(),
+            },
+            ResourceMetricAttribute {
+                key: "k".repeat(160),
+                value: "value".to_string(),
+            },
+            ResourceMetricAttribute {
+                key: "valid.but.too_large".to_string(),
+                value: "v".repeat(320),
+            },
+        ];
+        attributes.extend((0..20).map(|index| ResourceMetricAttribute {
+            key: format!("resource.attribute.{index}"),
+            value: "value".to_string(),
+        }));
+        attributes
+    }
+
+    fn assert_bounded_resource_metric_attributes(signal: &SignalEnvelope) {
+        let json = serde_json::to_value(signal).expect("signal serializes");
+        let attributes = json["payload"]["attributes"]
+            .as_array()
+            .expect("attributes are serialized");
+
+        assert_eq!(attributes.len(), 16);
+        assert_eq!(attributes[0]["key"].as_str().map(str::len), Some(128));
+        assert_eq!(attributes[1]["value"].as_str().map(str::len), Some(256));
+        assert_eq!(attributes[15]["key"], "resource.attribute.13");
+        assert!(!json.to_string().contains(&"k".repeat(129)));
+        assert!(!json.to_string().contains(&"v".repeat(257)));
+        assert!(json.to_string().contains("valid.but.too_large"));
     }
 }

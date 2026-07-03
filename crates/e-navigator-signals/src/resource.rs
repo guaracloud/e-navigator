@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ContainerContext, KubernetesContext, MetricAggregationWindow};
 
+const MAX_RESOURCE_METRIC_ATTRIBUTES: usize = 16;
+const MAX_RESOURCE_METRIC_ATTRIBUTE_KEY_BYTES: usize = 128;
+const MAX_RESOURCE_METRIC_ATTRIBUTE_VALUE_BYTES: usize = 256;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceContext {
     pub host_name: Option<String>,
@@ -185,4 +189,29 @@ pub struct ResourceCounterMetric {
 pub struct ResourceMetricAttribute {
     pub key: String,
     pub value: String,
+}
+
+pub fn sanitize_resource_metric_attributes(attributes: &mut Vec<ResourceMetricAttribute>) {
+    let sanitized = attributes
+        .drain(..)
+        .filter(|attribute| !attribute.key.is_empty())
+        .map(|attribute| ResourceMetricAttribute {
+            key: truncate_utf8(&attribute.key, MAX_RESOURCE_METRIC_ATTRIBUTE_KEY_BYTES),
+            value: truncate_utf8(&attribute.value, MAX_RESOURCE_METRIC_ATTRIBUTE_VALUE_BYTES),
+        })
+        .take(MAX_RESOURCE_METRIC_ATTRIBUTES)
+        .collect();
+    *attributes = sanitized;
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
 }

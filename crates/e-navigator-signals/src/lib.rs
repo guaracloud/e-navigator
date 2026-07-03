@@ -45,7 +45,7 @@ pub use resource::{
     CgroupPidsObservation, CgroupResourceContext, NodeCpuObservation, NodeDiskIoObservation,
     NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation, ProcessResourceContext,
     ProcessResourceObservation, ResourceContext, ResourceCounterMetric, ResourceGaugeMetric,
-    ResourceMetricAttribute,
+    ResourceMetricAttribute, sanitize_resource_metric_attributes,
 };
 pub use trace::{
     ServiceInteractionSpanObservation, TraceAttribute, TraceConfidence, TraceCorrelationKind,
