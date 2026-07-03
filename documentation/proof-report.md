@@ -76,11 +76,11 @@ or chart rendering:
   authority-port/userinfo validation, and a build-checked parser fuzz target,
   Kafka request-header plus bounded ApiVersions, non-flexible AddOffsetsToTxn,
   DeleteRecords, DeleteTopics, DescribeGroups, DeleteGroups, EndTxn, FindCoordinator, Heartbeat,
-  InitProducerId, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit,
+  InitProducerId, JoinGroup, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit,
   OffsetDelete, OffsetFetch, and SyncGroup request bodies,
   ApiVersions response, bounded Produce request/response, and bounded
   non-flexible AddOffsetsToTxn, DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups,
-  EndTxn, Fetch, FindCoordinator, Heartbeat, InitProducerId, LeaveGroup, ListGroups,
+  EndTxn, Fetch, FindCoordinator, Heartbeat, InitProducerId, JoinGroup, LeaveGroup, ListGroups,
   ListOffsets, Metadata, OffsetCommit, OffsetDelete, OffsetFetch, and SyncGroup
   request/response-error parsing,
   MongoDB
@@ -209,11 +209,11 @@ These areas remain explicitly partial:
 - **Kafka protocol observability:** bounded request-header parsing for common
   API keys, bounded ApiVersions request-body validation, bounded non-flexible
   Produce, Fetch, AddOffsetsToTxn, DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups, EndTxn,
-  FindCoordinator, Heartbeat, InitProducerId, LeaveGroup, ListGroups,
+  FindCoordinator, Heartbeat, InitProducerId, JoinGroup, LeaveGroup, ListGroups,
   ListOffsets, Metadata, OffsetCommit, OffsetDelete, OffsetFetch, and SyncGroup request-body
   validation, and ApiVersions, Produce, and non-flexible AddOffsetsToTxn,
   DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups, EndTxn, Fetch, FindCoordinator, Heartbeat,
-  InitProducerId, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit,
+  InitProducerId, JoinGroup, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit,
   OffsetDelete, OffsetFetch, and SyncGroup
   response-error parsing is locally tested without exporting client IDs,
   coordinator keys, consumer group/member identifiers, assignment payloads,
