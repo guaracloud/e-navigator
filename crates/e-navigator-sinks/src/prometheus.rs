@@ -250,6 +250,7 @@ pub struct PrometheusHttpSink {
 
 impl PrometheusHttpSink {
     pub fn bind(config: PrometheusHttpConfig) -> CoreResult<Self> {
+        validate_max_metric_lines(config.max_metric_lines)?;
         let bind_address = format!("{}:{}", config.bind_address, config.port);
         let listener = std::net::TcpListener::bind(&bind_address).map_err(module_error)?;
         listener.set_nonblocking(true).map_err(module_error)?;
@@ -278,6 +279,7 @@ impl PrometheusHttpSink {
         metrics_enabled: bool,
         profiles_enabled: bool,
     ) -> CoreResult<(Self, std::net::SocketAddr)> {
+        validate_max_metric_lines(max_metric_lines)?;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(module_error)?;
         let address = listener.local_addr().map_err(module_error)?;
         listener.set_nonblocking(true).map_err(module_error)?;
@@ -293,6 +295,21 @@ impl PrometheusHttpSink {
             address,
         ))
     }
+}
+
+fn validate_max_metric_lines(max_metric_lines: usize) -> CoreResult<()> {
+    if max_metric_lines == 0 {
+        return Err(module_error(
+            "prometheus_http.max_metric_lines must be greater than zero",
+        ));
+    }
+    if max_metric_lines > PrometheusHttpConfig::MAX_METRIC_LINES_LIMIT {
+        return Err(module_error(format!(
+            "prometheus_http.max_metric_lines must be less than or equal to {}",
+            PrometheusHttpConfig::MAX_METRIC_LINES_LIMIT
+        )));
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -627,6 +644,28 @@ mod tests {
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpStream,
     };
+
+    #[test]
+    fn prometheus_http_sink_rejects_invalid_metric_storage_bounds() {
+        for (max_metric_lines, expected_message) in [
+            (
+                0,
+                "prometheus_http.max_metric_lines must be greater than zero",
+            ),
+            (
+                PrometheusHttpConfig::MAX_METRIC_LINES_LIMIT + 1,
+                "prometheus_http.max_metric_lines must be less than or equal to",
+            ),
+        ] {
+            let err = PrometheusHttpSink::bind(PrometheusHttpConfig {
+                max_metric_lines,
+                ..PrometheusHttpConfig::default()
+            })
+            .expect_err("invalid storage bound fails before binding");
+
+            assert!(err.to_string().contains(expected_message));
+        }
+    }
 
     #[test]
     fn renders_native_network_counter_with_stable_labels() {
