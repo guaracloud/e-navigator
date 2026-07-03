@@ -5,19 +5,19 @@ use e_navigator_protocol::{
     kafka::{
         KafkaExtraction, parse_kafka_add_offsets_to_txn_response,
         parse_kafka_add_partitions_to_txn_response, parse_kafka_api_versions_response,
-        parse_kafka_create_partitions_response, parse_kafka_create_topics_response,
-        parse_kafka_delete_groups_response, parse_kafka_delete_records_response,
-        parse_kafka_delete_topics_response, parse_kafka_describe_groups_response,
-        parse_kafka_end_txn_response, parse_kafka_fetch_response,
-        parse_kafka_find_coordinator_response, parse_kafka_heartbeat_response,
-        parse_kafka_init_producer_id_response, parse_kafka_join_group_response,
-        parse_kafka_leave_group_response, parse_kafka_list_groups_response,
-        parse_kafka_list_offsets_response, parse_kafka_metadata_response,
-        parse_kafka_offset_commit_response, parse_kafka_offset_delete_response,
-        parse_kafka_offset_fetch_response, parse_kafka_produce_response, parse_kafka_request,
-        parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
-        parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
-        parse_kafka_write_txn_markers_response,
+        parse_kafka_create_acls_response, parse_kafka_create_partitions_response,
+        parse_kafka_create_topics_response, parse_kafka_delete_groups_response,
+        parse_kafka_delete_records_response, parse_kafka_delete_topics_response,
+        parse_kafka_describe_groups_response, parse_kafka_end_txn_response,
+        parse_kafka_fetch_response, parse_kafka_find_coordinator_response,
+        parse_kafka_heartbeat_response, parse_kafka_init_producer_id_response,
+        parse_kafka_join_group_response, parse_kafka_leave_group_response,
+        parse_kafka_list_groups_response, parse_kafka_list_offsets_response,
+        parse_kafka_metadata_response, parse_kafka_offset_commit_response,
+        parse_kafka_offset_delete_response, parse_kafka_offset_fetch_response,
+        parse_kafka_produce_response, parse_kafka_request, parse_kafka_sasl_authenticate_response,
+        parse_kafka_sasl_handshake_response, parse_kafka_sync_group_response,
+        parse_kafka_txn_offset_commit_response, parse_kafka_write_txn_markers_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -287,6 +287,7 @@ proptest! {
         let _ = parse_kafka_api_versions_response(&bytes, api_version, &config);
         let _ = parse_kafka_create_topics_response(&bytes, api_version.clamp(2, 4), &config);
         let _ = parse_kafka_create_partitions_response(&bytes, api_version.min(1), &config);
+        let _ = parse_kafka_create_acls_response(&bytes, 1, &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -2355,6 +2356,39 @@ fn validates_kafka_create_partitions_requests_without_topic_values() {
 }
 
 #[test]
+fn validates_kafka_create_acls_requests_without_acl_values() {
+    let body = kafka_create_acls_request_body("orders.secret", "User:secret", "host.secret");
+    let bytes = kafka_request_frame(30, 1, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka create acls request parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("create_acls"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "30")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "1")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("User")
+                || attribute.value.contains("host")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn validates_kafka_find_coordinator_v2_request_without_key_value() {
     let body = kafka_find_coordinator_request_body(2, "group.secret");
     let bytes = kafka_request_frame(10, 2, Some(b"secret-client"), &body);
@@ -3934,6 +3968,66 @@ fn extracts_kafka_create_partitions_error_response_without_topic_or_message_valu
 }
 
 #[test]
+fn extracts_kafka_create_acls_ok_response_without_message_values() {
+    let bytes = kafka_create_acls_response_frame(0, &[(0, None)]);
+
+    let extraction =
+        parse_kafka_create_acls_response(&bytes, 1, &ProtocolExtractionConfig::default())
+            .expect("create acls ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "create_acls");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "30")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_create_acls_error_response_without_message_values() {
+    let bytes =
+        kafka_create_acls_response_frame(0, &[(0, None), (31, Some("acl secret rejected"))]);
+
+    let extraction =
+        parse_kafka_create_acls_response(&bytes, 1, &ProtocolExtractionConfig::default())
+            .expect("create acls error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "create_acls");
+    assert_eq!(extraction.status_code, "31");
+    assert_eq!(extraction.error_type.as_deref(), Some("31"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "1")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "31")
+    );
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("secret") || attribute.value.contains("rejected")
+    ));
+}
+
+#[test]
 fn extracts_kafka_join_group_ok_response_without_group_member_or_metadata_values() {
     let bytes = kafka_join_group_response_frame(0, 5, 0, &[("member.secret", b"secret-metadata")]);
 
@@ -5158,6 +5252,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     )
     .expect("bounded kafka create partitions response parses");
     assert_eq!(bounded_create_partitions_response.attributes.len(), 2);
+
+    let bounded_create_acls_response = parse_kafka_create_acls_response(
+        &kafka_create_acls_response_frame(0, &[(31, Some("secret acl rejected"))]),
+        1,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka create acls response parses");
+    assert_eq!(bounded_create_acls_response.attributes.len(), 2);
 
     let bounded_join_group_response = parse_kafka_join_group_response(
         &kafka_join_group_response_frame(0, 2, 25, &[("member.secret", b"secret-metadata")]),
@@ -6424,6 +6531,38 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::ClientIdTooLong
     );
     assert_eq!(
+        parse_kafka_request(&kafka_request_frame(30, 0, None, b""), &config).unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(30, 1, None, b"\0\x01"), &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    let mut too_many_create_acls = Vec::new();
+    too_many_create_acls.extend_from_slice(&1025_i32.to_be_bytes());
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(30, 1, None, &too_many_create_acls),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    let body = kafka_create_acls_request_body("topic.secret.name", "User:secret", "host.secret");
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(30, 1, None, &body),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
         parse_kafka_api_versions_response(&[], 0, &config).unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
@@ -6557,6 +6696,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_create_partitions_response(
             &kafka_create_partitions_response_frame(0, &[("orders", 0, None)]),
+            2,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_create_acls_response(
+            &kafka_create_acls_response_frame(0, &[(0, None)]),
             2,
             &config
         )
@@ -6845,6 +6993,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_create_acls_response(
+            &kafka_create_acls_response_with_result_count_frame(1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_add_partitions_to_txn_response(
             &kafka_add_partitions_to_txn_response_with_topic_count_frame(1025),
             1,
@@ -7117,6 +7274,14 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_create_partitions_response(&truncated_create_partitions_response, 0, &config)
             .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_create_acls_response =
+        kafka_create_acls_response_frame(0, &[(31, Some("secret"))]);
+    truncated_create_acls_response.truncate(10);
+    assert_eq!(
+        parse_kafka_create_acls_response(&truncated_create_acls_response, 1, &config).unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
 
@@ -10364,6 +10529,19 @@ fn kafka_create_partitions_request_body(topic: &str, assignments: Option<&[&[i32
     body
 }
 
+fn kafka_create_acls_request_body(resource_name: &str, principal: &str, host: &str) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&1_i32.to_be_bytes());
+    body.push(2);
+    push_kafka_string(&mut body, resource_name);
+    body.push(3);
+    push_kafka_string(&mut body, principal);
+    push_kafka_string(&mut body, host);
+    body.push(3);
+    body.push(3);
+    body
+}
+
 fn kafka_join_group_request_body(api_version: i16, protocols: &[(&str, &[u8])]) -> Vec<u8> {
     let mut body = Vec::new();
     push_kafka_string(&mut body, "group.secret");
@@ -10994,6 +11172,29 @@ fn kafka_create_partitions_response_with_topic_count_frame(topic_count: i32) -> 
     response.extend_from_slice(&0_i32.to_be_bytes());
     response.extend_from_slice(&0_i32.to_be_bytes());
     response.extend_from_slice(&topic_count.to_be_bytes());
+    kafka_frame(&response)
+}
+
+fn kafka_create_acls_response_frame(
+    correlation_id: i32,
+    results: &[(i16, Option<&str>)],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&(results.len() as i32).to_be_bytes());
+    for (error_code, error_message) in results {
+        response.extend_from_slice(&error_code.to_be_bytes());
+        push_kafka_nullable_string(&mut response, *error_message);
+    }
+    kafka_frame(&response)
+}
+
+fn kafka_create_acls_response_with_result_count_frame(result_count: i32) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&result_count.to_be_bytes());
     kafka_frame(&response)
 }
 
