@@ -3930,6 +3930,70 @@ pub fn parse_kafka_remove_raft_voter_response(
     })
 }
 
+pub fn parse_kafka_update_raft_voter_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if api_version != 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = update_raft_voter_response_error_code(body, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("update_raft_voter"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("82"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "update_raft_voter".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_initialize_share_group_state_response(
     bytes: &[u8],
     api_version: i16,
@@ -4500,6 +4564,7 @@ fn validate_request_body(
         75 => validate_describe_topic_partitions_request_body(body, header, config),
         80 => validate_add_raft_voter_request_body(body, header, config),
         81 => validate_remove_raft_voter_request_body(body, header, config),
+        82 => validate_update_raft_voter_request_body(body, header, config),
         83 => validate_initialize_share_group_state_request_body(body, header, config),
         84 => validate_read_share_group_state_request_body(body, header, config),
         85 => validate_write_share_group_state_request_body(body, header, config),
@@ -5941,6 +6006,33 @@ fn validate_remove_raft_voter_request_body(
     let mut cursor = header.body_start;
     skip_compact_nullable_string(body, &mut cursor, config.max_request_line_bytes)?;
     skip_bytes(body, &mut cursor, 20)?;
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_update_raft_voter_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_version != 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+
+    let mut cursor = header.body_start;
+    skip_compact_nullable_string(body, &mut cursor, config.max_request_line_bytes)?;
+    skip_bytes(body, &mut cursor, 24)?;
+    let listener_count = read_compact_array_len(body, &mut cursor)?;
+    for _ in 0..listener_count {
+        skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+        skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+        skip_bytes(body, &mut cursor, 2)?;
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    skip_bytes(body, &mut cursor, 4)?;
     skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
     if cursor != body.len() {
         return Err(KafkaExtraction::MalformedFrame);
@@ -7676,6 +7768,21 @@ fn remove_raft_voter_response_error_code(
     Ok(error_code)
 }
 
+fn update_raft_voter_response_error_code(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    skip_bytes(body, &mut cursor, 4)?;
+    let error_code = read_i16_be_cursor(body, &mut cursor)?;
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    Ok(error_code)
+}
+
 fn initialize_share_group_state_response_error_code(
     body: &[u8],
     config: &ProtocolExtractionConfig,
@@ -8798,6 +8905,7 @@ fn api_key_name(api_key: i16) -> Option<&'static str> {
         75 => Some("describe_topic_partitions"),
         80 => Some("add_raft_voter"),
         81 => Some("remove_raft_voter"),
+        82 => Some("update_raft_voter"),
         83 => Some("initialize_share_group_state"),
         84 => Some("read_share_group_state"),
         85 => Some("write_share_group_state"),

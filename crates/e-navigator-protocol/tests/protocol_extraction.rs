@@ -39,8 +39,8 @@ use e_navigator_protocol::{
         parse_kafka_request, parse_kafka_sasl_authenticate_response,
         parse_kafka_sasl_handshake_response, parse_kafka_sync_group_response,
         parse_kafka_txn_offset_commit_response, parse_kafka_unregister_broker_response,
-        parse_kafka_update_features_response, parse_kafka_write_share_group_state_response,
-        parse_kafka_write_txn_markers_response,
+        parse_kafka_update_features_response, parse_kafka_update_raft_voter_response,
+        parse_kafka_write_share_group_state_response, parse_kafka_write_txn_markers_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -344,6 +344,7 @@ proptest! {
         let _ = parse_kafka_describe_topic_partitions_response(&bytes, 0, &config);
         let _ = parse_kafka_add_raft_voter_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_remove_raft_voter_response(&bytes, 0, &config);
+        let _ = parse_kafka_update_raft_voter_response(&bytes, 0, &config);
         let _ = parse_kafka_initialize_share_group_state_response(&bytes, 0, &config);
         let _ = parse_kafka_read_share_group_state_response(&bytes, 0, &config);
         let _ = parse_kafka_write_share_group_state_response(&bytes, api_version.min(1), &config);
@@ -3815,6 +3816,42 @@ fn validates_kafka_remove_raft_voter_request_without_cluster_values() {
 }
 
 #[test]
+fn validates_kafka_update_raft_voter_request_without_cluster_or_listener_values() {
+    let body = kafka_update_raft_voter_request_body(
+        Some("cluster.secret"),
+        &[("INTERNAL", "broker.secret.internal", 9092)],
+    );
+    let bytes = kafka_flexible_request_frame(82, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka update raft voter request parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("update_raft_voter"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "82")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("cluster")
+                || attribute.value.contains("secret")
+                || attribute.value.contains("broker")
+                || attribute.value.contains("INTERNAL"))
+    );
+}
+
+#[test]
 fn validates_kafka_initialize_share_group_state_request_without_group_or_topic_values() {
     let partitions: &[InitializeShareGroupStatePartitionFixture] =
         &[InitializeShareGroupStatePartitionFixture {
@@ -7062,6 +7099,83 @@ fn extracts_kafka_remove_raft_voter_error_response_without_message_values() {
             .iter()
             .any(|attribute| attribute.value.contains("secret")
                 || attribute.value.contains("message"))
+    );
+}
+
+#[test]
+fn extracts_kafka_update_raft_voter_ok_response_without_leader_values() {
+    let bytes = kafka_update_raft_voter_response_frame(
+        0,
+        0,
+        Some(UpdateRaftVoterLeaderFixture {
+            leader_id: 7,
+            leader_epoch: 8,
+            host: "leader.secret.internal",
+            port: 9092,
+        }),
+    );
+
+    let extraction =
+        parse_kafka_update_raft_voter_response(&bytes, 0, &ProtocolExtractionConfig::default())
+            .expect("update raft voter ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "update_raft_voter");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "82")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("leader")
+                || attribute.value.contains("secret")
+                || attribute.value.contains("9092"))
+    );
+}
+
+#[test]
+fn extracts_kafka_update_raft_voter_error_response_without_leader_values() {
+    let bytes = kafka_update_raft_voter_response_frame(
+        0,
+        35,
+        Some(UpdateRaftVoterLeaderFixture {
+            leader_id: 7,
+            leader_epoch: 8,
+            host: "leader.secret.internal",
+            port: 9092,
+        }),
+    );
+
+    let extraction =
+        parse_kafka_update_raft_voter_response(&bytes, 0, &ProtocolExtractionConfig::default())
+            .expect("update raft voter error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "update_raft_voter");
+    assert_eq!(extraction.status_code, "35");
+    assert_eq!(extraction.error_type.as_deref(), Some("35"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "35")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("leader")
+                || attribute.value.contains("secret")
+                || attribute.value.contains("9092"))
     );
 }
 
@@ -10350,6 +10464,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     .expect("bounded kafka remove raft voter response parses");
     assert_eq!(bounded_remove_raft_voter_response.attributes.len(), 2);
 
+    let bounded_update_raft_voter_response = parse_kafka_update_raft_voter_response(
+        &kafka_update_raft_voter_response_frame(0, 0, None),
+        0,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka update raft voter response parses");
+    assert_eq!(bounded_update_raft_voter_response.attributes.len(), 2);
+
     let bounded_initialize_share_group_state_response =
         parse_kafka_initialize_share_group_state_response(
             &kafka_initialize_share_group_state_response_frame(0, &[]),
@@ -13006,6 +13133,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_update_raft_voter_response(
+            &kafka_update_raft_voter_response_frame(0, 0, None),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_initialize_share_group_state_response(
             &kafka_initialize_share_group_state_response_frame(0, &[]),
             1,
@@ -13963,6 +14099,43 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         )
         .unwrap_err(),
         KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_update_raft_voter_response(
+            &kafka_update_raft_voter_response_frame(
+                0,
+                0,
+                Some(UpdateRaftVoterLeaderFixture {
+                    leader_id: 7,
+                    leader_epoch: 8,
+                    host: "leader.secret.internal",
+                    port: 9092,
+                }),
+            ),
+            0,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 8,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_update_raft_voter_response(
+            &kafka_update_raft_voter_response_with_tag_len_frame(65),
+            0,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
     );
     assert_eq!(
         parse_kafka_initialize_share_group_state_response(
@@ -15685,6 +15858,59 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::MalformedFrame
     );
 
+    let update_raft_voter_body = kafka_update_raft_voter_request_body(
+        Some("cluster.secret"),
+        &[("controller", "host.secret", 9093)],
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(82, 1, Some(b"client-a"), &update_raft_voter_body),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    let mut oversized_update_raft_voter_body = Vec::new();
+    push_compact_nullable_string(&mut oversized_update_raft_voter_body, None);
+    oversized_update_raft_voter_body.extend_from_slice(&100_i32.to_be_bytes());
+    oversized_update_raft_voter_body.extend_from_slice(&1_i32.to_be_bytes());
+    oversized_update_raft_voter_body.extend_from_slice(&[29_u8; 16]);
+    push_unsigned_varint(&mut oversized_update_raft_voter_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                82,
+                0,
+                Some(b"client-a"),
+                &oversized_update_raft_voter_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(82, 0, Some(b"client-a"), &update_raft_voter_body),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(82, 0, Some(b"client-a"), b"\0"),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
     let initialize_share_group_state_partitions: &[InitializeShareGroupStatePartitionFixture] =
         &[InitializeShareGroupStatePartitionFixture {
             partition: 1,
@@ -16731,6 +16957,23 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     truncated_remove_raft_voter_response.truncate(10);
     assert_eq!(
         parse_kafka_remove_raft_voter_response(&truncated_remove_raft_voter_response, 0, &config)
+            .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_update_raft_voter_response = kafka_update_raft_voter_response_frame(
+        0,
+        35,
+        Some(UpdateRaftVoterLeaderFixture {
+            leader_id: 7,
+            leader_epoch: 8,
+            host: "leader.secret.internal",
+            port: 9092,
+        }),
+    );
+    truncated_update_raft_voter_response.truncate(10);
+    assert_eq!(
+        parse_kafka_update_raft_voter_response(&truncated_update_raft_voter_response, 0, &config)
             .unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
@@ -20646,6 +20889,28 @@ fn kafka_remove_raft_voter_request_body(cluster_id: Option<&str>) -> Vec<u8> {
     body
 }
 
+fn kafka_update_raft_voter_request_body(
+    cluster_id: Option<&str>,
+    listeners: &[(&str, &str, u16)],
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_compact_nullable_string(&mut body, cluster_id);
+    body.extend_from_slice(&100_i32.to_be_bytes());
+    body.extend_from_slice(&1_i32.to_be_bytes());
+    body.extend_from_slice(&[29_u8; 16]);
+    push_unsigned_varint(&mut body, listeners.len() + 1);
+    for (name, host, port) in listeners {
+        push_compact_string(&mut body, name);
+        push_compact_string(&mut body, host);
+        body.extend_from_slice(&port.to_be_bytes());
+        push_unsigned_varint(&mut body, 0);
+    }
+    body.extend_from_slice(&1_i16.to_be_bytes());
+    body.extend_from_slice(&2_i16.to_be_bytes());
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 struct InitializeShareGroupStatePartitionFixture {
     partition: i32,
     state_epoch: i32,
@@ -23543,6 +23808,53 @@ fn kafka_remove_raft_voter_response_frame(
     response.extend_from_slice(&error_code.to_be_bytes());
     push_compact_nullable_string(&mut response, error_message);
     push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+struct UpdateRaftVoterLeaderFixture<'a> {
+    leader_id: i32,
+    leader_epoch: i32,
+    host: &'a str,
+    port: i32,
+}
+
+fn kafka_update_raft_voter_response_frame(
+    correlation_id: i32,
+    error_code: i16,
+    current_leader: Option<UpdateRaftVoterLeaderFixture<'_>>,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&error_code.to_be_bytes());
+    if let Some(current_leader) = current_leader {
+        push_unsigned_varint(&mut response, 1);
+        push_unsigned_varint(&mut response, 0);
+        let mut tag = Vec::new();
+        tag.extend_from_slice(&current_leader.leader_id.to_be_bytes());
+        tag.extend_from_slice(&current_leader.leader_epoch.to_be_bytes());
+        push_compact_string(&mut tag, current_leader.host);
+        tag.extend_from_slice(&current_leader.port.to_be_bytes());
+        push_unsigned_varint(&mut tag, 0);
+        push_unsigned_varint(&mut response, tag.len());
+        response.extend_from_slice(&tag);
+    } else {
+        push_unsigned_varint(&mut response, 0);
+    }
+    kafka_frame(&response)
+}
+
+fn kafka_update_raft_voter_response_with_tag_len_frame(tag_len: usize) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    push_unsigned_varint(&mut response, 1);
+    push_unsigned_varint(&mut response, 0);
+    push_unsigned_varint(&mut response, tag_len);
+    response.resize(response.len() + tag_len, 0);
     kafka_frame(&response)
 }
 
