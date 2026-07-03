@@ -715,6 +715,29 @@ fn extracts_grpc_status_from_decoded_http2_trailers() {
 }
 
 #[test]
+fn drops_malformed_grpc_authority_attributes() {
+    for authority in [
+        "checkout.example.com:70000",
+        "checkout.example.com:notaport",
+        "[2001:db8::1]invalid",
+    ] {
+        let bytes = format!(
+            ":method: POST\n:path: /checkout.v1.CheckoutService/GetCart\n:authority: {authority}\ncontent-type: application/grpc\n\n"
+        );
+        let extraction =
+            parse_grpc_request_headers(bytes.as_bytes(), &ProtocolExtractionConfig::default())
+                .expect("grpc request headers parse without authority attributes");
+
+        assert!(
+            !extraction.attributes.iter().any(
+                |attribute| attribute.key == "server.address" || attribute.key == "server.port"
+            ),
+            "{authority:?}"
+        );
+    }
+}
+
+#[test]
 fn rejects_non_grpc_decoded_http2_headers() {
     let bytes = b":method: GET\n:path: /checkout\ncontent-type: application/json\n\n";
 

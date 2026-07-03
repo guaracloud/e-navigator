@@ -289,25 +289,48 @@ fn bounded_authority(value: &str) -> Option<Authority> {
     {
         return None;
     }
-    let (address, port) = split_authority(value);
+    let (address, port) = split_authority(value)?;
     if address.is_empty() {
         return None;
     }
+    let port = match port {
+        Some(port) if bounded_port(port).is_some() => Some(port.to_string()),
+        Some(_) => return None,
+        None => None,
+    };
     Some(Authority {
         address: address.to_string(),
-        port: port.map(ToString::to_string),
+        port,
     })
 }
 
-fn split_authority(value: &str) -> (&str, Option<&str>) {
-    if let Some((host, port)) = value.rsplit_once(':')
-        && !host.contains(':')
-        && !port.is_empty()
-        && port.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        return (host, Some(port));
+fn split_authority(value: &str) -> Option<(&str, Option<&str>)> {
+    if let Some(rest) = value.strip_prefix('[') {
+        let (address, remainder) = rest.split_once(']')?;
+        let port = if remainder.is_empty() {
+            None
+        } else {
+            Some(remainder.strip_prefix(':')?)
+        };
+        return Some((address, port));
     }
-    (value, None)
+
+    if let Some((address, port)) = value.split_once(':') {
+        if port.contains(':') || port.is_empty() || !port.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return None;
+        }
+        return Some((address, Some(port)));
+    }
+
+    Some((value, None))
+}
+
+fn bounded_port(value: &str) -> Option<u16> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    value.parse().ok()
 }
 
 fn push_attribute(

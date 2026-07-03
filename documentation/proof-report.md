@@ -38,9 +38,10 @@ or chart rendering:
   relationships plus HTTP/1.x version-token validation,
   HTTP response-status fixture parsing with version-token validation and a
   build-checked parser fuzz target, strict W3C traceparent parsing,
-  decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with a
-  build-checked parser fuzz target, Kafka request-header and ApiVersions
-  response-error parsing, MongoDB wire-message and response-error parsing, MySQL
+  decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with bounded
+  authority-port validation and a build-checked parser fuzz target, Kafka
+  request-header and ApiVersions response-error parsing, MongoDB wire-message
+  and response-error parsing, MySQL
   command packet and ERR response parsing with build-checked parser fuzz
   coverage, NATS text command plus OK/error response parsing, PostgreSQL
   wire-message and ErrorResponse parsing with build-checked parser fuzz
