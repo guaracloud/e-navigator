@@ -5,6 +5,7 @@ use e_navigator_generators::{
     RequestCorrelationGenerator, ResourceMetricsGenerator, RuntimeSecurityGenerator,
     TraceCorrelationGenerator,
 };
+use e_navigator_processors::container_attribution::KubernetesMetadataCache;
 use e_navigator_profiling::model::{NormalizationLimits, parse_profile_fixture};
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
@@ -124,6 +125,45 @@ fn kafka_produce_response_fixture() -> Vec<u8> {
     frame
 }
 
+fn kubernetes_pod_list_fixture(pod_count: usize) -> String {
+    let items = (0..pod_count)
+        .map(|index| {
+            format!(
+                r#"{{
+                  "metadata": {{
+                    "name": "bench-pod-{index}",
+                    "namespace": "e-navigator-bench",
+                    "uid": "pod-uid-{index}",
+                    "labels": {{
+                      "app.kubernetes.io/name": "bench-app-{app_index}",
+                      "app.kubernetes.io/component": "api",
+                      "e-navigator.dev/bench": "true",
+                      "cardinality.example/ignored": "{index}"
+                    }}
+                  }},
+                  "spec": {{
+                    "nodeName": "homelab-01"
+                  }},
+                  "status": {{
+                    "podIP": "10.42.{octet_b}.{octet_c}",
+                    "containerStatuses": [
+                      {{
+                        "name": "api",
+                        "containerID": "containerd://container-{index}-api"
+                      }}
+                    ]
+                  }}
+                }}"#,
+                app_index = index % 32,
+                octet_b = (index / 254) + 1,
+                octet_c = (index % 254) + 1,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(r#"{{"items":[{items}]}}"#)
+}
+
 fn bench_protocol_and_profiles(c: &mut Criterion) {
     let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
     let http = b"GET /api/orders HTTP/1.1\r\nHost: api.example.test\r\nTraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\nTracestate: rojo=00f067aa0ba902b7\r\n\r\n";
@@ -228,6 +268,23 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     });
     c.bench_function("profiling/fixture_normalize", |b| {
         b.iter(|| parse_profile_fixture(black_box(profile_fixture), &limits).unwrap())
+    });
+}
+
+fn bench_processors(c: &mut Criterion) {
+    let pod_list = kubernetes_pod_list_fixture(512);
+    let config = e_navigator_core::KubernetesAttributionConfig {
+        max_pods: 512,
+        max_cache_entries: 1024,
+        max_labels_per_pod: 3,
+        ..e_navigator_core::KubernetesAttributionConfig::default()
+    };
+
+    c.bench_function("processor/kubernetes_pod_list_cache_build", |b| {
+        b.iter(|| {
+            KubernetesMetadataCache::from_pod_list_json(black_box(pod_list.as_str()), &config)
+                .unwrap()
+        })
     });
 }
 
@@ -870,6 +927,7 @@ criterion_group!(
     bench_raw_aya_decoders,
     bench_host_parsers,
     bench_protocol_and_profiles,
+    bench_processors,
     bench_generators,
     bench_serialization_and_exporter
 );

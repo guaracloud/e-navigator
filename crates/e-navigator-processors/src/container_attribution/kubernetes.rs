@@ -346,8 +346,14 @@ impl KubernetesMetadataCache {
             .error_for_status()
             .map_err(|err| err.to_string())?;
         let body = read_response_body(response, config.max_response_bytes).await?;
-        let pod_list = serde_json::from_str::<PodList>(&body).map_err(|err| err.to_string())?;
+        Self::from_pod_list_json(&body, config)
+    }
 
+    pub fn from_pod_list_json(
+        body: &str,
+        config: &KubernetesAttributionConfig,
+    ) -> Result<Self, String> {
+        let pod_list = serde_json::from_str::<PodList>(body).map_err(|err| err.to_string())?;
         Ok(Self::from_pod_list(pod_list, config))
     }
 
@@ -625,7 +631,7 @@ mod tests {
 
     #[test]
     fn deserializes_kubernetes_container_id_field() {
-        let pod_list: PodList = serde_json::from_str(
+        let cache = KubernetesMetadataCache::from_pod_list_json(
             r#"{
               "items": [
                 {
@@ -648,13 +654,9 @@ mod tests {
                 }
               ]
             }"#,
+            &KubernetesAttributionConfig::default(),
         )
         .expect("pod list JSON deserializes");
-
-        let cache = KubernetesMetadataCache::from_pod_list(
-            pod_list,
-            &KubernetesAttributionConfig::default(),
-        );
 
         assert!(cache.contains_container(
             "a528e7d90a827ff72201ea1cefe7d299448a2528cc5ada9ce4a7ec6d0c4a3b70"

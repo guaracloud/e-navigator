@@ -13,6 +13,7 @@ criterion = { workspace = true }
 e-navigator-core = { path = "../../../crates/e-navigator-core" }
 e-navigator-generators = { path = "../../../crates/e-navigator-generators" }
 e-navigator-profiling = { path = "../../../crates/e-navigator-profiling" }
+e-navigator-processors = { path = "../../../crates/e-navigator-processors" }
 e-navigator-protocol = { path = "../../../crates/e-navigator-protocol" }
 e-navigator-signals = { path = "../../../crates/e-navigator-signals" }
 e-navigator-sinks = { path = "../../../crates/e-navigator-sinks" }

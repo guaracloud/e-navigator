@@ -500,6 +500,7 @@ dependencies = [
  "criterion",
  "e-navigator-core",
  "e-navigator-generators",
+ "e-navigator-processors",
  "e-navigator-profiling",
  "e-navigator-protocol",
  "e-navigator-signals",

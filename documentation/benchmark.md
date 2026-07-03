@@ -41,6 +41,7 @@ Current local benchmark targets:
   parsing, NATS text command and response parsing, PostgreSQL wire-message
   parsing, and Redis RESP command parsing;
 - profiling fixture normalization;
+- Kubernetes pod-list JSON parsing and bounded metadata cache construction;
 - generator hot paths for network, DNS, resource, dependency graph, trace,
   request, profiling, runtime security, and native export;
 - JSON signal serialization, OpenTelemetry metric/trace/profile formatting,
@@ -121,6 +122,20 @@ cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
 This timing measures fixed-fixture generator handling for byte-counted close
 events across rotating remote destinations. It does not prove live eBPF event
 volume, Prometheus scrape latency, or production network overhead.
+
+Focused Kubernetes metadata cache-build smoke from this development host:
+
+```bash
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths \
+  processor/kubernetes_pod_list_cache_build -- --sample-size 10
+```
+
+- `processor/kubernetes_pod_list_cache_build`: 604.25-606.14 us.
+
+This timing measures fixed-fixture parsing and bounded cache construction for
+512 pods with container-ID and pod-IP indexes. It does not prove Kubernetes API
+latency, watch/list behavior, live attribution coverage, or production cluster
+overhead.
 
 ## Guarded Runtime Proof
 
