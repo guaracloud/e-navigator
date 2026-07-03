@@ -167,6 +167,7 @@ pub fn parse_redis_response(
         b'*' => parse_array_response(bytes, config.max_header_bytes)?,
         b'%' => parse_aggregate_response(bytes, config.max_header_bytes, true)?,
         b'~' => parse_aggregate_response(bytes, config.max_header_bytes, false)?,
+        b'>' => parse_aggregate_response(bytes, config.max_header_bytes, false)?,
         b'-' => {
             let status = parse_simple_token(bytes, 1)?;
             let status_code = parse_response_status(&status)?;

@@ -1564,6 +1564,29 @@ fn extracts_redis_resp3_aggregate_responses_without_raw_values() {
 }
 
 #[test]
+fn extracts_redis_resp3_push_response_without_raw_values() {
+    let push = parse_redis_response(
+        b">3\r\n+message\r\n$15\r\ncustomer-secret\r\n-WRONGTYPE secret push detail\r\n",
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("resp3 push response parses");
+
+    assert_eq!(push.protocol, ProtocolKind::Redis);
+    assert_eq!(push.status_code.as_deref(), Some("WRONGTYPE"));
+    assert_eq!(push.error_type.as_deref(), Some("redis_wrongtype"));
+    assert!(
+        push.attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "redis_wrongtype")
+    );
+    assert!(!push.attributes.iter().any(|attribute| {
+        attribute.value.contains("message")
+            || attribute.value.contains("customer")
+            || attribute.value.contains("secret")
+    }));
+}
+
+#[test]
 fn extracts_redis_error_type_without_raw_error_message() {
     let extraction = parse_redis_response(
         b"-WRONGTYPE Operation against a key holding the wrong kind of value secret-key\r\n",
@@ -1780,6 +1803,10 @@ fn rejects_malformed_and_unsupported_redis_fixtures() {
     );
     assert_eq!(
         parse_redis_response(b"~1\r\n+OK\r\ntrailing", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b">1\r\n+OK\r\ntrailing", &config).unwrap_err(),
         RedisExtraction::MalformedFrame
     );
 }
