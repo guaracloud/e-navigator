@@ -32,10 +32,10 @@ use crate::resource::{
     sanitize_resource_counter_metric, sanitize_resource_gauge_metric,
 };
 use crate::trace::{
-    sanitize_optional_trace_container_context, sanitize_optional_trace_kubernetes_context,
-    sanitize_optional_trace_peer_context, sanitize_optional_trace_process_identity,
-    sanitize_optional_trace_string, sanitize_trace_attributes, sanitize_trace_dependency_endpoint,
-    sanitize_trace_string,
+    sanitize_optional_trace_container_context, sanitize_optional_trace_identifier_string,
+    sanitize_optional_trace_kubernetes_context, sanitize_optional_trace_peer_context,
+    sanitize_optional_trace_process_identity, sanitize_optional_trace_string,
+    sanitize_trace_attributes, sanitize_trace_dependency_endpoint, sanitize_trace_string,
 };
 use crate::{
     CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
@@ -885,6 +885,9 @@ impl SignalEnvelope {
     ) -> Self {
         sanitize_trace_attributes(&mut observation.attributes);
         sanitize_trace_string(&mut observation.name);
+        sanitize_optional_trace_identifier_string(&mut observation.trace_id);
+        sanitize_optional_trace_identifier_string(&mut observation.span_id);
+        sanitize_optional_trace_identifier_string(&mut observation.parent_span_id);
         sanitize_optional_trace_string(&mut observation.service_name);
         sanitize_optional_trace_process_identity(&mut observation.process);
         sanitize_optional_trace_container_context(&mut observation.container);
@@ -905,6 +908,9 @@ impl SignalEnvelope {
     ) -> Self {
         sanitize_trace_attributes(&mut observation.attributes);
         sanitize_trace_string(&mut observation.name);
+        sanitize_optional_trace_identifier_string(&mut observation.trace_id);
+        sanitize_optional_trace_identifier_string(&mut observation.span_id);
+        sanitize_optional_trace_identifier_string(&mut observation.parent_span_id);
         sanitize_optional_trace_string(&mut observation.error_type);
         sanitize_trace_dependency_endpoint(&mut observation.source);
         sanitize_trace_dependency_endpoint(&mut observation.destination);
@@ -961,6 +967,9 @@ impl SignalEnvelope {
         mut observation: ProtocolRequestObservation,
     ) -> Self {
         sanitize_trace_attributes(&mut observation.attributes);
+        sanitize_optional_trace_identifier_string(&mut observation.trace_id);
+        sanitize_optional_trace_identifier_string(&mut observation.span_id);
+        sanitize_optional_trace_identifier_string(&mut observation.parent_span_id);
         sanitize_optional_trace_string(&mut observation.service_name);
         sanitize_optional_trace_string(&mut observation.method);
         sanitize_optional_trace_process_identity(&mut observation.process);
@@ -981,6 +990,9 @@ impl SignalEnvelope {
         mut observation: ExtractedTraceContextObservation,
     ) -> Self {
         sanitize_trace_attributes(&mut observation.attributes);
+        sanitize_optional_trace_identifier_string(&mut observation.trace_id);
+        sanitize_optional_trace_identifier_string(&mut observation.span_id);
+        sanitize_optional_trace_identifier_string(&mut observation.parent_span_id);
         sanitize_optional_trace_process_identity(&mut observation.process);
         sanitize_optional_trace_container_context(&mut observation.container);
         sanitize_optional_trace_kubernetes_context(&mut observation.kubernetes);
@@ -1000,6 +1012,9 @@ impl SignalEnvelope {
     ) -> Self {
         sanitize_trace_attributes(&mut observation.attributes);
         sanitize_trace_string(&mut observation.name);
+        sanitize_optional_trace_identifier_string(&mut observation.trace_id);
+        sanitize_optional_trace_identifier_string(&mut observation.span_id);
+        sanitize_optional_trace_identifier_string(&mut observation.parent_span_id);
         sanitize_optional_trace_string(&mut observation.service_name);
         sanitize_optional_trace_string(&mut observation.method);
         sanitize_optional_trace_process_identity(&mut observation.process);
@@ -2421,6 +2436,76 @@ mod tests {
                 .map(str::len),
             Some(256)
         );
+    }
+
+    #[test]
+    fn trace_constructors_bound_identifier_strings_before_json_stdout() {
+        let long_value = "a".repeat(96);
+        let span = SignalEnvelope::trace_span_observation(
+            "source.synthetic_exec",
+            None,
+            TraceSpanObservation {
+                name: "synthetic checkout".to_string(),
+                trace_id: Some(long_value.clone()),
+                span_id: Some(long_value.clone()),
+                parent_span_id: Some(long_value.clone()),
+                start_unix_nanos: 1_000,
+                end_unix_nanos: Some(3_000),
+                duration_nanos: Some(2_000),
+                correlation_kind: TraceCorrelationKind::Synthetic,
+                confidence: TraceConfidence::High,
+                service_name: Some("checkout-api".to_string()),
+                process: None,
+                container: None,
+                kubernetes: None,
+                peer: None,
+                attributes: vec![],
+            },
+        );
+        let interaction = SignalEnvelope::service_interaction_span_observation(
+            "generator.trace_correlation",
+            None,
+            ServiceInteractionSpanObservation {
+                name: "tcp client".to_string(),
+                trace_id: Some(long_value.clone()),
+                span_id: Some(long_value.clone()),
+                parent_span_id: Some(long_value),
+                start_unix_nanos: 10_000,
+                end_unix_nanos: Some(15_000),
+                duration_nanos: Some(5_000),
+                correlation_kind: TraceCorrelationKind::NetworkInferred,
+                confidence: TraceConfidence::Medium,
+                source: DependencyEndpoint {
+                    workload: None,
+                    container: None,
+                    address: None,
+                    port: None,
+                    domain: None,
+                },
+                destination: DependencyEndpoint {
+                    workload: None,
+                    container: None,
+                    address: None,
+                    port: None,
+                    domain: None,
+                },
+                protocol: NetworkProtocol::Tcp,
+                process: None,
+                error_type: None,
+                attributes: vec![],
+            },
+        );
+
+        for signal in [span, interaction] {
+            let json = serde_json::to_value(signal).expect("signal serializes");
+            assert_eq!(json["payload"]["trace_id"].as_str().map(str::len), Some(64));
+            assert_eq!(json["payload"]["span_id"].as_str().map(str::len), Some(64));
+            assert_eq!(
+                json["payload"]["parent_span_id"].as_str().map(str::len),
+                Some(64)
+            );
+            assert!(!json.to_string().contains(&"a".repeat(65)));
+        }
     }
 
     #[test]

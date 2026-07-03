@@ -10,6 +10,7 @@ const MAX_TRACE_ATTRIBUTES: usize = 16;
 const MAX_TRACE_ATTRIBUTE_KEY_BYTES: usize = 128;
 const MAX_TRACE_ATTRIBUTE_VALUE_BYTES: usize = 256;
 const MAX_TRACE_STRING_BYTES: usize = 256;
+const MAX_TRACE_IDENTIFIER_STRING_BYTES: usize = 64;
 const MAX_KUBERNETES_LABELS: usize = 16;
 const MAX_KUBERNETES_LABEL_KEY_BYTES: usize = 128;
 
@@ -148,6 +149,12 @@ pub(crate) fn sanitize_trace_string(value: &mut String) {
 pub(crate) fn sanitize_optional_trace_string(value: &mut Option<String>) {
     if let Some(inner) = value {
         sanitize_trace_string(inner);
+    }
+}
+
+pub(crate) fn sanitize_optional_trace_identifier_string(value: &mut Option<String>) {
+    if let Some(inner) = value {
+        *inner = truncate_utf8(inner, MAX_TRACE_IDENTIFIER_STRING_BYTES);
     }
 }
 

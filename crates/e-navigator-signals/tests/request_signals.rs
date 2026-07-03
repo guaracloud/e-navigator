@@ -293,6 +293,91 @@ fn request_constructors_bound_scalar_strings_before_json_stdout() {
 }
 
 #[test]
+fn request_constructors_bound_identifier_strings_before_json_stdout() {
+    let long_value = "b".repeat(96);
+    let protocol = SignalEnvelope::protocol_request_observation(
+        "source.protocol_fixture",
+        None,
+        ProtocolRequestObservation {
+            protocol: ProtocolKind::Http,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_500),
+            duration_nanos: Some(1_500),
+            trace_id: Some(long_value.clone()),
+            span_id: Some(long_value.clone()),
+            parent_span_id: Some(long_value.clone()),
+            traceparent: None,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::High,
+            service_name: Some("checkout-api".to_string()),
+            method: Some("GET".to_string()),
+            status_code: Some(200),
+            process: None,
+            container: None,
+            kubernetes: None,
+            peer: None,
+            attributes: vec![],
+        },
+    );
+    let context = SignalEnvelope::extracted_trace_context_observation(
+        "parser.protocol",
+        None,
+        ExtractedTraceContextObservation {
+            protocol: ProtocolKind::Http,
+            timestamp_unix_nanos: 1_100,
+            trace_id: Some(long_value.clone()),
+            span_id: Some(long_value.clone()),
+            parent_span_id: Some(long_value.clone()),
+            traceparent: None,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            process: None,
+            container: None,
+            kubernetes: None,
+            peer: None,
+            attributes: vec![],
+        },
+    );
+    let span = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        None,
+        RequestSpanObservation {
+            name: "http request".to_string(),
+            protocol: ProtocolKind::Http,
+            trace_id: Some(long_value.clone()),
+            span_id: Some(long_value.clone()),
+            parent_span_id: Some(long_value),
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_500),
+            duration_nanos: Some(1_500),
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::High,
+            service_name: Some("checkout-api".to_string()),
+            method: Some("GET".to_string()),
+            status_code: Some(200),
+            process: None,
+            container: None,
+            kubernetes: None,
+            peer: None,
+            attributes: vec![],
+        },
+    );
+
+    for signal in [protocol, context, span] {
+        let json = serde_json::to_value(signal).expect("signal serializes");
+        assert_eq!(json["payload"]["trace_id"].as_str().map(str::len), Some(64));
+        assert_eq!(json["payload"]["span_id"].as_str().map(str::len), Some(64));
+        assert_eq!(
+            json["payload"]["parent_span_id"].as_str().map(str::len),
+            Some(64)
+        );
+        assert!(!json.to_string().contains(&"b".repeat(65)));
+    }
+}
+
+#[test]
 fn request_constructors_bound_context_strings_before_json_stdout() {
     let long = "r".repeat(320);
     let process = NetworkProcessIdentity {
