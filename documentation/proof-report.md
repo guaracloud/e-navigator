@@ -69,7 +69,8 @@ or chart rendering:
   decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with bounded
   content-type suffix validation, authority-port/userinfo validation, and a
   build-checked parser fuzz target, Kafka
-  request-header plus ApiVersions and Produce response-error parsing, MongoDB
+  request-header plus ApiVersions and bounded Produce response-error parsing,
+  MongoDB
   wire-message and response-error parsing with OP_MSG section validation and
   non-negative response-code validation, MySQL command packet and OK/ERR
   response parsing with canonical

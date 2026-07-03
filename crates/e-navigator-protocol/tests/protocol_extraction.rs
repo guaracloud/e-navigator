@@ -1787,6 +1787,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         .unwrap_err(),
         KafkaExtraction::UnsupportedApiVersion
     );
+    assert_eq!(
+        parse_kafka_produce_response(
+            &kafka_produce_response_with_topic_count_frame(1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_produce_response(
+            &kafka_produce_response_with_partition_count_frame(1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
 
     let mut truncated = kafka_request_frame(3, 9, Some(b"client-a"), b"");
     truncated.truncate(8);
@@ -3120,6 +3138,23 @@ fn kafka_produce_response_frame(
     if api_version >= 1 {
         response.extend_from_slice(&0_i32.to_be_bytes());
     }
+    kafka_frame(&response)
+}
+
+fn kafka_produce_response_with_topic_count_frame(topic_count: i32) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&topic_count.to_be_bytes());
+    kafka_frame(&response)
+}
+
+fn kafka_produce_response_with_partition_count_frame(partition_count: i32) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&1_i32.to_be_bytes());
+    response.extend_from_slice(&6_i16.to_be_bytes());
+    response.extend_from_slice(b"orders");
+    response.extend_from_slice(&partition_count.to_be_bytes());
     kafka_frame(&response)
 }
 
