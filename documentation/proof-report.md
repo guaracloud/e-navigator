@@ -111,7 +111,7 @@ or chart rendering:
   local warning trace-record formatting for trace, request, network-flow, and
   profiling warnings, explicit no-ID network-flow and profiling-warning trace
   export suppression, bounded profiling-warning trace attributes,
-  nonzero trace/span ID filtering,
+  hex-shape and nonzero trace/span ID filtering,
   bounded final OTLP attribute key and string value conversion, and
   development-status profile sample records with
   deterministic, workload-aware IDs, bounded session IDs, bounded resource

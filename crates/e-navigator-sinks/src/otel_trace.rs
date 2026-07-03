@@ -84,14 +84,16 @@ fn trace_span_record(signal: &SignalEnvelope, span: &TraceSpanObservation) -> Ot
     append_process_attributes(&mut attributes, span.process.as_ref());
     append_peer_attributes(&mut attributes, span.peer.as_ref());
     append_trace_attributes(&mut attributes, &span.attributes);
+    let (trace_id, span_id, parent_span_id) =
+        trace_identity(&span.trace_id, &span.span_id, &span.parent_span_id);
 
     OtelTraceRecord {
         name: truncate_utf8(&span.name, MAX_TRACE_ATTRIBUTE_VALUE_BYTES),
         kind: OtelTraceRecordKind::Span,
         status: None,
-        trace_id: span.trace_id.clone(),
-        span_id: span.span_id.clone(),
-        parent_span_id: span.parent_span_id.clone(),
+        trace_id,
+        span_id,
+        parent_span_id,
         start_unix_nanos: span.start_unix_nanos,
         end_unix_nanos: span.end_unix_nanos,
         duration_nanos: span.duration_nanos,
@@ -116,14 +118,16 @@ fn service_interaction_record(
     if let Some(error_type) = &span.error_type {
         attributes.insert("error.type".to_string(), bounded_json_string(error_type));
     }
+    let (trace_id, span_id, parent_span_id) =
+        trace_identity(&span.trace_id, &span.span_id, &span.parent_span_id);
 
     OtelTraceRecord {
         name: truncate_utf8(&span.name, MAX_TRACE_ATTRIBUTE_VALUE_BYTES),
         kind: OtelTraceRecordKind::ServiceInteraction,
         status: span.error_type.as_deref().map(error_status),
-        trace_id: span.trace_id.clone(),
-        span_id: span.span_id.clone(),
-        parent_span_id: span.parent_span_id.clone(),
+        trace_id,
+        span_id,
+        parent_span_id,
         start_unix_nanos: span.start_unix_nanos,
         end_unix_nanos: span.end_unix_nanos,
         duration_nanos: span.duration_nanos,
@@ -245,14 +249,16 @@ fn request_span_record(signal: &SignalEnvelope, span: &RequestSpanObservation) -
     append_process_attributes(&mut attributes, span.process.as_ref());
     append_peer_attributes(&mut attributes, span.peer.as_ref());
     append_trace_attributes(&mut attributes, &span.attributes);
+    let (trace_id, span_id, parent_span_id) =
+        trace_identity(&span.trace_id, &span.span_id, &span.parent_span_id);
 
     OtelTraceRecord {
         name: truncate_utf8(&span.name, MAX_TRACE_ATTRIBUTE_VALUE_BYTES),
         kind: OtelTraceRecordKind::RequestSpan,
         status: request_span_status(span),
-        trace_id: span.trace_id.clone(),
-        span_id: span.span_id.clone(),
-        parent_span_id: span.parent_span_id.clone(),
+        trace_id,
+        span_id,
+        parent_span_id,
         start_unix_nanos: span.start_unix_nanos,
         end_unix_nanos: span.end_unix_nanos,
         duration_nanos: span.duration_nanos,
@@ -481,6 +487,41 @@ fn valid_request_status_message(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_TRACE_ATTRIBUTE_VALUE_BYTES
         && !value.bytes().any(|byte| byte.is_ascii_control())
+}
+
+fn trace_identity(
+    trace_id: &Option<String>,
+    span_id: &Option<String>,
+    parent_span_id: &Option<String>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let trace_id = trace_id.as_deref().and_then(valid_trace_id);
+    let span_id = span_id.as_deref().and_then(valid_span_id);
+    match (trace_id, span_id) {
+        (Some(trace_id), Some(span_id)) => (
+            Some(trace_id),
+            Some(span_id),
+            parent_span_id.as_deref().and_then(valid_span_id),
+        ),
+        _ => (None, None, None),
+    }
+}
+
+fn valid_trace_id(value: &str) -> Option<String> {
+    valid_hex_id(value, 32)
+}
+
+fn valid_span_id(value: &str) -> Option<String> {
+    valid_hex_id(value, 16)
+}
+
+fn valid_hex_id(value: &str, expected_len: usize) -> Option<String> {
+    if value.len() != expected_len
+        || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || value.bytes().all(|byte| byte == b'0')
+    {
+        return None;
+    }
+    Some(value.to_ascii_lowercase())
 }
 
 fn error_status(message: &str) -> OtelSpanStatus {

@@ -79,6 +79,70 @@ fn formats_trace_span_observation_as_stable_internal_trace_record() {
 }
 
 #[test]
+fn normalizes_and_suppresses_invalid_trace_identity_fields() {
+    let uppercase = SignalEnvelope::trace_span_observation(
+        "source.synthetic_exec",
+        Some("node-a".to_string()),
+        TraceSpanObservation {
+            name: "synthetic checkout".to_string(),
+            trace_id: Some("4BF92F3577B34DA6A3CE929D0E0E4736".to_string()),
+            span_id: Some("00F067AA0BA902B7".to_string()),
+            parent_span_id: Some("7C0FFEE000000001".to_string()),
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_000),
+            duration_nanos: Some(1_000),
+            correlation_kind: TraceCorrelationKind::Synthetic,
+            confidence: TraceConfidence::High,
+            service_name: None,
+            process: None,
+            container: None,
+            kubernetes: None,
+            peer: None,
+            attributes: vec![],
+        },
+    );
+    let uppercase_record = format_otel_trace_record(&uppercase).expect("trace formats");
+    assert_eq!(
+        uppercase_record.trace_id.as_deref(),
+        Some("4bf92f3577b34da6a3ce929d0e0e4736")
+    );
+    assert_eq!(
+        uppercase_record.span_id.as_deref(),
+        Some("00f067aa0ba902b7")
+    );
+    assert_eq!(
+        uppercase_record.parent_span_id.as_deref(),
+        Some("7c0ffee000000001")
+    );
+
+    let invalid = SignalEnvelope::trace_span_observation(
+        "source.synthetic_exec",
+        Some("node-a".to_string()),
+        TraceSpanObservation {
+            name: "synthetic checkout".to_string(),
+            trace_id: Some("00000000000000000000000000000000".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: Some("7c0ffee000000001".to_string()),
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_000),
+            duration_nanos: Some(1_000),
+            correlation_kind: TraceCorrelationKind::Synthetic,
+            confidence: TraceConfidence::High,
+            service_name: None,
+            process: None,
+            container: None,
+            kubernetes: None,
+            peer: None,
+            attributes: vec![],
+        },
+    );
+    let invalid_record = format_otel_trace_record(&invalid).expect("trace formats");
+    assert_eq!(invalid_record.trace_id, None);
+    assert_eq!(invalid_record.span_id, None);
+    assert_eq!(invalid_record.parent_span_id, None);
+}
+
+#[test]
 fn formats_service_interaction_without_inventing_trace_ids() {
     let signal = SignalEnvelope::service_interaction_span_observation(
         "generator.trace_correlation",
