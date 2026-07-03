@@ -88,11 +88,11 @@ or chart rendering:
   PostgreSQL Query/Parse/Bind/Describe/Close/Execute/FunctionCall/CopyData/
   CopyDone/CopyFail/Password/Flush/Sync/Terminate wire-message and
   Authentication/BackendKeyData/ParseComplete/BindComplete/CloseComplete/
-  ParameterDescription/RowDescription/DataRow/backend CopyData/CopyDone/
-  CopyInResponse/CopyOutResponse/CopyBothResponse/EmptyQueryResponse/NoData/
-  PortalSuspended/CommandComplete/NoticeResponse/ParameterStatus/
-  ReadyForQuery/ErrorResponse parsing with canonical SQLSTATE validation and
-  build-checked parser fuzz
+  ParameterDescription/RowDescription/DataRow/FunctionCallResponse/backend
+  CopyData/CopyDone/CopyInResponse/CopyOutResponse/CopyBothResponse/
+  EmptyQueryResponse/NoData/PortalSuspended/CommandComplete/NoticeResponse/
+  ParameterStatus/ReadyForQuery/ErrorResponse parsing with canonical SQLSTATE
+  validation and build-checked parser fuzz
   coverage, and Redis RESP command plus
   simple/integer/bulk/RESP3-scalar/RESP3-blob-error/verbatim/flat-array/
   nested-array/RESP3-map/RESP3-set/RESP3-push/error response parsing with
@@ -234,14 +234,15 @@ These areas remain explicitly partial:
   Describe, Close, Execute, FunctionCall, CopyData, CopyDone, CopyFail,
   PasswordMessage, Flush, Sync, Terminate, Authentication, BackendKeyData,
   ParseComplete, BindComplete, CloseComplete, ParameterDescription,
-  RowDescription, DataRow, backend CopyData, backend CopyDone, CopyInResponse,
-  CopyOutResponse, CopyBothResponse, EmptyQueryResponse, NoData,
-  PortalSuspended, CommandComplete, NoticeResponse, ParameterStatus,
-  ReadyForQuery, and ErrorResponse parsing is locally tested without exporting
-  raw SQL text, function OIDs, argument values, parameter type OIDs, row values,
-  authentication salts or SASL data, backend cancellation keys, copy payloads,
-  copy format metadata, copy failure text, password values, row field names,
-  notice text, parameter status values, or raw error messages, including
+  RowDescription, DataRow, FunctionCallResponse, backend CopyData, backend
+  CopyDone, CopyInResponse, CopyOutResponse, CopyBothResponse,
+  EmptyQueryResponse, NoData, PortalSuspended, CommandComplete, NoticeResponse,
+  ParameterStatus, ReadyForQuery, and ErrorResponse parsing is locally tested
+  without exporting raw SQL text, function OIDs, function return values,
+  argument values, parameter type OIDs, row values, authentication salts or SASL
+  data, backend cancellation keys, copy payloads, copy format metadata, copy
+  failure text, password values, row field names, notice text, parameter status
+  values, or raw error messages, including
   canonical SQLSTATE validation for notice and error responses, but runtime
   capture,
   request/response matching, broad
