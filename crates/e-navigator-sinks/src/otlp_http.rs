@@ -607,6 +607,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn otlp_http_sink_exports_response_status_attribute_as_otlp_error_status() {
+        let collector = FakeCollector::spawn(vec![200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            traces_endpoint: collector.url_with_path("/v1/traces"),
+            metrics_enabled: false,
+            traces_enabled: true,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+        let mut signal = redis_error_request_span();
+        let SignalPayload::RequestSpanObservation(span) = &mut signal.payload else {
+            panic!("expected request span");
+        };
+        span.attributes
+            .retain(|attribute| attribute.key != "error.type");
+
+        sink.write(&signal).await.expect("trace export succeeds");
+        let request = collector.next_request().await;
+
+        let decoded =
+            ExportTraceServiceRequest::decode(request.body()).expect("OTLP trace request decodes");
+        let span = decoded
+            .resource_spans
+            .first()
+            .and_then(|resource_spans| resource_spans.scope_spans.first())
+            .and_then(|scope_spans| scope_spans.spans.first())
+            .expect("span is present");
+
+        assert!(span.attributes.iter().any(|attribute| {
+            attribute.key == "db.response.status_code"
+                && format!("{:?}", attribute.value).contains("WRONGTYPE")
+        }));
+        assert!(
+            !span
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "error.type")
+        );
+        let status = span.status.as_ref().expect("span status is present");
+        assert_eq!(status.code, status::StatusCode::Error as i32);
+        assert_eq!(status.message, "WRONGTYPE");
+    }
+
+    #[tokio::test]
     async fn otlp_http_sink_exports_kafka_request_error_type_as_otlp_error_status() {
         let collector = FakeCollector::spawn(vec![200]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
