@@ -8,6 +8,7 @@ use e_navigator_protocol::{
         parse_kafka_alter_configs_response, parse_kafka_alter_partition_reassignments_response,
         parse_kafka_alter_replica_log_dirs_response,
         parse_kafka_alter_user_scram_credentials_response, parse_kafka_api_versions_response,
+        parse_kafka_consumer_group_describe_response,
         parse_kafka_consumer_group_heartbeat_response, parse_kafka_create_acls_response,
         parse_kafka_create_delegation_token_response, parse_kafka_create_partitions_response,
         parse_kafka_create_topics_response, parse_kafka_delete_acls_response,
@@ -329,6 +330,7 @@ proptest! {
         let _ = parse_kafka_describe_transactions_response(&bytes, 0, &config);
         let _ = parse_kafka_list_transactions_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_consumer_group_heartbeat_response(&bytes, api_version.min(1), &config);
+        let _ = parse_kafka_consumer_group_describe_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -3439,6 +3441,73 @@ fn validates_kafka_consumer_group_heartbeat_v1_request_without_regex_values() {
 }
 
 #[test]
+fn validates_kafka_consumer_group_describe_v0_request_without_group_values() {
+    let body = kafka_consumer_group_describe_request_body(0, &["alpha.secret", "beta.secret"]);
+    let bytes = kafka_flexible_request_frame(69, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka consumer group describe v0 request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("consumer_group_describe")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "69")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("alpha")
+                || attribute.value.contains("beta")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn validates_kafka_consumer_group_describe_v1_request_without_group_values() {
+    let body = kafka_consumer_group_describe_request_body(1, &["alpha.secret"]);
+    let bytes = kafka_flexible_request_frame(69, 1, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka consumer group describe v1 request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("consumer_group_describe")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "69")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "1")
+    );
+    assert!(
+        !extraction.attributes.iter().any(
+            |attribute| attribute.value.contains("alpha") || attribute.value.contains("secret")
+        )
+    );
+}
+
+#[test]
 fn validates_kafka_alter_replica_log_dirs_requests_without_path_or_topic_values() {
     let body = kafka_alter_replica_log_dirs_request_body(
         "/var/lib/kafka/secret-dir",
@@ -5931,6 +6000,116 @@ fn extracts_kafka_consumer_group_heartbeat_error_without_message_values() {
             .iter()
             .any(|attribute| attribute.value.contains("denied")
                 || attribute.value.contains("member")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_consumer_group_describe_ok_response_without_group_or_member_values() {
+    let assignments: &[ConsumerGroupDescribeTopicPartitionsFixture<'_>] =
+        &[([11_u8; 16], "orders.secret", &[0, 1])];
+    let members: &[ConsumerGroupDescribeMemberFixture<'_>] =
+        &[ConsumerGroupDescribeMemberFixture {
+            member_id: "member.secret",
+            instance_id: Some("instance.secret"),
+            rack_id: Some("rack.secret"),
+            client_id: "client.secret",
+            client_host: "host.secret",
+            subscribed_topic_names: &["orders.secret"],
+            subscribed_topic_regex: Some("orders.*secret"),
+            assignment: assignments,
+            target_assignment: assignments,
+        }];
+    let groups: &[ConsumerGroupDescribeGroupFixture<'_>] = &[ConsumerGroupDescribeGroupFixture {
+        error_code: 0,
+        error_message: None,
+        group_id: "alpha.secret",
+        group_state: "stable.secret",
+        assignor_name: "range.secret",
+        members,
+    }];
+    let bytes = kafka_consumer_group_describe_response_frame(0, 1, groups);
+
+    let extraction = parse_kafka_consumer_group_describe_response(
+        &bytes,
+        1,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("consumer group describe ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "consumer_group_describe");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "69")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("alpha")
+                || attribute.value.contains("member")
+                || attribute.value.contains("orders")
+                || attribute.value.contains("stable")
+                || attribute.value.contains("range")
+                || attribute.value.contains("client")
+                || attribute.value.contains("host")
+                || attribute.value.contains("secret")
+                || attribute.value.contains("11"))
+    );
+}
+
+#[test]
+fn extracts_kafka_consumer_group_describe_error_without_message_values() {
+    let groups: &[ConsumerGroupDescribeGroupFixture<'_>] = &[ConsumerGroupDescribeGroupFixture {
+        error_code: 30,
+        error_message: Some("describe secret denied"),
+        group_id: "alpha.secret",
+        group_state: "dead.secret",
+        assignor_name: "range.secret",
+        members: &[],
+    }];
+    let bytes = kafka_consumer_group_describe_response_frame(0, 0, groups);
+
+    let extraction = parse_kafka_consumer_group_describe_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("consumer group describe error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "consumer_group_describe");
+    assert_eq!(extraction.status_code, "30");
+    assert_eq!(extraction.error_type.as_deref(), Some("30"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "30")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("denied")
+                || attribute.value.contains("alpha")
+                || attribute.value.contains("dead")
+                || attribute.value.contains("range")
                 || attribute.value.contains("secret"))
     );
 }
@@ -8655,6 +8834,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
         2
     );
 
+    let bounded_consumer_group_describe_response = parse_kafka_consumer_group_describe_response(
+        &kafka_consumer_group_describe_response_frame(0, 1, &[]),
+        1,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka consumer group describe response parses");
+    assert_eq!(bounded_consumer_group_describe_response.attributes.len(), 2);
+
     let bounded_produce_response = parse_kafka_produce_response(
         &kafka_produce_response_frame(0, 1, &[("orders.secret", 6)]),
         1,
@@ -11172,6 +11364,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_consumer_group_describe_response(
+            &kafka_consumer_group_describe_response_frame(0, 0, &[]),
+            2,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_sasl_handshake_response(
             &kafka_sasl_handshake_response_frame(0, 0, &["PLAIN"]),
             2,
@@ -11976,6 +12177,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_consumer_group_describe_response(
+            &kafka_consumer_group_describe_response_with_group_count_frame(1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_describe_cluster_response(
             &kafka_describe_cluster_response_frame(
                 0,
@@ -12054,6 +12264,31 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
                 Some("heartbeat secret denied"),
                 Some("member.secret"),
                 None,
+            ),
+            1,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_consumer_group_describe_response(
+            &kafka_consumer_group_describe_response_frame(
+                0,
+                1,
+                &[ConsumerGroupDescribeGroupFixture {
+                    error_code: 30,
+                    error_message: Some("describe secret denied"),
+                    group_id: "alpha.secret",
+                    group_state: "dead.secret",
+                    assignor_name: "range.secret",
+                    members: &[],
+                }],
             ),
             1,
             &ProtocolExtractionConfig {
@@ -13053,6 +13288,62 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::MalformedFrame
     );
 
+    let consumer_group_describe_body =
+        kafka_consumer_group_describe_request_body(1, &["alpha.secret", "beta.secret"]);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(69, 2, Some(b"client-a"), &consumer_group_describe_body),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+
+    let mut oversized_consumer_group_describe_groups_body = Vec::new();
+    push_unsigned_varint(&mut oversized_consumer_group_describe_groups_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                69,
+                1,
+                Some(b"client-a"),
+                &oversized_consumer_group_describe_groups_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+
+    let consumer_group_describe_long_group_body =
+        kafka_consumer_group_describe_request_body(1, &["alpha.secret"]);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                69,
+                1,
+                Some(b"client-a"),
+                &consumer_group_describe_long_group_body,
+            ),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(69, 1, Some(b"client-a"), b"\x01"),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
     let mut truncated_response = kafka_produce_response_frame(0, 1, &[("orders", 6)]);
     truncated_response.truncate(10);
     assert_eq!(
@@ -13523,6 +13814,30 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_consumer_group_heartbeat_response(
             &truncated_consumer_group_heartbeat_response,
+            1,
+            &config,
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_consumer_group_describe_response =
+        kafka_consumer_group_describe_response_frame(
+            0,
+            1,
+            &[ConsumerGroupDescribeGroupFixture {
+                error_code: 30,
+                error_message: Some("describe secret denied"),
+                group_id: "alpha.secret",
+                group_state: "dead.secret",
+                assignor_name: "range.secret",
+                members: &[],
+            }],
+        );
+    truncated_consumer_group_describe_response.truncate(18);
+    assert_eq!(
+        parse_kafka_consumer_group_describe_response(
+            &truncated_consumer_group_describe_response,
             1,
             &config,
         )
@@ -17234,6 +17549,17 @@ fn kafka_consumer_group_heartbeat_request_body(
     body
 }
 
+fn kafka_consumer_group_describe_request_body(_api_version: i16, group_ids: &[&str]) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_unsigned_varint(&mut body, group_ids.len() + 1);
+    for group_id in group_ids {
+        push_compact_string(&mut body, group_id);
+    }
+    body.push(1);
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 fn kafka_alter_replica_log_dirs_request_body(log_dir: &str, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&1_i32.to_be_bytes());
@@ -19667,6 +19993,80 @@ fn kafka_consumer_group_heartbeat_response_with_assignment_count_frame(
     kafka_frame(&response)
 }
 
+type ConsumerGroupDescribeTopicPartitionsFixture<'a> = ([u8; 16], &'a str, &'a [i32]);
+
+struct ConsumerGroupDescribeMemberFixture<'a> {
+    member_id: &'a str,
+    instance_id: Option<&'a str>,
+    rack_id: Option<&'a str>,
+    client_id: &'a str,
+    client_host: &'a str,
+    subscribed_topic_names: &'a [&'a str],
+    subscribed_topic_regex: Option<&'a str>,
+    assignment: &'a [ConsumerGroupDescribeTopicPartitionsFixture<'a>],
+    target_assignment: &'a [ConsumerGroupDescribeTopicPartitionsFixture<'a>],
+}
+
+struct ConsumerGroupDescribeGroupFixture<'a> {
+    error_code: i16,
+    error_message: Option<&'a str>,
+    group_id: &'a str,
+    group_state: &'a str,
+    assignor_name: &'a str,
+    members: &'a [ConsumerGroupDescribeMemberFixture<'a>],
+}
+
+fn kafka_consumer_group_describe_response_frame(
+    correlation_id: i32,
+    api_version: i16,
+    groups: &[ConsumerGroupDescribeGroupFixture<'_>],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, groups.len() + 1);
+    for group in groups {
+        response.extend_from_slice(&group.error_code.to_be_bytes());
+        push_compact_nullable_string(&mut response, group.error_message);
+        push_compact_string(&mut response, group.group_id);
+        push_compact_string(&mut response, group.group_state);
+        response.extend_from_slice(&1_i32.to_be_bytes());
+        response.extend_from_slice(&1_i32.to_be_bytes());
+        push_compact_string(&mut response, group.assignor_name);
+        push_unsigned_varint(&mut response, group.members.len() + 1);
+        for member in group.members {
+            push_compact_string(&mut response, member.member_id);
+            push_compact_nullable_string(&mut response, member.instance_id);
+            push_compact_nullable_string(&mut response, member.rack_id);
+            response.extend_from_slice(&1_i32.to_be_bytes());
+            push_compact_string(&mut response, member.client_id);
+            push_compact_string(&mut response, member.client_host);
+            push_compact_string_array(&mut response, member.subscribed_topic_names);
+            push_compact_nullable_string(&mut response, member.subscribed_topic_regex);
+            push_topic_partition_assignment_with_names(&mut response, member.assignment);
+            push_topic_partition_assignment_with_names(&mut response, member.target_assignment);
+            if api_version >= 1 {
+                response.push(1);
+            }
+            push_unsigned_varint(&mut response, 0);
+        }
+        response.extend_from_slice(&0_i32.to_be_bytes());
+        push_unsigned_varint(&mut response, 0);
+    }
+    push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+fn kafka_consumer_group_describe_response_with_group_count_frame(group_count: usize) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, group_count + 1);
+    kafka_frame(&response)
+}
+
 fn kafka_sasl_handshake_response_frame(
     correlation_id: i32,
     error_code: i16,
@@ -19849,6 +20249,13 @@ fn push_compact_nullable_string_array(bytes: &mut Vec<u8>, values: Option<&[&str
     }
 }
 
+fn push_compact_string_array(bytes: &mut Vec<u8>, values: &[&str]) {
+    push_unsigned_varint(bytes, values.len() + 1);
+    for value in values {
+        push_compact_string(bytes, value);
+    }
+}
+
 fn push_compact_nullable_topic_partitions(
     bytes: &mut Vec<u8>,
     values: Option<&[ConsumerGroupHeartbeatTopicPartitionsFixture<'_>]>,
@@ -19863,6 +20270,20 @@ fn push_compact_nullable_topic_partitions(
     } else {
         push_unsigned_varint(bytes, 0);
     }
+}
+
+fn push_topic_partition_assignment_with_names(
+    bytes: &mut Vec<u8>,
+    values: &[ConsumerGroupDescribeTopicPartitionsFixture<'_>],
+) {
+    push_unsigned_varint(bytes, values.len() + 1);
+    for (topic_id, topic_name, partitions) in values {
+        bytes.extend_from_slice(topic_id);
+        push_compact_string(bytes, topic_name);
+        push_compact_int32_array(bytes, partitions);
+        push_unsigned_varint(bytes, 0);
+    }
+    push_unsigned_varint(bytes, 0);
 }
 
 fn push_nullable_topic_partition_assignment(
