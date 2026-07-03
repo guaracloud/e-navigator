@@ -132,6 +132,7 @@ pub fn parse_postgres_response(
     match bytes[0] {
         b'1' | b'2' | b'3' | b'n' => postgres_empty_ok_response(body, config.max_attributes),
         b'C' => postgres_command_complete_response(body, config),
+        b'D' => postgres_data_row_response(body, config),
         b'E' => postgres_error_response(body, config.max_attributes),
         b'N' => postgres_notice_response(body, config.max_attributes),
         b'S' => postgres_parameter_status_response(body, config),
@@ -166,6 +167,42 @@ fn postgres_command_complete_response(
     if cursor != body.len() {
         return Err(PostgresExtraction::MalformedFrame);
     }
+    let status_code = "OK".to_string();
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        attributes: postgres_response_attributes(&status_code, None, config.max_attributes),
+        status_code,
+        error_type: None,
+    })
+}
+
+fn postgres_data_row_response(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    let mut cursor = 0;
+    let column_count = read_u16_be_cursor(body, &mut cursor)? as usize;
+    if column_count > MAX_POSTGRES_BIND_ITEMS {
+        return Err(PostgresExtraction::QueryTooLong);
+    }
+    for _ in 0..column_count {
+        let value_len = read_i32_be_cursor(body, &mut cursor)?;
+        if value_len == -1 {
+            continue;
+        }
+        if value_len < 0 {
+            return Err(PostgresExtraction::MalformedFrame);
+        }
+        let value_len = value_len as usize;
+        if value_len > config.max_request_line_bytes {
+            return Err(PostgresExtraction::QueryTooLong);
+        }
+        skip_bytes(body, &mut cursor, value_len)?;
+    }
+    if cursor != body.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+
     let status_code = "OK".to_string();
     Ok(ParsedPostgresResponse {
         protocol: ProtocolKind::Postgresql,

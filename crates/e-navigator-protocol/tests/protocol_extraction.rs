@@ -2893,6 +2893,28 @@ fn extracts_postgres_command_complete_without_raw_tag() {
 }
 
 #[test]
+fn extracts_postgres_data_row_without_column_values() {
+    let bytes = postgres_data_row_frame(&[Some(b"secret-cell-value".as_slice()), None]);
+
+    let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres data row response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.status_code, "OK");
+    assert_eq!(extraction.error_type, None);
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "OK"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("cell"))
+    );
+}
+
+#[test]
 fn extracts_postgres_empty_success_responses_without_payload_values() {
     for message_type in [b'1', b'2', b'3', b'n'] {
         let bytes = postgres_frame(message_type, b"");
@@ -3350,6 +3372,32 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     assert_eq!(
         parse_postgres_response(&postgres_frame(b'Q', b"select 1\0"), &config).unwrap_err(),
         PostgresExtraction::UnsupportedMessage
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b'D', b"\x00\x01\xff\xff\xff\xfe"), &config)
+            .unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(
+            &postgres_frame(b'D', b"\x00\x01\x00\x00\x00\x06abc"),
+            &config
+        )
+        .unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(
+            &postgres_data_row_frame(&[Some(b"secret-cell-value".as_slice())]),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        PostgresExtraction::QueryTooLong
     );
     assert_eq!(
         parse_postgres_response(&postgres_frame(b'1', b"secret"), &config).unwrap_err(),
@@ -4799,6 +4847,21 @@ fn postgres_row_description_frame(field_names: &[&[u8]]) -> Vec<u8> {
         body.extend_from_slice(&0_i16.to_be_bytes());
     }
     postgres_frame(b'T', &body)
+}
+
+fn postgres_data_row_frame(values: &[Option<&[u8]>]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&(values.len() as u16).to_be_bytes());
+    for value in values {
+        match value {
+            Some(value) => {
+                body.extend_from_slice(&(value.len() as i32).to_be_bytes());
+                body.extend_from_slice(value);
+            }
+            None => body.extend_from_slice(&(-1_i32).to_be_bytes()),
+        }
+    }
+    postgres_frame(b'D', &body)
 }
 
 fn mysql_packet(command: u8, query: &[u8]) -> Vec<u8> {
