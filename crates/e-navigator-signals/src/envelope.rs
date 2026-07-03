@@ -5,6 +5,10 @@ use crate::dns::{
     sanitize_dns_counter_metric, sanitize_dns_latency_metric, sanitize_dns_query_event,
     sanitize_dns_response_event,
 };
+use crate::metrics::{
+    sanitize_network_counter_metric, sanitize_network_duration_metric,
+    sanitize_network_gauge_metric,
+};
 use crate::profiling::{sanitize_optional_profiling_string, sanitize_profiling_string};
 use crate::resource::sanitize_resource_metric_attributes;
 use crate::trace::{
@@ -578,8 +582,9 @@ impl SignalEnvelope {
     pub fn network_counter_metric(
         source: impl Into<String>,
         host: Option<String>,
-        metric: NetworkCounterMetric,
+        mut metric: NetworkCounterMetric,
     ) -> Self {
+        sanitize_network_counter_metric(&mut metric);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::NetworkCounterMetric,
@@ -592,8 +597,9 @@ impl SignalEnvelope {
     pub fn network_duration_metric(
         source: impl Into<String>,
         host: Option<String>,
-        metric: NetworkDurationMetric,
+        mut metric: NetworkDurationMetric,
     ) -> Self {
+        sanitize_network_duration_metric(&mut metric);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::NetworkDurationMetric,
@@ -606,8 +612,9 @@ impl SignalEnvelope {
     pub fn network_gauge_metric(
         source: impl Into<String>,
         host: Option<String>,
-        metric: NetworkGaugeMetric,
+        mut metric: NetworkGaugeMetric,
     ) -> Self {
+        sanitize_network_gauge_metric(&mut metric);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::NetworkGaugeMetric,
@@ -1951,6 +1958,145 @@ mod tests {
             decoded.payload,
             SignalPayload::NetworkGaugeMetric(_)
         ));
+    }
+
+    #[test]
+    fn network_metric_constructors_bound_strings_before_json_stdout() {
+        let long = "x".repeat(300);
+        let window = MetricAggregationWindow {
+            start_unix_nanos: 300,
+            end_unix_nanos: 900,
+        };
+
+        let counter = SignalEnvelope::network_counter_metric(
+            "generator.test",
+            None,
+            NetworkCounterMetric {
+                metric_name: long.clone(),
+                unit: long.clone(),
+                value: 1,
+                window: window.clone(),
+                process: Some(network_process()),
+                protocol: Some(NetworkProtocol::Tcp),
+                address_family: Some(NetworkAddressFamily::Ipv4),
+                local_address: Some(long.clone()),
+                local_port: Some(43512),
+                remote_address: Some(long.clone()),
+                remote_port: Some(443),
+                errno: None,
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let duration = SignalEnvelope::network_duration_metric(
+            "generator.test",
+            None,
+            NetworkDurationMetric {
+                metric_name: long.clone(),
+                unit: long.clone(),
+                count: 1,
+                sum_nanos: 600,
+                min_nanos: 600,
+                max_nanos: 600,
+                window: window.clone(),
+                process: Some(network_process()),
+                protocol: Some(NetworkProtocol::Tcp),
+                address_family: Some(NetworkAddressFamily::Ipv4),
+                remote_address: Some(long.clone()),
+                remote_port: Some(443),
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let gauge = SignalEnvelope::network_gauge_metric(
+            "generator.test",
+            None,
+            NetworkGaugeMetric {
+                metric_name: long.clone(),
+                unit: long,
+                value: 1,
+                window,
+                process: Some(network_process()),
+                protocol: Some(NetworkProtocol::Tcp),
+                address_family: Some(NetworkAddressFamily::Ipv4),
+                remote_address: Some("x".repeat(300)),
+                remote_port: Some(443),
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let counter_json = serde_json::to_value(counter).expect("counter serializes");
+        let duration_json = serde_json::to_value(duration).expect("duration serializes");
+        let gauge_json = serde_json::to_value(gauge).expect("gauge serializes");
+
+        assert_eq!(
+            counter_json["payload"]["metric_name"]
+                .as_str()
+                .expect("metric name")
+                .len(),
+            256
+        );
+        assert_eq!(
+            counter_json["payload"]["unit"]
+                .as_str()
+                .expect("unit")
+                .len(),
+            256
+        );
+        assert_eq!(
+            counter_json["payload"]["local_address"]
+                .as_str()
+                .expect("local address")
+                .len(),
+            256
+        );
+        assert_eq!(
+            counter_json["payload"]["remote_address"]
+                .as_str()
+                .expect("remote address")
+                .len(),
+            256
+        );
+        assert_eq!(
+            duration_json["payload"]["metric_name"]
+                .as_str()
+                .expect("metric name")
+                .len(),
+            256
+        );
+        assert_eq!(
+            duration_json["payload"]["unit"]
+                .as_str()
+                .expect("unit")
+                .len(),
+            256
+        );
+        assert_eq!(
+            duration_json["payload"]["remote_address"]
+                .as_str()
+                .expect("remote address")
+                .len(),
+            256
+        );
+        assert_eq!(
+            gauge_json["payload"]["metric_name"]
+                .as_str()
+                .expect("metric name")
+                .len(),
+            256
+        );
+        assert_eq!(
+            gauge_json["payload"]["unit"].as_str().expect("unit").len(),
+            256
+        );
+        assert_eq!(
+            gauge_json["payload"]["remote_address"]
+                .as_str()
+                .expect("remote address")
+                .len(),
+            256
+        );
     }
 
     #[test]
