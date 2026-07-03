@@ -1183,6 +1183,20 @@ fn formats_nats_request_span_error_status_from_error_type_attribute() {
 fn formats_request_span_error_status_from_response_status_without_error_type() {
     for (protocol, name, method, key, value) in [
         (
+            ProtocolKind::Http,
+            "http request",
+            "GET",
+            "http.response.status_code",
+            "503",
+        ),
+        (
+            ProtocolKind::Grpc,
+            "grpc request",
+            "GetCart",
+            "rpc.grpc.status_code",
+            "13",
+        ),
+        (
             ProtocolKind::Redis,
             "redis command",
             "GET",
@@ -1231,6 +1245,20 @@ fn formats_request_span_error_status_from_response_status_without_error_type() {
 #[test]
 fn formats_ok_response_status_attributes_without_error_status() {
     for (protocol, name, method, key, value) in [
+        (
+            ProtocolKind::Http,
+            "http request",
+            "GET",
+            "http.response.status_code",
+            "399",
+        ),
+        (
+            ProtocolKind::Grpc,
+            "grpc request",
+            "GetCart",
+            "rpc.grpc.status_code",
+            "0",
+        ),
         (
             ProtocolKind::Redis,
             "redis command",
