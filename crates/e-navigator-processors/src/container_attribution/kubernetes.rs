@@ -821,6 +821,66 @@ mod tests {
     }
 
     #[test]
+    fn denylist_selectors_filter_cache_entries_without_allowlists() {
+        let pod_list = PodList {
+            items: vec![
+                scoped_pod(
+                    "checkout",
+                    "payments",
+                    "node-a",
+                    "10.0.0.20",
+                    "container-checkout",
+                    BTreeMap::from([("app".to_string(), "checkout".to_string())]),
+                ),
+                scoped_pod(
+                    "system",
+                    "kube-system",
+                    "node-a",
+                    "10.0.0.21",
+                    "container-system",
+                    BTreeMap::from([("app".to_string(), "system".to_string())]),
+                ),
+                scoped_pod(
+                    "other-node",
+                    "payments",
+                    "node-b",
+                    "10.0.0.22",
+                    "container-other-node",
+                    BTreeMap::from([("app".to_string(), "checkout".to_string())]),
+                ),
+                scoped_pod(
+                    "debug",
+                    "payments",
+                    "node-a",
+                    "10.0.0.23",
+                    "container-debug",
+                    BTreeMap::from([("observability".to_string(), "disabled".to_string())]),
+                ),
+            ],
+        };
+        let config = KubernetesAttributionConfig {
+            namespace_denylist: vec!["kube-system".to_string()],
+            node_name_denylist: vec!["node-b".to_string()],
+            pod_label_exclude_selector: BTreeMap::from([(
+                "observability".to_string(),
+                "disabled".to_string(),
+            )]),
+            ..KubernetesAttributionConfig::default()
+        };
+
+        let cache = KubernetesMetadataCache::from_pod_list(pod_list, &config);
+
+        assert!(cache.contains_container("container-checkout"));
+        assert!(!cache.contains_container("container-system"));
+        assert!(!cache.contains_container("container-other-node"));
+        assert!(!cache.contains_container("container-debug"));
+        assert!(cache.get_by_pod_ip("10.0.0.20").is_some());
+        assert!(cache.get_by_pod_ip("10.0.0.21").is_none());
+        assert!(cache.get_by_pod_ip("10.0.0.22").is_none());
+        assert!(cache.get_by_pod_ip("10.0.0.23").is_none());
+    }
+
+    #[test]
     fn excluded_pods_do_not_consume_selected_pod_limit() {
         let pod_list = PodList {
             items: vec![
