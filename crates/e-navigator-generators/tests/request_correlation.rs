@@ -73,6 +73,47 @@ async fn redis_protocol_request_generates_named_request_span() {
 }
 
 #[tokio::test]
+async fn grpc_protocol_request_generates_named_request_span() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(None, true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.protocol = ProtocolKind::Grpc;
+    request.method = Some("GetCart".to_string());
+    request.status_code = None;
+    request.attributes = vec![
+        TraceAttribute {
+            key: "rpc.system".to_string(),
+            value: "grpc".to_string(),
+        },
+        TraceAttribute {
+            key: "rpc.service".to_string(),
+            value: "checkout.v1.CheckoutService".to_string(),
+        },
+        TraceAttribute {
+            key: "rpc.method".to_string(),
+            value: "GetCart".to_string(),
+        },
+    ];
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(span.name, "grpc request");
+    assert_eq!(span.protocol, ProtocolKind::Grpc);
+    assert_eq!(span.method.as_deref(), Some("GetCart"));
+    assert!(has_attribute(&span.attributes, "rpc.system", "grpc"));
+    assert!(has_attribute(
+        &span.attributes,
+        "rpc.service",
+        "checkout.v1.CheckoutService"
+    ));
+}
+
+#[tokio::test]
 async fn postgresql_protocol_request_generates_named_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);

@@ -244,6 +244,7 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert!(observed_protocols.is_superset(&BTreeSet::from([
             ProtocolKind::Http,
+            ProtocolKind::Grpc,
             ProtocolKind::Kafka,
             ProtocolKind::Mongodb,
             ProtocolKind::Mysql,

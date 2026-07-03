@@ -1,5 +1,6 @@
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
+    grpc::{GrpcExtraction, parse_grpc_request_headers},
     http::{HttpExtraction, parse_http_request},
     kafka::{KafkaExtraction, parse_kafka_request},
     mongodb::{MongodbExtraction, parse_mongodb_message},
@@ -97,6 +98,18 @@ proptest! {
         };
 
         let _ = parse_http_request(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_grpc_header_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 3,
+            max_tracestate_bytes: 32,
+        };
+
+        let _ = parse_grpc_request_headers(&bytes, &config);
     }
 
     #[test]
@@ -199,6 +212,35 @@ proptest! {
 
         let _ = parse_nats_command(&bytes, &config);
     }
+
+    #[test]
+    fn grpc_fixture_limits_are_respected(
+        service in "[A-Za-z0-9_.-]{1,40}",
+        method in "[A-Za-z0-9_.-]{1,40}",
+        tracestate in "[a-z0-9=,._-]{0,80}",
+    ) {
+        let bytes = format!(
+            ":method: POST\n:path: /{service}/{method}\n:authority: checkout.example.com:443\ncontent-type: application/grpc\ntraceparent: {VALID_TRACEPARENT}\ntracestate: {tracestate}\nauthorization: Bearer secret\n\n"
+        );
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 512,
+            max_request_line_bytes: 64,
+            max_attributes: 3,
+            max_tracestate_bytes: 16,
+        };
+
+        let parsed = parse_grpc_request_headers(bytes.as_bytes(), &config)
+            .expect("bounded grpc headers parse");
+        prop_assert!(parsed.attributes.len() <= config.max_attributes);
+        prop_assert!(parsed
+            .tracestate
+            .as_ref()
+            .is_none_or(|value| value.len() <= config.max_tracestate_bytes));
+        prop_assert!(!parsed
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")));
+    }
 }
 
 #[test]
@@ -289,6 +331,89 @@ fn extracts_http_request_trace_context_from_bounded_fixture() {
             .iter()
             .any(|attribute| { attribute.key == "url.path" && attribute.value == "/checkout/123" })
     );
+}
+
+#[test]
+fn extracts_grpc_request_trace_context_from_decoded_http2_headers() {
+    let bytes = b":method: POST\n:path: /checkout.v1.CheckoutService/GetCart\n:authority: checkout.example.com:8443\ncontent-type: application/grpc+proto\ntraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\ntracestate: vendor=value\nauthorization: Bearer secret\n\n";
+
+    let extraction = parse_grpc_request_headers(bytes, &ProtocolExtractionConfig::default())
+        .expect("grpc request headers parse");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Grpc);
+    assert_eq!(extraction.method.as_deref(), Some("GetCart"));
+    assert_eq!(
+        extraction.trace_context.as_ref().unwrap().trace_id,
+        "4bf92f3577b34da6a3ce929d0e0e4736"
+    );
+    assert_eq!(
+        extraction.trace_context.as_ref().unwrap().span_id,
+        "00f067aa0ba902b7"
+    );
+    assert_eq!(extraction.tracestate.as_deref(), Some("vendor=value"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "rpc.system" && attribute.value == "grpc")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "rpc.service" && attribute.value == "checkout.v1.CheckoutService"
+    }));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "rpc.method" && attribute.value == "GetCart")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "server.address"
+                && attribute.value == "checkout.example.com")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "server.port" && attribute.value == "8443")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn rejects_non_grpc_decoded_http2_headers() {
+    let bytes = b":method: GET\n:path: /checkout\ncontent-type: application/json\n\n";
+
+    assert_eq!(
+        parse_grpc_request_headers(bytes, &ProtocolExtractionConfig::default()).unwrap_err(),
+        GrpcExtraction::MissingGrpcContentType
+    );
+}
+
+#[test]
+fn reports_grpc_trace_context_warnings_without_inventing_ids() {
+    let missing = b":method: POST\n:path: /checkout.v1.CheckoutService/GetCart\ncontent-type: application/grpc\n\n";
+    let malformed = b":method: POST\n:path: /checkout.v1.CheckoutService/GetCart\ncontent-type: application/grpc\ntraceparent: 00-bad\n\n";
+
+    let missing = parse_grpc_request_headers(missing, &ProtocolExtractionConfig::default())
+        .expect("missing trace context still parses");
+    let malformed = parse_grpc_request_headers(malformed, &ProtocolExtractionConfig::default())
+        .expect("malformed trace context still parses");
+
+    assert_eq!(missing.warning.as_deref(), Some("missing_trace_context"));
+    assert!(missing.trace_context.is_none());
+    assert_eq!(
+        malformed.warning.as_deref(),
+        Some("malformed_trace_context")
+    );
+    assert!(malformed.trace_context.is_none());
 }
 
 #[test]

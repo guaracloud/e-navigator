@@ -19,16 +19,17 @@ or chart rendering:
 
 - static module registration and runner fan-out;
 - versioned JSON signal envelopes;
-- synthetic source pipeline, including sanitized HTTP, Kafka, MongoDB, MySQL,
-  NATS, PostgreSQL, and Redis protocol request/span fixtures and
+- synthetic source pipeline, including sanitized HTTP, gRPC, Kafka, MongoDB,
+  MySQL, NATS, PostgreSQL, and Redis protocol request/span fixtures and
   flow-attribution warnings;
 - config validation, packaged config guards, and local Kubernetes attribution
   selector filtering;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/profile events;
-- bounded DNS/HTTP fixture parsing, Kafka request-header parsing, MongoDB
-  wire-message parsing, MySQL command packet parsing, NATS text command
-  parsing, PostgreSQL wire-message parsing, and Redis RESP command parsing;
+- bounded DNS/HTTP fixture parsing, decoded gRPC-over-HTTP/2 metadata parsing,
+  Kafka request-header parsing, MongoDB wire-message parsing, MySQL command
+  packet parsing, NATS text command parsing, PostgreSQL wire-message parsing,
+  and Redis RESP command parsing;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/span flow
   and flow-attribution warnings;
@@ -73,9 +74,11 @@ These areas remain explicitly partial:
   Prometheus renders it as `network_flow_bytes`, and byte-counted closes without
   complete source attribution emit warnings locally, but positive live native
   export and warning proof must be rerun after the native metric migration.
-- **HTTP capture:** selected `homelab-02` outbound cleartext paths work, but
-  symmetric node coverage, inbound parsing, TLS, gRPC, status-code extraction,
-  route templates, retries, app errors, and broader iovec shapes are not proven.
+- **HTTP/gRPC capture:** selected `homelab-02` outbound cleartext HTTP/1 paths
+  work and decoded gRPC-over-HTTP/2 metadata parsing is locally tested, but
+  symmetric node coverage, inbound parsing, TLS, runtime HTTP/2 frame/HPACK
+  capture, gRPC status extraction, route templates, retries, app errors, and
+  broader iovec shapes are not proven.
 - **Trace readiness:** OTLP trace protobuf export includes request span kind,
   resource attributes, and local status mapping for HTTP status errors and
   network interaction errors, but broad backend service-graph compatibility and

@@ -109,8 +109,8 @@ Evidence-backed today:
 - host resource parsing and Docker synthetic fixtures;
 - process and TCP network source foundations;
 - Kubernetes/container attribution for selected captured signals;
-- dependency graph, resource metrics, network metrics, Kafka, MongoDB, MySQL,
-  NATS, PostgreSQL, and Redis parser foundations, request/trace/profile
+- dependency graph, resource metrics, network metrics, gRPC, Kafka, MongoDB,
+  MySQL, NATS, PostgreSQL, and Redis parser foundations, request/trace/profile
   foundations with OTLP trace status mapping and warning trace-record
   formatting, and runtime security generator behavior through tests, including
   flow-attribution warnings;
