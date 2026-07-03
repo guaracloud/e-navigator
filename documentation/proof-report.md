@@ -62,8 +62,8 @@ or chart rendering:
   dropped-profile-sample warnings;
 - Prometheus HTTP formatting, profile session aggregate rendering, profiling
   warning-count rendering, metric/profile family toggles, health/readiness
-  endpoints, bounded latest-metric storage, bounded label names/values, and
-  secret-like label filtering;
+  endpoints, bounded latest-metric storage, bounded metric attribute counts,
+  bounded label names/values, and secret-like label filtering;
 - OTLP protobuf request encoding plus per-family endpoint routing and family
   toggle suppression for metrics with bounded scalar/resource/attribute keys
   and values, traces with HTTP, gRPC, and `error.type` request/error status

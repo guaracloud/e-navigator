@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 
 const MAX_METRIC_STRING_BYTES: usize = 256;
 const MAX_METRIC_ATTRIBUTE_KEY_BYTES: usize = 128;
+const MAX_METRIC_ATTRIBUTES: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -290,7 +291,7 @@ fn resource_metric_attributes(
     cgroup: Option<&e_navigator_signals::CgroupResourceContext>,
 ) -> BTreeMap<String, serde_json::Value> {
     let mut mapped = BTreeMap::new();
-    for attribute in attributes {
+    for attribute in attributes.iter().take(MAX_METRIC_ATTRIBUTES) {
         let key = resource_attribute_key(metric_name, &attribute.key, &attribute.value);
         insert_attribute_string(&mut mapped, key, &attribute.value);
     }
@@ -646,6 +647,43 @@ mod tests {
             .expect("bounded attribute key exists");
 
         assert_eq!(key.len(), MAX_KEY_BYTES);
+    }
+
+    #[test]
+    fn bounds_resource_metric_attribute_count() {
+        let attributes = (0..(MAX_METRIC_ATTRIBUTES + 4))
+            .map(|index| e_navigator_signals::ResourceMetricAttribute {
+                key: format!("custom.attribute.{index}"),
+                value: "value".to_string(),
+            })
+            .collect();
+        let signal = SignalEnvelope::resource_gauge_metric(
+            "generator.resource_metrics",
+            Some("node-a".to_string()),
+            e_navigator_signals::ResourceGaugeMetric {
+                metric_name: "custom.resource.metric".to_string(),
+                unit: "1".to_string(),
+                value: 1,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 100,
+                    end_unix_nanos: 200,
+                },
+                resource: e_navigator_signals::ResourceContext {
+                    host_name: Some("node-a".to_string()),
+                    container: None,
+                    kubernetes: None,
+                },
+                process: None,
+                cgroup: None,
+                attributes,
+            },
+        );
+
+        let record = format_otel_metric_record(&signal).expect("resource metric formats");
+
+        assert_eq!(record.attributes.len(), MAX_METRIC_ATTRIBUTES);
+        assert!(record.attributes.contains_key("custom.attribute.15"));
+        assert!(!record.attributes.contains_key("custom.attribute.16"));
     }
 
     #[test]
