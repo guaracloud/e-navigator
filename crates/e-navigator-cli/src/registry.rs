@@ -55,6 +55,7 @@ pub(crate) fn build_registry(
         registry = registry.with_source(Box::new(AyaDnsSource::new(
             host.clone(),
             config.attribution.procfs_root.clone(),
+            config.dns_source.clone(),
         )));
     }
 

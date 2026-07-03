@@ -65,6 +65,10 @@ config:
     max_fds_per_process = 1024
     max_file_bytes = 131072
 
+    [dns_source]
+    max_packet_bytes = 512
+    max_preview_bytes = 160
+
     [http_source]
     max_header_bytes = 8192
     max_request_line_bytes = 1024

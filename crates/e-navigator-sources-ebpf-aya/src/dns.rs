@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+use e_navigator_core::DnsSourceConfig;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_signals::{
     DnsQueryEvent, DnsQueryType, DnsResponseCode, DnsResponseEvent, NetworkProcessIdentity,
     NetworkProtocol, SignalEnvelope,
@@ -45,7 +47,15 @@ struct ParsedDnsPacket {
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn parse_dns_packet(packet: &[u8]) -> Option<ParsedDnsPacket> {
-    if packet.len() < 12 || packet.len() > RAW_DNS_PACKET_BYTES {
+    parse_dns_packet_with_config(packet, &DnsSourceConfig::default())
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn parse_dns_packet_with_config(
+    packet: &[u8],
+    config: &DnsSourceConfig,
+) -> Option<ParsedDnsPacket> {
+    if packet.len() < 12 || packet.len() > config.max_packet_bytes {
         return None;
     }
     let flags = u16::from_be_bytes([packet[2], packet[3]]);
@@ -84,12 +94,29 @@ fn raw_dns_to_signal_with_clock_and_procfs(
     observed_unix_nanos: u64,
     procfs_root: &std::path::Path,
 ) -> Option<SignalEnvelope> {
+    raw_dns_to_signal_with_config(
+        bytes,
+        host,
+        observed_unix_nanos,
+        procfs_root,
+        &DnsSourceConfig::default(),
+    )
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn raw_dns_to_signal_with_config(
+    bytes: &[u8],
+    host: Option<String>,
+    observed_unix_nanos: u64,
+    procfs_root: &std::path::Path,
+    config: &DnsSourceConfig,
+) -> Option<SignalEnvelope> {
     if bytes.len() < core::mem::size_of::<RawDnsEvent>() {
         return None;
     }
     let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawDnsEvent>()) };
     let packet_len = (raw.packet_len as usize).min(RAW_DNS_PACKET_BYTES);
-    let parsed = parse_dns_packet(&raw.packet[..packet_len])?;
+    let parsed = parse_dns_packet_with_config(&raw.packet[..packet_len], config)?;
     let process = NetworkProcessIdentity {
         pid: raw.pid,
         ppid: None,
@@ -148,6 +175,14 @@ fn raw_dns_to_signal_with_clock_and_procfs(
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn raw_dns_diagnostic_values(bytes: &[u8]) -> Option<Vec<String>> {
+    raw_dns_diagnostic_values_with_config(bytes, &DnsSourceConfig::default())
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn raw_dns_diagnostic_values_with_config(
+    bytes: &[u8],
+    config: &DnsSourceConfig,
+) -> Option<Vec<String>> {
     if bytes.len() < core::mem::size_of::<RawDnsEvent>() {
         return None;
     }
@@ -163,19 +198,20 @@ fn raw_dns_diagnostic_values(bytes: &[u8]) -> Option<Vec<String>> {
         values.push(ipv4_to_string(raw.server_addr_v4));
     }
     if packet_len > 0 {
-        values.push(dns_packet_ascii_preview(&raw.packet[..packet_len]));
+        values.push(dns_packet_ascii_preview(
+            &raw.packet[..packet_len],
+            config.max_preview_bytes,
+        ));
     }
 
     Some(values)
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-fn dns_packet_ascii_preview(packet: &[u8]) -> String {
-    const MAX_PREVIEW_BYTES: usize = 160;
-
+fn dns_packet_ascii_preview(packet: &[u8], max_preview_bytes: usize) -> String {
     packet
         .iter()
-        .take(MAX_PREVIEW_BYTES)
+        .take(max_preview_bytes)
         .map(|byte| {
             if byte.is_ascii_graphic() || *byte == b' ' {
                 char::from(*byte)
@@ -277,7 +313,9 @@ mod platform {
         programs::TracePoint,
         util::online_cpus,
     };
-    use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Signal, Source};
+    use e_navigator_core::{
+        CoreError, CoreResult, DnsSourceConfig, ModuleKind, ModuleMetadata, Signal, Source,
+    };
     use e_navigator_signals::SignalEnvelope;
     use std::{
         path::PathBuf,
@@ -294,11 +332,16 @@ mod platform {
     pub struct AyaDnsSource {
         host: Option<String>,
         procfs_root: PathBuf,
+        config: DnsSourceConfig,
     }
 
     impl AyaDnsSource {
-        pub fn new(host: Option<String>, procfs_root: PathBuf) -> Self {
-            Self { host, procfs_root }
+        pub fn new(host: Option<String>, procfs_root: PathBuf, config: DnsSourceConfig) -> Self {
+            Self {
+                host,
+                procfs_root,
+                config,
+            }
         }
     }
 
@@ -416,6 +459,7 @@ mod platform {
                 let cpu_tx = tx.clone();
                 let host = self.host.clone();
                 let procfs_root = self.procfs_root.clone();
+                let config = self.config.clone();
                 let reader_shutdown = shutdown.clone();
                 let diagnostics = diagnostics.clone();
                 let telemetry = telemetry.clone();
@@ -433,20 +477,20 @@ mod platform {
                                 PerfEvent::Sample { head, tail } => {
                                     let bytes = perf_sample_bytes(head, tail);
                                     let sample = bytes.as_ref();
-                                    if let Some(signal) =
-                                        super::raw_dns_to_signal_with_clock_and_procfs(
-                                            sample,
-                                            host.clone(),
-                                            super::now_unix_nanos(),
-                                            &procfs_root,
-                                        )
-                                    {
+                                    if let Some(signal) = super::raw_dns_to_signal_with_config(
+                                        sample,
+                                        host.clone(),
+                                        super::now_unix_nanos(),
+                                        &procfs_root,
+                                        &config,
+                                    ) {
                                         telemetry.record_decoded_sample();
                                         log_dns_sample_diagnostic(
                                             &diagnostics,
                                             &telemetry,
                                             signal.kind(),
                                             sample,
+                                            &config,
                                             true,
                                         );
                                         if cpu_tx.blocking_send(signal).is_err() {
@@ -461,6 +505,7 @@ mod platform {
                                             &telemetry,
                                             "dns_invalid_sample",
                                             sample,
+                                            &config,
                                             false,
                                         );
                                         telemetry.record_invalid_sample();
@@ -506,13 +551,15 @@ mod platform {
         telemetry: &SourceTelemetry,
         raw_event: &str,
         sample: &[u8],
+        config: &DnsSourceConfig,
         decoded: bool,
     ) {
         if !diagnostics.enabled() {
             return;
         }
 
-        let mut values = super::raw_dns_diagnostic_values(sample).unwrap_or_default();
+        let mut values =
+            super::raw_dns_diagnostic_values_with_config(sample, config).unwrap_or_default();
         values.push(raw_event.to_string());
         let filter_values = values.iter().map(String::as_str).collect::<Vec<_>>();
         let decision = diagnostics.sample_decision_for(&filter_values);
@@ -627,7 +674,9 @@ mod platform {
 #[cfg(not(target_os = "linux"))]
 mod platform {
     use async_trait::async_trait;
-    use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Source};
+    use e_navigator_core::{
+        CoreError, CoreResult, DnsSourceConfig, ModuleKind, ModuleMetadata, Source,
+    };
     use e_navigator_signals::SignalEnvelope;
     use tokio::sync::mpsc;
 
@@ -635,13 +684,19 @@ mod platform {
     pub struct AyaDnsSource {
         host: Option<String>,
         _procfs_root: std::path::PathBuf,
+        _config: DnsSourceConfig,
     }
 
     impl AyaDnsSource {
-        pub fn new(host: Option<String>, procfs_root: std::path::PathBuf) -> Self {
+        pub fn new(
+            host: Option<String>,
+            procfs_root: std::path::PathBuf,
+            config: DnsSourceConfig,
+        ) -> Self {
             Self {
                 host,
                 _procfs_root: procfs_root,
+                _config: config,
             }
         }
     }
@@ -753,6 +808,39 @@ mod tests {
     }
 
     #[test]
+    fn raw_dns_event_uses_configured_packet_limit() {
+        let packet = dns_query_packet(0x1234, "api.example.com", 1);
+        let mut raw = RawDnsEvent {
+            pid: 42,
+            uid: 1000,
+            cgroup_id: 7,
+            protocol: RAW_DNS_PROTOCOL_UDP,
+            server_port_be: 53_u16.to_be(),
+            server_addr_v4: u32::from_ne_bytes([10, 96, 0, 10]),
+            timestamp_unix_nanos: 1_000,
+            latency_nanos: 0,
+            packet_len: packet.len() as u32,
+            command: fixed_command("api"),
+            packet: [0; RAW_DNS_PACKET_BYTES],
+        };
+        raw.packet[..packet.len()].copy_from_slice(&packet);
+
+        assert!(
+            raw_dns_to_signal_with_config(
+                raw_as_bytes(&raw),
+                Some("node-a".to_string()),
+                1_000,
+                std::path::Path::new("/proc"),
+                &DnsSourceConfig {
+                    max_packet_bytes: packet.len() - 1,
+                    max_preview_bytes: 160,
+                },
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn raw_dns_event_preserves_source_time_container_attribution() {
         const CONTAINER_ID: &str =
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -824,6 +912,38 @@ mod tests {
         assert!(values.iter().any(|value| value == "10.43.0.10"));
         assert!(values.iter().any(|value| value == "53"));
         assert!(values.iter().any(|value| value.contains("r14-proof-0")));
+    }
+
+    #[test]
+    fn raw_dns_diagnostic_values_use_configured_preview_limit() {
+        let packet = dns_query_packet(0x1234, "r14-proof-0.e-navigator-bench.svc.cluster.local", 1);
+        let mut raw = RawDnsEvent {
+            pid: 42,
+            uid: 1000,
+            cgroup_id: 7,
+            protocol: RAW_DNS_PROTOCOL_UDP,
+            server_port_be: 53_u16.to_be(),
+            server_addr_v4: u32::from_ne_bytes([10, 43, 0, 10]),
+            timestamp_unix_nanos: 1_000,
+            latency_nanos: 0,
+            packet_len: packet.len() as u32,
+            command: fixed_command("python"),
+            packet: [0; RAW_DNS_PACKET_BYTES],
+        };
+        raw.packet[..packet.len()].copy_from_slice(&packet);
+
+        let values = raw_dns_diagnostic_values_with_config(
+            raw_as_bytes(&raw),
+            &DnsSourceConfig {
+                max_packet_bytes: 512,
+                max_preview_bytes: 8,
+            },
+        )
+        .expect("diagnostic values");
+
+        let preview = values.last().expect("packet preview");
+        assert_eq!(preview.len(), 8);
+        assert!(!preview.contains("r14-proof-0"));
     }
 
     fn dns_query_packet(id: u16, name: &str, query_type: u16) -> Vec<u8> {

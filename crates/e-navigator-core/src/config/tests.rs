@@ -916,6 +916,61 @@ fn runtime_security_kubernetes_api_endpoints_are_validated() {
 }
 
 #[test]
+fn dns_source_defaults_are_bounded() {
+    let config = RuntimeConfig::default();
+
+    assert_eq!(config.dns_source.max_packet_bytes, 512);
+    assert_eq!(config.dns_source.max_preview_bytes, 160);
+}
+
+#[test]
+fn dns_source_limits_are_validated() {
+    assert_invalid(
+        RuntimeConfig {
+            dns_source: DnsSourceConfig {
+                max_packet_bytes: 0,
+                ..DnsSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "dns_source.max_packet_bytes must be between 12 and 512",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            dns_source: DnsSourceConfig {
+                max_packet_bytes: DnsSourceConfig::MAX_PACKET_BYTES_LIMIT + 1,
+                ..DnsSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "dns_source.max_packet_bytes must be between 12 and 512",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            dns_source: DnsSourceConfig {
+                max_preview_bytes: 0,
+                ..DnsSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "dns_source.max_preview_bytes must be between 1 and 160",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            dns_source: DnsSourceConfig {
+                max_preview_bytes: DnsSourceConfig::MAX_PREVIEW_BYTES_LIMIT + 1,
+                ..DnsSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "dns_source.max_preview_bytes must be between 1 and 160",
+    );
+}
+
+#[test]
 fn dns_metrics_limits_are_validated() {
     assert_invalid(
         RuntimeConfig {
@@ -1363,6 +1418,10 @@ fn representative_runtime_toml_deserializes_and_validates() {
         max_fds_per_process = 1024
         max_file_bytes = 131072
 
+        [dns_source]
+        max_packet_bytes = 512
+        max_preview_bytes = 160
+
         [http_source]
         max_header_bytes = 8192
         max_request_line_bytes = 1024
@@ -1495,6 +1554,7 @@ fn omitted_optional_sections_use_serde_defaults() {
     assert_eq!(config.attribution, AttributionConfig::default());
     assert_eq!(config.runtime_security, RuntimeSecurityConfig::default());
     assert_eq!(config.resource_source, ResourceSourceConfig::default());
+    assert_eq!(config.dns_source, DnsSourceConfig::default());
     assert_eq!(config.http_source, HttpSourceConfig::default());
     assert_eq!(config.cpu_profile_source, CpuProfileSourceConfig::default());
     assert_eq!(config.resource_metrics, ResourceMetricsConfig::default());

@@ -4,9 +4,9 @@ use std::collections::BTreeSet;
 use super::modules::{default_modules, is_known_module_name, known_module_names};
 use super::{
     ArgvCaptureConfig, AttributionConfig, ConfigError, ConfigResult, CpuProfileSourceConfig,
-    DnsMetricsConfig, HttpSourceConfig, ModuleConfig, NetworkMetricsConfig, OtlpHttpConfig,
-    ProfilingConfig, PrometheusHttpConfig, RequestCorrelationConfig, ResourceMetricsConfig,
-    ResourceSourceConfig, RuntimeSecurityConfig, TraceCorrelationConfig,
+    DnsMetricsConfig, DnsSourceConfig, HttpSourceConfig, ModuleConfig, NetworkMetricsConfig,
+    OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig, RequestCorrelationConfig,
+    ResourceMetricsConfig, ResourceSourceConfig, RuntimeSecurityConfig, TraceCorrelationConfig,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,6 +30,8 @@ pub struct RuntimeConfig {
     pub runtime_security: RuntimeSecurityConfig,
     #[serde(default)]
     pub resource_source: ResourceSourceConfig,
+    #[serde(default)]
+    pub dns_source: DnsSourceConfig,
     #[serde(default)]
     pub http_source: HttpSourceConfig,
     #[serde(default)]
@@ -64,6 +66,7 @@ impl Default for RuntimeConfig {
             attribution: AttributionConfig::default(),
             runtime_security: RuntimeSecurityConfig::default(),
             resource_source: ResourceSourceConfig::default(),
+            dns_source: DnsSourceConfig::default(),
             http_source: HttpSourceConfig::default(),
             cpu_profile_source: CpuProfileSourceConfig::default(),
             resource_metrics: ResourceMetricsConfig::default(),
@@ -118,6 +121,7 @@ impl RuntimeConfig {
         self.attribution.validate()?;
         self.runtime_security.validate()?;
         self.resource_source.validate()?;
+        self.dns_source.validate()?;
         self.http_source.validate()?;
         self.cpu_profile_source.validate(self)?;
         self.resource_metrics.validate()?;
