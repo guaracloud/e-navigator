@@ -5,6 +5,8 @@ use crate::{ContainerContext, KubernetesContext, MetricAggregationWindow, Networ
 const MAX_PROFILING_ATTRIBUTES: usize = 16;
 const MAX_PROFILING_ATTRIBUTE_KEY_BYTES: usize = 64;
 const MAX_PROFILING_ATTRIBUTE_VALUE_BYTES: usize = 256;
+const MAX_PROFILING_STACK_FRAMES: usize = 256;
+const MAX_PROFILING_FRAME_STRING_BYTES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -133,6 +135,15 @@ pub fn sanitize_profiling_attributes(attributes: &mut Vec<ProfilingAttribute>) {
     *attributes = sanitized;
 }
 
+pub fn sanitize_profiling_frames(frames: &mut Vec<ProfilingFrame>) {
+    frames.truncate(MAX_PROFILING_STACK_FRAMES);
+    for frame in frames {
+        truncate_optional_string(&mut frame.symbol, MAX_PROFILING_FRAME_STRING_BYTES);
+        truncate_optional_string(&mut frame.module, MAX_PROFILING_FRAME_STRING_BYTES);
+        truncate_optional_string(&mut frame.file, MAX_PROFILING_FRAME_STRING_BYTES);
+    }
+}
+
 pub fn is_sensitive_profiling_attribute_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
     key.contains("token")
@@ -158,4 +169,10 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
         end -= 1;
     }
     value[..end].to_string()
+}
+
+fn truncate_optional_string(value: &mut Option<String>, max_bytes: usize) {
+    if let Some(inner) = value {
+        *inner = truncate_utf8(inner, max_bytes);
+    }
 }

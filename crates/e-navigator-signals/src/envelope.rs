@@ -14,6 +14,7 @@ use crate::{
     RequestCorrelationWarning, RequestSpanObservation, ResourceCounterMetric, ResourceGaugeMetric,
     RuntimeSecurityFinding, ServiceInteractionSpanObservation, TraceCorrelationWarning,
     TraceServicePathObservation, TraceSpanObservation, sanitize_profiling_attributes,
+    sanitize_profiling_frames,
 };
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
@@ -943,6 +944,7 @@ impl SignalEnvelope {
         mut observation: ProfileSampleObservation,
     ) -> Self {
         sanitize_profiling_attributes(&mut observation.attributes);
+        sanitize_profiling_frames(&mut observation.stack_frames);
         Self::new(
             source,
             host,
@@ -957,6 +959,7 @@ impl SignalEnvelope {
         mut observation: ProfilingStackTraceObservation,
     ) -> Self {
         sanitize_profiling_attributes(&mut observation.attributes);
+        sanitize_profiling_frames(&mut observation.stack_frames);
         Self::new(
             source,
             host,

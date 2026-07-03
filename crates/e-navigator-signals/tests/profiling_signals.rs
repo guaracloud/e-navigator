@@ -196,6 +196,50 @@ fn profile_sample_constructor_bounds_attributes_before_json_stdout() {
 }
 
 #[test]
+fn profile_sample_constructor_bounds_stack_frames_before_json_stdout() {
+    let frames = (0..300)
+        .map(|index| ProfilingFrame {
+            symbol: Some(format!("frame-{index}-{}", "s".repeat(320))),
+            module: Some("m".repeat(320)),
+            file: Some("f".repeat(320)),
+            line: Some(index),
+        })
+        .collect();
+
+    let signal = SignalEnvelope::profile_sample_observation(
+        "source.synthetic_profile",
+        Some("node-a".to_string()),
+        e_navigator_signals::ProfileSampleObservation {
+            timestamp_unix_nanos: 1_000,
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::High,
+            sample_count: 1,
+            sampling_period_nanos: Some(10_000_000),
+            stack_id: "stack:0123456789abcdef".to_string(),
+            stack_frames: frames,
+            process: None,
+            container: None,
+            kubernetes: None,
+            thread_id: None,
+            thread_name: None,
+            attributes: vec![],
+        },
+    );
+
+    let json = serde_json::to_value(&signal).expect("signal serializes");
+    let frames = json["payload"]["stack_frames"]
+        .as_array()
+        .expect("stack frames are serialized");
+
+    assert_eq!(frames.len(), 256);
+    assert_eq!(frames[0]["symbol"].as_str().map(str::len), Some(256));
+    assert_eq!(frames[0]["module"].as_str().map(str::len), Some(256));
+    assert_eq!(frames[0]["file"].as_str().map(str::len), Some(256));
+    assert_eq!(frames[255]["line"], 255);
+}
+
+#[test]
 fn serializes_stack_trace_observation_with_optional_missing_symbols() {
     let signal = SignalEnvelope::profiling_stack_trace_observation(
         "source.synthetic_profile",
