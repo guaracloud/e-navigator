@@ -88,10 +88,10 @@ or chart rendering:
   PostgreSQL Query/Parse/Bind/Describe/Close/Execute/FunctionCall/CopyData/
   CopyDone/CopyFail/Password/Flush/Sync/Terminate wire-message and
   Authentication/BackendKeyData/ParseComplete/BindComplete/CloseComplete/
-  RowDescription/DataRow/EmptyQueryResponse/NoData/PortalSuspended/
-  CommandComplete/NoticeResponse/ParameterStatus/ReadyForQuery/ErrorResponse parsing with
-  canonical SQLSTATE validation and build-checked parser fuzz coverage, and
-  Redis RESP command plus
+  RowDescription/DataRow/CopyInResponse/CopyOutResponse/CopyBothResponse/
+  EmptyQueryResponse/NoData/PortalSuspended/CommandComplete/NoticeResponse/
+  ParameterStatus/ReadyForQuery/ErrorResponse parsing with canonical SQLSTATE
+  validation and build-checked parser fuzz coverage, and Redis RESP command plus
   simple/integer/bulk/RESP3-scalar/RESP3-blob-error/verbatim/flat-array/
   nested-array/RESP3-map/RESP3-set/RESP3-push/error response parsing with
   declared frame-length bounds,
@@ -232,10 +232,11 @@ These areas remain explicitly partial:
   Describe, Close, Execute, FunctionCall, CopyData, CopyDone, CopyFail,
   PasswordMessage, Flush, Sync, Terminate, Authentication, BackendKeyData,
   ParseComplete, BindComplete, CloseComplete, RowDescription, DataRow,
-  EmptyQueryResponse, NoData, PortalSuspended, CommandComplete, NoticeResponse,
-  ParameterStatus, ReadyForQuery, and ErrorResponse parsing is locally tested
-  without exporting raw SQL text, function OIDs, argument values, row values,
-  authentication salts or SASL data, backend cancellation keys, copy payloads,
+  CopyInResponse, CopyOutResponse, CopyBothResponse, EmptyQueryResponse, NoData,
+  PortalSuspended, CommandComplete, NoticeResponse, ParameterStatus,
+  ReadyForQuery, and ErrorResponse parsing is locally tested without exporting
+  raw SQL text, function OIDs, argument values, row values, authentication salts
+  or SASL data, backend cancellation keys, copy payloads, copy format metadata,
   copy failure text, password values, row field names, notice text, parameter
   status values, or raw error messages, including canonical SQLSTATE validation
   for notice and error responses, but runtime capture,

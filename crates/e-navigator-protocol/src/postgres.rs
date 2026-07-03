@@ -136,6 +136,7 @@ pub fn parse_postgres_response(
         b'C' => postgres_command_complete_response(body, config),
         b'D' => postgres_data_row_response(body, config),
         b'E' => postgres_error_response(body, config.max_attributes),
+        b'G' | b'H' | b'W' => postgres_copy_mode_response(body, config.max_attributes),
         b'K' => postgres_backend_key_data_response(body, config.max_attributes),
         b'N' => postgres_notice_response(body, config.max_attributes),
         b'R' => postgres_authentication_response(body, config),
@@ -211,6 +212,30 @@ fn postgres_data_row_response(
     Ok(ParsedPostgresResponse {
         protocol: ProtocolKind::Postgresql,
         attributes: postgres_response_attributes(&status_code, None, config.max_attributes),
+        status_code,
+        error_type: None,
+    })
+}
+
+fn postgres_copy_mode_response(
+    body: &[u8],
+    max_attributes: usize,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    let mut cursor = 0;
+    skip_bytes(body, &mut cursor, 1)?;
+    let column_count = read_u16_be_cursor(body, &mut cursor)? as usize;
+    if column_count > MAX_POSTGRES_BIND_ITEMS {
+        return Err(PostgresExtraction::QueryTooLong);
+    }
+    skip_bytes(body, &mut cursor, column_count.saturating_mul(2))?;
+    if cursor != body.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+
+    let status_code = "OK".to_string();
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        attributes: postgres_response_attributes(&status_code, None, max_attributes),
         status_code,
         error_type: None,
     })
