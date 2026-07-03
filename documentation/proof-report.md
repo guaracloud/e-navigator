@@ -27,10 +27,11 @@ or chart rendering:
   attributes, identifier/scalar strings, and process/context/peer strings and
   labels, trace signal families with bounded identifier/scalar, process,
   endpoint, and context strings and labels, network connection signals with
-  bounded process/address/context strings and labels, network flow warning signals with
-  bounded process/address/source/message/context strings, network flow summary
-  endpoint strings and dependency endpoint address/domain/context strings and
-  labels, DNS signal families with bounded DNS, process, and context strings
+  bounded process/address/context strings and safe Kubernetes labels, network
+  flow warning signals with bounded process/address/source/message/context
+  strings, network flow summary endpoint strings and dependency endpoint
+  address/domain/context strings and labels, DNS signal families with bounded
+  DNS, process, and context strings
   and labels, network metric signal families with bounded metric, process,
   context strings and labels,
   node/process/cgroup resource observation signals with bounded strings,

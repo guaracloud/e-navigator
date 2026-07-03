@@ -562,9 +562,20 @@ fn bounded_labels(
     };
     labels
         .into_iter()
-        .filter(|(key, _)| allowed(key))
+        .filter(|(key, value)| allowed(key) && safe_label(key, value))
         .take(config.max_labels_per_pod)
         .collect()
+}
+
+fn safe_label(key: &str, value: &str) -> bool {
+    !key.trim().is_empty()
+        && key.len() <= KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT
+        && !key.bytes().any(|byte| byte.is_ascii_control())
+        && !key.chars().any(char::is_whitespace)
+        && !value.trim().is_empty()
+        && value.len() <= KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT
+        && !value.bytes().any(|byte| byte.is_ascii_control())
+        && !value.chars().any(char::is_whitespace)
 }
 
 #[derive(Debug, Deserialize)]
@@ -856,6 +867,52 @@ mod tests {
         let config = KubernetesAttributionConfig {
             max_labels_per_pod: 8,
             label_allowlist: vec!["app".to_string(), "team".to_string()],
+            ..KubernetesAttributionConfig::default()
+        };
+
+        let cache = KubernetesMetadataCache::from_pod_list(pod_list, &config);
+        let context = cache.get("container-api").expect("container is indexed");
+
+        assert_eq!(
+            context.labels,
+            BTreeMap::from([
+                ("app".to_string(), "api".to_string()),
+                ("team".to_string(), "platform".to_string()),
+            ])
+        );
+    }
+
+    #[test]
+    fn unsafe_pod_labels_do_not_consume_label_limit() {
+        let pod_list = PodList {
+            items: vec![Pod {
+                metadata: PodMetadata {
+                    name: Some("api".to_string()),
+                    namespace: Some("default".to_string()),
+                    uid: Some("uid-api".to_string()),
+                    labels: Some(BTreeMap::from([
+                        ("".to_string(), "empty-key".to_string()),
+                        (" app".to_string(), "whitespace-key".to_string()),
+                        ("app".to_string(), "api".to_string()),
+                        ("bad\nkey".to_string(), "control-key".to_string()),
+                        ("empty-value".to_string(), "".to_string()),
+                        ("team".to_string(), "platform".to_string()),
+                    ])),
+                },
+                spec: Some(PodSpec {
+                    node_name: Some("node-a".to_string()),
+                }),
+                status: Some(PodStatus {
+                    pod_ip: None,
+                    container_statuses: Some(vec![ContainerStatus {
+                        name: "api".to_string(),
+                        container_id: Some("containerd://container-api".to_string()),
+                    }]),
+                }),
+            }],
+        };
+        let config = KubernetesAttributionConfig {
+            max_labels_per_pod: 2,
             ..KubernetesAttributionConfig::default()
         };
 
