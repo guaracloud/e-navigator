@@ -83,6 +83,12 @@ impl PrometheusHttpConfig {
                 ),
             ));
         }
+        if bind_address_has_inline_port(&self.bind_address) {
+            return Err(ConfigError::invalid_value(
+                "prometheus_http.bind_address",
+                "prometheus_http.bind_address must not include a port because prometheus_http.port is configured separately",
+            ));
+        }
         if self.port == 0 {
             return Err(ConfigError::invalid_value(
                 "prometheus_http.port",
@@ -128,4 +134,8 @@ fn default_max_metric_lines() -> usize {
 
 fn default_signal_family_enabled() -> bool {
     true
+}
+
+fn bind_address_has_inline_port(value: &str) -> bool {
+    value.contains(':') && !(value.starts_with('[') && value.ends_with(']'))
 }

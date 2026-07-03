@@ -253,6 +253,39 @@ fn prometheus_http_sink_config_is_validated_when_enabled() {
             ],
             prometheus_http: PrometheusHttpConfig {
                 enabled: true,
+                bind_address: "127.0.0.1:9090".to_string(),
+                ..PrometheusHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "prometheus_http.bind_address must not include a port because prometheus_http.port is configured separately",
+    );
+
+    assert!(
+        RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.synthetic_exec"),
+                ModuleConfig::enabled("sink.prometheus_http"),
+            ],
+            prometheus_http: PrometheusHttpConfig {
+                enabled: true,
+                bind_address: "[::1]".to_string(),
+                ..PrometheusHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        }
+        .validate()
+        .is_ok()
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.synthetic_exec"),
+                ModuleConfig::enabled("sink.prometheus_http"),
+            ],
+            prometheus_http: PrometheusHttpConfig {
+                enabled: true,
                 port: 0,
                 ..PrometheusHttpConfig::default()
             },
