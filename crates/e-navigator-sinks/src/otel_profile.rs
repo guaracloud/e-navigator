@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 const MAX_ATTRIBUTES: usize = 16;
 const MAX_KEY_BYTES: usize = 64;
 const MAX_VALUE_BYTES: usize = 256;
+const MAX_STACK_FRAMES: usize = 256;
+const MAX_FRAME_STRING_BYTES: usize = 256;
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325_u64;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
@@ -47,13 +49,13 @@ fn sample_record(signal: &SignalEnvelope, sample: &ProfileSampleObservation) -> 
     let mut attributes = bounded_attributes(&sample.attributes);
     attributes.insert(
         "profile.stack.id".to_string(),
-        serde_json::json!(sample.stack_id),
+        bounded_json_string(&sample.stack_id),
     );
     if let Some(thread_id) = sample.thread_id {
         attributes.insert("thread.id".to_string(), serde_json::json!(thread_id));
     }
     if let Some(thread_name) = &sample.thread_name {
-        attributes.insert("thread.name".to_string(), serde_json::json!(thread_name));
+        attributes.insert("thread.name".to_string(), bounded_json_string(thread_name));
     }
 
     OtelProfileRecord {
@@ -74,12 +76,8 @@ fn sample_record(signal: &SignalEnvelope, sample: &ProfileSampleObservation) -> 
         stack_frames: sample
             .stack_frames
             .iter()
-            .map(|frame| OtelProfileFrame {
-                symbol: frame.symbol.clone(),
-                module: frame.module.clone(),
-                file: frame.file.clone(),
-                line: frame.line,
-            })
+            .take(MAX_STACK_FRAMES)
+            .map(bounded_stack_frame)
             .collect(),
     }
 }
@@ -159,7 +157,7 @@ fn session_record(
     );
     attributes.insert(
         "profile.source".to_string(),
-        serde_json::json!(session.source),
+        bounded_json_string(&session.source),
     );
 
     OtelProfileRecord {
@@ -249,6 +247,28 @@ fn resource_attributes(
         resource.insert("source".to_string(), serde_json::json!("e-navigator"));
     }
     resource
+}
+
+fn bounded_stack_frame(frame: &e_navigator_signals::ProfilingFrame) -> OtelProfileFrame {
+    OtelProfileFrame {
+        symbol: frame
+            .symbol
+            .as_deref()
+            .map(|value| truncate_utf8(value, MAX_FRAME_STRING_BYTES)),
+        module: frame
+            .module
+            .as_deref()
+            .map(|value| truncate_utf8(value, MAX_FRAME_STRING_BYTES)),
+        file: frame
+            .file
+            .as_deref()
+            .map(|value| truncate_utf8(value, MAX_FRAME_STRING_BYTES)),
+        line: frame.line,
+    }
+}
+
+fn bounded_json_string(value: &str) -> serde_json::Value {
+    serde_json::json!(truncate_utf8(value, MAX_VALUE_BYTES))
 }
 
 fn bounded_attributes(attributes: &[ProfilingAttribute]) -> BTreeMap<String, serde_json::Value> {

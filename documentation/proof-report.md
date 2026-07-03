@@ -72,8 +72,9 @@ or chart rendering:
   local warning trace-record formatting for trace, request, network-flow, and
   profiling warnings, explicit no-ID profiling-warning trace export
   suppression, and development-status profile sample records with
-  deterministic, workload-aware IDs, bounded/sensitive attribute filtering, and
-  session dropped-sample records in fake-collector tests;
+  deterministic, workload-aware IDs, bounded stack frames, bounded/sensitive
+  attribute filtering, and session dropped-sample records in fake-collector
+  tests;
 - pprof-compatible profile sample protobuf rendering with bounded stack
   locations, sample-period scaling, bounded frame strings and workload labels,
   and sensitive attribute filtering;

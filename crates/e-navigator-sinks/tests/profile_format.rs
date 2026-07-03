@@ -190,6 +190,81 @@ fn otlp_profile_sample_ids_include_host_and_workload_identity() {
 }
 
 #[test]
+fn otlp_profile_bounds_sample_attributes_and_stack_frames() {
+    const MAX_VALUE_BYTES: usize = 256;
+    const MAX_STACK_FRAMES: usize = 256;
+
+    let long_value = "v".repeat(MAX_VALUE_BYTES + 64);
+    let mut signal = profile_sample_signal(Some("node-a"), Some("container-a"), Some("pod-a"));
+    if let e_navigator_signals::SignalPayload::ProfileSampleObservation(sample) =
+        &mut signal.payload
+    {
+        sample.stack_id = long_value.clone();
+        sample.thread_name = Some(long_value.clone());
+        sample.stack_frames = (0..MAX_STACK_FRAMES + 64)
+            .map(|index| ProfilingFrame {
+                symbol: Some(long_value.clone()),
+                module: Some(long_value.clone()),
+                file: Some(long_value.clone()),
+                line: Some(index as u32),
+            })
+            .collect();
+    }
+
+    let record = format_otel_profile_record(&signal).expect("record formats");
+
+    assert_eq!(
+        record.attributes["profile.stack.id"].as_str().map(str::len),
+        Some(MAX_VALUE_BYTES)
+    );
+    assert_eq!(
+        record.attributes["thread.name"].as_str().map(str::len),
+        Some(MAX_VALUE_BYTES)
+    );
+    assert_eq!(record.stack_frames.len(), MAX_STACK_FRAMES);
+    let frame = record.stack_frames.first().expect("stack frame formats");
+    assert_eq!(frame.symbol.as_deref().map(str::len), Some(MAX_VALUE_BYTES));
+    assert_eq!(frame.module.as_deref().map(str::len), Some(MAX_VALUE_BYTES));
+    assert_eq!(frame.file.as_deref().map(str::len), Some(MAX_VALUE_BYTES));
+}
+
+#[test]
+fn otlp_profile_bounds_session_source_attribute() {
+    const MAX_VALUE_BYTES: usize = 256;
+
+    let signal = SignalEnvelope::profiling_session_observation(
+        "generator.profiling",
+        None,
+        ProfilingSessionObservation {
+            window: MetricAggregationWindow {
+                start_unix_nanos: 1,
+                end_unix_nanos: 2,
+            },
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::Medium,
+            profile_id: "profile:abc".to_string(),
+            observed_sample_count: 3,
+            dropped_sample_count: 0,
+            distinct_stack_count: 2,
+            sampling_period_nanos: Some(10_000_000),
+            process: None,
+            container: None,
+            kubernetes: None,
+            source: "s".repeat(MAX_VALUE_BYTES + 64),
+            attributes: Vec::new(),
+        },
+    );
+
+    let record = format_otel_profile_record(&signal).expect("record formats");
+
+    assert_eq!(
+        record.attributes["profile.source"].as_str().map(str::len),
+        Some(MAX_VALUE_BYTES)
+    );
+}
+
+#[test]
 fn pprof_profile_sample_encodes_stack_values_and_safe_labels() {
     let mut signal = SignalEnvelope::profile_sample_observation(
         "source.aya_cpu_profile",
