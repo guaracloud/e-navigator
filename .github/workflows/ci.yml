@@ -41,6 +41,9 @@ jobs:
       - name: Build
         run: cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 
+      - name: Fuzz target build check
+        run: scripts/fuzz_check.sh
+
       - name: Synthetic run
         run: cargo run --locked -p e-navigator-cli -- --source synthetic
 
