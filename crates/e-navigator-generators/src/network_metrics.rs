@@ -572,8 +572,8 @@ impl CounterKey {
                 .map(|container| container.container_id.clone()),
             protocol: Some(format!("{:?}", event.protocol)),
             address_family: Some(format!("{:?}", event.address_family)),
-            remote_address: Some(event.remote_address.clone()),
-            remote_port: Some(event.remote_port),
+            remote_address: None,
+            remote_port: None,
             errno: None,
         }
     }
@@ -653,10 +653,10 @@ impl CounterTemplate {
             process: Some(event.process.clone()),
             protocol: Some(event.protocol),
             address_family: Some(event.address_family),
-            local_address: event.local_address.clone(),
-            local_port: event.local_port,
-            remote_address: Some(event.remote_address.clone()),
-            remote_port: Some(event.remote_port),
+            local_address: None,
+            local_port: None,
+            remote_address: None,
+            remote_port: None,
             errno: None,
             container: event.container.clone(),
             kubernetes: event.kubernetes.clone(),
@@ -1142,8 +1142,10 @@ mod tests {
         assert_eq!(metric.window.start_unix_nanos, 100);
         assert_eq!(metric.window.end_unix_nanos, 900);
         assert_eq!(metric.kubernetes, Some(kubernetes_context()));
-        assert_eq!(metric.remote_address.as_deref(), Some("10.0.0.20"));
-        assert_eq!(metric.remote_port, Some(5432));
+        assert_eq!(metric.local_address, None);
+        assert_eq!(metric.local_port, None);
+        assert_eq!(metric.remote_address, None);
+        assert_eq!(metric.remote_port, None);
     }
 
     #[tokio::test]
@@ -1411,6 +1413,27 @@ mod tests {
             counter_metric(&second_outputs, "network.flow.bytes").value,
             1536 + 96
         );
+    }
+
+    #[tokio::test]
+    async fn native_flow_byte_counter_aggregates_across_remote_destinations() {
+        let generator = NetworkMetricsGenerator::default();
+        let first =
+            network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
+        let second =
+            network_close_signal_with_bytes("10.0.0.30", 6379, 100, 950, Some(8), 256, 768);
+
+        let first_outputs = observe(&generator, &first).await;
+        let second_outputs = observe(&generator, &second).await;
+
+        assert_eq!(
+            counter_metric(&first_outputs, "network.flow.bytes").value,
+            1536
+        );
+        let metric = counter_metric(&second_outputs, "network.flow.bytes");
+        assert_eq!(metric.value, 2560);
+        assert_eq!(metric.remote_address, None);
+        assert_eq!(metric.remote_port, None);
     }
 
     async fn observe(
