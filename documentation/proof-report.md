@@ -76,7 +76,7 @@ or chart rendering:
   authority-port/userinfo validation, and a build-checked parser fuzz target,
   Kafka request-header plus bounded ApiVersions, non-flexible ListOffsets, and
   non-flexible Metadata request bodies, ApiVersions response, bounded Produce
-  request/response, and bounded non-flexible Fetch and Metadata
+  request/response, and bounded non-flexible Fetch, ListOffsets, and Metadata
   request/response-error parsing,
   MongoDB
   wire-message and response-error parsing with OP_MSG section and checksum
@@ -204,12 +204,12 @@ These areas remain explicitly partial:
 - **Kafka protocol observability:** bounded request-header parsing for common
   API keys, bounded ApiVersions request-body validation, bounded non-flexible
   Produce, Fetch, ListOffsets, and Metadata request-body validation, and
-  ApiVersions, Produce, and non-flexible Fetch and Metadata response-error
-  parsing is locally tested without exporting client IDs, software names,
-  topics, record payloads, broker hosts, cluster IDs, or response body values,
-  but runtime capture, request/response matching, broad response coverage,
-  flexible-version body semantics beyond ApiVersions, and live Kafka proof are
-  not implemented or proven.
+  ApiVersions, Produce, and non-flexible Fetch, ListOffsets, and Metadata
+  response-error parsing is locally tested without exporting client IDs,
+  software names, topics, record payloads, broker hosts, cluster IDs, or
+  response body values, but runtime capture, request/response matching, broad
+  response coverage, flexible-version body semantics beyond ApiVersions, and
+  live Kafka proof are not implemented or proven.
 - **MongoDB protocol observability:** bounded `OP_MSG` including
   checksum-present messages, command `OP_QUERY`, OP_MSG response-error parsing,
   and OP_REPLY response parsing is locally tested without exporting raw BSON
