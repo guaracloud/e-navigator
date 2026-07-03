@@ -4,6 +4,7 @@ use crate::ProtocolExtractionConfig;
 
 const MYSQL_COM_QUERY: u8 = 0x03;
 const MYSQL_COM_STMT_PREPARE: u8 = 0x16;
+const MYSQL_OK_PACKET: u8 = 0x00;
 const MYSQL_ERR_PACKET: u8 = 0xff;
 const MAX_MYSQL_OPERATION_BYTES: usize = 64;
 const MYSQL_SQLSTATE_BYTES: usize = 5;
@@ -20,7 +21,7 @@ pub struct ParsedMysqlCommand {
 pub struct ParsedMysqlResponse {
     pub protocol: ProtocolKind,
     pub status_code: String,
-    pub error_type: String,
+    pub error_type: Option<String>,
     pub attributes: Vec<TraceAttribute>,
 }
 
@@ -85,6 +86,17 @@ pub fn parse_mysql_error_response(
     bytes: &[u8],
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedMysqlResponse, MysqlExtraction> {
+    let response = parse_mysql_response(bytes, config)?;
+    if response.error_type.is_none() {
+        return Err(MysqlExtraction::UnsupportedResponse);
+    }
+    Ok(response)
+}
+
+pub fn parse_mysql_response(
+    bytes: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedMysqlResponse, MysqlExtraction> {
     if bytes.len() > config.max_header_bytes {
         return Err(MysqlExtraction::PacketTooLong);
     }
@@ -93,47 +105,61 @@ pub fn parse_mysql_error_response(
     }
 
     let payload = packet_payload(bytes, config.max_header_bytes)?;
-    if payload[0] != MYSQL_ERR_PACKET {
-        return Err(MysqlExtraction::UnsupportedResponse);
+    match payload[0] {
+        MYSQL_OK_PACKET => Ok(mysql_ok_response(config.max_attributes)),
+        MYSQL_ERR_PACKET => mysql_error_response(payload, config.max_attributes),
+        _ => Err(MysqlExtraction::UnsupportedResponse),
     }
+}
+
+fn mysql_ok_response(max_attributes: usize) -> ParsedMysqlResponse {
+    let status_code = "OK".to_string();
+    ParsedMysqlResponse {
+        protocol: ProtocolKind::Mysql,
+        status_code: status_code.clone(),
+        error_type: None,
+        attributes: mysql_response_attributes(&status_code, None, max_attributes),
+    }
+}
+
+fn mysql_error_response(
+    payload: &[u8],
+    max_attributes: usize,
+) -> Result<ParsedMysqlResponse, MysqlExtraction> {
     if payload.len() < 3 {
         return Err(MysqlExtraction::MalformedPacket);
     }
-
     let vendor_code = u16::from_le_bytes([payload[1], payload[2]]).to_string();
     let sqlstate = mysql_sqlstate(payload)?;
     let status_code = match sqlstate {
         Some(sqlstate) => format!("{sqlstate}/{vendor_code}"),
         None => vendor_code,
     };
-    let error_type = status_code.clone();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "db.system",
-        Some("mysql"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "db.response.status_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        Some(&error_type),
-    );
+    let error_type = Some(status_code.clone());
 
     Ok(ParsedMysqlResponse {
         protocol: ProtocolKind::Mysql,
+        attributes: mysql_response_attributes(&status_code, error_type.as_deref(), max_attributes),
         status_code,
         error_type,
-        attributes,
     })
+}
+
+fn mysql_response_attributes(
+    status_code: &str,
+    error_type: Option<&str>,
+    max_attributes: usize,
+) -> Vec<TraceAttribute> {
+    let mut attributes = Vec::new();
+    push_attribute(&mut attributes, max_attributes, "db.system", Some("mysql"));
+    push_attribute(
+        &mut attributes,
+        max_attributes,
+        "db.response.status_code",
+        Some(status_code),
+    );
+    push_attribute(&mut attributes, max_attributes, "error.type", error_type);
+    attributes
 }
 
 fn packet_payload(bytes: &[u8], max_packet_bytes: usize) -> Result<&[u8], MysqlExtraction> {

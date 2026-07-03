@@ -2,7 +2,7 @@
 
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
-    mysql::{parse_mysql_command, parse_mysql_error_response},
+    mysql::{parse_mysql_command, parse_mysql_error_response, parse_mysql_response},
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -18,5 +18,6 @@ fuzz_target!(|data: &[u8]| {
     };
 
     let _ = parse_mysql_command(data, &config);
+    let _ = parse_mysql_response(data, &config);
     let _ = parse_mysql_error_response(data, &config);
 });

@@ -59,8 +59,8 @@ or chart rendering:
   decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with bounded
   authority-port validation and a build-checked parser fuzz target, Kafka
   request-header and ApiVersions response-error parsing, MongoDB wire-message
-  and response-error parsing, MySQL
-  command packet and ERR response parsing with build-checked parser fuzz
+  and response-error parsing, MySQL command packet and OK/ERR response parsing
+  with build-checked parser fuzz
   coverage, NATS text command plus OK/error response parsing, PostgreSQL
   wire-message and ErrorResponse parsing with build-checked parser fuzz
   coverage, and Redis RESP command plus error-response parsing with
@@ -167,7 +167,7 @@ These areas remain explicitly partial:
   messages, but runtime capture, request/response matching, broad response
   coverage, and live NATS proof are not implemented or proven.
 - **MySQL protocol observability:** bounded `COM_QUERY`,
-  `COM_STMT_PREPARE`, and ERR response parsing is locally tested without
+  `COM_STMT_PREPARE`, and OK/ERR response parsing is locally tested without
   exporting raw SQL text or raw error messages, but runtime capture,
   request/response matching, broad response coverage, and live MySQL proof are
   not implemented or proven.

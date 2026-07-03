@@ -4,7 +4,9 @@ use e_navigator_protocol::{
     http::{HttpExtraction, parse_http_request, parse_http_response},
     kafka::{KafkaExtraction, parse_kafka_api_versions_response, parse_kafka_request},
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
-    mysql::{MysqlExtraction, parse_mysql_command, parse_mysql_error_response},
+    mysql::{
+        MysqlExtraction, parse_mysql_command, parse_mysql_error_response, parse_mysql_response,
+    },
     nats::{NatsExtraction, parse_nats_command, parse_nats_response},
     postgres::{PostgresExtraction, parse_postgres_error_response, parse_postgres_message},
     redis::{RedisExtraction, parse_redis_command, parse_redis_response},
@@ -351,7 +353,7 @@ proptest! {
     }
 
     #[test]
-    fn arbitrary_mysql_error_response_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+    fn arbitrary_mysql_response_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
         let config = ProtocolExtractionConfig {
             max_header_bytes: 256,
             max_request_line_bytes: 64,
@@ -359,6 +361,7 @@ proptest! {
             max_tracestate_bytes: 32,
         };
 
+        let _ = parse_mysql_response(&bytes, &config);
         let _ = parse_mysql_error_response(&bytes, &config);
     }
 
@@ -380,7 +383,7 @@ proptest! {
             .expect("bounded mysql error parses");
         let expected_status = format!("{sqlstate}/{vendor_code}");
         prop_assert_eq!(parsed.status_code.as_str(), expected_status.as_str());
-        prop_assert_eq!(parsed.error_type.as_str(), parsed.status_code.as_str());
+        prop_assert_eq!(parsed.error_type.as_deref(), Some(parsed.status_code.as_str()));
         prop_assert!(parsed.attributes.len() <= config.max_attributes);
         prop_assert!(!parsed
             .attributes
@@ -1896,6 +1899,42 @@ fn extracts_mysql_operation_after_comments() {
 }
 
 #[test]
+fn extracts_mysql_ok_response_without_raw_session_state() {
+    let bytes = mysql_ok_packet(b"\0\0\x02\0secret session state changed");
+
+    let extraction = parse_mysql_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("mysql ok parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Mysql);
+    assert_eq!(extraction.status_code, "OK");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.system" && attribute.value == "mysql")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.response.status_code" && attribute.value == "OK")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn extracts_mysql_error_response_without_raw_message() {
     let bytes = mysql_error_packet(1064, Some(b"42000"), b"syntax near secret table customers");
 
@@ -1904,7 +1943,7 @@ fn extracts_mysql_error_response_without_raw_message() {
 
     assert_eq!(extraction.protocol, ProtocolKind::Mysql);
     assert_eq!(extraction.status_code, "42000/1064");
-    assert_eq!(extraction.error_type, "42000/1064");
+    assert_eq!(extraction.error_type.as_deref(), Some("42000/1064"));
     assert!(
         extraction
             .attributes
@@ -1933,7 +1972,7 @@ fn extracts_mysql_error_response_without_sqlstate_marker() {
         .expect("mysql error response parses");
 
     assert_eq!(extraction.status_code, "1045");
-    assert_eq!(extraction.error_type, "1045");
+    assert_eq!(extraction.error_type.as_deref(), Some("1045"));
     assert!(extraction.attributes.iter().any(|attribute| {
         attribute.key == "db.response.status_code" && attribute.value == "1045"
     }));
@@ -2032,6 +2071,10 @@ fn rejects_malformed_and_unsupported_mysql_fixtures() {
     );
     assert_eq!(
         parse_mysql_error_response(&mysql_packet(0x00, b"ok"), &config).unwrap_err(),
+        MysqlExtraction::UnsupportedResponse
+    );
+    assert_eq!(
+        parse_mysql_response(&mysql_packet(0x03, b"select 1"), &config).unwrap_err(),
         MysqlExtraction::UnsupportedResponse
     );
 
@@ -2665,6 +2708,20 @@ fn mysql_error_packet(vendor_code: u16, sqlstate: Option<&[u8]>, message: &[u8])
         payload.extend_from_slice(sqlstate);
     }
     payload.extend_from_slice(message);
+
+    let mut packet = Vec::with_capacity(payload.len() + 4);
+    packet.push((payload.len() & 0xff) as u8);
+    packet.push(((payload.len() >> 8) & 0xff) as u8);
+    packet.push(((payload.len() >> 16) & 0xff) as u8);
+    packet.push(0);
+    packet.extend_from_slice(&payload);
+    packet
+}
+
+fn mysql_ok_packet(body: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.push(0x00);
+    payload.extend_from_slice(body);
 
     let mut packet = Vec::with_capacity(payload.len() + 4);
     packet.push((payload.len() & 0xff) as u8);
