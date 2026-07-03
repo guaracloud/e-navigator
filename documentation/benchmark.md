@@ -46,7 +46,8 @@ Current local benchmark targets:
   request, profiling, runtime security, and native export;
 - JSON signal serialization, OpenTelemetry metric/trace/profile formatting,
   pprof profile sample protobuf rendering, Prometheus profile session/warning
-  formatting, and bounded HTTP exporter queue enqueue behavior.
+  formatting, prefilled Prometheus latest-metric updates, and bounded HTTP
+  exporter queue enqueue behavior.
 
 Benchmark setup must stay outside measured loops where the code path supports
 that. Benchmarks use fixed in-memory fixtures only. They must not read live

@@ -416,6 +416,25 @@ fn bench_serialization_and_exporter(c: &mut Criterion) {
         profiles_enabled: true,
     })
     .unwrap();
+    let prometheus_latest_sink = PrometheusHttpSink::bind(PrometheusHttpConfig {
+        enabled: true,
+        bind_address: "127.0.0.1".to_string(),
+        port: 0,
+        max_metric_lines: 4096,
+        metrics_enabled: true,
+        profiles_enabled: false,
+    })
+    .unwrap();
+    for index in 0..2048 {
+        runtime
+            .block_on(
+                prometheus_latest_sink.write(&network_flow_metric_signal_named(&format!(
+                    "network.bench.metric.{index}"
+                ))),
+            )
+            .unwrap();
+    }
+    let prometheus_latest_update = network_flow_metric_signal_named("network.bench.metric.2047");
     c.bench_function("formatter/otel_network_flow_metric", |b| {
         b.iter(|| format_otel_metric_record(black_box(&network_metric)).unwrap())
     });
@@ -439,6 +458,13 @@ fn bench_serialization_and_exporter(c: &mut Criterion) {
         b.iter(|| {
             runtime
                 .block_on(prometheus_sink.write(black_box(&profile_warning)))
+                .unwrap()
+        })
+    });
+    c.bench_function("formatter/prometheus_latest_metric_update_prefilled", |b| {
+        b.iter(|| {
+            runtime
+                .block_on(prometheus_latest_sink.write(black_box(&prometheus_latest_update)))
                 .unwrap()
         })
     });
@@ -792,11 +818,15 @@ fn security_signals() -> Vec<SignalEnvelope> {
 }
 
 fn network_flow_metric_signal() -> SignalEnvelope {
+    network_flow_metric_signal_named("network.flow.bytes")
+}
+
+fn network_flow_metric_signal_named(metric_name: &str) -> SignalEnvelope {
     SignalEnvelope::network_counter_metric(
         "generator.network_metrics",
         Some("node-a".to_string()),
         NetworkCounterMetric {
-            metric_name: "network.flow.bytes".to_string(),
+            metric_name: metric_name.to_string(),
             unit: "By".to_string(),
             value: 4096,
             window: window(1_000, 2_000),
