@@ -2951,6 +2951,31 @@ fn extracts_postgres_authentication_responses_without_auth_payload_values() {
 }
 
 #[test]
+fn extracts_postgres_backend_key_data_without_key_values() {
+    let mut body = Vec::new();
+    body.extend_from_slice(&12_345_i32.to_be_bytes());
+    body.extend_from_slice(&67_890_i32.to_be_bytes());
+    let bytes = postgres_frame(b'K', &body);
+
+    let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres backend key data response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.status_code, "OK");
+    assert_eq!(extraction.error_type, None);
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "OK"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("12345")
+                || attribute.value.contains("67890"))
+    );
+}
+
+#[test]
 fn extracts_postgres_empty_success_responses_without_payload_values() {
     for message_type in [b'1', b'2', b'3', b'I', b'n', b's'] {
         let bytes = postgres_frame(message_type, b"");
@@ -3428,6 +3453,10 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     assert_eq!(
         parse_postgres_response(&postgres_authentication_frame(99, b""), &config).unwrap_err(),
         PostgresExtraction::UnsupportedMessage
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b'K', b"secret"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
     );
     assert_eq!(
         parse_postgres_response(

@@ -136,6 +136,7 @@ pub fn parse_postgres_response(
         b'C' => postgres_command_complete_response(body, config),
         b'D' => postgres_data_row_response(body, config),
         b'E' => postgres_error_response(body, config.max_attributes),
+        b'K' => postgres_backend_key_data_response(body, config.max_attributes),
         b'N' => postgres_notice_response(body, config.max_attributes),
         b'R' => postgres_authentication_response(body, config),
         b'S' => postgres_parameter_status_response(body, config),
@@ -318,6 +319,22 @@ fn postgres_notice_response(
 ) -> Result<ParsedPostgresResponse, PostgresExtraction> {
     let status_code = postgres_sqlstate(body)?.ok_or(PostgresExtraction::MissingSqlstate)?;
 
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        attributes: postgres_response_attributes(&status_code, None, max_attributes),
+        status_code,
+        error_type: None,
+    })
+}
+
+fn postgres_backend_key_data_response(
+    body: &[u8],
+    max_attributes: usize,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    if body.len() != 8 {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    let status_code = "OK".to_string();
     Ok(ParsedPostgresResponse {
         protocol: ProtocolKind::Postgresql,
         attributes: postgres_response_attributes(&status_code, None, max_attributes),
