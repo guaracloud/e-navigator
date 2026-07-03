@@ -19,9 +19,9 @@ use e_navigator_protocol::{
         parse_kafka_metadata_response, parse_kafka_offset_commit_response,
         parse_kafka_offset_delete_response, parse_kafka_offset_fetch_response,
         parse_kafka_produce_response, parse_kafka_request,
-        parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
-        parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
-        parse_kafka_write_txn_markers_response,
+        parse_kafka_renew_delegation_token_response, parse_kafka_sasl_authenticate_response,
+        parse_kafka_sasl_handshake_response, parse_kafka_sync_group_response,
+        parse_kafka_txn_offset_commit_response, parse_kafka_write_txn_markers_response,
     },
 };
 use libfuzzer_sys::fuzz_target;
@@ -54,6 +54,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_alter_replica_log_dirs_response(data, 1, &config);
     let _ = parse_kafka_describe_log_dirs_response(data, 1, &config);
     let _ = parse_kafka_create_delegation_token_response(data, 1, &config);
+    let _ = parse_kafka_renew_delegation_token_response(data, 1, &config);
     let _ = parse_kafka_produce_response(data, 0, &config);
     let _ = parse_kafka_produce_response(data, 7, &config);
     let _ = parse_kafka_fetch_response(data, 0, &config);

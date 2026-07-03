@@ -794,6 +794,70 @@ pub fn parse_kafka_create_delegation_token_response(
     })
 }
 
+pub fn parse_kafka_renew_delegation_token_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if api_version != 1 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = renew_delegation_token_response_error_code(body)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("renew_delegation_token"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("39"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "renew_delegation_token".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_produce_response(
     bytes: &[u8],
     api_version: i16,
@@ -2488,6 +2552,7 @@ fn validate_request_body(
         36 => validate_sasl_authenticate_request_body(body, header, config),
         37 => validate_create_partitions_request_body(body, header, config),
         38 => validate_create_delegation_token_request_body(body, header, config),
+        39 => validate_renew_delegation_token_request_body(body, header, config),
         42 => validate_delete_groups_request_body(body, header, config),
         47 => validate_offset_delete_request_body(body, header, config),
         _ => Ok(()),
@@ -2925,6 +2990,24 @@ fn validate_create_delegation_token_request_body(
         skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
         skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
     }
+    skip_bytes(body, &mut cursor, 8)?;
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_renew_delegation_token_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_version != 1 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+
+    let mut cursor = header.body_start;
+    skip_kafka_bytes(body, &mut cursor, config.max_header_bytes)?;
     skip_bytes(body, &mut cursor, 8)?;
     if cursor != body.len() {
         return Err(KafkaExtraction::MalformedFrame);
@@ -3751,6 +3834,16 @@ fn create_delegation_token_response_error_code(
     skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
     skip_kafka_bytes(body, &mut cursor, config.max_header_bytes)?;
     skip_bytes(body, &mut cursor, 4)?;
+    Ok(error_code)
+}
+
+fn renew_delegation_token_response_error_code(body: &[u8]) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    let error_code = read_i16_be_cursor(body, &mut cursor)?;
+    skip_bytes(body, &mut cursor, 12)?;
     Ok(error_code)
 }
 
@@ -4766,6 +4859,7 @@ fn api_key_name(api_key: i16) -> Option<&'static str> {
         36 => Some("sasl_authenticate"),
         37 => Some("create_partitions"),
         38 => Some("create_delegation_token"),
+        39 => Some("renew_delegation_token"),
         42 => Some("delete_groups"),
         44 => Some("incremental_alter_configs"),
         47 => Some("offset_delete"),

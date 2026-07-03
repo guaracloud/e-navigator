@@ -18,7 +18,8 @@ use e_navigator_protocol::{
         parse_kafka_leave_group_response, parse_kafka_list_groups_response,
         parse_kafka_list_offsets_response, parse_kafka_metadata_response,
         parse_kafka_offset_commit_response, parse_kafka_offset_delete_response,
-        parse_kafka_offset_fetch_response, parse_kafka_produce_response, parse_kafka_request,
+        parse_kafka_offset_fetch_response, parse_kafka_produce_response,
+        parse_kafka_renew_delegation_token_response, parse_kafka_request,
         parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
         parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
         parse_kafka_write_txn_markers_response,
@@ -299,6 +300,7 @@ proptest! {
         let _ = parse_kafka_alter_replica_log_dirs_response(&bytes, 1, &config);
         let _ = parse_kafka_describe_log_dirs_response(&bytes, 1, &config);
         let _ = parse_kafka_create_delegation_token_response(&bytes, 1, &config);
+        let _ = parse_kafka_renew_delegation_token_response(&bytes, 1, &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -2668,6 +2670,36 @@ fn validates_kafka_create_delegation_token_requests_without_principal_values() {
 }
 
 #[test]
+fn validates_kafka_renew_delegation_token_requests_without_hmac_values() {
+    let body = kafka_renew_delegation_token_request_body(b"hmac-secret");
+    let bytes = kafka_request_frame(39, 1, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka renew delegation token request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("renew_delegation_token")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "39")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.api_version" && attribute.value == "1"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("hmac")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn validates_kafka_find_coordinator_v2_request_without_key_value() {
     let body = kafka_find_coordinator_request_body(2, "group.secret");
     let bytes = kafka_request_frame(10, 2, Some(b"secret-client"), &body);
@@ -4887,6 +4919,58 @@ fn extracts_kafka_create_delegation_token_error_response_without_token_values() 
 }
 
 #[test]
+fn extracts_kafka_renew_delegation_token_ok_response() {
+    let bytes = kafka_renew_delegation_token_response_frame(0, 0);
+
+    let extraction = parse_kafka_renew_delegation_token_response(
+        &bytes,
+        1,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("renew delegation token ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "renew_delegation_token");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "39")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+}
+
+#[test]
+fn extracts_kafka_renew_delegation_token_error_response() {
+    let bytes = kafka_renew_delegation_token_response_frame(0, 35);
+
+    let extraction = parse_kafka_renew_delegation_token_response(
+        &bytes,
+        1,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("renew delegation token error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "renew_delegation_token");
+    assert_eq!(extraction.status_code, "35");
+    assert_eq!(extraction.error_type.as_deref(), Some("35"));
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.api_version" && attribute.value == "1"
+    }));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "35")
+    );
+}
+
+#[test]
 fn extracts_kafka_join_group_ok_response_without_group_member_or_metadata_values() {
     let bytes = kafka_join_group_response_frame(0, 5, 0, &[("member.secret", b"secret-metadata")]);
 
@@ -6247,6 +6331,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     )
     .expect("bounded kafka create delegation token response parses");
     assert_eq!(bounded_create_delegation_token_response.attributes.len(), 2);
+
+    let bounded_renew_delegation_token_response = parse_kafka_renew_delegation_token_response(
+        &kafka_renew_delegation_token_response_frame(0, 35),
+        1,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka renew delegation token response parses");
+    assert_eq!(bounded_renew_delegation_token_response.attributes.len(), 2);
 
     let bounded_join_group_response = parse_kafka_join_group_response(
         &kafka_join_group_response_frame(0, 2, 25, &[("member.secret", b"secret-metadata")]),
@@ -7762,6 +7859,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::ClientIdTooLong
     );
     assert_eq!(
+        parse_kafka_request(&kafka_request_frame(39, 2, None, b""), &config).unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    let body = kafka_renew_delegation_token_request_body(&[0_u8; 129]);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(39, 1, None, &body),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_api_versions_response(&[], 0, &config).unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
@@ -7963,6 +8078,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_create_delegation_token_response(
             &kafka_create_delegation_token_response_frame(0, 0, "User", "alice", "token", b"hmac",),
+            2,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_renew_delegation_token_response(
+            &kafka_renew_delegation_token_response_frame(0, 0),
             2,
             &config
         )
@@ -8750,6 +8874,19 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_create_delegation_token_response(
             &truncated_create_delegation_token_response,
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_renew_delegation_token_response =
+        kafka_renew_delegation_token_response_frame(0, 35);
+    truncated_renew_delegation_token_response.truncate(12);
+    assert_eq!(
+        parse_kafka_renew_delegation_token_response(
+            &truncated_renew_delegation_token_response,
             1,
             &config
         )
@@ -12125,6 +12262,13 @@ fn kafka_create_delegation_token_request_body(renewers: &[(&str, &str)]) -> Vec<
     body
 }
 
+fn kafka_renew_delegation_token_request_body(hmac: &[u8]) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_kafka_bytes(&mut body, hmac);
+    body.extend_from_slice(&3_600_000_i64.to_be_bytes());
+    body
+}
+
 fn kafka_join_group_request_body(api_version: i16, protocols: &[(&str, &[u8])]) -> Vec<u8> {
     let mut body = Vec::new();
     push_kafka_string(&mut body, "group.secret");
@@ -13108,6 +13252,15 @@ fn kafka_create_delegation_token_response_frame(
     response.extend_from_slice(&1_700_007_200_000_i64.to_be_bytes());
     push_kafka_string(&mut response, token_id);
     push_kafka_bytes(&mut response, hmac);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    kafka_frame(&response)
+}
+
+fn kafka_renew_delegation_token_response_frame(correlation_id: i32, error_code: i16) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    response.extend_from_slice(&error_code.to_be_bytes());
+    response.extend_from_slice(&1_700_003_600_000_i64.to_be_bytes());
     response.extend_from_slice(&0_i32.to_be_bytes());
     kafka_frame(&response)
 }
