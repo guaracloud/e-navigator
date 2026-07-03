@@ -4,7 +4,7 @@ use e_navigator_protocol::{
     http::{HttpExtraction, parse_http_request, parse_http_response},
     kafka::{
         KafkaExtraction, parse_kafka_api_versions_response, parse_kafka_fetch_response,
-        parse_kafka_produce_response, parse_kafka_request,
+        parse_kafka_metadata_response, parse_kafka_produce_response, parse_kafka_request,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -274,6 +274,7 @@ proptest! {
         let _ = parse_kafka_api_versions_response(&bytes, api_version, &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
+        let _ = parse_kafka_metadata_response(&bytes, api_version.min(8), &config);
     }
 
     #[test]
@@ -2275,6 +2276,80 @@ fn extracts_kafka_fetch_error_response_without_topic_or_record_values() {
 }
 
 #[test]
+fn extracts_kafka_metadata_ok_response_without_cluster_broker_or_topic_values() {
+    let bytes = kafka_metadata_response_frame(0, 8, &[("orders.secret", 0, 0)]);
+
+    let extraction = parse_kafka_metadata_response(&bytes, 8, &ProtocolExtractionConfig::default())
+        .expect("metadata ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "metadata");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "3")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("secret")
+                || attribute.value.contains("broker")
+                || attribute.value.contains("cluster"))
+    );
+}
+
+#[test]
+fn extracts_kafka_metadata_error_response_without_raw_values() {
+    let bytes = kafka_metadata_response_frame(
+        0,
+        7,
+        &[
+            ("orders.secret", 0, 0),
+            ("payments.secret", 0, 6),
+            ("inventory.secret", 17, 0),
+        ],
+    );
+
+    let extraction = parse_kafka_metadata_response(&bytes, 7, &ProtocolExtractionConfig::default())
+        .expect("metadata error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "metadata");
+    assert_eq!(extraction.status_code, "6");
+    assert_eq!(extraction.error_type.as_deref(), Some("6"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "7")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "6")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("payments")
+                || attribute.value.contains("inventory")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     let bounded = parse_kafka_request(
         &kafka_request_frame(3, 9, Some(b"client-a"), b"topic.secret"),
@@ -2326,6 +2401,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     )
     .expect("bounded kafka fetch response parses");
     assert_eq!(bounded_fetch_response.attributes.len(), 2);
+
+    let bounded_metadata_response = parse_kafka_metadata_response(
+        &kafka_metadata_response_frame(0, 1, &[("orders.secret", 6, 0)]),
+        1,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka metadata response parses");
+    assert_eq!(bounded_metadata_response.attributes.len(), 2);
 
     assert_eq!(
         parse_kafka_request(
@@ -2385,6 +2473,20 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     assert_eq!(
         parse_kafka_fetch_response(
             &kafka_fetch_response_frame(0, 1, &[("orders.secret", 6, b"secret-records")]),
+            1,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 16,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_metadata_response(
+            &kafka_metadata_response_frame(0, 1, &[("orders.secret", 6, 0)]),
             1,
             &ProtocolExtractionConfig {
                 max_header_bytes: 16,
@@ -2615,6 +2717,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_metadata_response(
+            &kafka_metadata_response_frame(0, 9, &[("orders", 0, 0)]),
+            9,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_fetch_response(
             &kafka_fetch_response_with_topic_count_frame(1025),
             1,
@@ -2646,6 +2757,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         .unwrap_err(),
         KafkaExtraction::FrameTooLong
     );
+    assert_eq!(
+        parse_kafka_metadata_response(
+            &kafka_metadata_response_with_topic_count_frame(1025),
+            8,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_metadata_response(
+            &kafka_metadata_response_with_partition_count_frame(1025),
+            8,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
 
     let mut truncated = kafka_request_frame(3, 9, Some(b"client-a"), b"");
     truncated.truncate(8);
@@ -2665,6 +2794,13 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     truncated_fetch_response.truncate(24);
     assert_eq!(
         parse_kafka_fetch_response(&truncated_fetch_response, 5, &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_metadata_response = kafka_metadata_response_frame(0, 8, &[("orders", 6, 0)]);
+    truncated_metadata_response.truncate(24);
+    assert_eq!(
+        parse_kafka_metadata_response(&truncated_metadata_response, 8, &config).unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
 
@@ -5813,6 +5949,105 @@ fn kafka_fetch_response_with_record_len_frame(record_len: i32) -> Vec<u8> {
     response.extend_from_slice(&42_i64.to_be_bytes());
     response.extend_from_slice(&record_len.to_be_bytes());
     kafka_frame(&response)
+}
+
+fn kafka_metadata_response_frame(
+    correlation_id: i32,
+    api_version: i16,
+    topics: &[(&str, i16, i16)],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    if api_version >= 3 {
+        response.extend_from_slice(&0_i32.to_be_bytes());
+    }
+    response.extend_from_slice(&1_i32.to_be_bytes());
+    response.extend_from_slice(&7_i32.to_be_bytes());
+    push_kafka_string(&mut response, "broker.secret.local");
+    response.extend_from_slice(&9092_i32.to_be_bytes());
+    if api_version >= 1 {
+        response.extend_from_slice(&(-1_i16).to_be_bytes());
+    }
+    if api_version >= 2 {
+        push_kafka_nullable_string(&mut response, Some("cluster.secret"));
+    }
+    if api_version >= 1 {
+        response.extend_from_slice(&7_i32.to_be_bytes());
+    }
+    response.extend_from_slice(&(topics.len() as i32).to_be_bytes());
+    for (topic, topic_error_code, partition_error_code) in topics {
+        response.extend_from_slice(&topic_error_code.to_be_bytes());
+        push_kafka_string(&mut response, topic);
+        if api_version >= 1 {
+            response.push(0);
+        }
+        response.extend_from_slice(&1_i32.to_be_bytes());
+        response.extend_from_slice(&partition_error_code.to_be_bytes());
+        response.extend_from_slice(&0_i32.to_be_bytes());
+        response.extend_from_slice(&7_i32.to_be_bytes());
+        if api_version >= 7 {
+            response.extend_from_slice(&3_i32.to_be_bytes());
+        }
+        push_int32_array(&mut response, &[7]);
+        push_int32_array(&mut response, &[7]);
+        if api_version >= 5 {
+            push_int32_array(&mut response, &[]);
+        }
+        if api_version >= 8 {
+            response.extend_from_slice(&0_i32.to_be_bytes());
+        }
+    }
+    if api_version >= 8 {
+        response.extend_from_slice(&0_i32.to_be_bytes());
+    }
+    kafka_frame(&response)
+}
+
+fn kafka_metadata_response_with_topic_count_frame(topic_count: i32) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&(-1_i16).to_be_bytes());
+    response.extend_from_slice(&7_i32.to_be_bytes());
+    response.extend_from_slice(&topic_count.to_be_bytes());
+    kafka_frame(&response)
+}
+
+fn kafka_metadata_response_with_partition_count_frame(partition_count: i32) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&(-1_i16).to_be_bytes());
+    response.extend_from_slice(&7_i32.to_be_bytes());
+    response.extend_from_slice(&1_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    response.extend_from_slice(&6_i16.to_be_bytes());
+    response.extend_from_slice(b"orders");
+    response.push(0);
+    response.extend_from_slice(&partition_count.to_be_bytes());
+    kafka_frame(&response)
+}
+
+fn push_kafka_string(bytes: &mut Vec<u8>, value: &str) {
+    bytes.extend_from_slice(&(value.len() as i16).to_be_bytes());
+    bytes.extend_from_slice(value.as_bytes());
+}
+
+fn push_kafka_nullable_string(bytes: &mut Vec<u8>, value: Option<&str>) {
+    if let Some(value) = value {
+        push_kafka_string(bytes, value);
+    } else {
+        bytes.extend_from_slice(&(-1_i16).to_be_bytes());
+    }
+}
+
+fn push_int32_array(bytes: &mut Vec<u8>, values: &[i32]) {
+    bytes.extend_from_slice(&(values.len() as i32).to_be_bytes());
+    for value in values {
+        bytes.extend_from_slice(&value.to_be_bytes());
+    }
 }
 
 fn push_unsigned_varint(bytes: &mut Vec<u8>, mut value: usize) {
