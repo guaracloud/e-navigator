@@ -197,6 +197,12 @@ fn validate_endpoint(path: &'static str, endpoint: &str) -> ConfigResult<()> {
             format!("{path} must not contain whitespace"),
         ));
     }
+    if endpoint.bytes().any(|byte| byte.is_ascii_control()) {
+        return Err(ConfigError::invalid_value(
+            path,
+            format!("{path} must not contain control characters"),
+        ));
+    }
     let Some(rest) = endpoint
         .strip_prefix("http://")
         .or_else(|| endpoint.strip_prefix("https://"))

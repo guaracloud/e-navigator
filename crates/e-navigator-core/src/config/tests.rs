@@ -544,6 +544,19 @@ fn otlp_http_sink_config_is_validated_when_enabled() {
             modules: enabled_modules(),
             otlp_http: OtlpHttpConfig {
                 enabled: true,
+                endpoint: "http://127.0.0.1:4318/\0metrics".to_string(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.endpoint must not contain control characters",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
                 endpoint: "http://".to_string(),
                 ..OtlpHttpConfig::default()
             },
