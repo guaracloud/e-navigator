@@ -202,7 +202,23 @@ fn prometheus_http_sink_config_is_validated_when_enabled() {
             ],
             prometheus_http: PrometheusHttpConfig {
                 enabled: true,
-                bind_address: "127.0.0.1\n0.0.0.0".to_string(),
+                bind_address: "127.0.0.1 0.0.0.0".to_string(),
+                ..PrometheusHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "prometheus_http.bind_address must not contain whitespace when sink.prometheus_http is enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.synthetic_exec"),
+                ModuleConfig::enabled("sink.prometheus_http"),
+            ],
+            prometheus_http: PrometheusHttpConfig {
+                enabled: true,
+                bind_address: "127.0.0.1\0".to_string(),
                 ..PrometheusHttpConfig::default()
             },
             ..RuntimeConfig::default()
