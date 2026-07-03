@@ -10,7 +10,7 @@ use e_navigator_protocol::{
     ProtocolExtractionConfig,
     grpc::{parse_grpc_request_headers, parse_grpc_response_trailers},
     http::{parse_http_request, parse_http_response},
-    kafka::{parse_kafka_api_versions_response, parse_kafka_request},
+    kafka::{parse_kafka_api_versions_response, parse_kafka_produce_response, parse_kafka_request},
     mongodb::{parse_mongodb_message, parse_mongodb_response},
     mysql::parse_mysql_command,
     nats::{parse_nats_command, parse_nats_response},
@@ -97,6 +97,33 @@ fn bench_host_parsers(c: &mut Criterion) {
     });
 }
 
+fn kafka_produce_response_fixture() -> Vec<u8> {
+    let topic = b"bench-topic";
+    let mut body = Vec::with_capacity(43);
+    body.extend_from_slice(&42_i32.to_be_bytes());
+    body.extend_from_slice(&1_i32.to_be_bytes());
+    body.extend_from_slice(
+        &i16::try_from(topic.len())
+            .expect("kafka benchmark topic fits in i16")
+            .to_be_bytes(),
+    );
+    body.extend_from_slice(topic);
+    body.extend_from_slice(&1_i32.to_be_bytes());
+    body.extend_from_slice(&0_i32.to_be_bytes());
+    body.extend_from_slice(&6_i16.to_be_bytes());
+    body.extend_from_slice(&42_i64.to_be_bytes());
+    body.extend_from_slice(&0_i32.to_be_bytes());
+
+    let mut frame = Vec::with_capacity(body.len() + 4);
+    frame.extend_from_slice(
+        &i32::try_from(body.len())
+            .expect("kafka benchmark body fits in i32")
+            .to_be_bytes(),
+    );
+    frame.extend_from_slice(&body);
+    frame
+}
+
 fn bench_protocol_and_profiles(c: &mut Criterion) {
     let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
     let http = b"GET /api/orders HTTP/1.1\r\nHost: api.example.test\r\nTraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\nTracestate: rojo=00f067aa0ba902b7\r\n\r\n";
@@ -109,6 +136,7 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
         b"<\0\0\0\x01\0\0\0\0\0\0\0\xdd\x07\0\0\0\0\0\0\0\x00'\0\0\0\x08ok\0\0\x10code\0\r\0\0\0\x02errmsg\0\x07\0\0\0secret\0\0";
     let kafka = b"\0\0\0\x1b\0\0\0\x08\0\0\0\x2a\0\x0cbench-clienttopic";
     let kafka_response = b"\0\0\0\x15\0\0\0\x2a\0#secret-api-list";
+    let kafka_produce_response = kafka_produce_response_fixture();
     let mysql = b"\x18\0\0\0\x03select * from customers";
     let nats = b"PUB orders.created 5\r\nhello\r\n";
     let nats_response = b"-ERR 'Authorization Violation'\r\n";
@@ -153,6 +181,16 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
         b.iter(|| {
             parse_kafka_api_versions_response(black_box(kafka_response), 0, &protocol_config)
                 .unwrap()
+        })
+    });
+    c.bench_function("protocol/kafka_produce_response_parse", |b| {
+        b.iter(|| {
+            parse_kafka_produce_response(
+                black_box(kafka_produce_response.as_slice()),
+                1,
+                &protocol_config,
+            )
+            .unwrap()
         })
     });
     c.bench_function("protocol/mongodb_op_msg_parse", |b| {
