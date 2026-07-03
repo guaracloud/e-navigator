@@ -9,7 +9,7 @@ use e_navigator_profiling::model::{NormalizationLimits, parse_profile_fixture};
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
     grpc::{parse_grpc_request_headers, parse_grpc_response_trailers},
-    http::parse_http_request,
+    http::{parse_http_request, parse_http_response},
     kafka::{parse_kafka_api_versions_response, parse_kafka_request},
     mongodb::{parse_mongodb_message, parse_mongodb_response},
     mysql::parse_mysql_command,
@@ -100,6 +100,7 @@ fn bench_host_parsers(c: &mut Criterion) {
 fn bench_protocol_and_profiles(c: &mut Criterion) {
     let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
     let http = b"GET /api/orders HTTP/1.1\r\nHost: api.example.test\r\nTraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\nTracestate: rojo=00f067aa0ba902b7\r\n\r\n";
+    let http_response = b"HTTP/1.1 503 Service Unavailable\r\nServer: fixture\r\n\r\n";
     let grpc = b":method: POST\n:path: /checkout.v1.CheckoutService/GetCart\n:authority: checkout.example.com:8443\ncontent-type: application/grpc+proto\ntraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\ntracestate: vendor=value\n\n";
     let grpc_trailers = b"grpc-status: 13\ngrpc-message: internal%20detail\n\n";
     let mongodb =
@@ -135,6 +136,9 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     });
     c.bench_function("protocol/http_fixture_parse", |b| {
         b.iter(|| parse_http_request(black_box(http), &protocol_config).unwrap())
+    });
+    c.bench_function("protocol/http_response_parse", |b| {
+        b.iter(|| parse_http_response(black_box(http_response), &protocol_config).unwrap())
     });
     c.bench_function("protocol/grpc_request_headers_parse", |b| {
         b.iter(|| parse_grpc_request_headers(black_box(grpc), &protocol_config).unwrap())
