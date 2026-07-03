@@ -344,6 +344,7 @@ fn validate_request_body(
     match header.api_key {
         0 => validate_produce_request_body(body, header, config),
         1 => validate_fetch_request_body(body, header, config),
+        3 => validate_metadata_request_body(body, header, config),
         18 => validate_api_versions_request_body(body, header, config),
         _ => Ok(()),
     }
@@ -398,6 +399,42 @@ fn validate_fetch_request_body(
             }
             skip_bytes(body, &mut cursor, 4)?;
         }
+    }
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_metadata_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_version < 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if header.api_version > 8 {
+        return Ok(());
+    }
+
+    let mut cursor = header.body_start;
+    let topic_count = if header.api_version == 0 {
+        Some(read_request_array_len(body, &mut cursor)?)
+    } else {
+        read_nullable_request_array_len(body, &mut cursor)?
+    };
+
+    if let Some(topic_count) = topic_count {
+        for _ in 0..topic_count {
+            skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+        }
+    }
+    if header.api_version >= 4 {
+        skip_bytes(body, &mut cursor, 1)?;
+    }
+    if header.api_version >= 8 {
+        skip_bytes(body, &mut cursor, 2)?;
     }
     if cursor != body.len() {
         return Err(KafkaExtraction::MalformedFrame);
@@ -547,6 +584,24 @@ fn read_request_array_len(body: &[u8], cursor: &mut usize) -> Result<usize, Kafk
         return Err(KafkaExtraction::FrameTooLong);
     }
     Ok(len)
+}
+
+fn read_nullable_request_array_len(
+    body: &[u8],
+    cursor: &mut usize,
+) -> Result<Option<usize>, KafkaExtraction> {
+    let len = read_i32_be_cursor(body, cursor)?;
+    if len == -1 {
+        return Ok(None);
+    }
+    if len < -1 {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    let len = len as usize;
+    if len > MAX_KAFKA_RESPONSE_ENTRIES {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    Ok(Some(len))
 }
 
 fn skip_kafka_string(
