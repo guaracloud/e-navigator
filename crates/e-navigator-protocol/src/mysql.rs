@@ -187,10 +187,14 @@ fn mysql_sqlstate(payload: &[u8]) -> Result<Option<&str>, MysqlExtraction> {
     }
     let sqlstate =
         std::str::from_utf8(&payload[4..end]).map_err(|_| MysqlExtraction::InvalidUtf8)?;
-    if !sqlstate.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+    if !sqlstate.bytes().all(is_sqlstate_byte) {
         return Err(MysqlExtraction::MalformedPacket);
     }
     Ok(Some(sqlstate))
+}
+
+fn is_sqlstate_byte(byte: u8) -> bool {
+    byte.is_ascii_digit() || byte.is_ascii_uppercase()
 }
 
 fn parse_query_bytes(bytes: &[u8], max_query_bytes: usize) -> Result<&str, MysqlExtraction> {

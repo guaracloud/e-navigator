@@ -2029,6 +2029,14 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     );
     assert_eq!(
         parse_postgres_error_response(
+            &postgres_error_response_frame(b"23a05", b"secret message"),
+            &config,
+        )
+        .unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_error_response(
             &postgres_error_response_frame(b"2350", b"secret message"),
             &config,
         )
@@ -2296,6 +2304,12 @@ fn rejects_malformed_and_unsupported_mysql_fixtures() {
     assert_eq!(
         parse_mysql_error_response(&invalid_sqlstate, &config).unwrap_err(),
         MysqlExtraction::InvalidUtf8
+    );
+
+    let lowercase_sqlstate = mysql_error_packet(1064, Some(b"42a00"), b"secret");
+    assert_eq!(
+        parse_mysql_error_response(&lowercase_sqlstate, &config).unwrap_err(),
+        MysqlExtraction::MalformedPacket
     );
 }
 

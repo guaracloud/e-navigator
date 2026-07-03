@@ -195,9 +195,7 @@ fn postgres_sqlstate(body: &[u8]) -> Result<Option<String>, PostgresExtraction> 
         }
         if field_type == b'C' {
             let value = parse_cstring(body, &mut cursor, POSTGRES_SQLSTATE_BYTES)?;
-            if value.len() != POSTGRES_SQLSTATE_BYTES
-                || !value.bytes().all(|byte| byte.is_ascii_alphanumeric())
-            {
+            if value.len() != POSTGRES_SQLSTATE_BYTES || !value.bytes().all(is_sqlstate_byte) {
                 return Err(PostgresExtraction::MalformedFrame);
             }
             return Ok(Some(value.to_string()));
@@ -205,6 +203,10 @@ fn postgres_sqlstate(body: &[u8]) -> Result<Option<String>, PostgresExtraction> 
         skip_cstring(body, &mut cursor)?;
     }
     Err(PostgresExtraction::MalformedFrame)
+}
+
+fn is_sqlstate_byte(byte: u8) -> bool {
+    byte.is_ascii_digit() || byte.is_ascii_uppercase()
 }
 
 fn skip_cstring(bytes: &[u8], cursor: &mut usize) -> Result<(), PostgresExtraction> {
