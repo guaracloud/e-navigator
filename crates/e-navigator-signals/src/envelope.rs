@@ -16,6 +16,8 @@ use crate::network::{
 };
 use crate::profiling::{sanitize_optional_profiling_string, sanitize_profiling_string};
 use crate::resource::{
+    sanitize_cgroup_cpu_observation, sanitize_cgroup_file_descriptor_observation,
+    sanitize_cgroup_memory_observation, sanitize_cgroup_pids_observation,
     sanitize_node_cpu_observation, sanitize_node_disk_io_observation,
     sanitize_node_filesystem_observation, sanitize_node_load_observation,
     sanitize_node_memory_observation, sanitize_process_resource_observation,
@@ -801,8 +803,9 @@ impl SignalEnvelope {
     pub fn cgroup_cpu_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: CgroupCpuObservation,
+        mut observation: CgroupCpuObservation,
     ) -> Self {
+        sanitize_cgroup_cpu_observation(&mut observation);
         Self::new(
             source,
             host,
@@ -814,8 +817,9 @@ impl SignalEnvelope {
     pub fn cgroup_memory_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: CgroupMemoryObservation,
+        mut observation: CgroupMemoryObservation,
     ) -> Self {
+        sanitize_cgroup_memory_observation(&mut observation);
         Self::new(
             source,
             host,
@@ -827,8 +831,9 @@ impl SignalEnvelope {
     pub fn cgroup_pids_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: CgroupPidsObservation,
+        mut observation: CgroupPidsObservation,
     ) -> Self {
+        sanitize_cgroup_pids_observation(&mut observation);
         Self::new(
             source,
             host,
@@ -840,8 +845,9 @@ impl SignalEnvelope {
     pub fn cgroup_file_descriptor_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: CgroupFileDescriptorObservation,
+        mut observation: CgroupFileDescriptorObservation,
     ) -> Self {
+        sanitize_cgroup_file_descriptor_observation(&mut observation);
         Self::new(
             source,
             host,
@@ -3029,6 +3035,84 @@ mod tests {
             let json = serde_json::to_value(&signal).expect("signal serializes");
             let decoded: SignalEnvelope = serde_json::from_value(json).expect("round trips");
             assert_eq!(decoded.schema_version, 1);
+        }
+    }
+
+    #[test]
+    fn cgroup_resource_constructors_bound_strings_before_json_stdout() {
+        let long = "c".repeat(320);
+        let cgroup = CgroupResourceContext {
+            cgroup_path: long.clone(),
+            container: None,
+            kubernetes: None,
+        };
+        let window = MetricAggregationWindow {
+            start_unix_nanos: 1_000,
+            end_unix_nanos: 2_000,
+        };
+        let cpu = SignalEnvelope::cgroup_cpu_observation(
+            "source.procfs_resource",
+            None,
+            CgroupCpuObservation {
+                metric_name: long.clone(),
+                unit: long.clone(),
+                timestamp_unix_nanos: 2_000,
+                window: window.clone(),
+                cgroup: cgroup.clone(),
+                usage_nanos: Some(10_000),
+                user_nanos: Some(6_000),
+                system_nanos: Some(4_000),
+                throttled_periods: Some(1),
+                throttled_nanos: Some(100),
+            },
+        );
+        let memory = SignalEnvelope::cgroup_memory_observation(
+            "source.procfs_resource",
+            None,
+            CgroupMemoryObservation {
+                metric_name: long.clone(),
+                unit: long.clone(),
+                timestamp_unix_nanos: 2_000,
+                window: window.clone(),
+                cgroup: cgroup.clone(),
+                current_bytes: Some(8_192),
+                peak_bytes: Some(16_384),
+                max_bytes: Some(65_536),
+            },
+        );
+        let pids = SignalEnvelope::cgroup_pids_observation(
+            "source.procfs_resource",
+            None,
+            CgroupPidsObservation {
+                metric_name: long.clone(),
+                unit: long.clone(),
+                timestamp_unix_nanos: 2_000,
+                window: window.clone(),
+                cgroup: cgroup.clone(),
+                process_count: Some(3),
+                thread_count: Some(9),
+                max_processes: Some(512),
+            },
+        );
+        let file_descriptors = SignalEnvelope::cgroup_file_descriptor_observation(
+            "source.procfs_resource",
+            None,
+            CgroupFileDescriptorObservation {
+                metric_name: long.clone(),
+                unit: long,
+                timestamp_unix_nanos: 2_000,
+                window,
+                cgroup,
+                open_fds: Some(42),
+                socket_count: Some(7),
+            },
+        );
+
+        for signal in [cpu, memory, pids, file_descriptors] {
+            assert_payload_string_lengths(
+                &signal,
+                &[&["metric_name"], &["unit"], &["cgroup", "cgroup_path"]],
+            );
         }
     }
 

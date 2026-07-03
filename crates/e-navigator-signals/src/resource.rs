@@ -244,6 +244,36 @@ pub(crate) fn sanitize_process_resource_context(context: &mut ProcessResourceCon
     sanitize_optional_resource_signal_string(&mut context.executable);
 }
 
+pub(crate) fn sanitize_cgroup_cpu_observation(observation: &mut CgroupCpuObservation) {
+    sanitize_resource_signal_string(&mut observation.metric_name);
+    sanitize_resource_signal_string(&mut observation.unit);
+    sanitize_cgroup_resource_context(&mut observation.cgroup);
+}
+
+pub(crate) fn sanitize_cgroup_memory_observation(observation: &mut CgroupMemoryObservation) {
+    sanitize_resource_signal_string(&mut observation.metric_name);
+    sanitize_resource_signal_string(&mut observation.unit);
+    sanitize_cgroup_resource_context(&mut observation.cgroup);
+}
+
+pub(crate) fn sanitize_cgroup_pids_observation(observation: &mut CgroupPidsObservation) {
+    sanitize_resource_signal_string(&mut observation.metric_name);
+    sanitize_resource_signal_string(&mut observation.unit);
+    sanitize_cgroup_resource_context(&mut observation.cgroup);
+}
+
+pub(crate) fn sanitize_cgroup_file_descriptor_observation(
+    observation: &mut CgroupFileDescriptorObservation,
+) {
+    sanitize_resource_signal_string(&mut observation.metric_name);
+    sanitize_resource_signal_string(&mut observation.unit);
+    sanitize_cgroup_resource_context(&mut observation.cgroup);
+}
+
+pub(crate) fn sanitize_cgroup_resource_context(context: &mut CgroupResourceContext) {
+    sanitize_resource_signal_string(&mut context.cgroup_path);
+}
+
 fn sanitize_resource_signal_string(value: &mut String) {
     *value = truncate_utf8(value, MAX_RESOURCE_SIGNAL_STRING_BYTES);
 }
