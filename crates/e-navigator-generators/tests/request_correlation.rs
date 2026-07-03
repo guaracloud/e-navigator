@@ -287,6 +287,13 @@ async fn protocol_request_preserves_error_attributes_for_trace_export() {
 
     for (protocol, method, status_key, status_value, error_type) in [
         (
+            ProtocolKind::Redis,
+            "GET",
+            "db.response.status_code",
+            "WRONGTYPE",
+            "redis_wrongtype",
+        ),
+        (
             ProtocolKind::Kafka,
             "api_versions",
             "messaging.kafka.response.error_code",
@@ -299,6 +306,27 @@ async fn protocol_request_preserves_error_attributes_for_trace_export() {
             "db.response.status_code",
             "13",
             "13",
+        ),
+        (
+            ProtocolKind::Mysql,
+            "SELECT",
+            "db.response.status_code",
+            "42000/1064",
+            "42000/1064",
+        ),
+        (
+            ProtocolKind::Nats,
+            "pub",
+            "messaging.nats.status_code",
+            "ERR",
+            "nats_error",
+        ),
+        (
+            ProtocolKind::Postgresql,
+            "SELECT",
+            "db.response.status_code",
+            "23505",
+            "23505",
         ),
     ] {
         let mut signal = protocol_request_signal(None, true);
