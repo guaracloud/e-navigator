@@ -7,7 +7,7 @@ use e_navigator_protocol::{
         parse_kafka_find_coordinator_response, parse_kafka_heartbeat_response,
         parse_kafka_leave_group_response, parse_kafka_list_groups_response,
         parse_kafka_list_offsets_response, parse_kafka_metadata_response,
-        parse_kafka_produce_response, parse_kafka_request,
+        parse_kafka_produce_response, parse_kafka_request, parse_kafka_sync_group_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -281,6 +281,7 @@ proptest! {
         let _ = parse_kafka_find_coordinator_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_heartbeat_response(&bytes, api_version.min(3), &config);
         let _ = parse_kafka_leave_group_response(&bytes, api_version.min(3), &config);
+        let _ = parse_kafka_sync_group_response(&bytes, api_version.min(3), &config);
         let _ = parse_kafka_list_groups_response(&bytes, api_version.min(3), &config);
         let _ = parse_kafka_metadata_response(&bytes, api_version.min(8), &config);
     }
@@ -2188,6 +2189,67 @@ fn validates_kafka_leave_group_legacy_requests_without_group_or_member_values() 
 }
 
 #[test]
+fn validates_kafka_sync_group_v3_request_without_group_member_or_assignment_values() {
+    let body = kafka_sync_group_request_body(3, b"secret-assignment");
+    let bytes = kafka_request_frame(14, 3, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka sync group v3 request parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation.as_deref(), Some("sync_group"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "14")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "3")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("member")
+                || attribute.value.contains("assignment"))
+    );
+}
+
+#[test]
+fn validates_kafka_sync_group_legacy_requests_without_group_member_or_assignment_values() {
+    for api_version in 0..=2 {
+        let body = kafka_sync_group_request_body(api_version, b"secret-assignment");
+        let bytes = kafka_request_frame(14, api_version, Some(b"secret-client"), &body);
+
+        let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+            .expect("kafka sync group request parses");
+
+        assert_eq!(extraction.operation.as_deref(), Some("sync_group"));
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                    && attribute.value == api_version.to_string())
+        );
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("secret")
+                    || attribute.value.contains("member")
+                    || attribute.value.contains("assignment"))
+        );
+    }
+}
+
+#[test]
 fn validates_kafka_list_groups_requests_without_body_values() {
     for api_version in 0..=3 {
         let bytes = kafka_request_frame(16, api_version, Some(b"secret-client"), b"");
@@ -2796,6 +2858,70 @@ fn extracts_kafka_leave_group_error_response_without_member_values() {
 }
 
 #[test]
+fn extracts_kafka_sync_group_ok_response_without_assignment_values() {
+    let bytes = kafka_sync_group_response_frame(0, 3, 0, b"secret-assignment");
+
+    let extraction =
+        parse_kafka_sync_group_response(&bytes, 3, &ProtocolExtractionConfig::default())
+            .expect("sync group ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "sync_group");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "14")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("assignment"))
+    );
+}
+
+#[test]
+fn extracts_kafka_sync_group_error_response_without_assignment_values() {
+    let bytes = kafka_sync_group_response_frame(0, 1, 25, b"secret-assignment");
+
+    let extraction =
+        parse_kafka_sync_group_response(&bytes, 1, &ProtocolExtractionConfig::default())
+            .expect("sync group error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "sync_group");
+    assert_eq!(extraction.status_code, "25");
+    assert_eq!(extraction.error_type.as_deref(), Some("25"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "1")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "25")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("assignment"))
+    );
+}
+
+#[test]
 fn extracts_kafka_list_groups_ok_response_without_group_values() {
     let bytes = kafka_list_groups_response_frame(0, 3, 0, &[("group.secret", "consumer")]);
 
@@ -3030,6 +3156,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     .expect("bounded kafka leave group response parses");
     assert_eq!(bounded_leave_group_response.attributes.len(), 2);
 
+    let bounded_sync_group_response = parse_kafka_sync_group_response(
+        &kafka_sync_group_response_frame(0, 1, 25, b"secret-assignment"),
+        1,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka sync group response parses");
+    assert_eq!(bounded_sync_group_response.attributes.len(), 2);
+
     let bounded_list_groups_response = parse_kafka_list_groups_response(
         &kafka_list_groups_response_frame(0, 1, 30, &[("group.secret", "consumer")]),
         1,
@@ -3170,6 +3309,20 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     assert_eq!(
         parse_kafka_leave_group_response(
             &kafka_leave_group_response_frame(0, 1, 25, &[]),
+            1,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 8,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_sync_group_response(
+            &kafka_sync_group_response_frame(0, 1, 25, b"secret-assignment"),
             1,
             &ProtocolExtractionConfig {
                 max_header_bytes: 8,
@@ -3333,6 +3486,28 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_request(
             &kafka_request_frame(13, 3, None, &body),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(14, -1, None, b""), &config).unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(14, 3, None, b"\0\x01"), &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    let body = kafka_sync_group_request_body(3, b"secret-assignment");
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(14, 3, None, &body),
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
                 max_request_line_bytes: 4,
@@ -3568,6 +3743,11 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_sync_group_response(&kafka_sync_group_response_frame(0, 4, 0, b""), 4, &config)
+            .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_list_groups_response(
             &kafka_list_groups_response_frame(0, 4, 0, &[]),
             4,
@@ -3659,6 +3839,20 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_sync_group_response(
+            &kafka_sync_group_response_with_assignment_len_frame(129),
+            1,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_list_groups_response(
             &kafka_list_groups_response_with_group_count_frame(1025),
             3,
@@ -3737,6 +3931,13 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     truncated_leave_group_response.truncate(12);
     assert_eq!(
         parse_kafka_leave_group_response(&truncated_leave_group_response, 3, &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_sync_group_response = kafka_sync_group_response_frame(0, 3, 25, b"data");
+    truncated_sync_group_response.truncate(12);
+    assert_eq!(
+        parse_kafka_sync_group_response(&truncated_sync_group_response, 3, &config).unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
 
@@ -6765,6 +6966,21 @@ fn kafka_leave_group_request_body(api_version: i16) -> Vec<u8> {
     body
 }
 
+fn kafka_sync_group_request_body(api_version: i16, assignment: &[u8]) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_kafka_string(&mut body, "group.secret");
+    body.extend_from_slice(&3_i32.to_be_bytes());
+    push_kafka_string(&mut body, "member.secret");
+    if api_version >= 3 {
+        push_kafka_nullable_string(&mut body, Some("instance.secret"));
+    }
+    body.extend_from_slice(&1_i32.to_be_bytes());
+    push_kafka_string(&mut body, "member.secret");
+    body.extend_from_slice(&(assignment.len() as i32).to_be_bytes());
+    body.extend_from_slice(assignment);
+    body
+}
+
 fn kafka_metadata_request_body(api_version: i16, topics: Option<&[&str]>) -> Vec<u8> {
     let mut body = Vec::new();
     if let Some(topics) = topics {
@@ -7066,6 +7282,32 @@ fn kafka_leave_group_response_with_member_count_frame(member_count: i32) -> Vec<
     response.extend_from_slice(&0_i32.to_be_bytes());
     response.extend_from_slice(&0_i16.to_be_bytes());
     response.extend_from_slice(&member_count.to_be_bytes());
+    kafka_frame(&response)
+}
+
+fn kafka_sync_group_response_frame(
+    correlation_id: i32,
+    api_version: i16,
+    error_code: i16,
+    assignment: &[u8],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    if api_version >= 1 {
+        response.extend_from_slice(&0_i32.to_be_bytes());
+    }
+    response.extend_from_slice(&error_code.to_be_bytes());
+    response.extend_from_slice(&(assignment.len() as i32).to_be_bytes());
+    response.extend_from_slice(assignment);
+    kafka_frame(&response)
+}
+
+fn kafka_sync_group_response_with_assignment_len_frame(assignment_len: i32) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    response.extend_from_slice(&assignment_len.to_be_bytes());
     kafka_frame(&response)
 }
 
