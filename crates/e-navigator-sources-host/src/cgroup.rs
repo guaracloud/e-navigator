@@ -12,9 +12,10 @@ pub(crate) fn sample_cgroups(
 ) -> Vec<CgroupSample> {
     let mut samples = Vec::new();
     let mut queue = VecDeque::from([config.cgroup_root.clone()]);
+    let mut visited = 0usize;
     let mut traversal_truncated = false;
     while let Some(path) = queue.pop_front() {
-        if samples.len() >= config.max_cgroups {
+        if samples.len() >= config.max_cgroups || visited >= config.max_cgroups {
             if !traversal_truncated {
                 warnings.push(format!(
                     "{}: cgroup traversal truncated at {} entries",
@@ -24,6 +25,7 @@ pub(crate) fn sample_cgroups(
             }
             break;
         }
+        visited = visited.saturating_add(1);
         if path.join("cgroup.procs").exists()
             || path.join("cpu.stat").exists()
             || path.join("memory.current").exists()
@@ -140,6 +142,35 @@ mod tests {
                 .filter(|warning| warning.contains("cgroup traversal truncated"))
                 .count(),
             1
+        );
+
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn cgroup_empty_directory_traversal_is_bounded() {
+        let root = temp_path("cgroup-empty-chain-cap");
+        let _ = std::fs::remove_dir_all(&root);
+        let mut current = root.clone();
+        for segment in ["a", "b", "c", "d", "e"] {
+            current = current.join(segment);
+            std::fs::create_dir_all(&current).expect("cgroup dir");
+        }
+        std::fs::write(current.join("cgroup.procs"), "").expect("leaf cgroup procs");
+
+        let config = HostResourceConfig {
+            cgroup_root: root.clone(),
+            max_cgroups: 3,
+            ..HostResourceConfig::default()
+        };
+        let mut warnings = Vec::new();
+        let samples = sample_cgroups(&config, &mut warnings);
+
+        assert!(samples.is_empty());
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("cgroup traversal truncated"))
         );
 
         std::fs::remove_dir_all(root).expect("cleanup");
