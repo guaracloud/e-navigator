@@ -434,6 +434,30 @@ mod tests {
     }
 
     #[test]
+    fn exporter_runtime_limits_match_otlp_http_config_limits() {
+        assert_eq!(
+            HttpExporterConfig::MAX_ENDPOINT_BYTES_LIMIT,
+            e_navigator_core::OtlpHttpConfig::MAX_ENDPOINT_BYTES_LIMIT
+        );
+        assert_eq!(
+            HttpExporterConfig::MAX_BATCH_SIZE_LIMIT,
+            e_navigator_core::OtlpHttpConfig::MAX_BATCH_SIZE_LIMIT
+        );
+        assert_eq!(
+            HttpExporterConfig::MAX_QUEUE_CAPACITY_LIMIT,
+            e_navigator_core::OtlpHttpConfig::MAX_QUEUE_CAPACITY_LIMIT
+        );
+        assert_eq!(
+            HttpExporterConfig::MAX_TIMEOUT_MILLIS_LIMIT,
+            e_navigator_core::OtlpHttpConfig::MAX_TIMEOUT_MILLIS_LIMIT
+        );
+        assert_eq!(
+            HttpExporterConfig::MAX_RETRIES_LIMIT,
+            e_navigator_core::OtlpHttpConfig::MAX_RETRIES_LIMIT
+        );
+    }
+
+    #[test]
     fn exporter_rejects_oversized_runtime_bounds() {
         for (config, expected_message) in [
             (
