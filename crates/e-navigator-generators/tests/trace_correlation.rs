@@ -130,6 +130,8 @@ async fn malformed_or_oversized_dns_domains_do_not_generate_service_paths() {
         "api..example.com",
         "bad label.example.com",
         "bad_label.example.com",
+        "-bad.example.com",
+        "bad-.example.com",
         &format!("{}.example.com", "a".repeat(64)),
         &format!("{}.example.com", "a".repeat(254)),
     ] {

@@ -647,6 +647,8 @@ fn normalize_domain(raw_domain: &str) -> Option<String> {
         || domain.split('.').any(|label| {
             label.is_empty()
                 || label.len() > 63
+                || label.starts_with('-')
+                || label.ends_with('-')
                 || !label
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
@@ -777,6 +779,47 @@ mod tests {
             dns_counter(&second_outputs, "dns.query.count").query_name,
             None
         );
+    }
+
+    #[tokio::test]
+    async fn malformed_dns_domains_do_not_create_domain_labels_or_edges() {
+        let generator = DnsMetricsGenerator::default();
+
+        for query_name in [
+            "api..example.com",
+            "bad label.example.com",
+            "bad_label.example.com",
+            "-bad.example.com",
+            "bad-.example.com",
+        ] {
+            let query_outputs = observe(
+                &generator,
+                &dns_query_signal(query_name, DnsQueryType::A, 100),
+            )
+            .await;
+            assert_eq!(
+                dns_counter(&query_outputs, "dns.query.count").query_name,
+                None,
+                "{query_name:?}"
+            );
+
+            let response_outputs = observe(
+                &generator,
+                &dns_response_signal(query_name, DnsResponseCode::NoError, 101),
+            )
+            .await;
+            assert_eq!(
+                dns_counter(&response_outputs, "dns.response.code.count").query_name,
+                None,
+                "{query_name:?}"
+            );
+            assert!(
+                !response_outputs
+                    .iter()
+                    .any(|signal| matches!(signal.payload, SignalPayload::DependencyEdge(_))),
+                "{query_name:?}"
+            );
+        }
     }
 
     #[tokio::test]

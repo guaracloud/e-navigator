@@ -61,9 +61,10 @@ or chart rendering:
   attribute filtering, owned stack-truncation markers, and build-checked DNS
   and HTTP raw decode fuzz targets;
 - bounded DNS request parsing with configurable packet and diagnostic preview
-  limits plus validated preview/packet relationships, bounded HTTP request
-  parsing with configurable HTTP parser limits and validated header/sub-limit
-  relationships plus HTTP/1.x version-token validation,
+  limits plus validated preview/packet relationships, bounded DNS-derived
+  domain label-shape validation, bounded HTTP request parsing with configurable
+  HTTP parser limits and validated header/sub-limit relationships plus
+  HTTP/1.x version-token validation,
   HTTP response-status fixture parsing with version-token validation and a
   build-checked parser fuzz target, strict W3C traceparent parsing,
   decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with bounded

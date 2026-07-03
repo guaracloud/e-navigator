@@ -716,6 +716,8 @@ fn normalize_domain(raw_domain: &str) -> Option<String> {
     for label in domain.split('.') {
         if label.is_empty()
             || label.len() > MAX_DOMAIN_LABEL_BYTES
+            || label.starts_with('-')
+            || label.ends_with('-')
             || !label.bytes().all(domain_label_byte_allowed)
         {
             return None;
