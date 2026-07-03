@@ -267,6 +267,37 @@ fn formats_service_path_and_warning_trace_foundation_records() {
 }
 
 #[test]
+fn bounds_trace_service_path_key() {
+    const MAX_VALUE_BYTES: usize = 256;
+
+    let signal = SignalEnvelope::trace_service_path_observation(
+        "generator.trace_correlation",
+        Some("node-a".to_string()),
+        TraceServicePathObservation {
+            path_key: "p".repeat(MAX_VALUE_BYTES + 64),
+            source: source_endpoint(),
+            destination: destination_endpoint(),
+            protocol: NetworkProtocol::Tcp,
+            first_seen_unix_nanos: 1_000,
+            last_seen_unix_nanos: 2_500,
+            observations: 3,
+            correlation_kind: TraceCorrelationKind::NetworkInferred,
+            confidence: TraceConfidence::Medium,
+            attributes: vec![],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("service path formats");
+
+    assert_eq!(
+        record.attributes["trace.service.path.key"]
+            .as_str()
+            .map(str::len),
+        Some(MAX_VALUE_BYTES)
+    );
+}
+
+#[test]
 fn formats_request_span_with_bounded_stable_attributes() {
     let signal = SignalEnvelope::request_span_observation(
         "generator.request_correlation",
@@ -435,7 +466,7 @@ fn bounds_trace_context_attributes() {
             correlation_kind: TraceCorrelationKind::ObservedTraceContext,
             confidence: TraceConfidence::High,
             service_name: Some("checkout-api".to_string()),
-            method: Some("GET".to_string()),
+            method: Some(long_value.clone()),
             status_code: Some(200),
             process: Some(process),
             container: Some(container_context()),
@@ -457,6 +488,7 @@ fn bounds_trace_context_attributes() {
         "server.k8s.container.name",
         "server.container.id",
         "server.container.runtime",
+        "http.request.method",
     ] {
         assert_eq!(
             record.attributes[key].as_str().map(str::len),
@@ -1177,6 +1209,44 @@ fn formats_request_correlation_warning() {
         "protocol_request_observation"
     );
     assert_eq!(record.attributes["network.protocol.name"], "http");
+}
+
+#[test]
+fn bounds_trace_warning_attributes() {
+    const MAX_VALUE_BYTES: usize = 256;
+
+    let long_value = "w".repeat(MAX_VALUE_BYTES + 64);
+    let signal = SignalEnvelope::request_correlation_warning(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestCorrelationWarning {
+            warning_type: long_value.clone(),
+            message: long_value.clone(),
+            timestamp_unix_nanos: 1_500,
+            source_signal_kind: long_value.clone(),
+            source_module: long_value,
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            protocol: ProtocolKind::Http,
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: None,
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("request warning formats");
+
+    for key in [
+        "warning.type",
+        "warning.message",
+        "trace.source.signal.kind",
+        "trace.source.module",
+    ] {
+        assert_eq!(
+            record.attributes[key].as_str().map(str::len),
+            Some(MAX_VALUE_BYTES)
+        );
+    }
 }
 
 #[test]

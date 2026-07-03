@@ -144,7 +144,7 @@ fn service_path_record(
     let mut attributes = correlation_attributes(path.correlation_kind, path.confidence);
     attributes.insert(
         "trace.service.path.key".to_string(),
-        serde_json::json!(path.path_key),
+        bounded_json_string(&path.path_key),
     );
     attributes.insert(
         "trace.service.path.observations".to_string(),
@@ -192,19 +192,19 @@ fn correlation_warning_record(
     );
     attributes.insert(
         "warning.type".to_string(),
-        serde_json::json!(warning.warning_type),
+        bounded_json_string(&warning.warning_type),
     );
     attributes.insert(
         "warning.message".to_string(),
-        serde_json::json!(warning.message),
+        bounded_json_string(&warning.message),
     );
     attributes.insert(
         "trace.source.signal.kind".to_string(),
-        serde_json::json!(warning.source_signal_kind),
+        bounded_json_string(&warning.source_signal_kind),
     );
     attributes.insert(
         "trace.source.module".to_string(),
-        serde_json::json!(warning.source_module),
+        bounded_json_string(&warning.source_module),
     );
     append_process_attributes(&mut attributes, warning.process.as_ref());
     append_peer_attributes(&mut attributes, warning.peer.as_ref());
@@ -236,7 +236,10 @@ fn request_span_record(signal: &SignalEnvelope, span: &RequestSpanObservation) -
         serde_json::json!(protocol_kind_name(span.protocol)),
     );
     if let Some(method) = &span.method {
-        attributes.insert("http.request.method".to_string(), serde_json::json!(method));
+        attributes.insert(
+            "http.request.method".to_string(),
+            bounded_json_string(method),
+        );
     }
     append_request_status_attribute(&mut attributes, span.protocol, span.status_code);
     append_process_attributes(&mut attributes, span.process.as_ref());
@@ -274,19 +277,19 @@ fn request_warning_record(
     );
     attributes.insert(
         "warning.type".to_string(),
-        serde_json::json!(warning.warning_type),
+        bounded_json_string(&warning.warning_type),
     );
     attributes.insert(
         "warning.message".to_string(),
-        serde_json::json!(warning.message),
+        bounded_json_string(&warning.message),
     );
     attributes.insert(
         "trace.source.signal.kind".to_string(),
-        serde_json::json!(warning.source_signal_kind),
+        bounded_json_string(&warning.source_signal_kind),
     );
     attributes.insert(
         "trace.source.module".to_string(),
-        serde_json::json!(warning.source_module),
+        bounded_json_string(&warning.source_module),
     );
     attributes.insert(
         "network.protocol.name".to_string(),
@@ -322,19 +325,19 @@ fn network_flow_warning_record(
     let mut attributes = BTreeMap::new();
     attributes.insert(
         "warning.type".to_string(),
-        serde_json::json!(warning.warning_type),
+        bounded_json_string(&warning.warning_type),
     );
     attributes.insert(
         "warning.message".to_string(),
-        serde_json::json!(warning.message),
+        bounded_json_string(&warning.message),
     );
     attributes.insert(
         "trace.source.signal.kind".to_string(),
-        serde_json::json!(warning.source_signal_kind),
+        bounded_json_string(&warning.source_signal_kind),
     );
     attributes.insert(
         "trace.source.module".to_string(),
-        serde_json::json!(warning.source_module),
+        bounded_json_string(&warning.source_module),
     );
     attributes.insert(
         "network.protocol.name".to_string(),
@@ -346,7 +349,7 @@ fn network_flow_warning_record(
     );
     attributes.insert(
         "server.address".to_string(),
-        serde_json::json!(warning.remote_address),
+        bounded_json_string(&warning.remote_address),
     );
     attributes.insert(
         "server.port".to_string(),
@@ -381,19 +384,19 @@ fn profiling_warning_record(
     let mut attributes = BTreeMap::new();
     attributes.insert(
         "warning.type".to_string(),
-        serde_json::json!(warning.warning_type),
+        bounded_json_string(&warning.warning_type),
     );
     attributes.insert(
         "warning.message".to_string(),
-        serde_json::json!(warning.message),
+        bounded_json_string(&warning.message),
     );
     attributes.insert(
         "trace.source.signal.kind".to_string(),
-        serde_json::json!(warning.source_signal_kind),
+        bounded_json_string(&warning.source_signal_kind),
     );
     attributes.insert(
         "trace.source.module".to_string(),
-        serde_json::json!(warning.source_module),
+        bounded_json_string(&warning.source_module),
     );
     attributes.insert(
         "profile.kind".to_string(),
