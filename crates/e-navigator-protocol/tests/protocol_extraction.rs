@@ -5,6 +5,7 @@ use e_navigator_protocol::{
     kafka::{
         KafkaExtraction, parse_kafka_add_offsets_to_txn_response,
         parse_kafka_add_partitions_to_txn_response, parse_kafka_alter_configs_response,
+        parse_kafka_alter_partition_reassignments_response,
         parse_kafka_alter_replica_log_dirs_response, parse_kafka_api_versions_response,
         parse_kafka_create_acls_response, parse_kafka_create_delegation_token_response,
         parse_kafka_create_partitions_response, parse_kafka_create_topics_response,
@@ -307,6 +308,7 @@ proptest! {
         let _ = parse_kafka_describe_delegation_token_response(&bytes, 1, &config);
         let _ = parse_kafka_elect_leaders_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_incremental_alter_configs_response(&bytes, api_version.min(1), &config);
+        let _ = parse_kafka_alter_partition_reassignments_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -2634,6 +2636,78 @@ fn validates_kafka_incremental_alter_configs_v1_request_without_resource_key_or_
             .any(|attribute| attribute.value.contains("orders")
                 || attribute.value.contains("retention")
                 || attribute.value.contains("token")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn validates_kafka_alter_partition_reassignments_v0_request_without_topic_or_replica_values() {
+    let partitions: &[AlterPartitionReassignmentFixture<'_>] = &[(0, Some(&[1, 2]))];
+    let topics: &[AlterPartitionReassignmentsTopicFixture<'_>] = &[("orders.secret", partitions)];
+    let body = kafka_alter_partition_reassignments_request_body(0, topics);
+    let bytes = kafka_flexible_request_frame(45, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka alter partition reassignments v0 request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("alter_partition_reassignments")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "45")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn validates_kafka_alter_partition_reassignments_v1_nullable_replicas_request() {
+    let partitions: &[AlterPartitionReassignmentFixture<'_>] = &[(0, None)];
+    let topics: &[AlterPartitionReassignmentsTopicFixture<'_>] = &[("orders.secret", partitions)];
+    let body = kafka_alter_partition_reassignments_request_body(1, topics);
+    let bytes = kafka_flexible_request_frame(45, 1, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka alter partition reassignments v1 request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("alter_partition_reassignments")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "45")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "1")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
                 || attribute.value.contains("secret"))
     );
 }
@@ -5520,6 +5594,109 @@ fn extracts_kafka_incremental_alter_configs_v1_error_response_without_resource_o
 }
 
 #[test]
+fn extracts_kafka_alter_partition_reassignments_ok_response_without_topic_or_message_values() {
+    let partitions: &[AlterPartitionReassignmentResultFixture<'_>] = &[(0, 0, None)];
+    let topics: &[AlterPartitionReassignmentTopicResultFixture<'_>] =
+        &[("orders.secret", partitions)];
+    let bytes = kafka_alter_partition_reassignments_response_frame(0, 0, 0, None, topics);
+
+    let extraction = parse_kafka_alter_partition_reassignments_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("alter partition reassignments ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "alter_partition_reassignments");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "45")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_alter_partition_reassignments_partition_error_without_topic_or_message_values() {
+    let partitions: &[AlterPartitionReassignmentResultFixture<'_>] =
+        &[(0, 0, None), (1, 35, Some("partition secret denied"))];
+    let topics: &[AlterPartitionReassignmentTopicResultFixture<'_>] =
+        &[("orders.secret", partitions)];
+    let bytes = kafka_alter_partition_reassignments_response_frame(0, 1, 0, None, topics);
+
+    let extraction = parse_kafka_alter_partition_reassignments_response(
+        &bytes,
+        1,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("alter partition reassignments partition error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "alter_partition_reassignments");
+    assert_eq!(extraction.status_code, "35");
+    assert_eq!(extraction.error_type.as_deref(), Some("35"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "1")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "35")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("denied")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_alter_partition_reassignments_top_level_error_before_partition_error() {
+    let partitions: &[AlterPartitionReassignmentResultFixture<'_>] =
+        &[(0, 35, Some("partition secret denied"))];
+    let topics: &[AlterPartitionReassignmentTopicResultFixture<'_>] =
+        &[("orders.secret", partitions)];
+    let bytes = kafka_alter_partition_reassignments_response_frame(
+        0,
+        1,
+        31,
+        Some("top secret denied"),
+        topics,
+    );
+
+    let extraction = parse_kafka_alter_partition_reassignments_response(
+        &bytes,
+        1,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("alter partition reassignments top-level error response parses");
+
+    assert_eq!(extraction.status_code, "31");
+    assert_eq!(extraction.error_type.as_deref(), Some("31"));
+}
+
+#[test]
 fn extracts_kafka_join_group_ok_response_without_group_member_or_metadata_values() {
     let bytes = kafka_join_group_response_frame(0, 5, 0, &[("member.secret", b"secret-metadata")]);
 
@@ -7074,6 +7251,31 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
         .expect("bounded kafka incremental alter configs response parses");
     assert_eq!(
         bounded_incremental_alter_configs_response.attributes.len(),
+        2
+    );
+
+    let bounded_alter_partition_reassignments_response =
+        parse_kafka_alter_partition_reassignments_response(
+            &kafka_alter_partition_reassignments_response_frame(
+                0,
+                1,
+                0,
+                None,
+                &[("orders.secret", &[(0, 35, Some("partition secret denied"))])],
+            ),
+            1,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 64,
+                max_attributes: 2,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .expect("bounded kafka alter partition reassignments response parses");
+    assert_eq!(
+        bounded_alter_partition_reassignments_response
+            .attributes
+            .len(),
         2
     );
 
@@ -8868,6 +9070,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_alter_partition_reassignments_response(
+            &kafka_alter_partition_reassignments_response_frame(0, 1, 0, None, &[]),
+            2,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_sasl_handshake_response(
             &kafka_sasl_handshake_response_frame(0, 0, &["PLAIN"]),
             2,
@@ -9474,6 +9685,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_alter_partition_reassignments_response(
+            &kafka_alter_partition_reassignments_response_with_topic_count_frame(1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_alter_partition_reassignments_response(
+            &kafka_alter_partition_reassignments_response_with_partition_count_frame(1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_metadata_response(
             &kafka_metadata_response_with_topic_count_frame(1025),
             8,
@@ -9584,6 +9813,66 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
                 1,
                 Some(b"client-a"),
                 &incremental_alter_configs_long_resource_body,
+            ),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+
+    let mut alter_partition_reassignments_unsupported_body = Vec::new();
+    alter_partition_reassignments_unsupported_body.extend_from_slice(&60_000_i32.to_be_bytes());
+    push_unsigned_varint(&mut alter_partition_reassignments_unsupported_body, 1);
+    push_unsigned_varint(&mut alter_partition_reassignments_unsupported_body, 0);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                45,
+                2,
+                Some(b"client-a"),
+                &alter_partition_reassignments_unsupported_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+
+    let mut oversized_alter_partition_reassignments_body = Vec::new();
+    oversized_alter_partition_reassignments_body.extend_from_slice(&60_000_i32.to_be_bytes());
+    push_unsigned_varint(&mut oversized_alter_partition_reassignments_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                45,
+                0,
+                Some(b"client-a"),
+                &oversized_alter_partition_reassignments_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+
+    let alter_reassignment_partitions: &[AlterPartitionReassignmentFixture<'_>] =
+        &[(0, Some(&[1, 2]))];
+    let alter_reassignment_topics: &[AlterPartitionReassignmentsTopicFixture<'_>] =
+        &[("orders.secret", alter_reassignment_partitions)];
+    let alter_partition_reassignments_long_topic_body =
+        kafka_alter_partition_reassignments_request_body(0, alter_reassignment_topics);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                45,
+                0,
+                Some(b"client-a"),
+                &alter_partition_reassignments_long_topic_body,
             ),
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
@@ -9830,6 +10119,25 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_incremental_alter_configs_response(
             &truncated_incremental_alter_configs_response,
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_alter_partition_reassignments_response =
+        kafka_alter_partition_reassignments_response_frame(
+            0,
+            1,
+            0,
+            None,
+            &[("orders", &[(0, 35, Some("secret"))])],
+        );
+    truncated_alter_partition_reassignments_response.truncate(18);
+    assert_eq!(
+        parse_kafka_alter_partition_reassignments_response(
+            &truncated_alter_partition_reassignments_response,
             1,
             &config
         )
@@ -13211,6 +13519,34 @@ fn kafka_incremental_alter_configs_request_body(
     body
 }
 
+type AlterPartitionReassignmentFixture<'a> = (i32, Option<&'a [i32]>);
+type AlterPartitionReassignmentsTopicFixture<'a> =
+    (&'a str, &'a [AlterPartitionReassignmentFixture<'a>]);
+
+fn kafka_alter_partition_reassignments_request_body(
+    api_version: i16,
+    topics: &[AlterPartitionReassignmentsTopicFixture<'_>],
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&60_000_i32.to_be_bytes());
+    if api_version >= 1 {
+        body.push(1);
+    }
+    push_unsigned_varint(&mut body, topics.len() + 1);
+    for (topic, partitions) in topics {
+        push_compact_string(&mut body, topic);
+        push_unsigned_varint(&mut body, partitions.len() + 1);
+        for (partition, replicas) in *partitions {
+            body.extend_from_slice(&partition.to_be_bytes());
+            push_compact_nullable_int32_array(&mut body, *replicas);
+            push_unsigned_varint(&mut body, 0);
+        }
+        push_unsigned_varint(&mut body, 0);
+    }
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 fn kafka_alter_replica_log_dirs_request_body(log_dir: &str, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&1_i32.to_be_bytes());
@@ -14815,6 +15151,72 @@ fn kafka_incremental_alter_configs_response_with_response_count_frame(
     kafka_frame(&response)
 }
 
+type AlterPartitionReassignmentResultFixture<'a> = (i32, i16, Option<&'a str>);
+type AlterPartitionReassignmentTopicResultFixture<'a> =
+    (&'a str, &'a [AlterPartitionReassignmentResultFixture<'a>]);
+
+fn kafka_alter_partition_reassignments_response_frame(
+    correlation_id: i32,
+    api_version: i16,
+    top_level_error_code: i16,
+    top_level_error_message: Option<&str>,
+    topics: &[AlterPartitionReassignmentTopicResultFixture<'_>],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    if api_version >= 1 {
+        response.push(1);
+    }
+    response.extend_from_slice(&top_level_error_code.to_be_bytes());
+    push_compact_nullable_string(&mut response, top_level_error_message);
+    push_unsigned_varint(&mut response, topics.len() + 1);
+    for (topic, partitions) in topics {
+        push_compact_string(&mut response, topic);
+        push_unsigned_varint(&mut response, partitions.len() + 1);
+        for (partition, error_code, error_message) in *partitions {
+            response.extend_from_slice(&partition.to_be_bytes());
+            response.extend_from_slice(&error_code.to_be_bytes());
+            push_compact_nullable_string(&mut response, *error_message);
+            push_unsigned_varint(&mut response, 0);
+        }
+        push_unsigned_varint(&mut response, 0);
+    }
+    push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+fn kafka_alter_partition_reassignments_response_with_topic_count_frame(
+    topic_count: usize,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.push(1);
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    push_compact_nullable_string(&mut response, None);
+    push_unsigned_varint(&mut response, topic_count + 1);
+    kafka_frame(&response)
+}
+
+fn kafka_alter_partition_reassignments_response_with_partition_count_frame(
+    partition_count: usize,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.push(1);
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    push_compact_nullable_string(&mut response, None);
+    push_unsigned_varint(&mut response, 2);
+    push_compact_string(&mut response, "orders");
+    push_unsigned_varint(&mut response, partition_count + 1);
+    kafka_frame(&response)
+}
+
 fn kafka_sasl_handshake_response_frame(
     correlation_id: i32,
     error_code: i16,
@@ -14995,6 +15397,17 @@ fn push_int32_array(bytes: &mut Vec<u8>, values: &[i32]) {
     bytes.extend_from_slice(&(values.len() as i32).to_be_bytes());
     for value in values {
         bytes.extend_from_slice(&value.to_be_bytes());
+    }
+}
+
+fn push_compact_nullable_int32_array(bytes: &mut Vec<u8>, values: Option<&[i32]>) {
+    if let Some(values) = values {
+        push_unsigned_varint(bytes, values.len() + 1);
+        for value in values {
+            bytes.extend_from_slice(&value.to_be_bytes());
+        }
+    } else {
+        push_unsigned_varint(bytes, 0);
     }
 }
 
