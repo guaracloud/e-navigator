@@ -1050,6 +1050,70 @@ pub fn parse_kafka_elect_leaders_response(
     })
 }
 
+pub fn parse_kafka_incremental_alter_configs_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if !(0..=1).contains(&api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = incremental_alter_configs_response_error_code(body, api_version, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("incremental_alter_configs"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("44"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "incremental_alter_configs".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_produce_response(
     bytes: &[u8],
     api_version: i16,
@@ -2749,6 +2813,7 @@ fn validate_request_body(
         41 => validate_describe_delegation_token_request_body(body, header, config),
         42 => validate_delete_groups_request_body(body, header, config),
         43 => validate_elect_leaders_request_body(body, header, config),
+        44 => validate_incremental_alter_configs_request_body(body, header, config),
         47 => validate_offset_delete_request_body(body, header, config),
         _ => Ok(()),
     }
@@ -3589,6 +3654,52 @@ fn validate_elect_leaders_request_body(
         }
     }
     skip_bytes(body, &mut cursor, 4)?;
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_incremental_alter_configs_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if !(0..=1).contains(&header.api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+
+    let mut cursor = header.body_start;
+    if header.api_version == 0 {
+        let resource_count = read_request_array_len(body, &mut cursor)?;
+        for _ in 0..resource_count {
+            skip_bytes(body, &mut cursor, 1)?;
+            skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+            let config_count = read_request_array_len(body, &mut cursor)?;
+            for _ in 0..config_count {
+                skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+                skip_bytes(body, &mut cursor, 1)?;
+                skip_nullable_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+            }
+        }
+        skip_bytes(body, &mut cursor, 1)?;
+    } else {
+        let resource_count = read_compact_array_len(body, &mut cursor)?;
+        for _ in 0..resource_count {
+            skip_bytes(body, &mut cursor, 1)?;
+            skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+            let config_count = read_compact_array_len(body, &mut cursor)?;
+            for _ in 0..config_count {
+                skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+                skip_bytes(body, &mut cursor, 1)?;
+                skip_compact_nullable_string(body, &mut cursor, config.max_request_line_bytes)?;
+                skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+            }
+            skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+        }
+        skip_bytes(body, &mut cursor, 1)?;
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
     if cursor != body.len() {
         return Err(KafkaExtraction::MalformedFrame);
     }
@@ -4608,6 +4719,47 @@ fn elect_leaders_response_error_code(
     Ok(first_partition_error_code.unwrap_or(0))
 }
 
+fn incremental_alter_configs_response_error_code(
+    body: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    if api_version >= 1 {
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    skip_bytes(body, &mut cursor, 4)?;
+    let response_count = if api_version == 0 {
+        read_response_array_len(body, &mut cursor)?
+    } else {
+        read_compact_array_len(body, &mut cursor)?
+    };
+    let mut first_error_code = None;
+    for _ in 0..response_count {
+        let error_code = read_i16_be_cursor(body, &mut cursor)?;
+        if error_code != 0 && first_error_code.is_none() {
+            first_error_code = Some(error_code);
+        }
+        if api_version == 0 {
+            skip_nullable_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+            skip_bytes(body, &mut cursor, 1)?;
+            skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+        } else {
+            skip_compact_nullable_string(body, &mut cursor, config.max_request_line_bytes)?;
+            skip_bytes(body, &mut cursor, 1)?;
+            skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+            skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+        }
+    }
+    if api_version >= 1 {
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    Ok(first_error_code.unwrap_or(0))
+}
+
 fn sasl_handshake_response_error_code(
     body: &[u8],
     config: &ProtocolExtractionConfig,
@@ -5062,6 +5214,32 @@ fn skip_compact_string(
     let encoded_len = read_unsigned_varint(body, cursor)?;
     if encoded_len == 0 {
         return Err(KafkaExtraction::MalformedFrame);
+    }
+    let len = encoded_len
+        .checked_sub(1)
+        .ok_or(KafkaExtraction::MalformedFrame)?;
+    if len > max_string_bytes {
+        return Err(KafkaExtraction::ClientIdTooLong);
+    }
+    let end = cursor
+        .checked_add(len)
+        .ok_or(KafkaExtraction::MalformedFrame)?;
+    let raw = body
+        .get(*cursor..end)
+        .ok_or(KafkaExtraction::MalformedFrame)?;
+    std::str::from_utf8(raw).map_err(|_| KafkaExtraction::InvalidUtf8)?;
+    *cursor = end;
+    Ok(())
+}
+
+fn skip_compact_nullable_string(
+    body: &[u8],
+    cursor: &mut usize,
+    max_string_bytes: usize,
+) -> Result<(), KafkaExtraction> {
+    let encoded_len = read_unsigned_varint(body, cursor)?;
+    if encoded_len == 0 {
+        return Ok(());
     }
     let len = encoded_len
         .checked_sub(1)
