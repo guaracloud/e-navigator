@@ -181,7 +181,7 @@ mod tests {
         NetworkCounterMetric, NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation,
         ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
         ProfilingKind, ProfilingSessionObservation, ProfilingWarningObservation, ProtocolKind,
-        RequestSpanObservation, SignalEnvelope, TraceAttribute, TraceConfidence,
+        RequestSpanObservation, SignalEnvelope, SignalPayload, TraceAttribute, TraceConfidence,
         TraceCorrelationKind,
     };
     use opentelemetry_proto::tonic::{
@@ -693,6 +693,111 @@ mod tests {
             attribute.key == "k8s.pod.name"
                 && format!("{:?}", attribute.value).contains("checkout-123")
         }));
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_filters_and_bounds_profile_attributes() {
+        let collector = FakeCollector::spawn(vec![200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            profiles_endpoint: collector.url_with_path("/v1development/profiles"),
+            metrics_enabled: false,
+            traces_enabled: false,
+            profiles_enabled: true,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+        let mut signal = profile_sample();
+        let long_key = format!("profiling.long.{}", "k".repeat(80));
+        let truncated_long_key = long_key[..64].to_string();
+        let long_value = "v".repeat(300);
+        let truncated_long_value = "v".repeat(256);
+        if let SignalPayload::ProfileSampleObservation(sample) = &mut signal.payload {
+            sample.attributes = vec![
+                ProfilingAttribute {
+                    key: "profiling.synthetic.fixture".to_string(),
+                    value: "cpu_sample".to_string(),
+                },
+                ProfilingAttribute {
+                    key: "authorization".to_string(),
+                    value: "Bearer token".to_string(),
+                },
+                ProfilingAttribute {
+                    key: "profile_id".to_string(),
+                    value: "canonical".to_string(),
+                },
+                ProfilingAttribute {
+                    key: long_key.clone(),
+                    value: long_value,
+                },
+            ];
+            sample
+                .attributes
+                .extend((0..20).map(|index| ProfilingAttribute {
+                    key: format!("profiling.extra.{index:02}"),
+                    value: format!("value-{index:02}"),
+                }));
+        }
+
+        sink.write(&signal).await.expect("profile export succeeds");
+        let request = collector.next_request().await;
+        let decoded = collector_profile_proto::ExportProfilesServiceRequest::decode(request.body())
+            .expect("OTLP profile request decodes");
+        let dictionary = decoded.dictionary.as_ref().expect("profile dictionary");
+        let resource_profiles = decoded
+            .resource_profiles
+            .first()
+            .expect("resource profiles are present");
+        let profile = resource_profiles
+            .scope_profiles
+            .first()
+            .expect("scope profiles are present")
+            .profiles
+            .first()
+            .expect("profile is present");
+
+        assert_profile_attribute(
+            dictionary,
+            &profile.attribute_indices,
+            "profiling.synthetic.fixture",
+            "cpu_sample",
+        );
+        assert_profile_attribute(
+            dictionary,
+            &profile.attribute_indices,
+            &truncated_long_key,
+            &truncated_long_value,
+        );
+        assert_profile_attribute(
+            dictionary,
+            &profile.attribute_indices,
+            "profiling.extra.11",
+            "value-11",
+        );
+        assert!(!profile_attribute_exists(
+            dictionary,
+            &profile.attribute_indices,
+            "authorization"
+        ));
+        assert!(!profile_attribute_exists(
+            dictionary,
+            &profile.attribute_indices,
+            "profile_id"
+        ));
+        assert!(!profile_attribute_exists(
+            dictionary,
+            &profile.attribute_indices,
+            &long_key
+        ));
+        assert!(!profile_attribute_exists(
+            dictionary,
+            &profile.attribute_indices,
+            "profiling.extra.12"
+        ));
     }
 
     #[tokio::test]
@@ -1316,6 +1421,18 @@ mod tests {
             "profile attribute {key} should contain {value_fragment}, got {:?}",
             attribute.value
         );
+    }
+
+    fn profile_attribute_exists(
+        dictionary: &collector_profile_proto::ProfilesDictionary,
+        indices: &[i32],
+        key: &str,
+    ) -> bool {
+        indices
+            .iter()
+            .filter_map(|index| usize::try_from(*index).ok())
+            .filter_map(|index| dictionary.attribute_table.get(index))
+            .any(|attribute| attribute.key == key)
     }
 
     fn lower_hex(bytes: &[u8]) -> String {
