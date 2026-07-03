@@ -305,6 +305,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn otlp_http_sink_respects_disabled_trace_and_profile_families() {
+        let collector = FakeCollector::spawn(vec![]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 50,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&request_span())
+            .await
+            .expect("disabled trace family is ignored");
+        sink.write(&profile_sample())
+            .await
+            .expect("disabled profile family is ignored");
+
+        assert!(collector.try_next_request().is_none());
+    }
+
+    #[tokio::test]
     async fn otlp_http_sink_exports_trace_records_as_otlp_protobuf() {
         let collector = FakeCollector::spawn(vec![200]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {

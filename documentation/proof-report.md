@@ -48,8 +48,9 @@ or chart rendering:
 - Prometheus HTTP formatting, profile session aggregate rendering, profiling
   warning-count rendering, metric/profile family toggles, health/readiness
   endpoints, and secret-like label filtering;
-- OTLP protobuf request encoding plus per-family endpoint routing for metrics,
-  traces with HTTP, gRPC, and `error.type` request/error status mapping
+- OTLP protobuf request encoding plus per-family endpoint routing and family
+  toggle suppression for metrics, traces with HTTP, gRPC, and `error.type`
+  request/error status mapping
   including Kafka, MongoDB, MySQL, NATS, PostgreSQL, and Redis request spans,
   local warning trace-record formatting for trace, request, network-flow, and
   profiling warnings, explicit no-ID profiling-warning trace export
