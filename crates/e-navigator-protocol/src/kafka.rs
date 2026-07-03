@@ -922,6 +922,70 @@ pub fn parse_kafka_delete_groups_response(
     })
 }
 
+pub fn parse_kafka_sasl_handshake_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if !(0..=1).contains(&api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = sasl_handshake_response_error_code(body, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("sasl_handshake"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("17"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "sasl_handshake".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_init_producer_id_response(
     bytes: &[u8],
     api_version: i16,
@@ -1571,6 +1635,7 @@ fn validate_request_body(
         14 => validate_sync_group_request_body(body, header, config),
         15 => validate_describe_groups_request_body(body, header, config),
         16 => validate_empty_request_body(body, header),
+        17 => validate_sasl_handshake_request_body(body, header, config),
         18 => validate_api_versions_request_body(body, header, config),
         20 => validate_delete_topics_request_body(body, header, config),
         21 => validate_delete_records_request_body(body, header, config),
@@ -2057,6 +2122,23 @@ fn validate_delete_groups_request_body(
     for _ in 0..group_count {
         skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
     }
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_sasl_handshake_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if !(0..=1).contains(&header.api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+
+    let mut cursor = header.body_start;
+    skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
     if cursor != body.len() {
         return Err(KafkaExtraction::MalformedFrame);
     }
@@ -2626,6 +2708,22 @@ fn delete_groups_response_error_code(
         }
     }
     Ok(first_error_code.unwrap_or(0))
+}
+
+fn sasl_handshake_response_error_code(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    let error_code = read_i16_be_cursor(body, &mut cursor)?;
+    let mechanism_count = read_response_array_len(body, &mut cursor)?;
+    for _ in 0..mechanism_count {
+        skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    Ok(error_code)
 }
 
 fn init_producer_id_response_error_code(body: &[u8]) -> Result<i16, KafkaExtraction> {
