@@ -251,6 +251,15 @@ fn validate_non_empty_list(path: &'static str, values: &[String]) -> ConfigResul
             format!("{path} entries must not contain control characters"),
         ));
     }
+    if values
+        .iter()
+        .any(|value| value.chars().any(char::is_whitespace))
+    {
+        return Err(ConfigError::invalid_value(
+            path,
+            format!("{path} entries must not contain whitespace"),
+        ));
+    }
     let mut seen = BTreeSet::new();
     for value in values {
         if !seen.insert(value.as_str()) {
@@ -317,6 +326,12 @@ fn validate_label_selector(
                 format!("{path} keys must not contain control characters"),
             ));
         }
+        if key.chars().any(char::is_whitespace) {
+            return Err(ConfigError::invalid_value(
+                path,
+                format!("{path} keys must not contain whitespace"),
+            ));
+        }
         if value.trim().is_empty() {
             return Err(ConfigError::invalid_value(
                 path,
@@ -336,6 +351,12 @@ fn validate_label_selector(
             return Err(ConfigError::invalid_value(
                 path,
                 format!("{path} value for '{key}' must not contain control characters"),
+            ));
+        }
+        if value.chars().any(char::is_whitespace) {
+            return Err(ConfigError::invalid_value(
+                path,
+                format!("{path} value for '{key}' must not contain whitespace"),
             ));
         }
     }

@@ -90,7 +90,7 @@ Kubernetes attribution also validates response and cache bounds before runtime:
 `max_labels_per_pod` at most 128.
 Kubernetes selector lists and pod-label selector maps must each contain at most
 128 entries. Each selector string, key, or value must be non-empty, must not
-contain control characters, and must be at most 253 bytes.
+contain whitespace or control characters, and must be at most 253 bytes.
 
 Host resource sampling validates its scan bounds before runtime:
 `resource_source.sample_interval_millis` must be greater than zero and at most

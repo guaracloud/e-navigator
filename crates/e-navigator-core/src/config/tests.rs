@@ -1249,6 +1249,20 @@ fn kubernetes_attribution_selectors_are_validated() {
         RuntimeConfig {
             attribution: AttributionConfig {
                 kubernetes: KubernetesAttributionConfig {
+                    namespace_allowlist: vec!["default prod".to_string()],
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "attribution.kubernetes.namespace_allowlist entries must not contain whitespace",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
                     label_allowlist: vec!["app".to_string(), "app".to_string()],
                     ..KubernetesAttributionConfig::default()
                 },
@@ -1323,6 +1337,23 @@ fn kubernetes_attribution_selectors_are_validated() {
         RuntimeConfig {
             attribution: AttributionConfig {
                 kubernetes: KubernetesAttributionConfig {
+                    pod_label_selector: BTreeMap::from([(
+                        "app role".to_string(),
+                        "checkout".to_string(),
+                    )]),
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "attribution.kubernetes.pod_label_selector keys must not contain whitespace",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
                     pod_label_selector: (0
                         ..=KubernetesAttributionConfig::MAX_SELECTOR_ENTRIES_LIMIT)
                         .map(|index| (format!("label-{index}"), "value".to_string()))
@@ -1374,6 +1405,23 @@ fn kubernetes_attribution_selectors_are_validated() {
             ..RuntimeConfig::default()
         },
         "attribution.kubernetes.pod_label_selector value for 'app' must not contain control characters",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    pod_label_selector: BTreeMap::from([(
+                        "app".to_string(),
+                        "checkout api".to_string(),
+                    )]),
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "attribution.kubernetes.pod_label_selector value for 'app' must not contain whitespace",
     );
 
     assert_invalid(

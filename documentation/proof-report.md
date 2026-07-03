@@ -48,8 +48,9 @@ or chart rendering:
   shared HTTP exporter endpoint shape/length validation plus upper-bound
   validation for batch, queue, timeout, and retry settings, local Kubernetes
   attribution selector filtering and
-  selector-shape/duplicate bounds plus response/cache/label/path bounds, and
-  host resource source scan/path plus metric-generator cardinality bounds;
+  selector-shape/whitespace/duplicate bounds plus response/cache/label/path
+  bounds, and host resource source scan/path plus metric-generator cardinality
+  bounds;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/DNS/HTTP/profile
   events, including profile fixture normalization with sensitive/reserved
