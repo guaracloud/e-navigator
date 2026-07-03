@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::network::sanitize_network_process_identity;
 use crate::{ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkProcessIdentity};
 
 const MAX_PROFILING_ATTRIBUTES: usize = 16;
@@ -8,6 +9,8 @@ const MAX_PROFILING_ATTRIBUTE_VALUE_BYTES: usize = 256;
 const MAX_PROFILING_STACK_FRAMES: usize = 256;
 const MAX_PROFILING_FRAME_STRING_BYTES: usize = 256;
 const MAX_PROFILING_STRING_BYTES: usize = 256;
+const MAX_KUBERNETES_LABELS: usize = 16;
+const MAX_KUBERNETES_LABEL_KEY_BYTES: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -151,6 +154,47 @@ pub(crate) fn sanitize_profiling_string(value: &mut String) {
 
 pub(crate) fn sanitize_optional_profiling_string(value: &mut Option<String>) {
     truncate_optional_string(value, MAX_PROFILING_STRING_BYTES);
+}
+
+pub(crate) fn sanitize_optional_profiling_process_identity(
+    process: &mut Option<NetworkProcessIdentity>,
+) {
+    if let Some(inner) = process {
+        sanitize_network_process_identity(inner);
+    }
+}
+
+pub(crate) fn sanitize_optional_profiling_container_context(
+    context: &mut Option<ContainerContext>,
+) {
+    if let Some(inner) = context {
+        sanitize_profiling_string(&mut inner.container_id);
+        sanitize_optional_profiling_string(&mut inner.runtime);
+    }
+}
+
+pub(crate) fn sanitize_optional_profiling_kubernetes_context(
+    context: &mut Option<KubernetesContext>,
+) {
+    if let Some(inner) = context {
+        sanitize_profiling_string(&mut inner.namespace);
+        sanitize_profiling_string(&mut inner.pod_name);
+        sanitize_optional_profiling_string(&mut inner.pod_uid);
+        sanitize_optional_profiling_string(&mut inner.container_name);
+        sanitize_optional_profiling_string(&mut inner.node_name);
+        inner.labels = inner
+            .labels
+            .iter()
+            .filter(|(key, _)| !key.is_empty())
+            .map(|(key, value)| {
+                (
+                    truncate_utf8(key, MAX_KUBERNETES_LABEL_KEY_BYTES),
+                    truncate_utf8(value, MAX_PROFILING_STRING_BYTES),
+                )
+            })
+            .take(MAX_KUBERNETES_LABELS)
+            .collect();
+    }
 }
 
 pub fn is_sensitive_profiling_attribute_key(key: &str) -> bool {

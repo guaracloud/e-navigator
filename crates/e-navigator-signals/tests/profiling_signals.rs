@@ -362,6 +362,130 @@ fn profiling_constructors_bound_scalar_strings_before_json_stdout() {
 }
 
 #[test]
+fn profiling_constructors_bound_context_strings_before_json_stdout() {
+    let long = "p".repeat(320);
+    let process = NetworkProcessIdentity {
+        pid: 42,
+        ppid: Some(1),
+        uid: Some(1000),
+        command: long.clone(),
+        executable: Some(long.clone()),
+        cgroup_id: None,
+    };
+    let container = ContainerContext {
+        container_id: long.clone(),
+        runtime: Some(long.clone()),
+    };
+    let kubernetes = KubernetesContext {
+        namespace: long.clone(),
+        pod_name: long.clone(),
+        pod_uid: Some(long.clone()),
+        container_name: Some(long.clone()),
+        node_name: Some(long.clone()),
+        labels: BTreeMap::from_iter(
+            (0..20).map(|index| (format!("label-{index}-{long}"), long.clone())),
+        ),
+    };
+    let window = MetricAggregationWindow {
+        start_unix_nanos: 1_000,
+        end_unix_nanos: 2_000,
+    };
+
+    let sample = SignalEnvelope::profile_sample_observation(
+        "source.synthetic_profile",
+        None,
+        e_navigator_signals::ProfileSampleObservation {
+            timestamp_unix_nanos: 1_000,
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::High,
+            sample_count: 1,
+            sampling_period_nanos: Some(10_000_000),
+            stack_id: "stack:0123456789abcdef".to_string(),
+            stack_frames: vec![],
+            process: Some(process.clone()),
+            container: Some(container.clone()),
+            kubernetes: Some(kubernetes.clone()),
+            thread_id: None,
+            thread_name: None,
+            attributes: vec![],
+        },
+    );
+    let stack_trace = SignalEnvelope::profiling_stack_trace_observation(
+        "source.synthetic_profile",
+        None,
+        ProfilingStackTraceObservation {
+            timestamp_unix_nanos: 1_100,
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::Medium,
+            stack_id: "stack:0123456789abcdef".to_string(),
+            stack_frames: vec![],
+            process: Some(process.clone()),
+            container: Some(container.clone()),
+            kubernetes: Some(kubernetes.clone()),
+            attributes: vec![],
+        },
+    );
+    let session = SignalEnvelope::profiling_session_observation(
+        "generator.profiling",
+        None,
+        ProfilingSessionObservation {
+            window,
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::Medium,
+            profile_id: "profile:0123456789abcdef".to_string(),
+            observed_sample_count: 5,
+            dropped_sample_count: 0,
+            distinct_stack_count: 2,
+            sampling_period_nanos: Some(10_000_000),
+            process: Some(process.clone()),
+            container: Some(container.clone()),
+            kubernetes: Some(kubernetes.clone()),
+            source: "source.synthetic_profile".to_string(),
+            attributes: vec![],
+        },
+    );
+    let warning = SignalEnvelope::profiling_warning_observation(
+        "generator.profiling",
+        None,
+        ProfilingWarningObservation {
+            warning_type: "missing_attribution".to_string(),
+            message: "profile sample has no container or Kubernetes context".to_string(),
+            timestamp_unix_nanos: 1_500,
+            source_signal_kind: "profile_sample_observation".to_string(),
+            source_module: "source.synthetic_profile".to_string(),
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::Low,
+            process: Some(process),
+            container: Some(container),
+            kubernetes: Some(kubernetes),
+            attributes: vec![],
+        },
+    );
+
+    for signal in [&sample, &stack_trace, &session, &warning] {
+        assert_payload_string_lengths(
+            signal,
+            &[
+                &["process", "command"],
+                &["process", "executable"],
+                &["container", "container_id"],
+                &["container", "runtime"],
+                &["kubernetes", "namespace"],
+                &["kubernetes", "pod_name"],
+                &["kubernetes", "pod_uid"],
+                &["kubernetes", "container_name"],
+                &["kubernetes", "node_name"],
+            ],
+        );
+        assert_payload_label_bounds(signal, &["kubernetes", "labels"]);
+    }
+}
+
+#[test]
 fn serializes_stack_trace_observation_with_optional_missing_symbols() {
     let signal = SignalEnvelope::profiling_stack_trace_observation(
         "source.synthetic_profile",
@@ -583,4 +707,34 @@ fn kubernetes() -> KubernetesContext {
         node_name: Some("node-a".to_string()),
         labels: BTreeMap::from([("app".to_string(), "checkout".to_string())]),
     }
+}
+
+fn assert_payload_string_lengths(signal: &SignalEnvelope, paths: &[&[&str]]) {
+    let json = serde_json::to_value(signal).expect("signal serializes");
+    for path in paths {
+        let mut value = &json["payload"];
+        for field in *path {
+            value = &value[*field];
+        }
+        assert_eq!(
+            value.as_str().map(str::len),
+            Some(256),
+            "{path:?} should be bounded"
+        );
+    }
+}
+
+fn assert_payload_label_bounds(signal: &SignalEnvelope, path: &[&str]) {
+    let json = serde_json::to_value(signal).expect("signal serializes");
+    let mut value = &json["payload"];
+    for field in path {
+        value = &value[*field];
+    }
+    let labels = value.as_object().expect("labels serialize as an object");
+    assert_eq!(labels.len(), 16);
+    assert!(
+        labels
+            .iter()
+            .all(|(key, value)| key.len() == 128 && value.as_str().map(str::len) == Some(256))
+    );
 }

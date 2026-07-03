@@ -36,7 +36,7 @@ or chart rendering:
   node/process/cgroup resource observation signals with bounded strings,
   resource metric signals with bounded scalar/context strings and dynamic
   attributes, and profiling signal families with bounded sanitized profiling
-  attributes, stack frames, and scalar strings;
+  attributes, stack frames, scalar strings, process/context strings, and labels;
 - synthetic source pipeline, including sanitized HTTP, gRPC, Kafka, MongoDB,
   MySQL, NATS, PostgreSQL, and Redis protocol request/error-span fixtures and
   flow-attribution warnings;

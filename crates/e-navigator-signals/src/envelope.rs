@@ -18,7 +18,11 @@ use crate::network::{
     sanitize_network_connection_failure_event, sanitize_network_connection_open_event,
     sanitize_network_flow_summary_event, sanitize_network_flow_warning,
 };
-use crate::profiling::{sanitize_optional_profiling_string, sanitize_profiling_string};
+use crate::profiling::{
+    sanitize_optional_profiling_container_context, sanitize_optional_profiling_kubernetes_context,
+    sanitize_optional_profiling_process_identity, sanitize_optional_profiling_string,
+    sanitize_profiling_string,
+};
 use crate::resource::{
     sanitize_cgroup_cpu_observation, sanitize_cgroup_file_descriptor_observation,
     sanitize_cgroup_memory_observation, sanitize_cgroup_pids_observation,
@@ -1061,6 +1065,9 @@ impl SignalEnvelope {
         sanitize_profiling_frames(&mut observation.stack_frames);
         sanitize_profiling_string(&mut observation.stack_id);
         sanitize_optional_profiling_string(&mut observation.thread_name);
+        sanitize_optional_profiling_process_identity(&mut observation.process);
+        sanitize_optional_profiling_container_context(&mut observation.container);
+        sanitize_optional_profiling_kubernetes_context(&mut observation.kubernetes);
         Self::new(
             source,
             host,
@@ -1077,6 +1084,9 @@ impl SignalEnvelope {
         sanitize_profiling_attributes(&mut observation.attributes);
         sanitize_profiling_frames(&mut observation.stack_frames);
         sanitize_profiling_string(&mut observation.stack_id);
+        sanitize_optional_profiling_process_identity(&mut observation.process);
+        sanitize_optional_profiling_container_context(&mut observation.container);
+        sanitize_optional_profiling_kubernetes_context(&mut observation.kubernetes);
         Self::new(
             source,
             host,
@@ -1093,6 +1103,9 @@ impl SignalEnvelope {
         sanitize_profiling_attributes(&mut observation.attributes);
         sanitize_profiling_string(&mut observation.profile_id);
         sanitize_profiling_string(&mut observation.source);
+        sanitize_optional_profiling_process_identity(&mut observation.process);
+        sanitize_optional_profiling_container_context(&mut observation.container);
+        sanitize_optional_profiling_kubernetes_context(&mut observation.kubernetes);
         Self::new(
             source,
             host,
@@ -1111,6 +1124,9 @@ impl SignalEnvelope {
         sanitize_profiling_string(&mut observation.message);
         sanitize_profiling_string(&mut observation.source_signal_kind);
         sanitize_profiling_string(&mut observation.source_module);
+        sanitize_optional_profiling_process_identity(&mut observation.process);
+        sanitize_optional_profiling_container_context(&mut observation.container);
+        sanitize_optional_profiling_kubernetes_context(&mut observation.kubernetes);
         Self::new(
             source,
             host,
