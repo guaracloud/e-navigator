@@ -223,6 +223,14 @@ mod tests {
         assert!(signals.iter().any(|signal| matches!(
             &signal.payload,
             SignalPayload::ProtocolRequestObservation(request)
+                if request.protocol == ProtocolKind::Http
+                    && request.method.as_deref() == Some("POST")
+                    && request.status_code == Some(503)
+                    && has_attribute(&request.attributes, "trace.synthetic.fixture", "http_protocol_error")
+        )));
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::ProtocolRequestObservation(request)
                 if request.traceparent.as_deref() == Some("00-bad")
                     && request.trace_id.is_none()
                     && request.span_id.is_none()
