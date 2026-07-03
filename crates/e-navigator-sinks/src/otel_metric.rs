@@ -7,6 +7,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 const MAX_METRIC_STRING_BYTES: usize = 256;
+const MAX_METRIC_ATTRIBUTE_KEY_BYTES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -317,7 +318,11 @@ fn insert_attribute_string(
     key: impl Into<String>,
     value: &str,
 ) {
-    attributes.insert(key.into(), bounded_json_string(value));
+    let key = key.into();
+    attributes.insert(
+        truncate_utf8(&key, MAX_METRIC_ATTRIBUTE_KEY_BYTES),
+        bounded_json_string(value),
+    );
 }
 
 fn resource_attribute_key<'a>(metric_name: &str, key: &'a str, value: &str) -> &'a str {
@@ -601,6 +606,46 @@ mod tests {
 
         assert_eq!(record.name.len(), MAX_VALUE_BYTES);
         assert_eq!(record.unit.len(), MAX_VALUE_BYTES);
+    }
+
+    #[test]
+    fn bounds_metric_attribute_keys() {
+        const MAX_KEY_BYTES: usize = 128;
+
+        let long_key = "k".repeat(MAX_KEY_BYTES + 64);
+        let signal = SignalEnvelope::resource_gauge_metric(
+            "generator.resource_metrics",
+            Some("node-a".to_string()),
+            e_navigator_signals::ResourceGaugeMetric {
+                metric_name: "custom.resource.metric".to_string(),
+                unit: "1".to_string(),
+                value: 1,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 100,
+                    end_unix_nanos: 200,
+                },
+                resource: e_navigator_signals::ResourceContext {
+                    host_name: Some("node-a".to_string()),
+                    container: None,
+                    kubernetes: None,
+                },
+                process: None,
+                cgroup: None,
+                attributes: vec![e_navigator_signals::ResourceMetricAttribute {
+                    key: long_key,
+                    value: "value".to_string(),
+                }],
+            },
+        );
+
+        let record = format_otel_metric_record(&signal).expect("resource metric formats");
+        let key = record
+            .attributes
+            .keys()
+            .find(|key| key.starts_with('k'))
+            .expect("bounded attribute key exists");
+
+        assert_eq!(key.len(), MAX_KEY_BYTES);
     }
 
     #[test]
