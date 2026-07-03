@@ -446,6 +446,44 @@ mod tests {
     }
 
     #[test]
+    fn formats_flow_byte_metric_without_endpoint_attributes() {
+        let signal = SignalEnvelope::network_counter_metric(
+            "generator.network_metrics",
+            Some("node-a".to_string()),
+            NetworkCounterMetric {
+                metric_name: "network.flow.bytes".to_string(),
+                unit: "By".to_string(),
+                value: 4096,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 100,
+                    end_unix_nanos: 200,
+                },
+                process: None,
+                protocol: Some(e_navigator_signals::NetworkProtocol::Tcp),
+                address_family: Some(e_navigator_signals::NetworkAddressFamily::Ipv4),
+                local_address: None,
+                local_port: None,
+                remote_address: None,
+                remote_port: None,
+                errno: None,
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let record = format_otel_metric_record(&signal).expect("metric formats");
+        let json = serde_json::to_value(&record).expect("record serializes");
+
+        assert_eq!(record.name, "network.flow.bytes");
+        assert_eq!(record.unit, "By");
+        assert_eq!(record.value, OtelMetricValue::U64(4096));
+        assert_eq!(json["attributes"]["net.transport"], "tcp");
+        assert_eq!(json["attributes"]["network.type"], "ipv4");
+        assert!(json["attributes"].get("server.address").is_none());
+        assert!(json["attributes"].get("server.port").is_none());
+    }
+
+    #[test]
     fn ignores_non_metric_signals() {
         let signal = SignalEnvelope::dependency_edge(
             "generator.test",
