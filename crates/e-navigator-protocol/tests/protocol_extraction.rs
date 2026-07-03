@@ -4,22 +4,22 @@ use e_navigator_protocol::{
     http::{HttpExtraction, parse_http_request, parse_http_response},
     kafka::{
         KafkaExtraction, parse_kafka_add_offsets_to_txn_response,
-        parse_kafka_add_partitions_to_txn_response, parse_kafka_api_versions_response,
-        parse_kafka_create_acls_response, parse_kafka_create_partitions_response,
-        parse_kafka_create_topics_response, parse_kafka_delete_acls_response,
-        parse_kafka_delete_groups_response, parse_kafka_delete_records_response,
-        parse_kafka_delete_topics_response, parse_kafka_describe_acls_response,
-        parse_kafka_describe_configs_response, parse_kafka_describe_groups_response,
-        parse_kafka_end_txn_response, parse_kafka_fetch_response,
-        parse_kafka_find_coordinator_response, parse_kafka_heartbeat_response,
-        parse_kafka_init_producer_id_response, parse_kafka_join_group_response,
-        parse_kafka_leave_group_response, parse_kafka_list_groups_response,
-        parse_kafka_list_offsets_response, parse_kafka_metadata_response,
-        parse_kafka_offset_commit_response, parse_kafka_offset_delete_response,
-        parse_kafka_offset_fetch_response, parse_kafka_produce_response, parse_kafka_request,
-        parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
-        parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
-        parse_kafka_write_txn_markers_response,
+        parse_kafka_add_partitions_to_txn_response, parse_kafka_alter_configs_response,
+        parse_kafka_api_versions_response, parse_kafka_create_acls_response,
+        parse_kafka_create_partitions_response, parse_kafka_create_topics_response,
+        parse_kafka_delete_acls_response, parse_kafka_delete_groups_response,
+        parse_kafka_delete_records_response, parse_kafka_delete_topics_response,
+        parse_kafka_describe_acls_response, parse_kafka_describe_configs_response,
+        parse_kafka_describe_groups_response, parse_kafka_end_txn_response,
+        parse_kafka_fetch_response, parse_kafka_find_coordinator_response,
+        parse_kafka_heartbeat_response, parse_kafka_init_producer_id_response,
+        parse_kafka_join_group_response, parse_kafka_leave_group_response,
+        parse_kafka_list_groups_response, parse_kafka_list_offsets_response,
+        parse_kafka_metadata_response, parse_kafka_offset_commit_response,
+        parse_kafka_offset_delete_response, parse_kafka_offset_fetch_response,
+        parse_kafka_produce_response, parse_kafka_request, parse_kafka_sasl_authenticate_response,
+        parse_kafka_sasl_handshake_response, parse_kafka_sync_group_response,
+        parse_kafka_txn_offset_commit_response, parse_kafka_write_txn_markers_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -293,6 +293,7 @@ proptest! {
         let _ = parse_kafka_describe_acls_response(&bytes, 1, &config);
         let _ = parse_kafka_delete_acls_response(&bytes, 1, &config);
         let _ = parse_kafka_describe_configs_response(&bytes, api_version.clamp(1, 3), &config);
+        let _ = parse_kafka_alter_configs_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -2508,6 +2509,45 @@ fn validates_kafka_describe_configs_requests_without_resource_or_key_values() {
 }
 
 #[test]
+fn validates_kafka_alter_configs_requests_without_resource_key_or_value_values() {
+    for api_version in 0..=1 {
+        let body = kafka_alter_configs_request_body(
+            "orders.secret",
+            &[("retention.secret.ms", Some("token-secret"))],
+        );
+        let bytes = kafka_request_frame(33, api_version, Some(b"secret-client"), &body);
+
+        let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+            .expect("kafka alter configs request parses");
+
+        assert_eq!(extraction.operation.as_deref(), Some("alter_configs"));
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "messaging.kafka.api_key"
+                    && attribute.value == "33")
+        );
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                    && attribute.value == api_version.to_string())
+        );
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("orders")
+                    || attribute.value.contains("retention")
+                    || attribute.value.contains("token")
+                    || attribute.value.contains("secret"))
+        );
+    }
+}
+
+#[test]
 fn validates_kafka_find_coordinator_v2_request_without_key_value() {
     let body = kafka_find_coordinator_request_body(2, "group.secret");
     let bytes = kafka_request_frame(10, 2, Some(b"secret-client"), &body);
@@ -4420,6 +4460,78 @@ fn extracts_kafka_describe_configs_error_response_without_message_or_config_valu
 }
 
 #[test]
+fn extracts_kafka_alter_configs_ok_response_without_resource_values() {
+    let bytes = kafka_alter_configs_response_frame(0, &[(0, None, "orders.secret")]);
+
+    let extraction =
+        parse_kafka_alter_configs_response(&bytes, 1, &ProtocolExtractionConfig::default())
+            .expect("alter configs ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "alter_configs");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "33")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_alter_configs_error_response_without_message_or_resource_values() {
+    let bytes = kafka_alter_configs_response_frame(
+        0,
+        &[
+            (0, None, "orders.secret"),
+            (35, Some("config secret rejected"), "payments.secret"),
+        ],
+    );
+
+    let extraction =
+        parse_kafka_alter_configs_response(&bytes, 0, &ProtocolExtractionConfig::default())
+            .expect("alter configs error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "alter_configs");
+    assert_eq!(extraction.status_code, "35");
+    assert_eq!(extraction.error_type.as_deref(), Some("35"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "35")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("payments")
+                || attribute.value.contains("rejected")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn extracts_kafka_join_group_ok_response_without_group_member_or_metadata_values() {
     let bytes = kafka_join_group_response_frame(0, 5, 0, &[("member.secret", b"secret-metadata")]);
 
@@ -5718,6 +5830,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     )
     .expect("bounded kafka describe configs response parses");
     assert_eq!(bounded_describe_configs_response.attributes.len(), 2);
+
+    let bounded_alter_configs_response = parse_kafka_alter_configs_response(
+        &kafka_alter_configs_response_frame(0, &[(35, Some("secret rejected"), "orders.secret")]),
+        1,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka alter configs response parses");
+    assert_eq!(bounded_alter_configs_response.attributes.len(), 2);
 
     let bounded_join_group_response = parse_kafka_join_group_response(
         &kafka_join_group_response_frame(0, 2, 25, &[("member.secret", b"secret-metadata")]),
@@ -7111,6 +7236,41 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::ClientIdTooLong
     );
     assert_eq!(
+        parse_kafka_request(&kafka_request_frame(33, -1, None, b""), &config).unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(33, 1, None, b"\0\x01"), &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    let mut too_many_alter_config_resources = Vec::new();
+    too_many_alter_config_resources.extend_from_slice(&1025_i32.to_be_bytes());
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(33, 1, None, &too_many_alter_config_resources),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    let body = kafka_alter_configs_request_body(
+        "topic.secret.name",
+        &[("retention.secret.ms", Some("token-secret"))],
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(33, 1, None, &body),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
         parse_kafka_api_versions_response(&[], 0, &config).unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
@@ -7277,6 +7437,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         parse_kafka_describe_configs_response(
             &kafka_describe_configs_response_frame(0, 1, &[]),
             4,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_alter_configs_response(
+            &kafka_alter_configs_response_frame(0, &[(0, None, "orders")]),
+            2,
             &config
         )
         .unwrap_err(),
@@ -7636,6 +7805,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_alter_configs_response(
+            &kafka_alter_configs_response_with_response_count_frame(1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_add_partitions_to_txn_response(
             &kafka_add_partitions_to_txn_response_with_topic_count_frame(1025),
             1,
@@ -7947,6 +8125,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     truncated_describe_configs_response.truncate(14);
     assert_eq!(
         parse_kafka_describe_configs_response(&truncated_describe_configs_response, 3, &config)
+            .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_alter_configs_response =
+        kafka_alter_configs_response_frame(0, &[(35, Some("secret"), "orders")]);
+    truncated_alter_configs_response.truncate(12);
+    assert_eq!(
+        parse_kafka_alter_configs_response(&truncated_alter_configs_response, 1, &config)
             .unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
@@ -11265,6 +11452,23 @@ fn kafka_describe_configs_request_body(
     body
 }
 
+fn kafka_alter_configs_request_body(
+    resource_name: &str,
+    configs: &[(&str, Option<&str>)],
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&1_i32.to_be_bytes());
+    body.push(2);
+    push_kafka_string(&mut body, resource_name);
+    body.extend_from_slice(&(configs.len() as i32).to_be_bytes());
+    for (name, value) in configs {
+        push_kafka_string(&mut body, name);
+        push_kafka_nullable_string(&mut body, *value);
+    }
+    body.push(1);
+    body
+}
+
 fn kafka_join_group_request_body(api_version: i16, protocols: &[(&str, &[u8])]) -> Vec<u8> {
     let mut body = Vec::new();
     push_kafka_string(&mut body, "group.secret");
@@ -12102,6 +12306,31 @@ fn kafka_describe_configs_response_with_synonym_count_frame(synonym_count: i32) 
     response.push(1);
     response.push(0);
     response.extend_from_slice(&synonym_count.to_be_bytes());
+    kafka_frame(&response)
+}
+
+fn kafka_alter_configs_response_frame(
+    correlation_id: i32,
+    responses: &[(i16, Option<&str>, &str)],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&(responses.len() as i32).to_be_bytes());
+    for (error_code, error_message, resource_name) in responses {
+        response.extend_from_slice(&error_code.to_be_bytes());
+        push_kafka_nullable_string(&mut response, *error_message);
+        response.push(2);
+        push_kafka_string(&mut response, resource_name);
+    }
+    kafka_frame(&response)
+}
+
+fn kafka_alter_configs_response_with_response_count_frame(response_count: i32) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&response_count.to_be_bytes());
     kafka_frame(&response)
 }
 
