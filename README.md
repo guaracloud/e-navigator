@@ -111,10 +111,10 @@ Evidence-backed today:
 - Kubernetes/container attribution for selected captured signals;
 - dependency graph, resource metrics, network metrics, HTTP response-status,
   gRPC metadata/status, Kafka, MongoDB, MySQL command/error, NATS, PostgreSQL,
-  and Redis command/error parser foundations, request/trace/profile foundations
-  with OTLP HTTP, gRPC, and `error.type` trace status mapping and warning
-  trace-record formatting, and runtime security generator behavior through
-  tests, including flow-attribution warnings;
+  query/error, and Redis command/error parser foundations, request/trace/profile
+  foundations with OTLP HTTP, gRPC, and `error.type` trace status mapping and
+  warning trace-record formatting, and runtime security generator behavior
+  through tests, including flow-attribution warnings;
 - selected guarded homelab proof for exec, network, DNS, HTTP, profile,
   resource, Prometheus, OTLP, and seccomp paths;
 - release artifact signing, SBOM generation, Helm packaging, and local quality

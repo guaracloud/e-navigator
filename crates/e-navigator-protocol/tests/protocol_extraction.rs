@@ -6,7 +6,7 @@ use e_navigator_protocol::{
     mongodb::{MongodbExtraction, parse_mongodb_message},
     mysql::{MysqlExtraction, parse_mysql_command, parse_mysql_error_response},
     nats::{NatsExtraction, parse_nats_command},
-    postgres::{PostgresExtraction, parse_postgres_message},
+    postgres::{PostgresExtraction, parse_postgres_error_response, parse_postgres_message},
     redis::{RedisExtraction, parse_redis_command, parse_redis_response},
     trace_context::{TraceContextError, parse_traceparent},
 };
@@ -236,8 +236,7 @@ proptest! {
         prop_assert!(!parsed
             .attributes
             .iter()
-            .any(|attribute| (!message.is_empty() && attribute.value.contains(&message))
-                || attribute.value.contains("secret")));
+            .any(|attribute| attribute.value.contains("secret")));
     }
 
     #[test]
@@ -262,6 +261,42 @@ proptest! {
         };
 
         let _ = parse_postgres_message(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_postgres_error_response_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 4,
+            max_tracestate_bytes: 32,
+        };
+
+        let _ = parse_postgres_error_response(&bytes, &config);
+    }
+
+    #[test]
+    fn postgres_error_response_limits_are_respected(
+        sqlstate in "[A-Z0-9]{5}",
+        message in "[A-Za-z0-9_.=/%+-]{0,80}",
+    ) {
+        let bytes = postgres_error_response_frame(sqlstate.as_bytes(), message.as_bytes());
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        };
+
+        let parsed = parse_postgres_error_response(&bytes, &config)
+            .expect("bounded postgres error parses");
+        prop_assert_eq!(parsed.status_code.as_str(), sqlstate.as_str());
+        prop_assert_eq!(parsed.error_type.as_str(), parsed.status_code.as_str());
+        prop_assert!(parsed.attributes.len() <= config.max_attributes);
+        prop_assert!(!parsed
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")));
     }
 
     #[test]
@@ -311,8 +346,7 @@ proptest! {
         prop_assert!(!parsed
             .attributes
             .iter()
-            .any(|attribute| (!message.is_empty() && attribute.value.contains(&message))
-                || attribute.value.contains("secret")));
+            .any(|attribute| attribute.value.contains("secret")));
     }
 
     #[test]
@@ -390,8 +424,7 @@ proptest! {
         prop_assert!(!parsed
             .attributes
             .iter()
-            .any(|attribute| (!message.is_empty() && attribute.value.contains(&message))
-                || attribute.value.contains("secret")));
+            .any(|attribute| attribute.value.contains("secret")));
     }
 }
 
@@ -1365,6 +1398,37 @@ fn extracts_postgres_operation_after_comments() {
 }
 
 #[test]
+fn extracts_postgres_error_response_without_raw_message_fields() {
+    let bytes =
+        postgres_error_response_frame(b"23505", b"duplicate key value violates secret constraint");
+
+    let extraction = parse_postgres_error_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.status_code, "23505");
+    assert_eq!(extraction.error_type, "23505");
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.system" && attribute.value == "postgresql")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "23505"
+    }));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "23505")
+    );
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("duplicate") || attribute.value.contains("secret")
+    ));
+}
+
+#[test]
 fn enforces_postgres_frame_query_and_attribute_bounds() {
     let bounded = parse_postgres_message(
         &postgres_frame(b'Q', b"select * from customers\0"),
@@ -1405,6 +1469,20 @@ fn enforces_postgres_frame_query_and_attribute_bounds() {
         .unwrap_err(),
         PostgresExtraction::QueryTooLong
     );
+
+    assert_eq!(
+        parse_postgres_error_response(
+            &postgres_error_response_frame(b"23505", b"duplicate key"),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 8,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        PostgresExtraction::FrameTooLong
+    );
 }
 
 #[test]
@@ -1430,6 +1508,31 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     assert_eq!(
         parse_postgres_message(&postgres_frame(b'Q', b"sel\xffct\0"), &config).unwrap_err(),
         PostgresExtraction::InvalidUtf8
+    );
+    assert_eq!(
+        parse_postgres_error_response(&postgres_frame(b'Q', b"select 1\0"), &config).unwrap_err(),
+        PostgresExtraction::UnsupportedMessage
+    );
+    assert_eq!(
+        parse_postgres_error_response(&postgres_frame(b'E', b"Msecret message\0\0"), &config)
+            .unwrap_err(),
+        PostgresExtraction::MissingSqlstate
+    );
+    assert_eq!(
+        parse_postgres_error_response(
+            &postgres_error_response_frame(b"23\xff05", b"secret message"),
+            &config,
+        )
+        .unwrap_err(),
+        PostgresExtraction::InvalidUtf8
+    );
+    assert_eq!(
+        parse_postgres_error_response(
+            &postgres_error_response_frame(b"2350", b"secret message"),
+            &config,
+        )
+        .unwrap_err(),
+        PostgresExtraction::MalformedFrame
     );
 }
 
@@ -1979,6 +2082,20 @@ fn postgres_frame(message_type: u8, body: &[u8]) -> Vec<u8> {
     frame.extend_from_slice(&((body.len() + 4) as u32).to_be_bytes());
     frame.extend_from_slice(body);
     frame
+}
+
+fn postgres_error_response_frame(sqlstate: &[u8], message: &[u8]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.push(b'S');
+    body.extend_from_slice(b"ERROR\0");
+    body.push(b'C');
+    body.extend_from_slice(sqlstate);
+    body.push(0);
+    body.push(b'M');
+    body.extend_from_slice(message);
+    body.push(0);
+    body.push(0);
+    postgres_frame(b'E', &body)
 }
 
 fn mysql_packet(command: u8, query: &[u8]) -> Vec<u8> {

@@ -4,12 +4,21 @@ use crate::ProtocolExtractionConfig;
 
 const MAX_POSTGRES_OPERATION_BYTES: usize = 64;
 const MAX_POSTGRES_STATEMENT_NAME_BYTES: usize = 128;
+const POSTGRES_SQLSTATE_BYTES: usize = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedPostgresQuery {
     pub protocol: ProtocolKind,
     pub operation: Option<String>,
     pub warning: Option<String>,
+    pub attributes: Vec<TraceAttribute>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedPostgresResponse {
+    pub protocol: ProtocolKind,
+    pub status_code: String,
+    pub error_type: String,
     pub attributes: Vec<TraceAttribute>,
 }
 
@@ -20,6 +29,7 @@ pub enum PostgresExtraction {
     MalformedFrame,
     QueryTooLong,
     UnsupportedMessage,
+    MissingSqlstate,
 }
 
 pub fn parse_postgres_message(
@@ -69,6 +79,52 @@ pub fn parse_postgres_message(
     })
 }
 
+pub fn parse_postgres_error_response(
+    bytes: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    if bytes.len() > config.max_header_bytes {
+        return Err(PostgresExtraction::FrameTooLong);
+    }
+    if bytes.len() < 5 {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    if bytes[0] != b'E' {
+        return Err(PostgresExtraction::UnsupportedMessage);
+    }
+
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let status_code = postgres_sqlstate(body)?.ok_or(PostgresExtraction::MissingSqlstate)?;
+    let error_type = status_code.clone();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "db.system",
+        Some("postgresql"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "db.response.status_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        Some(&error_type),
+    );
+
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 fn frame_body(bytes: &[u8], max_frame_bytes: usize) -> Result<&[u8], PostgresExtraction> {
     let declared_len = u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) as usize;
     if declared_len < 4 {
@@ -84,6 +140,36 @@ fn frame_body(bytes: &[u8], max_frame_bytes: usize) -> Result<&[u8], PostgresExt
         return Err(PostgresExtraction::MalformedFrame);
     }
     Ok(&bytes[5..total_len])
+}
+
+fn postgres_sqlstate(body: &[u8]) -> Result<Option<String>, PostgresExtraction> {
+    let mut cursor = 0;
+    while cursor < body.len() {
+        let field_type = body[cursor];
+        cursor += 1;
+        if field_type == 0 {
+            return Ok(None);
+        }
+        if field_type == b'C' {
+            let value = parse_cstring(body, &mut cursor, POSTGRES_SQLSTATE_BYTES)?;
+            if value.len() != POSTGRES_SQLSTATE_BYTES
+                || !value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+            {
+                return Err(PostgresExtraction::MalformedFrame);
+            }
+            return Ok(Some(value.to_string()));
+        }
+        skip_cstring(body, &mut cursor)?;
+    }
+    Err(PostgresExtraction::MalformedFrame)
+}
+
+fn skip_cstring(bytes: &[u8], cursor: &mut usize) -> Result<(), PostgresExtraction> {
+    let Some(end_offset) = bytes[*cursor..].iter().position(|byte| *byte == 0) else {
+        return Err(PostgresExtraction::MalformedFrame);
+    };
+    *cursor += end_offset + 1;
+    Ok(())
 }
 
 fn parse_simple_query(body: &[u8], max_query_bytes: usize) -> Result<&str, PostgresExtraction> {
