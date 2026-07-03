@@ -262,6 +262,8 @@ fn parse_dns_name(packet: &[u8], mut offset: usize) -> Option<(String, usize)> {
         let end = offset.checked_add(len)?;
         let label = packet.get(offset..end)?;
         if label.is_empty()
+            || label.first() == Some(&b'-')
+            || label.last() == Some(&b'-')
             || !label
                 .iter()
                 .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
@@ -787,6 +789,9 @@ mod tests {
         let long_name = (0..128).map(|_| "a").collect::<Vec<_>>().join(".");
         let packet = dns_query_packet(0x1234, &long_name, 1);
         assert!(parse_dns_packet(&packet).is_none());
+
+        assert!(parse_dns_packet(&dns_query_packet(0x1234, "-bad.example.com", 1)).is_none());
+        assert!(parse_dns_packet(&dns_query_packet(0x1234, "bad-.example.com", 1)).is_none());
     }
 
     #[test]

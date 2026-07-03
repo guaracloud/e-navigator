@@ -59,8 +59,9 @@ or chart rendering:
   container/Kubernetes cgroup markers rather than unrelated 64-hex substrings;
 - raw userspace decode paths for selected Aya exec/network/DNS/HTTP/profile
   events, including profile fixture normalization with sensitive/reserved
-  attribute filtering, owned stack-truncation markers, and build-checked DNS
-  and HTTP raw decode fuzz targets plus HTTP iovec length validation;
+  attribute filtering, owned stack-truncation markers, raw DNS label-shape
+  validation, and build-checked DNS and HTTP raw decode fuzz targets plus HTTP
+  iovec length validation;
 - bounded DNS request parsing with configurable packet and diagnostic preview
   limits plus validated preview/packet relationships, bounded DNS-derived
   domain label-shape validation, bounded HTTP request parsing with configurable
