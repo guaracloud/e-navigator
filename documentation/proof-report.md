@@ -81,7 +81,8 @@ or chart rendering:
   bounded label names/values, and secret-like label filtering;
 - OTLP protobuf request encoding plus per-family endpoint routing and family
   toggle suppression for metrics with bounded scalar/resource/attribute keys
-  and values, traces with HTTP, gRPC, and `error.type` request/error status
+  and values, native `network.flow.bytes` fake-collector export, traces with
+  HTTP, gRPC, and `error.type` request/error status
   mapping, server span kind and Kubernetes resource
   attributes with bounded trace resource/context/scalar values
   including Kafka, MongoDB, MySQL, NATS, PostgreSQL, and Redis request spans,
@@ -134,9 +135,10 @@ Guarded Linux/Kubernetes runs have recorded these slices:
 These areas remain explicitly partial:
 
 - **Native flow byte metric export:** code emits native `network.flow.bytes`,
-  Prometheus renders it as `network_flow_bytes`, and byte-counted closes without
-  complete source attribution emit warnings locally, but positive live native
-  export and warning proof must be rerun after the native metric migration.
+  Prometheus renders it as `network_flow_bytes`, OTLP HTTP fake-collector export
+  is locally proven, and byte-counted closes without complete source attribution
+  emit warnings locally, but positive live native export and warning proof must
+  be rerun after the native metric migration.
 - **HTTP/gRPC capture:** selected `homelab-02` outbound cleartext HTTP/1 paths
   work and bounded HTTP/1 response-status parsing plus decoded gRPC-over-HTTP/2
   metadata/trailer-status parsing are locally tested, but symmetric node

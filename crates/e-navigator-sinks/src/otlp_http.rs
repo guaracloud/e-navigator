@@ -249,6 +249,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn otlp_http_sink_exports_native_flow_byte_metric_as_otlp_protobuf() {
+        let collector = FakeCollector::spawn(vec![200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&flow_byte_metric())
+            .await
+            .expect("flow byte metric export succeeds");
+        let request = collector.next_request().await;
+
+        assert!(request.contains("POST /v1/metrics HTTP/1.1"));
+        let decoded = ExportMetricsServiceRequest::decode(request.body())
+            .expect("OTLP metrics request decodes");
+        let resource_metrics = decoded.resource_metrics.first().expect("resource metrics");
+        let scope_metrics = resource_metrics
+            .scope_metrics
+            .first()
+            .expect("scope metrics are present");
+        let metric = scope_metrics.metrics.first().expect("metric is present");
+
+        assert_eq!(metric.name, "network.flow.bytes");
+        assert_eq!(metric.unit, "By");
+        let Some(Data::Sum(sum)) = metric.data.as_ref() else {
+            panic!("flow bytes are exported as OTLP Sum");
+        };
+        let point = sum.data_points.first().expect("sum data point");
+        assert_eq!(point.value, Some(number_data_point::Value::AsInt(2048)));
+        assert!(point.attributes.iter().any(|attribute| {
+            attribute.key == "net.transport" && format!("{:?}", attribute.value).contains("tcp")
+        }));
+        assert!(point.attributes.iter().any(|attribute| {
+            attribute.key == "network.type" && format!("{:?}", attribute.value).contains("ipv4")
+        }));
+        assert!(
+            !point
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "server.address")
+        );
+        assert!(
+            !point
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "server.port")
+        );
+        let resource = resource_metrics.resource.as_ref().expect("resource");
+        assert!(resource.attributes.iter().any(|attribute| {
+            attribute.key == "k8s.namespace.name"
+                && format!("{:?}", attribute.value).contains("e-navigator-bench")
+        }));
+        assert!(resource.attributes.iter().any(|attribute| {
+            attribute.key == "k8s.pod.name"
+                && format!("{:?}", attribute.value).contains("workload-a")
+        }));
+    }
+
+    #[tokio::test]
     async fn otlp_http_sink_retries_failed_metric_export() {
         let collector = FakeCollector::spawn(vec![500, 200]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
@@ -1036,6 +1104,39 @@ mod tests {
                 errno: None,
                 container: None,
                 kubernetes: None,
+            },
+        )
+    }
+
+    fn flow_byte_metric() -> SignalEnvelope {
+        SignalEnvelope::network_counter_metric(
+            "generator.network_metrics",
+            Some("node-a".to_string()),
+            NetworkCounterMetric {
+                metric_name: "network.flow.bytes".to_string(),
+                unit: "By".to_string(),
+                value: 2048,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 100,
+                    end_unix_nanos: 200,
+                },
+                process: None,
+                protocol: Some(NetworkProtocol::Tcp),
+                address_family: Some(NetworkAddressFamily::Ipv4),
+                local_address: None,
+                local_port: None,
+                remote_address: None,
+                remote_port: None,
+                errno: None,
+                container: None,
+                kubernetes: Some(KubernetesContext {
+                    namespace: "e-navigator-bench".to_string(),
+                    pod_name: "workload-a".to_string(),
+                    pod_uid: Some("pod-uid".to_string()),
+                    container_name: Some("workload".to_string()),
+                    node_name: Some("homelab-01".to_string()),
+                    labels: BTreeMap::new(),
+                }),
             },
         )
     }
