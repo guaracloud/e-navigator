@@ -117,6 +117,7 @@ pub fn parse_redis_response(
                 error_type: None,
             }
         }
+        b'*' => parse_array_response(bytes, config.max_header_bytes)?,
         b'-' => {
             let status = parse_simple_token(bytes, 1)?;
             let status_code = parse_response_status(&status)?;
@@ -213,7 +214,7 @@ fn parse_bulk_string(
         return Err(RedisExtraction::BulkStringTooLong);
     }
 
-    let end = cursor
+    let end = (*cursor)
         .checked_add(len)
         .ok_or(RedisExtraction::MalformedFrame)?;
     let frame_end = end.checked_add(2).ok_or(RedisExtraction::FrameTooLong)?;
@@ -259,8 +260,91 @@ fn parse_simple_token(bytes: &[u8], start: usize) -> Result<String, RedisExtract
 }
 
 fn parse_bulk_string_response(bytes: &[u8], max_frame_bytes: usize) -> Result<(), RedisExtraction> {
+    let mut cursor = 0;
+    skip_bulk_string_response(bytes, &mut cursor, max_frame_bytes)
+}
+
+fn parse_array_response(
+    bytes: &[u8],
+    max_frame_bytes: usize,
+) -> Result<RedisResponseToken, RedisExtraction> {
     let mut cursor = 1;
-    let len = parse_decimal_line(bytes, &mut cursor)?;
+    let item_count = parse_decimal_line(bytes, &mut cursor)?;
+    if item_count == -1 {
+        return Ok(RedisResponseToken {
+            status_code: Some("OK".to_string()),
+            error_type: None,
+        });
+    }
+    if item_count < -1 {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+    let item_count = item_count as usize;
+    if item_count > MAX_REDIS_ARRAY_ITEMS {
+        return Err(RedisExtraction::FrameTooLong);
+    }
+
+    let mut first_error = None;
+    for _ in 0..item_count {
+        let Some(frame_type) = bytes.get(cursor) else {
+            return Err(RedisExtraction::MalformedFrame);
+        };
+        cursor += 1;
+        match frame_type {
+            b'+' => {
+                let status = parse_simple_token_cursor(bytes, &mut cursor)?;
+                let _ = parse_response_status(&status)?;
+            }
+            b':' => {
+                let _integer = parse_decimal_line(bytes, &mut cursor)?;
+            }
+            b'$' => skip_bulk_string_response_after_type(bytes, &mut cursor, max_frame_bytes)?,
+            b'-' => {
+                let status = parse_simple_token_cursor(bytes, &mut cursor)?;
+                let status_code = parse_response_status(&status)?;
+                if first_error.is_none() {
+                    let error_type = format!(
+                        "redis_{}",
+                        status_code.to_ascii_lowercase().replace('-', "_")
+                    );
+                    first_error = Some((status_code, error_type));
+                }
+            }
+            b'*' => return Err(RedisExtraction::UnsupportedFrame),
+            _ => return Err(RedisExtraction::UnsupportedFrame),
+        }
+    }
+
+    if let Some((status_code, error_type)) = first_error {
+        return Ok(RedisResponseToken {
+            status_code: Some(status_code),
+            error_type: Some(error_type),
+        });
+    }
+    Ok(RedisResponseToken {
+        status_code: Some("OK".to_string()),
+        error_type: None,
+    })
+}
+
+fn skip_bulk_string_response(
+    bytes: &[u8],
+    cursor: &mut usize,
+    max_frame_bytes: usize,
+) -> Result<(), RedisExtraction> {
+    if bytes.get(*cursor) != Some(&b'$') {
+        return Err(RedisExtraction::UnsupportedFrame);
+    }
+    *cursor += 1;
+    skip_bulk_string_response_after_type(bytes, cursor, max_frame_bytes)
+}
+
+fn skip_bulk_string_response_after_type(
+    bytes: &[u8],
+    cursor: &mut usize,
+    max_frame_bytes: usize,
+) -> Result<(), RedisExtraction> {
+    let len = parse_decimal_line(bytes, cursor)?;
     if len < 0 {
         if len == -1 {
             return Ok(());
@@ -271,7 +355,7 @@ fn parse_bulk_string_response(bytes: &[u8], max_frame_bytes: usize) -> Result<()
     if len > MAX_REDIS_BULK_STRING_BYTES {
         return Err(RedisExtraction::BulkStringTooLong);
     }
-    let end = cursor
+    let end = (*cursor)
         .checked_add(len)
         .ok_or(RedisExtraction::MalformedFrame)?;
     let frame_end = end.checked_add(2).ok_or(RedisExtraction::FrameTooLong)?;
@@ -281,7 +365,20 @@ fn parse_bulk_string_response(bytes: &[u8], max_frame_bytes: usize) -> Result<()
     if frame_end > bytes.len() || bytes.get(end..frame_end) != Some(b"\r\n") {
         return Err(RedisExtraction::MalformedFrame);
     }
+    *cursor = frame_end;
     Ok(())
+}
+
+fn parse_simple_token_cursor(bytes: &[u8], cursor: &mut usize) -> Result<String, RedisExtraction> {
+    let end = line_end(bytes, *cursor).ok_or(RedisExtraction::MalformedFrame)?;
+    let line =
+        std::str::from_utf8(&bytes[*cursor..end]).map_err(|_| RedisExtraction::InvalidUtf8)?;
+    let token = line
+        .split_ascii_whitespace()
+        .next()
+        .ok_or(RedisExtraction::MalformedFrame)?;
+    *cursor = end + 2;
+    Ok(token.to_string())
 }
 
 fn parse_decimal_line(bytes: &[u8], cursor: &mut usize) -> Result<isize, RedisExtraction> {

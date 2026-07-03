@@ -85,7 +85,8 @@ or chart rendering:
   PostgreSQL wire-message and
   CommandComplete/ReadyForQuery/ErrorResponse parsing with canonical SQLSTATE
   validation and build-checked parser fuzz coverage, and Redis RESP command plus
-  simple/integer/bulk/error response parsing with declared frame-length bounds,
+  simple/integer/bulk/flat-array/error response parsing with declared
+  frame-length bounds,
   bounded response-status token validation, and build-checked parser fuzz
   coverage;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
@@ -218,9 +219,9 @@ These areas remain explicitly partial:
   request/response matching, broad response coverage, and live PostgreSQL proof
   are not implemented or proven.
 - **Redis protocol observability:** bounded RESP command and
-  simple/integer/bulk/error response parsing is locally tested without
-  exporting raw key/value payloads or raw error messages, including declared
-  frame-length bounds and bounded response-status token validation, but runtime
+  simple/integer/bulk/flat-array/error response parsing is locally tested
+  without exporting raw key/value payloads or raw error messages, including
+  declared frame-length bounds and bounded response-status token validation, but runtime
   capture, request/response matching, broad response coverage, and live Redis
   proof are not implemented or proven.
 - **DNS capture:** selected UDP paths work, but symmetric all-node capture and

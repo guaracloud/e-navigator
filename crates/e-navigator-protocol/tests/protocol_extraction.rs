@@ -1289,6 +1289,60 @@ fn extracts_redis_bulk_response_without_raw_value() {
 }
 
 #[test]
+fn extracts_redis_array_response_without_raw_values() {
+    let extraction = parse_redis_response(
+        b"*3\r\n$15\r\ncustomer-secret\r\n:42\r\n+OK hidden-details\r\n",
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("array response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Redis);
+    assert_eq!(extraction.status_code.as_deref(), Some("OK"));
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.response.status_code" && attribute.value == "OK")
+    );
+    assert!(!extraction.attributes.iter().any(|attribute| {
+        attribute.value.contains("customer")
+            || attribute.value.contains("secret")
+            || attribute.value.contains("42")
+            || attribute.value.contains("hidden")
+    }));
+}
+
+#[test]
+fn extracts_redis_array_error_response_without_raw_error_message() {
+    let extraction = parse_redis_response(
+        b"*2\r\n$15\r\ncustomer-secret\r\n-WRONGTYPE secret-key type mismatch\r\n",
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("array error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Redis);
+    assert_eq!(extraction.status_code.as_deref(), Some("WRONGTYPE"));
+    assert_eq!(extraction.error_type.as_deref(), Some("redis_wrongtype"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.response.status_code"
+                && attribute.value == "WRONGTYPE")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "redis_wrongtype")
+    );
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("customer") || attribute.value.contains("secret")
+    ));
+}
+
+#[test]
 fn extracts_redis_error_type_without_raw_error_message() {
     let extraction = parse_redis_response(
         b"-WRONGTYPE Operation against a key holding the wrong kind of value secret-key\r\n",
@@ -1392,6 +1446,19 @@ fn enforces_redis_frame_attribute_and_bulk_bounds() {
         .unwrap_err(),
         RedisExtraction::FrameTooLong
     );
+    assert_eq!(
+        parse_redis_response(
+            b"*65\r\n",
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        RedisExtraction::FrameTooLong
+    );
 }
 
 #[test]
@@ -1439,7 +1506,7 @@ fn rejects_malformed_and_unsupported_redis_fixtures() {
         RedisExtraction::BulkStringTooLong
     );
     assert_eq!(
-        parse_redis_response(b"*1\r\n$3\r\nkey\r\n", &config).unwrap_err(),
+        parse_redis_response(b"*1\r\n*0\r\n", &config).unwrap_err(),
         RedisExtraction::UnsupportedFrame
     );
 }
