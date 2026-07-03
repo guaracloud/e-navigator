@@ -75,11 +75,11 @@ or chart rendering:
   content-type suffix validation, POST pseudo-header validation,
   authority-port/userinfo validation, and a build-checked parser fuzz target,
   Kafka request-header plus bounded ApiVersions, non-flexible AddOffsetsToTxn,
-  DeleteRecords, DescribeGroups, DeleteGroups, EndTxn, FindCoordinator, Heartbeat,
+  DeleteRecords, DeleteTopics, DescribeGroups, DeleteGroups, EndTxn, FindCoordinator, Heartbeat,
   InitProducerId, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit,
   OffsetDelete, OffsetFetch, and SyncGroup request bodies,
   ApiVersions response, bounded Produce request/response, and bounded
-  non-flexible AddOffsetsToTxn, DeleteRecords, DeleteGroups, DescribeGroups,
+  non-flexible AddOffsetsToTxn, DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups,
   EndTxn, Fetch, FindCoordinator, Heartbeat, InitProducerId, LeaveGroup, ListGroups,
   ListOffsets, Metadata, OffsetCommit, OffsetDelete, OffsetFetch, and SyncGroup
   request/response-error parsing,
@@ -208,11 +208,11 @@ These areas remain explicitly partial:
   mappings are not yet proven.
 - **Kafka protocol observability:** bounded request-header parsing for common
   API keys, bounded ApiVersions request-body validation, bounded non-flexible
-  Produce, Fetch, AddOffsetsToTxn, DeleteRecords, DeleteGroups, DescribeGroups, EndTxn,
+  Produce, Fetch, AddOffsetsToTxn, DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups, EndTxn,
   FindCoordinator, Heartbeat, InitProducerId, LeaveGroup, ListGroups,
   ListOffsets, Metadata, OffsetCommit, OffsetDelete, OffsetFetch, and SyncGroup request-body
   validation, and ApiVersions, Produce, and non-flexible AddOffsetsToTxn,
-  DeleteRecords, DeleteGroups, DescribeGroups, EndTxn, Fetch, FindCoordinator, Heartbeat,
+  DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups, EndTxn, Fetch, FindCoordinator, Heartbeat,
   InitProducerId, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit,
   OffsetDelete, OffsetFetch, and SyncGroup
   response-error parsing is locally tested without exporting client IDs,
