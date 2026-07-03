@@ -111,11 +111,12 @@ Evidence-backed today:
 - Kubernetes/container attribution for selected captured signals;
 - dependency graph, resource metrics, network metrics with precise duplicate
   flow suppression, configurable bounded DNS source limits and raw decode fuzz
-  target, HTTP response-status, configurable bounded HTTP parser limits and raw
-  request-event fuzz target, gRPC metadata/status, Kafka
-  request/ApiVersions-error, MongoDB command/error, MySQL command/error, NATS
-  command/error, PostgreSQL query/error, and Redis command/error parser
-  foundations, request/trace/profile foundations with OTLP
+  target, HTTP response-status with parser fuzz target, configurable bounded
+  HTTP parser limits and raw request-event fuzz target, gRPC metadata/status
+  with parser fuzz target, Kafka request/ApiVersions-error, MongoDB
+  command/error, MySQL command/error, NATS command/error, PostgreSQL
+  query/error, and Redis command/error parser foundations,
+  request/trace/profile foundations with OTLP
   HTTP profile session dropped-sample export, gRPC, and `error.type` trace
   status mapping and warning trace-record formatting, and runtime security
   generator behavior through tests, including flow-attribution and

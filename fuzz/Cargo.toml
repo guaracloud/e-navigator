@@ -27,6 +27,18 @@ test = false
 doc = false
 
 [[bin]]
+name = "http_response_parser"
+path = "fuzz_targets/http_response_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "grpc_headers_parser"
+path = "fuzz_targets/grpc_headers_parser.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "kafka_request_parser"
 path = "fuzz_targets/kafka_request_parser.rs"
 test = false
