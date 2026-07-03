@@ -2847,6 +2847,10 @@ fn rejects_malformed_and_unsupported_nats_fixtures() {
         NatsExtraction::UnsupportedCommand
     );
     assert_eq!(
+        parse_nats_command(b"pub subject 0\r\n\r\n", &config).unwrap_err(),
+        NatsExtraction::UnsupportedCommand
+    );
+    assert_eq!(
         parse_nats_command(b"P\xffNG\r\n", &config).unwrap_err(),
         NatsExtraction::InvalidUtf8
     );

@@ -293,11 +293,11 @@ fn bounded_operation(value: &str) -> Option<String> {
         || value.len() > MAX_NATS_OPERATION_BYTES
         || !value
             .bytes()
-            .all(|byte| byte.is_ascii_alphabetic() || byte == b'+' || byte == b'-')
+            .all(|byte| byte.is_ascii_uppercase() || byte == b'+' || byte == b'-')
     {
         return None;
     }
-    Some(value.to_ascii_uppercase())
+    Some(value.to_string())
 }
 
 fn line_end(bytes: &[u8], start: usize) -> Option<usize> {
