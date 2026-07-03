@@ -662,6 +662,36 @@ fn duplicate_module_names_are_invalid() {
 }
 
 #[test]
+fn runtime_log_level_is_bounded() {
+    assert_invalid(
+        RuntimeConfig {
+            log_level: String::new(),
+            ..RuntimeConfig::default()
+        },
+        "log_level must not be empty",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            log_level: " info".to_string(),
+            ..RuntimeConfig::default()
+        },
+        "log_level must not have leading or trailing whitespace",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            log_level: "x".repeat(RuntimeConfig::MAX_LOG_LEVEL_BYTES_LIMIT + 1),
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "log_level must be at most {} bytes",
+            RuntimeConfig::MAX_LOG_LEVEL_BYTES_LIMIT
+        ),
+    );
+}
+
+#[test]
 fn zero_queue_capacity_is_invalid_with_typed_error_metadata() {
     let config = RuntimeConfig {
         queue_capacity: 0,

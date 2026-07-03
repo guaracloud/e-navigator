@@ -85,12 +85,35 @@ impl RuntimeConfig {
     pub const MAX_QUEUE_CAPACITY_LIMIT: usize = 65_536;
     pub const MAX_DERIVED_SIGNALS_PER_INPUT_LIMIT: usize = 4096;
     pub const MAX_DERIVED_SIGNAL_DEPTH_LIMIT: usize = 64;
+    pub const MAX_LOG_LEVEL_BYTES_LIMIT: usize = 512;
 
     pub fn validate(&self) -> Result<(), String> {
         self.validate_typed().map_err(|err| err.to_string())
     }
 
     pub fn validate_typed(&self) -> ConfigResult<()> {
+        if self.log_level.trim().is_empty() {
+            return Err(ConfigError::invalid_value(
+                "log_level",
+                "log_level must not be empty",
+            ));
+        }
+        if self.log_level.trim() != self.log_level {
+            return Err(ConfigError::invalid_value(
+                "log_level",
+                "log_level must not have leading or trailing whitespace",
+            ));
+        }
+        if self.log_level.len() > Self::MAX_LOG_LEVEL_BYTES_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "log_level",
+                format!(
+                    "log_level must be at most {} bytes",
+                    Self::MAX_LOG_LEVEL_BYTES_LIMIT
+                ),
+            ));
+        }
+
         if self.queue_capacity == 0 {
             return Err(ConfigError::invalid_value(
                 "queue_capacity",

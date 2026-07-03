@@ -54,7 +54,7 @@ config:
 ```
 
 Top-level runtime bounds are validated before startup:
-`queue_capacity` must be at most 65,536,
+`log_level` must be non-empty and at most 512 bytes. `queue_capacity` must be at most 65,536,
 `max_derived_signals_per_input` at most 4,096, and
 `max_derived_signal_depth` at most 64.
 `runtime_security.kubernetes_api_endpoints` must contain at most 32 entries.
