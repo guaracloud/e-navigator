@@ -120,7 +120,10 @@ fn module_error(message: String) -> CoreError {
 
 #[cfg(test)]
 mod tests {
-    use e_navigator_signals::ExecEvent;
+    use e_navigator_signals::{
+        ExecEvent, NetworkAddressFamily, NetworkFlowWarning, NetworkProcessIdentity,
+        NetworkProtocol,
+    };
 
     use super::*;
 
@@ -197,5 +200,52 @@ mod tests {
                 "Authorization:<redacted>"
             ])
         );
+    }
+
+    #[test]
+    fn serializes_network_flow_warning_as_json_stdout() {
+        let signal = SignalEnvelope::network_flow_warning(
+            "generator.network_metrics",
+            Some("node-a".to_string()),
+            NetworkFlowWarning {
+                warning_type: "missing_attribution".to_string(),
+                message: "network flow has byte counters but incomplete source attribution"
+                    .to_string(),
+                timestamp_unix_nanos: 1,
+                source_signal_kind: "network_connection_close".to_string(),
+                source_module: "source.synthetic_network".to_string(),
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                remote_address: "198.51.100.30".to_string(),
+                remote_port: 9443,
+                process: NetworkProcessIdentity {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "api".to_string(),
+                    executable: Some("/app/api".to_string()),
+                    cgroup_id: None,
+                },
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let line = serialize_signal_line(&signal).expect("signal serializes");
+        let value: serde_json::Value =
+            serde_json::from_slice(&line[..line.len() - 1]).expect("line is valid JSON");
+
+        assert!(line.ends_with(b"\n"));
+        assert_eq!(value["kind"], "network_flow_warning");
+        assert_eq!(value["payload"]["warning_type"], "missing_attribution");
+        assert_eq!(
+            value["payload"]["source_signal_kind"],
+            "network_connection_close"
+        );
+        assert_eq!(value["payload"]["protocol"], "tcp");
+        assert_eq!(value["payload"]["address_family"], "ipv4");
+        assert_eq!(value["payload"]["remote_address"], "198.51.100.30");
+        assert_eq!(value["payload"]["remote_port"], 9443);
+        assert_eq!(value["payload"]["process"]["command"], "api");
     }
 }
