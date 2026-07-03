@@ -175,6 +175,7 @@ fn bench_generators(c: &mut Criterion) {
         NetworkMetricsGenerator::with_limits(8192, 8192),
         network_signals(),
     );
+    bench_network_flow_byte_aggregation(c);
     bench_generator(
         c,
         "generator/dns_metrics",
@@ -240,6 +241,35 @@ fn bench_generator<G>(
                 .unwrap();
             while rx.try_recv().is_ok() {}
         })
+    });
+}
+
+fn bench_network_flow_byte_aggregation(c: &mut Criterion) {
+    let runtime = Runtime::new().unwrap();
+    let generator = NetworkMetricsGenerator::with_limits(8192, 8192);
+    let (tx, mut rx) = mpsc::channel(1024);
+    let index = Cell::new(0_u64);
+
+    c.bench_function("generator/network_flow_byte_aggregation", |b| {
+        b.iter_batched(
+            || {
+                let next = index.get().wrapping_add(1);
+                index.set(next);
+                network_close_signal_for_destination(
+                    10_000 + next,
+                    format!("10.42.1.{}", (next % 64) + 1),
+                    4_000 + (next % 64) as u16,
+                    Some(100 + (next % 256) as i32),
+                )
+            },
+            |signal| {
+                runtime
+                    .block_on(generator.observe(black_box(&signal), &tx))
+                    .unwrap();
+                while rx.try_recv().is_ok() {}
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
@@ -685,6 +715,15 @@ fn network_open_signal(timestamp: u64) -> SignalEnvelope {
 }
 
 fn network_close_signal(timestamp: u64) -> SignalEnvelope {
+    network_close_signal_for_destination(timestamp, "203.0.113.10".to_string(), 443, Some(12))
+}
+
+fn network_close_signal_for_destination(
+    timestamp: u64,
+    remote_address: String,
+    remote_port: u16,
+    fd: Option<i32>,
+) -> SignalEnvelope {
     SignalEnvelope::network_connection_close(
         "source.synthetic",
         Some("node-a".to_string()),
@@ -694,9 +733,9 @@ fn network_close_signal(timestamp: u64) -> SignalEnvelope {
             address_family: NetworkAddressFamily::Ipv4,
             local_address: Some("10.42.0.10".to_string()),
             local_port: Some(41234),
-            remote_address: "203.0.113.10".to_string(),
-            remote_port: 443,
-            fd: Some(12),
+            remote_address,
+            remote_port,
+            fd,
             opened_at_unix_nanos: Some(timestamp.saturating_sub(500)),
             closed_at_unix_nanos: timestamp,
             duration_nanos: Some(500),

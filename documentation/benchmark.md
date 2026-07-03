@@ -108,6 +108,19 @@ This timing measures fixed-fixture pprof protobuf rendering only. It does not
 prove a runtime pprof endpoint, backend upload, storage behavior, or live
 profiling overhead.
 
+Focused network flow-byte aggregation smoke from this development host:
+
+```bash
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  --sample-size 10 generator/network_flow_byte_aggregation
+```
+
+- `generator/network_flow_byte_aggregation`: 2.1893-2.6888 us.
+
+This timing measures fixed-fixture generator handling for byte-counted close
+events across rotating remote destinations. It does not prove live eBPF event
+volume, Prometheus scrape latency, or production network overhead.
+
 ## Guarded Runtime Proof
 
 The guarded collector writes evidence under `benchmarks/results/<timestamp>/`.
