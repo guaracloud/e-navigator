@@ -1,9 +1,12 @@
-use crate::otel_metric::{OtelMetricValue, format_otel_metric_record};
+use crate::{
+    otel_metric::{OtelMetricRecord, OtelMetricValue, format_otel_metric_record},
+    profile_format::format_profile_record,
+};
 use async_trait::async_trait;
 use e_navigator_core::{
     CoreError, CoreResult, ModuleKind, ModuleMetadata, PrometheusHttpConfig, Sink,
 };
-use e_navigator_signals::SignalEnvelope;
+use e_navigator_signals::{SignalEnvelope, SignalPayload};
 use std::{
     collections::{BTreeMap, VecDeque},
     io,
@@ -28,18 +31,16 @@ pub struct PrometheusMetricLine {
 
 fn format_prometheus_metric_lines(signal: &SignalEnvelope) -> Vec<PrometheusMetricLine> {
     let Some(record) = format_otel_metric_record(signal) else {
-        return Vec::new();
+        return format_profile_session_metric_lines(signal);
     };
 
+    format_otel_prometheus_metric_lines(record)
+}
+
+fn format_otel_prometheus_metric_lines(record: OtelMetricRecord) -> Vec<PrometheusMetricLine> {
     let mut labels = BTreeMap::new();
     for (key, value) in record.resource.iter().chain(record.attributes.iter()) {
-        let key = sanitize_identifier(key);
-        if !prometheus_label_allowed(&key) {
-            continue;
-        }
-        if let Some(value) = prometheus_label_value(value) {
-            labels.insert(key, value);
-        }
+        insert_prometheus_label(&mut labels, key, value);
     }
 
     let metric_name = sanitize_identifier(&record.name);
@@ -73,6 +74,70 @@ fn format_prometheus_metric_lines(signal: &SignalEnvelope) -> Vec<PrometheusMetr
         })
         .collect(),
     }
+}
+
+fn format_profile_session_metric_lines(signal: &SignalEnvelope) -> Vec<PrometheusMetricLine> {
+    let SignalPayload::ProfilingSessionObservation(observation) = &signal.payload else {
+        return Vec::new();
+    };
+    let Some(record) = format_profile_record(signal) else {
+        return Vec::new();
+    };
+
+    let mut labels = BTreeMap::new();
+    for (key, value) in &record.resource {
+        insert_prometheus_label(&mut labels, key, &serde_json::json!(value));
+    }
+    insert_prometheus_label(
+        &mut labels,
+        "profile.kind",
+        &serde_json::json!(record.profile_kind),
+    );
+    insert_prometheus_label(
+        &mut labels,
+        "profile.correlation.kind",
+        &serde_json::json!(record.correlation_kind),
+    );
+    insert_prometheus_label(
+        &mut labels,
+        "profile.confidence",
+        &serde_json::json!(record.confidence),
+    );
+    insert_prometheus_label(
+        &mut labels,
+        "profile.source",
+        &serde_json::json!(observation.source),
+    );
+
+    let mut lines = [
+        (
+            "profile.session.samples.observed",
+            observation.observed_sample_count,
+        ),
+        (
+            "profile.session.samples.dropped",
+            observation.dropped_sample_count,
+        ),
+        (
+            "profile.session.stacks.distinct",
+            observation.distinct_stack_count,
+        ),
+    ]
+    .into_iter()
+    .map(|(name, value)| PrometheusMetricLine {
+        name: sanitize_identifier(name),
+        labels: labels.clone(),
+        value: value.to_string(),
+    })
+    .collect::<Vec<_>>();
+    if let Some(value) = observation.sampling_period_nanos {
+        lines.push(PrometheusMetricLine {
+            name: sanitize_identifier("profile.session.sampling.period.nanos"),
+            labels,
+            value: value.to_string(),
+        });
+    }
+    lines
 }
 
 pub fn render_prometheus_text(metrics: &[PrometheusMetricLine]) -> String {
@@ -247,6 +312,20 @@ fn request_path(request: &str) -> Option<&str> {
     }
 }
 
+fn insert_prometheus_label(
+    labels: &mut BTreeMap<String, String>,
+    key: &str,
+    value: &serde_json::Value,
+) {
+    let key = sanitize_identifier(key);
+    if !prometheus_label_allowed(&key) {
+        return;
+    }
+    if let Some(value) = prometheus_label_value(value) {
+        labels.insert(key, value);
+    }
+}
+
 fn prometheus_label_allowed(key: &str) -> bool {
     const AUTH_FRAGMENT: &str = concat!("au", "th");
     const AUTHS_FRAGMENT: &str = concat!("au", "ths");
@@ -349,8 +428,9 @@ mod tests {
     use super::*;
     use e_navigator_core::Sink;
     use e_navigator_signals::{
-        KubernetesContext, MetricAggregationWindow, NetworkAddressFamily, NetworkCounterMetric,
-        NetworkProtocol,
+        ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkAddressFamily,
+        NetworkCounterMetric, NetworkProcessIdentity, NetworkProtocol, ProfilingAttribute,
+        ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind, ProfilingSessionObservation,
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -393,6 +473,39 @@ mod tests {
             rendered,
             "network_flow_bytes{host_name=\"node-a\",k8s_container_name=\"workload\",k8s_namespace_name=\"e-navigator-bench\",k8s_node_name=\"homelab-01\",k8s_pod_name=\"workload-a\",net_transport=\"tcp\",network_type=\"ipv4\"} 2048\n"
         );
+    }
+
+    #[test]
+    fn renders_profile_session_aggregates_with_bounded_labels() {
+        let signal = profile_session_signal();
+
+        let lines = format_prometheus_metric_lines(&signal);
+        let rendered = render_prometheus_text(&lines);
+
+        assert_eq!(lines.len(), 4);
+        assert!(rendered.contains("profile_session_samples_observed{"));
+        assert!(rendered.contains("profile_session_samples_observed"));
+        assert!(rendered.contains("profile_session_samples_dropped"));
+        assert!(rendered.contains("profile_session_stacks_distinct"));
+        assert!(rendered.contains("profile_session_sampling_period_nanos"));
+        assert!(rendered.contains("profile_kind=\"cpu\""));
+        assert!(rendered.contains("profile_correlation_kind=\"observed_profile_sample\""));
+        assert!(rendered.contains("profile_confidence=\"high\""));
+        assert!(rendered.contains("profile_source=\"source.aya_cpu_profile\""));
+        assert!(rendered.contains("k8s_namespace_name=\"e-navigator-bench\""));
+        assert!(rendered.contains("service_name=\"checkout\""));
+        assert!(rendered.contains(" 27\n"));
+        assert!(rendered.contains(" 3\n"));
+        assert!(rendered.contains(" 5\n"));
+        assert!(rendered.contains(" 10000000\n"));
+        assert!(!rendered.contains("profile_id"));
+        assert!(!rendered.contains("profile:abc"));
+        assert!(!rendered.contains("stack_id"));
+        assert!(!rendered.contains("checkout-api"));
+        assert!(!rendered.contains("container-abc"));
+        assert!(!rendered.contains("pod-uid"));
+        assert!(!rendered.contains("tenant"));
+        assert!(!rendered.contains("authorization"));
     }
 
     #[test]
@@ -515,5 +628,60 @@ mod tests {
             node_name: Some("homelab-01".to_string()),
             labels: BTreeMap::new(),
         }
+    }
+
+    fn profile_session_signal() -> SignalEnvelope {
+        let mut labels = BTreeMap::new();
+        labels.insert("app.kubernetes.io/name".to_string(), "checkout".to_string());
+
+        SignalEnvelope::profiling_session_observation(
+            "generator.profiling",
+            Some("node-a".to_string()),
+            ProfilingSessionObservation {
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 1,
+                    end_unix_nanos: 2,
+                },
+                profiling_kind: ProfilingKind::Cpu,
+                correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+                confidence: ProfilingConfidence::High,
+                profile_id: "profile:abc".to_string(),
+                observed_sample_count: 27,
+                dropped_sample_count: 3,
+                distinct_stack_count: 5,
+                sampling_period_nanos: Some(10_000_000),
+                process: Some(NetworkProcessIdentity {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "checkout-api".to_string(),
+                    executable: Some("/app/checkout-api".to_string()),
+                    cgroup_id: None,
+                }),
+                container: Some(ContainerContext {
+                    container_id: "container-abc".to_string(),
+                    runtime: Some("containerd".to_string()),
+                }),
+                kubernetes: Some(KubernetesContext {
+                    namespace: "e-navigator-bench".to_string(),
+                    pod_name: "workload-a".to_string(),
+                    pod_uid: Some("pod-uid".to_string()),
+                    container_name: Some("workload".to_string()),
+                    node_name: Some("homelab-01".to_string()),
+                    labels,
+                }),
+                source: "source.aya_cpu_profile".to_string(),
+                attributes: vec![
+                    ProfilingAttribute {
+                        key: "tenant".to_string(),
+                        value: "customer-a".to_string(),
+                    },
+                    ProfilingAttribute {
+                        key: "authorization".to_string(),
+                        value: "secret".to_string(),
+                    },
+                ],
+            },
+        )
     }
 }
