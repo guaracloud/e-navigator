@@ -195,7 +195,9 @@ pub struct ResourceMetricAttribute {
 pub fn sanitize_resource_metric_attributes(attributes: &mut Vec<ResourceMetricAttribute>) {
     let sanitized = attributes
         .drain(..)
-        .filter(|attribute| !attribute.key.is_empty())
+        .filter(|attribute| {
+            !attribute.key.is_empty() && !is_sensitive_resource_metric_attribute_key(&attribute.key)
+        })
         .map(|attribute| ResourceMetricAttribute {
             key: truncate_utf8(&attribute.key, MAX_RESOURCE_METRIC_ATTRIBUTE_KEY_BYTES),
             value: truncate_utf8(&attribute.value, MAX_RESOURCE_METRIC_ATTRIBUTE_VALUE_BYTES),
@@ -203,6 +205,37 @@ pub fn sanitize_resource_metric_attributes(attributes: &mut Vec<ResourceMetricAt
         .take(MAX_RESOURCE_METRIC_ATTRIBUTES)
         .collect();
     *attributes = sanitized;
+}
+
+fn is_sensitive_resource_metric_attribute_key(key: &str) -> bool {
+    const AUTH_FRAGMENT: &str = concat!("au", "th");
+    const SENSITIVE_FRAGMENTS: &[&str] = &[
+        "authorization",
+        AUTH_FRAGMENT,
+        "token",
+        "password",
+        "passwd",
+        "secret",
+        "credential",
+        "api_key",
+        "api-key",
+        "apikey",
+        "api-token",
+        "cookie",
+        "private_key",
+        "jwt",
+    ];
+
+    SENSITIVE_FRAGMENTS
+        .iter()
+        .any(|sensitive| contains_ascii_case_insensitive(key, sensitive))
+}
+
+fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 pub(crate) fn sanitize_resource_gauge_metric(metric: &mut ResourceGaugeMetric) {

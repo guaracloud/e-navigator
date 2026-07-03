@@ -4174,6 +4174,10 @@ mod tests {
                 value: "dropped".to_string(),
             },
             ResourceMetricAttribute {
+                key: "x-api-key".to_string(),
+                value: "secret-token".to_string(),
+            },
+            ResourceMetricAttribute {
                 key: "k".repeat(160),
                 value: "value".to_string(),
             },
@@ -4201,6 +4205,8 @@ mod tests {
         assert_eq!(attributes[15]["key"], "resource.attribute.13");
         assert!(!json.to_string().contains(&"k".repeat(129)));
         assert!(!json.to_string().contains(&"v".repeat(257)));
+        assert!(!json.to_string().contains("secret-token"));
+        assert!(!json.to_string().contains("x-api-key"));
         assert!(json.to_string().contains("valid.but.too_large"));
     }
 
