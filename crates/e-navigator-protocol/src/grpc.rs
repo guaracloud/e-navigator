@@ -33,6 +33,7 @@ pub enum GrpcExtraction {
     HeadersTooLong,
     InvalidUtf8,
     MissingGrpcContentType,
+    MissingGrpcMethod,
     MissingGrpcStatus,
     InvalidGrpcStatus,
 }
@@ -79,6 +80,9 @@ pub fn parse_grpc_request_headers(
     let Some(content_type) = content_type else {
         return Err(GrpcExtraction::MissingGrpcContentType);
     };
+    if method.as_deref() != Some("POST") {
+        return Err(GrpcExtraction::MissingGrpcMethod);
+    }
 
     let (trace_context, warning) = match traceparent.as_deref() {
         Some(value) => match parse_traceparent(value) {

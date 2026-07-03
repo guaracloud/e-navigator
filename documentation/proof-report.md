@@ -72,8 +72,8 @@ or chart rendering:
   HTTP response-status fixture parsing with version-token validation and a
   build-checked parser fuzz target, strict W3C traceparent parsing,
   decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with bounded
-  content-type suffix validation, authority-port/userinfo validation, and a
-  build-checked parser fuzz target, Kafka
+  content-type suffix validation, POST pseudo-header validation,
+  authority-port/userinfo validation, and a build-checked parser fuzz target, Kafka
   request-header plus bounded ApiVersions request body, ApiVersions response,
   bounded Produce, and bounded Fetch
   response-error parsing,
@@ -184,7 +184,7 @@ These areas remain explicitly partial:
 - **HTTP/gRPC capture:** selected `homelab-02` outbound cleartext HTTP/1 paths
   work and bounded HTTP/1 response-status plus CONNECT authority parsing and
   decoded gRPC-over-HTTP/2 metadata/trailer-status parsing are locally tested,
-  but symmetric node
+  including explicit gRPC POST pseudo-header validation, but symmetric node
   coverage, inbound parsing, TLS, runtime HTTP/2 frame/HPACK capture, live HTTP
   or gRPC status matching, route templates, retries, app errors, and broader
   iovec shapes are not proven.

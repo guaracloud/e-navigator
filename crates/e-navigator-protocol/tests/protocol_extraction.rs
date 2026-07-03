@@ -760,13 +760,28 @@ fn rejects_non_grpc_decoded_http2_headers() {
         "application/grpc+",
         "application/grpc+proto; charset=utf-8",
     ] {
-        let bytes = format!(":method: GET\n:path: /checkout\ncontent-type: {content_type}\n\n");
+        let bytes = format!(":method: POST\n:path: /checkout\ncontent-type: {content_type}\n\n");
 
         assert_eq!(
             parse_grpc_request_headers(bytes.as_bytes(), &ProtocolExtractionConfig::default())
                 .unwrap_err(),
             GrpcExtraction::MissingGrpcContentType,
             "{content_type:?}"
+        );
+    }
+}
+
+#[test]
+fn rejects_grpc_headers_without_post_method() {
+    for bytes in [
+        b":path: /checkout.v1.CheckoutService/GetCart\ncontent-type: application/grpc\n\n"
+            .as_slice(),
+        b":method: GET\n:path: /checkout.v1.CheckoutService/GetCart\ncontent-type: application/grpc\n\n"
+            .as_slice(),
+    ] {
+        assert_eq!(
+            parse_grpc_request_headers(bytes, &ProtocolExtractionConfig::default()).unwrap_err(),
+            GrpcExtraction::MissingGrpcMethod
         );
     }
 }
