@@ -19,6 +19,7 @@ pub struct HttpExporterConfig {
 }
 
 impl HttpExporterConfig {
+    pub const MAX_ENDPOINT_BYTES_LIMIT: usize = 2048;
     pub const MAX_BATCH_SIZE_LIMIT: usize = 4096;
     pub const MAX_QUEUE_CAPACITY_LIMIT: usize = 65_536;
     pub const MAX_TIMEOUT_MILLIS_LIMIT: u64 = 300_000;
@@ -27,6 +28,45 @@ impl HttpExporterConfig {
     pub fn validate(&self) -> Result<(), ExporterError> {
         if self.endpoint.is_empty() {
             return Err(ExporterError::InvalidConfig("endpoint is required"));
+        }
+        if self.endpoint.len() > Self::MAX_ENDPOINT_BYTES_LIMIT {
+            return Err(ExporterError::InvalidConfig(
+                "endpoint must be at most 2048 bytes",
+            ));
+        }
+        if self.endpoint.trim() != self.endpoint || self.endpoint.chars().any(char::is_whitespace) {
+            return Err(ExporterError::InvalidConfig(
+                "endpoint must not contain whitespace",
+            ));
+        }
+        if self.endpoint.bytes().any(|byte| byte.is_ascii_control()) {
+            return Err(ExporterError::InvalidConfig(
+                "endpoint must not contain control characters",
+            ));
+        }
+        let endpoint = reqwest::Url::parse(&self.endpoint)
+            .map_err(|_| ExporterError::InvalidConfig("endpoint must be a valid URL"))?;
+        if !matches!(endpoint.scheme(), "http" | "https") {
+            return Err(ExporterError::InvalidConfig(
+                "endpoint must start with http:// or https://",
+            ));
+        }
+        let rest = self
+            .endpoint
+            .strip_prefix("http://")
+            .or_else(|| self.endpoint.strip_prefix("https://"))
+            .ok_or(ExporterError::InvalidConfig(
+                "endpoint must start with http:// or https://",
+            ))?;
+        let authority = rest
+            .split(['/', '?', '#'])
+            .next()
+            .expect("split always returns at least one segment");
+        if authority.is_empty() || authority.starts_with(':') {
+            return Err(ExporterError::InvalidConfig("endpoint must include a host"));
+        }
+        if endpoint.host_str().is_none() {
+            return Err(ExporterError::InvalidConfig("endpoint must include a host"));
         }
         if self.batch_size == 0 {
             return Err(ExporterError::InvalidConfig(
@@ -339,6 +379,58 @@ mod tests {
             max_retries: 0,
             tls_insecure_skip_verify: false,
         }
+    }
+
+    #[test]
+    fn exporter_rejects_invalid_endpoints() {
+        for (endpoint, expected_message) in [
+            (
+                " http://127.0.0.1:9",
+                "endpoint must not contain whitespace",
+            ),
+            (
+                "http://exa mple.test",
+                "endpoint must not contain whitespace",
+            ),
+            (
+                "http://127.0.0.1:9/\u{7}",
+                "endpoint must not contain control characters",
+            ),
+            (
+                "grpc://127.0.0.1:4317",
+                "endpoint must start with http:// or https://",
+            ),
+            ("http://", "endpoint must be a valid URL"),
+            ("http:///v1/metrics", "endpoint must include a host"),
+            ("http://:4318/v1/metrics", "endpoint must be a valid URL"),
+        ] {
+            let err = HttpExporterConfig {
+                endpoint: endpoint.to_string(),
+                ..valid_config()
+            }
+            .validate()
+            .expect_err("invalid endpoint fails");
+
+            assert_eq!(
+                err.to_string(),
+                format!("invalid exporter config: {expected_message}")
+            );
+        }
+
+        let err = HttpExporterConfig {
+            endpoint: format!(
+                "http://127.0.0.1:9/{}",
+                "x".repeat(HttpExporterConfig::MAX_ENDPOINT_BYTES_LIMIT)
+            ),
+            ..valid_config()
+        }
+        .validate()
+        .expect_err("oversized endpoint fails");
+
+        assert_eq!(
+            err.to_string(),
+            "invalid exporter config: endpoint must be at most 2048 bytes"
+        );
     }
 
     #[test]
