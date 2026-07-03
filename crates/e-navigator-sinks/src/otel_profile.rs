@@ -190,51 +190,33 @@ fn resource_attributes(
 ) -> BTreeMap<String, serde_json::Value> {
     let mut resource = BTreeMap::new();
     if let Some(host) = &signal.host {
-        resource.insert("host.name".to_string(), serde_json::json!(host));
+        insert_resource_string(&mut resource, "host.name", host);
     }
     if let Some(process) = process {
         resource.insert("process.pid".to_string(), serde_json::json!(process.pid));
-        resource.insert(
-            "process.command".to_string(),
-            serde_json::json!(process.command),
-        );
+        insert_resource_string(&mut resource, "process.command", &process.command);
     }
     if let Some(container) = container {
-        resource.insert(
-            "container.id".to_string(),
-            serde_json::json!(container.container_id),
-        );
+        insert_resource_string(&mut resource, "container.id", &container.container_id);
         if let Some(runtime) = &container.runtime {
-            resource.insert("container.runtime".to_string(), serde_json::json!(runtime));
+            insert_resource_string(&mut resource, "container.runtime", runtime);
         }
     }
     if let Some(kubernetes) = kubernetes {
-        resource.insert(
-            "k8s.namespace.name".to_string(),
-            serde_json::json!(kubernetes.namespace),
-        );
-        resource.insert(
-            "namespace".to_string(),
-            serde_json::json!(kubernetes.namespace),
-        );
-        resource.insert(
-            "k8s.pod.name".to_string(),
-            serde_json::json!(kubernetes.pod_name),
-        );
-        resource.insert("pod".to_string(), serde_json::json!(kubernetes.pod_name));
+        insert_resource_string(&mut resource, "k8s.namespace.name", &kubernetes.namespace);
+        insert_resource_string(&mut resource, "namespace", &kubernetes.namespace);
+        insert_resource_string(&mut resource, "k8s.pod.name", &kubernetes.pod_name);
+        insert_resource_string(&mut resource, "pod", &kubernetes.pod_name);
         if let Some(container_name) = &kubernetes.container_name {
-            resource.insert(
-                "k8s.container.name".to_string(),
-                serde_json::json!(container_name),
-            );
-            resource.insert("container".to_string(), serde_json::json!(container_name));
+            insert_resource_string(&mut resource, "k8s.container.name", container_name);
+            insert_resource_string(&mut resource, "container", container_name);
         }
         if let Some(pod_uid) = &kubernetes.pod_uid {
-            resource.insert("k8s.pod.uid".to_string(), serde_json::json!(pod_uid));
+            insert_resource_string(&mut resource, "k8s.pod.uid", pod_uid);
         }
         if let Some(node_name) = &kubernetes.node_name {
-            resource.insert("k8s.node.name".to_string(), serde_json::json!(node_name));
-            resource.insert("node".to_string(), serde_json::json!(node_name));
+            insert_resource_string(&mut resource, "k8s.node.name", node_name);
+            insert_resource_string(&mut resource, "node", node_name);
         }
         let service_name = kubernetes
             .labels
@@ -242,11 +224,19 @@ fn resource_attributes(
             .or_else(|| kubernetes.labels.get("app"))
             .cloned()
             .unwrap_or_else(|| kubernetes.pod_name.clone());
-        resource.insert("service.name".to_string(), serde_json::json!(service_name));
-        resource.insert("service_name".to_string(), serde_json::json!(service_name));
-        resource.insert("source".to_string(), serde_json::json!("e-navigator"));
+        insert_resource_string(&mut resource, "service.name", &service_name);
+        insert_resource_string(&mut resource, "service_name", &service_name);
+        insert_resource_string(&mut resource, "source", "e-navigator");
     }
     resource
+}
+
+fn insert_resource_string(
+    resource: &mut BTreeMap<String, serde_json::Value>,
+    key: &'static str,
+    value: &str,
+) {
+    resource.insert(key.to_string(), bounded_json_string(value));
 }
 
 fn bounded_stack_frame(frame: &e_navigator_signals::ProfilingFrame) -> OtelProfileFrame {

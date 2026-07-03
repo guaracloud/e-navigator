@@ -265,6 +265,64 @@ fn otlp_profile_bounds_session_source_attribute() {
 }
 
 #[test]
+fn profile_record_bounds_resource_values() {
+    const MAX_VALUE_BYTES: usize = 256;
+
+    let signal = profile_sample_with_long_resource_values(MAX_VALUE_BYTES);
+    let record = format_profile_record(&signal).expect("record formats");
+
+    for key in [
+        "host.name",
+        "process.command",
+        "container.id",
+        "container.runtime",
+        "k8s.namespace.name",
+        "namespace",
+        "k8s.pod.name",
+        "pod",
+        "k8s.pod.uid",
+        "k8s.container.name",
+        "container",
+        "k8s.node.name",
+        "node",
+        "service_name",
+    ] {
+        assert_eq!(record.resource[key].len(), MAX_VALUE_BYTES);
+    }
+}
+
+#[test]
+fn otlp_profile_bounds_resource_values() {
+    const MAX_VALUE_BYTES: usize = 256;
+
+    let signal = profile_sample_with_long_resource_values(MAX_VALUE_BYTES);
+    let record = format_otel_profile_record(&signal).expect("record formats");
+
+    for key in [
+        "host.name",
+        "process.command",
+        "container.id",
+        "container.runtime",
+        "k8s.namespace.name",
+        "namespace",
+        "k8s.pod.name",
+        "pod",
+        "k8s.pod.uid",
+        "k8s.container.name",
+        "container",
+        "k8s.node.name",
+        "node",
+        "service.name",
+        "service_name",
+    ] {
+        assert_eq!(
+            record.resource[key].as_str().map(str::len),
+            Some(MAX_VALUE_BYTES)
+        );
+    }
+}
+
+#[test]
 fn pprof_profile_sample_encodes_stack_values_and_safe_labels() {
     let mut signal = SignalEnvelope::profile_sample_observation(
         "source.aya_cpu_profile",
@@ -716,6 +774,31 @@ fn profile_sample_signal(
             attributes: vec![],
         },
     )
+}
+
+fn profile_sample_with_long_resource_values(max_value_bytes: usize) -> SignalEnvelope {
+    let long_value = "r".repeat(max_value_bytes + 64);
+    let mut signal = profile_sample_signal(Some(&long_value), Some(&long_value), Some(&long_value));
+
+    if let e_navigator_signals::SignalPayload::ProfileSampleObservation(sample) =
+        &mut signal.payload
+    {
+        if let Some(process) = &mut sample.process {
+            process.command = long_value.clone();
+        }
+        if let Some(container) = &mut sample.container {
+            container.runtime = Some(long_value.clone());
+        }
+        if let Some(kubernetes) = &mut sample.kubernetes {
+            kubernetes.namespace = long_value.clone();
+            kubernetes.pod_name = long_value.clone();
+            kubernetes.container_name = Some(long_value.clone());
+            kubernetes.node_name = Some(long_value.clone());
+            kubernetes.labels.insert("app".to_string(), long_value);
+        }
+    }
+
+    signal
 }
 
 fn container(container_id: &str) -> ContainerContext {

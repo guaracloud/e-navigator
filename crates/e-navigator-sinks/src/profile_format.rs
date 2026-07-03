@@ -107,49 +107,48 @@ fn resource_attributes(
 ) -> BTreeMap<String, String> {
     let mut resource = BTreeMap::new();
     if let Some(host) = &signal.host {
-        resource.insert("host.name".to_string(), host.clone());
+        insert_resource_string(&mut resource, "host.name", host);
     }
     if let Some(process) = process {
         resource.insert("process.pid".to_string(), process.pid.to_string());
-        resource.insert("process.command".to_string(), process.command.clone());
+        insert_resource_string(&mut resource, "process.command", &process.command);
     }
     if let Some(container) = container {
-        resource.insert("container.id".to_string(), container.container_id.clone());
+        insert_resource_string(&mut resource, "container.id", &container.container_id);
         if let Some(runtime) = &container.runtime {
-            resource.insert("container.runtime".to_string(), runtime.clone());
+            insert_resource_string(&mut resource, "container.runtime", runtime);
         }
     }
     if let Some(kubernetes) = kubernetes {
-        resource.insert(
-            "k8s.namespace.name".to_string(),
-            kubernetes.namespace.clone(),
-        );
-        resource.insert("namespace".to_string(), kubernetes.namespace.clone());
-        resource.insert("k8s.pod.name".to_string(), kubernetes.pod_name.clone());
-        resource.insert("pod".to_string(), kubernetes.pod_name.clone());
+        insert_resource_string(&mut resource, "k8s.namespace.name", &kubernetes.namespace);
+        insert_resource_string(&mut resource, "namespace", &kubernetes.namespace);
+        insert_resource_string(&mut resource, "k8s.pod.name", &kubernetes.pod_name);
+        insert_resource_string(&mut resource, "pod", &kubernetes.pod_name);
         if let Some(container_name) = &kubernetes.container_name {
-            resource.insert("k8s.container.name".to_string(), container_name.clone());
-            resource.insert("container".to_string(), container_name.clone());
+            insert_resource_string(&mut resource, "k8s.container.name", container_name);
+            insert_resource_string(&mut resource, "container", container_name);
         }
         if let Some(pod_uid) = &kubernetes.pod_uid {
-            resource.insert("k8s.pod.uid".to_string(), pod_uid.clone());
+            insert_resource_string(&mut resource, "k8s.pod.uid", pod_uid);
         }
         if let Some(node_name) = &kubernetes.node_name {
-            resource.insert("k8s.node.name".to_string(), node_name.clone());
-            resource.insert("node".to_string(), node_name.clone());
+            insert_resource_string(&mut resource, "k8s.node.name", node_name);
+            insert_resource_string(&mut resource, "node", node_name);
         }
-        resource.insert(
-            "service_name".to_string(),
-            kubernetes
-                .labels
-                .get("app.kubernetes.io/name")
-                .or_else(|| kubernetes.labels.get("app"))
-                .cloned()
-                .unwrap_or_else(|| kubernetes.pod_name.clone()),
-        );
-        resource.insert("source".to_string(), "e-navigator".to_string());
+        let service_name = kubernetes
+            .labels
+            .get("app.kubernetes.io/name")
+            .or_else(|| kubernetes.labels.get("app"))
+            .cloned()
+            .unwrap_or_else(|| kubernetes.pod_name.clone());
+        insert_resource_string(&mut resource, "service_name", &service_name);
+        insert_resource_string(&mut resource, "source", "e-navigator");
     }
     resource
+}
+
+fn insert_resource_string(resource: &mut BTreeMap<String, String>, key: &'static str, value: &str) {
+    resource.insert(key.to_string(), truncate_utf8(value, MAX_VALUE_BYTES));
 }
 
 fn profile_metric_name(kind: e_navigator_signals::ProfilingKind) -> Option<String> {
