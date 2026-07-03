@@ -92,7 +92,8 @@ or chart rendering:
   including Kafka, MongoDB, MySQL, NATS, PostgreSQL, and Redis request spans,
   local warning trace-record formatting for trace, request, network-flow, and
   profiling warnings, explicit no-ID network-flow and profiling-warning trace
-  export suppression, nonzero trace/span ID filtering,
+  export suppression, bounded profiling-warning trace attributes,
+  nonzero trace/span ID filtering,
   bounded final OTLP attribute key and string value conversion, and
   development-status profile sample records with
   deterministic, workload-aware IDs, bounded resource attributes, bounded stack
