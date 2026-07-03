@@ -2993,6 +2993,45 @@ fn extracts_mysql_stmt_execute_operation_without_statement_or_parameter_values()
 }
 
 #[test]
+fn extracts_mysql_stmt_lifecycle_operations_without_statement_ids() {
+    for (command, payload, operation, command_name) in [
+        (0x19, 42_u32.to_le_bytes().to_vec(), "CLOSE", "stmt_close"),
+        (0x1a, 43_u32.to_le_bytes().to_vec(), "RESET", "stmt_reset"),
+        (
+            0x1c,
+            [44_u32.to_le_bytes(), 10_u32.to_le_bytes()].concat(),
+            "FETCH",
+            "stmt_fetch",
+        ),
+    ] {
+        let bytes = mysql_packet(command, &payload);
+
+        let extraction = parse_mysql_command(&bytes, &ProtocolExtractionConfig::default())
+            .expect("mysql stmt lifecycle command parses");
+
+        assert_eq!(extraction.protocol, ProtocolKind::Mysql);
+        assert_eq!(extraction.operation.as_deref(), Some(operation));
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "db.operation" && attribute.value == operation)
+        );
+        assert!(extraction.attributes.iter().any(
+            |attribute| attribute.key == "db.mysql.command" && attribute.value == command_name
+        ));
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("42")
+                    || attribute.value.contains("43")
+                    || attribute.value.contains("44"))
+        );
+    }
+}
+
+#[test]
 fn extracts_mysql_ping_operation_without_payload_values() {
     let bytes = mysql_packet(0x0e, b"");
 
@@ -3256,6 +3295,18 @@ fn rejects_malformed_and_unsupported_mysql_fixtures() {
     );
     assert_eq!(
         parse_mysql_command(&mysql_packet(0x17, b"\x2a\0\0"), &config).unwrap_err(),
+        MysqlExtraction::MalformedPacket
+    );
+    assert_eq!(
+        parse_mysql_command(&mysql_packet(0x19, b"\x2a\0\0"), &config).unwrap_err(),
+        MysqlExtraction::MalformedPacket
+    );
+    assert_eq!(
+        parse_mysql_command(&mysql_packet(0x1a, b"\x2a\0\0\0extra"), &config).unwrap_err(),
+        MysqlExtraction::MalformedPacket
+    );
+    assert_eq!(
+        parse_mysql_command(&mysql_packet(0x1c, b"\x2a\0\0\0"), &config).unwrap_err(),
         MysqlExtraction::MalformedPacket
     );
     assert_eq!(

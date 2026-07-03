@@ -6,6 +6,9 @@ const MYSQL_COM_QUERY: u8 = 0x03;
 const MYSQL_COM_PING: u8 = 0x0e;
 const MYSQL_COM_STMT_PREPARE: u8 = 0x16;
 const MYSQL_COM_STMT_EXECUTE: u8 = 0x17;
+const MYSQL_COM_STMT_CLOSE: u8 = 0x19;
+const MYSQL_COM_STMT_RESET: u8 = 0x1a;
+const MYSQL_COM_STMT_FETCH: u8 = 0x1c;
 const MYSQL_OK_PACKET: u8 = 0x00;
 const MYSQL_EOF_PACKET: u8 = 0xfe;
 const MYSQL_ERR_PACKET: u8 = 0xff;
@@ -57,6 +60,9 @@ pub fn parse_mysql_command(
             mysql_operation(query)
         }
         MYSQL_COM_STMT_EXECUTE => mysql_stmt_execute_operation(payload)?,
+        MYSQL_COM_STMT_CLOSE => mysql_fixed_length_operation(payload, 5, "CLOSE")?,
+        MYSQL_COM_STMT_RESET => mysql_fixed_length_operation(payload, 5, "RESET")?,
+        MYSQL_COM_STMT_FETCH => mysql_fixed_length_operation(payload, 9, "FETCH")?,
         MYSQL_COM_PING => mysql_ping_operation(payload)?,
         _ => return Err(MysqlExtraction::UnsupportedCommand),
     };
@@ -138,6 +144,17 @@ fn mysql_stmt_execute_operation(payload: &[u8]) -> Result<Option<String>, MysqlE
         return Err(MysqlExtraction::MalformedPacket);
     }
     Ok(Some("EXECUTE".to_string()))
+}
+
+fn mysql_fixed_length_operation(
+    payload: &[u8],
+    expected_len: usize,
+    operation: &str,
+) -> Result<Option<String>, MysqlExtraction> {
+    if payload.len() != expected_len {
+        return Err(MysqlExtraction::MalformedPacket);
+    }
+    Ok(Some(operation.to_string()))
 }
 
 fn mysql_ping_operation(payload: &[u8]) -> Result<Option<String>, MysqlExtraction> {
@@ -285,6 +302,9 @@ fn command_name(command: u8) -> &'static str {
         MYSQL_COM_PING => "ping",
         MYSQL_COM_STMT_PREPARE => "stmt_prepare",
         MYSQL_COM_STMT_EXECUTE => "stmt_execute",
+        MYSQL_COM_STMT_CLOSE => "stmt_close",
+        MYSQL_COM_STMT_RESET => "stmt_reset",
+        MYSQL_COM_STMT_FETCH => "stmt_fetch",
         _ => "unknown",
     }
 }
