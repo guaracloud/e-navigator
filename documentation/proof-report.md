@@ -74,13 +74,15 @@ or chart rendering:
   decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with bounded
   content-type suffix validation, POST pseudo-header validation,
   authority-port/userinfo validation, and a build-checked parser fuzz target,
-  Kafka request-header plus bounded ApiVersions, non-flexible DescribeGroups,
-  DeleteGroups, FindCoordinator, Heartbeat, InitProducerId, LeaveGroup, ListGroups,
-  ListOffsets, Metadata, OffsetCommit, OffsetFetch, and SyncGroup request bodies,
+  Kafka request-header plus bounded ApiVersions, non-flexible AddOffsetsToTxn,
+  DescribeGroups, DeleteGroups, FindCoordinator, Heartbeat, InitProducerId,
+  LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit, OffsetFetch, and
+  SyncGroup request bodies,
   ApiVersions response, bounded Produce request/response, and bounded
-  non-flexible DeleteGroups, DescribeGroups, Fetch, FindCoordinator,
-  Heartbeat, InitProducerId, LeaveGroup, ListGroups, ListOffsets, Metadata,
-  OffsetCommit, OffsetFetch, and SyncGroup request/response-error parsing,
+  non-flexible AddOffsetsToTxn, DeleteGroups, DescribeGroups, Fetch,
+  FindCoordinator, Heartbeat, InitProducerId, LeaveGroup, ListGroups,
+  ListOffsets, Metadata, OffsetCommit, OffsetFetch, and SyncGroup
+  request/response-error parsing,
   MongoDB
   wire-message and response-error parsing with OP_MSG section and checksum
   validation, bounded OP_REPLY response parsing, and non-negative response-code validation,
@@ -206,12 +208,13 @@ These areas remain explicitly partial:
   mappings are not yet proven.
 - **Kafka protocol observability:** bounded request-header parsing for common
   API keys, bounded ApiVersions request-body validation, bounded non-flexible
-  Produce, Fetch, DeleteGroups, DescribeGroups, FindCoordinator, Heartbeat,
+  Produce, Fetch, AddOffsetsToTxn, DeleteGroups, DescribeGroups,
+  FindCoordinator, Heartbeat, InitProducerId, LeaveGroup, ListGroups,
+  ListOffsets, Metadata, OffsetCommit, OffsetFetch, and SyncGroup request-body
+  validation, and ApiVersions, Produce, and non-flexible AddOffsetsToTxn,
+  DeleteGroups, DescribeGroups, Fetch, FindCoordinator, Heartbeat,
   InitProducerId, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit,
-  OffsetFetch, and SyncGroup request-body validation, and ApiVersions, Produce, and
-  non-flexible DeleteGroups, DescribeGroups, Fetch, FindCoordinator,
-  Heartbeat, InitProducerId, LeaveGroup, ListGroups, ListOffsets, Metadata,
-  OffsetCommit, OffsetFetch, and SyncGroup
+  OffsetFetch, and SyncGroup
   response-error parsing is locally tested without exporting client IDs,
   coordinator keys, consumer group/member identifiers, assignment payloads,
   offset metadata, protocol metadata, software names, topics, record payloads,

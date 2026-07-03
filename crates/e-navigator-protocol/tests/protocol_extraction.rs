@@ -3,7 +3,8 @@ use e_navigator_protocol::{
     grpc::{GrpcExtraction, parse_grpc_request_headers, parse_grpc_response_trailers},
     http::{HttpExtraction, parse_http_request, parse_http_response},
     kafka::{
-        KafkaExtraction, parse_kafka_api_versions_response, parse_kafka_delete_groups_response,
+        KafkaExtraction, parse_kafka_add_offsets_to_txn_response,
+        parse_kafka_api_versions_response, parse_kafka_delete_groups_response,
         parse_kafka_describe_groups_response, parse_kafka_fetch_response,
         parse_kafka_find_coordinator_response, parse_kafka_heartbeat_response,
         parse_kafka_init_producer_id_response, parse_kafka_leave_group_response,
@@ -288,6 +289,7 @@ proptest! {
         let _ = parse_kafka_sync_group_response(&bytes, api_version.min(3), &config);
         let _ = parse_kafka_describe_groups_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_list_groups_response(&bytes, api_version.min(3), &config);
+        let _ = parse_kafka_add_offsets_to_txn_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_metadata_response(&bytes, api_version.min(8), &config);
     }
 
@@ -2560,6 +2562,41 @@ fn validates_kafka_init_producer_id_nullable_transactional_id_request() {
 }
 
 #[test]
+fn validates_kafka_add_offsets_to_txn_requests_without_transaction_or_group_values() {
+    for api_version in 0..=2 {
+        let body = kafka_add_offsets_to_txn_request_body();
+        let bytes = kafka_request_frame(25, api_version, Some(b"secret-client"), &body);
+
+        let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+            .expect("kafka add offsets to txn request parses");
+
+        assert_eq!(extraction.operation.as_deref(), Some("add_offsets_to_txn"));
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "messaging.kafka.api_key"
+                    && attribute.value == "25")
+        );
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                    && attribute.value == api_version.to_string())
+        );
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("secret")
+                    || attribute.value.contains("transaction")
+                    || attribute.value.contains("group"))
+        );
+    }
+}
+
+#[test]
 fn validates_kafka_metadata_v8_request_without_topic_values() {
     let body = kafka_metadata_request_body(8, Some(&["orders.secret", "payments.secret"]));
     let bytes = kafka_request_frame(3, 8, Some(b"secret-client"), &body);
@@ -3674,6 +3711,56 @@ fn extracts_kafka_init_producer_id_error_response_without_producer_values() {
 }
 
 #[test]
+fn extracts_kafka_add_offsets_to_txn_ok_response() {
+    let bytes = kafka_throttled_error_response_frame(0, 0);
+
+    let extraction =
+        parse_kafka_add_offsets_to_txn_response(&bytes, 2, &ProtocolExtractionConfig::default())
+            .expect("add offsets to txn ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "add_offsets_to_txn");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "25")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+}
+
+#[test]
+fn extracts_kafka_add_offsets_to_txn_error_response() {
+    let bytes = kafka_throttled_error_response_frame(0, 49);
+
+    let extraction =
+        parse_kafka_add_offsets_to_txn_response(&bytes, 1, &ProtocolExtractionConfig::default())
+            .expect("add offsets to txn error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "add_offsets_to_txn");
+    assert_eq!(extraction.status_code, "49");
+    assert_eq!(extraction.error_type.as_deref(), Some("49"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "1")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "49")
+    );
+}
+
+#[test]
 fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     let bounded = parse_kafka_request(
         &kafka_request_frame(3, 9, Some(b"client-a"), b"topic.secret"),
@@ -3868,6 +3955,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     )
     .expect("bounded kafka init producer id response parses");
     assert_eq!(bounded_init_producer_id_response.attributes.len(), 2);
+
+    let bounded_add_offsets_to_txn_response = parse_kafka_add_offsets_to_txn_response(
+        &kafka_throttled_error_response_frame(0, 49),
+        1,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka add offsets to txn response parses");
+    assert_eq!(bounded_add_offsets_to_txn_response.attributes.len(), 2);
 
     let bounded_metadata_response = parse_kafka_metadata_response(
         &kafka_metadata_response_frame(0, 1, &[("orders.secret", 6, 0)]),
@@ -4092,6 +4192,20 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_add_offsets_to_txn_response(
+            &kafka_throttled_error_response_frame(0, 49),
+            1,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 8,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_metadata_response(
             &kafka_metadata_response_frame(0, 1, &[("orders.secret", 6, 0)]),
             1,
@@ -4218,6 +4332,28 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_request(
             &kafka_request_frame(9, 5, None, &body),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(25, -1, None, b""), &config).unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(25, 2, None, b"\0\x01"), &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    let body = kafka_add_offsets_to_txn_request_body();
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(25, 2, None, &body),
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
                 max_request_line_bytes: 4,
@@ -4622,6 +4758,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_add_offsets_to_txn_response(
+            &kafka_throttled_error_response_frame(0, 0),
+            3,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_metadata_response(
             &kafka_metadata_response_frame(0, 9, &[("orders", 0, 0)]),
             9,
@@ -4899,6 +5044,14 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     truncated_init_producer_id_response.truncate(12);
     assert_eq!(
         parse_kafka_init_producer_id_response(&truncated_init_producer_id_response, 1, &config)
+            .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_add_offsets_to_txn_response = kafka_throttled_error_response_frame(0, 49);
+    truncated_add_offsets_to_txn_response.truncate(10);
+    assert_eq!(
+        parse_kafka_add_offsets_to_txn_response(&truncated_add_offsets_to_txn_response, 1, &config)
             .unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
@@ -8009,6 +8162,15 @@ fn kafka_init_producer_id_request_body(transactional_id: Option<&str>) -> Vec<u8
     body
 }
 
+fn kafka_add_offsets_to_txn_request_body() -> Vec<u8> {
+    let mut body = Vec::new();
+    push_kafka_string(&mut body, "transaction.secret");
+    body.extend_from_slice(&42_i64.to_be_bytes());
+    body.extend_from_slice(&3_i16.to_be_bytes());
+    push_kafka_string(&mut body, "group.secret");
+    body
+}
+
 fn kafka_metadata_request_body(api_version: i16, topics: Option<&[&str]>) -> Vec<u8> {
     let mut body = Vec::new();
     if let Some(topics) = topics {
@@ -8524,6 +8686,14 @@ fn kafka_init_producer_id_response_frame(
     if api_version >= 2 {
         response.push(0);
     }
+    kafka_frame(&response)
+}
+
+fn kafka_throttled_error_response_frame(correlation_id: i32, error_code: i16) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&error_code.to_be_bytes());
     kafka_frame(&response)
 }
 
