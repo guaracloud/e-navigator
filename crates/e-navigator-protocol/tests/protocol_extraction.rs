@@ -1234,6 +1234,44 @@ fn extracts_redis_simple_response_status_without_message_values() {
 }
 
 #[test]
+fn extracts_redis_integer_response_without_raw_count() {
+    let extraction = parse_redis_response(b":42\r\n", &ProtocolExtractionConfig::default())
+        .expect("integer parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Redis);
+    assert_eq!(extraction.status_code.as_deref(), Some("OK"));
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.response.status_code" && attribute.value == "OK")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("42"))
+    );
+}
+
+#[test]
+fn extracts_redis_bulk_response_without_raw_value() {
+    let extraction = parse_redis_response(
+        b"$15\r\ncustomer-secret\r\n",
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("bulk response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Redis);
+    assert_eq!(extraction.status_code.as_deref(), Some("OK"));
+    assert_eq!(extraction.error_type, None);
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("customer") || attribute.value.contains("secret")
+    ));
+}
+
+#[test]
 fn extracts_redis_error_type_without_raw_error_message() {
     let extraction = parse_redis_response(
         b"-WRONGTYPE Operation against a key holding the wrong kind of value secret-key\r\n",
@@ -1342,7 +1380,15 @@ fn rejects_malformed_and_unsupported_redis_fixtures() {
         RedisExtraction::InvalidUtf8
     );
     assert_eq!(
-        parse_redis_response(b"$3\r\nkey\r\n", &config).unwrap_err(),
+        parse_redis_response(b"$3\r\nkey", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b"$1025\r\nignored\r\n", &config).unwrap_err(),
+        RedisExtraction::BulkStringTooLong
+    );
+    assert_eq!(
+        parse_redis_response(b"*1\r\n$3\r\nkey\r\n", &config).unwrap_err(),
         RedisExtraction::UnsupportedFrame
     );
 }

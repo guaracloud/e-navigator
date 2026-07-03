@@ -63,8 +63,8 @@ or chart rendering:
   with build-checked parser fuzz
   coverage, NATS text command plus OK/error response parsing, PostgreSQL
   wire-message and CommandComplete/ErrorResponse parsing with build-checked parser fuzz
-  coverage, and Redis RESP command plus error-response parsing with
-  build-checked parser fuzz coverage;
+  coverage, and Redis RESP command plus simple/integer/bulk/error response
+  parsing with build-checked parser fuzz coverage;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/error-span
   flow, deterministic service path keys, precise duplicate flow suppression,
@@ -176,10 +176,11 @@ These areas remain explicitly partial:
   SQL text or raw error messages, but runtime capture, request/response
   matching, broad response coverage, and live PostgreSQL proof are not
   implemented or proven.
-- **Redis protocol observability:** bounded RESP command and error-response
-  parsing is locally tested without exporting raw key/value payloads or raw
-  error messages, but runtime capture, request/response matching, broad response
-  coverage, and live Redis proof are not implemented or proven.
+- **Redis protocol observability:** bounded RESP command and
+  simple/integer/bulk/error response parsing is locally tested without
+  exporting raw key/value payloads or raw error messages, but runtime capture,
+  request/response matching, broad response coverage, and live Redis proof are
+  not implemented or proven.
 - **DNS capture:** selected UDP paths work, but symmetric all-node capture and
   lossless DNS coverage are not proven.
 - **CPU profiling:** selected samples and sessions plus local pprof protobuf
