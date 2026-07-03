@@ -309,6 +309,79 @@ fn otlp_profile_bounds_session_source_attribute() {
 }
 
 #[test]
+fn otlp_profile_sample_attribute_cap_includes_canonical_fields() {
+    const MAX_OTLP_ATTRIBUTES: usize = 16;
+
+    let mut signal = profile_sample_signal(Some("node-a"), Some("container-a"), Some("pod-a"));
+    if let e_navigator_signals::SignalPayload::ProfileSampleObservation(sample) =
+        &mut signal.payload
+    {
+        sample.thread_id = Some(7);
+        sample.thread_name = Some("worker-7".to_string());
+        sample.attributes = vec![attr("profile.stack.id", "evil")];
+        sample
+            .attributes
+            .extend((0..32).map(|index| attr(&format!("profiling.extra.{index:02}"), "value")));
+    }
+
+    let record = format_otel_profile_record(&signal).expect("record formats");
+
+    assert_eq!(record.attributes.len(), MAX_OTLP_ATTRIBUTES);
+    assert_eq!(record.attributes["profile.stack.id"], "stack:abc");
+    assert_eq!(record.attributes["thread.id"].as_u64(), Some(7));
+    assert_eq!(record.attributes["thread.name"], "worker-7");
+    assert!(record.attributes.contains_key("profiling.extra.12"));
+    assert!(!record.attributes.contains_key("profiling.extra.13"));
+}
+
+#[test]
+fn otlp_profile_session_attribute_cap_includes_canonical_fields() {
+    const MAX_OTLP_ATTRIBUTES: usize = 16;
+
+    let signal = SignalEnvelope::profiling_session_observation(
+        "generator.profiling",
+        None,
+        ProfilingSessionObservation {
+            window: MetricAggregationWindow {
+                start_unix_nanos: 1,
+                end_unix_nanos: 2,
+            },
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::Medium,
+            profile_id: "profile:abc".to_string(),
+            observed_sample_count: 3,
+            dropped_sample_count: 1,
+            distinct_stack_count: 2,
+            sampling_period_nanos: Some(10_000_000),
+            process: None,
+            container: None,
+            kubernetes: None,
+            source: "source.synthetic_profile".to_string(),
+            attributes: {
+                let mut attributes = vec![attr("profile.source", "evil")];
+                attributes.extend(
+                    (0..32).map(|index| attr(&format!("profiling.extra.{index:02}"), "value")),
+                );
+                attributes
+            },
+        },
+    );
+
+    let record = format_otel_profile_record(&signal).expect("record formats");
+
+    assert_eq!(record.attributes.len(), MAX_OTLP_ATTRIBUTES);
+    assert_eq!(record.attributes["profile.distinct_stack_count"], 2);
+    assert_eq!(record.attributes["profile.dropped_sample_count"], 1);
+    assert_eq!(
+        record.attributes["profile.source"],
+        "source.synthetic_profile"
+    );
+    assert!(record.attributes.contains_key("profiling.extra.12"));
+    assert!(!record.attributes.contains_key("profiling.extra.13"));
+}
+
+#[test]
 fn profile_record_bounds_resource_values() {
     const MAX_VALUE_BYTES: usize = 256;
 

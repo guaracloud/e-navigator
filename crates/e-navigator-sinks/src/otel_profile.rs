@@ -46,7 +46,7 @@ pub fn format_otel_profile_record(signal: &SignalEnvelope) -> Option<OtelProfile
 
 fn sample_record(signal: &SignalEnvelope, sample: &ProfileSampleObservation) -> OtelProfileRecord {
     let profile_id = sample_profile_id(signal, sample);
-    let mut attributes = bounded_attributes(&sample.attributes);
+    let mut attributes = BTreeMap::new();
     attributes.insert(
         "profile.stack.id".to_string(),
         bounded_json_string(&sample.stack_id),
@@ -57,6 +57,7 @@ fn sample_record(signal: &SignalEnvelope, sample: &ProfileSampleObservation) -> 
     if let Some(thread_name) = &sample.thread_name {
         attributes.insert("thread.name".to_string(), bounded_json_string(thread_name));
     }
+    append_bounded_attributes(&mut attributes, &sample.attributes);
 
     OtelProfileRecord {
         profile_id,
@@ -146,7 +147,7 @@ fn session_record(
     signal: &SignalEnvelope,
     session: &ProfilingSessionObservation,
 ) -> OtelProfileRecord {
-    let mut attributes = bounded_attributes(&session.attributes);
+    let mut attributes = BTreeMap::new();
     attributes.insert(
         "profile.distinct_stack_count".to_string(),
         serde_json::json!(session.distinct_stack_count),
@@ -159,6 +160,7 @@ fn session_record(
         "profile.source".to_string(),
         bounded_json_string(&session.source),
     );
+    append_bounded_attributes(&mut attributes, &session.attributes);
 
     OtelProfileRecord {
         profile_id: session.profile_id.clone(),
@@ -261,18 +263,26 @@ fn bounded_json_string(value: &str) -> serde_json::Value {
     serde_json::json!(truncate_utf8(value, MAX_VALUE_BYTES))
 }
 
-fn bounded_attributes(attributes: &[ProfilingAttribute]) -> BTreeMap<String, serde_json::Value> {
-    let mut mapped = BTreeMap::new();
+fn append_bounded_attributes(
+    mapped: &mut BTreeMap<String, serde_json::Value>,
+    attributes: &[ProfilingAttribute],
+) {
     for attribute in attributes.iter().take(MAX_ATTRIBUTES) {
+        if mapped.len() >= MAX_ATTRIBUTES {
+            break;
+        }
         if should_drop_attribute(&attribute.key) {
             continue;
         }
+        let key = truncate_utf8(&attribute.key, MAX_KEY_BYTES);
+        if mapped.contains_key(&key) {
+            continue;
+        }
         mapped.insert(
-            truncate_utf8(&attribute.key, MAX_KEY_BYTES),
+            key,
             serde_json::json!(truncate_utf8(&attribute.value, MAX_VALUE_BYTES)),
         );
     }
-    mapped
 }
 
 fn should_drop_attribute(key: &str) -> bool {

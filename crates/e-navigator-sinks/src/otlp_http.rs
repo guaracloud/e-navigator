@@ -942,6 +942,7 @@ mod tests {
             .first()
             .expect("profile is present");
 
+        assert_eq!(profile.attribute_indices.len(), 16);
         assert_profile_attribute(
             dictionary,
             &profile.attribute_indices,
@@ -957,8 +958,8 @@ mod tests {
         assert_profile_attribute(
             dictionary,
             &profile.attribute_indices,
-            "profiling.extra.11",
-            "value-11",
+            "profiling.extra.10",
+            "value-10",
         );
         assert!(!profile_attribute_exists(
             dictionary,
@@ -978,7 +979,7 @@ mod tests {
         assert!(!profile_attribute_exists(
             dictionary,
             &profile.attribute_indices,
-            "profiling.extra.12"
+            "profiling.extra.11"
         ));
     }
 
