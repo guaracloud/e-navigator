@@ -6,6 +6,8 @@ const MAX_RESOURCE_METRIC_ATTRIBUTES: usize = 16;
 const MAX_RESOURCE_METRIC_ATTRIBUTE_KEY_BYTES: usize = 128;
 const MAX_RESOURCE_METRIC_ATTRIBUTE_VALUE_BYTES: usize = 256;
 const MAX_RESOURCE_SIGNAL_STRING_BYTES: usize = 256;
+const MAX_KUBERNETES_LABELS: usize = 16;
+const MAX_KUBERNETES_LABEL_KEY_BYTES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceContext {
@@ -258,6 +260,8 @@ pub(crate) fn sanitize_resource_counter_metric(metric: &mut ResourceCounterMetri
 
 fn sanitize_resource_context(context: &mut ResourceContext) {
     sanitize_optional_resource_signal_string(&mut context.host_name);
+    sanitize_optional_resource_container_context(&mut context.container);
+    sanitize_optional_resource_kubernetes_context(&mut context.kubernetes);
 }
 
 pub(crate) fn sanitize_node_cpu_observation(observation: &mut NodeCpuObservation) {
@@ -297,6 +301,8 @@ pub(crate) fn sanitize_process_resource_observation(observation: &mut ProcessRes
 pub(crate) fn sanitize_process_resource_context(context: &mut ProcessResourceContext) {
     sanitize_resource_signal_string(&mut context.command);
     sanitize_optional_resource_signal_string(&mut context.executable);
+    sanitize_optional_resource_container_context(&mut context.container);
+    sanitize_optional_resource_kubernetes_context(&mut context.kubernetes);
 }
 
 fn sanitize_optional_process_resource_context(context: &mut Option<ProcessResourceContext>) {
@@ -333,11 +339,42 @@ pub(crate) fn sanitize_cgroup_file_descriptor_observation(
 
 pub(crate) fn sanitize_cgroup_resource_context(context: &mut CgroupResourceContext) {
     sanitize_resource_signal_string(&mut context.cgroup_path);
+    sanitize_optional_resource_container_context(&mut context.container);
+    sanitize_optional_resource_kubernetes_context(&mut context.kubernetes);
 }
 
 fn sanitize_optional_cgroup_resource_context(context: &mut Option<CgroupResourceContext>) {
     if let Some(inner) = context {
         sanitize_cgroup_resource_context(inner);
+    }
+}
+
+fn sanitize_optional_resource_container_context(context: &mut Option<ContainerContext>) {
+    if let Some(inner) = context {
+        sanitize_resource_signal_string(&mut inner.container_id);
+        sanitize_optional_resource_signal_string(&mut inner.runtime);
+    }
+}
+
+fn sanitize_optional_resource_kubernetes_context(context: &mut Option<KubernetesContext>) {
+    if let Some(inner) = context {
+        sanitize_resource_signal_string(&mut inner.namespace);
+        sanitize_resource_signal_string(&mut inner.pod_name);
+        sanitize_optional_resource_signal_string(&mut inner.pod_uid);
+        sanitize_optional_resource_signal_string(&mut inner.container_name);
+        sanitize_optional_resource_signal_string(&mut inner.node_name);
+        inner.labels = inner
+            .labels
+            .iter()
+            .filter(|(key, _)| !key.is_empty())
+            .map(|(key, value)| {
+                (
+                    truncate_utf8(key, MAX_KUBERNETES_LABEL_KEY_BYTES),
+                    truncate_utf8(value, MAX_RESOURCE_SIGNAL_STRING_BYTES),
+                )
+            })
+            .take(MAX_KUBERNETES_LABELS)
+            .collect();
     }
 }
 

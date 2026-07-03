@@ -3857,24 +3857,38 @@ mod tests {
     #[test]
     fn resource_metric_constructors_bound_scalar_and_context_strings_before_json_stdout() {
         let long = "m".repeat(320);
+        let container = crate::ContainerContext {
+            container_id: long.clone(),
+            runtime: Some(long.clone()),
+        };
+        let kubernetes = crate::KubernetesContext {
+            namespace: long.clone(),
+            pod_name: long.clone(),
+            pod_uid: Some(long.clone()),
+            container_name: Some(long.clone()),
+            node_name: Some(long.clone()),
+            labels: std::collections::BTreeMap::from_iter(
+                (0..20).map(|index| (format!("label-{index}-{long}"), long.clone())),
+            ),
+        };
         let process = ProcessResourceContext {
             pid: 42,
             ppid: Some(1),
             uid: Some(1000),
             command: long.clone(),
             executable: Some(long.clone()),
-            container: None,
-            kubernetes: None,
+            container: Some(container.clone()),
+            kubernetes: Some(kubernetes.clone()),
         };
         let cgroup = CgroupResourceContext {
             cgroup_path: long.clone(),
-            container: None,
-            kubernetes: None,
+            container: Some(container.clone()),
+            kubernetes: Some(kubernetes.clone()),
         };
         let resource = ResourceContext {
             host_name: Some(long.clone()),
-            container: None,
-            kubernetes: None,
+            container: Some(container),
+            kubernetes: Some(kubernetes),
         };
         let window = MetricAggregationWindow {
             start_unix_nanos: 1_000,
@@ -3916,11 +3930,35 @@ mod tests {
                     &["metric_name"],
                     &["unit"],
                     &["resource", "host_name"],
+                    &["resource", "container", "container_id"],
+                    &["resource", "container", "runtime"],
+                    &["resource", "kubernetes", "namespace"],
+                    &["resource", "kubernetes", "pod_name"],
+                    &["resource", "kubernetes", "pod_uid"],
+                    &["resource", "kubernetes", "container_name"],
+                    &["resource", "kubernetes", "node_name"],
                     &["process", "command"],
                     &["process", "executable"],
+                    &["process", "container", "container_id"],
+                    &["process", "container", "runtime"],
+                    &["process", "kubernetes", "namespace"],
+                    &["process", "kubernetes", "pod_name"],
+                    &["process", "kubernetes", "pod_uid"],
+                    &["process", "kubernetes", "container_name"],
+                    &["process", "kubernetes", "node_name"],
                     &["cgroup", "cgroup_path"],
+                    &["cgroup", "container", "container_id"],
+                    &["cgroup", "container", "runtime"],
+                    &["cgroup", "kubernetes", "namespace"],
+                    &["cgroup", "kubernetes", "pod_name"],
+                    &["cgroup", "kubernetes", "pod_uid"],
+                    &["cgroup", "kubernetes", "container_name"],
+                    &["cgroup", "kubernetes", "node_name"],
                 ],
             );
+            assert_payload_label_bounds(&signal, &["resource", "kubernetes", "labels"]);
+            assert_payload_label_bounds(&signal, &["process", "kubernetes", "labels"]);
+            assert_payload_label_bounds(&signal, &["cgroup", "kubernetes", "labels"]);
         }
     }
 

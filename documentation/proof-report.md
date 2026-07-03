@@ -34,10 +34,11 @@ or chart rendering:
   and labels, network metric signal families with bounded metric, process,
   context strings and labels,
   node/process/cgroup resource observation signals with bounded strings,
-  resource metric signals with bounded scalar/context strings and bounded
-  sensitive-key-filtered dynamic attributes, and profiling signal families with
-  bounded sensitive/reserved profiling attribute filtering, stack frames, scalar
-  strings, process/context strings, and labels;
+  resource metric signals with bounded scalar/context strings including nested
+  container/Kubernetes contexts and bounded sensitive-key-filtered dynamic
+  attributes, and profiling signal families with bounded sensitive/reserved
+  profiling attribute filtering, stack frames, scalar strings, process/context
+  strings, and labels;
 - synthetic source pipeline, including sanitized HTTP, gRPC, Kafka, MongoDB,
   MySQL, NATS, PostgreSQL, and Redis protocol request/error-span fixtures and
   flow-attribution warnings;
