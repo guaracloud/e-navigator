@@ -145,6 +145,14 @@ fn sensitive_profile_attributes_are_filtered_during_normalization() {
                 value: "secret".to_string(),
             },
             e_navigator_signals::ProfilingAttribute {
+                key: "profile_id".to_string(),
+                value: "evil".to_string(),
+            },
+            e_navigator_signals::ProfilingAttribute {
+                key: "correlation_kind".to_string(),
+                value: "evil".to_string(),
+            },
+            e_navigator_signals::ProfilingAttribute {
                 key: "profiling.synthetic.fixture".to_string(),
                 value: "cpu_sample".to_string(),
             },

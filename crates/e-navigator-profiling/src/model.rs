@@ -182,7 +182,9 @@ fn normalize_attributes(
     let mut attributes = attributes
         .into_iter()
         .filter(|attribute| {
-            !attribute.key.is_empty() && !is_sensitive_profiling_attribute_key(&attribute.key)
+            !attribute.key.is_empty()
+                && !is_sensitive_profiling_attribute_key(&attribute.key)
+                && !is_reserved_profile_attribute_key(&attribute.key)
         })
         .map(|attribute| ProfilingAttribute {
             key: truncate_utf8(&attribute.key, max_key_bytes),
@@ -193,6 +195,20 @@ fn normalize_attributes(
     attributes.dedup_by(|left, right| left.key == right.key);
     attributes.truncate(max_attributes);
     attributes
+}
+
+fn is_reserved_profile_attribute_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "schema"
+            | "profile_id"
+            | "profile_kind"
+            | "correlation_kind"
+            | "confidence"
+            | "sample_count"
+            | "stack_id"
+            | "frame_count"
+    )
 }
 
 fn deterministic_stack_id(frames: &[ProfilingFrame]) -> String {
