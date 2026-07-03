@@ -54,6 +54,11 @@ impl Default for OtlpHttpConfig {
 }
 
 impl OtlpHttpConfig {
+    pub const MAX_QUEUE_CAPACITY_LIMIT: usize = 65_536;
+    pub const MAX_BATCH_SIZE_LIMIT: usize = 4096;
+    pub const MAX_TIMEOUT_MILLIS_LIMIT: u64 = 300_000;
+    pub const MAX_RETRIES_LIMIT: usize = 16;
+
     pub fn effective_metrics_endpoint(&self) -> Option<&str> {
         self.effective_endpoint(&self.metrics_endpoint)
     }
@@ -82,16 +87,52 @@ impl OtlpHttpConfig {
                 "otlp_http.queue_capacity must be greater than zero when sink.otlp_http is enabled",
             ));
         }
+        if self.queue_capacity > Self::MAX_QUEUE_CAPACITY_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "otlp_http.queue_capacity",
+                format!(
+                    "otlp_http.queue_capacity must be less than or equal to {} when sink.otlp_http is enabled",
+                    Self::MAX_QUEUE_CAPACITY_LIMIT
+                ),
+            ));
+        }
         if self.batch_size == 0 {
             return Err(ConfigError::invalid_value(
                 "otlp_http.batch_size",
                 "otlp_http.batch_size must be greater than zero when sink.otlp_http is enabled",
             ));
         }
+        if self.batch_size > Self::MAX_BATCH_SIZE_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "otlp_http.batch_size",
+                format!(
+                    "otlp_http.batch_size must be less than or equal to {} when sink.otlp_http is enabled",
+                    Self::MAX_BATCH_SIZE_LIMIT
+                ),
+            ));
+        }
         if self.timeout_millis == 0 {
             return Err(ConfigError::invalid_value(
                 "otlp_http.timeout_millis",
                 "otlp_http.timeout_millis must be greater than zero when sink.otlp_http is enabled",
+            ));
+        }
+        if self.timeout_millis > Self::MAX_TIMEOUT_MILLIS_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "otlp_http.timeout_millis",
+                format!(
+                    "otlp_http.timeout_millis must be less than or equal to {} when sink.otlp_http is enabled",
+                    Self::MAX_TIMEOUT_MILLIS_LIMIT
+                ),
+            ));
+        }
+        if self.max_retries > Self::MAX_RETRIES_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "otlp_http.max_retries",
+                format!(
+                    "otlp_http.max_retries must be less than or equal to {} when sink.otlp_http is enabled",
+                    Self::MAX_RETRIES_LIMIT
+                ),
             ));
         }
         if !(self.metrics_enabled || self.traces_enabled || self.profiles_enabled) {

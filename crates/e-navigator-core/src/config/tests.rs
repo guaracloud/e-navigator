@@ -337,6 +337,23 @@ fn otlp_http_sink_config_is_validated_when_enabled() {
             otlp_http: OtlpHttpConfig {
                 enabled: true,
                 endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                queue_capacity: OtlpHttpConfig::MAX_QUEUE_CAPACITY_LIMIT + 1,
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "otlp_http.queue_capacity must be less than or equal to {} when sink.otlp_http is enabled",
+            OtlpHttpConfig::MAX_QUEUE_CAPACITY_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
                 batch_size: 0,
                 ..OtlpHttpConfig::default()
             },
@@ -351,12 +368,63 @@ fn otlp_http_sink_config_is_validated_when_enabled() {
             otlp_http: OtlpHttpConfig {
                 enabled: true,
                 endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                batch_size: OtlpHttpConfig::MAX_BATCH_SIZE_LIMIT + 1,
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "otlp_http.batch_size must be less than or equal to {} when sink.otlp_http is enabled",
+            OtlpHttpConfig::MAX_BATCH_SIZE_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
                 timeout_millis: 0,
                 ..OtlpHttpConfig::default()
             },
             ..RuntimeConfig::default()
         },
         "otlp_http.timeout_millis must be greater than zero when sink.otlp_http is enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                timeout_millis: OtlpHttpConfig::MAX_TIMEOUT_MILLIS_LIMIT + 1,
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "otlp_http.timeout_millis must be less than or equal to {} when sink.otlp_http is enabled",
+            OtlpHttpConfig::MAX_TIMEOUT_MILLIS_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                max_retries: OtlpHttpConfig::MAX_RETRIES_LIMIT + 1,
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "otlp_http.max_retries must be less than or equal to {} when sink.otlp_http is enabled",
+            OtlpHttpConfig::MAX_RETRIES_LIMIT
+        ),
     );
 
     assert_invalid(

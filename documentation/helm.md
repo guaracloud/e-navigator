@@ -131,6 +131,10 @@ If a family-specific endpoint is omitted, that enabled family uses
 export requests. Every configured OTLP endpoint must be an `http://` or
 `https://` URL without whitespace.
 
+OTLP export runtime bounds are validated before startup:
+`otlp_http.queue_capacity` must be at most 65,536, `batch_size` at most 4,096,
+`timeout_millis` at most 300,000, and `max_retries` at most 16.
+
 ## Raw Manifest Fallback
 
 Raw YAML remains in `deploy/kubernetes/` for development and review, but Helm is
