@@ -482,15 +482,49 @@ fn pod_list_url(
     config: &KubernetesAttributionConfig,
 ) -> Result<String, String> {
     match node_name.filter(|node| !node.is_empty()) {
-        Some(node) => Ok(format!(
-            "https://{host}:{port}/api/v1/pods?fieldSelector=spec.nodeName%3D{node}"
-        )),
+        Some(node) => {
+            validate_node_name_for_field_selector(node)?;
+            Ok(format!(
+                "https://{host}:{port}/api/v1/pods?fieldSelector=spec.nodeName%3D{node}"
+            ))
+        }
         None if !config.require_node_name && config.allow_cluster_wide_pod_list => {
             warn!("kubernetes metadata refresh is listing pods without NODE_NAME scoping");
             Ok(format!("https://{host}:{port}/api/v1/pods"))
         }
         None => Err("NODE_NAME is required for Kubernetes attribution pod listing".to_string()),
     }
+}
+
+fn validate_node_name_for_field_selector(node_name: &str) -> Result<(), String> {
+    if node_name.len() > KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT {
+        return Err(format!(
+            "NODE_NAME must be at most {} bytes for Kubernetes attribution pod listing",
+            KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT
+        ));
+    }
+
+    if node_name.split('.').any(|label| {
+        label.is_empty()
+            || label.len() > 63
+            || !label
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            || !label
+                .bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+            || !label
+                .bytes()
+                .last()
+                .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    }) {
+        return Err(
+            "NODE_NAME must be a DNS subdomain for Kubernetes attribution pod listing".to_string(),
+        );
+    }
+
+    Ok(())
 }
 
 async fn read_response_body(
@@ -674,6 +708,48 @@ mod tests {
         .expect_err("missing node name is rejected");
 
         assert!(err.contains("NODE_NAME is required"));
+    }
+
+    #[test]
+    fn scoped_pod_list_url_accepts_dns_subdomain_node_name() {
+        let url = pod_list_url(
+            "kubernetes.default.svc",
+            "443",
+            Some("worker-a.zone-1"),
+            &KubernetesAttributionConfig::default(),
+        )
+        .expect("DNS subdomain node name is valid");
+
+        assert_eq!(
+            url,
+            "https://kubernetes.default.svc:443/api/v1/pods?fieldSelector=spec.nodeName%3Dworker-a.zone-1"
+        );
+    }
+
+    #[test]
+    fn unsafe_node_name_is_rejected_before_pod_list_url_construction() {
+        for node_name in [
+            "worker-a&limit=1",
+            "worker-a?fieldSelector=metadata.name%3Dpod",
+            "Worker-A",
+            "-worker-a",
+            "worker-a-",
+            "worker..a",
+            "worker a",
+        ] {
+            let err = pod_list_url(
+                "kubernetes.default.svc",
+                "443",
+                Some(node_name),
+                &KubernetesAttributionConfig::default(),
+            )
+            .expect_err("unsafe node name is rejected");
+
+            assert!(
+                err.contains("NODE_NAME must be a DNS subdomain"),
+                "unexpected error for {node_name}: {err}"
+            );
+        }
     }
 
     #[test]

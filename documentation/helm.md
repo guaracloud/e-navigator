@@ -92,6 +92,9 @@ most 128.
 Kubernetes selector lists and pod-label selector maps must each contain at most
 128 entries. Each selector string, key, or value must be non-empty, must not
 contain whitespace or control characters, and must be at most 253 bytes.
+When Kubernetes attribution uses `NODE_NAME` for API field-selector scoping, the
+runtime node name must be a DNS subdomain; unsafe values are rejected before a
+pod-list request is built.
 
 Host resource sampling validates its scan bounds before runtime:
 `resource_source.sample_interval_millis` must be greater than zero and at most
