@@ -109,6 +109,9 @@ serviceMonitor:
 `serviceMonitor.enabled=true` renders a `ServiceMonitor` only with both
 `service.enabled=true` and `prometheusHttp.enabled=true`.
 
+Prometheus latest-metric storage is also validated before startup:
+`prometheus_http.max_metric_lines` must be at most 262,144.
+
 OTLP HTTP export is configured inside the same `config.toml` override. The
 single `endpoint` remains the fallback for backward compatibility; set
 per-family endpoints only when metrics, traces, or profiles should route to

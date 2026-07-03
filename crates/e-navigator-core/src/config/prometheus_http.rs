@@ -33,6 +33,8 @@ impl Default for PrometheusHttpConfig {
 }
 
 impl PrometheusHttpConfig {
+    pub const MAX_METRIC_LINES_LIMIT: usize = 262_144;
+
     pub(super) fn validate(&self, module_enabled: bool) -> ConfigResult<()> {
         if !self.enabled {
             return Ok(());
@@ -59,6 +61,15 @@ impl PrometheusHttpConfig {
             return Err(ConfigError::invalid_value(
                 "prometheus_http.max_metric_lines",
                 "prometheus_http.max_metric_lines must be greater than zero when sink.prometheus_http is enabled",
+            ));
+        }
+        if self.max_metric_lines > Self::MAX_METRIC_LINES_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "prometheus_http.max_metric_lines",
+                format!(
+                    "prometheus_http.max_metric_lines must be less than or equal to {} when sink.prometheus_http is enabled",
+                    Self::MAX_METRIC_LINES_LIMIT
+                ),
             ));
         }
         if !(self.metrics_enabled || self.profiles_enabled) {

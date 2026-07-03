@@ -23,9 +23,9 @@ or chart rendering:
   MySQL, NATS, PostgreSQL, and Redis protocol request/error-span fixtures and
   flow-attribution warnings;
 - strict config validation with unknown-field rejection, packaged config guards,
-  OTLP HTTP endpoint-shape and runtime-bound validation, local Kubernetes
-  attribution selector filtering plus response/cache/label bounds, and host
-  resource source scan bounds;
+  Prometheus and OTLP HTTP sink runtime-bound validation, OTLP HTTP
+  endpoint-shape validation, local Kubernetes attribution selector filtering
+  plus response/cache/label bounds, and host resource source scan bounds;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/DNS/HTTP/profile
   events, including build-checked DNS and HTTP raw decode fuzz targets;

@@ -218,6 +218,25 @@ fn prometheus_http_sink_config_is_validated_when_enabled() {
             ],
             prometheus_http: PrometheusHttpConfig {
                 enabled: true,
+                max_metric_lines: PrometheusHttpConfig::MAX_METRIC_LINES_LIMIT + 1,
+                ..PrometheusHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "prometheus_http.max_metric_lines must be less than or equal to {} when sink.prometheus_http is enabled",
+            PrometheusHttpConfig::MAX_METRIC_LINES_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.synthetic_exec"),
+                ModuleConfig::enabled("sink.prometheus_http"),
+            ],
+            prometheus_http: PrometheusHttpConfig {
+                enabled: true,
                 metrics_enabled: false,
                 profiles_enabled: false,
                 ..PrometheusHttpConfig::default()
