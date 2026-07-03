@@ -53,7 +53,9 @@ or chart rendering:
   combined container-ID and pod-IP cache-entry bounds, cgroup-ID attribution
   scan/cache bounds, and host resource source scan/path plus metric-generator
   cardinality bounds;
-- procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
+- procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat
+  parsing, including cgroup container-ID extraction that requires
+  container/Kubernetes cgroup markers rather than unrelated 64-hex substrings;
 - raw userspace decode paths for selected Aya exec/network/DNS/HTTP/profile
   events, including profile fixture normalization with sensitive/reserved
   attribute filtering, owned stack-truncation markers, and build-checked DNS

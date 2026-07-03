@@ -6,6 +6,9 @@ use std::{
 };
 
 pub(super) fn parse_container_from_cgroup(contents: &str) -> Option<ContainerContext> {
+    if !has_container_cgroup_marker(contents) {
+        return None;
+    }
     let container_id = find_container_id(contents)?;
     let runtime = infer_runtime(contents);
     Some(ContainerContext {
@@ -29,6 +32,15 @@ fn find_container_id(contents: &str) -> Option<String> {
     }
 
     None
+}
+
+fn has_container_cgroup_marker(contents: &str) -> bool {
+    contents.contains("kubepods")
+        || contents.contains("cri-containerd")
+        || contents.contains("containerd")
+        || contents.contains("crio")
+        || contents.contains("cri-o")
+        || contents.contains("docker")
 }
 
 fn infer_runtime(contents: &str) -> Option<String> {
@@ -99,6 +111,24 @@ mod tests {
             assert_eq!(first.container_id, CONTAINER_ID);
             assert_eq!(first.runtime.as_deref(), runtime);
         }
+    }
+
+    #[test]
+    fn kubepods_cgroup_paths_with_bare_container_ids_are_supported() {
+        let context =
+            parse_container_from_cgroup(&format!("0::/kubepods/burstable/podabc/{CONTAINER_ID}\n"))
+                .expect("kubepods path is container evidence");
+
+        assert_eq!(context.container_id, CONTAINER_ID);
+        assert_eq!(context.runtime, None);
+    }
+
+    #[test]
+    fn unrecognized_cgroup_paths_do_not_guess_container_ids() {
+        let context =
+            parse_container_from_cgroup(&format!("0::/user.slice/session-{CONTAINER_ID}.scope\n"));
+
+        assert!(context.is_none());
     }
 
     #[test]
