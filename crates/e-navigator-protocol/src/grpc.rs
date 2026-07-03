@@ -21,11 +21,20 @@ pub struct ParsedGrpcRequest {
     pub attributes: Vec<TraceAttribute>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedGrpcResponse {
+    pub protocol: ProtocolKind,
+    pub status_code: u16,
+    pub attributes: Vec<TraceAttribute>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GrpcExtraction {
     HeadersTooLong,
     InvalidUtf8,
     MissingGrpcContentType,
+    MissingGrpcStatus,
+    InvalidGrpcStatus,
 }
 
 pub fn parse_grpc_request_headers(
@@ -142,6 +151,54 @@ pub fn parse_grpc_request_headers(
     })
 }
 
+pub fn parse_grpc_response_trailers(
+    bytes: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedGrpcResponse, GrpcExtraction> {
+    if bytes.len() > config.max_header_bytes {
+        return Err(GrpcExtraction::HeadersTooLong);
+    }
+    let trailer_text = std::str::from_utf8(bytes).map_err(|_| GrpcExtraction::InvalidUtf8)?;
+    let mut status_code = None;
+
+    for line in trailer_text.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            break;
+        }
+        let Some((key, value)) = split_header_line(line) else {
+            continue;
+        };
+        if key.trim().eq_ignore_ascii_case("grpc-status") {
+            status_code = Some(parse_grpc_status_code(value.trim())?);
+        }
+    }
+
+    let Some(status_code) = status_code else {
+        return Err(GrpcExtraction::MissingGrpcStatus);
+    };
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "rpc.system",
+        Some("grpc"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "rpc.grpc.status_code",
+        Some(&status_code.to_string()),
+    );
+
+    Ok(ParsedGrpcResponse {
+        protocol: ProtocolKind::Grpc,
+        status_code,
+        attributes,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Authority {
     address: String,
@@ -200,6 +257,19 @@ fn grpc_name_byte_allowed(byte: u8) -> bool {
 fn is_grpc_content_type(value: &str) -> bool {
     let value = value.to_ascii_lowercase();
     value == "application/grpc" || value.starts_with("application/grpc+")
+}
+
+fn parse_grpc_status_code(value: &str) -> Result<u16, GrpcExtraction> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(GrpcExtraction::InvalidGrpcStatus);
+    }
+    let status_code = value
+        .parse::<u16>()
+        .map_err(|_| GrpcExtraction::InvalidGrpcStatus)?;
+    if status_code > 16 {
+        return Err(GrpcExtraction::InvalidGrpcStatus);
+    }
+    Ok(status_code)
 }
 
 fn bounded_content_type(value: &str) -> Option<String> {

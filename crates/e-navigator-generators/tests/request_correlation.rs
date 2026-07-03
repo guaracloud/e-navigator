@@ -114,6 +114,42 @@ async fn grpc_protocol_request_generates_named_request_span() {
 }
 
 #[tokio::test]
+async fn grpc_protocol_request_preserves_response_status_for_span_export() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(None, true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.protocol = ProtocolKind::Grpc;
+    request.method = Some("GetCart".to_string());
+    request.status_code = Some(13);
+    request.attributes = vec![
+        TraceAttribute {
+            key: "rpc.system".to_string(),
+            value: "grpc".to_string(),
+        },
+        TraceAttribute {
+            key: "rpc.grpc.status_code".to_string(),
+            value: "13".to_string(),
+        },
+    ];
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(span.name, "grpc request");
+    assert_eq!(span.protocol, ProtocolKind::Grpc);
+    assert_eq!(span.status_code, Some(13));
+    assert!(has_attribute(
+        &span.attributes,
+        "rpc.grpc.status_code",
+        "13"
+    ));
+}
+
+#[tokio::test]
 async fn postgresql_protocol_request_generates_named_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);

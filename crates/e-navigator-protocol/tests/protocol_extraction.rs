@@ -1,6 +1,6 @@
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
-    grpc::{GrpcExtraction, parse_grpc_request_headers},
+    grpc::{GrpcExtraction, parse_grpc_request_headers, parse_grpc_response_trailers},
     http::{HttpExtraction, parse_http_request},
     kafka::{KafkaExtraction, parse_kafka_request},
     mongodb::{MongodbExtraction, parse_mongodb_message},
@@ -110,6 +110,18 @@ proptest! {
         };
 
         let _ = parse_grpc_request_headers(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_grpc_trailer_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        };
+
+        let _ = parse_grpc_response_trailers(&bytes, &config);
     }
 
     #[test]
@@ -240,6 +252,32 @@ proptest! {
             .attributes
             .iter()
             .any(|attribute| attribute.value.contains("secret")));
+    }
+
+    #[test]
+    fn grpc_trailer_limits_are_respected(
+        status in 0u8..=16,
+        message in "[A-Za-z0-9_.=/%+-]{0,80}",
+    ) {
+        let bytes = format!(
+            "grpc-status: {status}\ngrpc-message: {message}\ngrpc-status-details-bin: c2VjcmV0\n\n"
+        );
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 1,
+            max_tracestate_bytes: 32,
+        };
+
+        let parsed = parse_grpc_response_trailers(bytes.as_bytes(), &config)
+            .expect("bounded grpc trailers parse");
+        prop_assert_eq!(parsed.status_code, u16::from(status));
+        prop_assert!(parsed.attributes.len() <= config.max_attributes);
+        prop_assert!(!parsed
+            .attributes
+            .iter()
+            .any(|attribute| (!message.is_empty() && attribute.value.contains(&message))
+                || attribute.value.contains("secret")));
     }
 }
 
@@ -388,12 +426,62 @@ fn extracts_grpc_request_trace_context_from_decoded_http2_headers() {
 }
 
 #[test]
+fn extracts_grpc_status_from_decoded_http2_trailers() {
+    let bytes = b"grpc-status: 13\ngrpc-message: internal%20database%20detail\ngrpc-status-details-bin: c2VjcmV0\n\n";
+
+    let extraction = parse_grpc_response_trailers(bytes, &ProtocolExtractionConfig::default())
+        .expect("grpc response trailers parse");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Grpc);
+    assert_eq!(extraction.status_code, 13);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| { attribute.key == "rpc.system" && attribute.value == "grpc" })
+    );
+    assert!(
+        extraction.attributes.iter().any(|attribute| {
+            attribute.key == "rpc.grpc.status_code" && attribute.value == "13"
+        })
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("database")
+                || attribute.value.contains("c2VjcmV0"))
+    );
+}
+
+#[test]
 fn rejects_non_grpc_decoded_http2_headers() {
     let bytes = b":method: GET\n:path: /checkout\ncontent-type: application/json\n\n";
 
     assert_eq!(
         parse_grpc_request_headers(bytes, &ProtocolExtractionConfig::default()).unwrap_err(),
         GrpcExtraction::MissingGrpcContentType
+    );
+}
+
+#[test]
+fn rejects_malformed_grpc_response_trailers() {
+    let missing = b"grpc-message: no-status\n\n";
+    let invalid = b"grpc-status: 17\n\n";
+    let non_numeric = b"grpc-status: unavailable\n\n";
+
+    assert_eq!(
+        parse_grpc_response_trailers(missing, &ProtocolExtractionConfig::default()).unwrap_err(),
+        GrpcExtraction::MissingGrpcStatus
+    );
+    assert_eq!(
+        parse_grpc_response_trailers(invalid, &ProtocolExtractionConfig::default()).unwrap_err(),
+        GrpcExtraction::InvalidGrpcStatus
+    );
+    assert_eq!(
+        parse_grpc_response_trailers(non_numeric, &ProtocolExtractionConfig::default())
+            .unwrap_err(),
+        GrpcExtraction::InvalidGrpcStatus
     );
 }
 
