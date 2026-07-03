@@ -37,7 +37,7 @@ use e_navigator_protocol::{
         parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
         parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
         parse_kafka_unregister_broker_response, parse_kafka_update_features_response,
-        parse_kafka_write_txn_markers_response,
+        parse_kafka_write_share_group_state_response, parse_kafka_write_txn_markers_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -343,6 +343,7 @@ proptest! {
         let _ = parse_kafka_remove_raft_voter_response(&bytes, 0, &config);
         let _ = parse_kafka_initialize_share_group_state_response(&bytes, 0, &config);
         let _ = parse_kafka_read_share_group_state_response(&bytes, 0, &config);
+        let _ = parse_kafka_write_share_group_state_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -3893,6 +3894,61 @@ fn validates_kafka_read_share_group_state_request_without_group_or_topic_values(
 }
 
 #[test]
+fn validates_kafka_write_share_group_state_request_without_group_or_state_values() {
+    let batches: &[WriteShareGroupStateBatchFixture] = &[WriteShareGroupStateBatchFixture {
+        first_offset: 100,
+        last_offset: 200,
+        delivery_state: 2,
+        delivery_count: 3,
+    }];
+    let partitions: &[WriteShareGroupStatePartitionFixture<'_>] =
+        &[WriteShareGroupStatePartitionFixture {
+            partition: 1,
+            state_epoch: 5,
+            leader_epoch: 2,
+            start_offset: 100,
+            delivery_complete_count: Some(4),
+            state_batches: batches,
+        }];
+    let topics: &[WriteShareGroupStateTopicFixture<'_>] = &[WriteShareGroupStateTopicFixture {
+        topic_id: [29_u8; 16],
+        partitions,
+    }];
+    let body = kafka_write_share_group_state_request_body("group.secret", topics, 1);
+    let bytes = kafka_flexible_request_frame(85, 1, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka write share group state request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("write_share_group_state")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "85")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "1")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("29")
+                || attribute.value.contains("100")
+                || attribute.value.contains("200"))
+    );
+}
+
+#[test]
 fn validates_kafka_alter_replica_log_dirs_requests_without_path_or_topic_values() {
     let body = kafka_alter_replica_log_dirs_request_body(
         "/var/lib/kafka/secret-dir",
@@ -7108,6 +7164,93 @@ fn extracts_kafka_read_share_group_state_error_response_without_topic_message_or
 }
 
 #[test]
+fn extracts_kafka_write_share_group_state_ok_response_without_topic_or_message_values() {
+    let partitions: &[WriteShareGroupStateResultPartitionFixture<'_>] =
+        &[WriteShareGroupStateResultPartitionFixture {
+            partition: 1,
+            error_code: 0,
+            error_message: Some("secret message"),
+        }];
+    let topics: &[WriteShareGroupStateResultTopicFixture<'_>] =
+        &[WriteShareGroupStateResultTopicFixture {
+            topic_id: [29_u8; 16],
+            partitions,
+        }];
+    let bytes = kafka_write_share_group_state_response_frame(0, topics);
+
+    let extraction = parse_kafka_write_share_group_state_response(
+        &bytes,
+        1,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("write share group state ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "write_share_group_state");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "85")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("message")
+                || attribute.value.contains("29"))
+    );
+}
+
+#[test]
+fn extracts_kafka_write_share_group_state_error_response_without_topic_or_message_values() {
+    let partitions: &[WriteShareGroupStateResultPartitionFixture<'_>] =
+        &[WriteShareGroupStateResultPartitionFixture {
+            partition: 1,
+            error_code: 35,
+            error_message: Some("secret message"),
+        }];
+    let topics: &[WriteShareGroupStateResultTopicFixture<'_>] =
+        &[WriteShareGroupStateResultTopicFixture {
+            topic_id: [29_u8; 16],
+            partitions,
+        }];
+    let bytes = kafka_write_share_group_state_response_frame(0, topics);
+
+    let extraction = parse_kafka_write_share_group_state_response(
+        &bytes,
+        1,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("write share group state error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "write_share_group_state");
+    assert_eq!(extraction.status_code, "35");
+    assert_eq!(extraction.error_type.as_deref(), Some("35"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "35")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("message")
+                || attribute.value.contains("29"))
+    );
+}
+
+#[test]
 fn extracts_kafka_list_offsets_ok_response_without_topic_values() {
     let bytes = kafka_list_offsets_response_frame(0, 5, &[("orders.secret", 0)]);
 
@@ -9960,6 +10103,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     .expect("bounded kafka read share group state response parses");
     assert_eq!(bounded_read_share_group_state_response.attributes.len(), 2);
 
+    let bounded_write_share_group_state_response = parse_kafka_write_share_group_state_response(
+        &kafka_write_share_group_state_response_frame(0, &[]),
+        1,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka write share group state response parses");
+    assert_eq!(bounded_write_share_group_state_response.attributes.len(), 2);
+
     let bounded_produce_response = parse_kafka_produce_response(
         &kafka_produce_response_frame(0, 1, &[("orders.secret", 6)]),
         1,
@@ -12554,6 +12710,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_write_share_group_state_response(
+            &kafka_write_share_group_state_response_frame(0, &[]),
+            2,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_sasl_handshake_response(
             &kafka_sasl_handshake_response_frame(0, 0, &["PLAIN"]),
             2,
@@ -13553,6 +13718,48 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
                 }],
             ),
             0,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_write_share_group_state_response(
+            &kafka_write_share_group_state_response_with_topic_count_frame(1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_write_share_group_state_response(
+            &kafka_write_share_group_state_response_with_partition_count_frame(1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_write_share_group_state_response(
+            &kafka_write_share_group_state_response_frame(
+                0,
+                &[WriteShareGroupStateResultTopicFixture {
+                    topic_id: [29_u8; 16],
+                    partitions: &[WriteShareGroupStateResultPartitionFixture {
+                        partition: 1,
+                        error_code: 35,
+                        error_message: Some("secret message"),
+                    }],
+                }],
+            ),
+            1,
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
                 max_request_line_bytes: 4,
@@ -15234,6 +15441,123 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::MalformedFrame
     );
 
+    let write_share_group_state_batches: &[WriteShareGroupStateBatchFixture] =
+        &[WriteShareGroupStateBatchFixture {
+            first_offset: 100,
+            last_offset: 200,
+            delivery_state: 2,
+            delivery_count: 3,
+        }];
+    let write_share_group_state_partitions: &[WriteShareGroupStatePartitionFixture<'_>] =
+        &[WriteShareGroupStatePartitionFixture {
+            partition: 1,
+            state_epoch: 5,
+            leader_epoch: 2,
+            start_offset: 100,
+            delivery_complete_count: Some(4),
+            state_batches: write_share_group_state_batches,
+        }];
+    let write_share_group_state_topics: &[WriteShareGroupStateTopicFixture<'_>] =
+        &[WriteShareGroupStateTopicFixture {
+            topic_id: [29_u8; 16],
+            partitions: write_share_group_state_partitions,
+        }];
+    let write_share_group_state_body = kafka_write_share_group_state_request_body(
+        "group.secret",
+        write_share_group_state_topics,
+        1,
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(85, 2, Some(b"client-a"), &write_share_group_state_body),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(85, 1, Some(b"client-a"), &write_share_group_state_body),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 256,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    let mut oversized_write_share_group_state_body = Vec::new();
+    push_compact_string(&mut oversized_write_share_group_state_body, "group");
+    push_unsigned_varint(&mut oversized_write_share_group_state_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                85,
+                1,
+                Some(b"client-a"),
+                &oversized_write_share_group_state_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    let mut oversized_write_share_group_state_partition_body = Vec::new();
+    push_compact_string(
+        &mut oversized_write_share_group_state_partition_body,
+        "group",
+    );
+    push_unsigned_varint(&mut oversized_write_share_group_state_partition_body, 2);
+    oversized_write_share_group_state_partition_body.extend_from_slice(&[29_u8; 16]);
+    push_unsigned_varint(&mut oversized_write_share_group_state_partition_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                85,
+                1,
+                Some(b"client-a"),
+                &oversized_write_share_group_state_partition_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    let mut oversized_write_share_group_state_batch_body = Vec::new();
+    push_compact_string(&mut oversized_write_share_group_state_batch_body, "group");
+    push_unsigned_varint(&mut oversized_write_share_group_state_batch_body, 2);
+    oversized_write_share_group_state_batch_body.extend_from_slice(&[29_u8; 16]);
+    push_unsigned_varint(&mut oversized_write_share_group_state_batch_body, 2);
+    oversized_write_share_group_state_batch_body.extend_from_slice(&1_i32.to_be_bytes());
+    oversized_write_share_group_state_batch_body.extend_from_slice(&5_i32.to_be_bytes());
+    oversized_write_share_group_state_batch_body.extend_from_slice(&2_i32.to_be_bytes());
+    oversized_write_share_group_state_batch_body.extend_from_slice(&100_i64.to_be_bytes());
+    oversized_write_share_group_state_batch_body.extend_from_slice(&4_i32.to_be_bytes());
+    push_unsigned_varint(&mut oversized_write_share_group_state_batch_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                85,
+                1,
+                Some(b"client-a"),
+                &oversized_write_share_group_state_batch_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(85, 1, Some(b"client-a"), b"\0"),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
     let mut truncated_response = kafka_produce_response_frame(0, 1, &[("orders", 6)]);
     truncated_response.truncate(10);
     assert_eq!(
@@ -15857,6 +16181,29 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         parse_kafka_read_share_group_state_response(
             &truncated_read_share_group_state_response,
             0,
+            &config,
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_write_share_group_state_response =
+        kafka_write_share_group_state_response_frame(
+            0,
+            &[WriteShareGroupStateResultTopicFixture {
+                topic_id: [29_u8; 16],
+                partitions: &[WriteShareGroupStateResultPartitionFixture {
+                    partition: 1,
+                    error_code: 35,
+                    error_message: Some("secret message"),
+                }],
+            }],
+        );
+    truncated_write_share_group_state_response.truncate(18);
+    assert_eq!(
+        parse_kafka_write_share_group_state_response(
+            &truncated_write_share_group_state_response,
+            1,
             &config,
         )
         .unwrap_err(),
@@ -19716,6 +20063,67 @@ fn kafka_read_share_group_state_request_body(
     body
 }
 
+struct WriteShareGroupStateBatchFixture {
+    first_offset: i64,
+    last_offset: i64,
+    delivery_state: i8,
+    delivery_count: i16,
+}
+
+struct WriteShareGroupStatePartitionFixture<'a> {
+    partition: i32,
+    state_epoch: i32,
+    leader_epoch: i32,
+    start_offset: i64,
+    delivery_complete_count: Option<i32>,
+    state_batches: &'a [WriteShareGroupStateBatchFixture],
+}
+
+struct WriteShareGroupStateTopicFixture<'a> {
+    topic_id: [u8; 16],
+    partitions: &'a [WriteShareGroupStatePartitionFixture<'a>],
+}
+
+fn kafka_write_share_group_state_request_body(
+    group_id: &str,
+    topics: &[WriteShareGroupStateTopicFixture<'_>],
+    api_version: i16,
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_compact_string(&mut body, group_id);
+    push_unsigned_varint(&mut body, topics.len() + 1);
+    for topic in topics {
+        body.extend_from_slice(&topic.topic_id);
+        push_unsigned_varint(&mut body, topic.partitions.len() + 1);
+        for partition in topic.partitions {
+            body.extend_from_slice(&partition.partition.to_be_bytes());
+            body.extend_from_slice(&partition.state_epoch.to_be_bytes());
+            body.extend_from_slice(&partition.leader_epoch.to_be_bytes());
+            body.extend_from_slice(&partition.start_offset.to_be_bytes());
+            if api_version >= 1 {
+                body.extend_from_slice(
+                    &partition
+                        .delivery_complete_count
+                        .unwrap_or(-1)
+                        .to_be_bytes(),
+                );
+            }
+            push_unsigned_varint(&mut body, partition.state_batches.len() + 1);
+            for batch in partition.state_batches {
+                body.extend_from_slice(&batch.first_offset.to_be_bytes());
+                body.extend_from_slice(&batch.last_offset.to_be_bytes());
+                body.push(batch.delivery_state as u8);
+                body.extend_from_slice(&batch.delivery_count.to_be_bytes());
+                push_unsigned_varint(&mut body, 0);
+            }
+            push_unsigned_varint(&mut body, 0);
+        }
+        push_unsigned_varint(&mut body, 0);
+    }
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 fn kafka_alter_replica_log_dirs_request_body(log_dir: &str, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&1_i32.to_be_bytes());
@@ -22574,6 +22982,60 @@ fn kafka_read_share_group_state_response_with_batch_count_frame(batch_count: usi
     response.extend_from_slice(&5_i32.to_be_bytes());
     response.extend_from_slice(&100_i64.to_be_bytes());
     push_unsigned_varint(&mut response, batch_count + 1);
+    kafka_frame(&response)
+}
+
+struct WriteShareGroupStateResultPartitionFixture<'a> {
+    partition: i32,
+    error_code: i16,
+    error_message: Option<&'a str>,
+}
+
+struct WriteShareGroupStateResultTopicFixture<'a> {
+    topic_id: [u8; 16],
+    partitions: &'a [WriteShareGroupStateResultPartitionFixture<'a>],
+}
+
+fn kafka_write_share_group_state_response_frame(
+    correlation_id: i32,
+    topics: &[WriteShareGroupStateResultTopicFixture<'_>],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    push_unsigned_varint(&mut response, topics.len() + 1);
+    for topic in topics {
+        response.extend_from_slice(&topic.topic_id);
+        push_unsigned_varint(&mut response, topic.partitions.len() + 1);
+        for partition in topic.partitions {
+            response.extend_from_slice(&partition.partition.to_be_bytes());
+            response.extend_from_slice(&partition.error_code.to_be_bytes());
+            push_compact_nullable_string(&mut response, partition.error_message);
+            push_unsigned_varint(&mut response, 0);
+        }
+        push_unsigned_varint(&mut response, 0);
+    }
+    push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+fn kafka_write_share_group_state_response_with_topic_count_frame(topic_count: usize) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    push_unsigned_varint(&mut response, topic_count + 1);
+    kafka_frame(&response)
+}
+
+fn kafka_write_share_group_state_response_with_partition_count_frame(
+    partition_count: usize,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    push_unsigned_varint(&mut response, 2);
+    response.extend_from_slice(&[29_u8; 16]);
+    push_unsigned_varint(&mut response, partition_count + 1);
     kafka_frame(&response)
 }
 

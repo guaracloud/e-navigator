@@ -39,7 +39,7 @@ use e_navigator_protocol::{
         parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
         parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
         parse_kafka_unregister_broker_response, parse_kafka_update_features_response,
-        parse_kafka_write_txn_markers_response,
+        parse_kafka_write_share_group_state_response, parse_kafka_write_txn_markers_response,
     },
 };
 use libfuzzer_sys::fuzz_target;
@@ -108,6 +108,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_remove_raft_voter_response(data, 0, &config);
     let _ = parse_kafka_initialize_share_group_state_response(data, 0, &config);
     let _ = parse_kafka_read_share_group_state_response(data, 0, &config);
+    let _ = parse_kafka_write_share_group_state_response(data, 1, &config);
     let _ = parse_kafka_produce_response(data, 0, &config);
     let _ = parse_kafka_produce_response(data, 7, &config);
     let _ = parse_kafka_fetch_response(data, 0, &config);
