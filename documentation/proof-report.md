@@ -24,8 +24,8 @@ or chart rendering:
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/profile events;
 - bounded DNS/HTTP fixture parsing, MongoDB wire-message parsing, MySQL command
-  packet parsing, PostgreSQL wire-message parsing, and Redis RESP command
-  parsing;
+  packet parsing, NATS text command parsing, PostgreSQL wire-message parsing,
+  and Redis RESP command parsing;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior;
 - Prometheus HTTP formatting, health/readiness endpoints, and secret-like label
@@ -74,6 +74,11 @@ These areas remain explicitly partial:
   parsing is locally tested without exporting raw BSON values or namespaces, but
   runtime capture, request/response matching, status/error extraction, and live
   MongoDB proof are not implemented or proven.
+- **NATS protocol observability:** bounded text command parsing for common
+  publish, subscribe, message, and control lines is locally tested without
+  exporting raw subjects or payloads, but runtime capture, request/response
+  matching, status/error extraction, and live NATS proof are not implemented or
+  proven.
 - **MySQL protocol observability:** bounded `COM_QUERY` and
   `COM_STMT_PREPARE` command parsing is locally tested without exporting raw SQL
   text, but runtime capture, request/response matching, status/error

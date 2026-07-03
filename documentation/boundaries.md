@@ -30,6 +30,7 @@ E-Navigator does not currently claim:
 - trace storage, profile storage, flamegraph UI, dashboards, or query UI;
 - pprof export;
 - complete live HTTP/gRPC protocol parsing;
+- live NATS protocol capture or request/response matching;
 - live MongoDB protocol capture or request/response matching;
 - live MySQL protocol capture or request/response matching;
 - live PostgreSQL protocol capture or request/response matching;

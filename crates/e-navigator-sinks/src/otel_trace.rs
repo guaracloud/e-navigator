@@ -538,6 +538,7 @@ fn protocol_kind_name(protocol: ProtocolKind) -> &'static str {
         ProtocolKind::Grpc => "grpc",
         ProtocolKind::Mongodb => "mongodb",
         ProtocolKind::Mysql => "mysql",
+        ProtocolKind::Nats => "nats",
         ProtocolKind::Postgresql => "postgresql",
         ProtocolKind::Redis => "redis",
         ProtocolKind::Unknown => "unknown",

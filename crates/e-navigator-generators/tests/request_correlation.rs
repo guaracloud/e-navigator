@@ -169,6 +169,42 @@ async fn mongodb_protocol_request_generates_named_request_span() {
 }
 
 #[tokio::test]
+async fn nats_protocol_request_generates_named_request_span() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(None, true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.protocol = ProtocolKind::Nats;
+    request.method = Some("pub".to_string());
+    request.status_code = None;
+    request.attributes = vec![
+        TraceAttribute {
+            key: "messaging.system".to_string(),
+            value: "nats".to_string(),
+        },
+        TraceAttribute {
+            key: "messaging.operation".to_string(),
+            value: "pub".to_string(),
+        },
+    ];
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(span.name, "nats message");
+    assert_eq!(span.protocol, ProtocolKind::Nats);
+    assert_eq!(span.method.as_deref(), Some("pub"));
+    assert!(has_attribute(
+        &span.attributes,
+        "messaging.operation",
+        "pub"
+    ));
+}
+
+#[tokio::test]
 async fn valid_traceparent_fallback_generates_request_span_ids() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);

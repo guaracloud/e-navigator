@@ -8,8 +8,8 @@ use e_navigator_generators::{
 use e_navigator_profiling::model::{NormalizationLimits, parse_profile_fixture};
 use e_navigator_protocol::{
     ProtocolExtractionConfig, http::parse_http_request, mongodb::parse_mongodb_message,
-    mysql::parse_mysql_command, postgres::parse_postgres_message, redis::parse_redis_command,
-    trace_context::parse_traceparent,
+    mysql::parse_mysql_command, nats::parse_nats_command, postgres::parse_postgres_message,
+    redis::parse_redis_command, trace_context::parse_traceparent,
 };
 use e_navigator_signals::{
     ContainerContext, DnsQueryEvent, DnsQueryType, DnsResponseCode, DnsResponseEvent, ExecEvent,
@@ -95,6 +95,7 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     let mongodb =
         b"\x2e\0\0\0\x01\0\0\0\0\0\0\0\xdd\x07\0\0\0\0\0\0\0\x00\x19\0\0\0\x02find\0\x0a\0\0\0customers\0\0";
     let mysql = b"\x18\0\0\0\x03select * from customers";
+    let nats = b"PUB orders.created 5\r\nhello\r\n";
     let postgres = b"Q\0\0\0\x1cselect * from customers\0";
     let redis = b"*2\r\n$3\r\nGET\r\n$16\r\ncustomer:pii:123\r\n";
     let protocol_config = ProtocolExtractionConfig::default();
@@ -125,6 +126,9 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     });
     c.bench_function("protocol/mysql_query_packet_parse", |b| {
         b.iter(|| parse_mysql_command(black_box(mysql), &protocol_config).unwrap())
+    });
+    c.bench_function("protocol/nats_pub_command_parse", |b| {
+        b.iter(|| parse_nats_command(black_box(nats), &protocol_config).unwrap())
     });
     c.bench_function("protocol/postgres_simple_query_parse", |b| {
         b.iter(|| parse_postgres_message(black_box(postgres), &protocol_config).unwrap())

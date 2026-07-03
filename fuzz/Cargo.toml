@@ -33,6 +33,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "nats_command_parser"
+path = "fuzz_targets/nats_command_parser.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "mysql_command_parser"
 path = "fuzz_targets/mysql_command_parser.rs"
 test = false

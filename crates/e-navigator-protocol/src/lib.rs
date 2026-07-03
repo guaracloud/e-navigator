@@ -4,6 +4,7 @@
 pub mod http;
 pub mod mongodb;
 pub mod mysql;
+pub mod nats;
 pub mod postgres;
 pub mod redis;
 pub mod trace_context;

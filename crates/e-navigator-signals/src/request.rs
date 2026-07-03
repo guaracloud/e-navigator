@@ -13,6 +13,7 @@ pub enum ProtocolKind {
     Grpc,
     Mongodb,
     Mysql,
+    Nats,
     Postgresql,
     Redis,
     Unknown,

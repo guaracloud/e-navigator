@@ -36,8 +36,8 @@ Current local benchmark targets:
   bytes;
 - procfs, loadavg, meminfo, diskstats, and process stat parser paths;
 - traceparent, HTTP fixture parsing, MongoDB wire-message parsing, MySQL
-  command packet parsing, PostgreSQL wire-message parsing, and Redis RESP
-  command parsing;
+  command packet parsing, NATS text command parsing, PostgreSQL wire-message
+  parsing, and Redis RESP command parsing;
 - profiling fixture normalization;
 - generator hot paths for network, DNS, resource, dependency graph, trace,
   request, profiling, runtime security, and native export;
