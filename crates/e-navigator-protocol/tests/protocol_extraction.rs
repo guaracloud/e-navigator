@@ -14,19 +14,19 @@ use e_navigator_protocol::{
         parse_kafka_describe_acls_response, parse_kafka_describe_client_quotas_response,
         parse_kafka_describe_configs_response, parse_kafka_describe_delegation_token_response,
         parse_kafka_describe_groups_response, parse_kafka_describe_log_dirs_response,
-        parse_kafka_elect_leaders_response, parse_kafka_end_txn_response,
-        parse_kafka_expire_delegation_token_response, parse_kafka_fetch_response,
-        parse_kafka_find_coordinator_response, parse_kafka_heartbeat_response,
-        parse_kafka_incremental_alter_configs_response, parse_kafka_init_producer_id_response,
-        parse_kafka_join_group_response, parse_kafka_leave_group_response,
-        parse_kafka_list_groups_response, parse_kafka_list_offsets_response,
-        parse_kafka_list_partition_reassignments_response, parse_kafka_metadata_response,
-        parse_kafka_offset_commit_response, parse_kafka_offset_delete_response,
-        parse_kafka_offset_fetch_response, parse_kafka_produce_response,
-        parse_kafka_renew_delegation_token_response, parse_kafka_request,
-        parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
-        parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
-        parse_kafka_write_txn_markers_response,
+        parse_kafka_describe_user_scram_credentials_response, parse_kafka_elect_leaders_response,
+        parse_kafka_end_txn_response, parse_kafka_expire_delegation_token_response,
+        parse_kafka_fetch_response, parse_kafka_find_coordinator_response,
+        parse_kafka_heartbeat_response, parse_kafka_incremental_alter_configs_response,
+        parse_kafka_init_producer_id_response, parse_kafka_join_group_response,
+        parse_kafka_leave_group_response, parse_kafka_list_groups_response,
+        parse_kafka_list_offsets_response, parse_kafka_list_partition_reassignments_response,
+        parse_kafka_metadata_response, parse_kafka_offset_commit_response,
+        parse_kafka_offset_delete_response, parse_kafka_offset_fetch_response,
+        parse_kafka_produce_response, parse_kafka_renew_delegation_token_response,
+        parse_kafka_request, parse_kafka_sasl_authenticate_response,
+        parse_kafka_sasl_handshake_response, parse_kafka_sync_group_response,
+        parse_kafka_txn_offset_commit_response, parse_kafka_write_txn_markers_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -313,6 +313,7 @@ proptest! {
         let _ = parse_kafka_list_partition_reassignments_response(&bytes, 0, &config);
         let _ = parse_kafka_describe_client_quotas_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_alter_client_quotas_response(&bytes, api_version.min(1), &config);
+        let _ = parse_kafka_describe_user_scram_credentials_response(&bytes, 0, &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -2901,6 +2902,58 @@ fn validates_kafka_alter_client_quotas_v1_request_without_entity_or_quota_values
 }
 
 #[test]
+fn validates_kafka_describe_user_scram_credentials_request_without_user_values() {
+    let body = kafka_describe_user_scram_credentials_request_body(Some(&["alice.secret"]));
+    let bytes = kafka_flexible_request_frame(50, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka describe user scram credentials request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("describe_user_scram_credentials")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "50")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction.attributes.iter().any(
+            |attribute| attribute.value.contains("alice") || attribute.value.contains("secret")
+        )
+    );
+}
+
+#[test]
+fn validates_kafka_describe_user_scram_credentials_null_users_request() {
+    let body = kafka_describe_user_scram_credentials_request_body(None);
+    let bytes = kafka_flexible_request_frame(50, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka describe user scram credentials null users request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("describe_user_scram_credentials")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "50")
+    );
+}
+
+#[test]
 fn validates_kafka_alter_replica_log_dirs_requests_without_path_or_topic_values() {
     let body = kafka_alter_replica_log_dirs_request_body(
         "/var/lib/kafka/secret-dir",
@@ -4582,6 +4635,98 @@ fn extracts_kafka_alter_client_quotas_v1_error_response_without_entity_or_messag
             || attribute.value.contains("denied")
             || attribute.value.contains("secret")
     }));
+}
+
+#[test]
+fn extracts_kafka_describe_user_scram_credentials_ok_response_without_user_values() {
+    let credentials: &[UserScramCredentialInfoFixture] = &[(0, 4096)];
+    let results: &[DescribeUserScramCredentialsResultFixture<'_>] =
+        &[("alice.secret", 0, None, credentials)];
+    let bytes = kafka_describe_user_scram_credentials_response_frame(0, 0, None, results);
+
+    let extraction = parse_kafka_describe_user_scram_credentials_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("describe user scram credentials ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "describe_user_scram_credentials");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "50")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction.attributes.iter().any(
+            |attribute| attribute.value.contains("alice") || attribute.value.contains("secret")
+        )
+    );
+}
+
+#[test]
+fn extracts_kafka_describe_user_scram_credentials_user_error_without_user_or_message_values() {
+    let results: &[DescribeUserScramCredentialsResultFixture<'_>] = &[
+        ("alice.secret", 0, None, &[]),
+        ("bob.secret", 51, Some("user secret denied"), &[]),
+    ];
+    let bytes = kafka_describe_user_scram_credentials_response_frame(0, 0, None, results);
+
+    let extraction = parse_kafka_describe_user_scram_credentials_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("describe user scram credentials user error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "describe_user_scram_credentials");
+    assert_eq!(extraction.status_code, "51");
+    assert_eq!(extraction.error_type.as_deref(), Some("51"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "51")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("alice")
+                || attribute.value.contains("bob")
+                || attribute.value.contains("denied")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_describe_user_scram_credentials_top_level_error_before_user_error() {
+    let results: &[DescribeUserScramCredentialsResultFixture<'_>] =
+        &[("alice.secret", 51, Some("user secret denied"), &[])];
+    let bytes = kafka_describe_user_scram_credentials_response_frame(
+        0,
+        31,
+        Some("top secret denied"),
+        results,
+    );
+
+    let extraction = parse_kafka_describe_user_scram_credentials_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("describe user scram credentials top-level error response parses");
+
+    assert_eq!(extraction.status_code, "31");
+    assert_eq!(extraction.error_type.as_deref(), Some("31"));
 }
 
 #[test]
@@ -7751,6 +7896,30 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     .expect("bounded kafka alter client quotas response parses");
     assert_eq!(bounded_alter_client_quotas_response.attributes.len(), 2);
 
+    let bounded_describe_user_scram_credentials_response =
+        parse_kafka_describe_user_scram_credentials_response(
+            &kafka_describe_user_scram_credentials_response_frame(
+                0,
+                0,
+                None,
+                &[("alice.secret", 51, Some("user secret denied"), &[])],
+            ),
+            0,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 64,
+                max_attributes: 2,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .expect("bounded kafka describe user scram credentials response parses");
+    assert_eq!(
+        bounded_describe_user_scram_credentials_response
+            .attributes
+            .len(),
+        2
+    );
+
     let bounded_sasl_handshake_response = parse_kafka_sasl_handshake_response(
         &kafka_sasl_handshake_response_frame(0, 33, &["PLAIN.secret"]),
         1,
@@ -9578,6 +9747,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_describe_user_scram_credentials_response(
+            &kafka_describe_user_scram_credentials_response_frame(0, 0, None, &[]),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_sasl_handshake_response(
             &kafka_sasl_handshake_response_frame(0, 0, &["PLAIN"]),
             2,
@@ -10256,6 +10434,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_describe_user_scram_credentials_response(
+            &kafka_describe_user_scram_credentials_response_with_result_count_frame(1025),
+            0,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_describe_user_scram_credentials_response(
+            &kafka_describe_user_scram_credentials_response_with_credential_count_frame(1025),
+            0,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_metadata_response(
             &kafka_metadata_response_with_topic_count_frame(1025),
             8,
@@ -10612,6 +10808,60 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::ClientIdTooLong
     );
 
+    let mut describe_user_scram_credentials_unsupported_body = Vec::new();
+    push_unsigned_varint(&mut describe_user_scram_credentials_unsupported_body, 0);
+    push_unsigned_varint(&mut describe_user_scram_credentials_unsupported_body, 0);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                50,
+                1,
+                Some(b"client-a"),
+                &describe_user_scram_credentials_unsupported_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+
+    let mut oversized_describe_user_scram_credentials_body = Vec::new();
+    push_unsigned_varint(&mut oversized_describe_user_scram_credentials_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                50,
+                0,
+                Some(b"client-a"),
+                &oversized_describe_user_scram_credentials_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+
+    let describe_user_scram_credentials_long_user_body =
+        kafka_describe_user_scram_credentials_request_body(Some(&["alice.secret"]));
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                50,
+                0,
+                Some(b"client-a"),
+                &describe_user_scram_credentials_long_user_body,
+            ),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+
     let mut truncated_response = kafka_produce_response_frame(0, 1, &[("orders", 6)]);
     truncated_response.truncate(10);
     assert_eq!(
@@ -10925,6 +11175,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         parse_kafka_alter_client_quotas_response(
             &truncated_alter_client_quotas_response,
             1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_describe_user_scram_credentials_response =
+        kafka_describe_user_scram_credentials_response_frame(
+            0,
+            0,
+            None,
+            &[("alice.secret", 51, Some("user secret denied"), &[])],
+        );
+    truncated_describe_user_scram_credentials_response.truncate(16);
+    assert_eq!(
+        parse_kafka_describe_user_scram_credentials_response(
+            &truncated_describe_user_scram_credentials_response,
+            0,
             &config
         )
         .unwrap_err(),
@@ -14434,6 +14702,21 @@ fn kafka_alter_client_quotas_request_body(
     body
 }
 
+fn kafka_describe_user_scram_credentials_request_body(users: Option<&[&str]>) -> Vec<u8> {
+    let mut body = Vec::new();
+    if let Some(users) = users {
+        push_unsigned_varint(&mut body, users.len() + 1);
+        for user in users {
+            push_compact_string(&mut body, user);
+            push_unsigned_varint(&mut body, 0);
+        }
+    } else {
+        push_unsigned_varint(&mut body, 0);
+    }
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 fn kafka_alter_replica_log_dirs_request_body(log_dir: &str, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&1_i32.to_be_bytes());
@@ -16357,6 +16640,73 @@ fn kafka_alter_client_quotas_response_with_entity_count_frame(
         push_compact_nullable_string(&mut response, None);
         push_unsigned_varint(&mut response, entity_count + 1);
     }
+    kafka_frame(&response)
+}
+
+type UserScramCredentialInfoFixture = (i8, i32);
+type DescribeUserScramCredentialsResultFixture<'a> = (
+    &'a str,
+    i16,
+    Option<&'a str>,
+    &'a [UserScramCredentialInfoFixture],
+);
+
+fn kafka_describe_user_scram_credentials_response_frame(
+    correlation_id: i32,
+    top_level_error_code: i16,
+    top_level_error_message: Option<&str>,
+    results: &[DescribeUserScramCredentialsResultFixture<'_>],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&top_level_error_code.to_be_bytes());
+    push_compact_nullable_string(&mut response, top_level_error_message);
+    push_unsigned_varint(&mut response, results.len() + 1);
+    for (user, error_code, error_message, credentials) in results {
+        push_compact_string(&mut response, user);
+        response.extend_from_slice(&error_code.to_be_bytes());
+        push_compact_nullable_string(&mut response, *error_message);
+        push_unsigned_varint(&mut response, credentials.len() + 1);
+        for (mechanism, iterations) in *credentials {
+            response.push(*mechanism as u8);
+            response.extend_from_slice(&iterations.to_be_bytes());
+            push_unsigned_varint(&mut response, 0);
+        }
+        push_unsigned_varint(&mut response, 0);
+    }
+    push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+fn kafka_describe_user_scram_credentials_response_with_result_count_frame(
+    result_count: usize,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    push_compact_nullable_string(&mut response, None);
+    push_unsigned_varint(&mut response, result_count + 1);
+    kafka_frame(&response)
+}
+
+fn kafka_describe_user_scram_credentials_response_with_credential_count_frame(
+    credential_count: usize,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    push_compact_nullable_string(&mut response, None);
+    push_unsigned_varint(&mut response, 2);
+    push_compact_string(&mut response, "alice");
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    push_compact_nullable_string(&mut response, None);
+    push_unsigned_varint(&mut response, credential_count + 1);
     kafka_frame(&response)
 }
 
