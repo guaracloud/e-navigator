@@ -189,7 +189,7 @@ mod tests {
             metrics::v1::ExportMetricsServiceRequest, trace::v1::ExportTraceServiceRequest,
         },
         metrics::v1::{metric::Data, number_data_point},
-        trace::v1::status,
+        trace::v1::{span, status},
     };
     use prost::Message;
     use std::collections::BTreeMap;
@@ -376,6 +376,19 @@ mod tests {
             attribute.key == "service.name"
                 && format!("{:?}", attribute.value).contains("checkout-api")
         }));
+        assert!(resource.attributes.iter().any(|attribute| {
+            attribute.key == "k8s.namespace.name"
+                && format!("{:?}", attribute.value).contains("default")
+        }));
+        assert!(resource.attributes.iter().any(|attribute| {
+            attribute.key == "k8s.pod.name"
+                && format!("{:?}", attribute.value).contains("checkout-123")
+        }));
+        assert!(resource.attributes.iter().any(|attribute| {
+            attribute.key == "k8s.container.name"
+                && format!("{:?}", attribute.value).contains("checkout")
+        }));
+        assert_eq!(span.kind, span::SpanKind::Server as i32);
         assert!(span.attributes.iter().any(|attribute| {
             attribute.key == "http.request.method"
                 && format!("{:?}", attribute.value).contains("GET")
