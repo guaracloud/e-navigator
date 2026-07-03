@@ -23,7 +23,8 @@ bounded, versioned signals:
 
 - process execution and exit observations;
 - TCP network observations and native network metrics;
-- DNS, HTTP/request, Redis parser, trace, and profiling foundations;
+- DNS, HTTP/request, PostgreSQL and Redis parsers, trace, and profiling
+  foundations;
 - host resource observations from procfs, sysfs, and cgroups;
 - Kubernetes/container attribution where context is available;
 - derived dependency edges, low-cardinality metrics, request spans, profile
@@ -106,9 +107,9 @@ Evidence-backed today:
 - host resource parsing and Docker synthetic fixtures;
 - process and TCP network source foundations;
 - Kubernetes/container attribution for selected captured signals;
-- dependency graph, resource metrics, network metrics, Redis parser,
-  request/trace/profile foundations, and runtime security generator behavior
-  through tests;
+- dependency graph, resource metrics, network metrics, PostgreSQL and Redis
+  parser foundations, request/trace/profile foundations, and runtime security
+  generator behavior through tests;
 - selected guarded homelab proof for exec, network, DNS, HTTP, profile,
   resource, Prometheus, OTLP, and seccomp paths;
 - release artifact signing, SBOM generation, Helm packaging, and local quality
@@ -121,6 +122,7 @@ Important current non-claims:
 - no production backend compatibility claim;
 - no reduced-overhead or reduced-privilege claim;
 - no symmetric all-node DNS/HTTP capture claim;
+- no live PostgreSQL protocol capture or request/response matching claim;
 - no live Redis protocol capture or request/response matching claim;
 - live native `network.flow.bytes` export still needs a positive rerun after
   the native metric migration.

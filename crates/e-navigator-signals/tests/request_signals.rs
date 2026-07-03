@@ -163,6 +163,56 @@ fn serializes_redis_protocol_request_observation_without_payload_values() {
 }
 
 #[test]
+fn serializes_postgresql_protocol_request_observation_without_query_text() {
+    let signal = SignalEnvelope::protocol_request_observation(
+        "source.protocol_fixture",
+        Some("node-a".to_string()),
+        ProtocolRequestObservation {
+            protocol: ProtocolKind::Postgresql,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: None,
+            duration_nanos: None,
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            traceparent: None,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::Medium,
+            service_name: Some("database-client".to_string()),
+            method: Some("SELECT".to_string()),
+            status_code: None,
+            process: Some(process()),
+            container: Some(container()),
+            kubernetes: Some(kubernetes()),
+            peer: Some(peer()),
+            attributes: vec![
+                TraceAttribute {
+                    key: "db.system".to_string(),
+                    value: "postgresql".to_string(),
+                },
+                TraceAttribute {
+                    key: "db.operation".to_string(),
+                    value: "SELECT".to_string(),
+                },
+            ],
+        },
+    );
+
+    let json = serde_json::to_value(&signal).expect("signal serializes");
+
+    assert_eq!(json["payload"]["protocol"], "postgresql");
+    assert_eq!(json["payload"]["method"], "SELECT");
+    assert!(!json.to_string().contains("where token"));
+
+    let decoded: SignalEnvelope = serde_json::from_value(json).expect("signal deserializes");
+    assert!(matches!(
+        decoded.payload,
+        SignalPayload::ProtocolRequestObservation(_)
+    ));
+}
+
+#[test]
 fn serializes_extracted_trace_context_observation() {
     let signal = SignalEnvelope::extracted_trace_context_observation(
         "parser.protocol",

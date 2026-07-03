@@ -1,6 +1,7 @@
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
     http::{HttpExtraction, parse_http_request},
+    postgres::{PostgresExtraction, parse_postgres_message},
     redis::{RedisExtraction, parse_redis_command},
     trace_context::{TraceContextError, parse_traceparent},
 };
@@ -133,6 +134,18 @@ proptest! {
         };
 
         let _ = parse_redis_command(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_postgres_fixture_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 4,
+            max_tracestate_bytes: 32,
+        };
+
+        let _ = parse_postgres_message(&bytes, &config);
     }
 }
 
@@ -629,6 +642,143 @@ fn rejects_malformed_and_unsupported_redis_fixtures() {
     );
 }
 
+#[test]
+fn extracts_postgres_simple_query_operation_without_raw_sql() {
+    let bytes = postgres_frame(b'Q', b" select * from customers where token = 'secret'\0");
+
+    let extraction = parse_postgres_message(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres simple query parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.operation.as_deref(), Some("SELECT"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.system" && attribute.value == "postgresql")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.operation" && attribute.value == "SELECT")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| attribute.key
+        == "db.postgresql.message.type"
+        && attribute.value == "query"));
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("customers") || attribute.value.contains("secret")
+    ));
+}
+
+#[test]
+fn extracts_postgres_parse_message_operation_without_statement_or_sql() {
+    let mut body = Vec::new();
+    body.extend_from_slice(b"prepared-secret-name\0");
+    body.extend_from_slice(b"insert into orders values ($1, $2)\0");
+    body.extend_from_slice(&2_u16.to_be_bytes());
+    body.extend_from_slice(&23_u32.to_be_bytes());
+    body.extend_from_slice(&25_u32.to_be_bytes());
+    let bytes = postgres_frame(b'P', &body);
+
+    let extraction = parse_postgres_message(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres parse message parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("INSERT"));
+    assert!(extraction.attributes.iter().any(|attribute| attribute.key
+        == "db.postgresql.message.type"
+        && attribute.value == "parse"));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("prepared-secret-name")
+                || attribute.value.contains("orders"))
+    );
+}
+
+#[test]
+fn extracts_postgres_operation_after_comments() {
+    let bytes = postgres_frame(
+        b'Q',
+        b"/* application comment */\n-- request secret\nupdate accounts set balance = 0\0",
+    );
+
+    let extraction = parse_postgres_message(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres query with comments parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("UPDATE"));
+}
+
+#[test]
+fn enforces_postgres_frame_query_and_attribute_bounds() {
+    let bounded = parse_postgres_message(
+        &postgres_frame(b'Q', b"select * from customers\0"),
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded postgres query parses");
+    assert_eq!(bounded.attributes.len(), 2);
+
+    assert_eq!(
+        parse_postgres_message(
+            &postgres_frame(b'Q', b"select * from customers\0"),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 16,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        PostgresExtraction::FrameTooLong
+    );
+
+    assert_eq!(
+        parse_postgres_message(
+            &postgres_frame(b'Q', b"select * from customers\0"),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        PostgresExtraction::QueryTooLong
+    );
+}
+
+#[test]
+fn rejects_malformed_and_unsupported_postgres_fixtures() {
+    let config = ProtocolExtractionConfig::default();
+
+    assert_eq!(
+        parse_postgres_message(&[], &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_message(&[b'Q', 0, 0, 0, 3], &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'X', b"ignored\0"), &config).unwrap_err(),
+        PostgresExtraction::UnsupportedMessage
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'Q', b"select 1"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'Q', b"sel\xffct\0"), &config).unwrap_err(),
+        PostgresExtraction::InvalidUtf8
+    );
+}
+
 fn lower_hex_string(
     len: impl Into<proptest::collection::SizeRange>,
 ) -> impl Strategy<Value = String> {
@@ -645,4 +795,12 @@ fn non_zero_lower_hex_string(len: usize) -> impl Strategy<Value = String> {
 fn uppercase_hex_string(len: usize) -> impl Strategy<Value = String> {
     prop::collection::vec(prop_oneof![Just(b'0'), b'1'..=b'9', b'A'..=b'F'], len)
         .prop_map(|bytes| String::from_utf8(bytes).expect("ascii hex"))
+}
+
+fn postgres_frame(message_type: u8, body: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(body.len() + 5);
+    frame.push(message_type);
+    frame.extend_from_slice(&((body.len() + 4) as u32).to_be_bytes());
+    frame.extend_from_slice(body);
+    frame
 }

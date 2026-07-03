@@ -536,6 +536,7 @@ fn protocol_kind_name(protocol: ProtocolKind) -> &'static str {
     match protocol {
         ProtocolKind::Http => "http",
         ProtocolKind::Grpc => "grpc",
+        ProtocolKind::Postgresql => "postgresql",
         ProtocolKind::Redis => "redis",
         ProtocolKind::Unknown => "unknown",
         _ => "other",
