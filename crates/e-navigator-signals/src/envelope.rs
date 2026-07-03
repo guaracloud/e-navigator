@@ -5,6 +5,9 @@ use crate::dns::{
     sanitize_dns_counter_metric, sanitize_dns_latency_metric, sanitize_dns_query_event,
     sanitize_dns_response_event,
 };
+use crate::exec::{
+    sanitize_exec_event, sanitize_process_exit_event, sanitize_process_lifecycle_duration_event,
+};
 use crate::metrics::{
     sanitize_network_counter_metric, sanitize_network_duration_metric,
     sanitize_network_gauge_metric,
@@ -469,7 +472,8 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
 }
 
 impl SignalEnvelope {
-    pub fn exec(source: impl Into<String>, host: Option<String>, event: ExecEvent) -> Self {
+    pub fn exec(source: impl Into<String>, host: Option<String>, mut event: ExecEvent) -> Self {
+        sanitize_exec_event(&mut event);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::Exec,
@@ -482,8 +486,9 @@ impl SignalEnvelope {
     pub fn process_exit(
         source: impl Into<String>,
         host: Option<String>,
-        event: ProcessExitEvent,
+        mut event: ProcessExitEvent,
     ) -> Self {
+        sanitize_process_exit_event(&mut event);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::ProcessExit,
@@ -496,8 +501,9 @@ impl SignalEnvelope {
     pub fn process_lifecycle_duration(
         source: impl Into<String>,
         host: Option<String>,
-        event: ProcessLifecycleDurationEvent,
+        mut event: ProcessLifecycleDurationEvent,
     ) -> Self {
+        sanitize_process_lifecycle_duration_event(&mut event);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::ProcessLifecycleDuration,
@@ -1247,6 +1253,70 @@ mod tests {
         assert_eq!(json["kind"], "process_lifecycle_duration");
         assert_eq!(json["payload"]["pid"], 42);
         assert_eq!(json["payload"]["duration_nanos"], 150);
+    }
+
+    #[test]
+    fn exec_constructors_bound_strings_before_json_stdout() {
+        let long = "e".repeat(320);
+        let exec = SignalEnvelope::exec(
+            "source.test",
+            None,
+            ExecEvent {
+                pid: 42,
+                ppid: Some(1),
+                uid: Some(1000),
+                command: long.clone(),
+                executable: Some(long.clone()),
+                arguments: vec![long.clone(); 40],
+                cgroup_id: Some(7),
+                timestamp_unix_nanos: 123,
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let exit = SignalEnvelope::process_exit(
+            "source.test",
+            None,
+            ProcessExitEvent {
+                pid: 42,
+                ppid: Some(1),
+                uid: Some(1000),
+                command: long.clone(),
+                cgroup_id: None,
+                exit_code: Some(0),
+                runtime_nanos: Some(55),
+                timestamp_unix_nanos: 200,
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let lifecycle = SignalEnvelope::process_lifecycle_duration(
+            "generator.test",
+            None,
+            ProcessLifecycleDurationEvent {
+                pid: 42,
+                command: long,
+                started_at_unix_nanos: 100,
+                exited_at_unix_nanos: 250,
+                duration_nanos: 150,
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        assert_payload_string_lengths(&exec, &[&["command"], &["executable"]]);
+        let exec_json = serde_json::to_value(&exec).expect("exec serializes");
+        let arguments = exec_json["payload"]["arguments"]
+            .as_array()
+            .expect("arguments serialize as an array");
+        assert_eq!(arguments.len(), 32);
+        assert!(
+            arguments
+                .iter()
+                .all(|argument| argument.as_str().map(str::len) == Some(256))
+        );
+        assert_payload_string_lengths(&exit, &[&["command"]]);
+        assert_payload_string_lengths(&lifecycle, &[&["command"]]);
     }
 
     #[test]

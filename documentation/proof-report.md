@@ -20,17 +20,17 @@ or chart rendering:
 - static module registration and runner fan-out;
 - versioned JSON signal envelopes;
 - JSON stdout newline-delimited serialization and sink-side redaction, including
-  exec and runtime-security matched-process argv redaction, protocol request
-  observations without raw trace headers and with bounded sanitized trace
-  attributes and non-ID scalar strings, network connection signals with bounded
-  process/address strings, network flow warning signals with bounded
-  process/address/source/message strings, network flow summary endpoint strings
-  and dependency endpoint address/domain strings, DNS signal families with
-  bounded DNS and process strings, network metric signal families with bounded
-  strings, node/process/cgroup resource observation signals with bounded
-  strings, resource metric signals with bounded scalar/context strings and
-  dynamic attributes, and profiling signal families with bounded sanitized
-  profiling attributes, stack frames, and scalar strings;
+  exec strings and argument count, exec and runtime-security matched-process
+  argv redaction, protocol request observations without raw trace headers and
+  with bounded sanitized trace attributes and non-ID scalar strings, network
+  connection signals with bounded process/address strings, network flow warning
+  signals with bounded process/address/source/message strings, network flow
+  summary endpoint strings and dependency endpoint address/domain strings, DNS
+  signal families with bounded DNS and process strings, network metric signal
+  families with bounded strings, node/process/cgroup resource observation
+  signals with bounded strings, resource metric signals with bounded
+  scalar/context strings and dynamic attributes, and profiling signal families
+  with bounded sanitized profiling attributes, stack frames, and scalar strings;
 - synthetic source pipeline, including sanitized HTTP, gRPC, Kafka, MongoDB,
   MySQL, NATS, PostgreSQL, and Redis protocol request/error-span fixtures and
   flow-attribution warnings;

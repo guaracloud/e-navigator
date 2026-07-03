@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+const MAX_EXEC_SIGNAL_STRING_BYTES: usize = 256;
+const MAX_EXEC_ARGUMENTS: usize = 32;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecEvent {
     pub pid: u32,
@@ -91,4 +94,43 @@ pub struct KubernetesContext {
     pub container_name: Option<String>,
     pub node_name: Option<String>,
     pub labels: BTreeMap<String, String>,
+}
+
+pub(crate) fn sanitize_exec_event(event: &mut ExecEvent) {
+    sanitize_exec_signal_string(&mut event.command);
+    sanitize_optional_exec_signal_string(&mut event.executable);
+    event.arguments.truncate(MAX_EXEC_ARGUMENTS);
+    for argument in &mut event.arguments {
+        sanitize_exec_signal_string(argument);
+    }
+}
+
+pub(crate) fn sanitize_process_exit_event(event: &mut ProcessExitEvent) {
+    sanitize_exec_signal_string(&mut event.command);
+}
+
+pub(crate) fn sanitize_process_lifecycle_duration_event(event: &mut ProcessLifecycleDurationEvent) {
+    sanitize_exec_signal_string(&mut event.command);
+}
+
+fn sanitize_exec_signal_string(value: &mut String) {
+    *value = truncate_utf8(value, MAX_EXEC_SIGNAL_STRING_BYTES);
+}
+
+fn sanitize_optional_exec_signal_string(value: &mut Option<String>) {
+    if let Some(inner) = value {
+        sanitize_exec_signal_string(inner);
+    }
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
 }
