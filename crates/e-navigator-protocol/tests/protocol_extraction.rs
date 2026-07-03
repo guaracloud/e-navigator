@@ -949,6 +949,35 @@ fn extracts_bounded_http_host_authority_without_secret_headers() {
 }
 
 #[test]
+fn extracts_http_connect_authority_form_without_header_values() {
+    let bytes = b"CONNECT checkout.example.com:443 HTTP/1.1\r\nTraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\nAuthorization: Bearer secret\r\n\r\n";
+
+    let extraction = parse_http_request(bytes, &ProtocolExtractionConfig::default())
+        .expect("http connect parses");
+
+    assert_eq!(extraction.method.as_deref(), Some("CONNECT"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "server.address"
+                && attribute.value == "checkout.example.com")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "server.port" && attribute.value == "443")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "url.path" || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn extracts_absolute_form_http_target_path_and_authority_without_secrets() {
     let bytes = b"GET https://checkout.example.com:8443/orders/123?token=secret#frag HTTP/1.1\r\nTraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\nAuthorization: Bearer secret\r\nCookie: session=secret\r\n\r\n";
 
@@ -1056,6 +1085,29 @@ fn drops_malformed_absolute_form_http_target_authority_attributes() {
             || attribute.key == "server.address"
             || attribute.key == "server.port"
     }));
+}
+
+#[test]
+fn drops_malformed_http_connect_authority_attributes() {
+    for target in [
+        "user:pass@checkout.example.com:443",
+        "checkout.example.com:not-a-port",
+        "checkout.example.com:70000",
+        "/not-authority-form",
+    ] {
+        let bytes =
+            format!("CONNECT {target} HTTP/1.1\r\nTraceparent: {VALID_TRACEPARENT}\r\n\r\n");
+
+        let extraction = parse_http_request(bytes.as_bytes(), &ProtocolExtractionConfig::default())
+            .expect("http connect parses");
+
+        assert!(
+            !extraction.attributes.iter().any(
+                |attribute| attribute.key == "server.address" || attribute.key == "server.port"
+            ),
+            "{target:?}"
+        );
+    }
 }
 
 #[test]

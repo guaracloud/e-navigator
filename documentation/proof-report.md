@@ -68,7 +68,7 @@ or chart rendering:
   limits plus validated preview/packet relationships, bounded DNS-derived
   domain label-shape validation, bounded HTTP request parsing with configurable
   HTTP parser limits and validated header/sub-limit relationships plus
-  HTTP/1.x version-token validation,
+  HTTP/1.x version-token validation and CONNECT authority-form extraction,
   HTTP response-status fixture parsing with version-token validation and a
   build-checked parser fuzz target, strict W3C traceparent parsing,
   decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with bounded
@@ -182,8 +182,9 @@ These areas remain explicitly partial:
   emit warnings locally, but positive live native export and warning proof must
   be rerun after the native metric migration.
 - **HTTP/gRPC capture:** selected `homelab-02` outbound cleartext HTTP/1 paths
-  work and bounded HTTP/1 response-status parsing plus decoded gRPC-over-HTTP/2
-  metadata/trailer-status parsing are locally tested, but symmetric node
+  work and bounded HTTP/1 response-status plus CONNECT authority parsing and
+  decoded gRPC-over-HTTP/2 metadata/trailer-status parsing are locally tested,
+  but symmetric node
   coverage, inbound parsing, TLS, runtime HTTP/2 frame/HPACK capture, live HTTP
   or gRPC status matching, route templates, retries, app errors, and broader
   iovec shapes are not proven.

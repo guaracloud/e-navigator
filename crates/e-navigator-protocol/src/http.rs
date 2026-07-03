@@ -228,8 +228,8 @@ fn parse_request_line(request_line: &str) -> Result<ParsedRequestLine, HttpExtra
     } else {
         Some(method.to_string())
     };
-    let (path, authority) = if method.is_some() {
-        request_target_context(target)
+    let (path, authority) = if let Some(method) = method.as_deref() {
+        request_target_context(method, target)
     } else {
         (None, None)
     };
@@ -267,7 +267,7 @@ fn is_http1_version(value: &str) -> bool {
     matches!(value, "HTTP/1.0" | "HTTP/1.1")
 }
 
-fn request_target_context(target: &str) -> (Option<String>, Option<HostAuthority>) {
+fn request_target_context(method: &str, target: &str) -> (Option<String>, Option<HostAuthority>) {
     if target.starts_with('/') {
         return (request_target_path(target), None);
     }
@@ -277,6 +277,9 @@ fn request_target_context(target: &str) -> (Option<String>, Option<HostAuthority
     }
     if let Some(remainder) = target.strip_prefix("https://") {
         return absolute_form_target_context(remainder);
+    }
+    if method == "CONNECT" {
+        return (None, bounded_host_authority(target));
     }
 
     (None, None)
