@@ -722,6 +722,59 @@ fn formats_mongodb_request_span_with_protocol_name() {
 }
 
 #[test]
+fn formats_mongodb_request_span_error_status_from_error_type_attribute() {
+    let signal = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "mongodb command".to_string(),
+            protocol: ProtocolKind::Mongodb,
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(1_500),
+            duration_nanos: Some(500),
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            service_name: Some("database-client".to_string()),
+            method: Some("find".to_string()),
+            status_code: None,
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(trace_peer_context()),
+            attributes: vec![
+                TraceAttribute {
+                    key: "db.system".to_string(),
+                    value: "mongodb".to_string(),
+                },
+                TraceAttribute {
+                    key: "db.response.status_code".to_string(),
+                    value: "13".to_string(),
+                },
+                TraceAttribute {
+                    key: "error.type".to_string(),
+                    value: "13".to_string(),
+                },
+            ],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("mongodb request span formats");
+
+    assert_eq!(
+        record.status,
+        Some(OtelSpanStatus::Error {
+            message: "13".to_string()
+        })
+    );
+    assert_eq!(record.attributes["network.protocol.name"], "mongodb");
+    assert_eq!(record.attributes["db.response.status_code"], "13");
+    assert_eq!(record.attributes["error.type"], "13");
+}
+
+#[test]
 fn formats_kafka_request_span_with_protocol_name() {
     let signal = SignalEnvelope::request_span_observation(
         "generator.request_correlation",
@@ -763,6 +816,62 @@ fn formats_kafka_request_span_with_protocol_name() {
     assert_eq!(record.attributes["network.protocol.name"], "kafka");
     assert_eq!(record.attributes["messaging.system"], "kafka");
     assert_eq!(record.attributes["messaging.operation"], "produce");
+}
+
+#[test]
+fn formats_kafka_request_span_error_status_from_error_type_attribute() {
+    let signal = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "kafka request".to_string(),
+            protocol: ProtocolKind::Kafka,
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(1_500),
+            duration_nanos: Some(500),
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            service_name: Some("messaging-client".to_string()),
+            method: Some("api_versions".to_string()),
+            status_code: None,
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(trace_peer_context()),
+            attributes: vec![
+                TraceAttribute {
+                    key: "messaging.system".to_string(),
+                    value: "kafka".to_string(),
+                },
+                TraceAttribute {
+                    key: "messaging.kafka.response.error_code".to_string(),
+                    value: "35".to_string(),
+                },
+                TraceAttribute {
+                    key: "error.type".to_string(),
+                    value: "35".to_string(),
+                },
+            ],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("kafka request span formats");
+
+    assert_eq!(
+        record.status,
+        Some(OtelSpanStatus::Error {
+            message: "35".to_string()
+        })
+    );
+    assert_eq!(record.attributes["network.protocol.name"], "kafka");
+    assert_eq!(
+        record.attributes["messaging.kafka.response.error_code"],
+        "35"
+    );
+    assert_eq!(record.attributes["error.type"], "35");
 }
 
 #[test]

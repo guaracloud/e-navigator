@@ -282,6 +282,56 @@ async fn kafka_protocol_request_generates_named_request_span() {
 }
 
 #[tokio::test]
+async fn protocol_request_preserves_error_attributes_for_trace_export() {
+    let generator = RequestCorrelationGenerator::default();
+
+    for (protocol, method, status_key, status_value, error_type) in [
+        (
+            ProtocolKind::Kafka,
+            "api_versions",
+            "messaging.kafka.response.error_code",
+            "35",
+            "35",
+        ),
+        (
+            ProtocolKind::Mongodb,
+            "find",
+            "db.response.status_code",
+            "13",
+            "13",
+        ),
+    ] {
+        let mut signal = protocol_request_signal(None, true);
+        let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+            panic!("expected protocol request");
+        };
+        request.protocol = protocol;
+        request.method = Some(method.to_string());
+        request.status_code = None;
+        request.attributes = vec![
+            TraceAttribute {
+                key: status_key.to_string(),
+                value: status_value.to_string(),
+            },
+            TraceAttribute {
+                key: "error.type".to_string(),
+                value: error_type.to_string(),
+            },
+        ];
+
+        let outputs = observe(&generator, &signal).await;
+
+        let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+            panic!("expected request span");
+        };
+        assert_eq!(span.protocol, protocol);
+        assert_eq!(span.method.as_deref(), Some(method));
+        assert!(has_attribute(&span.attributes, status_key, status_value));
+        assert!(has_attribute(&span.attributes, "error.type", error_type));
+    }
+}
+
+#[tokio::test]
 async fn nats_protocol_request_generates_named_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);

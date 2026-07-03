@@ -450,6 +450,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn otlp_http_sink_exports_kafka_request_error_type_as_otlp_error_status() {
+        let collector = FakeCollector::spawn(vec![200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            traces_endpoint: collector.url_with_path("/v1/traces"),
+            metrics_enabled: false,
+            traces_enabled: true,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&kafka_error_request_span())
+            .await
+            .expect("trace export succeeds");
+        let request = collector.next_request().await;
+
+        let decoded =
+            ExportTraceServiceRequest::decode(request.body()).expect("OTLP trace request decodes");
+        let span = decoded
+            .resource_spans
+            .first()
+            .and_then(|resource_spans| resource_spans.scope_spans.first())
+            .and_then(|scope_spans| scope_spans.spans.first())
+            .expect("span is present");
+
+        assert_eq!(span.name, "kafka request");
+        assert!(span.attributes.iter().any(|attribute| {
+            attribute.key == "error.type" && format!("{:?}", attribute.value).contains("35")
+        }));
+        assert!(span.attributes.iter().any(|attribute| {
+            attribute.key == "messaging.kafka.response.error_code"
+                && format!("{:?}", attribute.value).contains("35")
+        }));
+        let status = span.status.as_ref().expect("span status is present");
+        assert_eq!(status.code, status::StatusCode::Error as i32);
+        assert_eq!(status.message, "35");
+    }
+
+    #[tokio::test]
     async fn otlp_http_sink_exports_profile_records_as_otlp_protobuf() {
         let collector = FakeCollector::spawn(vec![200]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
@@ -742,6 +786,56 @@ mod tests {
                     TraceAttribute {
                         key: "error.type".to_string(),
                         value: "redis_wrongtype".to_string(),
+                    },
+                ],
+            },
+        )
+    }
+
+    fn kafka_error_request_span() -> SignalEnvelope {
+        SignalEnvelope::request_span_observation(
+            "generator.request_correlation",
+            Some("node-a".to_string()),
+            RequestSpanObservation {
+                name: "kafka request".to_string(),
+                protocol: ProtocolKind::Kafka,
+                trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+                span_id: Some("00f067aa0ba902b7".to_string()),
+                parent_span_id: None,
+                start_unix_nanos: 1_000,
+                end_unix_nanos: Some(2_000),
+                duration_nanos: Some(1_000),
+                correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+                confidence: TraceConfidence::High,
+                service_name: Some("messaging-client".to_string()),
+                method: Some("api_versions".to_string()),
+                status_code: None,
+                process: None,
+                container: Some(ContainerContext {
+                    container_id: "container-a".to_string(),
+                    runtime: Some("containerd".to_string()),
+                }),
+                kubernetes: Some(KubernetesContext {
+                    namespace: "default".to_string(),
+                    pod_name: "kafka-client-123".to_string(),
+                    pod_uid: Some("pod-uid".to_string()),
+                    container_name: Some("kafka-client".to_string()),
+                    node_name: Some("node-a".to_string()),
+                    labels: BTreeMap::new(),
+                }),
+                peer: None,
+                attributes: vec![
+                    TraceAttribute {
+                        key: "messaging.system".to_string(),
+                        value: "kafka".to_string(),
+                    },
+                    TraceAttribute {
+                        key: "messaging.kafka.response.error_code".to_string(),
+                        value: "35".to_string(),
+                    },
+                    TraceAttribute {
+                        key: "error.type".to_string(),
+                        value: "35".to_string(),
                     },
                 ],
             },
