@@ -75,8 +75,8 @@ or chart rendering:
   deterministic, workload-aware IDs, bounded/sensitive attribute filtering, and
   session dropped-sample records in fake-collector tests;
 - pprof-compatible profile sample protobuf rendering with stack locations,
-  sample-period scaling, bounded workload labels, and sensitive attribute
-  filtering;
+  sample-period scaling, bounded frame strings and workload labels, and
+  sensitive attribute filtering;
 - local Criterion hot-path benchmark harness compile coverage for host parsers,
   raw Aya decode harnesses, traceparent, HTTP, gRPC, Kafka, MongoDB, MySQL,
   NATS, PostgreSQL, and Redis protocol parsers, generators, and sink formatters;

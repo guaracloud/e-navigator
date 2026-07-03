@@ -8,6 +8,7 @@ const MAX_ATTRIBUTES: usize = 16;
 const MAX_KEY_BYTES: usize = 64;
 const MAX_ATTRIBUTE_VALUE_BYTES: usize = 256;
 const MAX_LABEL_VALUE_BYTES: usize = 256;
+const MAX_FRAME_STRING_BYTES: usize = 256;
 
 pub fn format_pprof_profile(signal: &SignalEnvelope) -> Option<Vec<u8>> {
     let SignalPayload::ProfileSampleObservation(sample) = &signal.payload else {
@@ -85,12 +86,20 @@ fn functions(sample: &ProfileSampleObservation, table: &mut StringTable) -> Vec<
         .iter()
         .enumerate()
         .map(|(index, frame)| {
-            let name = frame.symbol.as_deref().unwrap_or("unknown");
+            let name = truncate_utf8(
+                frame.symbol.as_deref().unwrap_or("unknown"),
+                MAX_FRAME_STRING_BYTES,
+            );
+            let filename = frame
+                .file
+                .as_deref()
+                .map(|file| truncate_utf8(file, MAX_FRAME_STRING_BYTES))
+                .unwrap_or_default();
             Function {
                 id: u64::try_from(index + 1).unwrap_or(u64::MAX),
-                name: table.index(name),
-                system_name: table.index(name),
-                filename: table.index(frame.file.as_deref().unwrap_or_default()),
+                name: table.index(&name),
+                system_name: table.index(&name),
+                filename: table.index(&filename),
                 start_line: 0,
             }
         })

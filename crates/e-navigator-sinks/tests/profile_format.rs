@@ -327,6 +327,55 @@ fn pprof_profile_bounds_canonical_label_values() {
 }
 
 #[test]
+fn pprof_profile_bounds_frame_string_values() {
+    const MAX_FRAME_BYTES: usize = 256;
+
+    let long_value = "f".repeat(MAX_FRAME_BYTES + 64);
+    let signal = SignalEnvelope::profile_sample_observation(
+        "source.aya_cpu_profile",
+        Some("node-a".to_string()),
+        ProfileSampleObservation {
+            timestamp_unix_nanos: 1_000,
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::High,
+            sample_count: 1,
+            sampling_period_nanos: Some(10_000_000),
+            stack_id: "stack:abc".to_string(),
+            stack_frames: vec![ProfilingFrame {
+                symbol: Some(long_value.clone()),
+                module: Some("checkout".to_string()),
+                file: Some(long_value),
+                line: Some(42),
+            }],
+            process: None,
+            container: None,
+            kubernetes: None,
+            thread_id: None,
+            thread_name: None,
+            attributes: vec![],
+        },
+    );
+
+    let bytes = format_pprof_profile(&signal).expect("pprof profile formats");
+    let profile = pprof::Profile::decode(bytes.as_slice()).expect("pprof decodes");
+    let function = profile.function.first().expect("function formats");
+
+    assert_eq!(
+        string_table_value(&profile, function.name).map(str::len),
+        Some(MAX_FRAME_BYTES)
+    );
+    assert_eq!(
+        string_table_value(&profile, function.system_name).map(str::len),
+        Some(MAX_FRAME_BYTES)
+    );
+    assert_eq!(
+        string_table_value(&profile, function.filename).map(str::len),
+        Some(MAX_FRAME_BYTES)
+    );
+}
+
+#[test]
 fn pprof_profile_ignores_sessions_and_empty_stacks() {
     let session = SignalEnvelope::profiling_session_observation(
         "generator.profiling",
@@ -574,16 +623,20 @@ fn kubernetes(pod_uid: &str) -> KubernetesContext {
 fn label_value<'a>(profile: &'a pprof::Profile, key: &str) -> Option<&'a str> {
     let sample = profile.sample.first()?;
     sample.label.iter().find_map(|label| {
-        let label_key = profile.string_table.get(usize::try_from(label.key).ok()?)?;
+        let label_key = string_table_value(profile, label.key)?;
         if label_key == key {
-            profile
-                .string_table
-                .get(usize::try_from(label.str).ok()?)
-                .map(String::as_str)
+            string_table_value(profile, label.str)
         } else {
             None
         }
     })
+}
+
+fn string_table_value(profile: &pprof::Profile, index: i64) -> Option<&str> {
+    profile
+        .string_table
+        .get(usize::try_from(index).ok()?)
+        .map(String::as_str)
 }
 
 mod pprof {
