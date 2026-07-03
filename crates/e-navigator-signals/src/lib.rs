@@ -50,4 +50,5 @@ pub use resource::{
 pub use trace::{
     ServiceInteractionSpanObservation, TraceAttribute, TraceConfidence, TraceCorrelationKind,
     TraceCorrelationWarning, TracePeerContext, TraceServicePathObservation, TraceSpanObservation,
+    is_sensitive_trace_attribute_key, sanitize_trace_attributes,
 };

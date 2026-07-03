@@ -5,6 +5,10 @@ use crate::{
     NetworkProtocol,
 };
 
+const MAX_TRACE_ATTRIBUTES: usize = 16;
+const MAX_TRACE_ATTRIBUTE_KEY_BYTES: usize = 128;
+const MAX_TRACE_ATTRIBUTE_VALUE_BYTES: usize = 256;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -104,4 +108,31 @@ pub struct TraceCorrelationWarning {
     pub container: Option<ContainerContext>,
     pub kubernetes: Option<KubernetesContext>,
     pub peer: Option<TracePeerContext>,
+}
+
+pub fn sanitize_trace_attributes(attributes: &mut Vec<TraceAttribute>) {
+    let sanitized = attributes
+        .drain(..)
+        .filter(|attribute| {
+            !attribute.key.is_empty()
+                && attribute.key.len() <= MAX_TRACE_ATTRIBUTE_KEY_BYTES
+                && attribute.value.len() <= MAX_TRACE_ATTRIBUTE_VALUE_BYTES
+                && !is_sensitive_trace_attribute_key(&attribute.key)
+        })
+        .take(MAX_TRACE_ATTRIBUTES)
+        .collect();
+    *attributes = sanitized;
+}
+
+pub fn is_sensitive_trace_attribute_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key.contains("password")
+        || key.contains("passwd")
+        || key.contains("secret")
+        || key.contains("token")
+        || key.contains("authorization")
+        || key.contains("cookie")
+        || key.contains("api_key")
+        || key.contains("apikey")
+        || key.contains("credential")
 }

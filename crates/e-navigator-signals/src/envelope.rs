@@ -2,6 +2,7 @@ use e_navigator_core::Signal;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 
 use crate::profiling::{sanitize_optional_profiling_string, sanitize_profiling_string};
+use crate::trace::sanitize_trace_attributes;
 use crate::{
     CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
     CgroupPidsObservation, DependencyEdgeEvent, DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent,
@@ -838,8 +839,9 @@ impl SignalEnvelope {
     pub fn trace_span_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: TraceSpanObservation,
+        mut observation: TraceSpanObservation,
     ) -> Self {
+        sanitize_trace_attributes(&mut observation.attributes);
         Self::new(
             source,
             host,
@@ -851,8 +853,9 @@ impl SignalEnvelope {
     pub fn service_interaction_span_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: ServiceInteractionSpanObservation,
+        mut observation: ServiceInteractionSpanObservation,
     ) -> Self {
+        sanitize_trace_attributes(&mut observation.attributes);
         Self::new(
             source,
             host,
@@ -864,8 +867,9 @@ impl SignalEnvelope {
     pub fn trace_service_path_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: TraceServicePathObservation,
+        mut observation: TraceServicePathObservation,
     ) -> Self {
+        sanitize_trace_attributes(&mut observation.attributes);
         Self::new(
             source,
             host,
@@ -890,8 +894,9 @@ impl SignalEnvelope {
     pub fn protocol_request_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: ProtocolRequestObservation,
+        mut observation: ProtocolRequestObservation,
     ) -> Self {
+        sanitize_trace_attributes(&mut observation.attributes);
         Self::new(
             source,
             host,
@@ -903,8 +908,9 @@ impl SignalEnvelope {
     pub fn extracted_trace_context_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: ExtractedTraceContextObservation,
+        mut observation: ExtractedTraceContextObservation,
     ) -> Self {
+        sanitize_trace_attributes(&mut observation.attributes);
         Self::new(
             source,
             host,
@@ -916,8 +922,9 @@ impl SignalEnvelope {
     pub fn request_span_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: RequestSpanObservation,
+        mut observation: RequestSpanObservation,
     ) -> Self {
+        sanitize_trace_attributes(&mut observation.attributes);
         Self::new(
             source,
             host,
@@ -1505,6 +1512,97 @@ mod tests {
             ),
             "direct SignalPayload deserialization must preserve trace service path identity"
         );
+    }
+
+    #[test]
+    fn trace_constructors_bound_and_filter_attributes_before_json_stdout() {
+        let attributes = oversized_trace_attributes();
+        let span = SignalEnvelope::trace_span_observation(
+            "source.synthetic_exec",
+            Some("node-a".to_string()),
+            TraceSpanObservation {
+                name: "synthetic checkout".to_string(),
+                trace_id: None,
+                span_id: None,
+                parent_span_id: None,
+                start_unix_nanos: 1_000,
+                end_unix_nanos: Some(3_000),
+                duration_nanos: Some(2_000),
+                correlation_kind: TraceCorrelationKind::Synthetic,
+                confidence: TraceConfidence::High,
+                service_name: Some("checkout-api".to_string()),
+                process: None,
+                container: None,
+                kubernetes: None,
+                peer: None,
+                attributes: attributes.clone(),
+            },
+        );
+        let interaction = SignalEnvelope::service_interaction_span_observation(
+            "generator.trace_correlation",
+            Some("node-a".to_string()),
+            ServiceInteractionSpanObservation {
+                name: "tcp client".to_string(),
+                trace_id: None,
+                span_id: None,
+                parent_span_id: None,
+                start_unix_nanos: 10_000,
+                end_unix_nanos: Some(15_000),
+                duration_nanos: Some(5_000),
+                correlation_kind: TraceCorrelationKind::NetworkInferred,
+                confidence: TraceConfidence::Medium,
+                source: DependencyEndpoint {
+                    workload: None,
+                    container: None,
+                    address: Some("10.0.0.5".to_string()),
+                    port: Some(43512),
+                    domain: None,
+                },
+                destination: DependencyEndpoint {
+                    workload: None,
+                    container: None,
+                    address: Some("203.0.113.10".to_string()),
+                    port: Some(443),
+                    domain: None,
+                },
+                protocol: NetworkProtocol::Tcp,
+                process: None,
+                error_type: None,
+                attributes: attributes.clone(),
+            },
+        );
+        let path = SignalEnvelope::trace_service_path_observation(
+            "generator.trace_correlation",
+            Some("node-a".to_string()),
+            TraceServicePathObservation {
+                path_key: "trace-path:0123456789abcdef".to_string(),
+                source: DependencyEndpoint {
+                    workload: None,
+                    container: None,
+                    address: Some("10.0.0.5".to_string()),
+                    port: Some(43512),
+                    domain: None,
+                },
+                destination: DependencyEndpoint {
+                    workload: None,
+                    container: None,
+                    address: Some("203.0.113.10".to_string()),
+                    port: Some(443),
+                    domain: None,
+                },
+                protocol: NetworkProtocol::Tcp,
+                observations: 2,
+                first_seen_unix_nanos: 1_000,
+                last_seen_unix_nanos: 3_000,
+                correlation_kind: TraceCorrelationKind::DependencyInferred,
+                confidence: TraceConfidence::Low,
+                attributes,
+            },
+        );
+
+        assert_bounded_safe_trace_attributes(&span);
+        assert_bounded_safe_trace_attributes(&interaction);
+        assert_bounded_safe_trace_attributes(&path);
     }
 
     #[test]
@@ -2127,5 +2225,42 @@ mod tests {
             workload: None,
             container: None,
         }
+    }
+
+    fn oversized_trace_attributes() -> Vec<TraceAttribute> {
+        let mut attributes = vec![
+            TraceAttribute {
+                key: String::new(),
+                value: "dropped".to_string(),
+            },
+            TraceAttribute {
+                key: "authorization".to_string(),
+                value: "Bearer secret".to_string(),
+            },
+            TraceAttribute {
+                key: "k".repeat(160),
+                value: "v".repeat(320),
+            },
+        ];
+        attributes.extend((0..20).map(|index| TraceAttribute {
+            key: format!("custom.attribute.{index}"),
+            value: "value".to_string(),
+        }));
+        attributes
+    }
+
+    fn assert_bounded_safe_trace_attributes(signal: &SignalEnvelope) {
+        let json = serde_json::to_value(signal).expect("signal serializes");
+        let attributes = json["payload"]["attributes"]
+            .as_array()
+            .expect("attributes are serialized");
+
+        assert_eq!(attributes.len(), 16);
+        assert_eq!(attributes[0]["key"], "custom.attribute.0");
+        assert_eq!(attributes[15]["key"], "custom.attribute.15");
+        assert!(!json.to_string().contains("authorization"));
+        assert!(!json.to_string().contains("Bearer secret"));
+        assert!(!json.to_string().contains(&"k".repeat(160)));
+        assert!(!json.to_string().contains(&"v".repeat(320)));
     }
 }

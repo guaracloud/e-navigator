@@ -109,6 +109,84 @@ fn serializes_protocol_request_observation_with_explicit_context() {
 }
 
 #[test]
+fn request_constructors_bound_and_filter_trace_attributes_before_json_stdout() {
+    let attributes = oversized_trace_attributes();
+    let protocol = SignalEnvelope::protocol_request_observation(
+        "source.protocol_fixture",
+        Some("node-a".to_string()),
+        ProtocolRequestObservation {
+            protocol: ProtocolKind::Http,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_500),
+            duration_nanos: Some(1_500),
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            traceparent: None,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::High,
+            service_name: Some("checkout-api".to_string()),
+            method: Some("GET".to_string()),
+            status_code: Some(200),
+            process: None,
+            container: None,
+            kubernetes: None,
+            peer: None,
+            attributes: attributes.clone(),
+        },
+    );
+    let context = SignalEnvelope::extracted_trace_context_observation(
+        "parser.protocol",
+        Some("node-a".to_string()),
+        ExtractedTraceContextObservation {
+            protocol: ProtocolKind::Http,
+            timestamp_unix_nanos: 1_100,
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            traceparent: None,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            process: None,
+            container: None,
+            kubernetes: None,
+            peer: None,
+            attributes: attributes.clone(),
+        },
+    );
+    let request_span = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "http request".to_string(),
+            protocol: ProtocolKind::Http,
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_500),
+            duration_nanos: Some(1_500),
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::High,
+            service_name: Some("checkout-api".to_string()),
+            method: Some("GET".to_string()),
+            status_code: Some(200),
+            process: None,
+            container: None,
+            kubernetes: None,
+            peer: None,
+            attributes,
+        },
+    );
+
+    assert_bounded_safe_trace_attributes(&protocol);
+    assert_bounded_safe_trace_attributes(&context);
+    assert_bounded_safe_trace_attributes(&request_span);
+}
+
+#[test]
 fn serializes_redis_protocol_request_observation_without_payload_values() {
     let signal = SignalEnvelope::protocol_request_observation(
         "source.protocol_fixture",
@@ -647,4 +725,41 @@ fn peer() -> TracePeerContext {
         workload: None,
         container: None,
     }
+}
+
+fn oversized_trace_attributes() -> Vec<TraceAttribute> {
+    let mut attributes = vec![
+        TraceAttribute {
+            key: String::new(),
+            value: "dropped".to_string(),
+        },
+        TraceAttribute {
+            key: "authorization".to_string(),
+            value: "Bearer secret".to_string(),
+        },
+        TraceAttribute {
+            key: "k".repeat(160),
+            value: "v".repeat(320),
+        },
+    ];
+    attributes.extend((0..20).map(|index| TraceAttribute {
+        key: format!("custom.attribute.{index}"),
+        value: "value".to_string(),
+    }));
+    attributes
+}
+
+fn assert_bounded_safe_trace_attributes(signal: &SignalEnvelope) {
+    let json = serde_json::to_value(signal).expect("signal serializes");
+    let attributes = json["payload"]["attributes"]
+        .as_array()
+        .expect("attributes are serialized");
+
+    assert_eq!(attributes.len(), 16);
+    assert_eq!(attributes[0]["key"], "custom.attribute.0");
+    assert_eq!(attributes[15]["key"], "custom.attribute.15");
+    assert!(!json.to_string().contains("authorization"));
+    assert!(!json.to_string().contains("Bearer secret"));
+    assert!(!json.to_string().contains(&"k".repeat(160)));
+    assert!(!json.to_string().contains(&"v".repeat(320)));
 }

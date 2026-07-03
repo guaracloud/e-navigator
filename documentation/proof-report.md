@@ -21,9 +21,9 @@ or chart rendering:
 - versioned JSON signal envelopes;
 - JSON stdout newline-delimited serialization and sink-side redaction, including
   exec and runtime-security matched-process argv redaction, protocol request
-  observations without raw trace headers, network flow signals, and profiling
-  signal families with bounded sanitized profiling attributes, stack frames,
-  and scalar strings;
+  observations without raw trace headers and with bounded sanitized trace
+  attributes, network flow signals, and profiling signal families with bounded
+  sanitized profiling attributes, stack frames, and scalar strings;
 - synthetic source pipeline, including sanitized HTTP, gRPC, Kafka, MongoDB,
   MySQL, NATS, PostgreSQL, and Redis protocol request/error-span fixtures and
   flow-attribution warnings;
