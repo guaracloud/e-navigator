@@ -101,11 +101,16 @@ fn serializes_protocol_request_observation_with_explicit_context() {
     assert_eq!(json["payload"]["method"], "GET");
     assert_eq!(json["payload"]["status_code"], 200);
 
+    assert_protocol_request_payload_has_no_raw_trace_headers(&signal);
+
     let decoded: SignalEnvelope = serde_json::from_value(json).expect("signal deserializes");
-    assert!(matches!(
-        decoded.payload,
-        SignalPayload::ProtocolRequestObservation(_)
-    ));
+    match decoded.payload {
+        SignalPayload::ProtocolRequestObservation(observation) => {
+            assert!(observation.traceparent.is_none());
+            assert!(observation.tracestate.is_none());
+        }
+        payload => panic!("unexpected payload: {payload:?}"),
+    }
 }
 
 #[test]
@@ -868,11 +873,67 @@ fn serializes_extracted_trace_context_observation() {
     assert!(json["payload"].get("traceparent").is_none());
     assert!(json["payload"].get("tracestate").is_none());
 
+    assert_extracted_trace_context_payload_has_no_raw_trace_headers(&signal);
+
     let decoded: SignalEnvelope = serde_json::from_value(json).expect("signal deserializes");
-    assert!(matches!(
-        decoded.payload,
-        SignalPayload::ExtractedTraceContextObservation(_)
-    ));
+    match decoded.payload {
+        SignalPayload::ExtractedTraceContextObservation(observation) => {
+            assert!(observation.traceparent.is_none());
+            assert!(observation.tracestate.is_none());
+        }
+        payload => panic!("unexpected payload: {payload:?}"),
+    }
+}
+
+#[test]
+fn deserializing_request_payload_ignores_raw_trace_headers() {
+    let protocol = serde_json::json!({
+        "protocol": "http",
+        "start_unix_nanos": 1_000,
+        "end_unix_nanos": 2_500,
+        "duration_nanos": 1_500,
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "parent_span_id": null,
+        "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        "tracestate": "vendor=value",
+        "correlation_kind": "protocol_observed",
+        "confidence": "high",
+        "service_name": "checkout-api",
+        "method": "GET",
+        "status_code": 200,
+        "process": null,
+        "container": null,
+        "kubernetes": null,
+        "peer": null,
+        "attributes": []
+    });
+    let context = serde_json::json!({
+        "protocol": "http",
+        "timestamp_unix_nanos": 1_100,
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "parent_span_id": null,
+        "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        "tracestate": "vendor=value",
+        "correlation_kind": "observed_trace_context",
+        "confidence": "high",
+        "process": null,
+        "container": null,
+        "kubernetes": null,
+        "peer": null,
+        "attributes": []
+    });
+
+    let protocol =
+        serde_json::from_value::<ProtocolRequestObservation>(protocol).expect("protocol payload");
+    let context = serde_json::from_value::<ExtractedTraceContextObservation>(context)
+        .expect("context payload");
+
+    assert!(protocol.traceparent.is_none());
+    assert!(protocol.tracestate.is_none());
+    assert!(context.traceparent.is_none());
+    assert!(context.tracestate.is_none());
 }
 
 #[test]
@@ -1097,6 +1158,26 @@ fn assert_bounded_safe_trace_attributes(signal: &SignalEnvelope) {
     assert!(!json.to_string().contains("Bearer secret"));
     assert!(!json.to_string().contains(&"k".repeat(160)));
     assert!(!json.to_string().contains(&"v".repeat(320)));
+}
+
+fn assert_protocol_request_payload_has_no_raw_trace_headers(signal: &SignalEnvelope) {
+    match &signal.payload {
+        SignalPayload::ProtocolRequestObservation(observation) => {
+            assert!(observation.traceparent.is_none());
+            assert!(observation.tracestate.is_none());
+        }
+        payload => panic!("unexpected payload: {payload:?}"),
+    }
+}
+
+fn assert_extracted_trace_context_payload_has_no_raw_trace_headers(signal: &SignalEnvelope) {
+    match &signal.payload {
+        SignalPayload::ExtractedTraceContextObservation(observation) => {
+            assert!(observation.traceparent.is_none());
+            assert!(observation.tracestate.is_none());
+        }
+        payload => panic!("unexpected payload: {payload:?}"),
+    }
 }
 
 fn assert_payload_string_lengths(signal: &SignalEnvelope, paths: &[&[&str]]) {

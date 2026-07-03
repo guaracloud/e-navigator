@@ -23,7 +23,7 @@ or chart rendering:
   exec strings, argument count, and nested context strings/labels, exec and
   runtime-security matched-process argv redaction, bounded runtime-security
   finding strings and matched-process argument count, protocol request
-  observations without raw trace headers and with bounded sanitized trace
+  observations without retained raw trace headers and with bounded sanitized trace
   attributes, identifier/scalar strings, and process/context/peer strings and
   labels, trace signal families with bounded identifier/scalar, process,
   endpoint, and context strings and labels, network connection signals with

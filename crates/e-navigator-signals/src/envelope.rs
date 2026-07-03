@@ -976,6 +976,8 @@ impl SignalEnvelope {
         sanitize_optional_trace_container_context(&mut observation.container);
         sanitize_optional_trace_kubernetes_context(&mut observation.kubernetes);
         sanitize_optional_trace_peer_context(&mut observation.peer);
+        observation.traceparent = None;
+        observation.tracestate = None;
         Self::new(
             source,
             host,
@@ -997,6 +999,8 @@ impl SignalEnvelope {
         sanitize_optional_trace_container_context(&mut observation.container);
         sanitize_optional_trace_kubernetes_context(&mut observation.kubernetes);
         sanitize_optional_trace_peer_context(&mut observation.peer);
+        observation.traceparent = None;
+        observation.tracestate = None;
         Self::new(
             source,
             host,

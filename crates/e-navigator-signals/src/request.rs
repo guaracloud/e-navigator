@@ -29,9 +29,9 @@ pub struct ProtocolRequestObservation {
     pub trace_id: Option<String>,
     pub span_id: Option<String>,
     pub parent_span_id: Option<String>,
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip)]
     pub traceparent: Option<String>,
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip)]
     pub tracestate: Option<String>,
     pub correlation_kind: TraceCorrelationKind,
     pub confidence: TraceConfidence,
@@ -52,9 +52,9 @@ pub struct ExtractedTraceContextObservation {
     pub trace_id: Option<String>,
     pub span_id: Option<String>,
     pub parent_span_id: Option<String>,
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip)]
     pub traceparent: Option<String>,
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip)]
     pub tracestate: Option<String>,
     pub correlation_kind: TraceCorrelationKind,
     pub confidence: TraceConfidence,
