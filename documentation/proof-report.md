@@ -45,9 +45,9 @@ or chart rendering:
   runtime log-level, queue/derivation, and runtime-security endpoint bounds,
   Prometheus and OTLP HTTP sink runtime-bound validation, Prometheus bind-address
   host/port-shape validation, OTLP HTTP endpoint host/shape/length validation,
-  shared HTTP exporter endpoint shape/length validation plus upper-bound
-  validation for batch, queue, timeout, and retry settings, local Kubernetes
-  attribution selector filtering and
+  shared HTTP exporter endpoint shape/length validation plus header count/size
+  validation and upper-bound validation for batch, queue, timeout, and retry
+  settings, local Kubernetes attribution selector filtering and
   selector-shape/whitespace/duplicate bounds plus response/cache/label/path
   bounds, runtime `NODE_NAME` field-selector shape validation, including
   combined container-ID and pod-IP cache-entry bounds, cgroup-ID attribution

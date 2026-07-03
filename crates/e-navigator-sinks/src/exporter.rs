@@ -24,6 +24,9 @@ impl HttpExporterConfig {
     pub const MAX_QUEUE_CAPACITY_LIMIT: usize = 65_536;
     pub const MAX_TIMEOUT_MILLIS_LIMIT: u64 = 300_000;
     pub const MAX_RETRIES_LIMIT: usize = 16;
+    pub const MAX_HEADERS_LIMIT: usize = 64;
+    pub const MAX_HEADER_NAME_BYTES_LIMIT: usize = 128;
+    pub const MAX_HEADER_VALUE_BYTES_LIMIT: usize = 4096;
 
     pub fn validate(&self) -> Result<(), ExporterError> {
         if self.endpoint.is_empty() {
@@ -68,6 +71,7 @@ impl HttpExporterConfig {
         if endpoint.host_str().is_none() {
             return Err(ExporterError::InvalidConfig("endpoint must include a host"));
         }
+        validate_headers(&self.headers)?;
         if self.batch_size == 0 {
             return Err(ExporterError::InvalidConfig(
                 "batch_size must be greater than zero",
@@ -105,6 +109,33 @@ impl HttpExporterConfig {
         }
         Ok(())
     }
+}
+
+fn validate_headers(headers: &[(String, String)]) -> Result<(), ExporterError> {
+    if headers.len() > HttpExporterConfig::MAX_HEADERS_LIMIT {
+        return Err(ExporterError::InvalidConfig(
+            "headers must contain at most 64 entries",
+        ));
+    }
+    for (name, value) in headers {
+        if name.len() > HttpExporterConfig::MAX_HEADER_NAME_BYTES_LIMIT {
+            return Err(ExporterError::InvalidConfig(
+                "header names must be at most 128 bytes",
+            ));
+        }
+        if value.len() > HttpExporterConfig::MAX_HEADER_VALUE_BYTES_LIMIT {
+            return Err(ExporterError::InvalidConfig(
+                "header values must be at most 4096 bytes",
+            ));
+        }
+        if value.bytes().any(|byte| byte.is_ascii_control()) {
+            return Err(ExporterError::InvalidConfig(
+                "header values must not contain control characters",
+            ));
+        }
+    }
+    header_map(headers)?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -496,6 +527,57 @@ mod tests {
                 format!("invalid exporter config: {expected_message}")
             );
         }
+    }
+
+    #[test]
+    fn exporter_rejects_unbounded_or_invalid_headers() {
+        for (headers, expected_message) in [
+            (
+                (0..=HttpExporterConfig::MAX_HEADERS_LIMIT)
+                    .map(|index| (format!("x-header-{index}"), "value".to_string()))
+                    .collect::<Vec<_>>(),
+                "headers must contain at most 64 entries",
+            ),
+            (
+                vec![(
+                    "x".repeat(HttpExporterConfig::MAX_HEADER_NAME_BYTES_LIMIT + 1),
+                    "value".to_string(),
+                )],
+                "header names must be at most 128 bytes",
+            ),
+            (
+                vec![(
+                    "x-header".to_string(),
+                    "v".repeat(HttpExporterConfig::MAX_HEADER_VALUE_BYTES_LIMIT + 1),
+                )],
+                "header values must be at most 4096 bytes",
+            ),
+            (
+                vec![("x-header".to_string(), "bad\nvalue".to_string())],
+                "header values must not contain control characters",
+            ),
+        ] {
+            let err = HttpExporterConfig {
+                headers,
+                ..valid_config()
+            }
+            .validate()
+            .expect_err("invalid headers fail");
+
+            assert_eq!(
+                err.to_string(),
+                format!("invalid exporter config: {expected_message}")
+            );
+        }
+
+        let err = HttpExporterConfig {
+            headers: vec![("bad header".to_string(), "value".to_string())],
+            ..valid_config()
+        }
+        .validate()
+        .expect_err("invalid header syntax fails");
+
+        assert_eq!(err.to_string(), "invalid header");
     }
 
     #[tokio::test]
