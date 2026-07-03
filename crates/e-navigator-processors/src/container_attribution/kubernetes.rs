@@ -373,7 +373,7 @@ impl KubernetesMetadataCache {
             if let Some(status) = pod.status {
                 let pod_ip = status.pod_ip;
                 for container in status.container_statuses.unwrap_or_default() {
-                    if by_container_id.len() >= config.max_cache_entries {
+                    if cache_entry_count(&by_container_id, &by_pod_ip) >= config.max_cache_entries {
                         warn!(
                             max_cache_entries = config.max_cache_entries,
                             "kubernetes metadata cache entry limit reached"
@@ -395,12 +395,14 @@ impl KubernetesMetadataCache {
                             node_name: node_name.clone(),
                             labels: labels.clone(),
                         };
-                        if let Some(pod_ip) = pod_ip.as_ref().filter(|value| !value.is_empty()) {
-                            by_pod_ip
-                                .entry(pod_ip.clone())
-                                .or_insert_with(|| context.clone());
+                        by_container_id.insert(id.to_string(), context.clone());
+                        if let Some(pod_ip) = pod_ip.as_ref().filter(|value| !value.is_empty())
+                            && !by_pod_ip.contains_key(pod_ip)
+                            && cache_entry_count(&by_container_id, &by_pod_ip)
+                                < config.max_cache_entries
+                        {
+                            by_pod_ip.insert(pod_ip.clone(), context);
                         }
-                        by_container_id.insert(id.to_string(), context);
                     }
                 }
             }
@@ -411,6 +413,13 @@ impl KubernetesMetadataCache {
             by_pod_ip,
         }
     }
+}
+
+fn cache_entry_count(
+    by_container_id: &BTreeMap<String, KubernetesContext>,
+    by_pod_ip: &BTreeMap<String, KubernetesContext>,
+) -> usize {
+    by_container_id.len().saturating_add(by_pod_ip.len())
 }
 
 fn pod_matches_scope(
@@ -714,6 +723,30 @@ mod tests {
         assert!(cache.contains_container("container-0"));
         assert!(cache.contains_container("container-1"));
         assert!(!cache.contains_container("container-2"));
+    }
+
+    #[test]
+    fn pod_ip_index_does_not_exceed_cache_entry_limit() {
+        let pod_list = PodList {
+            items: vec![scoped_pod(
+                "api",
+                "default",
+                "node-a",
+                "10.0.0.10",
+                "container-api",
+                BTreeMap::from([("app".to_string(), "api".to_string())]),
+            )],
+        };
+        let config = KubernetesAttributionConfig {
+            max_cache_entries: 1,
+            ..KubernetesAttributionConfig::default()
+        };
+
+        let cache = KubernetesMetadataCache::from_pod_list(pod_list, &config);
+
+        assert_eq!(cache.len(), 1);
+        assert!(cache.contains_container("container-api"));
+        assert!(cache.get_by_pod_ip("10.0.0.10").is_none());
     }
 
     #[test]
