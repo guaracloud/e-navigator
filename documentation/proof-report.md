@@ -82,7 +82,7 @@ or chart rendering:
 - OTLP protobuf request encoding plus per-family endpoint routing and family
   toggle suppression for metrics with bounded scalar/resource/attribute keys
   and values, native `network.flow.bytes` fake-collector export, traces with
-  HTTP, gRPC, and `error.type` request/error status
+  HTTP, gRPC, `error.type`, and protocol response-status request/error status
   mapping, server span kind and Kubernetes resource
   attributes with bounded trace resource/context/scalar values
   including Kafka, MongoDB, MySQL, NATS, PostgreSQL, and Redis request spans,
@@ -147,9 +147,10 @@ These areas remain explicitly partial:
   iovec shapes are not proven.
 - **Trace readiness:** OTLP trace protobuf export includes request span kind,
   resource attributes, and local status mapping for HTTP status errors, gRPC
-  status errors, selected `error.type` protocol request errors, and network
-  interaction errors, but broad backend service-graph compatibility and live
-  collector proof for the status mappings are not yet proven.
+  status errors, selected `error.type` protocol request errors,
+  response-status attribute errors, and network interaction errors, but broad
+  backend service-graph compatibility and live collector proof for the status
+  mappings are not yet proven.
 - **Kafka protocol observability:** bounded request-header parsing for common
   API keys plus ApiVersions and Produce response-error parsing is locally
   tested without exporting client IDs, topics, record payloads, or response body
