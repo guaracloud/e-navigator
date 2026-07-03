@@ -163,7 +163,7 @@ fn session_record(
     append_bounded_attributes(&mut attributes, &session.attributes);
 
     OtelProfileRecord {
-        profile_id: session.profile_id.clone(),
+        profile_id: truncate_utf8(&session.profile_id, MAX_VALUE_BYTES),
         profile_kind: profiling_kind_name(session.profiling_kind).to_string(),
         sample_count: session.observed_sample_count,
         dropped_sample_count: session.dropped_sample_count,

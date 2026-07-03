@@ -107,10 +107,10 @@ or chart rendering:
   nonzero trace/span ID filtering,
   bounded final OTLP attribute key and string value conversion, and
   development-status profile sample records with
-  deterministic, workload-aware IDs, bounded resource attributes, bounded stack
-  frames, final canonical-plus-user attribute caps, bounded/sensitive
-  attribute filtering, and session dropped-sample records in fake-collector
-  tests;
+  deterministic, workload-aware IDs, bounded session IDs, bounded resource
+  attributes, bounded stack frames, final canonical-plus-user attribute caps,
+  bounded/sensitive attribute filtering, and session dropped-sample records in
+  fake-collector tests;
 - native profile record formatting with bounded identifiers, bounded resource
   attributes, and sensitive attribute filtering;
 - pprof-compatible profile sample protobuf rendering with bounded stack

@@ -275,6 +275,7 @@ fn otlp_profile_bounds_sample_attributes_and_stack_frames() {
 #[test]
 fn otlp_profile_bounds_session_source_attribute() {
     const MAX_VALUE_BYTES: usize = 256;
+    let long_value = "p".repeat(MAX_VALUE_BYTES + 64);
 
     let signal = SignalEnvelope::profiling_session_observation(
         "generator.profiling",
@@ -287,7 +288,7 @@ fn otlp_profile_bounds_session_source_attribute() {
             profiling_kind: ProfilingKind::Cpu,
             correlation_kind: ProfilingCorrelationKind::Synthetic,
             confidence: ProfilingConfidence::Medium,
-            profile_id: "profile:abc".to_string(),
+            profile_id: long_value,
             observed_sample_count: 3,
             dropped_sample_count: 0,
             distinct_stack_count: 2,
@@ -302,6 +303,7 @@ fn otlp_profile_bounds_session_source_attribute() {
 
     let record = format_otel_profile_record(&signal).expect("record formats");
 
+    assert_eq!(record.profile_id.len(), MAX_VALUE_BYTES);
     assert_eq!(
         record.attributes["profile.source"].as_str().map(str::len),
         Some(MAX_VALUE_BYTES)
