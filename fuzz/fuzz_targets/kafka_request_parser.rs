@@ -24,9 +24,10 @@ use e_navigator_protocol::{
         parse_kafka_get_telemetry_subscriptions_response, parse_kafka_heartbeat_response,
         parse_kafka_init_producer_id_response, parse_kafka_incremental_alter_configs_response,
         parse_kafka_join_group_response, parse_kafka_leave_group_response,
-        parse_kafka_list_groups_response, parse_kafka_list_offsets_response,
-        parse_kafka_list_partition_reassignments_response, parse_kafka_list_transactions_response,
-        parse_kafka_metadata_response, parse_kafka_offset_commit_response,
+        parse_kafka_list_config_resources_response, parse_kafka_list_groups_response,
+        parse_kafka_list_offsets_response, parse_kafka_list_partition_reassignments_response,
+        parse_kafka_list_transactions_response, parse_kafka_metadata_response,
+        parse_kafka_offset_commit_response,
         parse_kafka_offset_delete_response, parse_kafka_offset_fetch_response,
         parse_kafka_produce_response, parse_kafka_push_telemetry_response, parse_kafka_request,
         parse_kafka_renew_delegation_token_response, parse_kafka_sasl_authenticate_response,
@@ -95,6 +96,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_consumer_group_describe_response(data, 1, &config);
     let _ = parse_kafka_get_telemetry_subscriptions_response(data, 0, &config);
     let _ = parse_kafka_push_telemetry_response(data, 0, &config);
+    let _ = parse_kafka_list_config_resources_response(data, 1, &config);
     let _ = parse_kafka_produce_response(data, 0, &config);
     let _ = parse_kafka_produce_response(data, 7, &config);
     let _ = parse_kafka_fetch_response(data, 0, &config);
