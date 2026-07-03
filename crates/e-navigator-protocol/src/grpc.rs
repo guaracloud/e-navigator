@@ -256,7 +256,33 @@ fn grpc_name_byte_allowed(byte: u8) -> bool {
 
 fn is_grpc_content_type(value: &str) -> bool {
     let value = value.to_ascii_lowercase();
-    value == "application/grpc" || value.starts_with("application/grpc+")
+    if value == "application/grpc" {
+        return true;
+    }
+    let Some(suffix) = value.strip_prefix("application/grpc+") else {
+        return false;
+    };
+    !suffix.is_empty() && suffix.bytes().all(grpc_content_type_suffix_byte_allowed)
+}
+
+fn grpc_content_type_suffix_byte_allowed(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
 }
 
 fn parse_grpc_status_code(value: &str) -> Result<u16, GrpcExtraction> {
@@ -285,7 +311,7 @@ fn bounded_content_type(value: &str) -> Option<String> {
 fn bounded_authority(value: &str) -> Option<Authority> {
     if value.is_empty()
         || value.len() > MAX_GRPC_AUTHORITY_ATTRIBUTE_BYTES
-        || value.bytes().any(|byte| byte.is_ascii_control())
+        || value.bytes().any(grpc_authority_byte_forbidden)
     {
         return None;
     }
@@ -302,6 +328,10 @@ fn bounded_authority(value: &str) -> Option<Authority> {
         address: address.to_string(),
         port,
     })
+}
+
+fn grpc_authority_byte_forbidden(byte: u8) -> bool {
+    byte.is_ascii_control() || byte.is_ascii_whitespace() || matches!(byte, b'@' | b'/' | b'\\')
 }
 
 fn split_authority(value: &str) -> Option<(&str, Option<&str>)> {

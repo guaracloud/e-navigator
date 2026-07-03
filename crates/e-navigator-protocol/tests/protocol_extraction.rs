@@ -731,6 +731,10 @@ fn drops_malformed_grpc_authority_attributes() {
         "checkout.example.com:70000",
         "checkout.example.com:notaport",
         "[2001:db8::1]invalid",
+        "user@checkout.example.com",
+        "checkout example.com",
+        "checkout.example.com/path",
+        "checkout\\example.com",
     ] {
         let bytes = format!(
             ":method: POST\n:path: /checkout.v1.CheckoutService/GetCart\n:authority: {authority}\ncontent-type: application/grpc\n\n"
@@ -750,12 +754,20 @@ fn drops_malformed_grpc_authority_attributes() {
 
 #[test]
 fn rejects_non_grpc_decoded_http2_headers() {
-    let bytes = b":method: GET\n:path: /checkout\ncontent-type: application/json\n\n";
+    for content_type in [
+        "application/json",
+        "application/grpc+",
+        "application/grpc+proto; charset=utf-8",
+    ] {
+        let bytes = format!(":method: GET\n:path: /checkout\ncontent-type: {content_type}\n\n");
 
-    assert_eq!(
-        parse_grpc_request_headers(bytes, &ProtocolExtractionConfig::default()).unwrap_err(),
-        GrpcExtraction::MissingGrpcContentType
-    );
+        assert_eq!(
+            parse_grpc_request_headers(bytes.as_bytes(), &ProtocolExtractionConfig::default())
+                .unwrap_err(),
+            GrpcExtraction::MissingGrpcContentType,
+            "{content_type:?}"
+        );
+    }
 }
 
 #[test]
