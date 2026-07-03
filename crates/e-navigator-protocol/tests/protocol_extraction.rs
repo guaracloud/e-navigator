@@ -806,12 +806,17 @@ fn extracts_http_response_status_without_reason_or_headers() {
 #[test]
 fn rejects_malformed_http_response_status_lines() {
     let missing = b"HTTP/1.1\r\n\r\n";
+    let malformed_version = b"HTTP/x 200 OK\r\n\r\n";
     let non_numeric = b"HTTP/1.1 OK\r\n\r\n";
     let out_of_range = b"HTTP/1.1 700 custom\r\n\r\n";
     let request = b"GET /checkout HTTP/1.1\r\n\r\n";
 
     assert_eq!(
         parse_http_response(missing, &ProtocolExtractionConfig::default()).unwrap_err(),
+        HttpExtraction::MalformedResponseLine
+    );
+    assert_eq!(
+        parse_http_response(malformed_version, &ProtocolExtractionConfig::default()).unwrap_err(),
         HttpExtraction::MalformedResponseLine
     );
     assert_eq!(
@@ -1036,6 +1041,18 @@ fn rejects_adversarial_http_header_fixtures_without_panicking() {
     );
     assert_eq!(
         parse_http_request(b"GET\r\nHost: api.example.com\r\n\r\n", &config).unwrap_err(),
+        HttpExtraction::MalformedRequestLine
+    );
+    assert_eq!(
+        parse_http_request(b"GET / HTTP/x\r\nHost: api.example.com\r\n\r\n", &config).unwrap_err(),
+        HttpExtraction::MalformedRequestLine
+    );
+    assert_eq!(
+        parse_http_request(
+            b"GET / HTTP/1.1 unexpected\r\nHost: api.example.com\r\n\r\n",
+            &config
+        )
+        .unwrap_err(),
         HttpExtraction::MalformedRequestLine
     );
     assert_eq!(

@@ -213,7 +213,10 @@ fn parse_request_line(request_line: &str) -> Result<ParsedRequestLine, HttpExtra
     let Some(target) = fields.next() else {
         return Err(HttpExtraction::MalformedRequestLine);
     };
-    if fields.next().is_none() {
+    let Some(version) = fields.next() else {
+        return Err(HttpExtraction::MalformedRequestLine);
+    };
+    if !is_http1_version(version) || fields.next().is_some() {
         return Err(HttpExtraction::MalformedRequestLine);
     }
     let method = if method.is_empty()
@@ -242,7 +245,7 @@ fn parse_status_line(status_line: &str) -> Result<u16, HttpExtraction> {
     let Some(version) = fields.next() else {
         return Err(HttpExtraction::MalformedResponseLine);
     };
-    if !version.starts_with("HTTP/") {
+    if !is_http1_version(version) {
         return Err(HttpExtraction::MalformedResponseLine);
     }
     let Some(status_code) = fields.next() else {
@@ -258,6 +261,10 @@ fn parse_status_line(status_line: &str) -> Result<u16, HttpExtraction> {
         return Err(HttpExtraction::InvalidStatusCode);
     }
     Ok(status_code)
+}
+
+fn is_http1_version(value: &str) -> bool {
+    matches!(value, "HTTP/1.0" | "HTTP/1.1")
 }
 
 fn request_target_context(target: &str) -> (Option<String>, Option<HostAuthority>) {
