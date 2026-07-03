@@ -21,6 +21,7 @@ run cargo fmt --all -- --check
 run cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings
 run cargo test --locked --workspace --exclude e-navigator-ebpf-programs
 run cargo build --locked --workspace --exclude e-navigator-ebpf-programs
+run bash scripts/fuzz_check.sh
 run cargo run --locked -p e-navigator-cli -- --source synthetic
 run tests/homelab_bench_guard_test.sh
 run tests/packaged_config_guard_test.sh
