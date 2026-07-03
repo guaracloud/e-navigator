@@ -252,6 +252,49 @@ mod tests {
             ProtocolKind::Postgresql,
             ProtocolKind::Redis,
         ])));
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::ProtocolRequestObservation(request)
+                if request.protocol == ProtocolKind::Kafka
+                    && request.method.as_deref() == Some("api_versions")
+                    && has_attribute(&request.attributes, "messaging.kafka.response.error_code", "35")
+                    && has_attribute(&request.attributes, "error.type", "35")
+        )));
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::ProtocolRequestObservation(request)
+                if request.protocol == ProtocolKind::Mongodb
+                    && has_attribute(&request.attributes, "db.response.status_code", "13")
+                    && has_attribute(&request.attributes, "error.type", "13")
+        )));
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::ProtocolRequestObservation(request)
+                if request.protocol == ProtocolKind::Mysql
+                    && has_attribute(&request.attributes, "db.response.status_code", "42000/1064")
+                    && has_attribute(&request.attributes, "error.type", "42000/1064")
+        )));
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::ProtocolRequestObservation(request)
+                if request.protocol == ProtocolKind::Nats
+                    && has_attribute(&request.attributes, "messaging.nats.status_code", "ERR")
+                    && has_attribute(&request.attributes, "error.type", "nats_error")
+        )));
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::ProtocolRequestObservation(request)
+                if request.protocol == ProtocolKind::Postgresql
+                    && has_attribute(&request.attributes, "db.response.status_code", "23505")
+                    && has_attribute(&request.attributes, "error.type", "23505")
+        )));
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::ProtocolRequestObservation(request)
+                if request.protocol == ProtocolKind::Redis
+                    && has_attribute(&request.attributes, "db.response.status_code", "WRONGTYPE")
+                    && has_attribute(&request.attributes, "error.type", "redis_wrongtype")
+        )));
         assert!(!signals.iter().any(|signal| {
             format!("{:?}", signal.payload).contains("secret")
                 || format!("{:?}", signal.payload).contains("payload")
@@ -320,5 +363,15 @@ mod tests {
             signal.payload,
             SignalPayload::CgroupFileDescriptorObservation(_)
         )));
+    }
+
+    fn has_attribute(
+        attributes: &[e_navigator_signals::TraceAttribute],
+        key: &str,
+        value: &str,
+    ) -> bool {
+        attributes
+            .iter()
+            .any(|attribute| attribute.key == key && attribute.value == value)
     }
 }

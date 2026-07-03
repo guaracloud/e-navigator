@@ -20,7 +20,7 @@ or chart rendering:
 - static module registration and runner fan-out;
 - versioned JSON signal envelopes;
 - synthetic source pipeline, including sanitized HTTP, gRPC, Kafka, MongoDB,
-  MySQL, NATS, PostgreSQL, and Redis protocol request/span fixtures and
+  MySQL, NATS, PostgreSQL, and Redis protocol request/error-span fixtures and
   flow-attribution warnings;
 - config validation, packaged config guards, and local Kubernetes attribution
   selector filtering;
@@ -33,8 +33,8 @@ or chart rendering:
   text command plus OK/error response parsing, PostgreSQL wire-message and
   ErrorResponse parsing, and Redis RESP command plus error-response parsing;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
-  security generator behavior, including synthetic protocol request/span flow
-  and flow-attribution warnings;
+  security generator behavior, including synthetic protocol request/error-span
+  flow and flow-attribution warnings;
 - Prometheus HTTP formatting, health/readiness endpoints, and secret-like label
   filtering;
 - OTLP protobuf request encoding plus per-family endpoint routing for metrics,

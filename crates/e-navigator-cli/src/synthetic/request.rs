@@ -185,6 +185,20 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
             ],
         },
         ProtocolFixture {
+            protocol: ProtocolKind::Kafka,
+            method: "api_versions",
+            address: "203.0.113.20",
+            port: 9092,
+            domain: "kafka.example.com",
+            attributes: vec![
+                attr("messaging.system", "kafka"),
+                attr("messaging.operation", "api_versions"),
+                attr("messaging.kafka.response.error_code", "35"),
+                attr("error.type", "35"),
+                attr("trace.synthetic.fixture", "kafka_protocol_error"),
+            ],
+        },
+        ProtocolFixture {
             protocol: ProtocolKind::Mongodb,
             method: "find",
             address: "203.0.113.21",
@@ -197,6 +211,19 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
             ],
         },
         ProtocolFixture {
+            protocol: ProtocolKind::Mongodb,
+            method: "find",
+            address: "203.0.113.21",
+            port: 27017,
+            domain: "mongodb.example.com",
+            attributes: vec![
+                attr("db.system", "mongodb"),
+                attr("db.response.status_code", "13"),
+                attr("error.type", "13"),
+                attr("trace.synthetic.fixture", "mongodb_protocol_error"),
+            ],
+        },
+        ProtocolFixture {
             protocol: ProtocolKind::Mysql,
             method: "SELECT",
             address: "203.0.113.22",
@@ -206,6 +233,19 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
                 attr("db.system", "mysql"),
                 attr("db.operation", "SELECT"),
                 attr("trace.synthetic.fixture", "mysql_protocol_request"),
+            ],
+        },
+        ProtocolFixture {
+            protocol: ProtocolKind::Mysql,
+            method: "SELECT",
+            address: "203.0.113.22",
+            port: 3306,
+            domain: "mysql.example.com",
+            attributes: vec![
+                attr("db.system", "mysql"),
+                attr("db.response.status_code", "42000/1064"),
+                attr("error.type", "42000/1064"),
+                attr("trace.synthetic.fixture", "mysql_protocol_error"),
             ],
         },
         ProtocolFixture {
@@ -222,6 +262,19 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
             ],
         },
         ProtocolFixture {
+            protocol: ProtocolKind::Nats,
+            method: "pub",
+            address: "203.0.113.23",
+            port: 4222,
+            domain: "nats.example.com",
+            attributes: vec![
+                attr("messaging.system", "nats"),
+                attr("messaging.nats.status_code", "ERR"),
+                attr("error.type", "nats_error"),
+                attr("trace.synthetic.fixture", "nats_protocol_error"),
+            ],
+        },
+        ProtocolFixture {
             protocol: ProtocolKind::Postgresql,
             method: "SELECT",
             address: "203.0.113.24",
@@ -231,6 +284,19 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
                 attr("db.system", "postgresql"),
                 attr("db.operation", "SELECT"),
                 attr("trace.synthetic.fixture", "postgresql_protocol_request"),
+            ],
+        },
+        ProtocolFixture {
+            protocol: ProtocolKind::Postgresql,
+            method: "SELECT",
+            address: "203.0.113.24",
+            port: 5432,
+            domain: "postgresql.example.com",
+            attributes: vec![
+                attr("db.system", "postgresql"),
+                attr("db.response.status_code", "23505"),
+                attr("error.type", "23505"),
+                attr("trace.synthetic.fixture", "postgresql_protocol_error"),
             ],
         },
         ProtocolFixture {
@@ -244,6 +310,19 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
                 attr("db.operation", "GET"),
                 attr("db.redis.key_present", "true"),
                 attr("trace.synthetic.fixture", "redis_protocol_request"),
+            ],
+        },
+        ProtocolFixture {
+            protocol: ProtocolKind::Redis,
+            method: "GET",
+            address: "203.0.113.25",
+            port: 6379,
+            domain: "redis.example.com",
+            attributes: vec![
+                attr("db.system", "redis"),
+                attr("db.response.status_code", "WRONGTYPE"),
+                attr("error.type", "redis_wrongtype"),
+                attr("trace.synthetic.fixture", "redis_protocol_error"),
             ],
         },
     ]
