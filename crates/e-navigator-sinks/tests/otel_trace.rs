@@ -292,6 +292,70 @@ fn formats_request_span_with_bounded_stable_attributes() {
 }
 
 #[test]
+fn bounds_trace_resource_attributes() {
+    const MAX_VALUE_BYTES: usize = 256;
+
+    let long_value = "r".repeat(MAX_VALUE_BYTES + 64);
+    let mut kubernetes = kubernetes_context();
+    kubernetes.namespace = long_value.clone();
+    kubernetes.pod_name = long_value.clone();
+    kubernetes.pod_uid = Some(long_value.clone());
+    kubernetes.container_name = Some(long_value.clone());
+    kubernetes.node_name = Some(long_value.clone());
+    kubernetes
+        .labels
+        .insert("app.kubernetes.io/name".to_string(), long_value.clone());
+    let container = ContainerContext {
+        container_id: long_value.clone(),
+        runtime: Some(long_value.clone()),
+    };
+    let signal = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some(long_value.clone()),
+        RequestSpanObservation {
+            name: "http request".to_string(),
+            protocol: ProtocolKind::Http,
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_000),
+            duration_nanos: Some(1_000),
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            service_name: Some(long_value),
+            method: Some("GET".to_string()),
+            status_code: Some(200),
+            process: Some(network_process()),
+            container: Some(container),
+            kubernetes: Some(kubernetes),
+            peer: None,
+            attributes: vec![],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("request span formats");
+
+    for key in [
+        "host.name",
+        "service.name",
+        "container.id",
+        "container.runtime",
+        "k8s.namespace.name",
+        "k8s.pod.name",
+        "k8s.pod.uid",
+        "k8s.container.name",
+        "k8s.node.name",
+        "k8s.deployment.name",
+    ] {
+        assert_eq!(
+            record.resource[key].as_str().map(str::len),
+            Some(MAX_VALUE_BYTES)
+        );
+    }
+}
+
+#[test]
 fn formats_http_request_span_error_status_from_status_code() {
     let signal = SignalEnvelope::request_span_observation(
         "generator.request_correlation",

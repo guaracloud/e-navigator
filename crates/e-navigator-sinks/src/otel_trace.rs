@@ -73,15 +73,12 @@ pub fn format_otel_trace_record(signal: &SignalEnvelope) -> Option<OtelTraceReco
 }
 
 fn trace_span_record(signal: &SignalEnvelope, span: &TraceSpanObservation) -> OtelTraceRecord {
-    let mut resource = resource_attributes(
+    let resource = resource_attributes(
         signal,
         span.container.as_ref(),
         span.kubernetes.as_ref(),
         span.service_name.as_deref(),
     );
-    if let Some(service_name) = &span.service_name {
-        resource.insert("service.name".to_string(), serde_json::json!(service_name));
-    }
 
     let mut attributes = correlation_attributes(span.correlation_kind, span.confidence);
     append_process_attributes(&mut attributes, span.process.as_ref());
@@ -522,40 +519,28 @@ fn resource_attributes(
 ) -> BTreeMap<String, serde_json::Value> {
     let mut resource = BTreeMap::new();
     if let Some(host) = &signal.host {
-        resource.insert("host.name".to_string(), serde_json::json!(host));
+        insert_resource_string(&mut resource, "host.name", host);
     }
     if let Some(service_name) = service_name {
-        resource.insert("service.name".to_string(), serde_json::json!(service_name));
+        insert_resource_string(&mut resource, "service.name", service_name);
     }
     if let Some(container) = container {
-        resource.insert(
-            "container.id".to_string(),
-            serde_json::json!(container.container_id),
-        );
+        insert_resource_string(&mut resource, "container.id", &container.container_id);
         if let Some(runtime) = &container.runtime {
-            resource.insert("container.runtime".to_string(), serde_json::json!(runtime));
+            insert_resource_string(&mut resource, "container.runtime", runtime);
         }
     }
     if let Some(kubernetes) = kubernetes {
-        resource.insert(
-            "k8s.namespace.name".to_string(),
-            serde_json::json!(kubernetes.namespace),
-        );
-        resource.insert(
-            "k8s.pod.name".to_string(),
-            serde_json::json!(kubernetes.pod_name),
-        );
+        insert_resource_string(&mut resource, "k8s.namespace.name", &kubernetes.namespace);
+        insert_resource_string(&mut resource, "k8s.pod.name", &kubernetes.pod_name);
         if let Some(uid) = &kubernetes.pod_uid {
-            resource.insert("k8s.pod.uid".to_string(), serde_json::json!(uid));
+            insert_resource_string(&mut resource, "k8s.pod.uid", uid);
         }
         if let Some(container_name) = &kubernetes.container_name {
-            resource.insert(
-                "k8s.container.name".to_string(),
-                serde_json::json!(container_name),
-            );
+            insert_resource_string(&mut resource, "k8s.container.name", container_name);
         }
         if let Some(node_name) = &kubernetes.node_name {
-            resource.insert("k8s.node.name".to_string(), serde_json::json!(node_name));
+            insert_resource_string(&mut resource, "k8s.node.name", node_name);
         }
         if let Some(deployment_name) = kubernetes
             .labels
@@ -563,13 +548,34 @@ fn resource_attributes(
             .or_else(|| kubernetes.labels.get("app"))
             .filter(|name| !name.is_empty())
         {
-            resource.insert(
-                "k8s.deployment.name".to_string(),
-                serde_json::json!(deployment_name),
-            );
+            insert_resource_string(&mut resource, "k8s.deployment.name", deployment_name);
         }
     }
     resource
+}
+
+fn insert_resource_string(
+    resource: &mut BTreeMap<String, serde_json::Value>,
+    key: &'static str,
+    value: &str,
+) {
+    resource.insert(key.to_string(), bounded_json_string(value));
+}
+
+fn bounded_json_string(value: &str) -> serde_json::Value {
+    serde_json::json!(truncate_utf8(value, MAX_TRACE_ATTRIBUTE_VALUE_BYTES))
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
 }
 
 fn correlation_attributes(
