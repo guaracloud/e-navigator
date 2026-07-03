@@ -197,7 +197,7 @@ fn sanitize_dependency_endpoint(endpoint: &mut DependencyEndpoint) {
     sanitize_optional_network_signal_string(&mut endpoint.domain);
 }
 
-fn sanitize_network_process_identity(process: &mut NetworkProcessIdentity) {
+pub(crate) fn sanitize_network_process_identity(process: &mut NetworkProcessIdentity) {
     sanitize_network_signal_string(&mut process.command);
     sanitize_optional_network_signal_string(&mut process.executable);
 }

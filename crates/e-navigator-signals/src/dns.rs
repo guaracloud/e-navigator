@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::network::sanitize_network_process_identity;
 use crate::{
     ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkProcessIdentity,
     NetworkProtocol,
@@ -94,11 +95,13 @@ pub struct DnsLatencyMetric {
 }
 
 pub(crate) fn sanitize_dns_query_event(event: &mut DnsQueryEvent) {
+    sanitize_network_process_identity(&mut event.process);
     sanitize_dns_string(&mut event.query_name);
     sanitize_optional_dns_string(&mut event.server_address);
 }
 
 pub(crate) fn sanitize_dns_response_event(event: &mut DnsResponseEvent) {
+    sanitize_network_process_identity(&mut event.process);
     sanitize_dns_string(&mut event.query_name);
     sanitize_optional_dns_string(&mut event.server_address);
 }

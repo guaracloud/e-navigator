@@ -2447,11 +2447,19 @@ mod tests {
     #[test]
     fn dns_constructors_bound_strings_before_json_stdout() {
         let long_value = "d".repeat(320);
+        let process = NetworkProcessIdentity {
+            pid: 42,
+            ppid: Some(1),
+            uid: Some(1000),
+            command: long_value.clone(),
+            executable: Some(long_value.clone()),
+            cgroup_id: None,
+        };
         let query = SignalEnvelope::dns_query(
             "source.synthetic_dns",
             Some("node-a".to_string()),
             DnsQueryEvent {
-                process: network_process(),
+                process: process.clone(),
                 query_name: long_value.clone(),
                 query_type: DnsQueryType::A,
                 transport_protocol: NetworkProtocol::Udp,
@@ -2466,7 +2474,7 @@ mod tests {
             "source.synthetic_dns",
             Some("node-a".to_string()),
             DnsResponseEvent {
-                process: network_process(),
+                process,
                 query_name: long_value.clone(),
                 query_type: DnsQueryType::Aaaa,
                 response_code: DnsResponseCode::NxDomain,
@@ -2525,6 +2533,14 @@ mod tests {
 
         assert_dns_string_lengths(&query, &["query_name", "server_address"]);
         assert_dns_string_lengths(&response, &["query_name", "server_address"]);
+        assert_payload_string_lengths(
+            &query,
+            &[&["process", "command"], &["process", "executable"]],
+        );
+        assert_payload_string_lengths(
+            &response,
+            &[&["process", "command"], &["process", "executable"]],
+        );
         assert_dns_string_lengths(
             &counter,
             &["metric_name", "unit", "query_name", "server_address"],
