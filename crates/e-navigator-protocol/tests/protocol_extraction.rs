@@ -11,21 +11,22 @@ use e_navigator_protocol::{
         parse_kafka_create_partitions_response, parse_kafka_create_topics_response,
         parse_kafka_delete_acls_response, parse_kafka_delete_groups_response,
         parse_kafka_delete_records_response, parse_kafka_delete_topics_response,
-        parse_kafka_describe_acls_response, parse_kafka_describe_configs_response,
-        parse_kafka_describe_delegation_token_response, parse_kafka_describe_groups_response,
-        parse_kafka_describe_log_dirs_response, parse_kafka_elect_leaders_response,
-        parse_kafka_end_txn_response, parse_kafka_expire_delegation_token_response,
-        parse_kafka_fetch_response, parse_kafka_find_coordinator_response,
-        parse_kafka_heartbeat_response, parse_kafka_incremental_alter_configs_response,
-        parse_kafka_init_producer_id_response, parse_kafka_join_group_response,
-        parse_kafka_leave_group_response, parse_kafka_list_groups_response,
-        parse_kafka_list_offsets_response, parse_kafka_list_partition_reassignments_response,
-        parse_kafka_metadata_response, parse_kafka_offset_commit_response,
-        parse_kafka_offset_delete_response, parse_kafka_offset_fetch_response,
-        parse_kafka_produce_response, parse_kafka_renew_delegation_token_response,
-        parse_kafka_request, parse_kafka_sasl_authenticate_response,
-        parse_kafka_sasl_handshake_response, parse_kafka_sync_group_response,
-        parse_kafka_txn_offset_commit_response, parse_kafka_write_txn_markers_response,
+        parse_kafka_describe_acls_response, parse_kafka_describe_client_quotas_response,
+        parse_kafka_describe_configs_response, parse_kafka_describe_delegation_token_response,
+        parse_kafka_describe_groups_response, parse_kafka_describe_log_dirs_response,
+        parse_kafka_elect_leaders_response, parse_kafka_end_txn_response,
+        parse_kafka_expire_delegation_token_response, parse_kafka_fetch_response,
+        parse_kafka_find_coordinator_response, parse_kafka_heartbeat_response,
+        parse_kafka_incremental_alter_configs_response, parse_kafka_init_producer_id_response,
+        parse_kafka_join_group_response, parse_kafka_leave_group_response,
+        parse_kafka_list_groups_response, parse_kafka_list_offsets_response,
+        parse_kafka_list_partition_reassignments_response, parse_kafka_metadata_response,
+        parse_kafka_offset_commit_response, parse_kafka_offset_delete_response,
+        parse_kafka_offset_fetch_response, parse_kafka_produce_response,
+        parse_kafka_renew_delegation_token_response, parse_kafka_request,
+        parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
+        parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
+        parse_kafka_write_txn_markers_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -310,6 +311,7 @@ proptest! {
         let _ = parse_kafka_incremental_alter_configs_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_alter_partition_reassignments_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_list_partition_reassignments_response(&bytes, 0, &config);
+        let _ = parse_kafka_describe_client_quotas_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -2770,6 +2772,70 @@ fn validates_kafka_list_partition_reassignments_null_topics_request() {
 }
 
 #[test]
+fn validates_kafka_describe_client_quotas_v0_request_without_entity_values() {
+    let components: &[DescribeClientQuotasComponentFixture<'_>] =
+        &[("client-id", 0, Some("secret-client-a"))];
+    let body = kafka_describe_client_quotas_request_body(0, components);
+    let bytes = kafka_request_frame(48, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka describe client quotas v0 request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("describe_client_quotas")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "48")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("client-id") || attribute.value.contains("secret")
+    ));
+}
+
+#[test]
+fn validates_kafka_describe_client_quotas_v1_request_without_entity_values() {
+    let components: &[DescribeClientQuotasComponentFixture<'_>] =
+        &[("client-id", 0, Some("secret-client-a"))];
+    let body = kafka_describe_client_quotas_request_body(1, components);
+    let bytes = kafka_flexible_request_frame(48, 1, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka describe client quotas v1 request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("describe_client_quotas")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "48")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "1")
+    );
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("client-id") || attribute.value.contains("secret")
+    ));
+}
+
+#[test]
 fn validates_kafka_alter_replica_log_dirs_requests_without_path_or_topic_values() {
     let body = kafka_alter_replica_log_dirs_request_body(
         "/var/lib/kafka/secret-dir",
@@ -4298,6 +4364,93 @@ fn extracts_kafka_offset_delete_top_level_error_response() {
             .attributes
             .iter()
             .any(|attribute| attribute.key == "error.type" && attribute.value == "30")
+    );
+}
+
+#[test]
+fn extracts_kafka_describe_client_quotas_v0_ok_response_without_entity_or_quota_values() {
+    let entities: &[DescribeClientQuotasEntityFixture<'_>] =
+        &[("client-id", Some("secret-client-a"))];
+    let values: &[DescribeClientQuotasValueFixture<'_>] = &[("producer_byte_rate.secret", 42.0)];
+    let entries: &[DescribeClientQuotasEntryFixture<'_>] = &[(entities, values)];
+    let bytes = kafka_describe_client_quotas_response_frame(0, 0, 0, None, Some(entries));
+
+    let extraction = parse_kafka_describe_client_quotas_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("describe client quotas v0 ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "describe_client_quotas");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "48")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("client-id")
+                || attribute.value.contains("producer")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_describe_client_quotas_v1_error_response_without_entity_or_message_values() {
+    let entities: &[DescribeClientQuotasEntityFixture<'_>] =
+        &[("client-id", Some("secret-client-a"))];
+    let values: &[DescribeClientQuotasValueFixture<'_>] = &[("producer_byte_rate.secret", 42.0)];
+    let entries: &[DescribeClientQuotasEntryFixture<'_>] = &[(entities, values)];
+    let bytes = kafka_describe_client_quotas_response_frame(
+        0,
+        1,
+        31,
+        Some("top secret denied"),
+        Some(entries),
+    );
+
+    let extraction = parse_kafka_describe_client_quotas_response(
+        &bytes,
+        1,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("describe client quotas v1 error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "describe_client_quotas");
+    assert_eq!(extraction.status_code, "31");
+    assert_eq!(extraction.error_type.as_deref(), Some("31"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "1")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "31")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("client-id")
+                || attribute.value.contains("producer")
+                || attribute.value.contains("denied")
+                || attribute.value.contains("secret"))
     );
 }
 
@@ -7425,6 +7578,28 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
         2
     );
 
+    let bounded_describe_client_quotas_response = parse_kafka_describe_client_quotas_response(
+        &kafka_describe_client_quotas_response_frame(
+            0,
+            1,
+            31,
+            Some("top secret denied"),
+            Some(&[(
+                &[("client-id", Some("secret-client-a"))],
+                &[("producer_byte_rate.secret", 42.0)],
+            )]),
+        ),
+        1,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka describe client quotas response parses");
+    assert_eq!(bounded_describe_client_quotas_response.attributes.len(), 2);
+
     let bounded_sasl_handshake_response = parse_kafka_sasl_handshake_response(
         &kafka_sasl_handshake_response_frame(0, 33, &["PLAIN.secret"]),
         1,
@@ -9234,6 +9409,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_describe_client_quotas_response(
+            &kafka_describe_client_quotas_response_frame(0, 1, 0, None, None),
+            2,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_sasl_handshake_response(
             &kafka_sasl_handshake_response_frame(0, 0, &["PLAIN"]),
             2,
@@ -9876,6 +10060,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_describe_client_quotas_response(
+            &kafka_describe_client_quotas_response_with_entry_count_frame(1, 1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_describe_client_quotas_response(
+            &kafka_describe_client_quotas_response_with_entity_count_frame(1, 1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_metadata_response(
             &kafka_metadata_response_with_topic_count_frame(1025),
             8,
@@ -10104,6 +10306,62 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
                 0,
                 Some(b"client-a"),
                 &list_partition_reassignments_long_topic_body,
+            ),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+
+    let mut describe_client_quotas_unsupported_body = Vec::new();
+    describe_client_quotas_unsupported_body.extend_from_slice(&0_i32.to_be_bytes());
+    describe_client_quotas_unsupported_body.push(1);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(
+                48,
+                2,
+                Some(b"client-a"),
+                &describe_client_quotas_unsupported_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+
+    let mut oversized_describe_client_quotas_body = Vec::new();
+    oversized_describe_client_quotas_body.extend_from_slice(&1025_i32.to_be_bytes());
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(
+                48,
+                0,
+                Some(b"client-a"),
+                &oversized_describe_client_quotas_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+
+    let describe_client_quotas_components: &[DescribeClientQuotasComponentFixture<'_>] =
+        &[("client-id", 0, Some("secret-client-a"))];
+    let describe_client_quotas_long_entity_body =
+        kafka_describe_client_quotas_request_body(1, describe_client_quotas_components);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                48,
+                1,
+                Some(b"client-a"),
+                &describe_client_quotas_long_entity_body,
             ),
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
@@ -10388,6 +10646,27 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         parse_kafka_list_partition_reassignments_response(
             &truncated_list_partition_reassignments_response,
             0,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_describe_client_quotas_response = kafka_describe_client_quotas_response_frame(
+        0,
+        1,
+        0,
+        None,
+        Some(&[(
+            &[("client-id", Some("secret-client-a"))],
+            &[("producer_byte_rate.secret", 42.0)],
+        )]),
+    );
+    truncated_describe_client_quotas_response.truncate(18);
+    assert_eq!(
+        parse_kafka_describe_client_quotas_response(
+            &truncated_describe_client_quotas_response,
+            1,
             &config
         )
         .unwrap_err(),
@@ -13817,6 +14096,35 @@ fn kafka_list_partition_reassignments_request_body(
     body
 }
 
+type DescribeClientQuotasComponentFixture<'a> = (&'a str, i8, Option<&'a str>);
+
+fn kafka_describe_client_quotas_request_body(
+    api_version: i16,
+    components: &[DescribeClientQuotasComponentFixture<'_>],
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    if api_version == 0 {
+        body.extend_from_slice(&(components.len() as i32).to_be_bytes());
+        for (entity_type, match_type, match_value) in components {
+            push_kafka_string(&mut body, entity_type);
+            body.push(*match_type as u8);
+            push_kafka_nullable_string(&mut body, *match_value);
+        }
+        body.push(1);
+    } else {
+        push_unsigned_varint(&mut body, components.len() + 1);
+        for (entity_type, match_type, match_value) in components {
+            push_compact_string(&mut body, entity_type);
+            body.push(*match_type as u8);
+            push_compact_nullable_string(&mut body, *match_value);
+            push_unsigned_varint(&mut body, 0);
+        }
+        body.push(1);
+        push_unsigned_varint(&mut body, 0);
+    }
+    body
+}
+
 fn kafka_alter_replica_log_dirs_request_body(log_dir: &str, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&1_i32.to_be_bytes());
@@ -15545,6 +15853,117 @@ fn kafka_list_partition_reassignments_response_with_partition_count_frame(
     push_unsigned_varint(&mut response, 2);
     push_compact_string(&mut response, "orders");
     push_unsigned_varint(&mut response, partition_count + 1);
+    kafka_frame(&response)
+}
+
+type DescribeClientQuotasEntityFixture<'a> = (&'a str, Option<&'a str>);
+type DescribeClientQuotasValueFixture<'a> = (&'a str, f64);
+type DescribeClientQuotasEntryFixture<'a> = (
+    &'a [DescribeClientQuotasEntityFixture<'a>],
+    &'a [DescribeClientQuotasValueFixture<'a>],
+);
+
+fn kafka_describe_client_quotas_response_frame(
+    correlation_id: i32,
+    api_version: i16,
+    error_code: i16,
+    error_message: Option<&str>,
+    entries: Option<&[DescribeClientQuotasEntryFixture<'_>]>,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    if api_version >= 1 {
+        push_unsigned_varint(&mut response, 0);
+    }
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&error_code.to_be_bytes());
+    if api_version == 0 {
+        push_kafka_nullable_string(&mut response, error_message);
+        if let Some(entries) = entries {
+            response.extend_from_slice(&(entries.len() as i32).to_be_bytes());
+            for (entities, values) in entries {
+                response.extend_from_slice(&(entities.len() as i32).to_be_bytes());
+                for (entity_type, entity_name) in *entities {
+                    push_kafka_string(&mut response, entity_type);
+                    push_kafka_nullable_string(&mut response, *entity_name);
+                }
+                response.extend_from_slice(&(values.len() as i32).to_be_bytes());
+                for (key, value) in *values {
+                    push_kafka_string(&mut response, key);
+                    response.extend_from_slice(&value.to_be_bytes());
+                }
+            }
+        } else {
+            response.extend_from_slice(&(-1_i32).to_be_bytes());
+        }
+    } else {
+        push_compact_nullable_string(&mut response, error_message);
+        if let Some(entries) = entries {
+            push_unsigned_varint(&mut response, entries.len() + 1);
+            for (entities, values) in entries {
+                push_unsigned_varint(&mut response, entities.len() + 1);
+                for (entity_type, entity_name) in *entities {
+                    push_compact_string(&mut response, entity_type);
+                    push_compact_nullable_string(&mut response, *entity_name);
+                    push_unsigned_varint(&mut response, 0);
+                }
+                push_unsigned_varint(&mut response, values.len() + 1);
+                for (key, value) in *values {
+                    push_compact_string(&mut response, key);
+                    response.extend_from_slice(&value.to_be_bytes());
+                    push_unsigned_varint(&mut response, 0);
+                }
+                push_unsigned_varint(&mut response, 0);
+            }
+        } else {
+            push_unsigned_varint(&mut response, 0);
+        }
+        push_unsigned_varint(&mut response, 0);
+    }
+    kafka_frame(&response)
+}
+
+fn kafka_describe_client_quotas_response_with_entry_count_frame(
+    api_version: i16,
+    entry_count: usize,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    if api_version >= 1 {
+        push_unsigned_varint(&mut response, 0);
+    }
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    if api_version == 0 {
+        push_kafka_nullable_string(&mut response, None);
+        response.extend_from_slice(&(entry_count as i32).to_be_bytes());
+    } else {
+        push_compact_nullable_string(&mut response, None);
+        push_unsigned_varint(&mut response, entry_count + 1);
+    }
+    kafka_frame(&response)
+}
+
+fn kafka_describe_client_quotas_response_with_entity_count_frame(
+    api_version: i16,
+    entity_count: usize,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    if api_version >= 1 {
+        push_unsigned_varint(&mut response, 0);
+    }
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    if api_version == 0 {
+        push_kafka_nullable_string(&mut response, None);
+        response.extend_from_slice(&1_i32.to_be_bytes());
+        response.extend_from_slice(&(entity_count as i32).to_be_bytes());
+    } else {
+        push_compact_nullable_string(&mut response, None);
+        push_unsigned_varint(&mut response, 2);
+        push_unsigned_varint(&mut response, entity_count + 1);
+    }
     kafka_frame(&response)
 }
 
