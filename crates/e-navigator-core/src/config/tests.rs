@@ -578,7 +578,20 @@ fn otlp_http_sink_config_is_validated_when_enabled() {
             },
             ..RuntimeConfig::default()
         },
-        "otlp_http.endpoint must include a host or path after the scheme",
+        "otlp_http.endpoint must include a host after the scheme",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http:///v1/metrics".to_string(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.endpoint must include a host after the scheme",
     );
 
     assert_invalid(

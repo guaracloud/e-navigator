@@ -212,10 +212,14 @@ fn validate_endpoint(path: &'static str, endpoint: &str) -> ConfigResult<()> {
             format!("{path} must start with http:// or https://"),
         ));
     };
-    if rest.is_empty() {
+    let authority = rest
+        .split(['/', '?', '#'])
+        .next()
+        .expect("split always returns at least one segment");
+    if authority.is_empty() {
         return Err(ConfigError::invalid_value(
             path,
-            format!("{path} must include a host or path after the scheme"),
+            format!("{path} must include a host after the scheme"),
         ));
     }
     Ok(())
