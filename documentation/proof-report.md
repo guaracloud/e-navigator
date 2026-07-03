@@ -51,7 +51,8 @@ or chart rendering:
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/DNS/HTTP/profile
   events, including profile fixture normalization with sensitive/reserved
-  attribute filtering and build-checked DNS and HTTP raw decode fuzz targets;
+  attribute filtering, owned stack-truncation markers, and build-checked DNS
+  and HTTP raw decode fuzz targets;
 - bounded DNS request parsing with configurable packet and diagnostic preview
   limits plus validated preview/packet relationships, bounded HTTP request
   parsing with configurable HTTP parser limits and validated header/sub-limit
