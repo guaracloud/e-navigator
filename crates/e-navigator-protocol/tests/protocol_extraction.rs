@@ -3022,6 +3022,35 @@ fn extracts_postgres_error_response_without_raw_message_fields() {
 }
 
 #[test]
+fn extracts_postgres_notice_response_without_raw_message_fields() {
+    let bytes =
+        postgres_notice_response_frame(b"01000", b"secret notice detail should stay private");
+
+    let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres notice response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.status_code, "01000");
+    assert_eq!(extraction.error_type, None);
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "01000"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("notice detail"))
+    );
+}
+
+#[test]
 fn enforces_postgres_frame_query_and_attribute_bounds() {
     let bounded = parse_postgres_message(
         &postgres_frame(b'Q', b"select * from customers\0"),
@@ -3293,6 +3322,14 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
         PostgresExtraction::UnsupportedMessage
     );
     assert_eq!(
+        parse_postgres_error_response(
+            &postgres_notice_response_frame(b"01000", b"secret notice"),
+            &config,
+        )
+        .unwrap_err(),
+        PostgresExtraction::UnsupportedMessage
+    );
+    assert_eq!(
         parse_postgres_response(&postgres_frame(b'Q', b"select 1\0"), &config).unwrap_err(),
         PostgresExtraction::UnsupportedMessage
     );
@@ -3326,6 +3363,10 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
         PostgresExtraction::MissingSqlstate
     );
     assert_eq!(
+        parse_postgres_response(&postgres_frame(b'N', b"Msecret notice\0\0"), &config).unwrap_err(),
+        PostgresExtraction::MissingSqlstate
+    );
+    assert_eq!(
         parse_postgres_error_response(
             &postgres_error_response_frame(b"23\xff05", b"secret message"),
             &config,
@@ -3344,6 +3385,14 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     assert_eq!(
         parse_postgres_error_response(
             &postgres_error_response_frame(b"2350", b"secret message"),
+            &config,
+        )
+        .unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(
+            &postgres_notice_response_frame(b"01a00", b"secret notice"),
             &config,
         )
         .unwrap_err(),
@@ -4697,6 +4746,20 @@ fn postgres_error_response_frame(sqlstate: &[u8], message: &[u8]) -> Vec<u8> {
     body.push(0);
     body.push(0);
     postgres_frame(b'E', &body)
+}
+
+fn postgres_notice_response_frame(sqlstate: &[u8], message: &[u8]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.push(b'S');
+    body.extend_from_slice(b"NOTICE\0");
+    body.push(b'C');
+    body.extend_from_slice(sqlstate);
+    body.push(0);
+    body.push(b'M');
+    body.extend_from_slice(message);
+    body.push(0);
+    body.push(0);
+    postgres_frame(b'N', &body)
 }
 
 fn mysql_packet(command: u8, query: &[u8]) -> Vec<u8> {

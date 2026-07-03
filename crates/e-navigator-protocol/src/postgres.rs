@@ -133,6 +133,7 @@ pub fn parse_postgres_response(
         b'1' | b'2' | b'3' | b'n' => postgres_empty_ok_response(body, config.max_attributes),
         b'C' => postgres_command_complete_response(body, config),
         b'E' => postgres_error_response(body, config.max_attributes),
+        b'N' => postgres_notice_response(body, config.max_attributes),
         b'S' => postgres_parameter_status_response(body, config),
         b'Z' => postgres_ready_for_query_response(body, config.max_attributes),
         _ => Err(PostgresExtraction::UnsupportedMessage),
@@ -241,6 +242,20 @@ fn postgres_error_response(
         ),
         status_code,
         error_type,
+    })
+}
+
+fn postgres_notice_response(
+    body: &[u8],
+    max_attributes: usize,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    let status_code = postgres_sqlstate(body)?.ok_or(PostgresExtraction::MissingSqlstate)?;
+
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        attributes: postgres_response_attributes(&status_code, None, max_attributes),
+        status_code,
+        error_type: None,
     })
 }
 
