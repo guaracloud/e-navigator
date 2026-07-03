@@ -130,7 +130,9 @@ pub fn parse_postgres_response(
 
     let body = frame_body(bytes, config.max_header_bytes)?;
     match bytes[0] {
-        b'1' | b'2' | b'3' | b'n' => postgres_empty_ok_response(body, config.max_attributes),
+        b'1' | b'2' | b'3' | b'I' | b'n' | b's' => {
+            postgres_empty_ok_response(body, config.max_attributes)
+        }
         b'C' => postgres_command_complete_response(body, config),
         b'D' => postgres_data_row_response(body, config),
         b'E' => postgres_error_response(body, config.max_attributes),

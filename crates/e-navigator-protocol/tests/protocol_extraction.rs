@@ -2916,7 +2916,7 @@ fn extracts_postgres_data_row_without_column_values() {
 
 #[test]
 fn extracts_postgres_empty_success_responses_without_payload_values() {
-    for message_type in [b'1', b'2', b'3', b'n'] {
+    for message_type in [b'1', b'2', b'3', b'I', b'n', b's'] {
         let bytes = postgres_frame(message_type, b"");
 
         let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
@@ -3401,6 +3401,14 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     );
     assert_eq!(
         parse_postgres_response(&postgres_frame(b'1', b"secret"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b'I', b"secret"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b's', b"secret"), &config).unwrap_err(),
         PostgresExtraction::MalformedFrame
     );
     assert_eq!(
