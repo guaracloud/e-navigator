@@ -2130,6 +2130,40 @@ fn extracts_postgres_parse_message_operation_without_statement_or_sql() {
 }
 
 #[test]
+fn extracts_postgres_bind_message_without_portal_statement_or_parameter_values() {
+    let mut body = Vec::new();
+    body.extend_from_slice(b"secret-portal-name\0");
+    body.extend_from_slice(b"prepared-secret-name\0");
+    body.extend_from_slice(&1_u16.to_be_bytes());
+    body.extend_from_slice(&1_u16.to_be_bytes());
+    body.extend_from_slice(&2_u16.to_be_bytes());
+    body.extend_from_slice(&12_i32.to_be_bytes());
+    body.extend_from_slice(b"secret-param");
+    body.extend_from_slice(&(-1_i32).to_be_bytes());
+    body.extend_from_slice(&1_u16.to_be_bytes());
+    body.extend_from_slice(&0_u16.to_be_bytes());
+    let bytes = postgres_frame(b'B', &body);
+
+    let extraction = parse_postgres_message(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres bind message parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.operation.as_deref(), Some("BIND"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.operation" && attribute.value == "BIND")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| attribute.key
+        == "db.postgresql.message.type"
+        && attribute.value == "bind"));
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("secret") || attribute.value.contains("prepared")
+    ));
+}
+
+#[test]
 fn extracts_postgres_execute_message_without_portal_name() {
     let mut body = Vec::new();
     body.extend_from_slice(b"secret-portal-name\0");
@@ -2394,6 +2428,27 @@ fn enforces_postgres_frame_query_and_attribute_bounds() {
         PostgresExtraction::QueryTooLong
     );
 
+    let mut oversized_bind = Vec::new();
+    oversized_bind.extend_from_slice(b"portal\0statement\0");
+    oversized_bind.extend_from_slice(&0_u16.to_be_bytes());
+    oversized_bind.extend_from_slice(&1_u16.to_be_bytes());
+    oversized_bind.extend_from_slice(&5_i32.to_be_bytes());
+    oversized_bind.extend_from_slice(b"value");
+    oversized_bind.extend_from_slice(&0_u16.to_be_bytes());
+    assert_eq!(
+        parse_postgres_message(
+            &postgres_frame(b'B', &oversized_bind),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        PostgresExtraction::QueryTooLong
+    );
+
     assert_eq!(
         parse_postgres_error_response(
             &postgres_error_response_frame(b"23505", b"duplicate key"),
@@ -2444,6 +2499,20 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     assert_eq!(
         parse_postgres_message(&postgres_frame(b'Q', b"sel\xffct\0"), &config).unwrap_err(),
         PostgresExtraction::InvalidUtf8
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'B', b"portal\0statement\0"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    let mut negative_bind = Vec::new();
+    negative_bind.extend_from_slice(b"portal\0statement\0");
+    negative_bind.extend_from_slice(&0_u16.to_be_bytes());
+    negative_bind.extend_from_slice(&1_u16.to_be_bytes());
+    negative_bind.extend_from_slice(&(-2_i32).to_be_bytes());
+    negative_bind.extend_from_slice(&0_u16.to_be_bytes());
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'B', &negative_bind), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
     );
     assert_eq!(
         parse_postgres_message(&postgres_frame(b'E', b"portal"), &config).unwrap_err(),

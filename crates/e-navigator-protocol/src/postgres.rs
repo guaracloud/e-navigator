@@ -4,6 +4,7 @@ use crate::ProtocolExtractionConfig;
 
 const MAX_POSTGRES_OPERATION_BYTES: usize = 64;
 const MAX_POSTGRES_STATEMENT_NAME_BYTES: usize = 128;
+const MAX_POSTGRES_BIND_ITEMS: usize = 1024;
 const POSTGRES_SQLSTATE_BYTES: usize = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +48,7 @@ pub fn parse_postgres_message(
     let query = match bytes[0] {
         b'Q' => parse_simple_query(body, config.max_request_line_bytes)?,
         b'P' => parse_parse_message(body, config.max_request_line_bytes)?,
+        b'B' => parse_bind_message(body, config.max_request_line_bytes)?,
         b'E' => parse_execute_message(body)?,
         b'S' => parse_sync_message(body)?,
         b'H' => parse_flush_message(body)?,
@@ -54,6 +56,7 @@ pub fn parse_postgres_message(
         _ => return Err(PostgresExtraction::UnsupportedMessage),
     };
     let operation = match bytes[0] {
+        b'B' => Some("BIND".to_string()),
         b'E' => Some("EXECUTE".to_string()),
         b'S' => Some("SYNC".to_string()),
         b'H' => Some("FLUSH".to_string()),
@@ -288,6 +291,47 @@ fn parse_parse_message(body: &[u8], max_query_bytes: usize) -> Result<&str, Post
     Ok(query)
 }
 
+fn parse_bind_message(body: &[u8], max_parameter_bytes: usize) -> Result<&str, PostgresExtraction> {
+    let mut cursor = 0;
+    let _portal_name = parse_cstring(body, &mut cursor, MAX_POSTGRES_STATEMENT_NAME_BYTES)?;
+    let _statement_name = parse_cstring(body, &mut cursor, MAX_POSTGRES_STATEMENT_NAME_BYTES)?;
+
+    let parameter_format_count = read_u16_be_cursor(body, &mut cursor)? as usize;
+    if parameter_format_count > MAX_POSTGRES_BIND_ITEMS {
+        return Err(PostgresExtraction::QueryTooLong);
+    }
+    skip_bytes(body, &mut cursor, parameter_format_count.saturating_mul(2))?;
+
+    let parameter_count = read_u16_be_cursor(body, &mut cursor)? as usize;
+    if parameter_count > MAX_POSTGRES_BIND_ITEMS {
+        return Err(PostgresExtraction::QueryTooLong);
+    }
+    for _ in 0..parameter_count {
+        let parameter_len = read_i32_be_cursor(body, &mut cursor)?;
+        if parameter_len == -1 {
+            continue;
+        }
+        if parameter_len < -1 {
+            return Err(PostgresExtraction::MalformedFrame);
+        }
+        let parameter_len = parameter_len as usize;
+        if parameter_len > max_parameter_bytes {
+            return Err(PostgresExtraction::QueryTooLong);
+        }
+        skip_bytes(body, &mut cursor, parameter_len)?;
+    }
+
+    let result_format_count = read_u16_be_cursor(body, &mut cursor)? as usize;
+    if result_format_count > MAX_POSTGRES_BIND_ITEMS {
+        return Err(PostgresExtraction::QueryTooLong);
+    }
+    skip_bytes(body, &mut cursor, result_format_count.saturating_mul(2))?;
+    if cursor != body.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    Ok("BIND")
+}
+
 fn parse_execute_message(body: &[u8]) -> Result<&str, PostgresExtraction> {
     let mut cursor = 0;
     let _portal_name = parse_cstring(body, &mut cursor, MAX_POSTGRES_STATEMENT_NAME_BYTES)?;
@@ -343,6 +387,39 @@ fn parse_cstring<'a>(
     Ok(value)
 }
 
+fn read_u16_be_cursor(bytes: &[u8], cursor: &mut usize) -> Result<u16, PostgresExtraction> {
+    let end = cursor
+        .checked_add(2)
+        .ok_or(PostgresExtraction::MalformedFrame)?;
+    let raw = bytes
+        .get(*cursor..end)
+        .ok_or(PostgresExtraction::MalformedFrame)?;
+    *cursor = end;
+    Ok(u16::from_be_bytes([raw[0], raw[1]]))
+}
+
+fn read_i32_be_cursor(bytes: &[u8], cursor: &mut usize) -> Result<i32, PostgresExtraction> {
+    let end = cursor
+        .checked_add(4)
+        .ok_or(PostgresExtraction::MalformedFrame)?;
+    let raw = bytes
+        .get(*cursor..end)
+        .ok_or(PostgresExtraction::MalformedFrame)?;
+    *cursor = end;
+    Ok(i32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]))
+}
+
+fn skip_bytes(bytes: &[u8], cursor: &mut usize, len: usize) -> Result<(), PostgresExtraction> {
+    let end = cursor
+        .checked_add(len)
+        .ok_or(PostgresExtraction::MalformedFrame)?;
+    if end > bytes.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    *cursor = end;
+    Ok(())
+}
+
 fn postgres_operation(query: &str) -> Option<String> {
     let query = skip_sql_prefix(query);
     let end = query
@@ -380,6 +457,7 @@ fn message_type_name(message_type: u8) -> &'static str {
     match message_type {
         b'Q' => "query",
         b'P' => "parse",
+        b'B' => "bind",
         b'E' => "execute",
         b'S' => "sync",
         b'H' => "flush",
