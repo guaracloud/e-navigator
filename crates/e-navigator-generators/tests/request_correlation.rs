@@ -523,6 +523,35 @@ async fn request_attributes_are_count_and_byte_bounded() {
 }
 
 #[tokio::test]
+async fn request_span_output_drops_sensitive_trace_attributes() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.attributes.push(TraceAttribute {
+        key: "authorization".to_string(),
+        value: "Bearer secret-token".to_string(),
+    });
+    request.attributes.push(TraceAttribute {
+        key: "http.route".to_string(),
+        value: "/checkout".to_string(),
+    });
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert!(!has_attribute(
+        &span.attributes,
+        "authorization",
+        "Bearer secret-token"
+    ));
+    assert!(has_attribute(&span.attributes, "http.route", "/checkout"));
+}
+
+#[tokio::test]
 async fn request_attribute_bounding_preserves_error_status_attributes() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
