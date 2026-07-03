@@ -45,7 +45,8 @@ or chart rendering:
   runtime log-level, queue/derivation, and runtime-security endpoint bounds,
   Prometheus and OTLP HTTP sink runtime-bound validation, Prometheus bind-address
   host/port-shape validation, OTLP HTTP endpoint host/shape/length validation,
-  local Kubernetes attribution selector filtering and
+  shared HTTP exporter upper-bound validation for batch, queue, timeout, and
+  retry settings, local Kubernetes attribution selector filtering and
   selector-shape/duplicate bounds plus response/cache/label/path bounds, and
   host resource source scan/path plus metric-generator cardinality bounds;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
