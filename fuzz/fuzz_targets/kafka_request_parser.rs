@@ -5,8 +5,9 @@ use e_navigator_protocol::{
     kafka::{
         parse_kafka_api_versions_response, parse_kafka_fetch_response,
         parse_kafka_find_coordinator_response, parse_kafka_heartbeat_response,
-        parse_kafka_leave_group_response, parse_kafka_list_offsets_response,
-        parse_kafka_metadata_response, parse_kafka_produce_response, parse_kafka_request,
+        parse_kafka_leave_group_response, parse_kafka_list_groups_response,
+        parse_kafka_list_offsets_response, parse_kafka_metadata_response,
+        parse_kafka_produce_response, parse_kafka_request,
     },
 };
 use libfuzzer_sys::fuzz_target;
@@ -37,6 +38,8 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_heartbeat_response(data, 3, &config);
     let _ = parse_kafka_leave_group_response(data, 0, &config);
     let _ = parse_kafka_leave_group_response(data, 3, &config);
+    let _ = parse_kafka_list_groups_response(data, 0, &config);
+    let _ = parse_kafka_list_groups_response(data, 3, &config);
     let _ = parse_kafka_metadata_response(data, 0, &config);
     let _ = parse_kafka_metadata_response(data, 8, &config);
 });
