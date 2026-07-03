@@ -15,21 +15,21 @@ use e_navigator_protocol::{
         parse_kafka_describe_acls_response, parse_kafka_describe_client_quotas_response,
         parse_kafka_describe_cluster_response, parse_kafka_describe_configs_response,
         parse_kafka_describe_delegation_token_response, parse_kafka_describe_groups_response,
-        parse_kafka_describe_log_dirs_response, parse_kafka_describe_quorum_response,
-        parse_kafka_describe_user_scram_credentials_response, parse_kafka_elect_leaders_response,
-        parse_kafka_end_txn_response, parse_kafka_expire_delegation_token_response,
-        parse_kafka_fetch_response, parse_kafka_find_coordinator_response,
-        parse_kafka_heartbeat_response, parse_kafka_incremental_alter_configs_response,
-        parse_kafka_init_producer_id_response, parse_kafka_join_group_response,
-        parse_kafka_leave_group_response, parse_kafka_list_groups_response,
-        parse_kafka_list_offsets_response, parse_kafka_list_partition_reassignments_response,
-        parse_kafka_metadata_response, parse_kafka_offset_commit_response,
-        parse_kafka_offset_delete_response, parse_kafka_offset_fetch_response,
-        parse_kafka_produce_response, parse_kafka_renew_delegation_token_response,
-        parse_kafka_request, parse_kafka_sasl_authenticate_response,
-        parse_kafka_sasl_handshake_response, parse_kafka_sync_group_response,
-        parse_kafka_txn_offset_commit_response, parse_kafka_update_features_response,
-        parse_kafka_write_txn_markers_response,
+        parse_kafka_describe_log_dirs_response, parse_kafka_describe_producers_response,
+        parse_kafka_describe_quorum_response, parse_kafka_describe_user_scram_credentials_response,
+        parse_kafka_elect_leaders_response, parse_kafka_end_txn_response,
+        parse_kafka_expire_delegation_token_response, parse_kafka_fetch_response,
+        parse_kafka_find_coordinator_response, parse_kafka_heartbeat_response,
+        parse_kafka_incremental_alter_configs_response, parse_kafka_init_producer_id_response,
+        parse_kafka_join_group_response, parse_kafka_leave_group_response,
+        parse_kafka_list_groups_response, parse_kafka_list_offsets_response,
+        parse_kafka_list_partition_reassignments_response, parse_kafka_metadata_response,
+        parse_kafka_offset_commit_response, parse_kafka_offset_delete_response,
+        parse_kafka_offset_fetch_response, parse_kafka_produce_response,
+        parse_kafka_renew_delegation_token_response, parse_kafka_request,
+        parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
+        parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
+        parse_kafka_update_features_response, parse_kafka_write_txn_markers_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -321,6 +321,7 @@ proptest! {
         let _ = parse_kafka_describe_quorum_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_update_features_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_describe_cluster_response(&bytes, api_version.min(2), &config);
+        let _ = parse_kafka_describe_producers_response(&bytes, 0, &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -3171,6 +3172,38 @@ fn validates_kafka_describe_cluster_v2_request() {
 }
 
 #[test]
+fn validates_kafka_describe_producers_request_without_topic_values() {
+    let topics: &[DescribeProducersRequestTopicFixture<'_>] = &[("orders.secret", &[0, 1])];
+    let body = kafka_describe_producers_request_body(topics);
+    let bytes = kafka_flexible_request_frame(61, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka describe producers request parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("describe_producers"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "61")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn validates_kafka_alter_replica_log_dirs_requests_without_path_or_topic_values() {
     let body = kafka_alter_replica_log_dirs_request_body(
         "/var/lib/kafka/secret-dir",
@@ -5293,6 +5326,78 @@ fn extracts_kafka_describe_cluster_v2_error_response_without_message_or_broker_v
             .iter()
             .any(|attribute| attribute.value.contains("controller")
                 || attribute.value.contains("denied")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_describe_producers_ok_response_without_topic_or_producer_values() {
+    let partitions: &[DescribeProducersPartitionFixture<'_>] = &[(0, 0, None, 1)];
+    let topics: &[DescribeProducersTopicFixture<'_>] = &[("orders.secret", partitions)];
+    let bytes = kafka_describe_producers_response_frame(0, topics);
+
+    let extraction =
+        parse_kafka_describe_producers_response(&bytes, 0, &ProtocolExtractionConfig::default())
+            .expect("describe producers ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "describe_producers");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "61")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("1001")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_describe_producers_partition_error_without_topic_or_message_values() {
+    let partitions: &[DescribeProducersPartitionFixture<'_>] =
+        &[(0, 0, None, 1), (1, 35, Some("producer secret denied"), 2)];
+    let topics: &[DescribeProducersTopicFixture<'_>] = &[("orders.secret", partitions)];
+    let bytes = kafka_describe_producers_response_frame(0, topics);
+
+    let extraction =
+        parse_kafka_describe_producers_response(&bytes, 0, &ProtocolExtractionConfig::default())
+            .expect("describe producers partition error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "describe_producers");
+    assert_eq!(extraction.status_code, "35");
+    assert_eq!(extraction.error_type.as_deref(), Some("35"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "35")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("denied")
+                || attribute.value.contains("1002")
                 || attribute.value.contains("secret"))
     );
 }
@@ -7949,6 +8054,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     .expect("bounded kafka describe cluster response parses");
     assert_eq!(bounded_describe_cluster_response.attributes.len(), 2);
 
+    let bounded_describe_producers_response = parse_kafka_describe_producers_response(
+        &kafka_describe_producers_response_frame(0, &[("orders.secret", &[])]),
+        0,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka describe producers response parses");
+    assert_eq!(bounded_describe_producers_response.attributes.len(), 2);
+
     let bounded_produce_response = parse_kafka_produce_response(
         &kafka_produce_response_frame(0, 1, &[("orders.secret", 6)]),
         1,
@@ -10421,6 +10539,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_describe_producers_response(
+            &kafka_describe_producers_response_frame(0, &[("orders.secret", &[])]),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_sasl_handshake_response(
             &kafka_sasl_handshake_response_frame(0, 0, &["PLAIN"]),
             2,
@@ -11162,6 +11289,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_describe_producers_response(
+            &kafka_describe_producers_response_with_topic_count_frame(1025),
+            0,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_describe_producers_response(
+            &kafka_describe_producers_response_with_partition_count_frame(1025),
+            0,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_describe_cluster_response(
             &kafka_describe_cluster_response_frame(
                 0,
@@ -11812,6 +11957,72 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::MalformedFrame
     );
 
+    let describe_producers_body =
+        kafka_describe_producers_request_body(&[("orders.secret", &[0, 1])]);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(61, 1, Some(b"client-a"), &describe_producers_body),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+
+    let mut oversized_describe_producers_topics_body = Vec::new();
+    push_unsigned_varint(&mut oversized_describe_producers_topics_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                61,
+                0,
+                Some(b"client-a"),
+                &oversized_describe_producers_topics_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+
+    let mut oversized_describe_producers_partitions_body = Vec::new();
+    push_unsigned_varint(&mut oversized_describe_producers_partitions_body, 2);
+    push_compact_string(&mut oversized_describe_producers_partitions_body, "orders");
+    push_unsigned_varint(&mut oversized_describe_producers_partitions_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                61,
+                0,
+                Some(b"client-a"),
+                &oversized_describe_producers_partitions_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+
+    let describe_producers_long_topic_body =
+        kafka_describe_producers_request_body(&[("orders.secret", &[0])]);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                61,
+                0,
+                Some(b"client-a"),
+                &describe_producers_long_topic_body,
+            ),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+
     let mut truncated_response = kafka_produce_response_frame(0, 1, &[("orders", 6)]);
     truncated_response.truncate(10);
     assert_eq!(
@@ -12212,6 +12423,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_describe_cluster_response(&truncated_describe_cluster_response, 2, &config)
             .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_describe_producers_response = kafka_describe_producers_response_frame(
+        0,
+        &[(
+            "orders.secret",
+            &[(0, 35, Some("producer secret denied"), 1)],
+        )],
+    );
+    truncated_describe_producers_response.truncate(20);
+    assert_eq!(
+        parse_kafka_describe_producers_response(
+            &truncated_describe_producers_response,
+            0,
+            &config,
+        )
+        .unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
 
@@ -15812,6 +16041,22 @@ fn kafka_describe_cluster_request_body(api_version: i16) -> Vec<u8> {
     body
 }
 
+type DescribeProducersRequestTopicFixture<'a> = (&'a str, &'a [i32]);
+
+fn kafka_describe_producers_request_body(
+    topics: &[DescribeProducersRequestTopicFixture<'_>],
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_unsigned_varint(&mut body, topics.len() + 1);
+    for (topic, partitions) in topics {
+        push_compact_string(&mut body, topic);
+        push_compact_int32_array(&mut body, partitions);
+        push_unsigned_varint(&mut body, 0);
+    }
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 fn kafka_alter_replica_log_dirs_request_body(log_dir: &str, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&1_i32.to_be_bytes());
@@ -18017,6 +18262,63 @@ fn kafka_describe_cluster_response_with_broker_count_frame(broker_count: usize) 
     push_compact_string(&mut response, "cluster");
     response.extend_from_slice(&1_i32.to_be_bytes());
     push_unsigned_varint(&mut response, broker_count + 1);
+    kafka_frame(&response)
+}
+
+type DescribeProducersPartitionFixture<'a> = (i32, i16, Option<&'a str>, usize);
+type DescribeProducersTopicFixture<'a> = (&'a str, &'a [DescribeProducersPartitionFixture<'a>]);
+
+fn kafka_describe_producers_response_frame(
+    correlation_id: i32,
+    topics: &[DescribeProducersTopicFixture<'_>],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, topics.len() + 1);
+    for (topic, partitions) in topics {
+        push_compact_string(&mut response, topic);
+        push_unsigned_varint(&mut response, partitions.len() + 1);
+        for (partition_index, error_code, error_message, producer_count) in *partitions {
+            response.extend_from_slice(&partition_index.to_be_bytes());
+            response.extend_from_slice(&error_code.to_be_bytes());
+            push_compact_nullable_string(&mut response, *error_message);
+            push_unsigned_varint(&mut response, producer_count + 1);
+            for producer_index in 0..*producer_count {
+                response.extend_from_slice(&(1001_i64 + producer_index as i64).to_be_bytes());
+                response.extend_from_slice(&(producer_index as i32).to_be_bytes());
+                response.extend_from_slice(&(producer_index as i32).to_be_bytes());
+                response.extend_from_slice(&(123456_i64 + producer_index as i64).to_be_bytes());
+                response.extend_from_slice(&(producer_index as i32).to_be_bytes());
+                response.extend_from_slice(&(42_i64 + producer_index as i64).to_be_bytes());
+                push_unsigned_varint(&mut response, 0);
+            }
+            push_unsigned_varint(&mut response, 0);
+        }
+        push_unsigned_varint(&mut response, 0);
+    }
+    push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+fn kafka_describe_producers_response_with_topic_count_frame(topic_count: usize) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, topic_count + 1);
+    kafka_frame(&response)
+}
+
+fn kafka_describe_producers_response_with_partition_count_frame(partition_count: usize) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 2);
+    push_compact_string(&mut response, "orders");
+    push_unsigned_varint(&mut response, partition_count + 1);
     kafka_frame(&response)
 }
 

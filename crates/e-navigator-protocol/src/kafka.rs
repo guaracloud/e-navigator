@@ -3162,6 +3162,70 @@ pub fn parse_kafka_describe_cluster_response(
     })
 }
 
+pub fn parse_kafka_describe_producers_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if api_version != 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = describe_producers_response_error_code(body, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("describe_producers"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("61"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "describe_producers".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_list_groups_response(
     bytes: &[u8],
     api_version: i16,
@@ -3400,6 +3464,7 @@ fn validate_request_body(
         55 => validate_describe_quorum_request_body(body, header, config),
         57 => validate_update_features_request_body(body, header, config),
         60 => validate_describe_cluster_request_body(body, header, config),
+        61 => validate_describe_producers_request_body(body, header, config),
         _ => Ok(()),
     }
 }
@@ -4561,6 +4626,29 @@ fn validate_describe_cluster_request_body(
     }
     if header.api_version >= 2 {
         skip_bytes(body, &mut cursor, 1)?;
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_describe_producers_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_version != 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+
+    let mut cursor = header.body_start;
+    let topic_count = read_compact_array_len(body, &mut cursor)?;
+    for _ in 0..topic_count {
+        skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+        skip_compact_int32_array(body, &mut cursor)?;
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
     }
     skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
     if cursor != body.len() {
@@ -5834,6 +5922,42 @@ fn describe_cluster_response_error_code(
     Ok(error_code)
 }
 
+fn describe_producers_response_error_code(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    skip_bytes(body, &mut cursor, 4)?;
+
+    let topic_count = read_compact_array_len(body, &mut cursor)?;
+    let mut first_error_code = None;
+    for _ in 0..topic_count {
+        skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+        let partition_count = read_compact_array_len(body, &mut cursor)?;
+        for _ in 0..partition_count {
+            skip_bytes(body, &mut cursor, 4)?;
+            let error_code = read_i16_be_cursor(body, &mut cursor)?;
+            if error_code != 0 && first_error_code.is_none() {
+                first_error_code = Some(error_code);
+            }
+            skip_compact_nullable_string(body, &mut cursor, config.max_request_line_bytes)?;
+            let producer_count = read_compact_array_len(body, &mut cursor)?;
+            for _ in 0..producer_count {
+                skip_bytes(body, &mut cursor, 36)?;
+                skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+            }
+            skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+        }
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    Ok(first_error_code.unwrap_or(0))
+}
+
 fn delete_groups_response_error_code(
     body: &[u8],
     config: &ProtocolExtractionConfig,
@@ -6681,6 +6805,7 @@ fn api_key_name(api_key: i16) -> Option<&'static str> {
         55 => Some("describe_quorum"),
         57 => Some("update_features"),
         60 => Some("describe_cluster"),
+        61 => Some("describe_producers"),
         _ => None,
     }
 }
