@@ -1298,6 +1298,26 @@ fn runtime_security_kubernetes_api_endpoints_are_validated() {
     assert_invalid(
         RuntimeConfig {
             runtime_security: RuntimeSecurityConfig {
+                kubernetes_api_endpoints: vec![
+                    NetworkEndpointConfig {
+                        address: "10.96.0.1".to_string(),
+                        port: 443,
+                    };
+                    RuntimeSecurityConfig::MAX_KUBERNETES_API_ENDPOINTS_LIMIT
+                        + 1
+                ],
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "runtime_security.kubernetes_api_endpoints must contain at most {} entries",
+            RuntimeSecurityConfig::MAX_KUBERNETES_API_ENDPOINTS_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            runtime_security: RuntimeSecurityConfig {
                 kubernetes_api_endpoints: vec![NetworkEndpointConfig {
                     address: "kubernetes.default.svc".to_string(),
                     port: 443,

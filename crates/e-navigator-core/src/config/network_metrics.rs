@@ -11,7 +11,19 @@ pub struct RuntimeSecurityConfig {
 }
 
 impl RuntimeSecurityConfig {
+    pub const MAX_KUBERNETES_API_ENDPOINTS_LIMIT: usize = 32;
+
     pub(super) fn validate(&self) -> ConfigResult<()> {
+        if self.kubernetes_api_endpoints.len() > Self::MAX_KUBERNETES_API_ENDPOINTS_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "runtime_security.kubernetes_api_endpoints",
+                format!(
+                    "runtime_security.kubernetes_api_endpoints must contain at most {} entries",
+                    Self::MAX_KUBERNETES_API_ENDPOINTS_LIMIT
+                ),
+            ));
+        }
+
         for endpoint in &self.kubernetes_api_endpoints {
             endpoint.validate()?;
         }
