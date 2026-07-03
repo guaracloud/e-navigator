@@ -376,6 +376,47 @@ fn pprof_profile_bounds_frame_string_values() {
 }
 
 #[test]
+fn pprof_profile_bounds_stack_frame_count() {
+    const MAX_STACK_FRAMES: usize = 256;
+
+    let stack_frames = (0..MAX_STACK_FRAMES + 64)
+        .map(|index| ProfilingFrame {
+            symbol: Some(format!("frame_{index}")),
+            module: Some("checkout".to_string()),
+            file: Some(format!("/src/frame_{index}.rs")),
+            line: Some(index as u32),
+        })
+        .collect();
+    let signal = SignalEnvelope::profile_sample_observation(
+        "source.aya_cpu_profile",
+        Some("node-a".to_string()),
+        ProfileSampleObservation {
+            timestamp_unix_nanos: 1_000,
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::High,
+            sample_count: 1,
+            sampling_period_nanos: Some(10_000_000),
+            stack_id: "stack:abc".to_string(),
+            stack_frames,
+            process: None,
+            container: None,
+            kubernetes: None,
+            thread_id: None,
+            thread_name: None,
+            attributes: vec![],
+        },
+    );
+
+    let bytes = format_pprof_profile(&signal).expect("pprof profile formats");
+    let profile = pprof::Profile::decode(bytes.as_slice()).expect("pprof decodes");
+
+    assert_eq!(profile.location.len(), MAX_STACK_FRAMES);
+    assert_eq!(profile.function.len(), MAX_STACK_FRAMES);
+    assert_eq!(profile.sample[0].location_id.len(), MAX_STACK_FRAMES);
+}
+
+#[test]
 fn pprof_profile_ignores_sessions_and_empty_stacks() {
     let session = SignalEnvelope::profiling_session_observation(
         "generator.profiling",

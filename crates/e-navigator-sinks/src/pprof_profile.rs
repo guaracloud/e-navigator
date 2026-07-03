@@ -8,6 +8,7 @@ const MAX_ATTRIBUTES: usize = 16;
 const MAX_KEY_BYTES: usize = 64;
 const MAX_ATTRIBUTE_VALUE_BYTES: usize = 256;
 const MAX_LABEL_VALUE_BYTES: usize = 256;
+const MAX_PPROF_STACK_FRAMES: usize = 256;
 const MAX_FRAME_STRING_BYTES: usize = 256;
 
 pub fn format_pprof_profile(signal: &SignalEnvelope) -> Option<Vec<u8>> {
@@ -66,6 +67,7 @@ fn locations(sample: &ProfileSampleObservation) -> Vec<Location> {
     sample
         .stack_frames
         .iter()
+        .take(MAX_PPROF_STACK_FRAMES)
         .enumerate()
         .map(|(index, frame)| Location {
             id: u64::try_from(index + 1).unwrap_or(u64::MAX),
@@ -84,6 +86,7 @@ fn functions(sample: &ProfileSampleObservation, table: &mut StringTable) -> Vec<
     sample
         .stack_frames
         .iter()
+        .take(MAX_PPROF_STACK_FRAMES)
         .enumerate()
         .map(|(index, frame)| {
             let name = truncate_utf8(
