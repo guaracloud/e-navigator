@@ -21,6 +21,7 @@ use tokio::{
 };
 
 const MAX_REQUEST_BYTES: usize = 4096;
+const MAX_PROMETHEUS_LABEL_VALUE_BYTES: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrometheusMetricLine {
@@ -553,12 +554,13 @@ fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
 }
 
 fn prometheus_label_value(value: &serde_json::Value) -> Option<String> {
-    match value {
+    let value = match value {
         serde_json::Value::String(value) => Some(value.clone()),
         serde_json::Value::Number(value) => Some(value.to_string()),
         serde_json::Value::Bool(value) => Some(value.to_string()),
         _ => None,
-    }
+    }?;
+    (value.len() <= MAX_PROMETHEUS_LABEL_VALUE_BYTES).then_some(value)
 }
 
 fn profile_kind_name(kind: e_navigator_signals::ProfilingKind) -> &'static str {
@@ -724,6 +726,22 @@ mod tests {
         assert!(!prometheus_label_allowed("API_TOKEN"));
         assert!(!prometheus_label_allowed("Process_Command"));
         assert!(prometheus_label_allowed("k8s_namespace_name"));
+    }
+
+    #[test]
+    fn drops_oversized_prometheus_label_values() {
+        assert_eq!(
+            prometheus_label_value(&serde_json::json!(
+                "v".repeat(MAX_PROMETHEUS_LABEL_VALUE_BYTES + 1)
+            )),
+            None
+        );
+        assert_eq!(
+            prometheus_label_value(&serde_json::json!(
+                "v".repeat(MAX_PROMETHEUS_LABEL_VALUE_BYTES)
+            )),
+            Some("v".repeat(MAX_PROMETHEUS_LABEL_VALUE_BYTES))
+        );
     }
 
     #[tokio::test]
