@@ -121,8 +121,10 @@ fn module_error(message: String) -> CoreError {
 #[cfg(test)]
 mod tests {
     use e_navigator_signals::{
-        ExecEvent, NetworkAddressFamily, NetworkFlowWarning, NetworkProcessIdentity,
-        NetworkProtocol,
+        ExecEvent, MetricAggregationWindow, NetworkAddressFamily, NetworkFlowWarning,
+        NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation, ProfilingAttribute,
+        ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame, ProfilingKind,
+        ProfilingSessionObservation, ProfilingStackTraceObservation, ProfilingWarningObservation,
     };
 
     use super::*;
@@ -247,5 +249,184 @@ mod tests {
         assert_eq!(value["payload"]["remote_address"], "198.51.100.30");
         assert_eq!(value["payload"]["remote_port"], 9443);
         assert_eq!(value["payload"]["process"]["command"], "api");
+    }
+
+    #[test]
+    fn serializes_profile_sample_as_json_stdout() {
+        let signal = SignalEnvelope::profile_sample_observation(
+            "source.synthetic_profile",
+            Some("node-a".to_string()),
+            ProfileSampleObservation {
+                timestamp_unix_nanos: 10,
+                profiling_kind: ProfilingKind::Cpu,
+                correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+                confidence: ProfilingConfidence::High,
+                sample_count: 3,
+                sampling_period_nanos: Some(10_000_000),
+                stack_id: "stack:abc".to_string(),
+                stack_frames: vec![ProfilingFrame {
+                    symbol: Some("checkout::handler".to_string()),
+                    module: Some("checkout".to_string()),
+                    file: None,
+                    line: None,
+                }],
+                process: None,
+                container: None,
+                kubernetes: None,
+                thread_id: Some(7),
+                thread_name: Some("worker".to_string()),
+                attributes: vec![
+                    profile_attr("phase", "steady"),
+                    profile_attr("token", "secret"),
+                ],
+            },
+        );
+
+        let line = serialize_signal_line(&signal).expect("signal serializes");
+        let value: serde_json::Value =
+            serde_json::from_slice(&line[..line.len() - 1]).expect("line is valid JSON");
+
+        assert!(line.ends_with(b"\n"));
+        assert_eq!(value["kind"], "profile_sample_observation");
+        assert_eq!(value["payload"]["profiling_kind"], "cpu");
+        assert_eq!(value["payload"]["sample_count"], 3);
+        assert_eq!(value["payload"]["stack_id"], "stack:abc");
+        assert_eq!(
+            value["payload"]["stack_frames"][0]["symbol"],
+            "checkout::handler"
+        );
+        assert_eq!(value["payload"]["attributes"][0]["key"], "phase");
+        assert_eq!(value["payload"]["attributes"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn serializes_profile_session_as_json_stdout() {
+        let signal = SignalEnvelope::profiling_session_observation(
+            "generator.profiling",
+            Some("node-a".to_string()),
+            ProfilingSessionObservation {
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 1,
+                    end_unix_nanos: 2,
+                },
+                profiling_kind: ProfilingKind::Cpu,
+                correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+                confidence: ProfilingConfidence::High,
+                profile_id: "profile:abc".to_string(),
+                observed_sample_count: 27,
+                dropped_sample_count: 3,
+                distinct_stack_count: 5,
+                sampling_period_nanos: Some(10_000_000),
+                process: None,
+                container: None,
+                kubernetes: None,
+                source: "source.aya_cpu_profile".to_string(),
+                attributes: vec![
+                    profile_attr("phase", "steady"),
+                    profile_attr("token", "secret"),
+                ],
+            },
+        );
+
+        let line = serialize_signal_line(&signal).expect("signal serializes");
+        let value: serde_json::Value =
+            serde_json::from_slice(&line[..line.len() - 1]).expect("line is valid JSON");
+
+        assert!(line.ends_with(b"\n"));
+        assert_eq!(value["kind"], "profiling_session_observation");
+        assert_eq!(value["payload"]["profile_id"], "profile:abc");
+        assert_eq!(value["payload"]["observed_sample_count"], 27);
+        assert_eq!(value["payload"]["dropped_sample_count"], 3);
+        assert_eq!(value["payload"]["distinct_stack_count"], 5);
+        assert_eq!(value["payload"]["attributes"][0]["key"], "phase");
+        assert_eq!(value["payload"]["attributes"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn serializes_profile_stack_trace_as_json_stdout() {
+        let signal = SignalEnvelope::profiling_stack_trace_observation(
+            "source.synthetic_profile",
+            Some("node-a".to_string()),
+            ProfilingStackTraceObservation {
+                timestamp_unix_nanos: 11,
+                profiling_kind: ProfilingKind::Cpu,
+                correlation_kind: ProfilingCorrelationKind::Synthetic,
+                confidence: ProfilingConfidence::Medium,
+                stack_id: "stack:missing".to_string(),
+                stack_frames: vec![ProfilingFrame {
+                    symbol: None,
+                    module: Some("libunknown.so".to_string()),
+                    file: None,
+                    line: None,
+                }],
+                process: None,
+                container: None,
+                kubernetes: None,
+                attributes: vec![
+                    profile_attr("phase", "symbolication_pending"),
+                    profile_attr("api_key", "secret"),
+                ],
+            },
+        );
+
+        let line = serialize_signal_line(&signal).expect("signal serializes");
+        let value: serde_json::Value =
+            serde_json::from_slice(&line[..line.len() - 1]).expect("line is valid JSON");
+
+        assert!(line.ends_with(b"\n"));
+        assert_eq!(value["kind"], "profiling_stack_trace_observation");
+        assert_eq!(value["payload"]["stack_id"], "stack:missing");
+        assert_eq!(
+            value["payload"]["stack_frames"][0]["symbol"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            value["payload"]["stack_frames"][0]["module"],
+            "libunknown.so"
+        );
+        assert_eq!(value["payload"]["attributes"][0]["key"], "phase");
+        assert_eq!(value["payload"]["attributes"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn serializes_profiling_warning_as_json_stdout() {
+        let signal = SignalEnvelope::profiling_warning_observation(
+            "generator.profiling",
+            Some("node-a".to_string()),
+            ProfilingWarningObservation {
+                warning_type: "missing_attribution".to_string(),
+                message: "profile sample has no container or Kubernetes context".to_string(),
+                timestamp_unix_nanos: 12,
+                source_signal_kind: "profile_sample_observation".to_string(),
+                source_module: "source.synthetic_profile".to_string(),
+                profiling_kind: ProfilingKind::Cpu,
+                correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+                confidence: ProfilingConfidence::Low,
+                process: None,
+                container: None,
+                kubernetes: None,
+                attributes: vec![profile_attr("phase", "warning")],
+            },
+        );
+
+        let line = serialize_signal_line(&signal).expect("signal serializes");
+        let value: serde_json::Value =
+            serde_json::from_slice(&line[..line.len() - 1]).expect("line is valid JSON");
+
+        assert!(line.ends_with(b"\n"));
+        assert_eq!(value["kind"], "profiling_warning_observation");
+        assert_eq!(value["payload"]["warning_type"], "missing_attribution");
+        assert_eq!(
+            value["payload"]["source_signal_kind"],
+            "profile_sample_observation"
+        );
+        assert_eq!(value["payload"]["attributes"][0]["key"], "phase");
+    }
+
+    fn profile_attr(key: &str, value: &str) -> ProfilingAttribute {
+        ProfilingAttribute {
+            key: key.to_string(),
+            value: value.to_string(),
+        }
     }
 }
