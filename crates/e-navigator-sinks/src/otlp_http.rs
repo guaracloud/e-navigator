@@ -325,6 +325,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn otlp_http_sink_rejects_invalid_effective_endpoints() {
+        for (endpoint, expected_message) in [
+            (
+                "grpc://127.0.0.1:4317",
+                "endpoint must start with http:// or https://",
+            ),
+            ("http:///v1/metrics", "endpoint must include a host"),
+        ] {
+            let err = OtlpHttpSink::new(OtlpHttpConfig {
+                endpoint: endpoint.to_string(),
+                metrics_enabled: true,
+                traces_enabled: false,
+                profiles_enabled: false,
+                ..OtlpHttpConfig::default()
+            })
+            .expect_err("invalid effective endpoint fails");
+
+            assert!(err.to_string().contains(expected_message));
+        }
+    }
+
     #[tokio::test]
     async fn otlp_http_sink_exports_metric_records_as_otlp_protobuf() {
         let collector = FakeCollector::spawn(vec![200]).await;
