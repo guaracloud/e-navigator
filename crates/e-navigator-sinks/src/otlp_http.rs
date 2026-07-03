@@ -178,11 +178,11 @@ mod tests {
     use e_navigator_core::Sink;
     use e_navigator_signals::{
         ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkAddressFamily,
-        NetworkCounterMetric, NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation,
-        ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
-        ProfilingKind, ProfilingSessionObservation, ProfilingWarningObservation, ProtocolKind,
-        RequestSpanObservation, SignalEnvelope, SignalPayload, TraceAttribute, TraceConfidence,
-        TraceCorrelationKind,
+        NetworkCounterMetric, NetworkFlowWarning, NetworkProcessIdentity, NetworkProtocol,
+        ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence,
+        ProfilingCorrelationKind, ProfilingFrame, ProfilingKind, ProfilingSessionObservation,
+        ProfilingWarningObservation, ProtocolKind, RequestSpanObservation, SignalEnvelope,
+        SignalPayload, TraceAttribute, TraceConfidence, TraceCorrelationKind,
     };
     use opentelemetry_proto::tonic::{
         collector::{
@@ -486,6 +486,30 @@ mod tests {
         sink.write(&profiling_warning())
             .await
             .expect("profiling warning without ids is ignored");
+
+        assert!(collector.try_next_request().is_none());
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_does_not_export_network_flow_warnings_without_trace_ids() {
+        let collector = FakeCollector::spawn(vec![]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            traces_endpoint: collector.url_with_path("/v1/traces"),
+            metrics_enabled: false,
+            traces_enabled: true,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 50,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_flow_warning())
+            .await
+            .expect("network flow warning without ids is ignored");
 
         assert!(collector.try_next_request().is_none());
     }
@@ -1538,6 +1562,42 @@ mod tests {
                     key: "profile.dropped_sample_count".to_string(),
                     value: "76".to_string(),
                 }],
+            },
+        )
+    }
+
+    fn network_flow_warning() -> SignalEnvelope {
+        SignalEnvelope::network_flow_warning(
+            "generator.network_metrics",
+            Some("node-a".to_string()),
+            NetworkFlowWarning {
+                warning_type: "missing_attribution".to_string(),
+                message: "network flow has byte counters but incomplete source attribution"
+                    .to_string(),
+                timestamp_unix_nanos: 1_500,
+                source_signal_kind: "network_connection_close".to_string(),
+                source_module: "source.synthetic_network".to_string(),
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                remote_address: "198.51.100.30".to_string(),
+                remote_port: 9443,
+                process: NetworkProcessIdentity {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "checkout-api".to_string(),
+                    executable: Some("/app/checkout-api".to_string()),
+                    cgroup_id: None,
+                },
+                container: None,
+                kubernetes: Some(KubernetesContext {
+                    namespace: "default".to_string(),
+                    pod_name: "checkout-123".to_string(),
+                    pod_uid: Some("pod-uid".to_string()),
+                    container_name: Some("checkout".to_string()),
+                    node_name: Some("node-a".to_string()),
+                    labels: BTreeMap::new(),
+                }),
             },
         )
     }
