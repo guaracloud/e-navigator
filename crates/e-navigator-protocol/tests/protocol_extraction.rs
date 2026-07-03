@@ -2893,6 +2893,33 @@ fn extracts_postgres_command_complete_without_raw_tag() {
 }
 
 #[test]
+fn extracts_postgres_empty_success_responses_without_payload_values() {
+    for message_type in [b'1', b'2', b'3', b'n'] {
+        let bytes = postgres_frame(message_type, b"");
+
+        let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
+            .expect("postgres empty success response parses");
+
+        assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+        assert_eq!(extraction.status_code, "OK");
+        assert_eq!(extraction.error_type, None);
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "db.response.status_code"
+                    && attribute.value == "OK")
+        );
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("secret"))
+        );
+    }
+}
+
+#[test]
 fn extracts_postgres_ready_for_query_status_without_raw_fields() {
     let bytes = postgres_frame(b'Z', b"I");
 
@@ -3246,6 +3273,10 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     assert_eq!(
         parse_postgres_response(&postgres_frame(b'Q', b"select 1\0"), &config).unwrap_err(),
         PostgresExtraction::UnsupportedMessage
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b'1', b"secret"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
     );
     assert_eq!(
         parse_postgres_response(&postgres_frame(b'Z', b""), &config).unwrap_err(),

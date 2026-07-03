@@ -130,11 +130,28 @@ pub fn parse_postgres_response(
 
     let body = frame_body(bytes, config.max_header_bytes)?;
     match bytes[0] {
+        b'1' | b'2' | b'3' | b'n' => postgres_empty_ok_response(body, config.max_attributes),
         b'C' => postgres_command_complete_response(body, config),
         b'E' => postgres_error_response(body, config.max_attributes),
         b'Z' => postgres_ready_for_query_response(body, config.max_attributes),
         _ => Err(PostgresExtraction::UnsupportedMessage),
     }
+}
+
+fn postgres_empty_ok_response(
+    body: &[u8],
+    max_attributes: usize,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    if !body.is_empty() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    let status_code = "OK".to_string();
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        attributes: postgres_response_attributes(&status_code, None, max_attributes),
+        status_code,
+        error_type: None,
+    })
 }
 
 fn postgres_command_complete_response(
