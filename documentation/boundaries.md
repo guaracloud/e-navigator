@@ -40,7 +40,7 @@ E-Navigator does not currently claim:
 - full TCP state tracking, packet accounting, retransmits, or resets;
 - lossless DNS or HTTP capture across every node and workload shape;
 - live native `network.flow.bytes` export from traffic after the native metric
-  migration;
+  migration, including flow-attribution warning proof;
 - production collector/backend compatibility beyond recorded local or
   namespace-local Collector proof;
 - reduced overhead versus another observability stack;

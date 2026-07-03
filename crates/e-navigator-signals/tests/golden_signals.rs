@@ -37,6 +37,7 @@ fn golden_signal_families_round_trip_without_schema_drift() {
             "network_counter_metric".to_string(),
             "network_duration_metric".to_string(),
             "network_flow_summary".to_string(),
+            "network_flow_warning".to_string(),
             "network_gauge_metric".to_string(),
             "node_cpu_observation".to_string(),
             "node_disk_io_observation".to_string(),

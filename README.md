@@ -111,7 +111,7 @@ Evidence-backed today:
 - dependency graph, resource metrics, network metrics, Kafka, MongoDB, MySQL,
   NATS, PostgreSQL, and Redis parser foundations, request/trace/profile
   foundations with OTLP trace status mapping, and runtime security generator
-  behavior through tests;
+  behavior through tests, including flow-attribution warnings;
 - selected guarded homelab proof for exec, network, DNS, HTTP, profile,
   resource, Prometheus, OTLP, and seccomp paths;
 - release artifact signing, SBOM generation, Helm packaging, and local quality

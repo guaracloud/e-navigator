@@ -27,7 +27,8 @@ pub use metrics::{
 pub use network::{
     DependencyEdgeEvent, DependencyEndpoint, NetworkAddressFamily, NetworkConnectionCloseEvent,
     NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkFlowDirection,
-    NetworkFlowEndpoint, NetworkFlowSummaryEvent, NetworkProcessIdentity, NetworkProtocol,
+    NetworkFlowEndpoint, NetworkFlowSummaryEvent, NetworkFlowWarning, NetworkProcessIdentity,
+    NetworkProtocol,
 };
 pub use profiling::{
     ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind,

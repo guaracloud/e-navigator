@@ -24,7 +24,7 @@ when implementation and evidence change together.
 | Resource metrics | Implemented bounded resource metric generation | parser/generator tests and selected live output | production overhead baselines |
 | Runtime security findings | Implemented first generator scope | generator tests, golden coverage, selected live findings | broad policy engine and production alert routing |
 | CPU profiling source | Partial opt-in CPU profile sampling | raw decode/profile tests and selected live workload attribution | pprof export, storage, symbolization, flamegraphs, deterministic all-workload capture |
-| Native flow byte metrics | Implemented native `network.flow.bytes` signal and Prometheus rendering | generator/sink tests and golden schema coverage | positive live native metric export after migration |
+| Native flow byte metrics | Implemented native `network.flow.bytes` signal, Prometheus rendering, and flow-attribution warnings | generator/sink tests and golden schema coverage | positive live native metric export and warning proof after migration |
 | Prometheus HTTP sink | Implemented opt-in HTTP surface | local `/metrics`, `/healthz`, `/readyz` tests and selected live scrape proof | longer soak, cardinality baseline, production-load correctness |
 | OTLP HTTP sink | Partial metric, trace, development-status profile protobuf support, request/error status mapping, and per-family endpoint routing | fake-collector tests and selected namespace-local Collector proof | broad production collector/backend compatibility and live status-mapping proof |
 | Kubernetes packaging | Implemented Helm chart and raw manifests | Helm lint/template, schema checks, guarded homelab rollouts | production rollout proof across environments |

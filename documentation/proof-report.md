@@ -28,7 +28,8 @@ or chart rendering:
   wire-message parsing, MySQL command packet parsing, NATS text command
   parsing, PostgreSQL wire-message parsing, and Redis RESP command parsing;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
-  security generator behavior, including synthetic protocol request/span flow;
+  security generator behavior, including synthetic protocol request/span flow
+  and flow-attribution warnings;
 - Prometheus HTTP formatting, health/readiness endpoints, and secret-like label
   filtering;
 - OTLP protobuf request encoding plus per-family endpoint routing for metrics,
@@ -66,9 +67,10 @@ Guarded Linux/Kubernetes runs have recorded these slices:
 
 These areas remain explicitly partial:
 
-- **Native flow byte metric export:** code emits native `network.flow.bytes` and
-  Prometheus renders it as `network_flow_bytes`, but positive live native export
-  must be rerun after the native metric migration.
+- **Native flow byte metric export:** code emits native `network.flow.bytes`,
+  Prometheus renders it as `network_flow_bytes`, and byte-counted closes without
+  complete source attribution emit warnings locally, but positive live native
+  export and warning proof must be rerun after the native metric migration.
 - **HTTP capture:** selected `homelab-02` outbound cleartext paths work, but
   symmetric node coverage, inbound parsing, TLS, gRPC, status-code extraction,
   route templates, retries, app errors, and broader iovec shapes are not proven.

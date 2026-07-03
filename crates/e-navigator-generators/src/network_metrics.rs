@@ -3,8 +3,8 @@ use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetad
 use e_navigator_signals::{
     MetricAggregationWindow, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
     NetworkConnectionOpenEvent, NetworkCounterMetric, NetworkDurationMetric, NetworkFlowDirection,
-    NetworkFlowEndpoint, NetworkFlowSummaryEvent, NetworkGaugeMetric, NetworkProcessIdentity,
-    SignalEnvelope, SignalPayload,
+    NetworkFlowEndpoint, NetworkFlowSummaryEvent, NetworkFlowWarning, NetworkGaugeMetric,
+    NetworkProcessIdentity, SignalEnvelope, SignalPayload,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -162,6 +162,9 @@ impl NetworkMetricsGenerator {
         }
         if let Some(summary) = flow_summary_from_close(signal, event) {
             metrics.push(summary);
+        }
+        if let Some(warning) = flow_warning_from_close(signal, event) {
+            metrics.push(warning);
         }
         if event.kubernetes.is_some()
             && let Some(metric) = self.update_counter_by(
@@ -482,6 +485,38 @@ fn flow_summary_from_close(
                 .opened_at_unix_nanos
                 .unwrap_or(event.closed_at_unix_nanos),
             last_seen_unix_nanos: event.closed_at_unix_nanos,
+        },
+    ))
+}
+
+fn flow_warning_from_close(
+    signal: &SignalEnvelope,
+    event: &NetworkConnectionCloseEvent,
+) -> Option<SignalEnvelope> {
+    let bytes = event
+        .bytes_sent
+        .unwrap_or(0)
+        .saturating_add(event.bytes_received.unwrap_or(0));
+    if bytes == 0 || (event.container.is_some() && event.kubernetes.is_some()) {
+        return None;
+    }
+
+    Some(SignalEnvelope::network_flow_warning(
+        "generator.network_metrics",
+        signal.host.clone(),
+        NetworkFlowWarning {
+            warning_type: "missing_attribution".to_string(),
+            message: "byte-counted network flow has incomplete source container or Kubernetes attribution".to_string(),
+            timestamp_unix_nanos: event.closed_at_unix_nanos,
+            source_signal_kind: "network_connection_close".to_string(),
+            source_module: signal.source.clone(),
+            protocol: event.protocol,
+            address_family: event.address_family,
+            remote_address: event.remote_address.clone(),
+            remote_port: event.remote_port,
+            process: event.process.clone(),
+            container: event.container.clone(),
+            kubernetes: event.kubernetes.clone(),
         },
     ))
 }
@@ -1092,6 +1127,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn emits_network_flow_warning_when_byte_counters_lack_attribution() {
+        let generator = NetworkMetricsGenerator::default();
+        let mut close =
+            network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
+        let SignalPayload::NetworkConnectionClose(event) = &mut close.payload else {
+            panic!("expected network close");
+        };
+        event.container = None;
+        event.kubernetes = None;
+
+        let outputs = observe(&generator, &close).await;
+        let warning = network_flow_warning(&outputs);
+
+        assert_eq!(warning.warning_type, "missing_attribution");
+        assert_eq!(warning.timestamp_unix_nanos, 900);
+        assert_eq!(warning.source_signal_kind, "network_connection_close");
+        assert_eq!(warning.source_module, "source.test");
+        assert_eq!(warning.protocol, NetworkProtocol::Tcp);
+        assert_eq!(warning.address_family, NetworkAddressFamily::Ipv4);
+        assert_eq!(warning.remote_address, "10.0.0.20");
+        assert_eq!(warning.remote_port, 5432);
+        assert_eq!(warning.process, network_process());
+        assert!(warning.container.is_none());
+        assert!(warning.kubernetes.is_none());
+        assert!(
+            !outputs
+                .iter()
+                .any(|signal| matches!(signal.payload, SignalPayload::NetworkFlowSummary(_)))
+        );
+        assert!(!counter_metric_exists(&outputs, "network.flow.bytes"));
+    }
+
+    #[tokio::test]
+    async fn emits_network_flow_warning_for_partial_source_attribution() {
+        let generator = NetworkMetricsGenerator::default();
+        let mut close =
+            network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
+        let SignalPayload::NetworkConnectionClose(event) = &mut close.payload else {
+            panic!("expected network close");
+        };
+        event.container = None;
+
+        let outputs = observe(&generator, &close).await;
+
+        assert_eq!(
+            network_flow_warning(&outputs).kubernetes,
+            Some(kubernetes_context())
+        );
+        assert!(
+            outputs
+                .iter()
+                .any(|signal| matches!(signal.payload, SignalPayload::NetworkFlowSummary(_)))
+        );
+        assert!(counter_metric_exists(&outputs, "network.flow.bytes"));
+    }
+
+    #[tokio::test]
+    async fn does_not_emit_network_flow_warning_without_byte_counters() {
+        let generator = NetworkMetricsGenerator::default();
+        let mut close = network_close_signal("10.0.0.20", 5432, 100, 900, Some(7));
+        let SignalPayload::NetworkConnectionClose(event) = &mut close.payload else {
+            panic!("expected network close");
+        };
+        event.container = None;
+        event.kubernetes = None;
+
+        let outputs = observe(&generator, &close).await;
+
+        assert!(
+            !outputs
+                .iter()
+                .any(|signal| matches!(signal.payload, SignalPayload::NetworkFlowWarning(_)))
+        );
+    }
+
+    #[tokio::test]
     async fn emits_failure_counter_metric() {
         let generator = NetworkMetricsGenerator::default();
         let failure = network_failure_signal("203.0.113.10", 443, 111, 150);
@@ -1338,6 +1449,18 @@ mod tests {
                 _ => None,
             })
             .expect("network flow summary exists")
+    }
+
+    fn network_flow_warning(
+        metrics: &[SignalEnvelope],
+    ) -> &e_navigator_signals::NetworkFlowWarning {
+        metrics
+            .iter()
+            .find_map(|signal| match &signal.payload {
+                SignalPayload::NetworkFlowWarning(warning) => Some(warning),
+                _ => None,
+            })
+            .expect("network flow warning exists")
     }
 
     fn network_open_signal(

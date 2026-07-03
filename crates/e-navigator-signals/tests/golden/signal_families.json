@@ -159,6 +159,26 @@
   },
   {
     "schema_version": 1,
+    "kind": "network_flow_warning",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "warning_type": "missing_attribution",
+      "message": "byte-counted network flow has incomplete source container or Kubernetes attribution",
+      "timestamp_unix_nanos": 1200,
+      "source_signal_kind": "network_connection_close",
+      "source_module": "source.aya_network",
+      "protocol": "tcp",
+      "address_family": "ipv4",
+      "remote_address": "203.0.113.10",
+      "remote_port": 443,
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "cgroup_id": null},
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
     "kind": "network_counter_metric",
     "source": "golden",
     "host": "node-a",

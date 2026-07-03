@@ -78,6 +78,23 @@ pub struct NetworkFlowSummaryEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct NetworkFlowWarning {
+    pub warning_type: String,
+    pub message: String,
+    pub timestamp_unix_nanos: u64,
+    pub source_signal_kind: String,
+    pub source_module: String,
+    pub protocol: NetworkProtocol,
+    pub address_family: NetworkAddressFamily,
+    pub remote_address: String,
+    pub remote_port: u16,
+    pub process: NetworkProcessIdentity,
+    pub container: Option<ContainerContext>,
+    pub kubernetes: Option<KubernetesContext>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NetworkFlowEndpoint {
     pub address: Option<String>,
     pub port: Option<u16>,

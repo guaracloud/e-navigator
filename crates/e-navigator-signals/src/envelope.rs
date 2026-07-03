@@ -6,14 +6,14 @@ use crate::{
     CgroupPidsObservation, DependencyEdgeEvent, DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent,
     DnsResponseEvent, ExecEvent, ExtractedTraceContextObservation, NetworkConnectionCloseEvent,
     NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkCounterMetric,
-    NetworkDurationMetric, NetworkFlowSummaryEvent, NetworkGaugeMetric, NodeCpuObservation,
-    NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation,
-    ProcessExitEvent, ProcessLifecycleDurationEvent, ProcessResourceObservation,
-    ProfileSampleObservation, ProfilingSessionObservation, ProfilingStackTraceObservation,
-    ProfilingWarningObservation, ProtocolRequestObservation, RequestCorrelationWarning,
-    RequestSpanObservation, ResourceCounterMetric, ResourceGaugeMetric, RuntimeSecurityFinding,
-    ServiceInteractionSpanObservation, TraceCorrelationWarning, TraceServicePathObservation,
-    TraceSpanObservation, sanitize_profiling_attributes,
+    NetworkDurationMetric, NetworkFlowSummaryEvent, NetworkFlowWarning, NetworkGaugeMetric,
+    NodeCpuObservation, NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation,
+    NodeMemoryObservation, ProcessExitEvent, ProcessLifecycleDurationEvent,
+    ProcessResourceObservation, ProfileSampleObservation, ProfilingSessionObservation,
+    ProfilingStackTraceObservation, ProfilingWarningObservation, ProtocolRequestObservation,
+    RequestCorrelationWarning, RequestSpanObservation, ResourceCounterMetric, ResourceGaugeMetric,
+    RuntimeSecurityFinding, ServiceInteractionSpanObservation, TraceCorrelationWarning,
+    TraceServicePathObservation, TraceSpanObservation, sanitize_profiling_attributes,
 };
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
@@ -29,6 +29,7 @@ pub enum SignalKind {
     NetworkConnectionClose,
     NetworkConnectionFailure,
     NetworkFlowSummary,
+    NetworkFlowWarning,
     NetworkCounterMetric,
     NetworkDurationMetric,
     NetworkGaugeMetric,
@@ -71,6 +72,7 @@ pub enum SignalPayload {
     Exec(ExecEvent),
     ProcessExit(ProcessExitEvent),
     ProcessLifecycleDuration(ProcessLifecycleDurationEvent),
+    NetworkFlowWarning(NetworkFlowWarning),
     NetworkConnectionOpen(NetworkConnectionOpenEvent),
     NetworkConnectionClose(NetworkConnectionCloseEvent),
     NetworkConnectionFailure(NetworkConnectionFailureEvent),
@@ -174,6 +176,13 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
                     .map(SignalPayload::NetworkFlowSummary)
                     .map_err(|err| {
                         D::Error::custom(format!("invalid network_flow_summary payload: {err}"))
+                    })?
+            }
+            SignalKind::NetworkFlowWarning => {
+                serde_json::from_value::<NetworkFlowWarning>(raw.payload)
+                    .map(SignalPayload::NetworkFlowWarning)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid network_flow_warning payload: {err}"))
                     })?
             }
             SignalKind::NetworkCounterMetric => {
@@ -539,6 +548,20 @@ impl SignalEnvelope {
             source: source.into(),
             host,
             payload: SignalPayload::NetworkFlowSummary(event),
+        }
+    }
+
+    pub fn network_flow_warning(
+        source: impl Into<String>,
+        host: Option<String>,
+        warning: NetworkFlowWarning,
+    ) -> Self {
+        Self {
+            schema_version: SIGNAL_SCHEMA_VERSION,
+            kind: SignalKind::NetworkFlowWarning,
+            source: source.into(),
+            host,
+            payload: SignalPayload::NetworkFlowWarning(warning),
         }
     }
 
@@ -1000,6 +1023,7 @@ impl Signal for SignalEnvelope {
             SignalKind::NetworkConnectionClose => "network_connection_close",
             SignalKind::NetworkConnectionFailure => "network_connection_failure",
             SignalKind::NetworkFlowSummary => "network_flow_summary",
+            SignalKind::NetworkFlowWarning => "network_flow_warning",
             SignalKind::NetworkCounterMetric => "network_counter_metric",
             SignalKind::NetworkDurationMetric => "network_duration_metric",
             SignalKind::NetworkGaugeMetric => "network_gauge_metric",
@@ -1246,6 +1270,45 @@ mod tests {
         assert_eq!(json["kind"], "network_connection_failure");
         assert_eq!(json["payload"]["errno"], 111);
         assert_eq!(json["payload"]["remote_address"], "203.0.113.10");
+    }
+
+    #[test]
+    fn serializes_network_flow_warning_signal() {
+        let signal = SignalEnvelope::network_flow_warning(
+            "generator.network_metrics",
+            Some("node-a".to_string()),
+            NetworkFlowWarning {
+                warning_type: "missing_attribution".to_string(),
+                message: "byte-counted network flow has incomplete source attribution".to_string(),
+                timestamp_unix_nanos: 900,
+                source_signal_kind: "network_connection_close".to_string(),
+                source_module: "source.test".to_string(),
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                remote_address: "203.0.113.10".to_string(),
+                remote_port: 443,
+                process: network_process(),
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+        let decoded =
+            serde_json::from_value::<SignalEnvelope>(json.clone()).expect("signal deserializes");
+
+        assert_eq!(json["kind"], "network_flow_warning");
+        assert_eq!(json["payload"]["warning_type"], "missing_attribution");
+        assert_eq!(json["payload"]["source_module"], "source.test");
+        assert_eq!(json["payload"]["remote_address"], "203.0.113.10");
+        assert_eq!(decoded.signal_kind(), SignalKind::NetworkFlowWarning);
+
+        let decoded_payload =
+            serde_json::from_value::<SignalPayload>(json["payload"].clone()).expect("payload");
+        assert!(matches!(
+            decoded_payload,
+            SignalPayload::NetworkFlowWarning(_)
+        ));
     }
 
     #[test]
