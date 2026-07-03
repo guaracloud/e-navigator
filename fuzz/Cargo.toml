@@ -27,6 +27,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "mysql_command_parser"
+path = "fuzz_targets/mysql_command_parser.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "postgres_message_parser"
 path = "fuzz_targets/postgres_message_parser.rs"
 test = false

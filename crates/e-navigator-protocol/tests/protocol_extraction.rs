@@ -1,6 +1,7 @@
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
     http::{HttpExtraction, parse_http_request},
+    mysql::{MysqlExtraction, parse_mysql_command},
     postgres::{PostgresExtraction, parse_postgres_message},
     redis::{RedisExtraction, parse_redis_command},
     trace_context::{TraceContextError, parse_traceparent},
@@ -146,6 +147,18 @@ proptest! {
         };
 
         let _ = parse_postgres_message(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_mysql_fixture_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 4,
+            max_tracestate_bytes: 32,
+        };
+
+        let _ = parse_mysql_command(&bytes, &config);
     }
 }
 
@@ -779,6 +792,147 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     );
 }
 
+#[test]
+fn extracts_mysql_query_operation_without_raw_sql() {
+    let bytes = mysql_packet(0x03, b" select * from customers where token = 'secret'");
+
+    let extraction =
+        parse_mysql_command(&bytes, &ProtocolExtractionConfig::default()).expect("mysql parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Mysql);
+    assert_eq!(extraction.operation.as_deref(), Some("SELECT"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.system" && attribute.value == "mysql")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.operation" && attribute.value == "SELECT")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.mysql.command" && attribute.value == "query")
+    );
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("customers") || attribute.value.contains("secret")
+    ));
+}
+
+#[test]
+fn extracts_mysql_stmt_prepare_operation_without_raw_sql() {
+    let bytes = mysql_packet(0x16, b"insert into orders values (?, ?)");
+
+    let extraction = parse_mysql_command(&bytes, &ProtocolExtractionConfig::default())
+        .expect("mysql stmt prepare parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("INSERT"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.mysql.command"
+                && attribute.value == "stmt_prepare")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders"))
+    );
+}
+
+#[test]
+fn extracts_mysql_operation_after_comments() {
+    let bytes = mysql_packet(
+        0x03,
+        b"/* application comment */\n# secret note\nupdate accounts set balance = 0",
+    );
+
+    let extraction =
+        parse_mysql_command(&bytes, &ProtocolExtractionConfig::default()).expect("mysql parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("UPDATE"));
+}
+
+#[test]
+fn enforces_mysql_packet_query_and_attribute_bounds() {
+    let bounded = parse_mysql_command(
+        &mysql_packet(0x03, b"select * from customers"),
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded mysql query parses");
+    assert_eq!(bounded.attributes.len(), 2);
+
+    assert_eq!(
+        parse_mysql_command(
+            &mysql_packet(0x03, b"select * from customers"),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 16,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        MysqlExtraction::PacketTooLong
+    );
+
+    assert_eq!(
+        parse_mysql_command(
+            &mysql_packet(0x03, b"select * from customers"),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        MysqlExtraction::QueryTooLong
+    );
+}
+
+#[test]
+fn rejects_malformed_and_unsupported_mysql_fixtures() {
+    let config = ProtocolExtractionConfig::default();
+
+    assert_eq!(
+        parse_mysql_command(&[], &config).unwrap_err(),
+        MysqlExtraction::MalformedPacket
+    );
+    assert_eq!(
+        parse_mysql_command(&[0, 0, 0, 0], &config).unwrap_err(),
+        MysqlExtraction::MalformedPacket
+    );
+    assert_eq!(
+        parse_mysql_command(&mysql_packet(0x01, b"ignored"), &config).unwrap_err(),
+        MysqlExtraction::UnsupportedCommand
+    );
+
+    let mut truncated = mysql_packet(0x03, b"select 1");
+    truncated.truncate(5);
+    assert_eq!(
+        parse_mysql_command(&truncated, &config).unwrap_err(),
+        MysqlExtraction::MalformedPacket
+    );
+
+    assert_eq!(
+        parse_mysql_command(&mysql_packet(0x03, b"sel\xffct"), &config).unwrap_err(),
+        MysqlExtraction::InvalidUtf8
+    );
+}
+
 fn lower_hex_string(
     len: impl Into<proptest::collection::SizeRange>,
 ) -> impl Strategy<Value = String> {
@@ -803,4 +957,16 @@ fn postgres_frame(message_type: u8, body: &[u8]) -> Vec<u8> {
     frame.extend_from_slice(&((body.len() + 4) as u32).to_be_bytes());
     frame.extend_from_slice(body);
     frame
+}
+
+fn mysql_packet(command: u8, query: &[u8]) -> Vec<u8> {
+    let payload_len = query.len() + 1;
+    let mut packet = Vec::with_capacity(payload_len + 4);
+    packet.push((payload_len & 0xff) as u8);
+    packet.push(((payload_len >> 8) & 0xff) as u8);
+    packet.push(((payload_len >> 16) & 0xff) as u8);
+    packet.push(0);
+    packet.push(command);
+    packet.extend_from_slice(query);
+    packet
 }

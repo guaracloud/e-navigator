@@ -341,6 +341,50 @@ fn formats_postgresql_request_span_with_protocol_name() {
 }
 
 #[test]
+fn formats_mysql_request_span_with_protocol_name() {
+    let signal = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "mysql query".to_string(),
+            protocol: ProtocolKind::Mysql,
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(1_500),
+            duration_nanos: Some(500),
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::Medium,
+            service_name: Some("database-client".to_string()),
+            method: Some("SELECT".to_string()),
+            status_code: None,
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(trace_peer_context()),
+            attributes: vec![
+                TraceAttribute {
+                    key: "db.system".to_string(),
+                    value: "mysql".to_string(),
+                },
+                TraceAttribute {
+                    key: "db.operation".to_string(),
+                    value: "SELECT".to_string(),
+                },
+            ],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("mysql request span formats");
+
+    assert_eq!(record.name, "mysql query");
+    assert_eq!(record.attributes["network.protocol.name"], "mysql");
+    assert_eq!(record.attributes["db.system"], "mysql");
+    assert_eq!(record.attributes["db.operation"], "SELECT");
+}
+
+#[test]
 fn formats_request_correlation_warning() {
     let signal = SignalEnvelope::request_correlation_warning(
         "generator.request_correlation",
