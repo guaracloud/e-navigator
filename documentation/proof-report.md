@@ -87,10 +87,11 @@ or chart rendering:
   coverage;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/error-span
-  flow, deterministic service path keys, precise duplicate flow suppression,
-  bounded flow-byte aggregation across remote destinations, flow-attribution
-  warnings, bounded DNS-derived service-path domains, generated flow-summary
-  destination pod-IP attribution before sinks,
+  flow, deterministic service path keys, precise duplicate flow suppression with
+  deterministic bounded dedupe eviction, bounded flow-byte aggregation across
+  remote destinations, flow-attribution warnings, bounded DNS-derived
+  service-path domains, generated flow-summary destination pod-IP attribution
+  before sinks,
   deterministic profile session IDs with sampling-period separation, generated
   profile session bounded and sensitive/reserved-attribute filtering, bounded
   safe-attribute merging across samples, bounded profile stack-ID state,
