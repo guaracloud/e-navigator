@@ -76,7 +76,7 @@ or chart rendering:
   authority-port/userinfo validation, and a build-checked parser fuzz target,
   Kafka request-header plus bounded ApiVersions, non-flexible DescribeGroups,
   DeleteGroups, FindCoordinator, Heartbeat, InitProducerId, LeaveGroup, ListGroups,
-  ListOffsets, Metadata, OffsetCommit, and SyncGroup request bodies,
+  ListOffsets, Metadata, OffsetCommit, OffsetFetch, and SyncGroup request bodies,
   ApiVersions response, bounded Produce request/response, and bounded
   non-flexible DeleteGroups, DescribeGroups, Fetch, FindCoordinator,
   Heartbeat, InitProducerId, LeaveGroup, ListGroups, ListOffsets, Metadata,
@@ -208,7 +208,7 @@ These areas remain explicitly partial:
   API keys, bounded ApiVersions request-body validation, bounded non-flexible
   Produce, Fetch, DeleteGroups, DescribeGroups, FindCoordinator, Heartbeat,
   InitProducerId, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit,
-  and SyncGroup request-body validation, and ApiVersions, Produce, and
+  OffsetFetch, and SyncGroup request-body validation, and ApiVersions, Produce, and
   non-flexible DeleteGroups, DescribeGroups, Fetch, FindCoordinator,
   Heartbeat, InitProducerId, LeaveGroup, ListGroups, ListOffsets, Metadata,
   OffsetCommit, and SyncGroup

@@ -2022,6 +2022,84 @@ fn validates_kafka_offset_commit_legacy_requests_without_group_topic_or_metadata
 }
 
 #[test]
+fn validates_kafka_offset_fetch_v5_request_without_group_or_topic_values() {
+    let body = kafka_offset_fetch_request_body(5, Some(&[("orders.secret", &[0, 1])]));
+    let bytes = kafka_request_frame(9, 5, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka offset fetch v5 request parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation.as_deref(), Some("offset_fetch"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "9")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "5")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("orders"))
+    );
+}
+
+#[test]
+fn validates_kafka_offset_fetch_legacy_requests_without_group_or_topic_values() {
+    for api_version in 1..=4 {
+        let body = kafka_offset_fetch_request_body(api_version, Some(&[("orders.secret", &[0])]));
+        let bytes = kafka_request_frame(9, api_version, Some(b"secret-client"), &body);
+
+        let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+            .expect("kafka offset fetch request parses");
+
+        assert_eq!(extraction.operation.as_deref(), Some("offset_fetch"));
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                    && attribute.value == api_version.to_string())
+        );
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("secret")
+                    || attribute.value.contains("orders"))
+        );
+    }
+}
+
+#[test]
+fn validates_kafka_offset_fetch_nullable_topics_request() {
+    for api_version in 2..=5 {
+        let body = kafka_offset_fetch_request_body(api_version, None);
+        let bytes = kafka_request_frame(9, api_version, Some(b"secret-client"), &body);
+
+        let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+            .expect("kafka offset fetch nullable topics request parses");
+
+        assert_eq!(extraction.operation.as_deref(), Some("offset_fetch"));
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("secret"))
+        );
+    }
+}
+
+#[test]
 fn validates_kafka_list_offsets_v5_request_without_topic_values() {
     let body = kafka_list_offsets_request_body(5, &[("orders.secret", &[0, 1])]);
     let bytes = kafka_request_frame(2, 5, Some(b"secret-client"), &body);
@@ -4006,6 +4084,39 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_request(
             &kafka_request_frame(8, 7, None, &body),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(9, 0, None, b""), &config).unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(9, 5, None, b"\0\x01"), &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    let mut too_many_offset_fetch_topics = Vec::new();
+    push_kafka_string(&mut too_many_offset_fetch_topics, "group");
+    too_many_offset_fetch_topics.extend_from_slice(&1025_i32.to_be_bytes());
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(9, 5, None, &too_many_offset_fetch_topics),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    let body = kafka_offset_fetch_request_body(5, Some(&[("topic.secret.name", &[0])]));
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(9, 5, None, &body),
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
                 max_request_line_bytes: 4,
@@ -7639,6 +7750,25 @@ fn kafka_offset_commit_request_body(api_version: i16, topics: &[(&str, &[i32])])
             }
             push_kafka_nullable_string(&mut body, Some("metadata.secret"));
         }
+    }
+    body
+}
+
+fn kafka_offset_fetch_request_body(api_version: i16, topics: Option<&[(&str, &[i32])]>) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_kafka_string(&mut body, "group.secret");
+    if let Some(topics) = topics {
+        body.extend_from_slice(&(topics.len() as i32).to_be_bytes());
+        for (topic, partitions) in topics {
+            push_kafka_string(&mut body, topic);
+            body.extend_from_slice(&(partitions.len() as i32).to_be_bytes());
+            for partition in *partitions {
+                body.extend_from_slice(&partition.to_be_bytes());
+            }
+        }
+    } else {
+        assert!(api_version >= 2);
+        body.extend_from_slice(&(-1_i32).to_be_bytes());
     }
     body
 }

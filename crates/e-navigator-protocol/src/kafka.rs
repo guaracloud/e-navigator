@@ -1051,6 +1051,7 @@ fn validate_request_body(
         2 => validate_list_offsets_request_body(body, header, config),
         3 => validate_metadata_request_body(body, header, config),
         8 => validate_offset_commit_request_body(body, header, config),
+        9 => validate_offset_fetch_request_body(body, header, config),
         10 => validate_find_coordinator_request_body(body, header, config),
         12 => validate_heartbeat_request_body(body, header, config),
         13 => validate_leave_group_request_body(body, header, config),
@@ -1238,6 +1239,38 @@ fn validate_offset_commit_request_body(
                 skip_bytes(body, &mut cursor, 4)?;
             }
             skip_nullable_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+        }
+    }
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_offset_fetch_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_version < 1 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if header.api_version > 5 {
+        return Ok(());
+    }
+
+    let mut cursor = header.body_start;
+    skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+    let topic_count = if header.api_version == 1 {
+        Some(read_request_array_len(body, &mut cursor)?)
+    } else {
+        read_nullable_request_array_len(body, &mut cursor)?
+    };
+
+    if let Some(topic_count) = topic_count {
+        for _ in 0..topic_count {
+            skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+            skip_int32_array(body, &mut cursor)?;
         }
     }
     if cursor != body.len() {
