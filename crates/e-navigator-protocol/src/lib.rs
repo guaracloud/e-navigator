@@ -2,6 +2,7 @@
 #![warn(missing_debug_implementations, rust_2018_idioms, unreachable_pub)]
 
 pub mod http;
+pub mod mongodb;
 pub mod mysql;
 pub mod postgres;
 pub mod redis;

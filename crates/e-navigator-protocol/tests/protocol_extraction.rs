@@ -1,6 +1,7 @@
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
     http::{HttpExtraction, parse_http_request},
+    mongodb::{MongodbExtraction, parse_mongodb_message},
     mysql::{MysqlExtraction, parse_mysql_command},
     postgres::{PostgresExtraction, parse_postgres_message},
     redis::{RedisExtraction, parse_redis_command},
@@ -159,6 +160,18 @@ proptest! {
         };
 
         let _ = parse_mysql_command(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_mongodb_fixture_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 4,
+            max_tracestate_bytes: 32,
+        };
+
+        let _ = parse_mongodb_message(&bytes, &config);
     }
 }
 
@@ -933,6 +946,142 @@ fn rejects_malformed_and_unsupported_mysql_fixtures() {
     );
 }
 
+#[test]
+fn extracts_mongodb_op_msg_command_without_raw_bson_values() {
+    let document = bson_command_document("find", "customers-secret");
+    let bytes = mongodb_op_msg(&document);
+
+    let extraction =
+        parse_mongodb_message(&bytes, &ProtocolExtractionConfig::default()).expect("mongo parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Mongodb);
+    assert_eq!(extraction.operation.as_deref(), Some("find"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.system" && attribute.value == "mongodb")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.operation" && attribute.value == "find")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.mongodb.opcode" && attribute.value == "op_msg")
+    );
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("customers") || attribute.value.contains("secret")
+    ));
+}
+
+#[test]
+fn extracts_mongodb_op_query_command_without_namespace_or_values() {
+    let document = bson_command_document("insert", "orders-secret");
+    let bytes = mongodb_op_query("secret-db.$cmd", &document);
+
+    let extraction = parse_mongodb_message(&bytes, &ProtocolExtractionConfig::default())
+        .expect("mongo op_query parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("insert"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.mongodb.opcode" && attribute.value == "op_query")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("secret-db")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn enforces_mongodb_frame_document_and_attribute_bounds() {
+    let bounded = parse_mongodb_message(
+        &mongodb_op_msg(&bson_command_document("find", "customers")),
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded mongo command parses");
+    assert_eq!(bounded.attributes.len(), 2);
+
+    assert_eq!(
+        parse_mongodb_message(
+            &mongodb_op_msg(&bson_command_document("find", "customers")),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 16,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        MongodbExtraction::FrameTooLong
+    );
+
+    assert_eq!(
+        parse_mongodb_message(
+            &mongodb_op_msg(&bson_command_document("find", "customers")),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 8,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        MongodbExtraction::DocumentTooLong
+    );
+}
+
+#[test]
+fn rejects_malformed_and_unsupported_mongodb_fixtures() {
+    let config = ProtocolExtractionConfig::default();
+
+    assert_eq!(
+        parse_mongodb_message(&[], &config).unwrap_err(),
+        MongodbExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_mongodb_message(&mongodb_frame(1, b"ignored"), &config).unwrap_err(),
+        MongodbExtraction::UnsupportedOpcode
+    );
+
+    let mut truncated = mongodb_op_msg(&bson_command_document("find", "customers"));
+    truncated.truncate(18);
+    assert_eq!(
+        parse_mongodb_message(&truncated, &config).unwrap_err(),
+        MongodbExtraction::MalformedFrame
+    );
+
+    let invalid_key = {
+        let mut document = Vec::new();
+        document.extend_from_slice(&8_i32.to_le_bytes());
+        document.push(0x10);
+        document.push(0xff);
+        document.push(0);
+        document.push(0);
+        document
+    };
+    assert_eq!(
+        parse_mongodb_message(&mongodb_op_msg(&invalid_key), &config).unwrap_err(),
+        MongodbExtraction::InvalidUtf8
+    );
+}
+
 fn lower_hex_string(
     len: impl Into<proptest::collection::SizeRange>,
 ) -> impl Strategy<Value = String> {
@@ -969,4 +1118,49 @@ fn mysql_packet(command: u8, query: &[u8]) -> Vec<u8> {
     packet.push(command);
     packet.extend_from_slice(query);
     packet
+}
+
+fn mongodb_frame(opcode: i32, body: &[u8]) -> Vec<u8> {
+    let message_len = body.len() + 16;
+    let mut frame = Vec::with_capacity(message_len);
+    frame.extend_from_slice(&(message_len as i32).to_le_bytes());
+    frame.extend_from_slice(&1_i32.to_le_bytes());
+    frame.extend_from_slice(&0_i32.to_le_bytes());
+    frame.extend_from_slice(&opcode.to_le_bytes());
+    frame.extend_from_slice(body);
+    frame
+}
+
+fn mongodb_op_msg(document: &[u8]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&0_u32.to_le_bytes());
+    body.push(0);
+    body.extend_from_slice(document);
+    mongodb_frame(2013, &body)
+}
+
+fn mongodb_op_query(namespace: &str, document: &[u8]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&0_i32.to_le_bytes());
+    body.extend_from_slice(namespace.as_bytes());
+    body.push(0);
+    body.extend_from_slice(&0_i32.to_le_bytes());
+    body.extend_from_slice(&1_i32.to_le_bytes());
+    body.extend_from_slice(document);
+    mongodb_frame(2004, &body)
+}
+
+fn bson_command_document(command: &str, value: &str) -> Vec<u8> {
+    let value_len = value.len() + 1;
+    let document_len = 4 + 1 + command.len() + 1 + 4 + value_len + 1;
+    let mut document = Vec::with_capacity(document_len);
+    document.extend_from_slice(&(document_len as i32).to_le_bytes());
+    document.push(0x02);
+    document.extend_from_slice(command.as_bytes());
+    document.push(0);
+    document.extend_from_slice(&(value_len as i32).to_le_bytes());
+    document.extend_from_slice(value.as_bytes());
+    document.push(0);
+    document.push(0);
+    document
 }

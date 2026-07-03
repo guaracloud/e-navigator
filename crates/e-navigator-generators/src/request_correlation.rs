@@ -304,6 +304,7 @@ fn request_span_name(protocol: ProtocolKind) -> &'static str {
     match protocol {
         ProtocolKind::Http => "http request",
         ProtocolKind::Grpc => "grpc request",
+        ProtocolKind::Mongodb => "mongodb command",
         ProtocolKind::Mysql => "mysql query",
         ProtocolKind::Postgresql => "postgresql query",
         ProtocolKind::Redis => "redis command",

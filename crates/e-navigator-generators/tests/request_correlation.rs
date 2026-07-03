@@ -137,6 +137,38 @@ async fn mysql_protocol_request_generates_named_request_span() {
 }
 
 #[tokio::test]
+async fn mongodb_protocol_request_generates_named_request_span() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(None, true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.protocol = ProtocolKind::Mongodb;
+    request.method = Some("find".to_string());
+    request.status_code = None;
+    request.attributes = vec![
+        TraceAttribute {
+            key: "db.system".to_string(),
+            value: "mongodb".to_string(),
+        },
+        TraceAttribute {
+            key: "db.operation".to_string(),
+            value: "find".to_string(),
+        },
+    ];
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(span.name, "mongodb command");
+    assert_eq!(span.protocol, ProtocolKind::Mongodb);
+    assert_eq!(span.method.as_deref(), Some("find"));
+    assert!(has_attribute(&span.attributes, "db.operation", "find"));
+}
+
+#[tokio::test]
 async fn valid_traceparent_fallback_generates_request_span_ids() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);

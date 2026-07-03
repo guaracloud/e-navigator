@@ -23,8 +23,9 @@ or chart rendering:
 - config validation and packaged config guards;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/profile events;
-- bounded DNS/HTTP fixture parsing, MySQL command packet parsing, PostgreSQL
-  wire-message parsing, and Redis RESP command parsing;
+- bounded DNS/HTTP fixture parsing, MongoDB wire-message parsing, MySQL command
+  packet parsing, PostgreSQL wire-message parsing, and Redis RESP command
+  parsing;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior;
 - Prometheus HTTP formatting, health/readiness endpoints, and secret-like label
@@ -69,6 +70,10 @@ These areas remain explicitly partial:
 - **HTTP capture:** selected `homelab-02` outbound cleartext paths work, but
   symmetric node coverage, inbound parsing, TLS, gRPC, status-code extraction,
   route templates, retries, app errors, and broader iovec shapes are not proven.
+- **MongoDB protocol observability:** bounded `OP_MSG` and command `OP_QUERY`
+  parsing is locally tested without exporting raw BSON values or namespaces, but
+  runtime capture, request/response matching, status/error extraction, and live
+  MongoDB proof are not implemented or proven.
 - **MySQL protocol observability:** bounded `COM_QUERY` and
   `COM_STMT_PREPARE` command parsing is locally tested without exporting raw SQL
   text, but runtime capture, request/response matching, status/error

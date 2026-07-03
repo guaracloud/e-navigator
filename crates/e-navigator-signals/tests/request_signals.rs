@@ -263,6 +263,56 @@ fn serializes_mysql_protocol_request_observation_without_query_text() {
 }
 
 #[test]
+fn serializes_mongodb_protocol_request_observation_without_bson_values() {
+    let signal = SignalEnvelope::protocol_request_observation(
+        "source.protocol_fixture",
+        Some("node-a".to_string()),
+        ProtocolRequestObservation {
+            protocol: ProtocolKind::Mongodb,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: None,
+            duration_nanos: None,
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            traceparent: None,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::Medium,
+            service_name: Some("database-client".to_string()),
+            method: Some("find".to_string()),
+            status_code: None,
+            process: Some(process()),
+            container: Some(container()),
+            kubernetes: Some(kubernetes()),
+            peer: Some(peer()),
+            attributes: vec![
+                TraceAttribute {
+                    key: "db.system".to_string(),
+                    value: "mongodb".to_string(),
+                },
+                TraceAttribute {
+                    key: "db.operation".to_string(),
+                    value: "find".to_string(),
+                },
+            ],
+        },
+    );
+
+    let json = serde_json::to_value(&signal).expect("signal serializes");
+
+    assert_eq!(json["payload"]["protocol"], "mongodb");
+    assert_eq!(json["payload"]["method"], "find");
+    assert!(!json.to_string().contains("customers-secret"));
+
+    let decoded: SignalEnvelope = serde_json::from_value(json).expect("signal deserializes");
+    assert!(matches!(
+        decoded.payload,
+        SignalPayload::ProtocolRequestObservation(_)
+    ));
+}
+
+#[test]
 fn serializes_extracted_trace_context_observation() {
     let signal = SignalEnvelope::extracted_trace_context_observation(
         "parser.protocol",
