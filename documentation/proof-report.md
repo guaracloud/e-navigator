@@ -74,7 +74,8 @@ or chart rendering:
   decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with bounded
   content-type suffix validation, authority-port/userinfo validation, and a
   build-checked parser fuzz target, Kafka
-  request-header plus ApiVersions, bounded Produce, and bounded Fetch
+  request-header plus bounded ApiVersions request body, ApiVersions response,
+  bounded Produce, and bounded Fetch
   response-error parsing,
   MongoDB
   wire-message and response-error parsing with OP_MSG section validation,
@@ -192,12 +193,12 @@ These areas remain explicitly partial:
   backend service-graph compatibility and live collector proof for the status
   mappings are not yet proven.
 - **Kafka protocol observability:** bounded request-header parsing for common
-  API keys plus ApiVersions, Produce, and non-flexible Fetch response-error
-  parsing is locally tested without exporting client IDs, topics, record
-  payloads, or response body values, but runtime capture, request/response
-  matching, broad response
-  coverage, flexible-version body semantics beyond the ApiVersions response
-  header, and live Kafka proof are not implemented or proven.
+  API keys, bounded ApiVersions request-body validation, and ApiVersions,
+  Produce, and non-flexible Fetch response-error parsing is locally tested
+  without exporting client IDs, software names, topics, record payloads, or
+  response body values, but runtime capture, request/response matching, broad
+  response coverage, flexible-version body semantics beyond ApiVersions, and
+  live Kafka proof are not implemented or proven.
 - **MongoDB protocol observability:** bounded `OP_MSG`, command `OP_QUERY`,
   OP_MSG response-error parsing, and OP_REPLY response parsing is locally
   tested without exporting raw BSON values, namespaces, or raw error messages,

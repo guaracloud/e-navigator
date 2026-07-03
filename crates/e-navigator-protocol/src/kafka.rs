@@ -42,6 +42,7 @@ pub fn parse_kafka_request(
     }
     let body = frame_body(bytes, config.max_header_bytes)?;
     let header = request_header(body, config.max_request_line_bytes)?;
+    validate_request_body(body, &header, config)?;
     let operation = api_key_name(header.api_key)
         .ok_or(KafkaExtraction::UnsupportedApiKey)?
         .to_string();
@@ -286,6 +287,13 @@ struct KafkaRequestHeader {
     api_key: i16,
     api_version: i16,
     client_id_present: bool,
+    body_start: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KafkaClientId {
+    present: bool,
+    cursor: usize,
 }
 
 fn frame_body(bytes: &[u8], max_frame_bytes: usize) -> Result<&[u8], KafkaExtraction> {
@@ -323,8 +331,32 @@ fn request_header(
     Ok(KafkaRequestHeader {
         api_key,
         api_version,
-        client_id_present: client,
+        client_id_present: client.present,
+        body_start: client.cursor,
     })
+}
+
+fn validate_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_key != 18 {
+        return Ok(());
+    }
+    if header.api_version < 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    let mut cursor = header.body_start;
+    if header.api_version >= 3 {
+        skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+        skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
 }
 
 fn api_versions_response_error_code(
@@ -487,7 +519,7 @@ fn parse_client_id(
     body: &[u8],
     cursor: usize,
     max_client_id_bytes: usize,
-) -> Result<bool, KafkaExtraction> {
+) -> Result<KafkaClientId, KafkaExtraction> {
     let non_flexible = parse_nullable_string(body, cursor, max_client_id_bytes);
     if let Ok(client_id_present) = non_flexible {
         return Ok(client_id_present);
@@ -507,11 +539,14 @@ fn parse_nullable_string(
     body: &[u8],
     mut cursor: usize,
     max_client_id_bytes: usize,
-) -> Result<bool, KafkaExtraction> {
+) -> Result<KafkaClientId, KafkaExtraction> {
     let len = read_i16_be(body, cursor)?;
     cursor += 2;
     if len == -1 {
-        return Ok(false);
+        return Ok(KafkaClientId {
+            present: false,
+            cursor,
+        });
     }
     if len < -1 {
         return Err(KafkaExtraction::MalformedFrame);
@@ -527,14 +562,17 @@ fn parse_nullable_string(
         .get(cursor..end)
         .ok_or(KafkaExtraction::MalformedFrame)?;
     std::str::from_utf8(raw).map_err(|_| KafkaExtraction::InvalidUtf8)?;
-    Ok(len > 0)
+    Ok(KafkaClientId {
+        present: len > 0,
+        cursor: end,
+    })
 }
 
 fn parse_compact_nullable_string(
     body: &[u8],
     mut cursor: usize,
     max_client_id_bytes: usize,
-) -> Result<bool, KafkaExtraction> {
+) -> Result<KafkaClientId, KafkaExtraction> {
     let encoded_len = read_unsigned_varint(body, &mut cursor)?;
     let client_id_present = encoded_len != 0;
     if client_id_present {
@@ -554,7 +592,36 @@ fn parse_compact_nullable_string(
         cursor = end;
     }
     skip_tagged_fields(body, &mut cursor, max_client_id_bytes)?;
-    Ok(client_id_present)
+    Ok(KafkaClientId {
+        present: client_id_present,
+        cursor,
+    })
+}
+
+fn skip_compact_string(
+    body: &[u8],
+    cursor: &mut usize,
+    max_string_bytes: usize,
+) -> Result<(), KafkaExtraction> {
+    let encoded_len = read_unsigned_varint(body, cursor)?;
+    if encoded_len == 0 {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    let len = encoded_len
+        .checked_sub(1)
+        .ok_or(KafkaExtraction::MalformedFrame)?;
+    if len > max_string_bytes {
+        return Err(KafkaExtraction::ClientIdTooLong);
+    }
+    let end = cursor
+        .checked_add(len)
+        .ok_or(KafkaExtraction::MalformedFrame)?;
+    let raw = body
+        .get(*cursor..end)
+        .ok_or(KafkaExtraction::MalformedFrame)?;
+    std::str::from_utf8(raw).map_err(|_| KafkaExtraction::InvalidUtf8)?;
+    *cursor = end;
+    Ok(())
 }
 
 fn skip_tagged_fields(

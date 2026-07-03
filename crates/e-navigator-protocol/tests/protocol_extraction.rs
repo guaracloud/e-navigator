@@ -1768,7 +1768,12 @@ fn extracts_kafka_produce_request_without_client_topic_or_payload_values() {
 
 #[test]
 fn extracts_kafka_flexible_api_versions_request_without_client_id_value() {
-    let bytes = kafka_flexible_request_frame(18, 3, Some(b"secret-flex-client"), b"\0\0");
+    let bytes = kafka_flexible_request_frame(
+        18,
+        3,
+        Some(b"secret-flex-client"),
+        b"\x0bsecret-app\x0fsecret-version\0",
+    );
 
     let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
         .expect("flexible kafka header parses");
@@ -1777,12 +1782,11 @@ fn extracts_kafka_flexible_api_versions_request_without_client_id_value() {
     assert!(extraction.attributes.iter().any(|attribute| attribute.key
         == "messaging.kafka.client_id_present"
         && attribute.value == "true"));
-    assert!(
-        !extraction
-            .attributes
-            .iter()
-            .any(|attribute| attribute.value.contains("secret-flex-client"))
-    );
+    assert!(!extraction.attributes.iter().any(|attribute| {
+        attribute.value.contains("secret-flex-client")
+            || attribute.value.contains("secret-app")
+            || attribute.value.contains("secret-version")
+    }));
 }
 
 #[test]
@@ -2150,6 +2154,31 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_request(&kafka_request_frame(99, 0, None, b""), &config).unwrap_err(),
         KafkaExtraction::UnsupportedApiKey
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(18, 0, None, b"trailing"), &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(18, 3, None, b"\0\x01\0"),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(18, 3, None, b"\x0bsecret-app\x01\0"),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
     );
     assert_eq!(
         parse_kafka_api_versions_response(&[], 0, &config).unwrap_err(),
