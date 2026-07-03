@@ -41,17 +41,25 @@ pub(crate) fn sample_processes(
             }
         };
         let status = read_bounded_to_string(&path.join("status"), config.max_file_bytes).ok();
-        let fd_count = count_dir_entries(&path.join("fd"), config.max_fds_per_process).unwrap_or(0);
+        let fd_count =
+            count_dir_entries(&path.join("fd"), config.max_fds_per_process).unwrap_or_default();
+        if fd_count.truncated {
+            warnings.push(format!(
+                "{}/fd: file descriptor scan truncated at {} entries",
+                path.display(),
+                config.max_fds_per_process
+            ));
+        }
         let socket_count =
-            count_socket_fds(&path.join("fd"), config.max_fds_per_process).unwrap_or(0);
+            count_socket_fds(&path.join("fd"), config.max_fds_per_process).unwrap_or_default();
         match parse_process_stat(
             pid,
             &stat,
             status.as_deref(),
             clock_ticks_per_second,
             page_size_bytes,
-            fd_count,
-            socket_count,
+            fd_count.count,
+            socket_count.count,
             started,
             ended,
         ) {
@@ -120,7 +128,7 @@ mod tests {
         let config = HostResourceConfig {
             procfs_root: root.clone(),
             max_processes: 4,
-            max_fds_per_process: 1,
+            max_fds_per_process: 2,
             ..HostResourceConfig::default()
         };
         let mut warnings = Vec::new();
@@ -131,8 +139,42 @@ mod tests {
         assert_eq!(observations[0].process.pid, 42);
         assert_eq!(observations[0].process.command, "api");
         assert_eq!(observations[0].process.uid, Some(1000));
-        assert_eq!(observations[0].open_fds, Some(1));
+        assert_eq!(observations[0].open_fds, Some(2));
         assert_eq!(observations[0].thread_count, Some(4));
+
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn process_fd_scan_truncation_is_reported() {
+        let root = temp_path("process-fd-cap");
+        let _ = std::fs::remove_dir_all(&root);
+        let pid_root = root.join("42");
+        std::fs::create_dir_all(pid_root.join("fd")).expect("fd dir");
+        std::fs::write(
+            pid_root.join("stat"),
+            "42 (api) S 1 1 1 0 -1 0 0 0 0 0 1 1 0 0 20 0 1 0 100 8192 1\n",
+        )
+        .expect("stat");
+        std::fs::write(pid_root.join("fd/0"), "").expect("fd");
+        std::fs::write(pid_root.join("fd/1"), "").expect("fd");
+
+        let config = HostResourceConfig {
+            procfs_root: root.clone(),
+            max_processes: 4,
+            max_fds_per_process: 1,
+            ..HostResourceConfig::default()
+        };
+        let mut warnings = Vec::new();
+        let observations = sample_processes(&config, 1_000, 2_000, &mut warnings);
+
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].open_fds, Some(1));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("file descriptor scan truncated"))
+        );
 
         std::fs::remove_dir_all(root).expect("cleanup");
     }

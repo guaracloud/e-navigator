@@ -52,8 +52,8 @@ or chart rendering:
   selector-shape/whitespace/duplicate bounds plus response/cache/label/path
   bounds, runtime `NODE_NAME` field-selector shape validation, including
   combined container-ID and pod-IP cache-entry bounds, cgroup-ID attribution
-  scan/cache bounds, and host resource source scan/path/cgroup-traversal plus
-  metric-generator cardinality bounds;
+  scan/cache bounds, and host resource source scan/path/cgroup-traversal/fd
+  scan plus metric-generator cardinality bounds;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat
   parsing, including cgroup container-ID extraction that requires
   container/Kubernetes cgroup markers rather than unrelated 64-hex substrings;

@@ -15,23 +15,41 @@ pub(crate) fn read_bounded_to_string(path: &Path, max_bytes: u64) -> Result<Stri
     Ok(buffer)
 }
 
-pub(crate) fn count_dir_entries(path: &Path, max_entries: usize) -> Result<u64, String> {
-    Ok(fs::read_dir(path)
-        .map_err(|err| err.to_string())?
-        .take(max_entries)
-        .filter_map(Result::ok)
-        .count() as u64)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct BoundedCount {
+    pub count: u64,
+    pub truncated: bool,
 }
 
-pub(crate) fn count_socket_fds(path: &Path, max_entries: usize) -> Result<u64, String> {
+pub(crate) fn count_dir_entries(path: &Path, max_entries: usize) -> Result<BoundedCount, String> {
+    let mut count = 0u64;
+    let mut truncated = false;
+    for entry in fs::read_dir(path).map_err(|err| err.to_string())? {
+        let Ok(_) = entry else {
+            continue;
+        };
+        if count as usize >= max_entries {
+            truncated = true;
+            break;
+        }
+        count = count.saturating_add(1);
+    }
+    Ok(BoundedCount { count, truncated })
+}
+
+pub(crate) fn count_socket_fds(path: &Path, max_entries: usize) -> Result<BoundedCount, String> {
     let mut count = 0;
-    for entry in fs::read_dir(path)
-        .map_err(|err| err.to_string())?
-        .take(max_entries)
-    {
+    let mut visited = 0usize;
+    let mut truncated = false;
+    for entry in fs::read_dir(path).map_err(|err| err.to_string())? {
         let Ok(entry) = entry else {
             continue;
         };
+        if visited >= max_entries {
+            truncated = true;
+            break;
+        }
+        visited = visited.saturating_add(1);
         if fs::read_link(entry.path())
             .map(|target| target.to_string_lossy().starts_with("socket:"))
             .unwrap_or(false)
@@ -39,7 +57,7 @@ pub(crate) fn count_socket_fds(path: &Path, max_entries: usize) -> Result<u64, S
             count += 1;
         }
     }
-    Ok(count)
+    Ok(BoundedCount { count, truncated })
 }
 
 pub(crate) fn bounded_numeric_dirs(
@@ -249,7 +267,8 @@ mod tests {
 
         let count = count_dir_entries(&root, 1).expect("count");
 
-        assert_eq!(count, 1);
+        assert_eq!(count.count, 1);
+        assert!(count.truncated);
         std::fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -266,7 +285,8 @@ mod tests {
 
         let count = count_socket_fds(&root, 1).expect("count");
 
-        assert_eq!(count, 1);
+        assert_eq!(count.count, 1);
+        assert!(count.truncated);
         std::fs::remove_dir_all(root).expect("cleanup");
     }
 
