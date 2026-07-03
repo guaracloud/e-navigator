@@ -173,6 +173,21 @@ fn raw_dns_to_signal_with_config(
     }
 }
 
+#[cfg(feature = "fuzzing")]
+pub fn fuzz_decode_raw_dns_event(bytes: &[u8]) -> bool {
+    const MAX_FUZZ_BYTES: usize = 1024;
+
+    let bytes = &bytes[..bytes.len().min(MAX_FUZZ_BYTES)];
+    raw_dns_to_signal_with_config(
+        bytes,
+        None,
+        1_000,
+        std::path::Path::new("__e_navigator_fuzz_no_procfs__"),
+        &DnsSourceConfig::default(),
+    )
+    .is_some()
+}
+
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn raw_dns_diagnostic_values(bytes: &[u8]) -> Option<Vec<String>> {
     raw_dns_diagnostic_values_with_config(bytes, &DnsSourceConfig::default())
