@@ -112,6 +112,8 @@ or chart rendering:
 - local Criterion hot-path benchmark harness compile coverage for host parsers,
   raw Aya decode harnesses, traceparent, HTTP, gRPC, Kafka, MongoDB, MySQL,
   NATS, PostgreSQL, and Redis protocol parsers, generators, and sink formatters;
+- dedicated fuzz-target build checking through `scripts/fuzz_check.sh`, now
+  wired into the local quality gate;
 - Helm rendering, schema checks, and release verification workflow structure.
 
 ## Runtime-Proven Slices
