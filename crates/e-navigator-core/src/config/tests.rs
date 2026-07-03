@@ -919,6 +919,32 @@ fn http_source_limits_are_validated() {
         },
         "http_source.max_tracestate_bytes must be between 1 and 4096",
     );
+
+    assert_invalid(
+        RuntimeConfig {
+            http_source: HttpSourceConfig {
+                max_header_bytes: 16,
+                max_request_line_bytes: 17,
+                max_tracestate_bytes: 16,
+                ..HttpSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "http_source.max_request_line_bytes must be less than or equal to http_source.max_header_bytes",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            http_source: HttpSourceConfig {
+                max_header_bytes: 16,
+                max_request_line_bytes: 16,
+                max_tracestate_bytes: 17,
+                ..HttpSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "http_source.max_tracestate_bytes must be less than or equal to http_source.max_header_bytes",
+    );
 }
 
 #[test]

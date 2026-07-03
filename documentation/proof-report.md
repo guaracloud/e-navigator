@@ -30,7 +30,8 @@ or chart rendering:
   events, including build-checked DNS and HTTP raw decode fuzz targets;
 - bounded DNS request parsing with configurable packet and diagnostic preview
   limits plus validated preview/packet relationships, bounded HTTP request
-  parsing with configurable HTTP parser limits,
+  parsing with configurable HTTP parser limits and validated header/sub-limit
+  relationships,
   HTTP response-status fixture parsing with a build-checked parser fuzz target,
   decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with a
   build-checked parser fuzz target, Kafka request-header and ApiVersions

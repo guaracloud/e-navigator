@@ -69,6 +69,18 @@ impl HttpSourceConfig {
                 ),
             ));
         }
+        if self.max_request_line_bytes > self.max_header_bytes {
+            return Err(ConfigError::invalid_value(
+                "http_source.max_request_line_bytes",
+                "http_source.max_request_line_bytes must be less than or equal to http_source.max_header_bytes",
+            ));
+        }
+        if self.max_tracestate_bytes > self.max_header_bytes {
+            return Err(ConfigError::invalid_value(
+                "http_source.max_tracestate_bytes",
+                "http_source.max_tracestate_bytes must be less than or equal to http_source.max_header_bytes",
+            ));
+        }
         Ok(())
     }
 }
