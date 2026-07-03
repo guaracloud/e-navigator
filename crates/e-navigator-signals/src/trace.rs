@@ -8,6 +8,7 @@ use crate::{
 const MAX_TRACE_ATTRIBUTES: usize = 16;
 const MAX_TRACE_ATTRIBUTE_KEY_BYTES: usize = 128;
 const MAX_TRACE_ATTRIBUTE_VALUE_BYTES: usize = 256;
+const MAX_TRACE_STRING_BYTES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -135,4 +136,26 @@ pub fn is_sensitive_trace_attribute_key(key: &str) -> bool {
         || key.contains("api_key")
         || key.contains("apikey")
         || key.contains("credential")
+}
+
+pub(crate) fn sanitize_trace_string(value: &mut String) {
+    *value = truncate_utf8(value, MAX_TRACE_STRING_BYTES);
+}
+
+pub(crate) fn sanitize_optional_trace_string(value: &mut Option<String>) {
+    if let Some(inner) = value {
+        sanitize_trace_string(inner);
+    }
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
 }

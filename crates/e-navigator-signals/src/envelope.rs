@@ -2,7 +2,9 @@ use e_navigator_core::Signal;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 
 use crate::profiling::{sanitize_optional_profiling_string, sanitize_profiling_string};
-use crate::trace::sanitize_trace_attributes;
+use crate::trace::{
+    sanitize_optional_trace_string, sanitize_trace_attributes, sanitize_trace_string,
+};
 use crate::{
     CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
     CgroupPidsObservation, DependencyEdgeEvent, DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent,
@@ -842,6 +844,8 @@ impl SignalEnvelope {
         mut observation: TraceSpanObservation,
     ) -> Self {
         sanitize_trace_attributes(&mut observation.attributes);
+        sanitize_trace_string(&mut observation.name);
+        sanitize_optional_trace_string(&mut observation.service_name);
         Self::new(
             source,
             host,
@@ -856,6 +860,8 @@ impl SignalEnvelope {
         mut observation: ServiceInteractionSpanObservation,
     ) -> Self {
         sanitize_trace_attributes(&mut observation.attributes);
+        sanitize_trace_string(&mut observation.name);
+        sanitize_optional_trace_string(&mut observation.error_type);
         Self::new(
             source,
             host,
@@ -870,6 +876,7 @@ impl SignalEnvelope {
         mut observation: TraceServicePathObservation,
     ) -> Self {
         sanitize_trace_attributes(&mut observation.attributes);
+        sanitize_trace_string(&mut observation.path_key);
         Self::new(
             source,
             host,
@@ -881,8 +888,12 @@ impl SignalEnvelope {
     pub fn trace_correlation_warning(
         source: impl Into<String>,
         host: Option<String>,
-        warning: TraceCorrelationWarning,
+        mut warning: TraceCorrelationWarning,
     ) -> Self {
+        sanitize_trace_string(&mut warning.warning_type);
+        sanitize_trace_string(&mut warning.message);
+        sanitize_trace_string(&mut warning.source_signal_kind);
+        sanitize_trace_string(&mut warning.source_module);
         Self::new(
             source,
             host,
@@ -897,6 +908,8 @@ impl SignalEnvelope {
         mut observation: ProtocolRequestObservation,
     ) -> Self {
         sanitize_trace_attributes(&mut observation.attributes);
+        sanitize_optional_trace_string(&mut observation.service_name);
+        sanitize_optional_trace_string(&mut observation.method);
         Self::new(
             source,
             host,
@@ -925,6 +938,9 @@ impl SignalEnvelope {
         mut observation: RequestSpanObservation,
     ) -> Self {
         sanitize_trace_attributes(&mut observation.attributes);
+        sanitize_trace_string(&mut observation.name);
+        sanitize_optional_trace_string(&mut observation.service_name);
+        sanitize_optional_trace_string(&mut observation.method);
         Self::new(
             source,
             host,
@@ -936,8 +952,12 @@ impl SignalEnvelope {
     pub fn request_correlation_warning(
         source: impl Into<String>,
         host: Option<String>,
-        warning: RequestCorrelationWarning,
+        mut warning: RequestCorrelationWarning,
     ) -> Self {
+        sanitize_trace_string(&mut warning.warning_type);
+        sanitize_trace_string(&mut warning.message);
+        sanitize_trace_string(&mut warning.source_signal_kind);
+        sanitize_trace_string(&mut warning.source_module);
         Self::new(
             source,
             host,
@@ -1603,6 +1623,147 @@ mod tests {
         assert_bounded_safe_trace_attributes(&span);
         assert_bounded_safe_trace_attributes(&interaction);
         assert_bounded_safe_trace_attributes(&path);
+    }
+
+    #[test]
+    fn trace_constructors_bound_scalar_strings_before_json_stdout() {
+        let long_value = "t".repeat(320);
+        let span = SignalEnvelope::trace_span_observation(
+            "source.synthetic_exec",
+            Some("node-a".to_string()),
+            TraceSpanObservation {
+                name: long_value.clone(),
+                trace_id: None,
+                span_id: None,
+                parent_span_id: None,
+                start_unix_nanos: 1_000,
+                end_unix_nanos: Some(3_000),
+                duration_nanos: Some(2_000),
+                correlation_kind: TraceCorrelationKind::Synthetic,
+                confidence: TraceConfidence::High,
+                service_name: Some(long_value.clone()),
+                process: None,
+                container: None,
+                kubernetes: None,
+                peer: None,
+                attributes: vec![],
+            },
+        );
+        let interaction = SignalEnvelope::service_interaction_span_observation(
+            "generator.trace_correlation",
+            Some("node-a".to_string()),
+            ServiceInteractionSpanObservation {
+                name: long_value.clone(),
+                trace_id: None,
+                span_id: None,
+                parent_span_id: None,
+                start_unix_nanos: 10_000,
+                end_unix_nanos: Some(15_000),
+                duration_nanos: Some(5_000),
+                correlation_kind: TraceCorrelationKind::NetworkInferred,
+                confidence: TraceConfidence::Medium,
+                source: DependencyEndpoint {
+                    workload: None,
+                    container: None,
+                    address: None,
+                    port: None,
+                    domain: None,
+                },
+                destination: DependencyEndpoint {
+                    workload: None,
+                    container: None,
+                    address: None,
+                    port: None,
+                    domain: None,
+                },
+                protocol: NetworkProtocol::Tcp,
+                process: None,
+                error_type: Some(long_value.clone()),
+                attributes: vec![],
+            },
+        );
+        let path = SignalEnvelope::trace_service_path_observation(
+            "generator.trace_correlation",
+            Some("node-a".to_string()),
+            TraceServicePathObservation {
+                path_key: long_value.clone(),
+                source: DependencyEndpoint {
+                    workload: None,
+                    container: None,
+                    address: None,
+                    port: None,
+                    domain: None,
+                },
+                destination: DependencyEndpoint {
+                    workload: None,
+                    container: None,
+                    address: None,
+                    port: None,
+                    domain: None,
+                },
+                protocol: NetworkProtocol::Tcp,
+                observations: 2,
+                first_seen_unix_nanos: 1_000,
+                last_seen_unix_nanos: 3_000,
+                correlation_kind: TraceCorrelationKind::DependencyInferred,
+                confidence: TraceConfidence::Low,
+                attributes: vec![],
+            },
+        );
+        let warning = SignalEnvelope::trace_correlation_warning(
+            "generator.trace_correlation",
+            Some("node-a".to_string()),
+            TraceCorrelationWarning {
+                warning_type: long_value.clone(),
+                message: long_value.clone(),
+                timestamp_unix_nanos: 1_200,
+                source_signal_kind: long_value.clone(),
+                source_module: long_value,
+                correlation_kind: TraceCorrelationKind::NetworkInferred,
+                process: None,
+                container: None,
+                kubernetes: None,
+                peer: None,
+            },
+        );
+
+        let span_json = serde_json::to_value(&span).expect("span serializes");
+        let interaction_json = serde_json::to_value(&interaction).expect("interaction serializes");
+        let path_json = serde_json::to_value(&path).expect("path serializes");
+        let warning_json = serde_json::to_value(&warning).expect("warning serializes");
+
+        assert_eq!(
+            span_json["payload"]["name"].as_str().map(str::len),
+            Some(256)
+        );
+        assert_eq!(
+            span_json["payload"]["service_name"].as_str().map(str::len),
+            Some(256)
+        );
+        assert_eq!(
+            interaction_json["payload"]["name"].as_str().map(str::len),
+            Some(256)
+        );
+        assert_eq!(
+            interaction_json["payload"]["error_type"]
+                .as_str()
+                .map(str::len),
+            Some(256)
+        );
+        assert_eq!(
+            path_json["payload"]["path_key"].as_str().map(str::len),
+            Some(256)
+        );
+        assert_eq!(
+            warning_json["payload"]["message"].as_str().map(str::len),
+            Some(256)
+        );
+        assert_eq!(
+            warning_json["payload"]["source_module"]
+                .as_str()
+                .map(str::len),
+            Some(256)
+        );
     }
 
     #[test]

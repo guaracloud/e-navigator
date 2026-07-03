@@ -187,6 +187,112 @@ fn request_constructors_bound_and_filter_trace_attributes_before_json_stdout() {
 }
 
 #[test]
+fn request_constructors_bound_scalar_strings_before_json_stdout() {
+    let long_value = "r".repeat(320);
+    let protocol = SignalEnvelope::protocol_request_observation(
+        "source.protocol_fixture",
+        Some("node-a".to_string()),
+        ProtocolRequestObservation {
+            protocol: ProtocolKind::Http,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_500),
+            duration_nanos: Some(1_500),
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            traceparent: None,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::High,
+            service_name: Some(long_value.clone()),
+            method: Some(long_value.clone()),
+            status_code: Some(200),
+            process: None,
+            container: None,
+            kubernetes: None,
+            peer: None,
+            attributes: vec![],
+        },
+    );
+    let span = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: long_value.clone(),
+            protocol: ProtocolKind::Http,
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_500),
+            duration_nanos: Some(1_500),
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::High,
+            service_name: Some(long_value.clone()),
+            method: Some(long_value.clone()),
+            status_code: Some(200),
+            process: None,
+            container: None,
+            kubernetes: None,
+            peer: None,
+            attributes: vec![],
+        },
+    );
+    let warning = SignalEnvelope::request_correlation_warning(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestCorrelationWarning {
+            warning_type: long_value.clone(),
+            message: long_value.clone(),
+            timestamp_unix_nanos: 1_200,
+            source_signal_kind: long_value.clone(),
+            source_module: long_value,
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            protocol: ProtocolKind::Http,
+            process: None,
+            container: None,
+            kubernetes: None,
+            peer: None,
+        },
+    );
+
+    let protocol_json = serde_json::to_value(&protocol).expect("protocol serializes");
+    let span_json = serde_json::to_value(&span).expect("span serializes");
+    let warning_json = serde_json::to_value(&warning).expect("warning serializes");
+
+    assert_eq!(
+        protocol_json["payload"]["service_name"]
+            .as_str()
+            .map(str::len),
+        Some(256)
+    );
+    assert_eq!(
+        protocol_json["payload"]["method"].as_str().map(str::len),
+        Some(256)
+    );
+    assert_eq!(
+        span_json["payload"]["name"].as_str().map(str::len),
+        Some(256)
+    );
+    assert_eq!(
+        span_json["payload"]["service_name"].as_str().map(str::len),
+        Some(256)
+    );
+    assert_eq!(
+        warning_json["payload"]["warning_type"]
+            .as_str()
+            .map(str::len),
+        Some(256)
+    );
+    assert_eq!(
+        warning_json["payload"]["source_module"]
+            .as_str()
+            .map(str::len),
+        Some(256)
+    );
+}
+
+#[test]
 fn serializes_redis_protocol_request_observation_without_payload_values() {
     let signal = SignalEnvelope::protocol_request_observation(
         "source.protocol_fixture",
