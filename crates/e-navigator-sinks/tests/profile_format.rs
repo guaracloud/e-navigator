@@ -481,7 +481,10 @@ fn pprof_profile_sample_encodes_stack_values_and_safe_labels() {
             attributes: vec![
                 attr("profiling.source", "fixture"),
                 attr("authorization", "Bearer token"),
+                attr("schema", "evil"),
                 attr("profile_id", "evil"),
+                attr("correlation_kind", "evil"),
+                attr("confidence", "evil"),
             ],
         },
     );
@@ -518,7 +521,10 @@ fn pprof_profile_sample_encodes_stack_values_and_safe_labels() {
     assert_eq!(label_value(&profile, "thread.name"), Some("worker"));
     assert_eq!(label_value(&profile, "profiling.source"), Some("fixture"));
     assert_eq!(label_value(&profile, "authorization"), None);
+    assert_eq!(label_value(&profile, "schema"), None);
     assert_eq!(label_value(&profile, "profile_id"), None);
+    assert_eq!(label_value(&profile, "correlation_kind"), None);
+    assert_eq!(label_value(&profile, "confidence"), None);
 }
 
 #[test]

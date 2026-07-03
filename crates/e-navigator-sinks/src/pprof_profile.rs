@@ -190,32 +190,20 @@ fn bounded_attributes(attributes: &[ProfilingAttribute]) -> Vec<ProfilingAttribu
 
 fn should_drop_attribute(key: &str) -> bool {
     const CANONICAL_FIELDS: &[&str] = &[
+        "schema",
         "profile_id",
         "profile_kind",
+        "correlation_kind",
+        "confidence",
         "sample_count",
         "stack_id",
         "frame_count",
-    ];
-    const SENSITIVE_FRAGMENTS: &[&str] = &[
-        "token",
-        "authorization",
-        "cookie",
-        "password",
-        "secret",
-        "api_key",
-        "apikey",
-        "x-api-key",
-        "credential",
-        "private_key",
-        "jwt",
     ];
 
     CANONICAL_FIELDS
         .iter()
         .any(|field| key.eq_ignore_ascii_case(field))
-        || SENSITIVE_FRAGMENTS
-            .iter()
-            .any(|fragment| contains_ascii_case_insensitive(key, fragment))
+        || e_navigator_signals::is_sensitive_profiling_attribute_key(key)
 }
 
 fn profile_kind_name(kind: e_navigator_signals::ProfilingKind) -> &'static str {
@@ -226,13 +214,6 @@ fn profile_kind_name(kind: e_navigator_signals::ProfilingKind) -> &'static str {
         e_navigator_signals::ProfilingKind::Unknown => "unknown",
         _ => "unknown",
     }
-}
-
-fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 fn truncate_utf8(value: &str, max_bytes: usize) -> String {
