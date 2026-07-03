@@ -167,6 +167,15 @@ pub(crate) fn sanitize_network_connection_failure_event(event: &mut NetworkConne
     sanitize_network_signal_string(&mut event.remote_address);
 }
 
+pub(crate) fn sanitize_network_flow_warning(warning: &mut NetworkFlowWarning) {
+    sanitize_network_signal_string(&mut warning.warning_type);
+    sanitize_network_signal_string(&mut warning.message);
+    sanitize_network_signal_string(&mut warning.source_signal_kind);
+    sanitize_network_signal_string(&mut warning.source_module);
+    sanitize_network_signal_string(&mut warning.remote_address);
+    sanitize_network_process_identity(&mut warning.process);
+}
+
 fn sanitize_network_process_identity(process: &mut NetworkProcessIdentity) {
     sanitize_network_signal_string(&mut process.command);
     sanitize_optional_network_signal_string(&mut process.executable);

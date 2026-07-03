@@ -11,7 +11,7 @@ use crate::metrics::{
 };
 use crate::network::{
     sanitize_network_connection_close_event, sanitize_network_connection_failure_event,
-    sanitize_network_connection_open_event,
+    sanitize_network_connection_open_event, sanitize_network_flow_warning,
 };
 use crate::profiling::{sanitize_optional_profiling_string, sanitize_profiling_string};
 use crate::resource::sanitize_resource_metric_attributes;
@@ -575,8 +575,9 @@ impl SignalEnvelope {
     pub fn network_flow_warning(
         source: impl Into<String>,
         host: Option<String>,
-        warning: NetworkFlowWarning,
+        mut warning: NetworkFlowWarning,
     ) -> Self {
+        sanitize_network_flow_warning(&mut warning);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::NetworkFlowWarning,
@@ -1469,6 +1470,49 @@ mod tests {
             decoded_payload,
             SignalPayload::NetworkFlowWarning(_)
         ));
+    }
+
+    #[test]
+    fn network_flow_warning_constructor_bounds_strings_before_json_stdout() {
+        let long = "x".repeat(300);
+        let signal = SignalEnvelope::network_flow_warning(
+            "generator.network_metrics",
+            None,
+            NetworkFlowWarning {
+                warning_type: long.clone(),
+                message: long.clone(),
+                timestamp_unix_nanos: 900,
+                source_signal_kind: long.clone(),
+                source_module: long.clone(),
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                remote_address: long.clone(),
+                remote_port: 443,
+                process: NetworkProcessIdentity {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: long.clone(),
+                    executable: Some(long),
+                    cgroup_id: None,
+                },
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        assert_payload_string_lengths(
+            &signal,
+            &[
+                &["warning_type"],
+                &["message"],
+                &["source_signal_kind"],
+                &["source_module"],
+                &["remote_address"],
+                &["process", "command"],
+                &["process", "executable"],
+            ],
+        );
     }
 
     #[test]
