@@ -6,6 +6,8 @@ use e_navigator_signals::{
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+const MAX_METRIC_STRING_BYTES: usize = 256;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OtelMetricKind {
@@ -218,40 +220,36 @@ fn resource_attributes(
 ) -> BTreeMap<String, serde_json::Value> {
     let mut resource = BTreeMap::new();
     if let Some(host) = &signal.host {
-        resource.insert("host.name".to_string(), serde_json::json!(host));
+        insert_resource_string(&mut resource, "host.name", host);
     }
     if let Some(container) = container {
-        resource.insert(
-            "container.id".to_string(),
-            serde_json::json!(container.container_id),
-        );
+        insert_resource_string(&mut resource, "container.id", &container.container_id);
         if let Some(runtime) = &container.runtime {
-            resource.insert("container.runtime".to_string(), serde_json::json!(runtime));
+            insert_resource_string(&mut resource, "container.runtime", runtime);
         }
     }
     if let Some(kubernetes) = kubernetes {
-        resource.insert(
-            "k8s.namespace.name".to_string(),
-            serde_json::json!(kubernetes.namespace),
-        );
-        resource.insert(
-            "k8s.pod.name".to_string(),
-            serde_json::json!(kubernetes.pod_name),
-        );
+        insert_resource_string(&mut resource, "k8s.namespace.name", &kubernetes.namespace);
+        insert_resource_string(&mut resource, "k8s.pod.name", &kubernetes.pod_name);
         if let Some(uid) = &kubernetes.pod_uid {
-            resource.insert("k8s.pod.uid".to_string(), serde_json::json!(uid));
+            insert_resource_string(&mut resource, "k8s.pod.uid", uid);
         }
         if let Some(container_name) = &kubernetes.container_name {
-            resource.insert(
-                "k8s.container.name".to_string(),
-                serde_json::json!(container_name),
-            );
+            insert_resource_string(&mut resource, "k8s.container.name", container_name);
         }
         if let Some(node_name) = &kubernetes.node_name {
-            resource.insert("k8s.node.name".to_string(), serde_json::json!(node_name));
+            insert_resource_string(&mut resource, "k8s.node.name", node_name);
         }
     }
     resource
+}
+
+fn insert_resource_string(
+    resource: &mut BTreeMap<String, serde_json::Value>,
+    key: &'static str,
+    value: &str,
+) {
+    resource.insert(key.to_string(), bounded_json_string(value));
 }
 
 fn resource_metric_resource_attributes(
@@ -264,7 +262,7 @@ fn resource_metric_resource_attributes(
         metric.resource.kubernetes.as_ref(),
     );
     if let Some(host) = &metric.resource.host_name {
-        resource.insert("host.name".to_string(), serde_json::json!(host));
+        insert_resource_string(&mut resource, "host.name", host);
     }
     resource
 }
@@ -279,7 +277,7 @@ fn resource_counter_resource_attributes(
         metric.resource.kubernetes.as_ref(),
     );
     if let Some(host) = &metric.resource.host_name {
-        resource.insert("host.name".to_string(), serde_json::json!(host));
+        insert_resource_string(&mut resource, "host.name", host);
     }
     resource
 }
@@ -293,7 +291,7 @@ fn resource_metric_attributes(
     let mut mapped = BTreeMap::new();
     for attribute in attributes {
         let key = resource_attribute_key(metric_name, &attribute.key, &attribute.value);
-        mapped.insert(key.to_string(), serde_json::json!(attribute.value.clone()));
+        insert_attribute_string(&mut mapped, key, &attribute.value);
     }
     if let Some(process) = process {
         mapped.insert("process.pid".to_string(), serde_json::json!(process.pid));
@@ -302,16 +300,24 @@ fn resource_metric_attributes(
         }
         mapped.insert(
             "process.command".to_string(),
-            serde_json::json!(process.command.clone()),
+            bounded_json_string(&process.command),
         );
     }
     if let Some(cgroup) = cgroup {
         mapped.insert(
             "linux.cgroup.path".to_string(),
-            serde_json::json!(cgroup.cgroup_path.clone()),
+            bounded_json_string(&cgroup.cgroup_path),
         );
     }
     mapped
+}
+
+fn insert_attribute_string(
+    attributes: &mut BTreeMap<String, serde_json::Value>,
+    key: impl Into<String>,
+    value: &str,
+) {
+    attributes.insert(key.into(), bounded_json_string(value));
 }
 
 fn resource_attribute_key<'a>(metric_name: &str, key: &'a str, value: &str) -> &'a str {
@@ -351,10 +357,7 @@ fn network_attributes(
         );
     }
     if let Some(remote_address) = remote_address {
-        attributes.insert(
-            "server.address".to_string(),
-            serde_json::json!(remote_address),
-        );
+        insert_attribute_string(&mut attributes, "server.address", remote_address);
     }
     if let Some(remote_port) = remote_port {
         attributes.insert("server.port".to_string(), serde_json::json!(remote_port));
@@ -368,10 +371,7 @@ fn dns_attributes(
 ) -> BTreeMap<String, serde_json::Value> {
     let mut attributes = BTreeMap::new();
     if let Some(query_name) = query_name {
-        attributes.insert(
-            "dns.question.name".to_string(),
-            serde_json::json!(query_name),
-        );
+        insert_attribute_string(&mut attributes, "dns.question.name", query_name);
     }
     if let Some(response_code) = response_code {
         attributes.insert(
@@ -396,6 +396,22 @@ fn address_family_name(address_family: NetworkAddressFamily) -> &'static str {
         NetworkAddressFamily::Ipv6 => "ipv6",
         _ => "other",
     }
+}
+
+fn bounded_json_string(value: &str) -> serde_json::Value {
+    serde_json::json!(truncate_utf8(value, MAX_METRIC_STRING_BYTES))
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
 }
 
 #[cfg(test)]
@@ -484,6 +500,72 @@ mod tests {
     }
 
     #[test]
+    fn bounds_network_and_dns_metric_string_attributes() {
+        const MAX_VALUE_BYTES: usize = 256;
+
+        let long_value = "m".repeat(MAX_VALUE_BYTES + 64);
+        let network = SignalEnvelope::network_counter_metric(
+            "generator.network_metrics",
+            Some("node-a".to_string()),
+            NetworkCounterMetric {
+                metric_name: "network.connection.open.count".to_string(),
+                unit: "{connection}".to_string(),
+                value: 2,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 100,
+                    end_unix_nanos: 200,
+                },
+                process: None,
+                protocol: Some(e_navigator_signals::NetworkProtocol::Tcp),
+                address_family: Some(e_navigator_signals::NetworkAddressFamily::Ipv4),
+                local_address: None,
+                local_port: None,
+                remote_address: Some(long_value.clone()),
+                remote_port: Some(443),
+                errno: None,
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let dns = SignalEnvelope::dns_counter_metric(
+            "generator.dns_metrics",
+            Some("node-a".to_string()),
+            e_navigator_signals::DnsCounterMetric {
+                metric_name: "dns.query.count".to_string(),
+                unit: "{query}".to_string(),
+                value: 1,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 100,
+                    end_unix_nanos: 200,
+                },
+                query_name: Some(long_value),
+                query_type: None,
+                response_code: None,
+                server_address: None,
+                server_port: None,
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let network_record = format_otel_metric_record(&network).expect("network metric formats");
+        let dns_record = format_otel_metric_record(&dns).expect("dns metric formats");
+
+        assert_eq!(
+            network_record.attributes["server.address"]
+                .as_str()
+                .map(str::len),
+            Some(MAX_VALUE_BYTES)
+        );
+        assert_eq!(
+            dns_record.attributes["dns.question.name"]
+                .as_str()
+                .map(str::len),
+            Some(MAX_VALUE_BYTES)
+        );
+    }
+
+    #[test]
     fn ignores_non_metric_signals() {
         let signal = SignalEnvelope::dependency_edge(
             "generator.test",
@@ -551,6 +633,87 @@ mod tests {
         assert_eq!(record.value, OtelMetricValue::I64(4096));
         assert_eq!(record.resource["host.name"], "node-a");
         assert_eq!(record.attributes["state"], "available");
+    }
+
+    #[test]
+    fn bounds_metric_resource_and_scope_strings() {
+        const MAX_VALUE_BYTES: usize = 256;
+
+        let long_value = "r".repeat(MAX_VALUE_BYTES + 64);
+        let container = e_navigator_signals::ContainerContext {
+            container_id: long_value.clone(),
+            runtime: Some(long_value.clone()),
+        };
+        let mut labels = BTreeMap::new();
+        labels.insert("app".to_string(), "api".to_string());
+        let kubernetes = e_navigator_signals::KubernetesContext {
+            namespace: long_value.clone(),
+            pod_name: long_value.clone(),
+            pod_uid: Some(long_value.clone()),
+            container_name: Some(long_value.clone()),
+            node_name: Some(long_value.clone()),
+            labels,
+        };
+        let signal = SignalEnvelope::resource_counter_metric(
+            "generator.resource_metrics",
+            Some(long_value.clone()),
+            e_navigator_signals::ResourceCounterMetric {
+                metric_name: "process.cpu.time".to_string(),
+                unit: "ns".to_string(),
+                value: 400,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 100,
+                    end_unix_nanos: 200,
+                },
+                resource: e_navigator_signals::ResourceContext {
+                    host_name: Some(long_value.clone()),
+                    container: Some(container.clone()),
+                    kubernetes: Some(kubernetes.clone()),
+                },
+                process: Some(e_navigator_signals::ProcessResourceContext {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: long_value.clone(),
+                    executable: Some("/app/api".to_string()),
+                    container: Some(container),
+                    kubernetes: Some(kubernetes),
+                }),
+                cgroup: Some(e_navigator_signals::CgroupResourceContext {
+                    cgroup_path: long_value.clone(),
+                    container: None,
+                    kubernetes: None,
+                }),
+                attributes: vec![e_navigator_signals::ResourceMetricAttribute {
+                    key: "state".to_string(),
+                    value: long_value,
+                }],
+            },
+        );
+
+        let record = format_otel_metric_record(&signal).expect("resource counter formats");
+
+        for key in [
+            "host.name",
+            "container.id",
+            "container.runtime",
+            "k8s.namespace.name",
+            "k8s.pod.name",
+            "k8s.pod.uid",
+            "k8s.container.name",
+            "k8s.node.name",
+        ] {
+            assert_eq!(
+                record.resource[key].as_str().map(str::len),
+                Some(MAX_VALUE_BYTES)
+            );
+        }
+        for key in ["process.cpu.state", "process.command", "linux.cgroup.path"] {
+            assert_eq!(
+                record.attributes[key].as_str().map(str::len),
+                Some(MAX_VALUE_BYTES)
+            );
+        }
     }
 
     #[test]
