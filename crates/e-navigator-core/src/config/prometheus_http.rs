@@ -58,6 +58,16 @@ impl PrometheusHttpConfig {
                 "prometheus_http.bind_address must not have leading or trailing whitespace when sink.prometheus_http is enabled",
             ));
         }
+        if self
+            .bind_address
+            .bytes()
+            .any(|byte| byte.is_ascii_control())
+        {
+            return Err(ConfigError::invalid_value(
+                "prometheus_http.bind_address",
+                "prometheus_http.bind_address must not contain control characters when sink.prometheus_http is enabled",
+            ));
+        }
         if self.bind_address.len() > Self::MAX_BIND_ADDRESS_BYTES_LIMIT {
             return Err(ConfigError::invalid_value(
                 "prometheus_http.bind_address",

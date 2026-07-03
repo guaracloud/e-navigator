@@ -104,6 +104,12 @@ impl RuntimeConfig {
                 "log_level must not have leading or trailing whitespace",
             ));
         }
+        if self.log_level.bytes().any(|byte| byte.is_ascii_control()) {
+            return Err(ConfigError::invalid_value(
+                "log_level",
+                "log_level must not contain control characters",
+            ));
+        }
         if self.log_level.len() > Self::MAX_LOG_LEVEL_BYTES_LIMIT {
             return Err(ConfigError::invalid_value(
                 "log_level",

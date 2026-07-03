@@ -54,7 +54,8 @@ config:
 ```
 
 Top-level runtime bounds are validated before startup:
-`log_level` must be non-empty and at most 512 bytes. `queue_capacity` must be at most 65,536,
+`log_level` must be non-empty, contain no control characters, and be at most 512 bytes.
+`queue_capacity` must be at most 65,536,
 `max_derived_signals_per_input` at most 4,096, and
 `max_derived_signal_depth` at most 64.
 `runtime_security.kubernetes_api_endpoints` must contain at most 32 entries.
@@ -129,8 +130,8 @@ serviceMonitor:
 
 Prometheus latest-metric storage is also validated before startup:
 `prometheus_http.max_metric_lines` must be at most 262,144, and
-`prometheus_http.bind_address` must not have leading/trailing whitespace or
-exceed 253 bytes.
+`prometheus_http.bind_address` must not have leading/trailing whitespace,
+contain control characters, or exceed 253 bytes.
 
 OTLP HTTP export is configured inside the same `config.toml` override. The
 single `endpoint` remains the fallback for backward compatibility; set

@@ -202,6 +202,22 @@ fn prometheus_http_sink_config_is_validated_when_enabled() {
             ],
             prometheus_http: PrometheusHttpConfig {
                 enabled: true,
+                bind_address: "127.0.0.1\n0.0.0.0".to_string(),
+                ..PrometheusHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "prometheus_http.bind_address must not contain control characters when sink.prometheus_http is enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.synthetic_exec"),
+                ModuleConfig::enabled("sink.prometheus_http"),
+            ],
+            prometheus_http: PrometheusHttpConfig {
+                enabled: true,
                 bind_address: "a".repeat(PrometheusHttpConfig::MAX_BIND_ADDRESS_BYTES_LIMIT + 1),
                 ..PrometheusHttpConfig::default()
             },
@@ -712,6 +728,14 @@ fn runtime_log_level_is_bounded() {
             ..RuntimeConfig::default()
         },
         "log_level must not have leading or trailing whitespace",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            log_level: "info\nwarn".to_string(),
+            ..RuntimeConfig::default()
+        },
+        "log_level must not contain control characters",
     );
 
     assert_invalid(
