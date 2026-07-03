@@ -63,11 +63,12 @@ or chart rendering:
   authority-port validation and a build-checked parser fuzz target, Kafka
   request-header plus ApiVersions and Produce response-error parsing, MongoDB
   wire-message and response-error parsing, MySQL command packet and OK/ERR
-  response parsing with build-checked parser fuzz
+  response parsing with canonical SQLSTATE validation and build-checked parser fuzz
   coverage, NATS text command plus OK/error response parsing, PostgreSQL
-  wire-message and CommandComplete/ErrorResponse parsing with build-checked parser fuzz
-  coverage, and Redis RESP command plus simple/integer/bulk/error response
-  parsing with build-checked parser fuzz coverage;
+  wire-message and CommandComplete/ErrorResponse parsing with canonical
+  SQLSTATE validation and build-checked parser fuzz coverage, and Redis RESP
+  command plus simple/integer/bulk/error response parsing with build-checked
+  parser fuzz coverage;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/error-span
   flow, deterministic service path keys, precise duplicate flow suppression,
@@ -176,14 +177,15 @@ These areas remain explicitly partial:
   coverage, and live NATS proof are not implemented or proven.
 - **MySQL protocol observability:** bounded `COM_QUERY`,
   `COM_STMT_PREPARE`, and OK/ERR response parsing is locally tested without
-  exporting raw SQL text or raw error messages, but runtime capture,
-  request/response matching, broad response coverage, and live MySQL proof are
-  not implemented or proven.
+  exporting raw SQL text or raw error messages, including canonical SQLSTATE
+  validation for error responses, but runtime capture, request/response
+  matching, broad response coverage, and live MySQL proof are not implemented or
+  proven.
 - **PostgreSQL protocol observability:** bounded simple Query, Parse, and
   CommandComplete/ErrorResponse parsing is locally tested without exporting raw
-  SQL text or raw error messages, but runtime capture, request/response
-  matching, broad response coverage, and live PostgreSQL proof are not
-  implemented or proven.
+  SQL text or raw error messages, including canonical SQLSTATE validation for
+  error responses, but runtime capture, request/response matching, broad
+  response coverage, and live PostgreSQL proof are not implemented or proven.
 - **Redis protocol observability:** bounded RESP command and
   simple/integer/bulk/error response parsing is locally tested without
   exporting raw key/value payloads or raw error messages, but runtime capture,
