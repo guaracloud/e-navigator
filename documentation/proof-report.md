@@ -29,8 +29,9 @@ or chart rendering:
 - bounded DNS/HTTP request and HTTP response-status fixture parsing, decoded
   gRPC-over-HTTP/2 metadata and trailer-status parsing, Kafka request-header
   parsing, MongoDB wire-message parsing, MySQL command packet and ERR response
-  parsing, NATS text command parsing, PostgreSQL wire-message and ErrorResponse
-  parsing, and Redis RESP command plus error-response parsing;
+  parsing, NATS text command plus OK/error response parsing, PostgreSQL
+  wire-message and ErrorResponse parsing, and Redis RESP command plus
+  error-response parsing;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/span flow
   and flow-attribution warnings;
@@ -97,10 +98,10 @@ These areas remain explicitly partial:
   runtime capture, request/response matching, status/error extraction, and live
   MongoDB proof are not implemented or proven.
 - **NATS protocol observability:** bounded text command parsing for common
-  publish, subscribe, message, and control lines is locally tested without
-  exporting raw subjects or payloads, but runtime capture, request/response
-  matching, status/error extraction, and live NATS proof are not implemented or
-  proven.
+  publish, subscribe, message, and control lines plus OK/error response parsing
+  is locally tested without exporting raw subjects, payloads, or raw error
+  messages, but runtime capture, request/response matching, broad response
+  coverage, and live NATS proof are not implemented or proven.
 - **MySQL protocol observability:** bounded `COM_QUERY`,
   `COM_STMT_PREPARE`, and ERR response parsing is locally tested without
   exporting raw SQL text or raw error messages, but runtime capture,

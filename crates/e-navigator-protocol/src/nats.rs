@@ -12,6 +12,14 @@ pub struct ParsedNatsCommand {
     pub attributes: Vec<TraceAttribute>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedNatsResponse {
+    pub protocol: ProtocolKind,
+    pub status_code: String,
+    pub error_type: Option<String>,
+    pub attributes: Vec<TraceAttribute>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NatsExtraction {
     FrameTooLong,
@@ -63,10 +71,73 @@ pub fn parse_nats_command(
     })
 }
 
+pub fn parse_nats_response(
+    bytes: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedNatsResponse, NatsExtraction> {
+    if bytes.len() > config.max_header_bytes {
+        return Err(NatsExtraction::FrameTooLong);
+    }
+    let line_end = line_end(bytes, 0).ok_or(NatsExtraction::MalformedFrame)?;
+    if line_end > config.max_request_line_bytes {
+        return Err(NatsExtraction::FrameTooLong);
+    }
+    let line = std::str::from_utf8(&bytes[..line_end]).map_err(|_| NatsExtraction::InvalidUtf8)?;
+    let response = parse_response_line(line)?;
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("nats"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.nats.status_code",
+        Some(response.status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        response.error_type,
+    );
+
+    Ok(ParsedNatsResponse {
+        protocol: ProtocolKind::Nats,
+        status_code: response.status_code.to_string(),
+        error_type: response.error_type.map(str::to_string),
+        attributes,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NatsCommand {
     operation: Option<String>,
     subject_present: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NatsResponse {
+    status_code: &'static str,
+    error_type: Option<&'static str>,
+}
+
+fn parse_response_line(line: &str) -> Result<NatsResponse, NatsExtraction> {
+    let fields = line.split_ascii_whitespace().collect::<Vec<_>>();
+    match fields.as_slice() {
+        ["+OK"] => Ok(NatsResponse {
+            status_code: "OK",
+            error_type: None,
+        }),
+        ["-ERR", ..] if fields.len() > 1 => Ok(NatsResponse {
+            status_code: "ERR",
+            error_type: Some("nats_error"),
+        }),
+        [..] => Err(NatsExtraction::UnsupportedCommand),
+    }
 }
 
 fn parse_control_line(

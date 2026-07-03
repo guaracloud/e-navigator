@@ -7,9 +7,15 @@ use e_navigator_generators::{
 };
 use e_navigator_profiling::model::{NormalizationLimits, parse_profile_fixture};
 use e_navigator_protocol::{
-    ProtocolExtractionConfig, http::parse_http_request, kafka::parse_kafka_request,
-    mongodb::parse_mongodb_message, mysql::parse_mysql_command, nats::parse_nats_command,
-    postgres::parse_postgres_message, redis::parse_redis_command, trace_context::parse_traceparent,
+    ProtocolExtractionConfig,
+    http::parse_http_request,
+    kafka::parse_kafka_request,
+    mongodb::parse_mongodb_message,
+    mysql::parse_mysql_command,
+    nats::{parse_nats_command, parse_nats_response},
+    postgres::parse_postgres_message,
+    redis::parse_redis_command,
+    trace_context::parse_traceparent,
 };
 use e_navigator_signals::{
     ContainerContext, DnsQueryEvent, DnsQueryType, DnsResponseCode, DnsResponseEvent, ExecEvent,
@@ -97,6 +103,7 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     let kafka = b"\0\0\0\x1b\0\0\0\x08\0\0\0\x2a\0\x0cbench-clienttopic";
     let mysql = b"\x18\0\0\0\x03select * from customers";
     let nats = b"PUB orders.created 5\r\nhello\r\n";
+    let nats_response = b"-ERR 'Authorization Violation'\r\n";
     let postgres = b"Q\0\0\0\x1cselect * from customers\0";
     let redis = b"*2\r\n$3\r\nGET\r\n$16\r\ncustomer:pii:123\r\n";
     let protocol_config = ProtocolExtractionConfig::default();
@@ -133,6 +140,9 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     });
     c.bench_function("protocol/nats_pub_command_parse", |b| {
         b.iter(|| parse_nats_command(black_box(nats), &protocol_config).unwrap())
+    });
+    c.bench_function("protocol/nats_error_response_parse", |b| {
+        b.iter(|| parse_nats_response(black_box(nats_response), &protocol_config).unwrap())
     });
     c.bench_function("protocol/postgres_simple_query_parse", |b| {
         b.iter(|| parse_postgres_message(black_box(postgres), &protocol_config).unwrap())

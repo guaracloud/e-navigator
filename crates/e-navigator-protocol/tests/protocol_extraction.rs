@@ -5,7 +5,7 @@ use e_navigator_protocol::{
     kafka::{KafkaExtraction, parse_kafka_request},
     mongodb::{MongodbExtraction, parse_mongodb_message},
     mysql::{MysqlExtraction, parse_mysql_command, parse_mysql_error_response},
-    nats::{NatsExtraction, parse_nats_command},
+    nats::{NatsExtraction, parse_nats_command, parse_nats_response},
     postgres::{PostgresExtraction, parse_postgres_error_response, parse_postgres_message},
     redis::{RedisExtraction, parse_redis_command, parse_redis_response},
     trace_context::{TraceContextError, parse_traceparent},
@@ -371,6 +371,41 @@ proptest! {
         };
 
         let _ = parse_nats_command(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_nats_response_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 4,
+            max_tracestate_bytes: 32,
+        };
+
+        let _ = parse_nats_response(&bytes, &config);
+    }
+
+    #[test]
+    fn nats_response_limits_are_respected(
+        message in "[A-Za-z0-9_.=/%+-]{0,40}",
+    ) {
+        let bytes = format!("-ERR {message} secret-detail\r\n");
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 96,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        };
+
+        let parsed = parse_nats_response(bytes.as_bytes(), &config)
+            .expect("bounded nats error parses");
+        prop_assert_eq!(parsed.status_code.as_str(), "ERR");
+        prop_assert_eq!(parsed.error_type.as_deref(), Some("nats_error"));
+        prop_assert!(parsed.attributes.len() <= config.max_attributes);
+        prop_assert!(!parsed
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")));
     }
 
     #[test]
@@ -1987,7 +2022,69 @@ fn extracts_nats_subscription_and_control_operations() {
 }
 
 #[test]
-fn enforces_nats_frame_payload_and_attribute_bounds() {
+fn extracts_nats_ok_response_status() {
+    let extraction =
+        parse_nats_response(b"+OK\r\n", &ProtocolExtractionConfig::default()).expect("ok parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Nats);
+    assert_eq!(extraction.status_code, "OK");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.system" && attribute.value == "nats")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.nats.status_code"
+                && attribute.value == "OK")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type")
+    );
+}
+
+#[test]
+fn extracts_nats_error_type_without_raw_error_message() {
+    let extraction = parse_nats_response(
+        b"-ERR 'Authorization Violation for secret.subject'\r\n",
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("error parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Nats);
+    assert_eq!(extraction.status_code, "ERR");
+    assert_eq!(extraction.error_type.as_deref(), Some("nats_error"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.nats.status_code"
+                && attribute.value == "ERR")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "nats_error")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("Authorization")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn enforces_nats_frame_payload_response_and_attribute_bounds() {
     let bounded = parse_nats_command(
         b"PUB orders.secret 5\r\nhello\r\n",
         &ProtocolExtractionConfig {
@@ -1999,6 +2096,18 @@ fn enforces_nats_frame_payload_and_attribute_bounds() {
     )
     .expect("bounded nats command parses");
     assert_eq!(bounded.attributes.len(), 2);
+
+    let bounded_response = parse_nats_response(
+        b"-ERR secret-detail\r\n",
+        &ProtocolExtractionConfig {
+            max_header_bytes: 64,
+            max_request_line_bytes: 32,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded nats response parses");
+    assert_eq!(bounded_response.attributes.len(), 2);
 
     assert_eq!(
         parse_nats_command(
@@ -2025,6 +2134,32 @@ fn enforces_nats_frame_payload_and_attribute_bounds() {
         )
         .unwrap_err(),
         NatsExtraction::PayloadTooLong
+    );
+    assert_eq!(
+        parse_nats_response(
+            b"-ERR secret-detail\r\n",
+            &ProtocolExtractionConfig {
+                max_header_bytes: 8,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        NatsExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_nats_response(
+            b"-ERR secret-detail-that-exceeds-line-bound\r\n",
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 8,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        NatsExtraction::FrameTooLong
     );
 }
 
@@ -2054,6 +2189,22 @@ fn rejects_malformed_and_unsupported_nats_fixtures() {
     );
     assert_eq!(
         parse_nats_command(b"P\xffNG\r\n", &config).unwrap_err(),
+        NatsExtraction::InvalidUtf8
+    );
+    assert_eq!(
+        parse_nats_response(b"-ERR\r\n", &config).unwrap_err(),
+        NatsExtraction::UnsupportedCommand
+    );
+    assert_eq!(
+        parse_nats_response(b"+OK details\r\n", &config).unwrap_err(),
+        NatsExtraction::UnsupportedCommand
+    );
+    assert_eq!(
+        parse_nats_response(b"PING\r\n", &config).unwrap_err(),
+        NatsExtraction::UnsupportedCommand
+    );
+    assert_eq!(
+        parse_nats_response(b"+O\xff\r\n", &config).unwrap_err(),
         NatsExtraction::InvalidUtf8
     );
 }
