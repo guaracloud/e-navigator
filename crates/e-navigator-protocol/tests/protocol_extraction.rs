@@ -1301,6 +1301,47 @@ fn extracts_redis_resp3_scalar_responses_without_raw_values() {
 }
 
 #[test]
+fn extracts_redis_resp3_blob_responses_without_raw_values() {
+    let verbatim = parse_redis_response(
+        b"=16\r\ntxt:secret-value\r\n",
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("resp3 verbatim string parses");
+
+    assert_eq!(verbatim.protocol, ProtocolKind::Redis);
+    assert_eq!(verbatim.status_code.as_deref(), Some("OK"));
+    assert_eq!(verbatim.error_type, None);
+    assert!(
+        !verbatim
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret"))
+    );
+
+    let error = parse_redis_response(
+        b"!15\r\nERR secret-data\r\n",
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("resp3 blob error parses");
+
+    assert_eq!(error.protocol, ProtocolKind::Redis);
+    assert_eq!(error.status_code.as_deref(), Some("ERR"));
+    assert_eq!(error.error_type.as_deref(), Some("redis_err"));
+    assert!(
+        error
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "redis_err")
+    );
+    assert!(
+        !error
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret-data"))
+    );
+}
+
+#[test]
 fn extracts_redis_bulk_response_without_raw_value() {
     let extraction = parse_redis_response(
         b"$15\r\ncustomer-secret\r\n",
@@ -1591,6 +1632,22 @@ fn rejects_malformed_and_unsupported_redis_fixtures() {
     assert_eq!(
         parse_redis_response(b"(12\r\ntrailing", &config).unwrap_err(),
         RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b"=16\r\ntxt:secret-value", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b"!15\r\nERR secret-data", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b"!10\r\nERR \xff-data\r\n", &config).unwrap_err(),
+        RedisExtraction::InvalidUtf8
+    );
+    assert_eq!(
+        parse_redis_response(b"=1025\r\nignored\r\n", &config).unwrap_err(),
+        RedisExtraction::BulkStringTooLong
     );
     assert_eq!(
         parse_redis_response(b"$3\r\nkey", &config).unwrap_err(),

@@ -139,6 +139,24 @@ pub fn parse_redis_response(
                 error_type: None,
             }
         }
+        b'=' => {
+            skip_resp3_blob_payload(bytes, config.max_header_bytes)?;
+            RedisResponseToken {
+                status_code: Some("OK".to_string()),
+                error_type: None,
+            }
+        }
+        b'!' => {
+            let status_code = parse_resp3_blob_error_response(bytes, config.max_header_bytes)?;
+            let error_type = Some(format!(
+                "redis_{}",
+                status_code.to_ascii_lowercase().replace('-', "_")
+            ));
+            RedisResponseToken {
+                status_code: Some(status_code),
+                error_type,
+            }
+        }
         b'$' => {
             parse_bulk_string_response(bytes, config.max_header_bytes)?;
             RedisResponseToken {
@@ -335,6 +353,42 @@ fn parse_resp3_big_number_response(bytes: &[u8]) -> Result<(), RedisExtraction> 
         return Err(RedisExtraction::MalformedFrame);
     }
     Ok(())
+}
+
+fn skip_resp3_blob_payload(bytes: &[u8], max_frame_bytes: usize) -> Result<&[u8], RedisExtraction> {
+    let mut cursor = 1;
+    let len = parse_decimal_line(bytes, &mut cursor)?;
+    if len < 0 {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+    let len = len as usize;
+    if len > MAX_REDIS_BULK_STRING_BYTES {
+        return Err(RedisExtraction::BulkStringTooLong);
+    }
+    let end = cursor
+        .checked_add(len)
+        .ok_or(RedisExtraction::MalformedFrame)?;
+    let frame_end = end.checked_add(2).ok_or(RedisExtraction::FrameTooLong)?;
+    if frame_end > max_frame_bytes {
+        return Err(RedisExtraction::FrameTooLong);
+    }
+    if frame_end != bytes.len() || bytes.get(end..frame_end) != Some(b"\r\n") {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+    Ok(&bytes[cursor..end])
+}
+
+fn parse_resp3_blob_error_response(
+    bytes: &[u8],
+    max_frame_bytes: usize,
+) -> Result<String, RedisExtraction> {
+    let payload = skip_resp3_blob_payload(bytes, max_frame_bytes)?;
+    let message = std::str::from_utf8(payload).map_err(|_| RedisExtraction::InvalidUtf8)?;
+    let token = message
+        .split_ascii_whitespace()
+        .next()
+        .ok_or(RedisExtraction::MalformedFrame)?;
+    parse_response_status(token)
 }
 
 fn parse_array_response(

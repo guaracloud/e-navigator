@@ -87,8 +87,8 @@ or chart rendering:
   CopyDone/CopyFail/Password/Flush/Sync/Terminate wire-message and
   CommandComplete/ReadyForQuery/ErrorResponse parsing with canonical SQLSTATE
   validation and build-checked parser fuzz coverage, and Redis RESP command plus
-  simple/integer/bulk/RESP3-scalar/flat-array/nested-array/error response parsing with declared
-  frame-length bounds,
+  simple/integer/bulk/RESP3-scalar/RESP3-blob-error/verbatim/flat-array/
+  nested-array/error response parsing with declared frame-length bounds,
   bounded response-status token validation, and build-checked parser fuzz
   coverage;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
@@ -227,11 +227,12 @@ These areas remain explicitly partial:
   error responses, but runtime capture, request/response matching, broad
   response coverage, and live PostgreSQL proof are not implemented or proven.
 - **Redis protocol observability:** bounded RESP command and
-  simple/integer/bulk/RESP3-scalar/flat-array/nested-array/error response parsing is locally tested
-  without exporting raw key/value payloads or raw error messages, including
-  declared frame-length bounds and bounded response-status token validation, but runtime
-  capture, request/response matching, broad response coverage, and live Redis
-  proof are not implemented or proven.
+  simple/integer/bulk/RESP3-scalar/RESP3-blob-error/verbatim/flat-array/
+  nested-array/error response parsing is locally tested without exporting raw
+  key/value payloads or raw error messages, including declared frame-length
+  bounds and bounded response-status token validation, but runtime capture,
+  request/response matching, broad response coverage, and live Redis proof are
+  not implemented or proven.
 - **DNS capture:** selected UDP paths work, but symmetric all-node capture and
   lossless DNS coverage are not proven.
 - **CPU profiling:** selected samples and sessions plus local pprof protobuf
