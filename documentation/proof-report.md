@@ -24,7 +24,9 @@ or chart rendering:
   runtime-security matched-process argv redaction, bounded runtime-security
   finding strings and matched-process argument count, protocol request
   observations without raw trace headers and with bounded sanitized trace
-  attributes and non-ID scalar strings, network connection signals with bounded
+  attributes, non-ID scalar strings, and process/context/peer strings and
+  labels, trace signal families with bounded scalar, process, endpoint, and
+  context strings and labels, network connection signals with bounded
   process/address/context strings and labels, network flow warning signals with
   bounded process/address/source/message/context strings, network flow summary
   endpoint strings and dependency endpoint address/domain/context strings and

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::network::sanitize_network_process_identity;
 use crate::{
     ContainerContext, DependencyEndpoint, KubernetesContext, NetworkProcessIdentity,
     NetworkProtocol,
@@ -9,6 +10,8 @@ const MAX_TRACE_ATTRIBUTES: usize = 16;
 const MAX_TRACE_ATTRIBUTE_KEY_BYTES: usize = 128;
 const MAX_TRACE_ATTRIBUTE_VALUE_BYTES: usize = 256;
 const MAX_TRACE_STRING_BYTES: usize = 256;
+const MAX_KUBERNETES_LABELS: usize = 16;
+const MAX_KUBERNETES_LABEL_KEY_BYTES: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -146,6 +149,59 @@ pub(crate) fn sanitize_optional_trace_string(value: &mut Option<String>) {
     if let Some(inner) = value {
         sanitize_trace_string(inner);
     }
+}
+
+pub(crate) fn sanitize_optional_trace_process_identity(
+    process: &mut Option<NetworkProcessIdentity>,
+) {
+    if let Some(inner) = process {
+        sanitize_network_process_identity(inner);
+    }
+}
+
+pub(crate) fn sanitize_optional_trace_container_context(context: &mut Option<ContainerContext>) {
+    if let Some(inner) = context {
+        sanitize_trace_string(&mut inner.container_id);
+        sanitize_optional_trace_string(&mut inner.runtime);
+    }
+}
+
+pub(crate) fn sanitize_optional_trace_kubernetes_context(context: &mut Option<KubernetesContext>) {
+    if let Some(inner) = context {
+        sanitize_trace_string(&mut inner.namespace);
+        sanitize_trace_string(&mut inner.pod_name);
+        sanitize_optional_trace_string(&mut inner.pod_uid);
+        sanitize_optional_trace_string(&mut inner.container_name);
+        sanitize_optional_trace_string(&mut inner.node_name);
+        inner.labels = inner
+            .labels
+            .iter()
+            .filter(|(key, _)| !key.is_empty())
+            .map(|(key, value)| {
+                (
+                    truncate_utf8(key, MAX_KUBERNETES_LABEL_KEY_BYTES),
+                    truncate_utf8(value, MAX_TRACE_STRING_BYTES),
+                )
+            })
+            .take(MAX_KUBERNETES_LABELS)
+            .collect();
+    }
+}
+
+pub(crate) fn sanitize_optional_trace_peer_context(context: &mut Option<TracePeerContext>) {
+    if let Some(inner) = context {
+        sanitize_optional_trace_string(&mut inner.address);
+        sanitize_optional_trace_string(&mut inner.domain);
+        sanitize_optional_trace_kubernetes_context(&mut inner.workload);
+        sanitize_optional_trace_container_context(&mut inner.container);
+    }
+}
+
+pub(crate) fn sanitize_trace_dependency_endpoint(endpoint: &mut DependencyEndpoint) {
+    sanitize_optional_trace_string(&mut endpoint.address);
+    sanitize_optional_trace_string(&mut endpoint.domain);
+    sanitize_optional_trace_kubernetes_context(&mut endpoint.workload);
+    sanitize_optional_trace_container_context(&mut endpoint.container);
 }
 
 fn truncate_utf8(value: &str, max_bytes: usize) -> String {

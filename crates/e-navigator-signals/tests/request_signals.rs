@@ -293,6 +293,150 @@ fn request_constructors_bound_scalar_strings_before_json_stdout() {
 }
 
 #[test]
+fn request_constructors_bound_context_strings_before_json_stdout() {
+    let long = "r".repeat(320);
+    let process = NetworkProcessIdentity {
+        pid: 42,
+        ppid: Some(1),
+        uid: Some(1000),
+        command: long.clone(),
+        executable: Some(long.clone()),
+        cgroup_id: None,
+    };
+    let container = ContainerContext {
+        container_id: long.clone(),
+        runtime: Some(long.clone()),
+    };
+    let kubernetes = KubernetesContext {
+        namespace: long.clone(),
+        pod_name: long.clone(),
+        pod_uid: Some(long.clone()),
+        container_name: Some(long.clone()),
+        node_name: Some(long.clone()),
+        labels: BTreeMap::from_iter(
+            (0..20).map(|index| (format!("label-{index}-{long}"), long.clone())),
+        ),
+    };
+    let peer = TracePeerContext {
+        address: Some(long.clone()),
+        port: Some(443),
+        domain: Some(long),
+        workload: Some(kubernetes.clone()),
+        container: Some(container.clone()),
+    };
+
+    let protocol = SignalEnvelope::protocol_request_observation(
+        "source.protocol_fixture",
+        None,
+        ProtocolRequestObservation {
+            protocol: ProtocolKind::Http,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_500),
+            duration_nanos: Some(1_500),
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            traceparent: None,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::High,
+            service_name: Some("checkout-api".to_string()),
+            method: Some("GET".to_string()),
+            status_code: Some(200),
+            process: Some(process.clone()),
+            container: Some(container.clone()),
+            kubernetes: Some(kubernetes.clone()),
+            peer: Some(peer.clone()),
+            attributes: vec![],
+        },
+    );
+    let context = SignalEnvelope::extracted_trace_context_observation(
+        "parser.protocol",
+        None,
+        ExtractedTraceContextObservation {
+            protocol: ProtocolKind::Http,
+            timestamp_unix_nanos: 1_100,
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            traceparent: None,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            process: Some(process.clone()),
+            container: Some(container.clone()),
+            kubernetes: Some(kubernetes.clone()),
+            peer: Some(peer.clone()),
+            attributes: vec![],
+        },
+    );
+    let span = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        None,
+        RequestSpanObservation {
+            name: "http request".to_string(),
+            protocol: ProtocolKind::Http,
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_500),
+            duration_nanos: Some(1_500),
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::High,
+            service_name: Some("checkout-api".to_string()),
+            method: Some("GET".to_string()),
+            status_code: Some(200),
+            process: Some(process.clone()),
+            container: Some(container.clone()),
+            kubernetes: Some(kubernetes.clone()),
+            peer: Some(peer.clone()),
+            attributes: vec![],
+        },
+    );
+    let warning = SignalEnvelope::request_correlation_warning(
+        "generator.request_correlation",
+        None,
+        RequestCorrelationWarning {
+            warning_type: "missing_trace_context".to_string(),
+            message: "protocol request had no observed trace context".to_string(),
+            timestamp_unix_nanos: 1_200,
+            source_signal_kind: "protocol_request_observation".to_string(),
+            source_module: "source.protocol_fixture".to_string(),
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            protocol: ProtocolKind::Http,
+            process: Some(process),
+            container: Some(container),
+            kubernetes: Some(kubernetes),
+            peer: Some(peer),
+        },
+    );
+
+    for signal in [&protocol, &context, &span, &warning] {
+        assert_payload_string_lengths(
+            signal,
+            &[
+                &["process", "command"],
+                &["process", "executable"],
+                &["container", "container_id"],
+                &["container", "runtime"],
+                &["kubernetes", "namespace"],
+                &["kubernetes", "pod_name"],
+                &["kubernetes", "pod_uid"],
+                &["kubernetes", "container_name"],
+                &["kubernetes", "node_name"],
+                &["peer", "address"],
+                &["peer", "domain"],
+                &["peer", "container", "container_id"],
+                &["peer", "workload", "namespace"],
+            ],
+        );
+        assert_payload_label_bounds(signal, &["kubernetes", "labels"]);
+        assert_payload_label_bounds(signal, &["peer", "workload", "labels"]);
+    }
+}
+
+#[test]
 fn serializes_redis_protocol_request_observation_without_payload_values() {
     let signal = SignalEnvelope::protocol_request_observation(
         "source.protocol_fixture",
@@ -868,4 +1012,34 @@ fn assert_bounded_safe_trace_attributes(signal: &SignalEnvelope) {
     assert!(!json.to_string().contains("Bearer secret"));
     assert!(!json.to_string().contains(&"k".repeat(160)));
     assert!(!json.to_string().contains(&"v".repeat(320)));
+}
+
+fn assert_payload_string_lengths(signal: &SignalEnvelope, paths: &[&[&str]]) {
+    let json = serde_json::to_value(signal).expect("signal serializes");
+    for path in paths {
+        let mut value = &json["payload"];
+        for field in *path {
+            value = &value[*field];
+        }
+        assert_eq!(
+            value.as_str().map(str::len),
+            Some(256),
+            "{path:?} should be bounded"
+        );
+    }
+}
+
+fn assert_payload_label_bounds(signal: &SignalEnvelope, path: &[&str]) {
+    let json = serde_json::to_value(signal).expect("signal serializes");
+    let mut value = &json["payload"];
+    for field in path {
+        value = &value[*field];
+    }
+    let labels = value.as_object().expect("labels serialize as an object");
+    assert_eq!(labels.len(), 16);
+    assert!(
+        labels
+            .iter()
+            .all(|(key, value)| key.len() == 128 && value.as_str().map(str::len) == Some(256))
+    );
 }

@@ -28,7 +28,10 @@ use crate::resource::{
     sanitize_resource_counter_metric, sanitize_resource_gauge_metric,
 };
 use crate::trace::{
-    sanitize_optional_trace_string, sanitize_trace_attributes, sanitize_trace_string,
+    sanitize_optional_trace_container_context, sanitize_optional_trace_kubernetes_context,
+    sanitize_optional_trace_peer_context, sanitize_optional_trace_process_identity,
+    sanitize_optional_trace_string, sanitize_trace_attributes, sanitize_trace_dependency_endpoint,
+    sanitize_trace_string,
 };
 use crate::{
     CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
@@ -900,6 +903,10 @@ impl SignalEnvelope {
         sanitize_trace_attributes(&mut observation.attributes);
         sanitize_trace_string(&mut observation.name);
         sanitize_optional_trace_string(&mut observation.service_name);
+        sanitize_optional_trace_process_identity(&mut observation.process);
+        sanitize_optional_trace_container_context(&mut observation.container);
+        sanitize_optional_trace_kubernetes_context(&mut observation.kubernetes);
+        sanitize_optional_trace_peer_context(&mut observation.peer);
         Self::new(
             source,
             host,
@@ -916,6 +923,9 @@ impl SignalEnvelope {
         sanitize_trace_attributes(&mut observation.attributes);
         sanitize_trace_string(&mut observation.name);
         sanitize_optional_trace_string(&mut observation.error_type);
+        sanitize_trace_dependency_endpoint(&mut observation.source);
+        sanitize_trace_dependency_endpoint(&mut observation.destination);
+        sanitize_optional_trace_process_identity(&mut observation.process);
         Self::new(
             source,
             host,
@@ -931,6 +941,8 @@ impl SignalEnvelope {
     ) -> Self {
         sanitize_trace_attributes(&mut observation.attributes);
         sanitize_trace_string(&mut observation.path_key);
+        sanitize_trace_dependency_endpoint(&mut observation.source);
+        sanitize_trace_dependency_endpoint(&mut observation.destination);
         Self::new(
             source,
             host,
@@ -948,6 +960,10 @@ impl SignalEnvelope {
         sanitize_trace_string(&mut warning.message);
         sanitize_trace_string(&mut warning.source_signal_kind);
         sanitize_trace_string(&mut warning.source_module);
+        sanitize_optional_trace_process_identity(&mut warning.process);
+        sanitize_optional_trace_container_context(&mut warning.container);
+        sanitize_optional_trace_kubernetes_context(&mut warning.kubernetes);
+        sanitize_optional_trace_peer_context(&mut warning.peer);
         Self::new(
             source,
             host,
@@ -964,6 +980,10 @@ impl SignalEnvelope {
         sanitize_trace_attributes(&mut observation.attributes);
         sanitize_optional_trace_string(&mut observation.service_name);
         sanitize_optional_trace_string(&mut observation.method);
+        sanitize_optional_trace_process_identity(&mut observation.process);
+        sanitize_optional_trace_container_context(&mut observation.container);
+        sanitize_optional_trace_kubernetes_context(&mut observation.kubernetes);
+        sanitize_optional_trace_peer_context(&mut observation.peer);
         Self::new(
             source,
             host,
@@ -978,6 +998,10 @@ impl SignalEnvelope {
         mut observation: ExtractedTraceContextObservation,
     ) -> Self {
         sanitize_trace_attributes(&mut observation.attributes);
+        sanitize_optional_trace_process_identity(&mut observation.process);
+        sanitize_optional_trace_container_context(&mut observation.container);
+        sanitize_optional_trace_kubernetes_context(&mut observation.kubernetes);
+        sanitize_optional_trace_peer_context(&mut observation.peer);
         Self::new(
             source,
             host,
@@ -995,6 +1019,10 @@ impl SignalEnvelope {
         sanitize_trace_string(&mut observation.name);
         sanitize_optional_trace_string(&mut observation.service_name);
         sanitize_optional_trace_string(&mut observation.method);
+        sanitize_optional_trace_process_identity(&mut observation.process);
+        sanitize_optional_trace_container_context(&mut observation.container);
+        sanitize_optional_trace_kubernetes_context(&mut observation.kubernetes);
+        sanitize_optional_trace_peer_context(&mut observation.peer);
         Self::new(
             source,
             host,
@@ -1012,6 +1040,10 @@ impl SignalEnvelope {
         sanitize_trace_string(&mut warning.message);
         sanitize_trace_string(&mut warning.source_signal_kind);
         sanitize_trace_string(&mut warning.source_module);
+        sanitize_optional_trace_process_identity(&mut warning.process);
+        sanitize_optional_trace_container_context(&mut warning.container);
+        sanitize_optional_trace_kubernetes_context(&mut warning.kubernetes);
+        sanitize_optional_trace_peer_context(&mut warning.peer);
         Self::new(
             source,
             host,
@@ -2341,6 +2373,178 @@ mod tests {
                 .map(str::len),
             Some(256)
         );
+    }
+
+    #[test]
+    fn trace_constructors_bound_context_strings_before_json_stdout() {
+        let long = "t".repeat(320);
+        let process = NetworkProcessIdentity {
+            pid: 42,
+            ppid: Some(1),
+            uid: Some(1000),
+            command: long.clone(),
+            executable: Some(long.clone()),
+            cgroup_id: None,
+        };
+        let container = crate::ContainerContext {
+            container_id: long.clone(),
+            runtime: Some(long.clone()),
+        };
+        let kubernetes = crate::KubernetesContext {
+            namespace: long.clone(),
+            pod_name: long.clone(),
+            pod_uid: Some(long.clone()),
+            container_name: Some(long.clone()),
+            node_name: Some(long.clone()),
+            labels: std::collections::BTreeMap::from_iter(
+                (0..20).map(|index| (format!("label-{index}-{long}"), long.clone())),
+            ),
+        };
+        let peer = TracePeerContext {
+            address: Some(long.clone()),
+            port: Some(443),
+            domain: Some(long.clone()),
+            workload: Some(kubernetes.clone()),
+            container: Some(container.clone()),
+        };
+        let endpoint = DependencyEndpoint {
+            workload: Some(kubernetes.clone()),
+            container: Some(container.clone()),
+            address: Some(long.clone()),
+            port: Some(443),
+            domain: Some(long.clone()),
+        };
+
+        let span = SignalEnvelope::trace_span_observation(
+            "source.synthetic_exec",
+            None,
+            TraceSpanObservation {
+                name: "synthetic checkout".to_string(),
+                trace_id: None,
+                span_id: None,
+                parent_span_id: None,
+                start_unix_nanos: 1_000,
+                end_unix_nanos: Some(3_000),
+                duration_nanos: Some(2_000),
+                correlation_kind: TraceCorrelationKind::Synthetic,
+                confidence: TraceConfidence::High,
+                service_name: Some("checkout-api".to_string()),
+                process: Some(process.clone()),
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
+                peer: Some(peer.clone()),
+                attributes: vec![],
+            },
+        );
+        let interaction = SignalEnvelope::service_interaction_span_observation(
+            "generator.trace_correlation",
+            None,
+            ServiceInteractionSpanObservation {
+                name: "tcp client".to_string(),
+                trace_id: None,
+                span_id: None,
+                parent_span_id: None,
+                start_unix_nanos: 10_000,
+                end_unix_nanos: Some(15_000),
+                duration_nanos: Some(5_000),
+                correlation_kind: TraceCorrelationKind::NetworkInferred,
+                confidence: TraceConfidence::Medium,
+                source: endpoint.clone(),
+                destination: endpoint.clone(),
+                protocol: NetworkProtocol::Tcp,
+                process: Some(process.clone()),
+                error_type: None,
+                attributes: vec![],
+            },
+        );
+        let path = SignalEnvelope::trace_service_path_observation(
+            "generator.trace_correlation",
+            None,
+            TraceServicePathObservation {
+                path_key: "trace-path:0123456789abcdef".to_string(),
+                source: endpoint.clone(),
+                destination: endpoint,
+                protocol: NetworkProtocol::Tcp,
+                observations: 2,
+                first_seen_unix_nanos: 1_000,
+                last_seen_unix_nanos: 3_000,
+                correlation_kind: TraceCorrelationKind::DependencyInferred,
+                confidence: TraceConfidence::Low,
+                attributes: vec![],
+            },
+        );
+        let warning = SignalEnvelope::trace_correlation_warning(
+            "generator.trace_correlation",
+            None,
+            TraceCorrelationWarning {
+                warning_type: "missing_attribution".to_string(),
+                message: "trace correlation source signal has no context".to_string(),
+                timestamp_unix_nanos: 1_000,
+                source_signal_kind: "network_connection_open".to_string(),
+                source_module: "source.test".to_string(),
+                correlation_kind: TraceCorrelationKind::NetworkInferred,
+                process: Some(process),
+                container: Some(container),
+                kubernetes: Some(kubernetes),
+                peer: Some(peer),
+            },
+        );
+
+        for signal in [&span, &warning] {
+            assert_payload_string_lengths(
+                signal,
+                &[
+                    &["process", "command"],
+                    &["process", "executable"],
+                    &["container", "container_id"],
+                    &["container", "runtime"],
+                    &["kubernetes", "namespace"],
+                    &["kubernetes", "pod_name"],
+                    &["kubernetes", "pod_uid"],
+                    &["kubernetes", "container_name"],
+                    &["kubernetes", "node_name"],
+                    &["peer", "address"],
+                    &["peer", "domain"],
+                    &["peer", "container", "container_id"],
+                    &["peer", "workload", "namespace"],
+                ],
+            );
+            assert_payload_label_bounds(signal, &["kubernetes", "labels"]);
+            assert_payload_label_bounds(signal, &["peer", "workload", "labels"]);
+        }
+
+        assert_payload_string_lengths(
+            &interaction,
+            &[
+                &["process", "command"],
+                &["process", "executable"],
+                &["source", "address"],
+                &["source", "domain"],
+                &["source", "container", "container_id"],
+                &["source", "workload", "namespace"],
+                &["destination", "address"],
+                &["destination", "domain"],
+                &["destination", "container", "runtime"],
+                &["destination", "workload", "node_name"],
+            ],
+        );
+        assert_payload_label_bounds(&interaction, &["source", "workload", "labels"]);
+        assert_payload_label_bounds(&interaction, &["destination", "workload", "labels"]);
+        assert_payload_string_lengths(
+            &path,
+            &[
+                &["source", "address"],
+                &["source", "domain"],
+                &["source", "container", "container_id"],
+                &["source", "workload", "namespace"],
+                &["destination", "address"],
+                &["destination", "domain"],
+                &["destination", "container", "runtime"],
+                &["destination", "workload", "node_name"],
+            ],
+        );
+        assert_payload_label_bounds(&path, &["source", "workload", "labels"]);
+        assert_payload_label_bounds(&path, &["destination", "workload", "labels"]);
     }
 
     #[test]
