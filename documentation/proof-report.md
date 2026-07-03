@@ -65,9 +65,9 @@ or chart rendering:
   endpoints, bounded latest-metric storage, bounded label names/values, and
   secret-like label filtering;
 - OTLP protobuf request encoding plus per-family endpoint routing and family
-  toggle suppression for metrics with bounded resource/attribute strings,
-  traces with HTTP, gRPC, and `error.type` request/error status mapping,
-  server span kind and Kubernetes resource
+  toggle suppression for metrics with bounded scalar/resource/attribute
+  strings, traces with HTTP, gRPC, and `error.type` request/error status
+  mapping, server span kind and Kubernetes resource
   attributes with bounded trace resource/context/scalar values
   including Kafka, MongoDB, MySQL, NATS, PostgreSQL, and Redis request spans,
   local warning trace-record formatting for trace, request, network-flow, and

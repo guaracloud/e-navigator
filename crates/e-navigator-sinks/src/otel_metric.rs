@@ -72,8 +72,8 @@ fn network_counter_record(
     }
 
     OtelMetricRecord {
-        name: metric.metric_name.clone(),
-        unit: metric.unit.clone(),
+        name: bounded_metric_string(&metric.metric_name),
+        unit: bounded_metric_string(&metric.unit),
         kind: OtelMetricKind::Sum,
         value: OtelMetricValue::U64(metric.value),
         window: metric.window.clone(),
@@ -91,8 +91,8 @@ fn network_duration_record(
     metric: &NetworkDurationMetric,
 ) -> OtelMetricRecord {
     OtelMetricRecord {
-        name: metric.metric_name.clone(),
-        unit: metric.unit.clone(),
+        name: bounded_metric_string(&metric.metric_name),
+        unit: bounded_metric_string(&metric.unit),
         kind: OtelMetricKind::HistogramSummary,
         value: OtelMetricValue::Summary {
             count: metric.count,
@@ -117,8 +117,8 @@ fn network_duration_record(
 
 fn network_gauge_record(signal: &SignalEnvelope, metric: &NetworkGaugeMetric) -> OtelMetricRecord {
     OtelMetricRecord {
-        name: metric.metric_name.clone(),
-        unit: metric.unit.clone(),
+        name: bounded_metric_string(&metric.metric_name),
+        unit: bounded_metric_string(&metric.unit),
         kind: OtelMetricKind::Gauge,
         value: OtelMetricValue::I64(metric.value),
         window: metric.window.clone(),
@@ -138,8 +138,8 @@ fn network_gauge_record(signal: &SignalEnvelope, metric: &NetworkGaugeMetric) ->
 
 fn dns_counter_record(signal: &SignalEnvelope, metric: &DnsCounterMetric) -> OtelMetricRecord {
     OtelMetricRecord {
-        name: metric.metric_name.clone(),
-        unit: metric.unit.clone(),
+        name: bounded_metric_string(&metric.metric_name),
+        unit: bounded_metric_string(&metric.unit),
         kind: OtelMetricKind::Sum,
         value: OtelMetricValue::U64(metric.value),
         window: metric.window.clone(),
@@ -154,8 +154,8 @@ fn dns_counter_record(signal: &SignalEnvelope, metric: &DnsCounterMetric) -> Ote
 
 fn dns_latency_record(signal: &SignalEnvelope, metric: &DnsLatencyMetric) -> OtelMetricRecord {
     OtelMetricRecord {
-        name: metric.metric_name.clone(),
-        unit: metric.unit.clone(),
+        name: bounded_metric_string(&metric.metric_name),
+        unit: bounded_metric_string(&metric.unit),
         kind: OtelMetricKind::HistogramSummary,
         value: OtelMetricValue::Summary {
             count: metric.count,
@@ -178,8 +178,8 @@ fn resource_gauge_record(
     metric: &ResourceGaugeMetric,
 ) -> OtelMetricRecord {
     OtelMetricRecord {
-        name: metric.metric_name.clone(),
-        unit: metric.unit.clone(),
+        name: bounded_metric_string(&metric.metric_name),
+        unit: bounded_metric_string(&metric.unit),
         kind: OtelMetricKind::Gauge,
         value: OtelMetricValue::I64(metric.value),
         window: metric.window.clone(),
@@ -198,8 +198,8 @@ fn resource_counter_record(
     metric: &ResourceCounterMetric,
 ) -> OtelMetricRecord {
     OtelMetricRecord {
-        name: metric.metric_name.clone(),
-        unit: metric.unit.clone(),
+        name: bounded_metric_string(&metric.metric_name),
+        unit: bounded_metric_string(&metric.unit),
         kind: OtelMetricKind::Sum,
         value: OtelMetricValue::U64(metric.value),
         window: metric.window.clone(),
@@ -402,6 +402,10 @@ fn bounded_json_string(value: &str) -> serde_json::Value {
     serde_json::json!(truncate_utf8(value, MAX_METRIC_STRING_BYTES))
 }
 
+fn bounded_metric_string(value: &str) -> String {
+    truncate_utf8(value, MAX_METRIC_STRING_BYTES)
+}
+
 fn truncate_utf8(value: &str, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value.to_string();
@@ -563,6 +567,40 @@ mod tests {
                 .map(str::len),
             Some(MAX_VALUE_BYTES)
         );
+    }
+
+    #[test]
+    fn bounds_metric_name_and_unit_strings() {
+        const MAX_VALUE_BYTES: usize = 256;
+
+        let signal = SignalEnvelope::network_counter_metric(
+            "generator.network_metrics",
+            Some("node-a".to_string()),
+            NetworkCounterMetric {
+                metric_name: "n".repeat(MAX_VALUE_BYTES + 64),
+                unit: "u".repeat(MAX_VALUE_BYTES + 64),
+                value: 2,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 100,
+                    end_unix_nanos: 200,
+                },
+                process: None,
+                protocol: Some(e_navigator_signals::NetworkProtocol::Tcp),
+                address_family: Some(e_navigator_signals::NetworkAddressFamily::Ipv4),
+                local_address: None,
+                local_port: None,
+                remote_address: None,
+                remote_port: None,
+                errno: None,
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let record = format_otel_metric_record(&signal).expect("metric formats");
+
+        assert_eq!(record.name.len(), MAX_VALUE_BYTES);
+        assert_eq!(record.unit.len(), MAX_VALUE_BYTES);
     }
 
     #[test]
