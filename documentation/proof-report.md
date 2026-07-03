@@ -25,8 +25,8 @@ or chart rendering:
 - strict config validation with unknown-field rejection, packaged config guards,
   and local Kubernetes attribution selector filtering;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
-- raw userspace decode paths for selected Aya exec/network/DNS/profile events,
-  including a build-checked DNS raw decode fuzz target;
+- raw userspace decode paths for selected Aya exec/network/DNS/HTTP/profile
+  events, including build-checked DNS and HTTP raw decode fuzz targets;
 - bounded DNS request parsing with configurable packet and diagnostic preview
   limits, bounded HTTP request parsing with configurable HTTP parser limits,
   HTTP response-status fixture parsing, decoded gRPC-over-HTTP/2 metadata and

@@ -93,6 +93,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "raw_http_request_event_decode"
+path = "fuzz_targets/raw_http_request_event_decode.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "raw_cpu_profile_event_decode"
 path = "fuzz_targets/raw_cpu_profile_event_decode.rs"
 test = false
