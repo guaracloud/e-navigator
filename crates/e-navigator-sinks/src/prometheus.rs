@@ -333,7 +333,7 @@ impl Sink<SignalEnvelope> for PrometheusHttpSink {
 #[derive(Debug)]
 struct PrometheusState {
     max_metric_lines: usize,
-    metrics: Mutex<VecDeque<PrometheusMetricLine>>,
+    metrics: Mutex<PrometheusMetricStore>,
     healthy: AtomicBool,
 }
 
@@ -341,7 +341,7 @@ impl PrometheusState {
     fn new(max_metric_lines: usize) -> Self {
         Self {
             max_metric_lines,
-            metrics: Mutex::new(VecDeque::new()),
+            metrics: Mutex::new(PrometheusMetricStore::default()),
             healthy: AtomicBool::new(true),
         }
     }
@@ -351,17 +351,7 @@ impl PrometheusState {
             .metrics
             .lock()
             .map_err(|err| module_error(err.to_string()))?;
-        if let Some(existing) = metrics
-            .iter_mut()
-            .find(|existing| existing.name == line.name && existing.labels == line.labels)
-        {
-            *existing = line;
-            return Ok(());
-        }
-        while metrics.len() >= self.max_metric_lines {
-            metrics.pop_front();
-        }
-        metrics.push_back(line);
+        metrics.push(line, self.max_metric_lines);
         Ok(())
     }
 
@@ -370,9 +360,53 @@ impl PrometheusState {
             .metrics
             .lock()
             .map_err(|err| module_error(err.to_string()))?;
-        Ok(render_prometheus_text(
-            &metrics.iter().cloned().collect::<Vec<_>>(),
-        ))
+        Ok(render_prometheus_text(&metrics.lines()))
+    }
+}
+
+#[derive(Debug, Default)]
+struct PrometheusMetricStore {
+    order: VecDeque<PrometheusSeriesKey>,
+    latest: BTreeMap<PrometheusSeriesKey, PrometheusMetricLine>,
+}
+
+impl PrometheusMetricStore {
+    fn push(&mut self, line: PrometheusMetricLine, max_metric_lines: usize) {
+        let key = PrometheusSeriesKey::from(&line);
+        if let Some(existing) = self.latest.get_mut(&key) {
+            *existing = line;
+            return;
+        }
+        while self.latest.len() >= max_metric_lines {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            self.latest.remove(&oldest);
+        }
+        self.order.push_back(key.clone());
+        self.latest.insert(key, line);
+    }
+
+    fn lines(&self) -> Vec<PrometheusMetricLine> {
+        self.order
+            .iter()
+            .filter_map(|key| self.latest.get(key).cloned())
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PrometheusSeriesKey {
+    name: String,
+    labels: BTreeMap<String, String>,
+}
+
+impl From<&PrometheusMetricLine> for PrometheusSeriesKey {
+    fn from(line: &PrometheusMetricLine) -> Self {
+        Self {
+            name: line.name.clone(),
+            labels: line.labels.clone(),
+        }
     }
 }
 
@@ -789,6 +823,29 @@ mod tests {
     }
 
     #[test]
+    fn prometheus_metric_store_replaces_existing_series_and_preserves_eviction_order() {
+        let mut store = PrometheusMetricStore::default();
+
+        store.push(prometheus_line("first", "1"), 2);
+        store.push(prometheus_line("second", "2"), 2);
+        store.push(prometheus_line("first", "9"), 2);
+
+        let updated = render_prometheus_text(&store.lines());
+        assert!(!updated.contains("first 1"));
+        assert!(updated.contains("first 9"));
+        assert!(updated.contains("second 2"));
+        assert_eq!(store.lines().len(), 2);
+
+        store.push(prometheus_line("third", "3"), 2);
+
+        let rendered = render_prometheus_text(&store.lines());
+
+        assert!(!rendered.contains("first 9"));
+        assert!(rendered.contains("second 2"));
+        assert!(rendered.contains("third 3"));
+    }
+
+    #[test]
     fn drops_oversized_prometheus_label_values() {
         assert_eq!(
             prometheus_label_value(&serde_json::json!(
@@ -1025,6 +1082,14 @@ mod tests {
                 kubernetes: Some(kubernetes_context()),
             },
         )
+    }
+
+    fn prometheus_line(name: &str, value: &str) -> PrometheusMetricLine {
+        PrometheusMetricLine {
+            name: name.to_string(),
+            labels: BTreeMap::new(),
+            value: value.to_string(),
+        }
     }
 
     fn profile_session_signal() -> SignalEnvelope {
