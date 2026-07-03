@@ -8,7 +8,7 @@ use e_navigator_signals::{
     TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning, TraceServicePathObservation,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{Mutex, MutexGuard},
 };
 use tokio::sync::mpsc;
@@ -25,8 +25,8 @@ pub struct TraceCorrelationGenerator {
     max_seen_interactions: usize,
     max_warnings: usize,
     service_paths: Mutex<BTreeMap<PathKey, PathState>>,
-    seen_interactions: Mutex<BTreeSet<InteractionFingerprint>>,
-    seen_warnings: Mutex<BTreeSet<WarningFingerprint>>,
+    seen_interactions: Mutex<BoundedFingerprints<InteractionFingerprint>>,
+    seen_warnings: Mutex<BoundedFingerprints<WarningFingerprint>>,
 }
 
 impl Default for TraceCorrelationGenerator {
@@ -50,8 +50,8 @@ impl TraceCorrelationGenerator {
             max_seen_interactions,
             max_warnings,
             service_paths: Mutex::new(BTreeMap::new()),
-            seen_interactions: Mutex::new(BTreeSet::new()),
-            seen_warnings: Mutex::new(BTreeSet::new()),
+            seen_interactions: Mutex::new(BoundedFingerprints::default()),
+            seen_warnings: Mutex::new(BoundedFingerprints::default()),
         }
     }
 }
@@ -337,16 +337,7 @@ impl TraceCorrelationGenerator {
 
     fn mark_interaction_seen(&self, fingerprint: InteractionFingerprint) -> CoreResult<bool> {
         let mut seen = self.seen_interactions()?;
-        if seen.contains(&fingerprint) {
-            return Ok(false);
-        }
-        if seen.len() >= self.max_seen_interactions.max(1)
-            && let Some(first) = seen.iter().next().cloned()
-        {
-            seen.remove(&first);
-        }
-        seen.insert(fingerprint);
-        Ok(true)
+        Ok(seen.insert_if_new(fingerprint, self.max_seen_interactions))
     }
 
     fn missing_attribution_warning(
@@ -364,15 +355,9 @@ impl TraceCorrelationGenerator {
             peer: peer.clone(),
         };
         let mut seen = self.seen_warnings()?;
-        if seen.contains(&fingerprint) {
+        if !seen.insert_if_new(fingerprint, self.max_warnings) {
             return Ok(None);
         }
-        if seen.len() >= self.max_warnings.max(1)
-            && let Some(first) = seen.iter().next().cloned()
-        {
-            seen.remove(&first);
-        }
-        seen.insert(fingerprint);
         drop(seen);
 
         Ok(Some(SignalEnvelope::trace_correlation_warning(
@@ -398,12 +383,52 @@ impl TraceCorrelationGenerator {
         self.service_paths.lock().map_err(module_error)
     }
 
-    fn seen_interactions(&self) -> CoreResult<MutexGuard<'_, BTreeSet<InteractionFingerprint>>> {
+    fn seen_interactions(
+        &self,
+    ) -> CoreResult<MutexGuard<'_, BoundedFingerprints<InteractionFingerprint>>> {
         self.seen_interactions.lock().map_err(module_error)
     }
 
-    fn seen_warnings(&self) -> CoreResult<MutexGuard<'_, BTreeSet<WarningFingerprint>>> {
+    fn seen_warnings(&self) -> CoreResult<MutexGuard<'_, BoundedFingerprints<WarningFingerprint>>> {
         self.seen_warnings.lock().map_err(module_error)
+    }
+}
+
+#[derive(Debug)]
+struct BoundedFingerprints<T> {
+    entries: BTreeSet<T>,
+    insertion_order: VecDeque<T>,
+}
+
+impl<T> Default for BoundedFingerprints<T> {
+    fn default() -> Self {
+        Self {
+            entries: BTreeSet::new(),
+            insertion_order: VecDeque::new(),
+        }
+    }
+}
+
+impl<T> BoundedFingerprints<T>
+where
+    T: Clone + Ord,
+{
+    fn insert_if_new(&mut self, fingerprint: T, max_entries: usize) -> bool {
+        if self.entries.contains(&fingerprint) {
+            return false;
+        }
+
+        let max_entries = max_entries.max(1);
+        while self.entries.len() >= max_entries {
+            let Some(oldest) = self.insertion_order.pop_front() else {
+                break;
+            };
+            self.entries.remove(&oldest);
+        }
+
+        self.insertion_order.push_back(fingerprint.clone());
+        self.entries.insert(fingerprint);
+        true
     }
 }
 

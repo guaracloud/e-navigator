@@ -259,6 +259,46 @@ async fn duplicate_network_close_is_suppressed() {
 }
 
 #[tokio::test]
+async fn bounded_interaction_dedupe_evicts_oldest_inserted_fingerprint() {
+    let generator = TraceCorrelationGenerator::with_limits(8, 2, 8);
+    let first = network_close_signal("203.0.113.10", 443, 1_000, 3_500, true);
+    let second = network_close_signal("198.51.100.20", 443, 2_000, 4_500, true);
+    let third = network_close_signal("192.0.2.30", 443, 3_000, 5_500, true);
+
+    assert_eq!(observe(&generator, &first).await.len(), 1);
+    assert_eq!(observe(&generator, &second).await.len(), 1);
+    assert_eq!(observe(&generator, &third).await.len(), 1);
+
+    assert!(observe(&generator, &second).await.is_empty());
+    assert_eq!(observe(&generator, &first).await.len(), 1);
+}
+
+#[tokio::test]
+async fn bounded_warning_dedupe_evicts_oldest_inserted_fingerprint() {
+    let generator = TraceCorrelationGenerator::with_limits(8, 8, 2);
+    let first = network_close_signal_with_fd("203.0.113.10", 443, 1_000, 3_500, false, Some(7));
+    let second = network_close_signal_with_fd("198.51.100.20", 443, 2_000, 4_500, false, Some(7));
+    let third = network_close_signal_with_fd("192.0.2.30", 443, 3_000, 5_500, false, Some(7));
+
+    assert_eq!(warning_count(&observe(&generator, &first).await), 1);
+    assert_eq!(warning_count(&observe(&generator, &second).await), 1);
+    assert_eq!(warning_count(&observe(&generator, &third).await), 1);
+
+    let repeated_second =
+        network_close_signal_with_fd("198.51.100.20", 443, 2_000, 4_500, false, Some(8));
+    let repeated_first =
+        network_close_signal_with_fd("203.0.113.10", 443, 1_000, 3_500, false, Some(8));
+    assert_eq!(
+        warning_count(&observe(&generator, &repeated_second).await),
+        0
+    );
+    assert_eq!(
+        warning_count(&observe(&generator, &repeated_first).await),
+        1
+    );
+}
+
+#[tokio::test]
 async fn open_only_network_event_does_not_infer_span() {
     let generator = TraceCorrelationGenerator::default();
     let signal = network_open_signal("203.0.113.10", 443, true);
@@ -304,6 +344,13 @@ fn assert_low_cardinality_path_key(path_key: &str) {
     assert!(!path_key.contains("pod-uid"));
 }
 
+fn warning_count(outputs: &[SignalEnvelope]) -> usize {
+    outputs
+        .iter()
+        .filter(|signal| matches!(&signal.payload, SignalPayload::TraceCorrelationWarning(_)))
+        .count()
+}
+
 fn network_open_signal(remote_address: &str, remote_port: u16, attributed: bool) -> SignalEnvelope {
     let (container, kubernetes) = attribution(attributed);
     SignalEnvelope::network_connection_open(
@@ -332,6 +379,24 @@ fn network_close_signal(
     closed_at: u64,
     attributed: bool,
 ) -> SignalEnvelope {
+    network_close_signal_with_fd(
+        remote_address,
+        remote_port,
+        opened_at,
+        closed_at,
+        attributed,
+        Some(7),
+    )
+}
+
+fn network_close_signal_with_fd(
+    remote_address: &str,
+    remote_port: u16,
+    opened_at: u64,
+    closed_at: u64,
+    attributed: bool,
+    fd: Option<i32>,
+) -> SignalEnvelope {
     let (container, kubernetes) = attribution(attributed);
     SignalEnvelope::network_connection_close(
         "source.test",
@@ -344,7 +409,7 @@ fn network_close_signal(
             local_port: Some(43512),
             remote_address: remote_address.to_string(),
             remote_port,
-            fd: Some(7),
+            fd,
             opened_at_unix_nanos: Some(opened_at),
             closed_at_unix_nanos: closed_at,
             duration_nanos: Some(closed_at.saturating_sub(opened_at)),
