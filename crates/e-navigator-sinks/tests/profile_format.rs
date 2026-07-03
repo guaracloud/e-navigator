@@ -171,6 +171,23 @@ fn sample_profile_ids_include_host_and_workload_identity() {
 }
 
 #[test]
+fn otlp_profile_sample_ids_include_host_and_workload_identity() {
+    let mut left = profile_sample_signal(Some("node-a"), Some("container-a"), Some("pod-a"));
+    let right = profile_sample_signal(Some("node-b"), Some("container-b"), Some("pod-b"));
+    let left_record = format_otel_profile_record(&left).expect("left formats");
+    let right_record = format_otel_profile_record(&right).expect("right formats");
+    assert_eq!(left_record.profile_id, "profile-sample:d41180ea1f8882c9");
+    assert_ne!(left_record.profile_id, right_record.profile_id);
+
+    if let e_navigator_signals::SignalPayload::ProfileSampleObservation(sample) = &mut left.payload
+    {
+        sample.container = Some(container("container-c"));
+    }
+    let changed_record = format_otel_profile_record(&left).expect("changed formats");
+    assert_ne!(left_record.profile_id, changed_record.profile_id);
+}
+
+#[test]
 fn profile_resource_mapping_preserves_pod_uid() {
     let record = format_profile_record(&profile_sample_signal(
         Some("node-a"),

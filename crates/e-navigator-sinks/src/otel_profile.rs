@@ -2,14 +2,13 @@ use e_navigator_signals::{
     NetworkProcessIdentity, ProfileSampleObservation, ProfilingAttribute,
     ProfilingSessionObservation, SignalEnvelope, SignalPayload,
 };
-use std::{
-    collections::BTreeMap,
-    hash::{Hash, Hasher},
-};
+use std::collections::BTreeMap;
 
 const MAX_ATTRIBUTES: usize = 16;
 const MAX_KEY_BYTES: usize = 64;
 const MAX_VALUE_BYTES: usize = 256;
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325_u64;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OtelProfileRecord {
@@ -44,16 +43,7 @@ pub fn format_otel_profile_record(signal: &SignalEnvelope) -> Option<OtelProfile
 }
 
 fn sample_record(signal: &SignalEnvelope, sample: &ProfileSampleObservation) -> OtelProfileRecord {
-    let profile_id = format!(
-        "profile-sample:{:016x}",
-        stable_hash64(
-            format!(
-                "{}|{}|{}",
-                signal.source, sample.timestamp_unix_nanos, sample.stack_id
-            )
-            .as_bytes(),
-        )
-    );
+    let profile_id = sample_profile_id(signal, sample);
     let mut attributes = bounded_attributes(&sample.attributes);
     attributes.insert(
         "profile.stack.id".to_string(),
@@ -92,6 +82,66 @@ fn sample_record(signal: &SignalEnvelope, sample: &ProfileSampleObservation) -> 
             })
             .collect(),
     }
+}
+
+fn sample_profile_id(signal: &SignalEnvelope, sample: &ProfileSampleObservation) -> String {
+    let hash = profile_sample_hash(
+        signal,
+        sample.timestamp_unix_nanos,
+        sample.process.as_ref(),
+        sample.container.as_ref(),
+        sample.kubernetes.as_ref(),
+        &sample.stack_id,
+    );
+    format!("profile-sample:{hash:016x}")
+}
+
+fn profile_sample_hash(
+    signal: &SignalEnvelope,
+    timestamp_unix_nanos: u64,
+    process: Option<&NetworkProcessIdentity>,
+    container: Option<&e_navigator_signals::ContainerContext>,
+    kubernetes: Option<&e_navigator_signals::KubernetesContext>,
+    stack_id: &str,
+) -> u64 {
+    let mut hash = FNV_OFFSET_BASIS;
+    hash_str(&mut hash, &signal.source);
+    hash_separator(&mut hash);
+    hash_decimal(&mut hash, timestamp_unix_nanos);
+    hash_separator(&mut hash);
+    hash_str(&mut hash, signal.host.as_deref().unwrap_or(""));
+    hash_separator(&mut hash);
+    if let Some(process) = process {
+        hash_decimal(&mut hash, u64::from(process.pid));
+    }
+    hash_separator(&mut hash);
+    if let Some(uid) = process.and_then(|process| process.uid) {
+        hash_decimal(&mut hash, u64::from(uid));
+    }
+    hash_separator(&mut hash);
+    hash_str(
+        &mut hash,
+        container
+            .map(|container| container.container_id.as_str())
+            .unwrap_or(""),
+    );
+    hash_separator(&mut hash);
+    hash_str(
+        &mut hash,
+        kubernetes
+            .and_then(|kubernetes| kubernetes.pod_uid.as_deref())
+            .unwrap_or(""),
+    );
+    hash_separator(&mut hash);
+    hash_str(
+        &mut hash,
+        kubernetes
+            .and_then(|kubernetes| kubernetes.container_name.as_deref())
+            .unwrap_or(""),
+    );
+    hash_separator(&mut hash);
+    hash_str(&mut hash, stack_id);
+    hash
 }
 
 fn session_record(
@@ -251,8 +301,34 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
     value[..end].to_string()
 }
 
-fn stable_hash64(bytes: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
+fn hash_str(hash: &mut u64, value: &str) {
+    for byte in value.as_bytes() {
+        hash_byte(hash, *byte);
+    }
+}
+
+fn hash_decimal(hash: &mut u64, value: u64) {
+    let mut buffer = [0_u8; 20];
+    let mut index = buffer.len();
+    let mut remaining = value;
+    loop {
+        index -= 1;
+        buffer[index] = b'0' + (remaining % 10) as u8;
+        remaining /= 10;
+        if remaining == 0 {
+            break;
+        }
+    }
+    for byte in &buffer[index..] {
+        hash_byte(hash, *byte);
+    }
+}
+
+fn hash_separator(hash: &mut u64) {
+    hash_byte(hash, b'|');
+}
+
+fn hash_byte(hash: &mut u64, byte: u8) {
+    *hash ^= u64::from(byte);
+    *hash = hash.wrapping_mul(FNV_PRIME);
 }
