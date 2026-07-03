@@ -52,6 +52,7 @@ pub fn parse_postgres_message(
         b'D' => parse_describe_message(body)?,
         b'C' => parse_close_message(body)?,
         b'E' => parse_execute_message(body)?,
+        b'F' => parse_function_call_message(body, config.max_request_line_bytes)?,
         b'p' => parse_password_message(body, config.max_request_line_bytes)?,
         b'S' => parse_sync_message(body)?,
         b'H' => parse_flush_message(body)?,
@@ -63,6 +64,7 @@ pub fn parse_postgres_message(
         b'D' => Some("DESCRIBE".to_string()),
         b'C' => Some("CLOSE".to_string()),
         b'E' => Some("EXECUTE".to_string()),
+        b'F' => Some("FUNCTION_CALL".to_string()),
         b'p' => Some("PASSWORD".to_string()),
         b'S' => Some("SYNC".to_string()),
         b'H' => Some("FLUSH".to_string()),
@@ -378,6 +380,49 @@ fn parse_execute_message(body: &[u8]) -> Result<&str, PostgresExtraction> {
     Ok("EXECUTE")
 }
 
+fn parse_function_call_message(
+    body: &[u8],
+    max_argument_bytes: usize,
+) -> Result<&str, PostgresExtraction> {
+    let mut cursor = 0;
+    skip_bytes(body, &mut cursor, 4)?;
+
+    let argument_format_count = read_u16_be_cursor(body, &mut cursor)? as usize;
+    if argument_format_count > MAX_POSTGRES_BIND_ITEMS {
+        return Err(PostgresExtraction::QueryTooLong);
+    }
+    skip_bytes(body, &mut cursor, argument_format_count.saturating_mul(2))?;
+
+    let argument_count = read_u16_be_cursor(body, &mut cursor)? as usize;
+    if argument_count > MAX_POSTGRES_BIND_ITEMS {
+        return Err(PostgresExtraction::QueryTooLong);
+    }
+    for _ in 0..argument_count {
+        let argument_len = read_i32_be_cursor(body, &mut cursor)?;
+        if argument_len == -1 {
+            continue;
+        }
+        if argument_len < -1 {
+            return Err(PostgresExtraction::MalformedFrame);
+        }
+        let argument_len = argument_len as usize;
+        if argument_len > max_argument_bytes {
+            return Err(PostgresExtraction::QueryTooLong);
+        }
+        skip_bytes(body, &mut cursor, argument_len)?;
+    }
+
+    let result_format_count = read_u16_be_cursor(body, &mut cursor)? as usize;
+    if result_format_count > MAX_POSTGRES_BIND_ITEMS {
+        return Err(PostgresExtraction::QueryTooLong);
+    }
+    skip_bytes(body, &mut cursor, result_format_count.saturating_mul(2))?;
+    if cursor != body.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    Ok("FUNCTION_CALL")
+}
+
 fn parse_password_message(
     body: &[u8],
     max_password_bytes: usize,
@@ -504,6 +549,7 @@ fn message_type_name(message_type: u8) -> &'static str {
         b'D' => "describe",
         b'C' => "close",
         b'E' => "execute",
+        b'F' => "function_call",
         b'p' => "password",
         b'S' => "sync",
         b'H' => "flush",

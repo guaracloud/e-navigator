@@ -2308,6 +2308,47 @@ fn extracts_postgres_execute_message_without_portal_name() {
 }
 
 #[test]
+fn extracts_postgres_function_call_message_without_argument_values() {
+    let mut body = Vec::new();
+    body.extend_from_slice(&12_345_u32.to_be_bytes());
+    body.extend_from_slice(&1_u16.to_be_bytes());
+    body.extend_from_slice(&1_u16.to_be_bytes());
+    body.extend_from_slice(&2_u16.to_be_bytes());
+    body.extend_from_slice(&5_i32.to_be_bytes());
+    body.extend_from_slice(b"first");
+    body.extend_from_slice(&(-1_i32).to_be_bytes());
+    body.extend_from_slice(&1_u16.to_be_bytes());
+    body.extend_from_slice(&1_u16.to_be_bytes());
+    let bytes = postgres_frame(b'F', &body);
+
+    let extraction = parse_postgres_message(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres function call message parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.operation.as_deref(), Some("FUNCTION_CALL"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.operation" && attribute.value == "FUNCTION_CALL")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.postgresql.message.type"
+                && attribute.value == "function_call")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("12345")
+                || attribute.value.contains("first"))
+    );
+}
+
+#[test]
 fn extracts_postgres_sync_message_without_payload_values() {
     let bytes = postgres_frame(b'S', b"");
 
@@ -2686,6 +2727,41 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     };
     assert_eq!(
         parse_postgres_message(&postgres_frame(b'E', &long_portal), &config).unwrap_err(),
+        PostgresExtraction::QueryTooLong
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'F', b"\x00\x00"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    let mut negative_function_call = Vec::new();
+    negative_function_call.extend_from_slice(&12_345_u32.to_be_bytes());
+    negative_function_call.extend_from_slice(&0_u16.to_be_bytes());
+    negative_function_call.extend_from_slice(&1_u16.to_be_bytes());
+    negative_function_call.extend_from_slice(&(-2_i32).to_be_bytes());
+    negative_function_call.extend_from_slice(&0_u16.to_be_bytes());
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'F', &negative_function_call), &config)
+            .unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    let mut oversized_function_call = Vec::new();
+    oversized_function_call.extend_from_slice(&12_345_u32.to_be_bytes());
+    oversized_function_call.extend_from_slice(&0_u16.to_be_bytes());
+    oversized_function_call.extend_from_slice(&1_u16.to_be_bytes());
+    oversized_function_call.extend_from_slice(&5_i32.to_be_bytes());
+    oversized_function_call.extend_from_slice(b"value");
+    oversized_function_call.extend_from_slice(&0_u16.to_be_bytes());
+    assert_eq!(
+        parse_postgres_message(
+            &postgres_frame(b'F', &oversized_function_call),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
         PostgresExtraction::QueryTooLong
     );
     assert_eq!(
