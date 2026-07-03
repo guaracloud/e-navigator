@@ -3610,6 +3610,70 @@ pub fn parse_kafka_get_telemetry_subscriptions_response(
     })
 }
 
+pub fn parse_kafka_push_telemetry_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if api_version != 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = push_telemetry_response_error_code(body, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("push_telemetry"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("72"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "push_telemetry".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_list_groups_response(
     bytes: &[u8],
     api_version: i16,
@@ -3855,6 +3919,7 @@ fn validate_request_body(
         68 => validate_consumer_group_heartbeat_request_body(body, header, config),
         69 => validate_consumer_group_describe_request_body(body, header, config),
         71 => validate_get_telemetry_subscriptions_request_body(body, header, config),
+        72 => validate_push_telemetry_request_body(body, header, config),
         _ => Ok(()),
     }
 }
@@ -5179,6 +5244,26 @@ fn validate_get_telemetry_subscriptions_request_body(
 
     let mut cursor = header.body_start;
     skip_bytes(body, &mut cursor, 16)?;
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_push_telemetry_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_version != 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+
+    let mut cursor = header.body_start;
+    skip_bytes(body, &mut cursor, 16)?;
+    skip_bytes(body, &mut cursor, 6)?;
+    skip_compact_bytes(body, &mut cursor, config.max_header_bytes)?;
     skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
     if cursor != body.len() {
         return Err(KafkaExtraction::MalformedFrame);
@@ -6651,6 +6736,21 @@ fn get_telemetry_subscriptions_response_error_code(
     Ok(error_code)
 }
 
+fn push_telemetry_response_error_code(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    skip_bytes(body, &mut cursor, 4)?;
+    let error_code = read_i16_be_cursor(body, &mut cursor)?;
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    Ok(error_code)
+}
+
 fn delete_groups_response_error_code(
     body: &[u8],
     config: &ProtocolExtractionConfig,
@@ -7589,6 +7689,7 @@ fn api_key_name(api_key: i16) -> Option<&'static str> {
         68 => Some("consumer_group_heartbeat"),
         69 => Some("consumer_group_describe"),
         71 => Some("get_telemetry_subscriptions"),
+        72 => Some("push_telemetry"),
         _ => None,
     }
 }
