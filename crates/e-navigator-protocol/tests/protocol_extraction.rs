@@ -13,22 +13,23 @@ use e_navigator_protocol::{
         parse_kafka_delete_acls_response, parse_kafka_delete_groups_response,
         parse_kafka_delete_records_response, parse_kafka_delete_topics_response,
         parse_kafka_describe_acls_response, parse_kafka_describe_client_quotas_response,
-        parse_kafka_describe_configs_response, parse_kafka_describe_delegation_token_response,
-        parse_kafka_describe_groups_response, parse_kafka_describe_log_dirs_response,
-        parse_kafka_describe_quorum_response, parse_kafka_describe_user_scram_credentials_response,
-        parse_kafka_elect_leaders_response, parse_kafka_end_txn_response,
-        parse_kafka_expire_delegation_token_response, parse_kafka_fetch_response,
-        parse_kafka_find_coordinator_response, parse_kafka_heartbeat_response,
-        parse_kafka_incremental_alter_configs_response, parse_kafka_init_producer_id_response,
-        parse_kafka_join_group_response, parse_kafka_leave_group_response,
-        parse_kafka_list_groups_response, parse_kafka_list_offsets_response,
-        parse_kafka_list_partition_reassignments_response, parse_kafka_metadata_response,
-        parse_kafka_offset_commit_response, parse_kafka_offset_delete_response,
-        parse_kafka_offset_fetch_response, parse_kafka_produce_response,
-        parse_kafka_renew_delegation_token_response, parse_kafka_request,
-        parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
-        parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
-        parse_kafka_update_features_response, parse_kafka_write_txn_markers_response,
+        parse_kafka_describe_cluster_response, parse_kafka_describe_configs_response,
+        parse_kafka_describe_delegation_token_response, parse_kafka_describe_groups_response,
+        parse_kafka_describe_log_dirs_response, parse_kafka_describe_quorum_response,
+        parse_kafka_describe_user_scram_credentials_response, parse_kafka_elect_leaders_response,
+        parse_kafka_end_txn_response, parse_kafka_expire_delegation_token_response,
+        parse_kafka_fetch_response, parse_kafka_find_coordinator_response,
+        parse_kafka_heartbeat_response, parse_kafka_incremental_alter_configs_response,
+        parse_kafka_init_producer_id_response, parse_kafka_join_group_response,
+        parse_kafka_leave_group_response, parse_kafka_list_groups_response,
+        parse_kafka_list_offsets_response, parse_kafka_list_partition_reassignments_response,
+        parse_kafka_metadata_response, parse_kafka_offset_commit_response,
+        parse_kafka_offset_delete_response, parse_kafka_offset_fetch_response,
+        parse_kafka_produce_response, parse_kafka_renew_delegation_token_response,
+        parse_kafka_request, parse_kafka_sasl_authenticate_response,
+        parse_kafka_sasl_handshake_response, parse_kafka_sync_group_response,
+        parse_kafka_txn_offset_commit_response, parse_kafka_update_features_response,
+        parse_kafka_write_txn_markers_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -319,6 +320,7 @@ proptest! {
         let _ = parse_kafka_alter_user_scram_credentials_response(&bytes, 0, &config);
         let _ = parse_kafka_describe_quorum_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_update_features_response(&bytes, api_version.min(2), &config);
+        let _ = parse_kafka_describe_cluster_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -3115,6 +3117,60 @@ fn validates_kafka_update_features_v2_request_without_feature_values() {
 }
 
 #[test]
+fn validates_kafka_describe_cluster_v0_request() {
+    let body = kafka_describe_cluster_request_body(0);
+    let bytes = kafka_flexible_request_frame(60, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka describe cluster v0 request parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("describe_cluster"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "60")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn validates_kafka_describe_cluster_v2_request() {
+    let body = kafka_describe_cluster_request_body(2);
+    let bytes = kafka_flexible_request_frame(60, 2, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka describe cluster v2 request parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("describe_cluster"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "60")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "2")
+    );
+}
+
+#[test]
 fn validates_kafka_alter_replica_log_dirs_requests_without_path_or_topic_values() {
     let body = kafka_alter_replica_log_dirs_request_body(
         "/var/lib/kafka/secret-dir",
@@ -5156,6 +5212,87 @@ fn extracts_kafka_update_features_v2_top_level_error_without_message_values() {
             .attributes
             .iter()
             .any(|attribute| attribute.value.contains("denied")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_describe_cluster_v0_ok_response_without_cluster_or_broker_values() {
+    let brokers: &[DescribeClusterBrokerFixture<'_>] = &[(
+        1,
+        "broker.secret.internal",
+        9092,
+        Some("rack.secret"),
+        false,
+    )];
+    let bytes = kafka_describe_cluster_response_frame(0, 0, 0, None, "cluster.secret", brokers);
+
+    let extraction =
+        parse_kafka_describe_cluster_response(&bytes, 0, &ProtocolExtractionConfig::default())
+            .expect("describe cluster v0 ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "describe_cluster");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "60")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("broker")
+                || attribute.value.contains("rack")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_describe_cluster_v2_error_response_without_message_or_broker_values() {
+    let brokers: &[DescribeClusterBrokerFixture<'_>] = &[(
+        1,
+        "controller.secret.internal",
+        9093,
+        Some("rack.secret"),
+        true,
+    )];
+    let bytes = kafka_describe_cluster_response_frame(
+        0,
+        2,
+        31,
+        Some("cluster secret denied"),
+        "cluster.secret",
+        brokers,
+    );
+
+    let extraction =
+        parse_kafka_describe_cluster_response(&bytes, 2, &ProtocolExtractionConfig::default())
+            .expect("describe cluster v2 error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "describe_cluster");
+    assert_eq!(extraction.status_code, "31");
+    assert_eq!(extraction.error_type.as_deref(), Some("31"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "2")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("controller")
+                || attribute.value.contains("denied")
                 || attribute.value.contains("secret"))
     );
 }
@@ -7799,6 +7936,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     .expect("bounded kafka update features response parses");
     assert_eq!(bounded_update_features_response.attributes.len(), 2);
 
+    let bounded_describe_cluster_response = parse_kafka_describe_cluster_response(
+        &kafka_describe_cluster_response_frame(0, 0, 0, None, "cluster.secret", &[]),
+        0,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka describe cluster response parses");
+    assert_eq!(bounded_describe_cluster_response.attributes.len(), 2);
+
     let bounded_produce_response = parse_kafka_produce_response(
         &kafka_produce_response_frame(0, 1, &[("orders.secret", 6)]),
         1,
@@ -10262,6 +10412,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_describe_cluster_response(
+            &kafka_describe_cluster_response_frame(0, 2, 0, None, "cluster", &[]),
+            3,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_sasl_handshake_response(
             &kafka_sasl_handshake_response_frame(0, 0, &["PLAIN"]),
             2,
@@ -10994,6 +11153,36 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_describe_cluster_response(
+            &kafka_describe_cluster_response_with_broker_count_frame(1025),
+            2,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_describe_cluster_response(
+            &kafka_describe_cluster_response_frame(
+                0,
+                2,
+                0,
+                None,
+                "cluster",
+                &[(1, "broker.secret.internal", 9092, None, false)],
+            ),
+            2,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
         parse_kafka_metadata_response(
             &kafka_metadata_response_with_topic_count_frame(1025),
             8,
@@ -11605,6 +11794,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::ClientIdTooLong
     );
 
+    let describe_cluster_body = kafka_describe_cluster_request_body(2);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(60, 3, Some(b"client-a"), &describe_cluster_body),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(60, 2, Some(b"client-a"), b"\x01\x02\x01\x01"),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
     let mut truncated_response = kafka_produce_response_frame(0, 1, &[("orders", 6)]);
     truncated_response.truncate(10);
     assert_eq!(
@@ -11989,6 +12196,21 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     truncated_update_features_response.truncate(16);
     assert_eq!(
         parse_kafka_update_features_response(&truncated_update_features_response, 1, &config)
+            .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_describe_cluster_response = kafka_describe_cluster_response_frame(
+        0,
+        2,
+        0,
+        None,
+        "cluster.secret",
+        &[(1, "broker.secret.internal", 9092, Some("rack.secret"), true)],
+    );
+    truncated_describe_cluster_response.truncate(20);
+    assert_eq!(
+        parse_kafka_describe_cluster_response(&truncated_describe_cluster_response, 2, &config)
             .unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
@@ -15577,6 +15799,19 @@ fn kafka_update_features_request_body(
     body
 }
 
+fn kafka_describe_cluster_request_body(api_version: i16) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.push(1);
+    if api_version >= 1 {
+        body.push(2);
+    }
+    if api_version >= 2 {
+        body.push(1);
+    }
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 fn kafka_alter_replica_log_dirs_request_body(log_dir: &str, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&1_i32.to_be_bytes());
@@ -17731,6 +17966,57 @@ fn kafka_update_features_response_with_result_count_frame(result_count: usize) -
     response.extend_from_slice(&0_i16.to_be_bytes());
     push_compact_nullable_string(&mut response, None);
     push_unsigned_varint(&mut response, result_count + 1);
+    kafka_frame(&response)
+}
+
+type DescribeClusterBrokerFixture<'a> = (i32, &'a str, i32, Option<&'a str>, bool);
+
+fn kafka_describe_cluster_response_frame(
+    correlation_id: i32,
+    api_version: i16,
+    error_code: i16,
+    error_message: Option<&str>,
+    cluster_id: &str,
+    brokers: &[DescribeClusterBrokerFixture<'_>],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&error_code.to_be_bytes());
+    push_compact_nullable_string(&mut response, error_message);
+    if api_version >= 1 {
+        response.push(2);
+    }
+    push_compact_string(&mut response, cluster_id);
+    response.extend_from_slice(&1_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, brokers.len() + 1);
+    for (broker_id, host, port, rack, is_fenced) in brokers {
+        response.extend_from_slice(&broker_id.to_be_bytes());
+        push_compact_string(&mut response, host);
+        response.extend_from_slice(&port.to_be_bytes());
+        push_compact_nullable_string(&mut response, *rack);
+        if api_version >= 2 {
+            response.push(u8::from(*is_fenced));
+        }
+        push_unsigned_varint(&mut response, 0);
+    }
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+fn kafka_describe_cluster_response_with_broker_count_frame(broker_count: usize) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    push_compact_nullable_string(&mut response, None);
+    response.push(2);
+    push_compact_string(&mut response, "cluster");
+    response.extend_from_slice(&1_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, broker_count + 1);
     kafka_frame(&response)
 }
 
