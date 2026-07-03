@@ -216,7 +216,7 @@ fn validate_endpoint(path: &'static str, endpoint: &str) -> ConfigResult<()> {
         .split(['/', '?', '#'])
         .next()
         .expect("split always returns at least one segment");
-    if authority.is_empty() || authority.starts_with(':') {
+    if !authority_has_host(authority) {
         return Err(ConfigError::invalid_value(
             path,
             format!("{path} must include a host after the scheme"),
@@ -243,4 +243,21 @@ fn default_timeout_millis() -> u64 {
 
 fn default_max_retries() -> usize {
     2
+}
+
+fn authority_has_host(authority: &str) -> bool {
+    if authority.is_empty() || authority.starts_with(':') {
+        return false;
+    }
+    if let Some(rest) = authority.strip_prefix('[') {
+        let Some(end) = rest.find(']') else {
+            return false;
+        };
+        if end == 0 {
+            return false;
+        }
+        let after = &rest[end + 1..];
+        return after.is_empty() || after.starts_with(':');
+    }
+    true
 }

@@ -619,6 +619,19 @@ fn otlp_http_sink_config_is_validated_when_enabled() {
             modules: enabled_modules(),
             otlp_http: OtlpHttpConfig {
                 enabled: true,
+                endpoint: "http://[::1/v1/metrics".to_string(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.endpoint must include a host after the scheme",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
                 endpoint: "http:///v1/metrics".to_string(),
                 ..OtlpHttpConfig::default()
             },
@@ -731,7 +744,7 @@ fn otlp_http_sink_accepts_family_specific_and_fallback_endpoints() {
 
     assert!(
         RuntimeConfig {
-            modules: enabled_modules,
+            modules: enabled_modules.clone(),
             otlp_http: OtlpHttpConfig {
                 enabled: true,
                 endpoint: String::new(),
@@ -739,6 +752,20 @@ fn otlp_http_sink_accepts_family_specific_and_fallback_endpoints() {
                 traces_enabled: true,
                 profiles_enabled: false,
                 traces_endpoint: "http://127.0.0.1:4318/v1/traces".to_string(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        }
+        .validate()
+        .is_ok()
+    );
+
+    assert!(
+        RuntimeConfig {
+            modules: enabled_modules,
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://[::1]:4318/v1/metrics".to_string(),
                 ..OtlpHttpConfig::default()
             },
             ..RuntimeConfig::default()
