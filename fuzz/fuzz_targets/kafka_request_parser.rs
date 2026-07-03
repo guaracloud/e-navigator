@@ -6,6 +6,7 @@ use e_navigator_protocol::{
         parse_kafka_add_offsets_to_txn_response, parse_kafka_alter_configs_response,
         parse_kafka_alter_client_quotas_response, parse_kafka_alter_partition_reassignments_response,
         parse_kafka_alter_replica_log_dirs_response, parse_kafka_api_versions_response,
+        parse_kafka_alter_user_scram_credentials_response,
         parse_kafka_add_partitions_to_txn_response, parse_kafka_create_acls_response,
         parse_kafka_create_delegation_token_response, parse_kafka_create_partitions_response,
         parse_kafka_create_topics_response, parse_kafka_delete_groups_response,
@@ -75,6 +76,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_alter_client_quotas_response(data, 0, &config);
     let _ = parse_kafka_alter_client_quotas_response(data, 1, &config);
     let _ = parse_kafka_describe_user_scram_credentials_response(data, 0, &config);
+    let _ = parse_kafka_alter_user_scram_credentials_response(data, 0, &config);
     let _ = parse_kafka_produce_response(data, 0, &config);
     let _ = parse_kafka_produce_response(data, 7, &config);
     let _ = parse_kafka_fetch_response(data, 0, &config);

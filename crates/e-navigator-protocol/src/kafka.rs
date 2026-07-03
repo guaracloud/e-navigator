@@ -2906,6 +2906,70 @@ pub fn parse_kafka_describe_user_scram_credentials_response(
     })
 }
 
+pub fn parse_kafka_alter_user_scram_credentials_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if api_version != 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = alter_user_scram_credentials_response_error_code(body, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("alter_user_scram_credentials"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("51"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "alter_user_scram_credentials".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_list_groups_response(
     bytes: &[u8],
     api_version: i16,
@@ -3140,6 +3204,7 @@ fn validate_request_body(
         48 => validate_describe_client_quotas_request_body(body, header, config),
         49 => validate_alter_client_quotas_request_body(body, header, config),
         50 => validate_describe_user_scram_credentials_request_body(body, header, config),
+        51 => validate_alter_user_scram_credentials_request_body(body, header, config),
         _ => Ok(()),
     }
 }
@@ -4191,6 +4256,38 @@ fn validate_describe_user_scram_credentials_request_body(
             skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
             skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
         }
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_alter_user_scram_credentials_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_version != 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+
+    let mut cursor = header.body_start;
+    let deletion_count = read_compact_array_len(body, &mut cursor)?;
+    for _ in 0..deletion_count {
+        skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+        skip_bytes(body, &mut cursor, 1)?;
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    let upsertion_count = read_compact_array_len(body, &mut cursor)?;
+    for _ in 0..upsertion_count {
+        skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+        skip_bytes(body, &mut cursor, 1)?;
+        skip_bytes(body, &mut cursor, 4)?;
+        skip_compact_bytes(body, &mut cursor, config.max_header_bytes)?;
+        skip_compact_bytes(body, &mut cursor, config.max_header_bytes)?;
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
     }
     skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
     if cursor != body.len() {
@@ -5293,6 +5390,31 @@ fn describe_user_scram_credentials_response_error_code(
     Ok(first_user_error_code.unwrap_or(0))
 }
 
+fn alter_user_scram_credentials_response_error_code(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    skip_bytes(body, &mut cursor, 4)?;
+    let result_count = read_compact_array_len(body, &mut cursor)?;
+    let mut first_error_code = None;
+    for _ in 0..result_count {
+        skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+        let error_code = read_i16_be_cursor(body, &mut cursor)?;
+        if error_code != 0 && first_error_code.is_none() {
+            first_error_code = Some(error_code);
+        }
+        skip_compact_nullable_string(body, &mut cursor, config.max_request_line_bytes)?;
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    Ok(first_error_code.unwrap_or(0))
+}
+
 fn delete_groups_response_error_code(
     body: &[u8],
     config: &ProtocolExtractionConfig,
@@ -5797,6 +5919,24 @@ fn skip_compact_int32_array(body: &[u8], cursor: &mut usize) -> Result<(), Kafka
     skip_bytes(body, cursor, len.saturating_mul(4))
 }
 
+fn skip_compact_bytes(
+    body: &[u8],
+    cursor: &mut usize,
+    max_len: usize,
+) -> Result<(), KafkaExtraction> {
+    let encoded_len = read_unsigned_varint(body, cursor)?;
+    if encoded_len == 0 {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    let len = encoded_len
+        .checked_sub(1)
+        .ok_or(KafkaExtraction::MalformedFrame)?;
+    if len > max_len {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    skip_bytes(body, cursor, len)
+}
+
 fn skip_nullable_bytes(
     body: &[u8],
     cursor: &mut usize,
@@ -6118,6 +6258,7 @@ fn api_key_name(api_key: i16) -> Option<&'static str> {
         48 => Some("describe_client_quotas"),
         49 => Some("alter_client_quotas"),
         50 => Some("describe_user_scram_credentials"),
+        51 => Some("alter_user_scram_credentials"),
         _ => None,
     }
 }
