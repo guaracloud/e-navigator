@@ -27,6 +27,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "kafka_request_parser"
+path = "fuzz_targets/kafka_request_parser.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "mongodb_message_parser"
 path = "fuzz_targets/mongodb_message_parser.rs"
 test = false

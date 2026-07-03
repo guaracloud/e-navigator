@@ -1,6 +1,7 @@
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
     http::{HttpExtraction, parse_http_request},
+    kafka::{KafkaExtraction, parse_kafka_request},
     mongodb::{MongodbExtraction, parse_mongodb_message},
     mysql::{MysqlExtraction, parse_mysql_command},
     nats::{NatsExtraction, parse_nats_command},
@@ -137,6 +138,18 @@ proptest! {
         };
 
         let _ = parse_redis_command(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_kafka_fixture_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 4,
+            max_tracestate_bytes: 32,
+        };
+
+        let _ = parse_kafka_request(&bytes, &config);
     }
 
     #[test]
@@ -678,6 +691,148 @@ fn rejects_malformed_and_unsupported_redis_fixtures() {
     assert_eq!(
         parse_redis_command(b"*2\r\n$3\r\nGET\r\n$3\r\nkey", &config).unwrap_err(),
         RedisExtraction::MalformedFrame
+    );
+}
+
+#[test]
+fn extracts_kafka_produce_request_without_client_topic_or_payload_values() {
+    let bytes = kafka_request_frame(
+        0,
+        8,
+        Some(b"secret-client"),
+        b"topic.secret.name secret-payload",
+    );
+
+    let extraction =
+        parse_kafka_request(&bytes, &ProtocolExtractionConfig::default()).expect("kafka parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation.as_deref(), Some("produce"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.system" && attribute.value == "kafka")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| attribute.key
+        == "messaging.operation"
+        && attribute.value == "produce"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "0")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "8")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| attribute.key
+        == "messaging.kafka.client_id_present"
+        && attribute.value == "true"));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("topic")
+                || attribute.value.contains("payload"))
+    );
+}
+
+#[test]
+fn extracts_kafka_flexible_api_versions_request_without_client_id_value() {
+    let bytes = kafka_flexible_request_frame(18, 3, Some(b"secret-flex-client"), b"\0\0");
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("flexible kafka header parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("api_versions"));
+    assert!(extraction.attributes.iter().any(|attribute| attribute.key
+        == "messaging.kafka.client_id_present"
+        && attribute.value == "true"));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret-flex-client"))
+    );
+}
+
+#[test]
+fn enforces_kafka_frame_client_id_and_attribute_bounds() {
+    let bounded = parse_kafka_request(
+        &kafka_request_frame(3, 9, Some(b"client-a"), b"topic.secret"),
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka request parses");
+    assert_eq!(bounded.attributes.len(), 2);
+
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(3, 9, Some(b"client-a"), b"topic.secret"),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 16,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(3, 9, Some(b"client-a"), b""),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+}
+
+#[test]
+fn rejects_malformed_and_unsupported_kafka_fixtures() {
+    let config = ProtocolExtractionConfig::default();
+
+    assert_eq!(
+        parse_kafka_request(&[], &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_kafka_request(&0_i32.to_be_bytes(), &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(99, 0, None, b""), &config).unwrap_err(),
+        KafkaExtraction::UnsupportedApiKey
+    );
+
+    let mut truncated = kafka_request_frame(3, 9, Some(b"client-a"), b"");
+    truncated.truncate(8);
+    assert_eq!(
+        parse_kafka_request(&truncated, &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(3, 9, Some(b"bad-\xff"), b""), &config)
+            .unwrap_err(),
+        KafkaExtraction::InvalidUtf8
     );
 }
 
@@ -1295,6 +1450,68 @@ fn mysql_packet(command: u8, query: &[u8]) -> Vec<u8> {
     packet.push(command);
     packet.extend_from_slice(query);
     packet
+}
+
+fn kafka_request_frame(
+    api_key: i16,
+    api_version: i16,
+    client_id: Option<&[u8]>,
+    body: &[u8],
+) -> Vec<u8> {
+    let mut request = Vec::new();
+    request.extend_from_slice(&api_key.to_be_bytes());
+    request.extend_from_slice(&api_version.to_be_bytes());
+    request.extend_from_slice(&42_i32.to_be_bytes());
+    if let Some(client_id) = client_id {
+        request.extend_from_slice(&(client_id.len() as i16).to_be_bytes());
+        request.extend_from_slice(client_id);
+    } else {
+        request.extend_from_slice(&(-1_i16).to_be_bytes());
+    }
+    request.extend_from_slice(body);
+    kafka_frame(&request)
+}
+
+fn kafka_flexible_request_frame(
+    api_key: i16,
+    api_version: i16,
+    client_id: Option<&[u8]>,
+    body: &[u8],
+) -> Vec<u8> {
+    let mut request = Vec::new();
+    request.extend_from_slice(&api_key.to_be_bytes());
+    request.extend_from_slice(&api_version.to_be_bytes());
+    request.extend_from_slice(&42_i32.to_be_bytes());
+    if let Some(client_id) = client_id {
+        push_unsigned_varint(&mut request, client_id.len() + 1);
+        request.extend_from_slice(client_id);
+    } else {
+        push_unsigned_varint(&mut request, 0);
+    }
+    push_unsigned_varint(&mut request, 0);
+    request.extend_from_slice(body);
+    kafka_frame(&request)
+}
+
+fn kafka_frame(request: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(request.len() + 4);
+    frame.extend_from_slice(&(request.len() as i32).to_be_bytes());
+    frame.extend_from_slice(request);
+    frame
+}
+
+fn push_unsigned_varint(bytes: &mut Vec<u8>, mut value: usize) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        bytes.push(byte);
+        if value == 0 {
+            return;
+        }
+    }
 }
 
 fn mongodb_frame(opcode: i32, body: &[u8]) -> Vec<u8> {

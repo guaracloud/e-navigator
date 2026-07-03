@@ -169,6 +169,42 @@ async fn mongodb_protocol_request_generates_named_request_span() {
 }
 
 #[tokio::test]
+async fn kafka_protocol_request_generates_named_request_span() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(None, true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.protocol = ProtocolKind::Kafka;
+    request.method = Some("produce".to_string());
+    request.status_code = None;
+    request.attributes = vec![
+        TraceAttribute {
+            key: "messaging.system".to_string(),
+            value: "kafka".to_string(),
+        },
+        TraceAttribute {
+            key: "messaging.operation".to_string(),
+            value: "produce".to_string(),
+        },
+    ];
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(span.name, "kafka request");
+    assert_eq!(span.protocol, ProtocolKind::Kafka);
+    assert_eq!(span.method.as_deref(), Some("produce"));
+    assert!(has_attribute(
+        &span.attributes,
+        "messaging.operation",
+        "produce"
+    ));
+}
+
+#[tokio::test]
 async fn nats_protocol_request_generates_named_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);

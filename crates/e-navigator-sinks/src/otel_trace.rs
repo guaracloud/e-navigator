@@ -536,6 +536,7 @@ fn protocol_kind_name(protocol: ProtocolKind) -> &'static str {
     match protocol {
         ProtocolKind::Http => "http",
         ProtocolKind::Grpc => "grpc",
+        ProtocolKind::Kafka => "kafka",
         ProtocolKind::Mongodb => "mongodb",
         ProtocolKind::Mysql => "mysql",
         ProtocolKind::Nats => "nats",

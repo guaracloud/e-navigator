@@ -23,7 +23,7 @@ bounded, versioned signals:
 
 - process execution and exit observations;
 - TCP network observations and native network metrics;
-- DNS, HTTP/request, MongoDB, MySQL, NATS, PostgreSQL, and Redis parsers,
+- DNS, HTTP/request, Kafka, MongoDB, MySQL, NATS, PostgreSQL, and Redis parsers,
   trace, and profiling foundations;
 - host resource observations from procfs, sysfs, and cgroups;
 - Kubernetes/container attribution where context is available;
@@ -107,9 +107,9 @@ Evidence-backed today:
 - host resource parsing and Docker synthetic fixtures;
 - process and TCP network source foundations;
 - Kubernetes/container attribution for selected captured signals;
-- dependency graph, resource metrics, network metrics, MongoDB, MySQL, NATS,
-  PostgreSQL, and Redis parser foundations, request/trace/profile foundations,
-  and runtime security generator behavior through tests;
+- dependency graph, resource metrics, network metrics, Kafka, MongoDB, MySQL,
+  NATS, PostgreSQL, and Redis parser foundations, request/trace/profile
+  foundations, and runtime security generator behavior through tests;
 - selected guarded homelab proof for exec, network, DNS, HTTP, profile,
   resource, Prometheus, OTLP, and seccomp paths;
 - release artifact signing, SBOM generation, Helm packaging, and local quality
@@ -122,6 +122,7 @@ Important current non-claims:
 - no production backend compatibility claim;
 - no reduced-overhead or reduced-privilege claim;
 - no symmetric all-node DNS/HTTP capture claim;
+- no live Kafka protocol capture or request/response matching claim;
 - no live NATS protocol capture or request/response matching claim;
 - no live MongoDB protocol capture or request/response matching claim;
 - no live MySQL protocol capture or request/response matching claim;

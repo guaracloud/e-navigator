@@ -11,6 +11,7 @@ use crate::{
 pub enum ProtocolKind {
     Http,
     Grpc,
+    Kafka,
     Mongodb,
     Mysql,
     Nats,

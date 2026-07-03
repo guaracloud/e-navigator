@@ -313,6 +313,62 @@ fn serializes_mongodb_protocol_request_observation_without_bson_values() {
 }
 
 #[test]
+fn serializes_kafka_protocol_request_observation_without_client_topic_or_payload() {
+    let signal = SignalEnvelope::protocol_request_observation(
+        "source.protocol_fixture",
+        Some("node-a".to_string()),
+        ProtocolRequestObservation {
+            protocol: ProtocolKind::Kafka,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: None,
+            duration_nanos: None,
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            traceparent: None,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::Medium,
+            service_name: Some("messaging-client".to_string()),
+            method: Some("produce".to_string()),
+            status_code: None,
+            process: Some(process()),
+            container: Some(container()),
+            kubernetes: Some(kubernetes()),
+            peer: Some(peer()),
+            attributes: vec![
+                TraceAttribute {
+                    key: "messaging.system".to_string(),
+                    value: "kafka".to_string(),
+                },
+                TraceAttribute {
+                    key: "messaging.operation".to_string(),
+                    value: "produce".to_string(),
+                },
+                TraceAttribute {
+                    key: "messaging.kafka.client_id_present".to_string(),
+                    value: "true".to_string(),
+                },
+            ],
+        },
+    );
+
+    let json = serde_json::to_value(&signal).expect("signal serializes");
+
+    assert_eq!(json["payload"]["protocol"], "kafka");
+    assert_eq!(json["payload"]["method"], "produce");
+    assert!(!json.to_string().contains("secret-client"));
+    assert!(!json.to_string().contains("topic.secret"));
+    assert!(!json.to_string().contains("secret-payload"));
+
+    let decoded: SignalEnvelope = serde_json::from_value(json).expect("signal deserializes");
+    assert!(matches!(
+        decoded.payload,
+        SignalPayload::ProtocolRequestObservation(_)
+    ));
+}
+
+#[test]
 fn serializes_nats_protocol_request_observation_without_subject_or_payload() {
     let signal = SignalEnvelope::protocol_request_observation(
         "source.protocol_fixture",

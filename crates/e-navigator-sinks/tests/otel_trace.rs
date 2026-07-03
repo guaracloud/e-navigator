@@ -429,6 +429,50 @@ fn formats_mongodb_request_span_with_protocol_name() {
 }
 
 #[test]
+fn formats_kafka_request_span_with_protocol_name() {
+    let signal = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "kafka request".to_string(),
+            protocol: ProtocolKind::Kafka,
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(1_500),
+            duration_nanos: Some(500),
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::Medium,
+            service_name: Some("messaging-client".to_string()),
+            method: Some("produce".to_string()),
+            status_code: None,
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(trace_peer_context()),
+            attributes: vec![
+                TraceAttribute {
+                    key: "messaging.system".to_string(),
+                    value: "kafka".to_string(),
+                },
+                TraceAttribute {
+                    key: "messaging.operation".to_string(),
+                    value: "produce".to_string(),
+                },
+            ],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("kafka request span formats");
+
+    assert_eq!(record.name, "kafka request");
+    assert_eq!(record.attributes["network.protocol.name"], "kafka");
+    assert_eq!(record.attributes["messaging.system"], "kafka");
+    assert_eq!(record.attributes["messaging.operation"], "produce");
+}
+
+#[test]
 fn formats_nats_request_span_with_protocol_name() {
     let signal = SignalEnvelope::request_span_observation(
         "generator.request_correlation",
