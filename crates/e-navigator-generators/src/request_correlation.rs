@@ -304,6 +304,7 @@ fn request_span_name(protocol: ProtocolKind) -> &'static str {
     match protocol {
         ProtocolKind::Http => "http request",
         ProtocolKind::Grpc => "grpc request",
+        ProtocolKind::Redis => "redis command",
         ProtocolKind::Unknown => "protocol request",
         _ => "protocol request",
     }
@@ -333,7 +334,7 @@ fn request_target_fingerprint(attributes: &[TraceAttribute]) -> Option<u64> {
     attributes.iter().find_map(|attribute| {
         if !matches!(
             attribute.key.as_str(),
-            "url.path" | "http.route" | "http.request.target"
+            "url.path" | "http.route" | "http.request.target" | "db.operation"
         ) || attribute.key.len() > MAX_REQUEST_ATTRIBUTE_KEY_BYTES
             || attribute.value.len() > MAX_REQUEST_ATTRIBUTE_VALUE_BYTES
         {

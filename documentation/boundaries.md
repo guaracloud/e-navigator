@@ -30,6 +30,7 @@ E-Navigator does not currently claim:
 - trace storage, profile storage, flamegraph UI, dashboards, or query UI;
 - pprof export;
 - complete live HTTP/gRPC protocol parsing;
+- live Redis protocol capture or request/response matching;
 - TLS payload inspection;
 - full TCP state tracking, packet accounting, retransmits, or resets;
 - lossless DNS or HTTP capture across every node and workload shape;

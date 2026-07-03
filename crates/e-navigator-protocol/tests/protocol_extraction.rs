@@ -1,6 +1,7 @@
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
     http::{HttpExtraction, parse_http_request},
+    redis::{RedisExtraction, parse_redis_command},
     trace_context::{TraceContextError, parse_traceparent},
 };
 use e_navigator_signals::ProtocolKind;
@@ -120,6 +121,18 @@ proptest! {
                 .iter()
                 .any(|attribute| attribute.value.contains("secret")));
         }
+    }
+
+    #[test]
+    fn arbitrary_redis_fixture_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 4,
+            max_tracestate_bytes: 32,
+        };
+
+        let _ = parse_redis_command(&bytes, &config);
     }
 }
 
@@ -494,6 +507,126 @@ fn enforces_fixed_header_request_line_tracestate_and_attribute_bounds() {
     .expect("bounded truncation parses deterministically");
     assert_eq!(extraction.tracestate, None);
     assert_eq!(extraction.attributes.len(), 1);
+}
+
+#[test]
+fn extracts_redis_resp_command_without_raw_key_or_value() {
+    let bytes = b"*3\r\n$3\r\nSET\r\n$16\r\ncustomer:pii:123\r\n$12\r\nsecret-value\r\n";
+
+    let extraction = parse_redis_command(bytes, &ProtocolExtractionConfig::default())
+        .expect("redis command parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Redis);
+    assert_eq!(extraction.command.as_deref(), Some("SET"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.system" && attribute.value == "redis")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.operation" && attribute.value == "SET")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.redis.argument.count" && attribute.value == "2")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.redis.key_present" && attribute.value == "true")
+    );
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("customer") || attribute.value.contains("secret")
+    ));
+}
+
+#[test]
+fn extracts_redis_inline_command_without_raw_arguments() {
+    let extraction = parse_redis_command(
+        b"get customer:pii:123\r\n",
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("inline redis command parses");
+
+    assert_eq!(extraction.command.as_deref(), Some("GET"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.operation" && attribute.value == "GET")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("customer"))
+    );
+}
+
+#[test]
+fn enforces_redis_frame_attribute_and_bulk_bounds() {
+    let bounded = parse_redis_command(
+        b"*2\r\n$3\r\nGET\r\n$16\r\ncustomer:pii:123\r\n",
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded redis command parses");
+    assert_eq!(bounded.attributes.len(), 2);
+
+    assert_eq!(
+        parse_redis_command(
+            b"*1\r\n$1025\r\nGET\r\n",
+            &ProtocolExtractionConfig::default()
+        )
+        .unwrap_err(),
+        RedisExtraction::BulkStringTooLong
+    );
+    assert_eq!(
+        parse_redis_command(
+            b"GET customer:pii:123\r\n",
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        RedisExtraction::FrameTooLong
+    );
+}
+
+#[test]
+fn rejects_malformed_and_unsupported_redis_fixtures() {
+    let config = ProtocolExtractionConfig::default();
+
+    assert_eq!(
+        parse_redis_command(b"*0\r\n", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_command(b"*2\r\n+GET\r\n$3\r\nkey\r\n", &config).unwrap_err(),
+        RedisExtraction::UnsupportedFrame
+    );
+    assert_eq!(
+        parse_redis_command(b"*1\r\n$3\r\nG\xffT\r\n", &config).unwrap_err(),
+        RedisExtraction::InvalidUtf8
+    );
+    assert_eq!(
+        parse_redis_command(b"*2\r\n$3\r\nGET\r\n$3\r\nkey", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
 }
 
 fn lower_hex_string(

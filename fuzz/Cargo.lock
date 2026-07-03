@@ -198,6 +198,7 @@ dependencies = [
  "aya-build",
  "e-navigator-core",
  "e-navigator-profiling",
+ "e-navigator-protocol",
  "e-navigator-signals",
  "libc",
  "tokio",

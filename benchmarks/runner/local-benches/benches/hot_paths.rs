@@ -7,7 +7,8 @@ use e_navigator_generators::{
 };
 use e_navigator_profiling::model::{NormalizationLimits, parse_profile_fixture};
 use e_navigator_protocol::{
-    ProtocolExtractionConfig, http::parse_http_request, trace_context::parse_traceparent,
+    ProtocolExtractionConfig, http::parse_http_request, redis::parse_redis_command,
+    trace_context::parse_traceparent,
 };
 use e_navigator_signals::{
     ContainerContext, DnsQueryEvent, DnsQueryType, DnsResponseCode, DnsResponseEvent, ExecEvent,
@@ -90,6 +91,7 @@ fn bench_host_parsers(c: &mut Criterion) {
 fn bench_protocol_and_profiles(c: &mut Criterion) {
     let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
     let http = b"GET /api/orders HTTP/1.1\r\nHost: api.example.test\r\nTraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\nTracestate: rojo=00f067aa0ba902b7\r\n\r\n";
+    let redis = b"*2\r\n$3\r\nGET\r\n$16\r\ncustomer:pii:123\r\n";
     let protocol_config = ProtocolExtractionConfig::default();
     let profile_fixture = r#"{
         "timestamp_unix_nanos": 1000,
@@ -112,6 +114,9 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     });
     c.bench_function("protocol/http_fixture_parse", |b| {
         b.iter(|| parse_http_request(black_box(http), &protocol_config).unwrap())
+    });
+    c.bench_function("protocol/redis_resp_command_parse", |b| {
+        b.iter(|| parse_redis_command(black_box(redis), &protocol_config).unwrap())
     });
     c.bench_function("profiling/fixture_normalize", |b| {
         b.iter(|| parse_profile_fixture(black_box(profile_fixture), &limits).unwrap())

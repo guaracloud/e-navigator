@@ -23,7 +23,7 @@ or chart rendering:
 - config validation and packaged config guards;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/profile events;
-- bounded DNS/HTTP fixture parsing;
+- bounded DNS/HTTP fixture parsing and Redis RESP command parsing;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior;
 - Prometheus HTTP formatting, health/readiness endpoints, and secret-like label
@@ -68,6 +68,10 @@ These areas remain explicitly partial:
 - **HTTP capture:** selected `homelab-02` outbound cleartext paths work, but
   symmetric node coverage, inbound parsing, TLS, gRPC, status-code extraction,
   route templates, retries, app errors, and broader iovec shapes are not proven.
+- **Redis protocol observability:** bounded RESP command parsing is locally
+  tested without exporting raw key/value payloads, but runtime capture,
+  request/response matching, status/error extraction, and live Redis proof are
+  not implemented or proven.
 - **DNS capture:** selected UDP paths work, but symmetric all-node capture and
   lossless DNS coverage are not proven.
 - **CPU profiling:** selected samples and sessions are proven, but deterministic

@@ -109,6 +109,60 @@ fn serializes_protocol_request_observation_with_explicit_context() {
 }
 
 #[test]
+fn serializes_redis_protocol_request_observation_without_payload_values() {
+    let signal = SignalEnvelope::protocol_request_observation(
+        "source.protocol_fixture",
+        Some("node-a".to_string()),
+        ProtocolRequestObservation {
+            protocol: ProtocolKind::Redis,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: None,
+            duration_nanos: None,
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            traceparent: None,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::Medium,
+            service_name: Some("cache-client".to_string()),
+            method: Some("GET".to_string()),
+            status_code: None,
+            process: Some(process()),
+            container: Some(container()),
+            kubernetes: Some(kubernetes()),
+            peer: Some(peer()),
+            attributes: vec![
+                TraceAttribute {
+                    key: "db.system".to_string(),
+                    value: "redis".to_string(),
+                },
+                TraceAttribute {
+                    key: "db.operation".to_string(),
+                    value: "GET".to_string(),
+                },
+                TraceAttribute {
+                    key: "db.redis.key_present".to_string(),
+                    value: "true".to_string(),
+                },
+            ],
+        },
+    );
+
+    let json = serde_json::to_value(&signal).expect("signal serializes");
+
+    assert_eq!(json["payload"]["protocol"], "redis");
+    assert_eq!(json["payload"]["method"], "GET");
+    assert!(!json.to_string().contains("customer:pii"));
+
+    let decoded: SignalEnvelope = serde_json::from_value(json).expect("signal deserializes");
+    assert!(matches!(
+        decoded.payload,
+        SignalPayload::ProtocolRequestObservation(_)
+    ));
+}
+
+#[test]
 fn serializes_extracted_trace_context_observation() {
     let signal = SignalEnvelope::extracted_trace_context_observation(
         "parser.protocol",

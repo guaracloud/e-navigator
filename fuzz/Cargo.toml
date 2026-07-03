@@ -27,6 +27,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "redis_command_parser"
+path = "fuzz_targets/redis_command_parser.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "profile_fixture_parser"
 path = "fuzz_targets/profile_fixture_parser.rs"
 test = false
