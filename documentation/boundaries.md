@@ -28,7 +28,7 @@ E-Navigator does not currently claim:
 
 - production observability backend behavior;
 - trace storage, profile storage, flamegraph UI, dashboards, or query UI;
-- pprof export;
+- runtime pprof endpoint or upload sink;
 - complete live HTTP/gRPC protocol parsing;
 - live Kafka protocol capture or request/response matching;
 - live NATS protocol capture or request/response matching;

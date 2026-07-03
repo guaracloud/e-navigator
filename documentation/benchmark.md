@@ -43,8 +43,8 @@ Current local benchmark targets:
 - generator hot paths for network, DNS, resource, dependency graph, trace,
   request, profiling, runtime security, and native export;
 - JSON signal serialization, OpenTelemetry metric/trace/profile formatting,
-  Prometheus profile session/warning formatting, and bounded HTTP exporter queue
-  enqueue behavior.
+  pprof profile sample protobuf rendering, Prometheus profile session/warning
+  formatting, and bounded HTTP exporter queue enqueue behavior.
 
 Benchmark setup must stay outside measured loops where the code path supports
 that. Benchmarks use fixed in-memory fixtures only. They must not read live
@@ -94,6 +94,19 @@ cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
 This timing measures fixed-fixture internal OpenTelemetry trace-record
 formatting only. It does not prove OTLP collector latency, backend acceptance,
 or live protocol capture overhead.
+
+Focused pprof profile sample formatter smoke from this development host:
+
+```bash
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  --sample-size 10 formatter/pprof_profile_sample
+```
+
+- `formatter/pprof_profile_sample`: 3.7686-3.7823 us.
+
+This timing measures fixed-fixture pprof protobuf rendering only. It does not
+prove a runtime pprof endpoint, backend upload, storage behavior, or live
+profiling overhead.
 
 ## Guarded Runtime Proof
 

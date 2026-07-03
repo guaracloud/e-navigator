@@ -29,7 +29,7 @@ use e_navigator_signals::{
 };
 use e_navigator_sinks::{
     HttpExporterConfig, HttpJsonExporter, PrometheusHttpSink, format_otel_metric_record,
-    format_otel_trace_record, format_profile_record,
+    format_otel_trace_record, format_pprof_profile, format_profile_record,
 };
 use e_navigator_sources_ebpf_aya::{
     cpu_profile::fuzz_decode_raw_cpu_profile_event, exec::fuzz_decode_raw_exec_event,
@@ -274,6 +274,9 @@ fn bench_serialization_and_exporter(c: &mut Criterion) {
     });
     c.bench_function("formatter/profile_record", |b| {
         b.iter(|| format_profile_record(black_box(&profile)).unwrap())
+    });
+    c.bench_function("formatter/pprof_profile_sample", |b| {
+        b.iter(|| format_pprof_profile(black_box(&profile)).unwrap())
     });
     c.bench_function("formatter/prometheus_profile_session_write", |b| {
         b.iter(|| {

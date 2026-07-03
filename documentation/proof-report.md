@@ -54,6 +54,8 @@ or chart rendering:
   suppression, and development-status profile sample records with
   deterministic, workload-aware IDs plus session dropped-sample records in
   fake-collector tests;
+- pprof-compatible profile sample protobuf rendering with stack locations,
+  sample-period scaling, workload labels, and sensitive attribute filtering;
 - Helm rendering, schema checks, and release verification workflow structure.
 
 ## Runtime-Proven Slices
@@ -132,9 +134,10 @@ These areas remain explicitly partial:
   coverage, and live Redis proof are not implemented or proven.
 - **DNS capture:** selected UDP paths work, but symmetric all-node capture and
   lossless DNS coverage are not proven.
-- **CPU profiling:** selected samples and sessions are proven, but deterministic
-  capture for every workload shape, symbolization, pprof, storage, and
-  flamegraph rendering are not proven.
+- **CPU profiling:** selected samples and sessions plus local pprof protobuf
+  rendering are proven, but deterministic capture for every workload shape,
+  symbolization, runtime pprof upload, storage, and flamegraph rendering are not
+  proven.
 - **Exporter infrastructure:** local and namespace-local proof exists, but broad
   production backend/collector compatibility and longer live soaks are not
   proven.

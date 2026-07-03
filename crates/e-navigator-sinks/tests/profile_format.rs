@@ -4,8 +4,10 @@ use e_navigator_signals::{
     ProfilingFrame, ProfilingKind, ProfilingSessionObservation, SignalEnvelope,
 };
 use e_navigator_sinks::{
-    E_NAVIGATOR_CPU_PROFILE_METRIC_NAME, format_otel_profile_record, format_profile_record,
+    E_NAVIGATOR_CPU_PROFILE_METRIC_NAME, format_otel_profile_record, format_pprof_profile,
+    format_profile_record,
 };
+use prost::Message;
 use std::collections::BTreeMap;
 
 #[test]
@@ -185,6 +187,119 @@ fn otlp_profile_sample_ids_include_host_and_workload_identity() {
     }
     let changed_record = format_otel_profile_record(&left).expect("changed formats");
     assert_ne!(left_record.profile_id, changed_record.profile_id);
+}
+
+#[test]
+fn pprof_profile_sample_encodes_stack_values_and_safe_labels() {
+    let mut signal = SignalEnvelope::profile_sample_observation(
+        "source.aya_cpu_profile",
+        Some("node-a".to_string()),
+        ProfileSampleObservation {
+            timestamp_unix_nanos: 1_000,
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::High,
+            sample_count: 2,
+            sampling_period_nanos: Some(10_000_000),
+            stack_id: "stack:abc".to_string(),
+            stack_frames: vec![
+                ProfilingFrame {
+                    symbol: Some("checkout::handler".to_string()),
+                    module: Some("checkout".to_string()),
+                    file: Some("/src/checkout.rs".to_string()),
+                    line: Some(42),
+                },
+                ProfilingFrame {
+                    symbol: Some("tokio::runtime".to_string()),
+                    module: Some("tokio".to_string()),
+                    file: None,
+                    line: None,
+                },
+            ],
+            process: Some(NetworkProcessIdentity {
+                pid: 42,
+                ppid: Some(1),
+                uid: Some(1000),
+                command: "checkout-api".to_string(),
+                executable: Some("/app/checkout-api".to_string()),
+                cgroup_id: None,
+            }),
+            container: Some(container("container-a")),
+            kubernetes: Some(kubernetes("pod-a")),
+            thread_id: Some(7),
+            thread_name: Some("worker".to_string()),
+            attributes: vec![
+                attr("profiling.source", "fixture"),
+                attr("authorization", "Bearer token"),
+                attr("profile_id", "evil"),
+            ],
+        },
+    );
+    if let e_navigator_signals::SignalPayload::ProfileSampleObservation(sample) =
+        &mut signal.payload
+        && let Some(kubernetes) = &mut sample.kubernetes
+    {
+        kubernetes
+            .labels
+            .insert("app".to_string(), "checkout-api".to_string());
+    }
+
+    let bytes = format_pprof_profile(&signal).expect("pprof profile formats");
+    let profile = pprof::Profile::decode(bytes.as_slice()).expect("pprof decodes");
+
+    assert_eq!(profile.string_table.first().map(String::as_str), Some(""));
+    assert!(profile.string_table.contains(&"cpu".to_string()));
+    assert!(profile.string_table.contains(&"nanoseconds".to_string()));
+    assert!(
+        profile
+            .string_table
+            .contains(&"checkout::handler".to_string())
+    );
+    assert!(profile.string_table.contains(&"tokio::runtime".to_string()));
+    assert_eq!(profile.sample.len(), 1);
+    assert_eq!(profile.sample[0].value, vec![20_000_000]);
+    assert_eq!(profile.sample[0].location_id, vec![1, 2]);
+    assert_eq!(profile.location.len(), 2);
+    assert_eq!(profile.location[0].line[0].line, 42);
+    assert_eq!(profile.function.len(), 2);
+    assert_eq!(profile.time_nanos, 1_000);
+    assert_eq!(profile.period, 10_000_000);
+    assert_eq!(label_value(&profile, "service.name"), Some("checkout-api"));
+    assert_eq!(label_value(&profile, "thread.name"), Some("worker"));
+    assert_eq!(label_value(&profile, "profiling.source"), Some("fixture"));
+    assert_eq!(label_value(&profile, "authorization"), None);
+    assert_eq!(label_value(&profile, "profile_id"), None);
+}
+
+#[test]
+fn pprof_profile_ignores_sessions_and_empty_stacks() {
+    let session = SignalEnvelope::profiling_session_observation(
+        "generator.profiling",
+        Some("node-a".to_string()),
+        ProfilingSessionObservation {
+            window: MetricAggregationWindow {
+                start_unix_nanos: 1,
+                end_unix_nanos: 2,
+            },
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::Medium,
+            profile_id: "profile:abc".to_string(),
+            observed_sample_count: 3,
+            dropped_sample_count: 0,
+            distinct_stack_count: 2,
+            sampling_period_nanos: Some(10_000_000),
+            process: None,
+            container: None,
+            kubernetes: None,
+            source: "source.synthetic_profile".to_string(),
+            attributes: Vec::new(),
+        },
+    );
+    let empty_stack = profile_sample_signal(Some("node-a"), Some("container-a"), Some("pod-a"));
+
+    assert_eq!(format_pprof_profile(&session), None);
+    assert_eq!(format_pprof_profile(&empty_stack), None);
 }
 
 #[test]
@@ -398,5 +513,128 @@ fn kubernetes(pod_uid: &str) -> KubernetesContext {
         container_name: Some("checkout".to_string()),
         node_name: Some("node-a".to_string()),
         labels: BTreeMap::new(),
+    }
+}
+
+fn label_value<'a>(profile: &'a pprof::Profile, key: &str) -> Option<&'a str> {
+    let sample = profile.sample.first()?;
+    sample.label.iter().find_map(|label| {
+        let label_key = profile.string_table.get(usize::try_from(label.key).ok()?)?;
+        if label_key == key {
+            profile
+                .string_table
+                .get(usize::try_from(label.str).ok()?)
+                .map(String::as_str)
+        } else {
+            None
+        }
+    })
+}
+
+mod pprof {
+    use prost::Message;
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(super) struct Profile {
+        #[prost(message, repeated, tag = "1")]
+        pub(super) sample_type: Vec<ValueType>,
+        #[prost(message, repeated, tag = "2")]
+        pub(super) sample: Vec<Sample>,
+        #[prost(message, repeated, tag = "3")]
+        pub(super) mapping: Vec<Mapping>,
+        #[prost(message, repeated, tag = "4")]
+        pub(super) location: Vec<Location>,
+        #[prost(message, repeated, tag = "5")]
+        pub(super) function: Vec<Function>,
+        #[prost(string, repeated, tag = "6")]
+        pub(super) string_table: Vec<String>,
+        #[prost(int64, tag = "7")]
+        pub(super) drop_frames: i64,
+        #[prost(int64, tag = "8")]
+        pub(super) keep_frames: i64,
+        #[prost(int64, tag = "9")]
+        pub(super) time_nanos: i64,
+        #[prost(int64, tag = "10")]
+        pub(super) duration_nanos: i64,
+        #[prost(message, optional, tag = "11")]
+        pub(super) period_type: Option<ValueType>,
+        #[prost(int64, tag = "12")]
+        pub(super) period: i64,
+        #[prost(int64, repeated, tag = "13")]
+        pub(super) comment: Vec<i64>,
+        #[prost(int64, tag = "14")]
+        pub(super) default_sample_type: i64,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(super) struct ValueType {
+        #[prost(int64, tag = "1")]
+        pub(super) r#type: i64,
+        #[prost(int64, tag = "2")]
+        pub(super) unit: i64,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(super) struct Sample {
+        #[prost(uint64, repeated, tag = "1")]
+        pub(super) location_id: Vec<u64>,
+        #[prost(int64, repeated, tag = "2")]
+        pub(super) value: Vec<i64>,
+        #[prost(message, repeated, tag = "3")]
+        pub(super) label: Vec<Label>,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(super) struct Label {
+        #[prost(int64, tag = "1")]
+        pub(super) key: i64,
+        #[prost(int64, tag = "2")]
+        pub(super) str: i64,
+        #[prost(int64, tag = "3")]
+        pub(super) num: i64,
+        #[prost(int64, tag = "4")]
+        pub(super) num_unit: i64,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(super) struct Mapping {
+        #[prost(uint64, tag = "1")]
+        pub(super) id: u64,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(super) struct Location {
+        #[prost(uint64, tag = "1")]
+        pub(super) id: u64,
+        #[prost(uint64, tag = "2")]
+        pub(super) mapping_id: u64,
+        #[prost(uint64, tag = "3")]
+        pub(super) address: u64,
+        #[prost(message, repeated, tag = "4")]
+        pub(super) line: Vec<Line>,
+        #[prost(bool, tag = "5")]
+        pub(super) is_folded: bool,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(super) struct Line {
+        #[prost(uint64, tag = "1")]
+        pub(super) function_id: u64,
+        #[prost(int64, tag = "2")]
+        pub(super) line: i64,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(super) struct Function {
+        #[prost(uint64, tag = "1")]
+        pub(super) id: u64,
+        #[prost(int64, tag = "2")]
+        pub(super) name: i64,
+        #[prost(int64, tag = "3")]
+        pub(super) system_name: i64,
+        #[prost(int64, tag = "4")]
+        pub(super) filename: i64,
+        #[prost(int64, tag = "5")]
+        pub(super) start_line: i64,
     }
 }
