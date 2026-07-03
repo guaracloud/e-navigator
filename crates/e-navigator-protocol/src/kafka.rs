@@ -408,6 +408,7 @@ fn validate_request_body(
     match header.api_key {
         0 => validate_produce_request_body(body, header, config),
         1 => validate_fetch_request_body(body, header, config),
+        2 => validate_list_offsets_request_body(body, header, config),
         3 => validate_metadata_request_body(body, header, config),
         18 => validate_api_versions_request_body(body, header, config),
         _ => Ok(()),
@@ -462,6 +463,42 @@ fn validate_fetch_request_body(
                 skip_bytes(body, &mut cursor, 8)?;
             }
             skip_bytes(body, &mut cursor, 4)?;
+        }
+    }
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_list_offsets_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_version < 1 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if header.api_version > 5 {
+        return Ok(());
+    }
+
+    let mut cursor = header.body_start;
+    skip_bytes(body, &mut cursor, 4)?;
+    if header.api_version >= 2 {
+        skip_bytes(body, &mut cursor, 1)?;
+    }
+
+    let topic_count = read_request_array_len(body, &mut cursor)?;
+    for _ in 0..topic_count {
+        skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+        let partition_count = read_request_array_len(body, &mut cursor)?;
+        for _ in 0..partition_count {
+            skip_bytes(body, &mut cursor, 4)?;
+            if header.api_version >= 4 {
+                skip_bytes(body, &mut cursor, 4)?;
+            }
+            skip_bytes(body, &mut cursor, 8)?;
         }
     }
     if cursor != body.len() {
