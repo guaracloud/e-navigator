@@ -75,11 +75,11 @@ or chart rendering:
   content-type suffix validation, POST pseudo-header validation,
   authority-port/userinfo validation, and a build-checked parser fuzz target,
   Kafka request-header plus bounded ApiVersions, flexible WriteTxnMarkers, non-flexible AddOffsetsToTxn, AddPartitionsToTxn,
-  DeleteRecords, DeleteTopics, DescribeGroups, DeleteGroups, EndTxn, FindCoordinator, Heartbeat,
+  CreateTopics, DeleteRecords, DeleteTopics, DescribeGroups, DeleteGroups, EndTxn, FindCoordinator, Heartbeat,
   InitProducerId, JoinGroup, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit,
   TxnOffsetCommit, SaslAuthenticate, SaslHandshake, OffsetDelete, OffsetFetch, and SyncGroup request bodies,
   ApiVersions response, bounded Produce request/response, and bounded
-  flexible WriteTxnMarkers and non-flexible AddOffsetsToTxn, AddPartitionsToTxn, DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups,
+  flexible WriteTxnMarkers and non-flexible AddOffsetsToTxn, AddPartitionsToTxn, CreateTopics, DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups,
   EndTxn, Fetch, FindCoordinator, Heartbeat, InitProducerId, JoinGroup, LeaveGroup, ListGroups,
   WriteTxnMarkers, SaslAuthenticate, SaslHandshake, ListOffsets, Metadata, OffsetCommit, TxnOffsetCommit,
   OffsetDelete, OffsetFetch, and SyncGroup
@@ -209,12 +209,12 @@ These areas remain explicitly partial:
   mappings are not yet proven.
 - **Kafka protocol observability:** bounded request-header parsing for common
   API keys, bounded ApiVersions request-body validation, bounded flexible WriteTxnMarkers and non-flexible
-  Produce, Fetch, AddOffsetsToTxn, AddPartitionsToTxn, DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups, EndTxn,
+  Produce, Fetch, AddOffsetsToTxn, AddPartitionsToTxn, CreateTopics, DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups, EndTxn,
   FindCoordinator, Heartbeat, InitProducerId, JoinGroup, LeaveGroup, ListGroups,
   ListOffsets, Metadata, OffsetCommit, OffsetDelete, OffsetFetch, TxnOffsetCommit,
   SaslAuthenticate, SaslHandshake, and SyncGroup request-body
   validation, and ApiVersions, Produce, flexible WriteTxnMarkers, and non-flexible AddOffsetsToTxn,
-  AddPartitionsToTxn, DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups, EndTxn, Fetch, FindCoordinator, Heartbeat,
+  AddPartitionsToTxn, CreateTopics, DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups, EndTxn, Fetch, FindCoordinator, Heartbeat,
   InitProducerId, JoinGroup, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit,
   WriteTxnMarkers, TxnOffsetCommit, SaslAuthenticate, SaslHandshake, OffsetDelete, OffsetFetch, and SyncGroup
   response-error parsing is locally tested without exporting client IDs,
