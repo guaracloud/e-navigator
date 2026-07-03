@@ -198,6 +198,46 @@ mod tests {
         net::TcpListener,
     };
 
+    #[test]
+    fn otlp_http_sink_requires_endpoints_for_enabled_families() {
+        for (config, expected_message) in [
+            (
+                OtlpHttpConfig {
+                    enabled: true,
+                    metrics_enabled: true,
+                    traces_enabled: false,
+                    profiles_enabled: false,
+                    ..OtlpHttpConfig::default()
+                },
+                "otlp_http.metrics_endpoint or otlp_http.endpoint is required when OTLP metrics are enabled",
+            ),
+            (
+                OtlpHttpConfig {
+                    enabled: true,
+                    metrics_enabled: false,
+                    traces_enabled: true,
+                    profiles_enabled: false,
+                    ..OtlpHttpConfig::default()
+                },
+                "otlp_http.traces_endpoint or otlp_http.endpoint is required when OTLP traces are enabled",
+            ),
+            (
+                OtlpHttpConfig {
+                    enabled: true,
+                    metrics_enabled: false,
+                    traces_enabled: false,
+                    profiles_enabled: true,
+                    ..OtlpHttpConfig::default()
+                },
+                "otlp_http.profiles_endpoint or otlp_http.endpoint is required when OTLP profiles are enabled",
+            ),
+        ] {
+            let err = OtlpHttpSink::new(config).expect_err("enabled family without endpoint fails");
+
+            assert!(err.to_string().contains(expected_message));
+        }
+    }
+
     #[tokio::test]
     async fn otlp_http_sink_exports_metric_records_as_otlp_protobuf() {
         let collector = FakeCollector::spawn(vec![200]).await;
