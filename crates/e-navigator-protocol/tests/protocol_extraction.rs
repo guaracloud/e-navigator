@@ -29,7 +29,8 @@ use e_navigator_protocol::{
         parse_kafka_renew_delegation_token_response, parse_kafka_request,
         parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
         parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
-        parse_kafka_update_features_response, parse_kafka_write_txn_markers_response,
+        parse_kafka_unregister_broker_response, parse_kafka_update_features_response,
+        parse_kafka_write_txn_markers_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -322,6 +323,7 @@ proptest! {
         let _ = parse_kafka_update_features_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_describe_cluster_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_describe_producers_response(&bytes, 0, &config);
+        let _ = parse_kafka_unregister_broker_response(&bytes, 0, &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -3204,6 +3206,36 @@ fn validates_kafka_describe_producers_request_without_topic_values() {
 }
 
 #[test]
+fn validates_kafka_unregister_broker_request_without_broker_id_value() {
+    let body = kafka_unregister_broker_request_body(42);
+    let bytes = kafka_flexible_request_frame(64, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka unregister broker request parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("unregister_broker"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "64")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("42") || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn validates_kafka_alter_replica_log_dirs_requests_without_path_or_topic_values() {
     let body = kafka_alter_replica_log_dirs_request_body(
         "/var/lib/kafka/secret-dir",
@@ -5398,6 +5430,63 @@ fn extracts_kafka_describe_producers_partition_error_without_topic_or_message_va
             .any(|attribute| attribute.value.contains("orders")
                 || attribute.value.contains("denied")
                 || attribute.value.contains("1002")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_unregister_broker_ok_response() {
+    let bytes = kafka_unregister_broker_response_frame(0, 0, None);
+
+    let extraction =
+        parse_kafka_unregister_broker_response(&bytes, 0, &ProtocolExtractionConfig::default())
+            .expect("unregister broker ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "unregister_broker");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "64")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+}
+
+#[test]
+fn extracts_kafka_unregister_broker_error_without_message_values() {
+    let bytes = kafka_unregister_broker_response_frame(0, 35, Some("broker secret denied"));
+
+    let extraction =
+        parse_kafka_unregister_broker_response(&bytes, 0, &ProtocolExtractionConfig::default())
+            .expect("unregister broker error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "unregister_broker");
+    assert_eq!(extraction.status_code, "35");
+    assert_eq!(extraction.error_type.as_deref(), Some("35"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "35")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("denied")
                 || attribute.value.contains("secret"))
     );
 }
@@ -8067,6 +8156,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     .expect("bounded kafka describe producers response parses");
     assert_eq!(bounded_describe_producers_response.attributes.len(), 2);
 
+    let bounded_unregister_broker_response = parse_kafka_unregister_broker_response(
+        &kafka_unregister_broker_response_frame(0, 0, None),
+        0,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka unregister broker response parses");
+    assert_eq!(bounded_unregister_broker_response.attributes.len(), 2);
+
     let bounded_produce_response = parse_kafka_produce_response(
         &kafka_produce_response_frame(0, 1, &[("orders.secret", 6)]),
         1,
@@ -10548,6 +10650,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_unregister_broker_response(
+            &kafka_unregister_broker_response_frame(0, 0, None),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_sasl_handshake_response(
             &kafka_sasl_handshake_response_frame(0, 0, &["PLAIN"]),
             2,
@@ -11328,6 +11439,20 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::ClientIdTooLong
     );
     assert_eq!(
+        parse_kafka_unregister_broker_response(
+            &kafka_unregister_broker_response_frame(0, 35, Some("broker secret denied")),
+            0,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
         parse_kafka_metadata_response(
             &kafka_metadata_response_with_topic_count_frame(1025),
             8,
@@ -12023,6 +12148,32 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::ClientIdTooLong
     );
 
+    let unregister_broker_body = kafka_unregister_broker_request_body(42);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(64, 1, Some(b"client-a"), &unregister_broker_body),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(64, 0, Some(b"client-a"), b"\0\0"),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(64, 0, Some(b"client-a"), b"\0\0\0*\0\0"),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
     let mut truncated_response = kafka_produce_response_frame(0, 1, &[("orders", 6)]);
     truncated_response.truncate(10);
     assert_eq!(
@@ -12441,6 +12592,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
             &config,
         )
         .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_unregister_broker_response =
+        kafka_unregister_broker_response_frame(0, 35, Some("broker secret denied"));
+    truncated_unregister_broker_response.truncate(10);
+    assert_eq!(
+        parse_kafka_unregister_broker_response(&truncated_unregister_broker_response, 0, &config)
+            .unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
 
@@ -16057,6 +16217,13 @@ fn kafka_describe_producers_request_body(
     body
 }
 
+fn kafka_unregister_broker_request_body(broker_id: i32) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&broker_id.to_be_bytes());
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 fn kafka_alter_replica_log_dirs_request_body(log_dir: &str, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&1_i32.to_be_bytes());
@@ -18319,6 +18486,21 @@ fn kafka_describe_producers_response_with_partition_count_frame(partition_count:
     push_unsigned_varint(&mut response, 2);
     push_compact_string(&mut response, "orders");
     push_unsigned_varint(&mut response, partition_count + 1);
+    kafka_frame(&response)
+}
+
+fn kafka_unregister_broker_response_frame(
+    correlation_id: i32,
+    error_code: i16,
+    error_message: Option<&str>,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&error_code.to_be_bytes());
+    push_compact_nullable_string(&mut response, error_message);
+    push_unsigned_varint(&mut response, 0);
     kafka_frame(&response)
 }
 
