@@ -15,7 +15,7 @@ use e_navigator_protocol::{
         parse_kafka_offset_delete_response, parse_kafka_offset_fetch_response,
         parse_kafka_produce_response, parse_kafka_request,
         parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
-        parse_kafka_sync_group_response,
+        parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
     },
 };
 use libfuzzer_sys::fuzz_target;
@@ -77,6 +77,8 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_add_offsets_to_txn_response(data, 2, &config);
     let _ = parse_kafka_end_txn_response(data, 0, &config);
     let _ = parse_kafka_end_txn_response(data, 2, &config);
+    let _ = parse_kafka_txn_offset_commit_response(data, 0, &config);
+    let _ = parse_kafka_txn_offset_commit_response(data, 2, &config);
     let _ = parse_kafka_metadata_response(data, 0, &config);
     let _ = parse_kafka_metadata_response(data, 8, &config);
 });

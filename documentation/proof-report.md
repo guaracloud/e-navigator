@@ -76,12 +76,13 @@ or chart rendering:
   authority-port/userinfo validation, and a build-checked parser fuzz target,
   Kafka request-header plus bounded ApiVersions, non-flexible AddOffsetsToTxn, AddPartitionsToTxn,
   DeleteRecords, DeleteTopics, DescribeGroups, DeleteGroups, EndTxn, FindCoordinator, Heartbeat,
-  InitProducerId, JoinGroup, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit, SaslAuthenticate,
-  SaslHandshake, OffsetDelete, OffsetFetch, and SyncGroup request bodies,
+  InitProducerId, JoinGroup, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit,
+  TxnOffsetCommit, SaslAuthenticate, SaslHandshake, OffsetDelete, OffsetFetch, and SyncGroup request bodies,
   ApiVersions response, bounded Produce request/response, and bounded
   non-flexible AddOffsetsToTxn, AddPartitionsToTxn, DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups,
   EndTxn, Fetch, FindCoordinator, Heartbeat, InitProducerId, JoinGroup, LeaveGroup, ListGroups,
-  SaslAuthenticate, SaslHandshake, ListOffsets, Metadata, OffsetCommit, OffsetDelete, OffsetFetch, and SyncGroup
+  SaslAuthenticate, SaslHandshake, ListOffsets, Metadata, OffsetCommit, TxnOffsetCommit,
+  OffsetDelete, OffsetFetch, and SyncGroup
   request/response-error parsing,
   MongoDB
   wire-message and response-error parsing with OP_MSG section and checksum
@@ -210,11 +211,12 @@ These areas remain explicitly partial:
   API keys, bounded ApiVersions request-body validation, bounded non-flexible
   Produce, Fetch, AddOffsetsToTxn, AddPartitionsToTxn, DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups, EndTxn,
   FindCoordinator, Heartbeat, InitProducerId, JoinGroup, LeaveGroup, ListGroups,
-  ListOffsets, Metadata, OffsetCommit, OffsetDelete, OffsetFetch, SaslAuthenticate, SaslHandshake, and SyncGroup request-body
+  ListOffsets, Metadata, OffsetCommit, OffsetDelete, OffsetFetch, TxnOffsetCommit,
+  SaslAuthenticate, SaslHandshake, and SyncGroup request-body
   validation, and ApiVersions, Produce, and non-flexible AddOffsetsToTxn,
   AddPartitionsToTxn, DeleteRecords, DeleteTopics, DeleteGroups, DescribeGroups, EndTxn, Fetch, FindCoordinator, Heartbeat,
-  InitProducerId, JoinGroup, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit, SaslAuthenticate,
-  SaslHandshake, OffsetDelete, OffsetFetch, and SyncGroup
+  InitProducerId, JoinGroup, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit,
+  TxnOffsetCommit, SaslAuthenticate, SaslHandshake, OffsetDelete, OffsetFetch, and SyncGroup
   response-error parsing is locally tested without exporting client IDs,
   coordinator keys, consumer group/member identifiers, assignment payloads,
   offset metadata, protocol metadata, software names, topics, record payloads,
