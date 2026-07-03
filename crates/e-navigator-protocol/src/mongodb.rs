@@ -90,6 +90,7 @@ pub fn parse_mongodb_response(
     }
     let response = parse_op_msg_response(frame.body, config.max_request_line_bytes)?;
     let status_code = match (response.ok, response.code) {
+        (Some(false), Some(code)) if code < 0 => return Err(MongodbExtraction::MalformedFrame),
         (Some(false), Some(code)) => code.to_string(),
         (Some(false), None) => "0".to_string(),
         (Some(true), _) => "1".to_string(),

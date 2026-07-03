@@ -2576,6 +2576,14 @@ fn rejects_malformed_and_unsupported_mongodb_fixtures() {
         .unwrap_err(),
         MongodbExtraction::MissingStatus
     );
+    assert_eq!(
+        parse_mongodb_response(
+            &mongodb_op_msg(&bson_mongodb_error_document(-1, b"secret")),
+            &config
+        )
+        .unwrap_err(),
+        MongodbExtraction::MalformedFrame
+    );
 
     let invalid_key = {
         let mut document = Vec::new();
