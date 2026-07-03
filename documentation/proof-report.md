@@ -26,10 +26,11 @@ or chart rendering:
   selector filtering;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/profile events;
-- bounded DNS/HTTP fixture parsing, decoded gRPC-over-HTTP/2 metadata and
-  trailer-status parsing, Kafka request-header parsing, MongoDB wire-message
-  parsing, MySQL command packet parsing, NATS text command parsing,
-  PostgreSQL wire-message parsing, and Redis RESP command parsing;
+- bounded DNS/HTTP request and HTTP response-status fixture parsing, decoded
+  gRPC-over-HTTP/2 metadata and trailer-status parsing, Kafka request-header
+  parsing, MongoDB wire-message parsing, MySQL command packet parsing, NATS
+  text command parsing, PostgreSQL wire-message parsing, and Redis RESP command
+  parsing;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/span flow
   and flow-attribution warnings;
@@ -76,10 +77,11 @@ These areas remain explicitly partial:
   complete source attribution emit warnings locally, but positive live native
   export and warning proof must be rerun after the native metric migration.
 - **HTTP/gRPC capture:** selected `homelab-02` outbound cleartext HTTP/1 paths
-  work and decoded gRPC-over-HTTP/2 metadata plus trailer-status parsing is
-  locally tested, but symmetric node coverage, inbound parsing, TLS, runtime
-  HTTP/2 frame/HPACK capture, live gRPC status matching, route templates,
-  retries, app errors, and broader iovec shapes are not proven.
+  work and bounded HTTP/1 response-status parsing plus decoded gRPC-over-HTTP/2
+  metadata/trailer-status parsing are locally tested, but symmetric node
+  coverage, inbound parsing, TLS, runtime HTTP/2 frame/HPACK capture, live HTTP
+  or gRPC status matching, route templates, retries, app errors, and broader
+  iovec shapes are not proven.
 - **Trace readiness:** OTLP trace protobuf export includes request span kind,
   resource attributes, and local status mapping for HTTP status errors, gRPC
   status errors, and network interaction errors, but broad backend

@@ -1,7 +1,7 @@
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
     grpc::{GrpcExtraction, parse_grpc_request_headers, parse_grpc_response_trailers},
-    http::{HttpExtraction, parse_http_request},
+    http::{HttpExtraction, parse_http_request, parse_http_response},
     kafka::{KafkaExtraction, parse_kafka_request},
     mongodb::{MongodbExtraction, parse_mongodb_message},
     mysql::{MysqlExtraction, parse_mysql_command},
@@ -101,6 +101,18 @@ proptest! {
     }
 
     #[test]
+    fn arbitrary_http_response_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        };
+
+        let _ = parse_http_response(&bytes, &config);
+    }
+
+    #[test]
     fn arbitrary_grpc_header_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
         let config = ProtocolExtractionConfig {
             max_header_bytes: 256,
@@ -151,6 +163,31 @@ proptest! {
                 .iter()
                 .any(|attribute| attribute.value.contains("secret")));
         }
+    }
+
+    #[test]
+    fn http_response_limits_are_respected(
+        status in 100u16..=599,
+        reason in "[A-Za-z0-9_.=/%+-]{0,80}",
+    ) {
+        let bytes = format!(
+            "HTTP/1.1 {status} {reason}\r\nSet-Cookie: session=secret\r\nX-Error-Detail: {reason}\r\n\r\nbody"
+        );
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 128,
+            max_attributes: 1,
+            max_tracestate_bytes: 32,
+        };
+
+        let parsed = parse_http_response(bytes.as_bytes(), &config)
+            .expect("bounded http response parses");
+        prop_assert_eq!(parsed.status_code, status);
+        prop_assert!(parsed.attributes.len() <= config.max_attributes);
+        prop_assert!(!parsed
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")));
     }
 
     #[test]
@@ -521,6 +558,53 @@ fn extracts_http_request_path_without_query_or_fragment() {
         .attributes
         .iter()
         .any(|attribute| attribute.value.contains("secret") || attribute.value.contains("frag")));
+}
+
+#[test]
+fn extracts_http_response_status_without_reason_or_headers() {
+    let bytes = b"HTTP/1.1 503 Service Unavailable\r\nSet-Cookie: session=secret\r\nX-Error-Detail: database offline\r\n\r\nbody";
+
+    let extraction = parse_http_response(bytes, &ProtocolExtractionConfig::default())
+        .expect("http response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Http);
+    assert_eq!(extraction.status_code, 503);
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "http.response.status_code" && attribute.value == "503"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("Service")
+                || attribute.value.contains("database")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn rejects_malformed_http_response_status_lines() {
+    let missing = b"HTTP/1.1\r\n\r\n";
+    let non_numeric = b"HTTP/1.1 OK\r\n\r\n";
+    let out_of_range = b"HTTP/1.1 700 custom\r\n\r\n";
+    let request = b"GET /checkout HTTP/1.1\r\n\r\n";
+
+    assert_eq!(
+        parse_http_response(missing, &ProtocolExtractionConfig::default()).unwrap_err(),
+        HttpExtraction::MalformedResponseLine
+    );
+    assert_eq!(
+        parse_http_response(non_numeric, &ProtocolExtractionConfig::default()).unwrap_err(),
+        HttpExtraction::InvalidStatusCode
+    );
+    assert_eq!(
+        parse_http_response(out_of_range, &ProtocolExtractionConfig::default()).unwrap_err(),
+        HttpExtraction::InvalidStatusCode
+    );
+    assert_eq!(
+        parse_http_response(request, &ProtocolExtractionConfig::default()).unwrap_err(),
+        HttpExtraction::MalformedResponseLine
+    );
 }
 
 #[test]

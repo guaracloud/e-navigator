@@ -20,12 +20,22 @@ pub struct ParsedHttpRequest {
     pub attributes: Vec<TraceAttribute>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedHttpResponse {
+    pub protocol: ProtocolKind,
+    pub status_code: u16,
+    pub attributes: Vec<TraceAttribute>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpExtraction {
     HeadersTooLong,
     InvalidUtf8,
     RequestLineTooLong,
     MalformedRequestLine,
+    ResponseLineTooLong,
+    MalformedResponseLine,
+    InvalidStatusCode,
 }
 
 pub fn parse_http_request(
@@ -123,6 +133,35 @@ pub fn parse_http_request(
     })
 }
 
+pub fn parse_http_response(
+    bytes: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedHttpResponse, HttpExtraction> {
+    let header_end = header_end(bytes, config.max_header_bytes)?;
+    let header_bytes = &bytes[..header_end];
+    let header_text = std::str::from_utf8(header_bytes).map_err(|_| HttpExtraction::InvalidUtf8)?;
+    let mut lines = header_text.split("\r\n");
+    let status_line = lines.next().ok_or(HttpExtraction::MalformedResponseLine)?;
+    if status_line.len() > config.max_request_line_bytes {
+        return Err(HttpExtraction::ResponseLineTooLong);
+    }
+    let status_code = parse_status_line(status_line)?;
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "http.response.status_code",
+        Some(&status_code.to_string()),
+    );
+
+    Ok(ParsedHttpResponse {
+        protocol: ProtocolKind::Http,
+        status_code,
+        attributes,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedRequestLine {
     method: Option<String>,
@@ -196,6 +235,29 @@ fn parse_request_line(request_line: &str) -> Result<ParsedRequestLine, HttpExtra
         path,
         authority,
     })
+}
+
+fn parse_status_line(status_line: &str) -> Result<u16, HttpExtraction> {
+    let mut fields = status_line.split_whitespace();
+    let Some(version) = fields.next() else {
+        return Err(HttpExtraction::MalformedResponseLine);
+    };
+    if !version.starts_with("HTTP/") {
+        return Err(HttpExtraction::MalformedResponseLine);
+    }
+    let Some(status_code) = fields.next() else {
+        return Err(HttpExtraction::MalformedResponseLine);
+    };
+    if status_code.len() != 3 || !status_code.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(HttpExtraction::InvalidStatusCode);
+    }
+    let status_code = status_code
+        .parse::<u16>()
+        .map_err(|_| HttpExtraction::InvalidStatusCode)?;
+    if !(100..=599).contains(&status_code) {
+        return Err(HttpExtraction::InvalidStatusCode);
+    }
+    Ok(status_code)
 }
 
 fn request_target_context(target: &str) -> (Option<String>, Option<HostAuthority>) {
