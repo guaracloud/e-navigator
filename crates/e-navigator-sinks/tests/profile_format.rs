@@ -156,6 +156,50 @@ fn formats_profile_sample_without_raw_stack_attribute_labels() {
 }
 
 #[test]
+fn profile_record_bounds_identifier_fields() {
+    const MAX_VALUE_BYTES: usize = 256;
+
+    let long_value = "i".repeat(MAX_VALUE_BYTES + 64);
+    let session = SignalEnvelope::profiling_session_observation(
+        "generator.profiling",
+        None,
+        ProfilingSessionObservation {
+            window: MetricAggregationWindow {
+                start_unix_nanos: 1,
+                end_unix_nanos: 2,
+            },
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::Medium,
+            profile_id: long_value.clone(),
+            observed_sample_count: 3,
+            dropped_sample_count: 0,
+            distinct_stack_count: 2,
+            sampling_period_nanos: None,
+            process: None,
+            container: None,
+            kubernetes: None,
+            source: "source.synthetic_profile".to_string(),
+            attributes: Vec::new(),
+        },
+    );
+    let session_record = format_profile_record(&session).expect("session formats");
+    assert_eq!(session_record.profile_id.len(), MAX_VALUE_BYTES);
+
+    let mut sample = profile_sample_signal(Some("node-a"), None, None);
+    if let e_navigator_signals::SignalPayload::ProfileSampleObservation(observation) =
+        &mut sample.payload
+    {
+        observation.stack_id = long_value;
+    }
+    let sample_record = format_profile_record(&sample).expect("sample formats");
+    assert_eq!(
+        sample_record.stack_id.as_deref().map(str::len),
+        Some(MAX_VALUE_BYTES)
+    );
+}
+
+#[test]
 fn sample_profile_ids_include_host_and_workload_identity() {
     let mut left = profile_sample_signal(Some("node-a"), Some("container-a"), Some("pod-a"));
     let right = profile_sample_signal(Some("node-b"), Some("container-b"), Some("pod-b"));

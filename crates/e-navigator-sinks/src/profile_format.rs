@@ -50,7 +50,7 @@ fn session_record(
 ) -> ProfileRecord {
     ProfileRecord {
         schema: PROFILE_SCHEMA.to_string(),
-        profile_id: observation.profile_id.clone(),
+        profile_id: truncate_utf8(&observation.profile_id, MAX_VALUE_BYTES),
         profile_metric_name: profile_metric_name(observation.profiling_kind),
         profile_kind: profiling_kind_name(observation.profiling_kind).to_string(),
         correlation_kind: correlation_kind_name(observation.correlation_kind).to_string(),
@@ -85,7 +85,7 @@ fn sample_record(signal: &SignalEnvelope, observation: &ProfileSampleObservation
         sample_count: observation.sample_count,
         dropped_sample_count: 0,
         distinct_stack_count: None,
-        stack_id: Some(observation.stack_id.clone()),
+        stack_id: Some(truncate_utf8(&observation.stack_id, MAX_VALUE_BYTES)),
         frame_count: Some(observation.stack_frames.len() as u64),
         sampling_period_nanos: observation.sampling_period_nanos,
         window: None,

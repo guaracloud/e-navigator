@@ -75,6 +75,8 @@ or chart rendering:
   deterministic, workload-aware IDs, bounded resource attributes, bounded stack
   frames, bounded/sensitive attribute filtering, and session dropped-sample
   records in fake-collector tests;
+- native profile record formatting with bounded identifiers, bounded resource
+  attributes, and sensitive attribute filtering;
 - pprof-compatible profile sample protobuf rendering with bounded stack
   locations, sample-period scaling, bounded frame strings and workload labels,
   and sensitive attribute filtering;
