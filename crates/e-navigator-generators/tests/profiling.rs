@@ -25,7 +25,7 @@ async fn synthetic_cpu_sample_generates_profiling_window() {
     assert_eq!(window.distinct_stack_count, 1);
     assert_eq!(window.window.start_unix_nanos, 1_000_000_000);
     assert_eq!(window.window.end_unix_nanos, 2_000_000_000);
-    assert_eq!(window.profile_id, "profile:38f407a634326e87");
+    assert_eq!(window.profile_id, "profile:e760a9f411fcd1e9");
     assert_eq!(window.source, "source.synthetic_profile");
     assert_eq!(window.process.as_ref().expect("process").pid, 42);
     assert_eq!(
@@ -113,6 +113,32 @@ async fn aggregation_is_deterministic() {
     assert_eq!(first_window.profile_id, second_window.profile_id);
     assert_eq!(second_window.observed_sample_count, 4);
     assert_eq!(second_window.distinct_stack_count, 2);
+}
+
+#[tokio::test]
+async fn sampling_period_separates_profile_windows() {
+    let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
+    let first = sample_signal_with_stack(1_500_000_000, "stack:a", Some(context()));
+    let mut second = sample_signal_with_stack(1_600_000_000, "stack:b", Some(context()));
+    if let SignalPayload::ProfileSampleObservation(sample) = &mut second.payload {
+        sample.sampling_period_nanos = Some(20_000_000);
+    }
+
+    let first_outputs = observe(&generator, &first).await;
+    let second_outputs = observe(&generator, &second).await;
+
+    let SignalPayload::ProfilingSessionObservation(first_window) = &first_outputs[0].payload else {
+        panic!("expected first profiling session");
+    };
+    let SignalPayload::ProfilingSessionObservation(second_window) = &second_outputs[0].payload
+    else {
+        panic!("expected second profiling session");
+    };
+    assert_ne!(first_window.profile_id, second_window.profile_id);
+    assert_eq!(first_window.observed_sample_count, 2);
+    assert_eq!(second_window.observed_sample_count, 2);
+    assert_eq!(first_window.sampling_period_nanos, Some(10_000_000));
+    assert_eq!(second_window.sampling_period_nanos, Some(20_000_000));
 }
 
 #[tokio::test]

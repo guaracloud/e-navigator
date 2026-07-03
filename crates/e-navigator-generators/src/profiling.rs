@@ -315,6 +315,7 @@ struct WindowKey {
     container_name: Option<String>,
     profiling_kind: &'static str,
     correlation_kind: &'static str,
+    sampling_period_nanos: Option<u64>,
     start_unix_nanos: u64,
     end_unix_nanos: u64,
     profile_id: String,
@@ -327,7 +328,7 @@ impl WindowKey {
         window: &MetricAggregationWindow,
     ) -> Self {
         let canonical = format!(
-            "source:{}|host:{}|pid:{}|uid:{}|container:{}|namespace:{}|pod:{}|k8s_container:{}|kind:{}|correlation:{}|start:{}|end:{}",
+            "source:{}|host:{}|pid:{}|uid:{}|container:{}|namespace:{}|pod:{}|k8s_container:{}|kind:{}|correlation:{}|period:{}|start:{}|end:{}",
             signal.source,
             signal
                 .host
@@ -372,6 +373,10 @@ impl WindowKey {
                 .unwrap_or_else(|| "none".to_string()),
             profiling_kind_name(sample.profiling_kind),
             correlation_kind_name(sample.correlation_kind),
+            sample
+                .sampling_period_nanos
+                .map(optional_u64)
+                .unwrap_or_else(|| "none".to_string()),
             window.start_unix_nanos,
             window.end_unix_nanos
         );
@@ -398,6 +403,7 @@ impl WindowKey {
                 .and_then(|kubernetes| kubernetes.container_name.clone()),
             profiling_kind: profiling_kind_name(sample.profiling_kind),
             correlation_kind: correlation_kind_name(sample.correlation_kind),
+            sampling_period_nanos: sample.sampling_period_nanos,
             start_unix_nanos: window.start_unix_nanos,
             end_unix_nanos: window.end_unix_nanos,
             profile_id: format!("profile:{:016x}", stable_hash64(canonical.as_bytes())),
@@ -670,6 +676,10 @@ fn optional_str(value: &str) -> String {
 }
 
 fn optional_u32(value: u32) -> String {
+    format!("some:{value}")
+}
+
+fn optional_u64(value: u64) -> String {
     format!("some:{value}")
 }
 
