@@ -159,6 +159,7 @@ async fn deterministic_aggregation_uses_stable_path_key() {
     let second_key = service_path_key(&second_outputs);
 
     assert_low_cardinality_path_key(&first_key);
+    assert_eq!(first_key, "trace-path:042d517c13d070d1");
     assert_eq!(second_key, first_key);
 }
 

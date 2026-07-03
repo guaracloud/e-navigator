@@ -40,8 +40,9 @@ or chart rendering:
   build-checked parser fuzz coverage;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/error-span
-  flow, precise duplicate flow suppression, flow-attribution warnings,
-  deterministic profile session IDs, and dropped-profile-sample warnings;
+  flow, deterministic service path keys, precise duplicate flow suppression,
+  flow-attribution warnings, deterministic profile session IDs, and
+  dropped-profile-sample warnings;
 - Prometheus HTTP formatting, health/readiness endpoints, and secret-like label
   filtering;
 - OTLP protobuf request encoding plus per-family endpoint routing for metrics,
