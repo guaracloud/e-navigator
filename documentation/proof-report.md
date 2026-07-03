@@ -79,7 +79,7 @@ or chart rendering:
   MongoDB
   wire-message and response-error parsing with OP_MSG section validation,
   bounded OP_REPLY response parsing, and non-negative response-code validation,
-  MySQL command packet and OK/EOF/ERR
+  MySQL command packet parsing for query/prepare/execute plus OK/EOF/ERR
   response parsing with canonical
   SQLSTATE validation and build-checked parser fuzz coverage, NATS text command
   parsing with canonical command-token validation plus OK/error response parsing,
@@ -209,11 +209,11 @@ These areas remain explicitly partial:
   request/response matching, broad response coverage, and live NATS proof are
   not implemented or proven.
 - **MySQL protocol observability:** bounded `COM_QUERY`,
-  `COM_STMT_PREPARE`, and OK/EOF/ERR response parsing is locally tested without
-  exporting raw SQL text or raw error messages, including canonical SQLSTATE
-  validation for error responses, but runtime capture, request/response
-  matching, broad response coverage, and live MySQL proof are not implemented or
-  proven.
+  `COM_STMT_PREPARE`, `COM_STMT_EXECUTE`, and OK/EOF/ERR response parsing is
+  locally tested without exporting raw SQL text, statement IDs, parameter
+  values, or raw error messages, including canonical SQLSTATE validation for
+  error responses, but runtime capture, request/response matching, broad
+  response coverage, and live MySQL proof are not implemented or proven.
 - **PostgreSQL protocol observability:** bounded simple Query, Parse, Execute,
   CommandComplete, ReadyForQuery, and ErrorResponse parsing is locally tested
   without exporting raw SQL text or raw error messages, including canonical

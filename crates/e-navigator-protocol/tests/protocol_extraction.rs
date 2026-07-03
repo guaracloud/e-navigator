@@ -2507,6 +2507,43 @@ fn extracts_mysql_stmt_prepare_operation_without_raw_sql() {
 }
 
 #[test]
+fn extracts_mysql_stmt_execute_operation_without_statement_or_parameter_values() {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&42_u32.to_le_bytes());
+    payload.push(0);
+    payload.extend_from_slice(&1_u32.to_le_bytes());
+    payload.extend_from_slice(b"secret-binary-params");
+    let bytes = mysql_packet(0x17, &payload);
+
+    let extraction = parse_mysql_command(&bytes, &ProtocolExtractionConfig::default())
+        .expect("mysql stmt execute parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Mysql);
+    assert_eq!(extraction.operation.as_deref(), Some("EXECUTE"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.operation" && attribute.value == "EXECUTE")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.mysql.command"
+                && attribute.value == "stmt_execute")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("42")
+                || attribute.value.contains("secret")
+                || attribute.value.contains("params"))
+    );
+}
+
+#[test]
 fn extracts_mysql_operation_after_comments() {
     let bytes = mysql_packet(
         0x03,
@@ -2676,6 +2713,19 @@ fn enforces_mysql_packet_query_and_attribute_bounds() {
         .unwrap_err(),
         MysqlExtraction::QueryTooLong
     );
+    assert_eq!(
+        parse_mysql_command(
+            &mysql_packet(0x17, b"\x2a\0\0\0\0\x01\0\0\0secret"),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 12,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        MysqlExtraction::PacketTooLong
+    );
 
     assert_eq!(
         parse_mysql_error_response(
@@ -2731,6 +2781,10 @@ fn rejects_malformed_and_unsupported_mysql_fixtures() {
     assert_eq!(
         parse_mysql_command(&mysql_packet(0x03, b"sel\xffct"), &config).unwrap_err(),
         MysqlExtraction::InvalidUtf8
+    );
+    assert_eq!(
+        parse_mysql_command(&mysql_packet(0x17, b"\x2a\0\0"), &config).unwrap_err(),
+        MysqlExtraction::MalformedPacket
     );
     assert_eq!(
         parse_mysql_error_response(&mysql_packet(0x00, b"ok"), &config).unwrap_err(),
