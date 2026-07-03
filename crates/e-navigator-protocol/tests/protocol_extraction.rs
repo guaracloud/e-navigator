@@ -2183,6 +2183,26 @@ fn extracts_postgres_sync_message_without_payload_values() {
 }
 
 #[test]
+fn extracts_postgres_flush_message_without_payload_values() {
+    let bytes = postgres_frame(b'H', b"");
+
+    let extraction = parse_postgres_message(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres flush message parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.operation.as_deref(), Some("FLUSH"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.operation" && attribute.value == "FLUSH")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| attribute.key
+        == "db.postgresql.message.type"
+        && attribute.value == "flush"));
+}
+
+#[test]
 fn extracts_postgres_operation_after_comments() {
     let bytes = postgres_frame(
         b'Q',
@@ -2422,6 +2442,10 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     );
     assert_eq!(
         parse_postgres_message(&postgres_frame(b'S', b"secret"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'H', b"secret"), &config).unwrap_err(),
         PostgresExtraction::MalformedFrame
     );
     assert_eq!(
