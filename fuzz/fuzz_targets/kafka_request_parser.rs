@@ -17,9 +17,9 @@ use e_navigator_protocol::{
         parse_kafka_describe_delegation_token_response, parse_kafka_describe_groups_response,
         parse_kafka_describe_log_dirs_response, parse_kafka_describe_producers_response,
         parse_kafka_describe_quorum_response, parse_kafka_describe_user_scram_credentials_response,
-        parse_kafka_elect_leaders_response, parse_kafka_end_txn_response,
-        parse_kafka_expire_delegation_token_response, parse_kafka_fetch_response,
-        parse_kafka_find_coordinator_response,
+        parse_kafka_describe_transactions_response, parse_kafka_elect_leaders_response,
+        parse_kafka_end_txn_response, parse_kafka_expire_delegation_token_response,
+        parse_kafka_fetch_response, parse_kafka_find_coordinator_response,
         parse_kafka_heartbeat_response, parse_kafka_init_producer_id_response,
         parse_kafka_incremental_alter_configs_response, parse_kafka_join_group_response,
         parse_kafka_leave_group_response, parse_kafka_list_groups_response,
@@ -87,6 +87,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_describe_cluster_response(data, 2, &config);
     let _ = parse_kafka_describe_producers_response(data, 0, &config);
     let _ = parse_kafka_unregister_broker_response(data, 0, &config);
+    let _ = parse_kafka_describe_transactions_response(data, 0, &config);
     let _ = parse_kafka_produce_response(data, 0, &config);
     let _ = parse_kafka_produce_response(data, 7, &config);
     let _ = parse_kafka_fetch_response(data, 0, &config);
