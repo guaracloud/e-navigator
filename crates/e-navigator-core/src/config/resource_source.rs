@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{ConfigError, ConfigResult};
 
@@ -40,6 +40,7 @@ impl Default for ResourceSourceConfig {
 }
 
 impl ResourceSourceConfig {
+    pub const MAX_PATH_BYTES_LIMIT: usize = 4096;
     pub const MAX_SAMPLE_INTERVAL_MILLIS_LIMIT: u64 = 3_600_000;
     pub const MAX_PROCESSES_LIMIT: usize = 65_536;
     pub const MAX_CGROUPS_LIMIT: usize = 65_536;
@@ -53,18 +54,21 @@ impl ResourceSourceConfig {
                 "resource_source.procfs_root must not be empty",
             ));
         }
+        validate_path_len("resource_source.procfs_root", &self.procfs_root)?;
         if self.sysfs_root.as_os_str().is_empty() {
             return Err(ConfigError::invalid_value(
                 "resource_source.sysfs_root",
                 "resource_source.sysfs_root must not be empty",
             ));
         }
+        validate_path_len("resource_source.sysfs_root", &self.sysfs_root)?;
         if self.cgroup_root.as_os_str().is_empty() {
             return Err(ConfigError::invalid_value(
                 "resource_source.cgroup_root",
                 "resource_source.cgroup_root must not be empty",
             ));
         }
+        validate_path_len("resource_source.cgroup_root", &self.cgroup_root)?;
         if self.sample_interval_millis == 0 {
             return Err(ConfigError::invalid_value(
                 "resource_source.sample_interval_millis",
@@ -142,6 +146,19 @@ impl ResourceSourceConfig {
         }
         Ok(())
     }
+}
+
+fn validate_path_len(path: &'static str, value: &Path) -> ConfigResult<()> {
+    if value.to_string_lossy().len() > ResourceSourceConfig::MAX_PATH_BYTES_LIMIT {
+        return Err(ConfigError::invalid_value(
+            path,
+            format!(
+                "{path} must be at most {} bytes",
+                ResourceSourceConfig::MAX_PATH_BYTES_LIMIT
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn default_procfs_root() -> PathBuf {

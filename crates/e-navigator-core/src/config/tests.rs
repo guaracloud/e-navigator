@@ -883,6 +883,23 @@ fn attribution_paths_are_validated() {
         },
         "attribution.cgroup_root must not be empty",
     );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                procfs_root: PathBuf::from(format!(
+                    "/{}",
+                    "p".repeat(AttributionConfig::MAX_PATH_BYTES_LIMIT)
+                )),
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "attribution.procfs_root must be at most {} bytes",
+            AttributionConfig::MAX_PATH_BYTES_LIMIT
+        ),
+    );
 }
 
 #[test]
@@ -913,6 +930,26 @@ fn kubernetes_attribution_paths_are_validated_when_enabled() {
             ..RuntimeConfig::default()
         },
         "attribution.kubernetes.ca_cert_path must not be empty when Kubernetes attribution is enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    token_path: PathBuf::from(format!(
+                        "/{}",
+                        "t".repeat(KubernetesAttributionConfig::MAX_PATH_BYTES_LIMIT)
+                    )),
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "attribution.kubernetes.token_path must be at most {} bytes",
+            KubernetesAttributionConfig::MAX_PATH_BYTES_LIMIT
+        ),
     );
 
     let config = RuntimeConfig {
@@ -1177,6 +1214,22 @@ fn resource_source_paths_and_bounds_are_validated() {
             ..RuntimeConfig::default()
         },
         "resource_source.cgroup_root must not be empty",
+    );
+    assert_invalid(
+        RuntimeConfig {
+            resource_source: ResourceSourceConfig {
+                procfs_root: PathBuf::from(format!(
+                    "/{}",
+                    "r".repeat(ResourceSourceConfig::MAX_PATH_BYTES_LIMIT)
+                )),
+                ..ResourceSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "resource_source.procfs_root must be at most {} bytes",
+            ResourceSourceConfig::MAX_PATH_BYTES_LIMIT
+        ),
     );
     assert_invalid(
         RuntimeConfig {

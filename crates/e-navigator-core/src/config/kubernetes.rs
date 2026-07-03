@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{ConfigError, ConfigResult};
 
@@ -71,6 +71,7 @@ impl KubernetesAttributionConfig {
     pub const MAX_LABELS_PER_POD_LIMIT: usize = 128;
     pub const MAX_SELECTOR_ENTRIES_LIMIT: usize = 128;
     pub const MAX_SELECTOR_VALUE_BYTES_LIMIT: usize = 253;
+    pub const MAX_PATH_BYTES_LIMIT: usize = 4096;
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
         if !self.enabled {
@@ -83,12 +84,14 @@ impl KubernetesAttributionConfig {
                 "attribution.kubernetes.token_path must not be empty when Kubernetes attribution is enabled",
             ));
         }
+        validate_path_len("attribution.kubernetes.token_path", &self.token_path)?;
         if self.ca_cert_path.as_os_str().is_empty() {
             return Err(ConfigError::invalid_value(
                 "attribution.kubernetes.ca_cert_path",
                 "attribution.kubernetes.ca_cert_path must not be empty when Kubernetes attribution is enabled",
             ));
         }
+        validate_path_len("attribution.kubernetes.ca_cert_path", &self.ca_cert_path)?;
         if self.max_response_bytes == 0 {
             return Err(ConfigError::invalid_value(
                 "attribution.kubernetes.max_response_bytes",
@@ -196,6 +199,19 @@ impl KubernetesAttributionConfig {
 
         Ok(())
     }
+}
+
+fn validate_path_len(path: &'static str, value: &Path) -> ConfigResult<()> {
+    if value.to_string_lossy().len() > KubernetesAttributionConfig::MAX_PATH_BYTES_LIMIT {
+        return Err(ConfigError::invalid_value(
+            path,
+            format!(
+                "{path} must be at most {} bytes",
+                KubernetesAttributionConfig::MAX_PATH_BYTES_LIMIT
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_non_empty_list(path: &'static str, values: &[String]) -> ConfigResult<()> {

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{ConfigError, ConfigResult, KubernetesAttributionConfig};
 
@@ -25,6 +25,8 @@ impl Default for AttributionConfig {
 }
 
 impl AttributionConfig {
+    pub const MAX_PATH_BYTES_LIMIT: usize = 4096;
+
     pub(super) fn validate(&self) -> ConfigResult<()> {
         if self.procfs_root.as_os_str().is_empty() {
             return Err(ConfigError::invalid_value(
@@ -32,15 +34,30 @@ impl AttributionConfig {
                 "attribution.procfs_root must not be empty",
             ));
         }
+        validate_path_len("attribution.procfs_root", &self.procfs_root)?;
         if self.cgroup_root.as_os_str().is_empty() {
             return Err(ConfigError::invalid_value(
                 "attribution.cgroup_root",
                 "attribution.cgroup_root must not be empty",
             ));
         }
+        validate_path_len("attribution.cgroup_root", &self.cgroup_root)?;
 
         self.kubernetes.validate()
     }
+}
+
+fn validate_path_len(path: &'static str, value: &Path) -> ConfigResult<()> {
+    if value.to_string_lossy().len() > AttributionConfig::MAX_PATH_BYTES_LIMIT {
+        return Err(ConfigError::invalid_value(
+            path,
+            format!(
+                "{path} must be at most {} bytes",
+                AttributionConfig::MAX_PATH_BYTES_LIMIT
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn default_procfs_root() -> PathBuf {
