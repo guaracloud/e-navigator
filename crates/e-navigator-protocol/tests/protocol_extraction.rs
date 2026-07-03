@@ -1273,6 +1273,34 @@ fn extracts_redis_integer_response_without_raw_count() {
 }
 
 #[test]
+fn extracts_redis_resp3_scalar_responses_without_raw_values() {
+    for bytes in [
+        b"_\r\n".as_slice(),
+        b"#t\r\n".as_slice(),
+        b"#f\r\n".as_slice(),
+        b",123.45\r\n".as_slice(),
+        b"(-3492890328409238509324850943850943825024385\r\n".as_slice(),
+    ] {
+        let extraction = parse_redis_response(bytes, &ProtocolExtractionConfig::default())
+            .expect("resp3 scalar response parses");
+
+        assert_eq!(extraction.protocol, ProtocolKind::Redis);
+        assert_eq!(extraction.status_code.as_deref(), Some("OK"));
+        assert_eq!(extraction.error_type, None);
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "db.response.status_code"
+                    && attribute.value == "OK")
+        );
+        assert!(!extraction.attributes.iter().any(|attribute| {
+            attribute.value.contains("123.45") || attribute.value.contains("349289")
+        }));
+    }
+}
+
+#[test]
 fn extracts_redis_bulk_response_without_raw_value() {
     let extraction = parse_redis_response(
         b"$15\r\ncustomer-secret\r\n",
@@ -1542,6 +1570,26 @@ fn rejects_malformed_and_unsupported_redis_fixtures() {
     );
     assert_eq!(
         parse_redis_response(b"-ERR!\r\n", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b"_ignored\r\n", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b"#x\r\n", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b",\r\n", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b",1.25\r\ntrailing", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b"(12\r\ntrailing", &config).unwrap_err(),
         RedisExtraction::MalformedFrame
     );
     assert_eq!(

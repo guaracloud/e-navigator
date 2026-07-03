@@ -111,6 +111,34 @@ pub fn parse_redis_response(
                 error_type: None,
             }
         }
+        b'_' => {
+            parse_resp3_null_response(bytes)?;
+            RedisResponseToken {
+                status_code: Some("OK".to_string()),
+                error_type: None,
+            }
+        }
+        b'#' => {
+            parse_resp3_boolean_response(bytes)?;
+            RedisResponseToken {
+                status_code: Some("OK".to_string()),
+                error_type: None,
+            }
+        }
+        b',' => {
+            parse_resp3_double_response(bytes)?;
+            RedisResponseToken {
+                status_code: Some("OK".to_string()),
+                error_type: None,
+            }
+        }
+        b'(' => {
+            parse_resp3_big_number_response(bytes)?;
+            RedisResponseToken {
+                status_code: Some("OK".to_string()),
+                error_type: None,
+            }
+        }
         b'$' => {
             parse_bulk_string_response(bytes, config.max_header_bytes)?;
             RedisResponseToken {
@@ -263,6 +291,50 @@ fn parse_simple_token(bytes: &[u8], start: usize) -> Result<String, RedisExtract
 fn parse_bulk_string_response(bytes: &[u8], max_frame_bytes: usize) -> Result<(), RedisExtraction> {
     let mut cursor = 0;
     skip_bulk_string_response(bytes, &mut cursor, max_frame_bytes)
+}
+
+fn parse_resp3_null_response(bytes: &[u8]) -> Result<(), RedisExtraction> {
+    if bytes == b"_\r\n" {
+        return Ok(());
+    }
+    Err(RedisExtraction::MalformedFrame)
+}
+
+fn parse_resp3_boolean_response(bytes: &[u8]) -> Result<(), RedisExtraction> {
+    if matches!(bytes, b"#t\r\n" | b"#f\r\n") {
+        return Ok(());
+    }
+    Err(RedisExtraction::MalformedFrame)
+}
+
+fn parse_resp3_double_response(bytes: &[u8]) -> Result<(), RedisExtraction> {
+    let end = line_end(bytes, 1).ok_or(RedisExtraction::MalformedFrame)?;
+    if end + 2 != bytes.len() {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+    let value = std::str::from_utf8(&bytes[1..end]).map_err(|_| RedisExtraction::InvalidUtf8)?;
+    if value.is_empty() {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn parse_resp3_big_number_response(bytes: &[u8]) -> Result<(), RedisExtraction> {
+    let end = line_end(bytes, 1).ok_or(RedisExtraction::MalformedFrame)?;
+    if end + 2 != bytes.len() {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+    let value = &bytes[1..end];
+    if value.is_empty()
+        || value == b"-"
+        || !value
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| byte.is_ascii_digit() || (index == 0 && *byte == b'-'))
+    {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+    Ok(())
 }
 
 fn parse_array_response(
