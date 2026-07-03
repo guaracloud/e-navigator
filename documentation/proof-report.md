@@ -80,7 +80,7 @@ or chart rendering:
   ApiVersions response, bounded Produce request/response, and bounded
   non-flexible DeleteGroups, DescribeGroups, Fetch, FindCoordinator,
   Heartbeat, InitProducerId, LeaveGroup, ListGroups, ListOffsets, Metadata,
-  OffsetCommit, and SyncGroup request/response-error parsing,
+  OffsetCommit, OffsetFetch, and SyncGroup request/response-error parsing,
   MongoDB
   wire-message and response-error parsing with OP_MSG section and checksum
   validation, bounded OP_REPLY response parsing, and non-negative response-code validation,
@@ -211,7 +211,7 @@ These areas remain explicitly partial:
   OffsetFetch, and SyncGroup request-body validation, and ApiVersions, Produce, and
   non-flexible DeleteGroups, DescribeGroups, Fetch, FindCoordinator,
   Heartbeat, InitProducerId, LeaveGroup, ListGroups, ListOffsets, Metadata,
-  OffsetCommit, and SyncGroup
+  OffsetCommit, OffsetFetch, and SyncGroup
   response-error parsing is locally tested without exporting client IDs,
   coordinator keys, consumer group/member identifiers, assignment payloads,
   offset metadata, protocol metadata, software names, topics, record payloads,

@@ -858,6 +858,70 @@ pub fn parse_kafka_offset_commit_response(
     })
 }
 
+pub fn parse_kafka_offset_fetch_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if !(1..=5).contains(&api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = offset_fetch_response_error_code(body, api_version, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("offset_fetch"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("9"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "offset_fetch".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_list_groups_response(
     bytes: &[u8],
     api_version: i16,
@@ -1765,6 +1829,44 @@ fn offset_commit_response_error_code(
         }
     }
     Ok(first_error_code.unwrap_or(0))
+}
+
+fn offset_fetch_response_error_code(
+    body: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    if api_version >= 3 {
+        skip_bytes(body, &mut cursor, 4)?;
+    }
+    let topic_count = read_response_array_len(body, &mut cursor)?;
+    let mut first_partition_error_code = None;
+    for _ in 0..topic_count {
+        skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+        let partition_count = read_response_array_len(body, &mut cursor)?;
+        for _ in 0..partition_count {
+            skip_bytes(body, &mut cursor, 12)?;
+            if api_version >= 5 {
+                skip_bytes(body, &mut cursor, 4)?;
+            }
+            skip_nullable_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+            let error_code = read_i16_be_cursor(body, &mut cursor)?;
+            if error_code != 0 && first_partition_error_code.is_none() {
+                first_partition_error_code = Some(error_code);
+            }
+        }
+    }
+    if api_version >= 2 {
+        let top_level_error_code = read_i16_be_cursor(body, &mut cursor)?;
+        if top_level_error_code != 0 {
+            return Ok(top_level_error_code);
+        }
+    }
+    Ok(first_partition_error_code.unwrap_or(0))
 }
 
 fn delete_groups_response_error_code(

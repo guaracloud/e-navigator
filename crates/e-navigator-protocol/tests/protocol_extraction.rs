@@ -9,7 +9,8 @@ use e_navigator_protocol::{
         parse_kafka_init_producer_id_response, parse_kafka_leave_group_response,
         parse_kafka_list_groups_response, parse_kafka_list_offsets_response,
         parse_kafka_metadata_response, parse_kafka_offset_commit_response,
-        parse_kafka_produce_response, parse_kafka_request, parse_kafka_sync_group_response,
+        parse_kafka_offset_fetch_response, parse_kafka_produce_response, parse_kafka_request,
+        parse_kafka_sync_group_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -2953,6 +2954,93 @@ fn extracts_kafka_offset_commit_error_response_without_topic_values() {
 }
 
 #[test]
+fn extracts_kafka_offset_fetch_ok_response_without_topic_or_metadata_values() {
+    let bytes = kafka_offset_fetch_response_frame(0, 5, 0, &[("orders.secret", 0)]);
+
+    let extraction =
+        parse_kafka_offset_fetch_response(&bytes, 5, &ProtocolExtractionConfig::default())
+            .expect("offset fetch ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "offset_fetch");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "9")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("orders")
+                || attribute.value.contains("metadata"))
+    );
+}
+
+#[test]
+fn extracts_kafka_offset_fetch_partition_error_response_without_topic_or_metadata_values() {
+    let bytes =
+        kafka_offset_fetch_response_frame(0, 1, 0, &[("orders.secret", 0), ("other.secret", 25)]);
+
+    let extraction =
+        parse_kafka_offset_fetch_response(&bytes, 1, &ProtocolExtractionConfig::default())
+            .expect("offset fetch partition error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "offset_fetch");
+    assert_eq!(extraction.status_code, "25");
+    assert_eq!(extraction.error_type.as_deref(), Some("25"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "1")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "25")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("orders")
+                || attribute.value.contains("metadata"))
+    );
+}
+
+#[test]
+fn extracts_kafka_offset_fetch_top_level_error_response() {
+    let bytes = kafka_offset_fetch_response_frame(0, 4, 30, &[("orders.secret", 0)]);
+
+    let extraction =
+        parse_kafka_offset_fetch_response(&bytes, 4, &ProtocolExtractionConfig::default())
+            .expect("offset fetch top-level error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "offset_fetch");
+    assert_eq!(extraction.status_code, "30");
+    assert_eq!(extraction.error_type.as_deref(), Some("30"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "30")
+    );
+}
+
+#[test]
 fn extracts_kafka_list_offsets_ok_response_without_topic_values() {
     let bytes = kafka_list_offsets_response_frame(0, 5, &[("orders.secret", 0)]);
 
@@ -3650,6 +3738,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     )
     .expect("bounded kafka offset commit response parses");
     assert_eq!(bounded_offset_commit_response.attributes.len(), 2);
+
+    let bounded_offset_fetch_response = parse_kafka_offset_fetch_response(
+        &kafka_offset_fetch_response_frame(0, 3, 25, &[("orders.secret", 0)]),
+        3,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka offset fetch response parses");
+    assert_eq!(bounded_offset_fetch_response.attributes.len(), 2);
 
     let bounded_list_offsets_response = parse_kafka_list_offsets_response(
         &kafka_list_offsets_response_frame(0, 1, &[("orders.secret", 6)]),
@@ -4412,6 +4513,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_offset_fetch_response(
+            &kafka_offset_fetch_response_frame(0, 6, 0, &[("orders", 0)]),
+            6,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_produce_response(
             &kafka_produce_response_with_topic_count_frame(1025),
             1,
@@ -4562,6 +4672,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_offset_fetch_response(
+            &kafka_offset_fetch_response_with_topic_count_frame(1025),
+            3,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_offset_fetch_response(
+            &kafka_offset_fetch_response_with_partition_count_frame(1025),
+            3,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_list_offsets_response(
             &kafka_list_offsets_response_with_topic_count_frame(1025),
             2,
@@ -4688,6 +4816,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     truncated_offset_commit_response.truncate(12);
     assert_eq!(
         parse_kafka_offset_commit_response(&truncated_offset_commit_response, 7, &config)
+            .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_offset_fetch_response =
+        kafka_offset_fetch_response_frame(0, 5, 0, &[("orders", 25)]);
+    truncated_offset_fetch_response.truncate(20);
+    assert_eq!(
+        parse_kafka_offset_fetch_response(&truncated_offset_fetch_response, 5, &config)
             .unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
@@ -8090,6 +8227,54 @@ fn kafka_offset_commit_response_with_topic_count_frame(topic_count: i32) -> Vec<
     response.extend_from_slice(&0_i32.to_be_bytes());
     response.extend_from_slice(&0_i32.to_be_bytes());
     response.extend_from_slice(&topic_count.to_be_bytes());
+    kafka_frame(&response)
+}
+
+fn kafka_offset_fetch_response_frame(
+    correlation_id: i32,
+    api_version: i16,
+    top_level_error_code: i16,
+    topics: &[(&str, i16)],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    if api_version >= 3 {
+        response.extend_from_slice(&0_i32.to_be_bytes());
+    }
+    response.extend_from_slice(&(topics.len() as i32).to_be_bytes());
+    for (topic, error_code) in topics {
+        push_kafka_string(&mut response, topic);
+        response.extend_from_slice(&1_i32.to_be_bytes());
+        response.extend_from_slice(&0_i32.to_be_bytes());
+        response.extend_from_slice(&42_i64.to_be_bytes());
+        if api_version >= 5 {
+            response.extend_from_slice(&3_i32.to_be_bytes());
+        }
+        push_kafka_nullable_string(&mut response, Some("metadata.secret"));
+        response.extend_from_slice(&error_code.to_be_bytes());
+    }
+    if api_version >= 2 {
+        response.extend_from_slice(&top_level_error_code.to_be_bytes());
+    }
+    kafka_frame(&response)
+}
+
+fn kafka_offset_fetch_response_with_topic_count_frame(topic_count: i32) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&topic_count.to_be_bytes());
+    kafka_frame(&response)
+}
+
+fn kafka_offset_fetch_response_with_partition_count_frame(partition_count: i32) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&1_i32.to_be_bytes());
+    response.extend_from_slice(&6_i16.to_be_bytes());
+    response.extend_from_slice(b"orders");
+    response.extend_from_slice(&partition_count.to_be_bytes());
     kafka_frame(&response)
 }
 
