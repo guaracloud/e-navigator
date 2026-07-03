@@ -123,6 +123,24 @@ async fn dns_response_generates_domain_service_path_when_successful() {
 }
 
 #[tokio::test]
+async fn malformed_or_oversized_dns_domains_do_not_generate_service_paths() {
+    let generator = TraceCorrelationGenerator::default();
+
+    for query_name in [
+        "api..example.com",
+        "bad label.example.com",
+        &format!("{}.example.com", "a".repeat(64)),
+        &format!("{}.example.com", "a".repeat(254)),
+    ] {
+        let signal = dns_response_signal(query_name, DnsResponseCode::NoError);
+
+        let outputs = observe(&generator, &signal).await;
+
+        assert!(outputs.is_empty(), "{query_name:?}");
+    }
+}
+
+#[tokio::test]
 async fn missing_attribution_emits_warning_without_failing() {
     let generator = TraceCorrelationGenerator::default();
     let signal = network_close_signal("203.0.113.10", 443, 1_000, 3_500, false);

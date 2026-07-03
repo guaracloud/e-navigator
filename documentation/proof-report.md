@@ -54,7 +54,8 @@ or chart rendering:
   security generator behavior, including synthetic protocol request/error-span
   flow, deterministic service path keys, precise duplicate flow suppression,
   bounded flow-byte aggregation across remote destinations, flow-attribution
-  warnings, generated flow-summary destination pod-IP attribution before sinks,
+  warnings, bounded DNS-derived service-path domains, generated flow-summary
+  destination pod-IP attribution before sinks,
   deterministic profile session IDs, generated profile session
   sensitive-attribute filtering, bounded request-span scalar fields and
   attributes, and

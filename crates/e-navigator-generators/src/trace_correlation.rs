@@ -16,6 +16,8 @@ use tokio::sync::mpsc;
 const DEFAULT_MAX_SERVICE_PATHS: usize = 4096;
 const DEFAULT_MAX_SEEN_INTERACTIONS: usize = 8192;
 const DEFAULT_MAX_WARNINGS: usize = 1024;
+const MAX_DOMAIN_BYTES: usize = 253;
+const MAX_DOMAIN_LABEL_BYTES: usize = 63;
 
 #[derive(Debug)]
 pub struct TraceCorrelationGenerator {
@@ -708,11 +710,22 @@ fn address_family_name(address_family: NetworkAddressFamily) -> &'static str {
 
 fn normalize_domain(raw_domain: &str) -> Option<String> {
     let domain = raw_domain.trim().trim_end_matches('.').to_ascii_lowercase();
-    if domain.is_empty() {
-        None
-    } else {
-        Some(domain)
+    if domain.is_empty() || domain.len() > MAX_DOMAIN_BYTES {
+        return None;
     }
+    for label in domain.split('.') {
+        if label.is_empty()
+            || label.len() > MAX_DOMAIN_LABEL_BYTES
+            || !label.bytes().all(domain_label_byte_allowed)
+        {
+            return None;
+        }
+    }
+    Some(domain)
+}
+
+fn domain_label_byte_allowed(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
 }
 
 fn missing_attribution(
