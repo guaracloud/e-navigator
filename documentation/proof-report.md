@@ -20,8 +20,9 @@ or chart rendering:
 - static module registration and runner fan-out;
 - versioned JSON signal envelopes;
 - JSON stdout newline-delimited serialization and sink-side redaction, including
-  exec argv redaction, protocol request observations without raw trace headers,
-  network flow signals, and profiling signal families;
+  exec and runtime-security matched-process argv redaction, protocol request
+  observations without raw trace headers, network flow signals, and profiling
+  signal families;
 - synthetic source pipeline, including sanitized HTTP, gRPC, Kafka, MongoDB,
   MySQL, NATS, PostgreSQL, and Redis protocol request/error-span fixtures and
   flow-attribution warnings;

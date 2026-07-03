@@ -121,13 +121,14 @@ fn module_error(message: String) -> CoreError {
 #[cfg(test)]
 mod tests {
     use e_navigator_signals::{
-        ContainerContext, ExecEvent, KubernetesContext, MetricAggregationWindow,
+        ContainerContext, ExecEvent, KubernetesContext, MatchedProcess, MetricAggregationWindow,
         NetworkAddressFamily, NetworkFlowDirection, NetworkFlowEndpoint, NetworkFlowSummaryEvent,
         NetworkFlowWarning, NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation,
         ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
         ProfilingKind, ProfilingSessionObservation, ProfilingStackTraceObservation,
-        ProfilingWarningObservation, ProtocolKind, ProtocolRequestObservation, TraceAttribute,
-        TraceConfidence, TraceCorrelationKind,
+        ProfilingWarningObservation, ProtocolKind, ProtocolRequestObservation,
+        RuntimeSecurityFinding, RuntimeSecuritySeverity, TraceAttribute, TraceConfidence,
+        TraceCorrelationKind,
     };
     use std::collections::BTreeMap;
 
@@ -204,6 +205,46 @@ mod tests {
                 "--api-key",
                 "<redacted>",
                 "Authorization:<redacted>"
+            ])
+        );
+    }
+
+    #[test]
+    fn redacts_runtime_security_matched_process_arguments_in_json_stdout() {
+        let signal = SignalEnvelope::runtime_security_finding(
+            "generator.runtime_security",
+            Some("node-a".to_string()),
+            RuntimeSecurityFinding {
+                rule_id: "suspicious_process".to_string(),
+                severity: RuntimeSecuritySeverity::High,
+                matched_process: MatchedProcess {
+                    pid: 42,
+                    command: "curl".to_string(),
+                    executable: Some("/usr/bin/curl".to_string()),
+                    arguments: vec![
+                        "curl".to_string(),
+                        "--authorization".to_string(),
+                        "Bearer abc.def".to_string(),
+                        "--password=plain-secret".to_string(),
+                    ],
+                },
+                matched_connection: None,
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let line = serialize_signal_line(&signal).expect("signal serializes");
+        let value: serde_json::Value =
+            serde_json::from_slice(&line[..line.len() - 1]).expect("line is valid JSON");
+
+        assert_eq!(
+            value["payload"]["matched_process"]["arguments"],
+            serde_json::json!([
+                "curl",
+                "--authorization",
+                "<redacted>",
+                "--password=<redacted>"
             ])
         );
     }
