@@ -21,6 +21,7 @@ use tokio::{
 };
 
 const MAX_REQUEST_BYTES: usize = 4096;
+const MAX_PROMETHEUS_LABEL_NAME_BYTES: usize = 128;
 const MAX_PROMETHEUS_LABEL_VALUE_BYTES: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -420,6 +421,9 @@ fn insert_prometheus_label(
     value: &serde_json::Value,
 ) {
     let key = sanitize_identifier(key);
+    if key.len() > MAX_PROMETHEUS_LABEL_NAME_BYTES {
+        return;
+    }
     if !prometheus_label_allowed(&key) {
         return;
     }
@@ -742,6 +746,24 @@ mod tests {
             )),
             Some("v".repeat(MAX_PROMETHEUS_LABEL_VALUE_BYTES))
         );
+    }
+
+    #[test]
+    fn drops_oversized_prometheus_label_names_after_sanitizing() {
+        let mut labels = BTreeMap::new();
+        insert_prometheus_label(
+            &mut labels,
+            &"label".repeat(32),
+            &serde_json::json!("value"),
+        );
+        assert!(labels.is_empty());
+
+        insert_prometheus_label(
+            &mut labels,
+            &"label".repeat(25),
+            &serde_json::json!("value"),
+        );
+        assert_eq!(labels.len(), 1);
     }
 
     #[tokio::test]
