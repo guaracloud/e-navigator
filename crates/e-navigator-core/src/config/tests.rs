@@ -724,6 +724,77 @@ fn kubernetes_attribution_paths_are_validated_when_enabled() {
 }
 
 #[test]
+fn kubernetes_attribution_limits_are_bounded() {
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    max_response_bytes: KubernetesAttributionConfig::MAX_RESPONSE_BYTES_LIMIT + 1,
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "attribution.kubernetes.max_response_bytes must be less than or equal to {}",
+            KubernetesAttributionConfig::MAX_RESPONSE_BYTES_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    max_pods: KubernetesAttributionConfig::MAX_PODS_LIMIT + 1,
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "attribution.kubernetes.max_pods must be less than or equal to {}",
+            KubernetesAttributionConfig::MAX_PODS_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    max_cache_entries: KubernetesAttributionConfig::MAX_CACHE_ENTRIES_LIMIT + 1,
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "attribution.kubernetes.max_cache_entries must be less than or equal to {}",
+            KubernetesAttributionConfig::MAX_CACHE_ENTRIES_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    max_labels_per_pod: KubernetesAttributionConfig::MAX_LABELS_PER_POD_LIMIT + 1,
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "attribution.kubernetes.max_labels_per_pod must be less than or equal to {}",
+            KubernetesAttributionConfig::MAX_LABELS_PER_POD_LIMIT
+        ),
+    );
+}
+
+#[test]
 fn kubernetes_attribution_selectors_are_validated() {
     assert_invalid(
         RuntimeConfig {

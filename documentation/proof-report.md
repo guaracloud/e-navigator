@@ -24,7 +24,7 @@ or chart rendering:
   flow-attribution warnings;
 - strict config validation with unknown-field rejection, packaged config guards,
   OTLP HTTP endpoint-shape validation, and local Kubernetes attribution selector
-  filtering;
+  filtering plus response/cache/label bounds;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/DNS/HTTP/profile
   events, including build-checked DNS and HTTP raw decode fuzz targets;

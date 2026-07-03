@@ -65,6 +65,11 @@ impl Default for KubernetesAttributionConfig {
 }
 
 impl KubernetesAttributionConfig {
+    pub const MAX_RESPONSE_BYTES_LIMIT: u64 = 32 * 1024 * 1024;
+    pub const MAX_PODS_LIMIT: usize = 65_536;
+    pub const MAX_CACHE_ENTRIES_LIMIT: usize = 262_144;
+    pub const MAX_LABELS_PER_POD_LIMIT: usize = 128;
+
     pub(super) fn validate(&self) -> ConfigResult<()> {
         if !self.enabled {
             return Ok(());
@@ -88,10 +93,28 @@ impl KubernetesAttributionConfig {
                 "attribution.kubernetes.max_response_bytes must be greater than zero",
             ));
         }
+        if self.max_response_bytes > Self::MAX_RESPONSE_BYTES_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "attribution.kubernetes.max_response_bytes",
+                format!(
+                    "attribution.kubernetes.max_response_bytes must be less than or equal to {}",
+                    Self::MAX_RESPONSE_BYTES_LIMIT
+                ),
+            ));
+        }
         if self.max_pods == 0 {
             return Err(ConfigError::invalid_value(
                 "attribution.kubernetes.max_pods",
                 "attribution.kubernetes.max_pods must be greater than zero",
+            ));
+        }
+        if self.max_pods > Self::MAX_PODS_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "attribution.kubernetes.max_pods",
+                format!(
+                    "attribution.kubernetes.max_pods must be less than or equal to {}",
+                    Self::MAX_PODS_LIMIT
+                ),
             ));
         }
         if self.max_cache_entries == 0 {
@@ -100,10 +123,28 @@ impl KubernetesAttributionConfig {
                 "attribution.kubernetes.max_cache_entries must be greater than zero",
             ));
         }
+        if self.max_cache_entries > Self::MAX_CACHE_ENTRIES_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "attribution.kubernetes.max_cache_entries",
+                format!(
+                    "attribution.kubernetes.max_cache_entries must be less than or equal to {}",
+                    Self::MAX_CACHE_ENTRIES_LIMIT
+                ),
+            ));
+        }
         if self.max_labels_per_pod == 0 && self.label_allowlist.is_empty() {
             return Err(ConfigError::invalid_value(
                 "attribution.kubernetes.max_labels_per_pod",
                 "attribution.kubernetes.max_labels_per_pod must be greater than zero unless label_allowlist is set",
+            ));
+        }
+        if self.max_labels_per_pod > Self::MAX_LABELS_PER_POD_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "attribution.kubernetes.max_labels_per_pod",
+                format!(
+                    "attribution.kubernetes.max_labels_per_pod must be less than or equal to {}",
+                    Self::MAX_LABELS_PER_POD_LIMIT
+                ),
             ));
         }
         if self.require_node_name && self.allow_cluster_wide_pod_list {

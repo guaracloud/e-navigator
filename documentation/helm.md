@@ -75,6 +75,11 @@ pod_label_selector = { "app.kubernetes.io/name" = "checkout" }
 pod_label_exclude_selector = { "observability.e-navigator.dev/exclude" = "true" }
 ```
 
+Kubernetes attribution also validates response and cache bounds before runtime:
+`attribution.kubernetes.max_response_bytes` must be at most 33,554,432,
+`max_pods` at most 65,536, `max_cache_entries` at most 262,144, and
+`max_labels_per_pod` at most 128.
+
 The chart does not expose port `9090` by default. Enable the Service only when a
 real HTTP surface is configured, for example when `sink.prometheus_http` and
 `[prometheus_http] enabled = true` are present in `config.toml`:
