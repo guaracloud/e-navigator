@@ -180,8 +180,8 @@ mod tests {
         ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkAddressFamily,
         NetworkCounterMetric, NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation,
         ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
-        ProfilingKind, ProtocolKind, RequestSpanObservation, SignalEnvelope, TraceAttribute,
-        TraceConfidence, TraceCorrelationKind,
+        ProfilingKind, ProfilingSessionObservation, ProtocolKind, RequestSpanObservation,
+        SignalEnvelope, TraceAttribute, TraceConfidence, TraceCorrelationKind,
     };
     use opentelemetry_proto::tonic::{
         collector::{
@@ -553,6 +553,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn otlp_http_sink_exports_profile_session_dropped_samples_as_otlp_protobuf() {
+        let collector = FakeCollector::spawn(vec![200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            profiles_endpoint: collector.url_with_path("/v1development/profiles"),
+            metrics_enabled: false,
+            traces_enabled: false,
+            profiles_enabled: true,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&profile_session())
+            .await
+            .expect("profile session export succeeds");
+        let request = collector.next_request().await;
+
+        assert!(request.contains("POST /v1development/profiles HTTP/1.1"));
+        assert!(request.contains("content-type: application/x-protobuf"));
+        assert!(!request.contains("signal_family"));
+        let decoded = collector_profile_proto::ExportProfilesServiceRequest::decode(request.body())
+            .expect("OTLP profile request decodes");
+        let dictionary = decoded.dictionary.as_ref().expect("profile dictionary");
+        let resource_profiles = decoded
+            .resource_profiles
+            .first()
+            .expect("resource profiles are present");
+        let scope_profiles = resource_profiles
+            .scope_profiles
+            .first()
+            .expect("scope profiles are present");
+        let profile = scope_profiles.profiles.first().expect("profile is present");
+        let sample = profile.sample.first().expect("sample is present");
+
+        assert!(dictionary.string_table.contains(&"cpu".to_string()));
+        assert!(dictionary.string_table.contains(&"nanoseconds".to_string()));
+        assert_eq!(sample.value, vec![24]);
+        assert_eq!(sample.locations_start_index, 0);
+        assert_eq!(sample.locations_length, 0);
+        assert!(profile.location_indices.is_empty());
+        assert_eq!(sample.timestamps_unix_nano, vec![3_000]);
+        assert_eq!(profile.time_nanos, 3_000);
+        assert_eq!(profile.duration_nanos, 2_000);
+        assert_eq!(profile.period, 10_000_000);
+        assert_eq!(profile.profile_id.len(), 16);
+        assert_profile_attribute(
+            dictionary,
+            &profile.attribute_indices,
+            "profile.distinct_stack_count",
+            "5",
+        );
+        assert_profile_attribute(
+            dictionary,
+            &profile.attribute_indices,
+            "profile.dropped_sample_count",
+            "76",
+        );
+        assert_profile_attribute(
+            dictionary,
+            &profile.attribute_indices,
+            "profile.source",
+            "source.aya_cpu_profile",
+        );
+        assert!(
+            !dictionary
+                .attribute_table
+                .iter()
+                .any(|attribute| attribute.key == "authorization")
+        );
+        assert_eq!(sample.attribute_indices, profile.attribute_indices);
+        let resource = resource_profiles.resource.as_ref().expect("resource");
+        assert!(resource.attributes.iter().any(|attribute| {
+            attribute.key == "process.pid" && format!("{:?}", attribute.value).contains("42")
+        }));
+        assert!(resource.attributes.iter().any(|attribute| {
+            attribute.key == "host.name" && format!("{:?}", attribute.value).contains("node-a")
+        }));
+    }
+
+    #[tokio::test]
     async fn otlp_http_sink_falls_back_to_single_endpoint_for_enabled_families() {
         let collector = FakeCollector::spawn(vec![200, 200, 200]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
@@ -888,6 +972,70 @@ mod tests {
                 }],
             },
         )
+    }
+
+    fn profile_session() -> SignalEnvelope {
+        SignalEnvelope::profiling_session_observation(
+            "generator.profiling",
+            Some("node-a".to_string()),
+            ProfilingSessionObservation {
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 1_000,
+                    end_unix_nanos: 3_000,
+                },
+                profiling_kind: ProfilingKind::Cpu,
+                correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+                confidence: ProfilingConfidence::Medium,
+                profile_id: "profile:abc".to_string(),
+                observed_sample_count: 24,
+                dropped_sample_count: 76,
+                distinct_stack_count: 5,
+                sampling_period_nanos: Some(10_000_000),
+                process: Some(NetworkProcessIdentity {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "checkout-api".to_string(),
+                    executable: Some("/app/checkout-api".to_string()),
+                    cgroup_id: None,
+                }),
+                container: None,
+                kubernetes: None,
+                source: "source.aya_cpu_profile".to_string(),
+                attributes: vec![
+                    ProfilingAttribute {
+                        key: "profiling.synthetic.fixture".to_string(),
+                        value: "cpu_session".to_string(),
+                    },
+                    ProfilingAttribute {
+                        key: "authorization".to_string(),
+                        value: "Bearer token".to_string(),
+                    },
+                ],
+            },
+        )
+    }
+
+    fn assert_profile_attribute(
+        dictionary: &collector_profile_proto::ProfilesDictionary,
+        indices: &[i32],
+        key: &str,
+        value_fragment: &str,
+    ) {
+        let Some(attribute) = indices
+            .iter()
+            .filter_map(|index| usize::try_from(*index).ok())
+            .filter_map(|index| dictionary.attribute_table.get(index))
+            .find(|attribute| attribute.key == key)
+        else {
+            panic!("profile attribute {key} is present");
+        };
+
+        assert!(
+            format!("{:?}", attribute.value).contains(value_fragment),
+            "profile attribute {key} should contain {value_fragment}, got {:?}",
+            attribute.value
+        );
     }
 
     fn lower_hex(bytes: &[u8]) -> String {

@@ -40,7 +40,8 @@ or chart rendering:
 - OTLP protobuf request encoding plus per-family endpoint routing for metrics,
   traces with HTTP, gRPC, and `error.type` request/error status mapping
   including Kafka, MongoDB, and Redis request spans, local warning trace-record
-  formatting, and development-status profiles in fake-collector tests;
+  formatting, and development-status profile sample plus session dropped-sample
+  records in fake-collector tests;
 - Helm rendering, schema checks, and release verification workflow structure.
 
 ## Runtime-Proven Slices

@@ -113,9 +113,10 @@ Evidence-backed today:
   gRPC metadata/status, Kafka request/ApiVersions-error, MongoDB
   command/error, MySQL command/error, NATS command/error, PostgreSQL
   query/error, and Redis command/error parser foundations, request/trace/profile
-  foundations with OTLP HTTP, gRPC, and `error.type` trace status mapping and
-  warning trace-record formatting, and runtime security generator behavior
-  through tests, including flow-attribution warnings;
+  foundations with OTLP HTTP profile session dropped-sample export, gRPC, and
+  `error.type` trace status mapping and warning trace-record formatting, and
+  runtime security generator behavior through tests, including flow-attribution
+  warnings;
 - selected guarded homelab proof for exec, network, DNS, HTTP, profile,
   resource, Prometheus, OTLP, and seccomp paths;
 - release artifact signing, SBOM generation, Helm packaging, and local quality
