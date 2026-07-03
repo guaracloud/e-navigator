@@ -178,6 +178,18 @@ impl RawHttpDecodeError {
                 reason: HttpExtraction::MalformedRequestLine,
                 ..
             } => "malformed_request_line",
+            Self::HttpExtraction {
+                reason: HttpExtraction::ResponseLineTooLong,
+                ..
+            } => "response_line_too_long",
+            Self::HttpExtraction {
+                reason: HttpExtraction::MalformedResponseLine,
+                ..
+            } => "malformed_response_line",
+            Self::HttpExtraction {
+                reason: HttpExtraction::InvalidStatusCode,
+                ..
+            } => "invalid_status_code",
         }
     }
 
