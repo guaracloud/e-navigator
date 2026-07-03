@@ -22,18 +22,18 @@ use e_navigator_protocol::{
         parse_kafka_describe_user_scram_credentials_response, parse_kafka_elect_leaders_response,
         parse_kafka_end_txn_response, parse_kafka_expire_delegation_token_response,
         parse_kafka_fetch_response, parse_kafka_find_coordinator_response,
-        parse_kafka_heartbeat_response, parse_kafka_incremental_alter_configs_response,
-        parse_kafka_init_producer_id_response, parse_kafka_join_group_response,
-        parse_kafka_leave_group_response, parse_kafka_list_groups_response,
-        parse_kafka_list_offsets_response, parse_kafka_list_partition_reassignments_response,
-        parse_kafka_list_transactions_response, parse_kafka_metadata_response,
-        parse_kafka_offset_commit_response, parse_kafka_offset_delete_response,
-        parse_kafka_offset_fetch_response, parse_kafka_produce_response,
-        parse_kafka_renew_delegation_token_response, parse_kafka_request,
-        parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
-        parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
-        parse_kafka_unregister_broker_response, parse_kafka_update_features_response,
-        parse_kafka_write_txn_markers_response,
+        parse_kafka_get_telemetry_subscriptions_response, parse_kafka_heartbeat_response,
+        parse_kafka_incremental_alter_configs_response, parse_kafka_init_producer_id_response,
+        parse_kafka_join_group_response, parse_kafka_leave_group_response,
+        parse_kafka_list_groups_response, parse_kafka_list_offsets_response,
+        parse_kafka_list_partition_reassignments_response, parse_kafka_list_transactions_response,
+        parse_kafka_metadata_response, parse_kafka_offset_commit_response,
+        parse_kafka_offset_delete_response, parse_kafka_offset_fetch_response,
+        parse_kafka_produce_response, parse_kafka_renew_delegation_token_response,
+        parse_kafka_request, parse_kafka_sasl_authenticate_response,
+        parse_kafka_sasl_handshake_response, parse_kafka_sync_group_response,
+        parse_kafka_txn_offset_commit_response, parse_kafka_unregister_broker_response,
+        parse_kafka_update_features_response, parse_kafka_write_txn_markers_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -331,6 +331,7 @@ proptest! {
         let _ = parse_kafka_list_transactions_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_consumer_group_heartbeat_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_consumer_group_describe_response(&bytes, api_version.min(1), &config);
+        let _ = parse_kafka_get_telemetry_subscriptions_response(&bytes, 0, &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -3508,6 +3509,39 @@ fn validates_kafka_consumer_group_describe_v1_request_without_group_values() {
 }
 
 #[test]
+fn validates_kafka_get_telemetry_subscriptions_request_without_instance_values() {
+    let body = kafka_get_telemetry_subscriptions_request_body([17_u8; 16]);
+    let bytes = kafka_flexible_request_frame(71, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka get telemetry subscriptions request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("get_telemetry_subscriptions")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "71")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("17") || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn validates_kafka_alter_replica_log_dirs_requests_without_path_or_topic_values() {
     let body = kafka_alter_replica_log_dirs_request_body(
         "/var/lib/kafka/secret-dir",
@@ -6111,6 +6145,83 @@ fn extracts_kafka_consumer_group_describe_error_without_message_values() {
                 || attribute.value.contains("dead")
                 || attribute.value.contains("range")
                 || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_get_telemetry_subscriptions_ok_response_without_metric_or_instance_values() {
+    let bytes = kafka_get_telemetry_subscriptions_response_frame(
+        0,
+        0,
+        [19_u8; 16],
+        &[1, 2],
+        &["secret.metric", "another.secret.metric"],
+    );
+
+    let extraction = parse_kafka_get_telemetry_subscriptions_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("get telemetry subscriptions ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "get_telemetry_subscriptions");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "71")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("metric")
+                || attribute.value.contains("secret")
+                || attribute.value.contains("19"))
+    );
+}
+
+#[test]
+fn extracts_kafka_get_telemetry_subscriptions_error_without_metric_values() {
+    let bytes = kafka_get_telemetry_subscriptions_response_frame(
+        0,
+        35,
+        [23_u8; 16],
+        &[1],
+        &["secret.metric"],
+    );
+
+    let extraction = parse_kafka_get_telemetry_subscriptions_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("get telemetry subscriptions error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "get_telemetry_subscriptions");
+    assert_eq!(extraction.status_code, "35");
+    assert_eq!(extraction.error_type.as_deref(), Some("35"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "35")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("metric")
+                || attribute.value.contains("secret")
+                || attribute.value.contains("23"))
     );
 }
 
@@ -8847,6 +8958,25 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     .expect("bounded kafka consumer group describe response parses");
     assert_eq!(bounded_consumer_group_describe_response.attributes.len(), 2);
 
+    let bounded_get_telemetry_subscriptions_response =
+        parse_kafka_get_telemetry_subscriptions_response(
+            &kafka_get_telemetry_subscriptions_response_frame(0, 0, [0_u8; 16], &[], &[]),
+            0,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 64,
+                max_attributes: 2,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .expect("bounded kafka get telemetry subscriptions response parses");
+    assert_eq!(
+        bounded_get_telemetry_subscriptions_response
+            .attributes
+            .len(),
+        2
+    );
+
     let bounded_produce_response = parse_kafka_produce_response(
         &kafka_produce_response_frame(0, 1, &[("orders.secret", 6)]),
         1,
@@ -11373,6 +11503,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_get_telemetry_subscriptions_response(
+            &kafka_get_telemetry_subscriptions_response_frame(0, 0, [0_u8; 16], &[], &[]),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_sasl_handshake_response(
             &kafka_sasl_handshake_response_frame(0, 0, &["PLAIN"]),
             2,
@@ -12186,6 +12325,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_get_telemetry_subscriptions_response(
+            &kafka_get_telemetry_subscriptions_response_with_compression_type_count_frame(1025),
+            0,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_get_telemetry_subscriptions_response(
+            &kafka_get_telemetry_subscriptions_response_with_requested_metric_count_frame(1025),
+            0,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_describe_cluster_response(
             &kafka_describe_cluster_response_frame(
                 0,
@@ -12291,6 +12448,26 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
                 }],
             ),
             1,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_get_telemetry_subscriptions_response(
+            &kafka_get_telemetry_subscriptions_response_frame(
+                0,
+                0,
+                [23_u8; 16],
+                &[1],
+                &["secret.metric"],
+            ),
+            0,
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
                 max_request_line_bytes: 4,
@@ -13344,6 +13521,46 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::MalformedFrame
     );
 
+    let get_telemetry_subscriptions_body =
+        kafka_get_telemetry_subscriptions_request_body([17_u8; 16]);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                71,
+                1,
+                Some(b"client-a"),
+                &get_telemetry_subscriptions_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(71, 0, Some(b"client-a"), b"\x00"),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    let mut get_telemetry_subscriptions_trailing_body =
+        kafka_get_telemetry_subscriptions_request_body([17_u8; 16]);
+    get_telemetry_subscriptions_trailing_body.push(1);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                71,
+                0,
+                Some(b"client-a"),
+                &get_telemetry_subscriptions_trailing_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
     let mut truncated_response = kafka_produce_response_frame(0, 1, &[("orders", 6)]);
     truncated_response.truncate(10);
     assert_eq!(
@@ -13839,6 +14056,25 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         parse_kafka_consumer_group_describe_response(
             &truncated_consumer_group_describe_response,
             1,
+            &config,
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_get_telemetry_subscriptions_response =
+        kafka_get_telemetry_subscriptions_response_frame(
+            0,
+            35,
+            [23_u8; 16],
+            &[1],
+            &["secret.metric"],
+        );
+    truncated_get_telemetry_subscriptions_response.truncate(20);
+    assert_eq!(
+        parse_kafka_get_telemetry_subscriptions_response(
+            &truncated_get_telemetry_subscriptions_response,
+            0,
             &config,
         )
         .unwrap_err(),
@@ -17560,6 +17796,13 @@ fn kafka_consumer_group_describe_request_body(_api_version: i16, group_ids: &[&s
     body
 }
 
+fn kafka_get_telemetry_subscriptions_request_body(client_instance_id: [u8; 16]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&client_instance_id);
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 fn kafka_alter_replica_log_dirs_request_body(log_dir: &str, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&1_i32.to_be_bytes());
@@ -20067,6 +20310,61 @@ fn kafka_consumer_group_describe_response_with_group_count_frame(group_count: us
     kafka_frame(&response)
 }
 
+fn kafka_get_telemetry_subscriptions_response_frame(
+    correlation_id: i32,
+    error_code: i16,
+    client_instance_id: [u8; 16],
+    accepted_compression_types: &[i8],
+    requested_metrics: &[&str],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&error_code.to_be_bytes());
+    response.extend_from_slice(&client_instance_id);
+    response.extend_from_slice(&7_i32.to_be_bytes());
+    push_compact_int8_array(&mut response, accepted_compression_types);
+    response.extend_from_slice(&30_000_i32.to_be_bytes());
+    response.extend_from_slice(&1_048_576_i32.to_be_bytes());
+    response.push(1);
+    push_compact_string_array(&mut response, requested_metrics);
+    push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+fn kafka_get_telemetry_subscriptions_response_with_compression_type_count_frame(
+    compression_type_count: usize,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    response.extend_from_slice(&[0_u8; 16]);
+    response.extend_from_slice(&7_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, compression_type_count + 1);
+    kafka_frame(&response)
+}
+
+fn kafka_get_telemetry_subscriptions_response_with_requested_metric_count_frame(
+    requested_metric_count: usize,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    response.extend_from_slice(&[0_u8; 16]);
+    response.extend_from_slice(&7_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 1);
+    response.extend_from_slice(&30_000_i32.to_be_bytes());
+    response.extend_from_slice(&1_048_576_i32.to_be_bytes());
+    response.push(1);
+    push_unsigned_varint(&mut response, requested_metric_count + 1);
+    kafka_frame(&response)
+}
+
 fn kafka_sasl_handshake_response_frame(
     correlation_id: i32,
     error_code: i16,
@@ -20253,6 +20551,13 @@ fn push_compact_string_array(bytes: &mut Vec<u8>, values: &[&str]) {
     push_unsigned_varint(bytes, values.len() + 1);
     for value in values {
         push_compact_string(bytes, value);
+    }
+}
+
+fn push_compact_int8_array(bytes: &mut Vec<u8>, values: &[i8]) {
+    push_unsigned_varint(bytes, values.len() + 1);
+    for value in values {
+        bytes.push(*value as u8);
     }
 }
 
