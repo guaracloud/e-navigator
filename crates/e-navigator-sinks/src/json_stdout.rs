@@ -121,11 +121,14 @@ fn module_error(message: String) -> CoreError {
 #[cfg(test)]
 mod tests {
     use e_navigator_signals::{
-        ExecEvent, MetricAggregationWindow, NetworkAddressFamily, NetworkFlowWarning,
-        NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation, ProfilingAttribute,
-        ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame, ProfilingKind,
-        ProfilingSessionObservation, ProfilingStackTraceObservation, ProfilingWarningObservation,
+        ContainerContext, ExecEvent, KubernetesContext, MetricAggregationWindow,
+        NetworkAddressFamily, NetworkFlowDirection, NetworkFlowEndpoint, NetworkFlowSummaryEvent,
+        NetworkFlowWarning, NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation,
+        ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
+        ProfilingKind, ProfilingSessionObservation, ProfilingStackTraceObservation,
+        ProfilingWarningObservation,
     };
+    use std::collections::BTreeMap;
 
     use super::*;
 
@@ -249,6 +252,54 @@ mod tests {
         assert_eq!(value["payload"]["remote_address"], "198.51.100.30");
         assert_eq!(value["payload"]["remote_port"], 9443);
         assert_eq!(value["payload"]["process"]["command"], "api");
+    }
+
+    #[test]
+    fn serializes_network_flow_summary_as_json_stdout() {
+        let signal = SignalEnvelope::network_flow_summary(
+            "generator.network_metrics",
+            Some("node-a".to_string()),
+            NetworkFlowSummaryEvent {
+                source: network_flow_endpoint(
+                    "10.0.0.5",
+                    41000,
+                    "checkout-7d8f",
+                    "checkout",
+                    Some("container-source"),
+                ),
+                destination: network_flow_endpoint("10.0.0.20", 6379, "redis-0", "redis", None),
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                bytes: 1536,
+                packets: None,
+                direction: NetworkFlowDirection::Egress,
+                first_seen_unix_nanos: 1_000,
+                last_seen_unix_nanos: 3_000,
+            },
+        );
+
+        let line = serialize_signal_line(&signal).expect("signal serializes");
+        let value: serde_json::Value =
+            serde_json::from_slice(&line[..line.len() - 1]).expect("line is valid JSON");
+
+        assert!(line.ends_with(b"\n"));
+        assert_eq!(value["kind"], "network_flow_summary");
+        assert_eq!(value["payload"]["protocol"], "tcp");
+        assert_eq!(value["payload"]["address_family"], "ipv4");
+        assert_eq!(value["payload"]["bytes"], 1536);
+        assert_eq!(value["payload"]["direction"], "egress");
+        assert_eq!(value["payload"]["source"]["address"], "10.0.0.5");
+        assert_eq!(value["payload"]["source"]["port"], 41000);
+        assert_eq!(
+            value["payload"]["source"]["kubernetes"]["pod_name"],
+            "checkout-7d8f"
+        );
+        assert_eq!(value["payload"]["destination"]["address"], "10.0.0.20");
+        assert_eq!(value["payload"]["destination"]["port"], 6379);
+        assert_eq!(
+            value["payload"]["destination"]["kubernetes"]["pod_name"],
+            "redis-0"
+        );
     }
 
     #[test]
@@ -427,6 +478,33 @@ mod tests {
         ProfilingAttribute {
             key: key.to_string(),
             value: value.to_string(),
+        }
+    }
+
+    fn network_flow_endpoint(
+        address: &str,
+        port: u16,
+        pod_name: &str,
+        container_name: &str,
+        container_id: Option<&str>,
+    ) -> NetworkFlowEndpoint {
+        NetworkFlowEndpoint {
+            address: Some(address.to_string()),
+            port: Some(port),
+            owner_name: None,
+            owner_type: None,
+            container: container_id.map(|container_id| ContainerContext {
+                container_id: container_id.to_string(),
+                runtime: Some("containerd".to_string()),
+            }),
+            kubernetes: Some(KubernetesContext {
+                namespace: "shop".to_string(),
+                pod_name: pod_name.to_string(),
+                pod_uid: Some(format!("{pod_name}-uid")),
+                container_name: Some(container_name.to_string()),
+                node_name: Some("node-a".to_string()),
+                labels: BTreeMap::new(),
+            }),
         }
     }
 }
