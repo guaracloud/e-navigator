@@ -43,7 +43,7 @@ pub fn parse_redis_command(
     }
 
     let frame = if bytes[0] == b'*' {
-        parse_resp_array(bytes)?
+        parse_resp_array(bytes, config.max_header_bytes)?
     } else {
         parse_inline_command(bytes, config.max_request_line_bytes)?
     };
@@ -111,7 +111,7 @@ pub fn parse_redis_response(
             }
         }
         b'$' => {
-            parse_bulk_string_response(bytes)?;
+            parse_bulk_string_response(bytes, config.max_header_bytes)?;
             RedisResponseToken {
                 status_code: Some("OK".to_string()),
                 error_type: None,
@@ -173,7 +173,7 @@ struct RedisResponseToken {
     error_type: Option<String>,
 }
 
-fn parse_resp_array(bytes: &[u8]) -> Result<RedisFrame, RedisExtraction> {
+fn parse_resp_array(bytes: &[u8], max_frame_bytes: usize) -> Result<RedisFrame, RedisExtraction> {
     let mut cursor = 1;
     let item_count = parse_decimal_line(bytes, &mut cursor)?;
     if item_count <= 0 || item_count as usize > MAX_REDIS_ARRAY_ITEMS {
@@ -182,7 +182,7 @@ fn parse_resp_array(bytes: &[u8]) -> Result<RedisFrame, RedisExtraction> {
 
     let mut command = None;
     for index in 0..item_count as usize {
-        let item = parse_bulk_string(bytes, &mut cursor)?;
+        let item = parse_bulk_string(bytes, &mut cursor, max_frame_bytes)?;
         if index == 0 {
             command = Some(item);
         }
@@ -195,7 +195,11 @@ fn parse_resp_array(bytes: &[u8]) -> Result<RedisFrame, RedisExtraction> {
     })
 }
 
-fn parse_bulk_string(bytes: &[u8], cursor: &mut usize) -> Result<String, RedisExtraction> {
+fn parse_bulk_string(
+    bytes: &[u8],
+    cursor: &mut usize,
+    max_frame_bytes: usize,
+) -> Result<String, RedisExtraction> {
     if bytes.get(*cursor) != Some(&b'$') {
         return Err(RedisExtraction::UnsupportedFrame);
     }
@@ -212,7 +216,11 @@ fn parse_bulk_string(bytes: &[u8], cursor: &mut usize) -> Result<String, RedisEx
     let end = cursor
         .checked_add(len)
         .ok_or(RedisExtraction::MalformedFrame)?;
-    if end + 2 > bytes.len() || bytes.get(end..end + 2) != Some(b"\r\n") {
+    let frame_end = end.checked_add(2).ok_or(RedisExtraction::FrameTooLong)?;
+    if frame_end > max_frame_bytes {
+        return Err(RedisExtraction::FrameTooLong);
+    }
+    if frame_end > bytes.len() || bytes.get(end..frame_end) != Some(b"\r\n") {
         return Err(RedisExtraction::MalformedFrame);
     }
     let value =
@@ -250,7 +258,7 @@ fn parse_simple_token(bytes: &[u8], start: usize) -> Result<String, RedisExtract
     Ok(token.to_string())
 }
 
-fn parse_bulk_string_response(bytes: &[u8]) -> Result<(), RedisExtraction> {
+fn parse_bulk_string_response(bytes: &[u8], max_frame_bytes: usize) -> Result<(), RedisExtraction> {
     let mut cursor = 1;
     let len = parse_decimal_line(bytes, &mut cursor)?;
     if len < 0 {
@@ -266,7 +274,11 @@ fn parse_bulk_string_response(bytes: &[u8]) -> Result<(), RedisExtraction> {
     let end = cursor
         .checked_add(len)
         .ok_or(RedisExtraction::MalformedFrame)?;
-    if end + 2 > bytes.len() || bytes.get(end..end + 2) != Some(b"\r\n") {
+    let frame_end = end.checked_add(2).ok_or(RedisExtraction::FrameTooLong)?;
+    if frame_end > max_frame_bytes {
+        return Err(RedisExtraction::FrameTooLong);
+    }
+    if frame_end > bytes.len() || bytes.get(end..frame_end) != Some(b"\r\n") {
         return Err(RedisExtraction::MalformedFrame);
     }
     Ok(())

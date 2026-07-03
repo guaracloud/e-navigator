@@ -1340,6 +1340,19 @@ fn enforces_redis_frame_attribute_and_bulk_bounds() {
     );
     assert_eq!(
         parse_redis_command(
+            b"*1\r\n$64\r\nGET\r\n",
+            &ProtocolExtractionConfig {
+                max_header_bytes: 16,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        RedisExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_redis_command(
             b"GET customer:pii:123\r\n",
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
@@ -1357,6 +1370,19 @@ fn enforces_redis_frame_attribute_and_bulk_bounds() {
             b"+OK\r\n",
             &ProtocolExtractionConfig {
                 max_header_bytes: 2,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        RedisExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_redis_response(
+            b"$64\r\nabc\r\n",
+            &ProtocolExtractionConfig {
+                max_header_bytes: 16,
                 max_request_line_bytes: 64,
                 max_attributes: 4,
                 max_tracestate_bytes: 32,
