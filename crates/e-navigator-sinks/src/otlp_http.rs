@@ -180,8 +180,9 @@ mod tests {
         ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkAddressFamily,
         NetworkCounterMetric, NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation,
         ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
-        ProfilingKind, ProfilingSessionObservation, ProtocolKind, RequestSpanObservation,
-        SignalEnvelope, TraceAttribute, TraceConfidence, TraceCorrelationKind,
+        ProfilingKind, ProfilingSessionObservation, ProfilingWarningObservation, ProtocolKind,
+        RequestSpanObservation, SignalEnvelope, TraceAttribute, TraceConfidence,
+        TraceCorrelationKind,
     };
     use opentelemetry_proto::tonic::{
         collector::{
@@ -355,6 +356,30 @@ mod tests {
         let status = span.status.as_ref().expect("span status is present");
         assert_eq!(status.code, status::StatusCode::Error as i32);
         assert_eq!(status.message, "HTTP status code 503");
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_does_not_export_profiling_warnings_without_trace_ids() {
+        let collector = FakeCollector::spawn(vec![]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            traces_endpoint: collector.url_with_path("/v1/traces"),
+            metrics_enabled: false,
+            traces_enabled: true,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 50,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&profiling_warning())
+            .await
+            .expect("profiling warning without ids is ignored");
+
+        assert!(collector.try_next_request().is_none());
     }
 
     #[tokio::test]
@@ -1012,6 +1037,37 @@ mod tests {
                         value: "Bearer token".to_string(),
                     },
                 ],
+            },
+        )
+    }
+
+    fn profiling_warning() -> SignalEnvelope {
+        SignalEnvelope::profiling_warning_observation(
+            "generator.profiling",
+            Some("node-a".to_string()),
+            ProfilingWarningObservation {
+                warning_type: "dropped_profile_samples".to_string(),
+                message: "profile samples were dropped by bounded aggregation".to_string(),
+                timestamp_unix_nanos: 3_000,
+                source_signal_kind: "profile_sample_observation".to_string(),
+                source_module: "source.aya_cpu_profile".to_string(),
+                profiling_kind: ProfilingKind::Cpu,
+                correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+                confidence: ProfilingConfidence::Medium,
+                process: Some(NetworkProcessIdentity {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "checkout-api".to_string(),
+                    executable: Some("/app/checkout-api".to_string()),
+                    cgroup_id: None,
+                }),
+                container: None,
+                kubernetes: None,
+                attributes: vec![ProfilingAttribute {
+                    key: "profile.dropped_sample_count".to_string(),
+                    value: "76".to_string(),
+                }],
             },
         )
     }
