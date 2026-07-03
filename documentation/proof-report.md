@@ -91,7 +91,8 @@ or chart rendering:
   deterministic bounded dedupe eviction, bounded flow-byte aggregation across
   remote destinations, flow-attribution warnings, bounded DNS-derived
   service-path domains with deterministic bounded dedupe eviction, generated
-  flow-summary destination pod-IP attribution before sinks,
+  flow-summary destination pod-IP attribution before sinks, deterministic
+  resource metric dedupe eviction,
   deterministic profile session IDs with sampling-period separation, generated
   profile session bounded and sensitive/reserved-attribute filtering, bounded
   safe-attribute merging across samples, bounded profile stack-ID state,

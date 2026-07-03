@@ -1,13 +1,12 @@
 use async_trait::async_trait;
 use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata};
 use e_navigator_signals::{SignalEnvelope, SignalPayload};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Mutex,
-};
+use std::{collections::BTreeMap, sync::Mutex};
 use tokio::sync::mpsc;
 
-use super::state::{CounterState, ObservationFingerprint, StateKey};
+use super::state::{
+    BoundedObservationFingerprints, CounterState, ObservationFingerprint, StateKey,
+};
 
 const DEFAULT_MAX_RESOURCE_KEYS: usize = 4096;
 
@@ -16,7 +15,7 @@ pub struct ResourceMetricsGenerator {
     pub(super) max_keys: usize,
     pub(super) counters: Mutex<BTreeMap<StateKey, CounterState>>,
     pub(super) gauges: Mutex<BTreeMap<StateKey, i64>>,
-    pub(super) seen: Mutex<BTreeSet<ObservationFingerprint>>,
+    pub(super) seen: Mutex<BoundedObservationFingerprints>,
 }
 
 impl Default for ResourceMetricsGenerator {
@@ -31,7 +30,7 @@ impl ResourceMetricsGenerator {
             max_keys,
             counters: Mutex::new(BTreeMap::new()),
             gauges: Mutex::new(BTreeMap::new()),
-            seen: Mutex::new(BTreeSet::new()),
+            seen: Mutex::new(BoundedObservationFingerprints::default()),
         }
     }
 }
