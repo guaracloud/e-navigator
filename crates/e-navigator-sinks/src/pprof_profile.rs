@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 
 const MAX_ATTRIBUTES: usize = 16;
 const MAX_KEY_BYTES: usize = 64;
-const MAX_VALUE_BYTES: usize = 256;
+const MAX_ATTRIBUTE_VALUE_BYTES: usize = 256;
+const MAX_LABEL_VALUE_BYTES: usize = 256;
 
 pub fn format_pprof_profile(signal: &SignalEnvelope) -> Option<Vec<u8>> {
     let SignalPayload::ProfileSampleObservation(sample) = &signal.payload else {
@@ -103,39 +104,36 @@ fn labels(
 ) -> Vec<Label> {
     let mut labels = BTreeMap::new();
     if let Some(host) = &signal.host {
-        labels.insert("host.name".to_string(), host.clone());
+        insert_label(&mut labels, "host.name", host);
     }
-    labels.insert("profile.stack.id".to_string(), sample.stack_id.clone());
+    insert_label(&mut labels, "profile.stack.id", &sample.stack_id);
     if let Some(thread_id) = sample.thread_id {
-        labels.insert("thread.id".to_string(), thread_id.to_string());
+        insert_label(&mut labels, "thread.id", &thread_id.to_string());
     }
     if let Some(thread_name) = &sample.thread_name {
-        labels.insert("thread.name".to_string(), thread_name.clone());
+        insert_label(&mut labels, "thread.name", thread_name);
     }
     if let Some(process) = &sample.process {
-        labels.insert("process.pid".to_string(), process.pid.to_string());
-        labels.insert("process.command".to_string(), process.command.clone());
+        insert_label(&mut labels, "process.pid", &process.pid.to_string());
+        insert_label(&mut labels, "process.command", &process.command);
     }
     if let Some(container) = &sample.container {
-        labels.insert("container.id".to_string(), container.container_id.clone());
+        insert_label(&mut labels, "container.id", &container.container_id);
         if let Some(runtime) = &container.runtime {
-            labels.insert("container.runtime".to_string(), runtime.clone());
+            insert_label(&mut labels, "container.runtime", runtime);
         }
     }
     if let Some(kubernetes) = &sample.kubernetes {
-        labels.insert(
-            "k8s.namespace.name".to_string(),
-            kubernetes.namespace.clone(),
-        );
-        labels.insert("k8s.pod.name".to_string(), kubernetes.pod_name.clone());
+        insert_label(&mut labels, "k8s.namespace.name", &kubernetes.namespace);
+        insert_label(&mut labels, "k8s.pod.name", &kubernetes.pod_name);
         if let Some(pod_uid) = &kubernetes.pod_uid {
-            labels.insert("k8s.pod.uid".to_string(), pod_uid.clone());
+            insert_label(&mut labels, "k8s.pod.uid", pod_uid);
         }
         if let Some(container_name) = &kubernetes.container_name {
-            labels.insert("k8s.container.name".to_string(), container_name.clone());
+            insert_label(&mut labels, "k8s.container.name", container_name);
         }
         if let Some(node_name) = &kubernetes.node_name {
-            labels.insert("k8s.node.name".to_string(), node_name.clone());
+            insert_label(&mut labels, "k8s.node.name", node_name);
         }
         let service_name = kubernetes
             .labels
@@ -143,10 +141,13 @@ fn labels(
             .or_else(|| kubernetes.labels.get("app"))
             .cloned()
             .unwrap_or_else(|| kubernetes.pod_name.clone());
-        labels.insert("service.name".to_string(), service_name);
+        insert_label(&mut labels, "service.name", &service_name);
     }
     for attribute in bounded_attributes(&sample.attributes) {
-        labels.insert(attribute.key, attribute.value);
+        labels.insert(
+            attribute.key,
+            truncate_utf8(&attribute.value, MAX_LABEL_VALUE_BYTES),
+        );
     }
 
     labels
@@ -160,6 +161,10 @@ fn labels(
         .collect()
 }
 
+fn insert_label(labels: &mut BTreeMap<String, String>, key: &'static str, value: &str) {
+    labels.insert(key.to_string(), truncate_utf8(value, MAX_LABEL_VALUE_BYTES));
+}
+
 fn bounded_attributes(attributes: &[ProfilingAttribute]) -> Vec<ProfilingAttribute> {
     attributes
         .iter()
@@ -167,7 +172,7 @@ fn bounded_attributes(attributes: &[ProfilingAttribute]) -> Vec<ProfilingAttribu
         .filter(|attribute| !should_drop_attribute(&attribute.key))
         .map(|attribute| ProfilingAttribute {
             key: truncate_utf8(&attribute.key, MAX_KEY_BYTES),
-            value: truncate_utf8(&attribute.value, MAX_VALUE_BYTES),
+            value: truncate_utf8(&attribute.value, MAX_ATTRIBUTE_VALUE_BYTES),
         })
         .collect()
 }

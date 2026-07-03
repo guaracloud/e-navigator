@@ -272,6 +272,61 @@ fn pprof_profile_sample_encodes_stack_values_and_safe_labels() {
 }
 
 #[test]
+fn pprof_profile_bounds_canonical_label_values() {
+    const MAX_LABEL_BYTES: usize = 256;
+
+    let long_value = "v".repeat(MAX_LABEL_BYTES + 64);
+    let mut signal = profile_sample_signal(Some(&long_value), Some(&long_value), Some(&long_value));
+
+    if let e_navigator_signals::SignalPayload::ProfileSampleObservation(sample) =
+        &mut signal.payload
+    {
+        sample.stack_id = long_value.clone();
+        sample.stack_frames = vec![ProfilingFrame {
+            symbol: Some("checkout::handler".to_string()),
+            module: Some("checkout".to_string()),
+            file: Some("/src/checkout.rs".to_string()),
+            line: Some(42),
+        }];
+        sample.thread_name = Some(long_value.clone());
+        if let Some(process) = &mut sample.process {
+            process.command = long_value.clone();
+        }
+        if let Some(kubernetes) = &mut sample.kubernetes {
+            kubernetes.namespace = long_value.clone();
+            kubernetes.pod_name = long_value.clone();
+            kubernetes.container_name = Some(long_value.clone());
+            kubernetes.node_name = Some(long_value.clone());
+            kubernetes
+                .labels
+                .insert("app".to_string(), long_value.clone());
+        }
+    }
+
+    let bytes = format_pprof_profile(&signal).expect("pprof profile formats");
+    let profile = pprof::Profile::decode(bytes.as_slice()).expect("pprof decodes");
+
+    for key in [
+        "host.name",
+        "profile.stack.id",
+        "thread.name",
+        "process.command",
+        "container.id",
+        "k8s.namespace.name",
+        "k8s.pod.name",
+        "k8s.pod.uid",
+        "k8s.container.name",
+        "k8s.node.name",
+        "service.name",
+    ] {
+        assert_eq!(
+            label_value(&profile, key).map(str::len),
+            Some(MAX_LABEL_BYTES)
+        );
+    }
+}
+
+#[test]
 fn pprof_profile_ignores_sessions_and_empty_stacks() {
     let session = SignalEnvelope::profiling_session_observation(
         "generator.profiling",
