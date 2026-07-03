@@ -896,12 +896,48 @@ fn resource_source_paths_and_bounds_are_validated() {
     assert_invalid(
         RuntimeConfig {
             resource_source: ResourceSourceConfig {
+                sample_interval_millis: 0,
+                ..ResourceSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "resource_source.sample_interval_millis must be greater than zero",
+    );
+    assert_invalid(
+        RuntimeConfig {
+            resource_source: ResourceSourceConfig {
+                sample_interval_millis: ResourceSourceConfig::MAX_SAMPLE_INTERVAL_MILLIS_LIMIT + 1,
+                ..ResourceSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "resource_source.sample_interval_millis must be less than or equal to {}",
+            ResourceSourceConfig::MAX_SAMPLE_INTERVAL_MILLIS_LIMIT
+        ),
+    );
+    assert_invalid(
+        RuntimeConfig {
+            resource_source: ResourceSourceConfig {
                 max_processes: 0,
                 ..ResourceSourceConfig::default()
             },
             ..RuntimeConfig::default()
         },
         "resource_source.max_processes must be greater than zero",
+    );
+    assert_invalid(
+        RuntimeConfig {
+            resource_source: ResourceSourceConfig {
+                max_processes: ResourceSourceConfig::MAX_PROCESSES_LIMIT + 1,
+                ..ResourceSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "resource_source.max_processes must be less than or equal to {}",
+            ResourceSourceConfig::MAX_PROCESSES_LIMIT
+        ),
     );
     assert_invalid(
         RuntimeConfig {
@@ -916,6 +952,19 @@ fn resource_source_paths_and_bounds_are_validated() {
     assert_invalid(
         RuntimeConfig {
             resource_source: ResourceSourceConfig {
+                max_cgroups: ResourceSourceConfig::MAX_CGROUPS_LIMIT + 1,
+                ..ResourceSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "resource_source.max_cgroups must be less than or equal to {}",
+            ResourceSourceConfig::MAX_CGROUPS_LIMIT
+        ),
+    );
+    assert_invalid(
+        RuntimeConfig {
+            resource_source: ResourceSourceConfig {
                 max_fds_per_process: 0,
                 ..ResourceSourceConfig::default()
             },
@@ -926,12 +975,38 @@ fn resource_source_paths_and_bounds_are_validated() {
     assert_invalid(
         RuntimeConfig {
             resource_source: ResourceSourceConfig {
+                max_fds_per_process: ResourceSourceConfig::MAX_FDS_PER_PROCESS_LIMIT + 1,
+                ..ResourceSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "resource_source.max_fds_per_process must be less than or equal to {}",
+            ResourceSourceConfig::MAX_FDS_PER_PROCESS_LIMIT
+        ),
+    );
+    assert_invalid(
+        RuntimeConfig {
+            resource_source: ResourceSourceConfig {
                 max_file_bytes: 0,
                 ..ResourceSourceConfig::default()
             },
             ..RuntimeConfig::default()
         },
         "resource_source.max_file_bytes must be greater than zero",
+    );
+    assert_invalid(
+        RuntimeConfig {
+            resource_source: ResourceSourceConfig {
+                max_file_bytes: ResourceSourceConfig::MAX_FILE_BYTES_LIMIT + 1,
+                ..ResourceSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "resource_source.max_file_bytes must be less than or equal to {}",
+            ResourceSourceConfig::MAX_FILE_BYTES_LIMIT
+        ),
     );
 }
 

@@ -80,6 +80,12 @@ Kubernetes attribution also validates response and cache bounds before runtime:
 `max_pods` at most 65,536, `max_cache_entries` at most 262,144, and
 `max_labels_per_pod` at most 128.
 
+Host resource sampling validates its scan bounds before runtime:
+`resource_source.sample_interval_millis` must be greater than zero and at most
+3,600,000, `max_processes` and `max_cgroups` at most 65,536,
+`max_fds_per_process` at most 1,048,576, and `max_file_bytes` at most
+1,048,576.
+
 The chart does not expose port `9090` by default. Enable the Service only when a
 real HTTP surface is configured, for example when `sink.prometheus_http` and
 `[prometheus_http] enabled = true` are present in `config.toml`:
