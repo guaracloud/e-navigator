@@ -5,8 +5,8 @@ use e_navigator_protocol::{
     kafka::{
         KafkaExtraction, parse_kafka_add_offsets_to_txn_response,
         parse_kafka_add_partitions_to_txn_response, parse_kafka_add_raft_voter_response,
-        parse_kafka_alter_client_quotas_response, parse_kafka_alter_configs_response,
-        parse_kafka_alter_partition_reassignments_response,
+        parse_kafka_allocate_producer_ids_response, parse_kafka_alter_client_quotas_response,
+        parse_kafka_alter_configs_response, parse_kafka_alter_partition_reassignments_response,
         parse_kafka_alter_replica_log_dirs_response,
         parse_kafka_alter_user_scram_credentials_response, parse_kafka_api_versions_response,
         parse_kafka_consumer_group_describe_response,
@@ -337,6 +337,7 @@ proptest! {
         let _ = parse_kafka_unregister_broker_response(&bytes, 0, &config);
         let _ = parse_kafka_describe_transactions_response(&bytes, 0, &config);
         let _ = parse_kafka_list_transactions_response(&bytes, api_version.min(2), &config);
+        let _ = parse_kafka_allocate_producer_ids_response(&bytes, 0, &config);
         let _ = parse_kafka_consumer_group_heartbeat_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_consumer_group_describe_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_get_telemetry_subscriptions_response(&bytes, 0, &config);
@@ -3369,6 +3370,69 @@ fn validates_kafka_list_transactions_v2_request_without_pattern_values() {
                 || attribute.value.contains("txn")
                 || attribute.value.contains("1002")
                 || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn validates_kafka_allocate_producer_ids_request_without_broker_values() {
+    let body = kafka_allocate_producer_ids_request_body(12_345, 9_876_543);
+    let bytes = kafka_flexible_request_frame(67, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka allocate producer ids request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("allocate_producer_ids")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "67")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("12345")
+                || attribute.value.contains("9876543")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn rejects_malformed_kafka_allocate_producer_ids_requests() {
+    let config = ProtocolExtractionConfig::default();
+    let body = kafka_allocate_producer_ids_request_body(12_345, 9_876_543);
+
+    assert_eq!(
+        parse_kafka_request(&kafka_flexible_request_frame(67, 1, None, &body), &config),
+        Err(KafkaExtraction::UnsupportedApiVersion)
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(67, 0, None, b"\0\0\0\x01"),
+            &config,
+        ),
+        Err(KafkaExtraction::MalformedFrame)
+    );
+
+    let mut extra_body = body.clone();
+    extra_body.push(0);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(67, 0, None, &extra_body),
+            &config,
+        ),
+        Err(KafkaExtraction::MalformedFrame)
     );
 }
 
@@ -6584,6 +6648,87 @@ fn extracts_kafka_list_transactions_error_without_filter_or_state_values() {
                 || attribute.value.contains("abort")
                 || attribute.value.contains("1002")
                 || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_allocate_producer_ids_ok_response_without_producer_values() {
+    let bytes = kafka_allocate_producer_ids_response_frame(0, 0, 9_000_000, 1_000);
+
+    let extraction =
+        parse_kafka_allocate_producer_ids_response(&bytes, 0, &ProtocolExtractionConfig::default())
+            .expect("allocate producer ids ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "allocate_producer_ids");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "67")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction.attributes.iter().any(
+            |attribute| attribute.value.contains("9000000") || attribute.value.contains("1000")
+        )
+    );
+}
+
+#[test]
+fn extracts_kafka_allocate_producer_ids_error_response_without_producer_values() {
+    let bytes = kafka_allocate_producer_ids_response_frame(0, 35, 9_000_000, 1_000);
+
+    let extraction =
+        parse_kafka_allocate_producer_ids_response(&bytes, 0, &ProtocolExtractionConfig::default())
+            .expect("allocate producer ids error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "allocate_producer_ids");
+    assert_eq!(extraction.status_code, "35");
+    assert_eq!(extraction.error_type.as_deref(), Some("35"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "35")
+    );
+    assert!(
+        !extraction.attributes.iter().any(
+            |attribute| attribute.value.contains("9000000") || attribute.value.contains("1000")
+        )
+    );
+}
+
+#[test]
+fn rejects_malformed_kafka_allocate_producer_ids_responses() {
+    let config = ProtocolExtractionConfig::default();
+
+    assert_eq!(
+        parse_kafka_allocate_producer_ids_response(
+            &kafka_allocate_producer_ids_response_frame(0, 0, 9_000_000, 1_000),
+            1,
+            &config,
+        ),
+        Err(KafkaExtraction::UnsupportedApiVersion)
+    );
+
+    let mut truncated = kafka_allocate_producer_ids_response_frame(0, 0, 9_000_000, 1_000);
+    truncated.truncate(16);
+    assert_eq!(
+        parse_kafka_allocate_producer_ids_response(&truncated, 0, &config),
+        Err(KafkaExtraction::MalformedFrame)
     );
 }
 
@@ -10581,6 +10726,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     )
     .expect("bounded kafka list transactions response parses");
     assert_eq!(bounded_list_transactions_response.attributes.len(), 2);
+
+    let bounded_allocate_producer_ids_response = parse_kafka_allocate_producer_ids_response(
+        &kafka_allocate_producer_ids_response_frame(0, 0, 9_000_000, 1_000),
+        0,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka allocate producer ids response parses");
+    assert_eq!(bounded_allocate_producer_ids_response.attributes.len(), 2);
 
     let bounded_consumer_group_heartbeat_response = parse_kafka_consumer_group_heartbeat_response(
         &kafka_consumer_group_heartbeat_response_frame(0, 0, None, None, None),
@@ -21003,6 +21161,14 @@ fn kafka_list_transactions_request_body(
     body
 }
 
+fn kafka_allocate_producer_ids_request_body(broker_id: i32, broker_epoch: i64) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&broker_id.to_be_bytes());
+    body.extend_from_slice(&broker_epoch.to_be_bytes());
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 type ConsumerGroupHeartbeatTopicPartitionsFixture<'a> = ([u8; 16], &'a [i32]);
 
 struct ConsumerGroupHeartbeatRequestFixture<'a> {
@@ -23756,6 +23922,23 @@ fn kafka_list_transactions_response_with_state_count_frame(state_count: usize) -
     response.extend_from_slice(&0_i16.to_be_bytes());
     push_unsigned_varint(&mut response, 1);
     push_unsigned_varint(&mut response, state_count + 1);
+    kafka_frame(&response)
+}
+
+fn kafka_allocate_producer_ids_response_frame(
+    correlation_id: i32,
+    error_code: i16,
+    producer_id_start: i64,
+    producer_id_len: i32,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&error_code.to_be_bytes());
+    response.extend_from_slice(&producer_id_start.to_be_bytes());
+    response.extend_from_slice(&producer_id_len.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
     kafka_frame(&response)
 }
 

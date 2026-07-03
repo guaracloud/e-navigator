@@ -3418,6 +3418,70 @@ pub fn parse_kafka_list_transactions_response(
     })
 }
 
+pub fn parse_kafka_allocate_producer_ids_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if api_version != 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = allocate_producer_ids_response_error_code(body, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("allocate_producer_ids"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("67"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "allocate_producer_ids".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_consumer_group_heartbeat_response(
     bytes: &[u8],
     api_version: i16,
@@ -4620,6 +4684,7 @@ fn validate_request_body(
         64 => validate_unregister_broker_request_body(body, header, config),
         65 => validate_describe_transactions_request_body(body, header, config),
         66 => validate_list_transactions_request_body(body, header, config),
+        67 => validate_allocate_producer_ids_request_body(body, header, config),
         68 => validate_consumer_group_heartbeat_request_body(body, header, config),
         69 => validate_consumer_group_describe_request_body(body, header, config),
         71 => validate_get_telemetry_subscriptions_request_body(body, header, config),
@@ -5890,6 +5955,24 @@ fn validate_list_transactions_request_body(
     if header.api_version >= 2 {
         skip_compact_nullable_string(body, &mut cursor, config.max_request_line_bytes)?;
     }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_allocate_producer_ids_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_version != 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+
+    let mut cursor = header.body_start;
+    skip_bytes(body, &mut cursor, 12)?;
     skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
     if cursor != body.len() {
         return Err(KafkaExtraction::MalformedFrame);
@@ -7652,6 +7735,22 @@ fn list_transactions_response_error_code(
     Ok(error_code)
 }
 
+fn allocate_producer_ids_response_error_code(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    skip_bytes(body, &mut cursor, 4)?;
+    let error_code = read_i16_be_cursor(body, &mut cursor)?;
+    skip_bytes(body, &mut cursor, 12)?;
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    Ok(error_code)
+}
+
 fn consumer_group_heartbeat_response_error_code(
     body: &[u8],
     config: &ProtocolExtractionConfig,
@@ -9003,6 +9102,7 @@ fn api_key_name(api_key: i16) -> Option<&'static str> {
         64 => Some("unregister_broker"),
         65 => Some("describe_transactions"),
         66 => Some("list_transactions"),
+        67 => Some("allocate_producer_ids"),
         68 => Some("consumer_group_heartbeat"),
         69 => Some("consumer_group_describe"),
         71 => Some("get_telemetry_subscriptions"),
