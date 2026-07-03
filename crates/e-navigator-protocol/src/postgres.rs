@@ -144,6 +144,7 @@ pub fn parse_postgres_response(
         b'T' => postgres_row_description_response(body, config),
         b'Z' => postgres_ready_for_query_response(body, config.max_attributes),
         b'd' => postgres_copy_data_response(config.max_attributes),
+        b't' => postgres_parameter_description_response(body, config.max_attributes),
         _ => Err(PostgresExtraction::UnsupportedMessage),
     }
 }
@@ -294,6 +295,29 @@ fn postgres_row_description_response(
     Ok(ParsedPostgresResponse {
         protocol: ProtocolKind::Postgresql,
         attributes: postgres_response_attributes(&status_code, None, config.max_attributes),
+        status_code,
+        error_type: None,
+    })
+}
+
+fn postgres_parameter_description_response(
+    body: &[u8],
+    max_attributes: usize,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    let mut cursor = 0;
+    let parameter_count = read_u16_be_cursor(body, &mut cursor)? as usize;
+    if parameter_count > MAX_POSTGRES_BIND_ITEMS {
+        return Err(PostgresExtraction::QueryTooLong);
+    }
+    skip_bytes(body, &mut cursor, parameter_count.saturating_mul(4))?;
+    if cursor != body.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+
+    let status_code = "OK".to_string();
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        attributes: postgres_response_attributes(&status_code, None, max_attributes),
         status_code,
         error_type: None,
     })

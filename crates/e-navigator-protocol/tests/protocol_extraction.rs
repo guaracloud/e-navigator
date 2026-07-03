@@ -3088,6 +3088,27 @@ fn extracts_postgres_row_description_without_field_names() {
 }
 
 #[test]
+fn extracts_postgres_parameter_description_without_type_oids() {
+    let bytes = postgres_parameter_description_frame(&[23, 25]);
+
+    let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres parameter description response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.status_code, "OK");
+    assert_eq!(extraction.error_type, None);
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "OK"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("23") || attribute.value.contains("25"))
+    );
+}
+
+#[test]
 fn extracts_postgres_ready_for_query_status_without_raw_fields() {
     let bytes = postgres_frame(b'Z', b"I");
 
@@ -3595,6 +3616,22 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
         parse_postgres_response(&postgres_frame(b'T', b"\x00\x01secret_name\0"), &config)
             .unwrap_err(),
         PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b't', b"\x00\x01\x00\x00"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(
+            &postgres_frame(b't', &{
+                let mut body = Vec::new();
+                body.extend_from_slice(&1025_u16.to_be_bytes());
+                body
+            }),
+            &config,
+        )
+        .unwrap_err(),
+        PostgresExtraction::QueryTooLong
     );
     assert_eq!(
         parse_postgres_response(&postgres_frame(b'Z', b""), &config).unwrap_err(),
@@ -5023,6 +5060,15 @@ fn postgres_row_description_frame(field_names: &[&[u8]]) -> Vec<u8> {
         body.extend_from_slice(&0_i16.to_be_bytes());
     }
     postgres_frame(b'T', &body)
+}
+
+fn postgres_parameter_description_frame(type_oids: &[u32]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&(type_oids.len() as u16).to_be_bytes());
+    for type_oid in type_oids {
+        body.extend_from_slice(&type_oid.to_be_bytes());
+    }
+    postgres_frame(b't', &body)
 }
 
 fn postgres_data_row_frame(values: &[Option<&[u8]>]) -> Vec<u8> {
