@@ -153,7 +153,8 @@ profiles_enabled = true
 If a family-specific endpoint is omitted, that enabled family uses
 `otlp_http.endpoint`. Disabled families do not require an endpoint and do not
 export requests. Every configured OTLP endpoint must be an `http://` or
-`https://` URL without whitespace or control characters and at most 2,048 bytes.
+`https://` URL with a host, without whitespace or control characters, and at
+most 2,048 bytes.
 
 OTLP export runtime bounds are validated before startup:
 `otlp_http.queue_capacity` must be at most 65,536, `batch_size` at most 4,096,

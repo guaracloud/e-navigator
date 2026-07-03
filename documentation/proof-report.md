@@ -44,7 +44,7 @@ or chart rendering:
 - strict config validation with unknown-field rejection, packaged config guards,
   runtime log-level, queue/derivation, and runtime-security endpoint bounds,
   Prometheus and OTLP HTTP sink runtime-bound validation, Prometheus bind-address
-  validation, OTLP HTTP endpoint-shape/length validation, local Kubernetes
+  validation, OTLP HTTP endpoint host/shape/length validation, local Kubernetes
   attribution selector filtering and selector-shape/duplicate bounds plus
   response/cache/label/path bounds, and host resource source scan/path plus
   metric-generator cardinality bounds;
