@@ -151,6 +151,9 @@ impl RawHttpInvalidSampleMetadata {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RawHttpDecodeError {
     RawSampleTooShort,
+    InvalidIovecLength {
+        sample: RawHttpInvalidSampleMetadata,
+    },
     HttpExtraction {
         reason: HttpExtraction,
         sample: RawHttpInvalidSampleMetadata,
@@ -162,6 +165,7 @@ impl RawHttpDecodeError {
     fn reason_name(self) -> &'static str {
         match self {
             Self::RawSampleTooShort => "raw_sample_too_short",
+            Self::InvalidIovecLength { .. } => "invalid_iovec_length",
             Self::HttpExtraction {
                 reason: HttpExtraction::HeadersTooLong,
                 ..
@@ -196,6 +200,7 @@ impl RawHttpDecodeError {
     fn sample_metadata(self) -> Option<RawHttpInvalidSampleMetadata> {
         match self {
             Self::RawSampleTooShort => None,
+            Self::InvalidIovecLength { sample } => Some(sample),
             Self::HttpExtraction { sample, .. } => Some(sample),
         }
     }
@@ -240,7 +245,7 @@ fn raw_http_request_to_signal_result_with_config(
     }
 
     let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawHttpRequestEvent>()) };
-    let request = compact_raw_http_request(&raw);
+    let request = compact_raw_http_request(&raw)?;
     let parsed = parse_http_request(&request, protocol_config).map_err(|reason| {
         RawHttpDecodeError::HttpExtraction {
             reason,
@@ -291,14 +296,19 @@ fn raw_http_request_to_signal_result_with_config(
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-fn compact_raw_http_request(raw: &RawHttpRequestEvent) -> Vec<u8> {
+fn compact_raw_http_request(raw: &RawHttpRequestEvent) -> Result<Vec<u8>, RawHttpDecodeError> {
     let request_len = (raw.request_len as usize).min(RAW_HTTP_REQUEST_BYTES);
     if raw.request_iovec_lens.iter().all(|len| *len == 0) {
-        return raw.request[..request_len].to_vec();
+        return Ok(raw.request[..request_len].to_vec());
     }
 
     let mut request = Vec::with_capacity(request_len);
     for (index, len) in raw.request_iovec_lens.iter().enumerate() {
+        if usize::from(*len) > RAW_HTTP_IOVEC_CHUNK_BYTES {
+            return Err(RawHttpDecodeError::InvalidIovecLength {
+                sample: RawHttpInvalidSampleMetadata::from_raw(raw),
+            });
+        }
         let start = index * RAW_HTTP_IOVEC_CHUNK_BYTES;
         let end = (start + usize::from(*len)).min(RAW_HTTP_REQUEST_BYTES);
         if start >= end || request.len() >= request_len {
@@ -309,7 +319,7 @@ fn compact_raw_http_request(raw: &RawHttpRequestEvent) -> Vec<u8> {
         let segment = &raw.request[start..end];
         request.extend_from_slice(&segment[..segment.len().min(remaining)]);
     }
-    request
+    Ok(request)
 }
 
 #[cfg(feature = "fuzzing")]
@@ -1277,6 +1287,55 @@ mod tests {
         assert_eq!(sample.request_len, payload.len() as u32);
         assert_eq!(sample.request_iovec_lens, [3, 5, 7]);
         assert_eq!(bytes_to_string(&sample.command), "curl");
+    }
+
+    #[test]
+    fn raw_http_decode_result_rejects_oversized_iovec_lengths() {
+        let part1 = b"GET /oversized";
+        let part2 = b"-iovec HTTP/1.1\r\nHost: api.example.test\r\n\r\n";
+        let mut raw = RawHttpRequestEvent {
+            pid: 42,
+            uid: 1000,
+            cgroup_id: 7,
+            fd: 9,
+            family: RAW_HTTP_AF_INET,
+            remote_port_be: 8080_u16.to_be(),
+            local_port_be: 39000_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([10, 43, 0, 77]),
+            local_addr_v4: u32::from_ne_bytes([10, 42, 1, 23]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 0,
+            request_len: (part1.len() + part2.len()) as u32,
+            request_iovec_lens: [
+                part1.len() as u16,
+                (RAW_HTTP_IOVEC_CHUNK_BYTES + 1) as u16,
+                0,
+            ],
+            command: fixed_command("curl"),
+            request: [0; RAW_HTTP_REQUEST_BYTES],
+        };
+        raw.request[..part1.len()].copy_from_slice(part1);
+        let second_offset = RAW_HTTP_IOVEC_CHUNK_BYTES;
+        raw.request[second_offset..second_offset + part2.len()].copy_from_slice(part2);
+
+        let err = raw_http_request_to_signal_result(
+            raw_as_bytes(&raw),
+            None,
+            1_000,
+            std::path::Path::new("/proc"),
+        )
+        .expect_err("oversized iovec length is invalid");
+        let sample = err
+            .sample_metadata()
+            .expect("invalid raw HTTP samples preserve bounded metadata");
+
+        assert!(matches!(err, RawHttpDecodeError::InvalidIovecLength { .. }));
+        assert_eq!(err.reason_name(), "invalid_iovec_length");
+        assert_eq!(
+            sample.request_iovec_lens[1],
+            (RAW_HTTP_IOVEC_CHUNK_BYTES + 1) as u16
+        );
     }
 
     #[test]
