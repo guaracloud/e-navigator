@@ -75,11 +75,12 @@ or chart rendering:
   content-type suffix validation, POST pseudo-header validation,
   authority-port/userinfo validation, and a build-checked parser fuzz target,
   Kafka request-header plus bounded ApiVersions, non-flexible DescribeGroups,
-  FindCoordinator, Heartbeat, LeaveGroup, ListGroups, ListOffsets, Metadata,
-  OffsetCommit, and SyncGroup request bodies, ApiVersions response, bounded
-  Produce request/response, and bounded non-flexible DescribeGroups, Fetch,
-  FindCoordinator, Heartbeat, LeaveGroup, ListGroups, ListOffsets, Metadata,
-  OffsetCommit, and SyncGroup request/response-error parsing,
+  DeleteGroups, FindCoordinator, Heartbeat, LeaveGroup, ListGroups,
+  ListOffsets, Metadata, OffsetCommit, and SyncGroup request bodies,
+  ApiVersions response, bounded Produce request/response, and bounded
+  non-flexible DeleteGroups, DescribeGroups, Fetch, FindCoordinator,
+  Heartbeat, LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit, and
+  SyncGroup request/response-error parsing,
   MongoDB
   wire-message and response-error parsing with OP_MSG section and checksum
   validation, bounded OP_REPLY response parsing, and non-negative response-code validation,
@@ -205,14 +206,15 @@ These areas remain explicitly partial:
   mappings are not yet proven.
 - **Kafka protocol observability:** bounded request-header parsing for common
   API keys, bounded ApiVersions request-body validation, bounded non-flexible
-  Produce, Fetch, DescribeGroups, FindCoordinator, Heartbeat, LeaveGroup,
-  ListGroups, ListOffsets, Metadata, OffsetCommit, and SyncGroup request-body
-  validation, and ApiVersions, Produce, and non-flexible DescribeGroups, Fetch,
-  FindCoordinator, Heartbeat, LeaveGroup, ListGroups, ListOffsets, Metadata,
-  OffsetCommit, and SyncGroup response-error parsing is locally tested without
-  exporting client IDs, coordinator keys, consumer group/member identifiers,
-  assignment payloads, offset metadata, protocol metadata, software names,
-  topics, record payloads, broker hosts, cluster IDs, or response body values,
+  Produce, Fetch, DeleteGroups, DescribeGroups, FindCoordinator, Heartbeat,
+  LeaveGroup, ListGroups, ListOffsets, Metadata, OffsetCommit, and SyncGroup
+  request-body validation, and ApiVersions, Produce, and non-flexible
+  DeleteGroups, DescribeGroups, Fetch, FindCoordinator, Heartbeat, LeaveGroup,
+  ListGroups, ListOffsets, Metadata, OffsetCommit, and SyncGroup
+  response-error parsing is locally tested without exporting client IDs,
+  coordinator keys, consumer group/member identifiers, assignment payloads,
+  offset metadata, protocol metadata, software names, topics, record payloads,
+  broker hosts, cluster IDs, or response body values,
   but runtime capture, request/response matching, broad response coverage,
   flexible-version body semantics beyond ApiVersions, and live Kafka proof are
   not implemented or proven.

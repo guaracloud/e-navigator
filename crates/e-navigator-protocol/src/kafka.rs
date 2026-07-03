@@ -666,6 +666,70 @@ pub fn parse_kafka_describe_groups_response(
     })
 }
 
+pub fn parse_kafka_delete_groups_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if !(0..=1).contains(&api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = delete_groups_response_error_code(body, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("delete_groups"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("42"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "delete_groups".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_offset_commit_response(
     bytes: &[u8],
     api_version: i16,
@@ -930,6 +994,7 @@ fn validate_request_body(
         15 => validate_describe_groups_request_body(body, header, config),
         16 => validate_empty_request_body(body, header),
         18 => validate_api_versions_request_body(body, header, config),
+        42 => validate_delete_groups_request_body(body, header, config),
         _ => Ok(()),
     }
 }
@@ -1249,6 +1314,29 @@ fn validate_describe_groups_request_body(
     Ok(())
 }
 
+fn validate_delete_groups_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_version < 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if header.api_version > 1 {
+        return Ok(());
+    }
+
+    let mut cursor = header.body_start;
+    let group_count = read_request_array_len(body, &mut cursor)?;
+    for _ in 0..group_count {
+        skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
 fn validate_produce_request_body(
     body: &[u8],
     header: &KafkaRequestHeader,
@@ -1555,6 +1643,27 @@ fn offset_commit_response_error_code(
             if error_code != 0 && first_error_code.is_none() {
                 first_error_code = Some(error_code);
             }
+        }
+    }
+    Ok(first_error_code.unwrap_or(0))
+}
+
+fn delete_groups_response_error_code(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    skip_bytes(body, &mut cursor, 4)?;
+    let group_count = read_response_array_len(body, &mut cursor)?;
+    let mut first_error_code = None;
+    for _ in 0..group_count {
+        skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+        let error_code = read_i16_be_cursor(body, &mut cursor)?;
+        if error_code != 0 && first_error_code.is_none() {
+            first_error_code = Some(error_code);
         }
     }
     Ok(first_error_code.unwrap_or(0))
