@@ -1180,6 +1180,104 @@ fn formats_nats_request_span_error_status_from_error_type_attribute() {
 }
 
 #[test]
+fn formats_request_span_error_status_from_response_status_without_error_type() {
+    for (protocol, name, method, key, value) in [
+        (
+            ProtocolKind::Redis,
+            "redis command",
+            "GET",
+            "db.response.status_code",
+            "WRONGTYPE",
+        ),
+        (
+            ProtocolKind::Kafka,
+            "kafka request",
+            "produce",
+            "messaging.kafka.response.error_code",
+            "6",
+        ),
+        (
+            ProtocolKind::Nats,
+            "nats message",
+            "pub",
+            "messaging.nats.status_code",
+            "ERR",
+        ),
+    ] {
+        let signal = request_span_signal(
+            protocol,
+            name,
+            method,
+            vec![TraceAttribute {
+                key: key.to_string(),
+                value: value.to_string(),
+            }],
+        );
+
+        let record = format_otel_trace_record(&signal).expect("request span formats");
+
+        assert_eq!(
+            record.status,
+            Some(OtelSpanStatus::Error {
+                message: value.to_string()
+            }),
+            "{key}"
+        );
+        assert_eq!(record.attributes[key], value);
+        assert!(!record.attributes.contains_key("error.type"));
+    }
+}
+
+#[test]
+fn formats_ok_response_status_attributes_without_error_status() {
+    for (protocol, name, method, key, value) in [
+        (
+            ProtocolKind::Redis,
+            "redis command",
+            "GET",
+            "db.response.status_code",
+            "OK",
+        ),
+        (
+            ProtocolKind::Mongodb,
+            "mongodb command",
+            "find",
+            "db.response.status_code",
+            "1",
+        ),
+        (
+            ProtocolKind::Kafka,
+            "kafka request",
+            "produce",
+            "messaging.kafka.response.error_code",
+            "0",
+        ),
+        (
+            ProtocolKind::Nats,
+            "nats message",
+            "pub",
+            "messaging.nats.status_code",
+            "OK",
+        ),
+    ] {
+        let signal = request_span_signal(
+            protocol,
+            name,
+            method,
+            vec![TraceAttribute {
+                key: key.to_string(),
+                value: value.to_string(),
+            }],
+        );
+
+        let record = format_otel_trace_record(&signal).expect("request span formats");
+
+        assert_eq!(record.status, None, "{key}");
+        assert_eq!(record.attributes[key], value);
+    }
+}
+
+#[test]
 fn formats_request_correlation_warning() {
     let signal = SignalEnvelope::request_correlation_warning(
         "generator.request_correlation",
@@ -1400,6 +1498,38 @@ fn destination_endpoint() -> DependencyEndpoint {
         port: Some(443),
         domain: None,
     }
+}
+
+fn request_span_signal(
+    protocol: ProtocolKind,
+    name: &str,
+    method: &str,
+    attributes: Vec<TraceAttribute>,
+) -> SignalEnvelope {
+    SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: name.to_string(),
+            protocol,
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(1_500),
+            duration_nanos: Some(500),
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            service_name: Some("service-a".to_string()),
+            method: Some(method.to_string()),
+            status_code: None,
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(trace_peer_context()),
+            attributes,
+        },
+    )
 }
 
 fn trace_peer_context() -> TracePeerContext {

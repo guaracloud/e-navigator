@@ -444,7 +444,9 @@ fn request_span_status(span: &RequestSpanObservation) -> Option<OtelSpanStatus> 
                 grpc_status_name(status_code)
             )))
         }
-        _ => request_error_type(span).map(error_status),
+        _ => request_error_type(span)
+            .or_else(|| request_error_status_attribute(span))
+            .map(error_status),
     }
 }
 
@@ -453,11 +455,32 @@ fn request_error_type(span: &RequestSpanObservation) -> Option<&str> {
         .iter()
         .find(|attribute| attribute.key == "error.type")
         .map(|attribute| attribute.value.as_str())
-        .filter(|value| {
-            !value.is_empty()
-                && value.len() <= MAX_TRACE_ATTRIBUTE_VALUE_BYTES
-                && !value.bytes().any(|byte| byte.is_ascii_control())
-        })
+        .filter(|value| valid_request_status_message(value))
+}
+
+fn request_error_status_attribute(span: &RequestSpanObservation) -> Option<&str> {
+    span.attributes.iter().find_map(|attribute| {
+        let value = attribute.value.as_str();
+        if !valid_request_status_message(value) {
+            return None;
+        }
+        match attribute.key.as_str() {
+            "http.response.status_code" if matches!(value.parse::<u16>(), Ok(code) if code >= 400) => {
+                Some(value)
+            }
+            "rpc.grpc.status_code" if value != "0" => Some(value),
+            "db.response.status_code" if !matches!(value, "OK" | "1") => Some(value),
+            "messaging.kafka.response.error_code" if value != "0" => Some(value),
+            "messaging.nats.status_code" if value.eq_ignore_ascii_case("ERR") => Some(value),
+            _ => None,
+        }
+    })
+}
+
+fn valid_request_status_message(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_TRACE_ATTRIBUTE_VALUE_BYTES
+        && !value.bytes().any(|byte| byte.is_ascii_control())
 }
 
 fn error_status(message: &str) -> OtelSpanStatus {
