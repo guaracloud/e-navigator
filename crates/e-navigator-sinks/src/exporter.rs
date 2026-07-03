@@ -19,6 +19,11 @@ pub struct HttpExporterConfig {
 }
 
 impl HttpExporterConfig {
+    pub const MAX_BATCH_SIZE_LIMIT: usize = 4096;
+    pub const MAX_QUEUE_CAPACITY_LIMIT: usize = 65_536;
+    pub const MAX_TIMEOUT_MILLIS_LIMIT: u64 = 300_000;
+    pub const MAX_RETRIES_LIMIT: usize = 16;
+
     pub fn validate(&self) -> Result<(), ExporterError> {
         if self.endpoint.is_empty() {
             return Err(ExporterError::InvalidConfig("endpoint is required"));
@@ -28,14 +33,34 @@ impl HttpExporterConfig {
                 "batch_size must be greater than zero",
             ));
         }
+        if self.batch_size > Self::MAX_BATCH_SIZE_LIMIT {
+            return Err(ExporterError::InvalidConfig(
+                "batch_size must be less than or equal to 4096",
+            ));
+        }
         if self.queue_capacity == 0 {
             return Err(ExporterError::InvalidConfig(
                 "queue_capacity must be greater than zero",
             ));
         }
+        if self.queue_capacity > Self::MAX_QUEUE_CAPACITY_LIMIT {
+            return Err(ExporterError::InvalidConfig(
+                "queue_capacity must be less than or equal to 65536",
+            ));
+        }
         if self.timeout_millis == 0 {
             return Err(ExporterError::InvalidConfig(
                 "timeout_millis must be greater than zero",
+            ));
+        }
+        if self.timeout_millis > Self::MAX_TIMEOUT_MILLIS_LIMIT {
+            return Err(ExporterError::InvalidConfig(
+                "timeout_millis must be less than or equal to 300000",
+            ));
+        }
+        if self.max_retries > Self::MAX_RETRIES_LIMIT {
+            return Err(ExporterError::InvalidConfig(
+                "max_retries must be less than or equal to 16",
             ));
         }
         Ok(())
@@ -302,6 +327,59 @@ mod tests {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     struct TestRecord {
         value: u64,
+    }
+
+    fn valid_config() -> HttpExporterConfig {
+        HttpExporterConfig {
+            endpoint: "http://127.0.0.1:9".to_string(),
+            headers: Vec::new(),
+            batch_size: 1,
+            queue_capacity: 1,
+            timeout_millis: 1,
+            max_retries: 0,
+            tls_insecure_skip_verify: false,
+        }
+    }
+
+    #[test]
+    fn exporter_rejects_oversized_runtime_bounds() {
+        for (config, expected_message) in [
+            (
+                HttpExporterConfig {
+                    batch_size: HttpExporterConfig::MAX_BATCH_SIZE_LIMIT + 1,
+                    ..valid_config()
+                },
+                "batch_size must be less than or equal to 4096",
+            ),
+            (
+                HttpExporterConfig {
+                    queue_capacity: HttpExporterConfig::MAX_QUEUE_CAPACITY_LIMIT + 1,
+                    ..valid_config()
+                },
+                "queue_capacity must be less than or equal to 65536",
+            ),
+            (
+                HttpExporterConfig {
+                    timeout_millis: HttpExporterConfig::MAX_TIMEOUT_MILLIS_LIMIT + 1,
+                    ..valid_config()
+                },
+                "timeout_millis must be less than or equal to 300000",
+            ),
+            (
+                HttpExporterConfig {
+                    max_retries: HttpExporterConfig::MAX_RETRIES_LIMIT + 1,
+                    ..valid_config()
+                },
+                "max_retries must be less than or equal to 16",
+            ),
+        ] {
+            let err = config.validate().expect_err("oversized bound is invalid");
+
+            assert_eq!(
+                err.to_string(),
+                format!("invalid exporter config: {expected_message}")
+            );
+        }
     }
 
     #[tokio::test]
