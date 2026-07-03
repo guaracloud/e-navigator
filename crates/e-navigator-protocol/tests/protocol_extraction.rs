@@ -1888,6 +1888,65 @@ fn validates_kafka_produce_v2_request_without_topic_or_record_values() {
 }
 
 #[test]
+fn validates_kafka_fetch_v5_request_without_topic_values() {
+    let body = kafka_fetch_request_body(5, &[("orders.secret", &[0, 1])]);
+    let bytes = kafka_request_frame(1, 5, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka fetch v5 request parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation.as_deref(), Some("fetch"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "1")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "5")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("orders"))
+    );
+}
+
+#[test]
+fn validates_kafka_fetch_legacy_requests_without_topic_values() {
+    for api_version in 0..=4 {
+        let body = kafka_fetch_request_body(api_version, &[("orders.secret", &[0])]);
+        let bytes = kafka_request_frame(1, api_version, Some(b"secret-client"), &body);
+
+        let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+            .expect("kafka fetch request parses");
+
+        assert_eq!(extraction.operation.as_deref(), Some("fetch"));
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                    && attribute.value == api_version.to_string())
+        );
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("secret")
+                    || attribute.value.contains("orders"))
+        );
+    }
+}
+
+#[test]
 fn extracts_kafka_flexible_api_versions_request_without_client_id_value() {
     let bytes = kafka_flexible_request_frame(
         18,
@@ -2283,6 +2342,43 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_request(&kafka_request_frame(0, 2, None, b"\0\x01"), &config).unwrap_err(),
         KafkaExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(1, 6, None, b""), &config).unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(1, 5, None, b"\0\x01"), &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    let mut too_many_fetch_topics = Vec::new();
+    too_many_fetch_topics.extend_from_slice(&(-1_i32).to_be_bytes());
+    too_many_fetch_topics.extend_from_slice(&500_i32.to_be_bytes());
+    too_many_fetch_topics.extend_from_slice(&1_i32.to_be_bytes());
+    too_many_fetch_topics.extend_from_slice(&1_000_i32.to_be_bytes());
+    too_many_fetch_topics.extend_from_slice(&0_i8.to_be_bytes());
+    too_many_fetch_topics.extend_from_slice(&1025_i32.to_be_bytes());
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(1, 5, None, &too_many_fetch_topics),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    let body = kafka_fetch_request_body(5, &[("topic.secret.name", &[0])]);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(1, 5, None, &body),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
     );
     let mut too_many_produce_topics = Vec::new();
     too_many_produce_topics.extend_from_slice(&1_i16.to_be_bytes());
@@ -5375,6 +5471,34 @@ fn kafka_produce_request_body(topics: &[(&str, i32, &[u8])]) -> Vec<u8> {
         body.extend_from_slice(&partition.to_be_bytes());
         body.extend_from_slice(&(records.len() as i32).to_be_bytes());
         body.extend_from_slice(records);
+    }
+    body
+}
+
+fn kafka_fetch_request_body(api_version: i16, topics: &[(&str, &[i32])]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&(-1_i32).to_be_bytes());
+    body.extend_from_slice(&500_i32.to_be_bytes());
+    body.extend_from_slice(&1_i32.to_be_bytes());
+    if api_version >= 3 {
+        body.extend_from_slice(&1_000_i32.to_be_bytes());
+    }
+    if api_version >= 4 {
+        body.push(0);
+    }
+    body.extend_from_slice(&(topics.len() as i32).to_be_bytes());
+    for (topic, partitions) in topics {
+        body.extend_from_slice(&(topic.len() as i16).to_be_bytes());
+        body.extend_from_slice(topic.as_bytes());
+        body.extend_from_slice(&(partitions.len() as i32).to_be_bytes());
+        for partition in *partitions {
+            body.extend_from_slice(&partition.to_be_bytes());
+            body.extend_from_slice(&42_i64.to_be_bytes());
+            if api_version >= 5 {
+                body.extend_from_slice(&40_i64.to_be_bytes());
+            }
+            body.extend_from_slice(&1024_i32.to_be_bytes());
+        }
     }
     body
 }
