@@ -14,7 +14,8 @@ use e_navigator_protocol::{
         parse_kafka_list_offsets_response, parse_kafka_metadata_response,
         parse_kafka_offset_commit_response, parse_kafka_offset_delete_response,
         parse_kafka_offset_fetch_response, parse_kafka_produce_response, parse_kafka_request,
-        parse_kafka_sasl_handshake_response, parse_kafka_sync_group_response,
+        parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
+        parse_kafka_sync_group_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -300,6 +301,7 @@ proptest! {
         let _ = parse_kafka_add_offsets_to_txn_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_add_partitions_to_txn_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_end_txn_response(&bytes, api_version.min(2), &config);
+        let _ = parse_kafka_sasl_authenticate_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_metadata_response(&bytes, api_version.min(8), &config);
     }
 
@@ -2657,6 +2659,39 @@ fn validates_kafka_sasl_handshake_requests_without_mechanism_values() {
 }
 
 #[test]
+fn validates_kafka_sasl_authenticate_requests_without_auth_values() {
+    for api_version in 0..=1 {
+        let body = kafka_sasl_authenticate_request_body(b"secret-auth-bytes");
+        let bytes = kafka_request_frame(36, api_version, Some(b"secret-client"), &body);
+
+        let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+            .expect("kafka sasl authenticate request parses");
+
+        assert_eq!(extraction.operation.as_deref(), Some("sasl_authenticate"));
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "messaging.kafka.api_key"
+                    && attribute.value == "36")
+        );
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                    && attribute.value == api_version.to_string())
+        );
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("secret"))
+        );
+    }
+}
+
+#[test]
 fn validates_kafka_delete_groups_requests_without_group_values() {
     for api_version in 0..=1 {
         let body = kafka_delete_groups_request_body(&["group.secret", "other.secret"]);
@@ -4252,6 +4287,74 @@ fn extracts_kafka_sasl_handshake_error_response_without_mechanism_values() {
 }
 
 #[test]
+fn extracts_kafka_sasl_authenticate_ok_response_without_auth_or_message_values() {
+    let bytes = kafka_sasl_authenticate_response_frame(0, 1, 0, None, b"secret-auth-response");
+
+    let extraction =
+        parse_kafka_sasl_authenticate_response(&bytes, 1, &ProtocolExtractionConfig::default())
+            .expect("sasl authenticate ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "sasl_authenticate");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "36")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_sasl_authenticate_error_response_without_auth_or_message_values() {
+    let bytes = kafka_sasl_authenticate_response_frame(
+        0,
+        0,
+        58,
+        Some("secret auth failed"),
+        b"secret-auth-response",
+    );
+
+    let extraction =
+        parse_kafka_sasl_authenticate_response(&bytes, 0, &ProtocolExtractionConfig::default())
+            .expect("sasl authenticate error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "sasl_authenticate");
+    assert_eq!(extraction.status_code, "58");
+    assert_eq!(extraction.error_type.as_deref(), Some("58"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "58")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn extracts_kafka_init_producer_id_ok_response_without_producer_values() {
     let bytes = kafka_init_producer_id_response_frame(0, 1, 0);
 
@@ -4766,6 +4869,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     )
     .expect("bounded kafka end txn response parses");
     assert_eq!(bounded_end_txn_response.attributes.len(), 2);
+
+    let bounded_sasl_authenticate_response = parse_kafka_sasl_authenticate_response(
+        &kafka_sasl_authenticate_response_frame(0, 1, 58, Some("secret"), b"secret-auth"),
+        1,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka sasl authenticate response parses");
+    assert_eq!(bounded_sasl_authenticate_response.attributes.len(), 2);
 
     let bounded_metadata_response = parse_kafka_metadata_response(
         &kafka_metadata_response_frame(0, 1, &[("orders.secret", 6, 0)]),
@@ -5544,6 +5660,30 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::ClientIdTooLong
     );
     assert_eq!(
+        parse_kafka_request(&kafka_request_frame(36, -1, None, b""), &config).unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(36, 1, None, b"\0\x01"), &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    let mut oversized_sasl_auth = Vec::new();
+    oversized_sasl_auth.extend_from_slice(&129_i32.to_be_bytes());
+    oversized_sasl_auth.extend_from_slice(&[0_u8; 129]);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(36, 1, None, &oversized_sasl_auth),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_request(&kafka_request_frame(3, -1, None, b""), &config).unwrap_err(),
         KafkaExtraction::UnsupportedApiVersion
     );
@@ -5855,6 +5995,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_sasl_authenticate_response(
+            &kafka_sasl_authenticate_response_frame(0, 1, 0, None, b""),
+            2,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_init_producer_id_response(
             &kafka_init_producer_id_response_frame(0, 2, 0),
             2,
@@ -6047,6 +6196,20 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_sasl_handshake_response(
             &kafka_sasl_handshake_response_frame(0, 0, &["PLAIN.secret"]),
+            1,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_sasl_authenticate_response(
+            &kafka_sasl_authenticate_response_frame(0, 1, 58, Some("secret auth failed"), b"auth",),
             1,
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
@@ -6295,6 +6458,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     truncated_sasl_handshake_response.truncate(10);
     assert_eq!(
         parse_kafka_sasl_handshake_response(&truncated_sasl_handshake_response, 1, &config)
+            .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_sasl_authenticate_response =
+        kafka_sasl_authenticate_response_frame(0, 1, 58, Some("auth"), b"secret-auth");
+    truncated_sasl_authenticate_response.truncate(12);
+    assert_eq!(
+        parse_kafka_sasl_authenticate_response(&truncated_sasl_authenticate_response, 1, &config)
             .unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
@@ -9499,6 +9671,12 @@ fn kafka_sasl_handshake_request_body(mechanism: &str) -> Vec<u8> {
     body
 }
 
+fn kafka_sasl_authenticate_request_body(auth_bytes: &[u8]) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_kafka_bytes(&mut body, auth_bytes);
+    body
+}
+
 fn kafka_init_producer_id_request_body(transactional_id: Option<&str>) -> Vec<u8> {
     let mut body = Vec::new();
     push_kafka_nullable_string(&mut body, transactional_id);
@@ -10227,6 +10405,24 @@ fn kafka_sasl_handshake_response_with_mechanism_count_frame(mechanism_count: i32
     response.extend_from_slice(&0_i32.to_be_bytes());
     response.extend_from_slice(&0_i16.to_be_bytes());
     response.extend_from_slice(&mechanism_count.to_be_bytes());
+    kafka_frame(&response)
+}
+
+fn kafka_sasl_authenticate_response_frame(
+    correlation_id: i32,
+    api_version: i16,
+    error_code: i16,
+    error_message: Option<&str>,
+    auth_bytes: &[u8],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    response.extend_from_slice(&error_code.to_be_bytes());
+    push_kafka_nullable_string(&mut response, error_message);
+    push_kafka_bytes(&mut response, auth_bytes);
+    if api_version >= 1 {
+        response.extend_from_slice(&60_000_i64.to_be_bytes());
+    }
     kafka_frame(&response)
 }
 
