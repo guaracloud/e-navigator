@@ -50,8 +50,9 @@ or chart rendering:
   attribution selector filtering and
   selector-shape/whitespace/duplicate bounds plus response/cache/label/path
   bounds, runtime `NODE_NAME` field-selector shape validation, including
-  combined container-ID and pod-IP cache-entry bounds, and
-  host resource source scan/path plus metric-generator cardinality bounds;
+  combined container-ID and pod-IP cache-entry bounds, cgroup-ID attribution
+  scan/cache bounds, and host resource source scan/path plus metric-generator
+  cardinality bounds;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/DNS/HTTP/profile
   events, including profile fixture normalization with sensitive/reserved

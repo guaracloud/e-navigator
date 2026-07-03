@@ -13,6 +13,7 @@ use tracing::warn;
 use super::cgroup::parse_container_from_cgroup;
 
 const MAX_CGROUP_ATTRIBUTION_CACHE_ENTRIES: usize = 4096;
+const MAX_CGROUP_ATTRIBUTION_SCAN_ENTRIES: usize = 16_384;
 const MIN_CGROUP_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Default)]
@@ -51,7 +52,12 @@ impl CgroupIdAttributionCache {
             None => return,
         };
         if let Ok(mut cache) = self.cache.lock() {
-            insert_bounded(&mut cache, cgroup_id, container);
+            insert_bounded(
+                &mut cache,
+                cgroup_id,
+                container,
+                MAX_CGROUP_ATTRIBUTION_CACHE_ENTRIES,
+            );
         }
     }
 
@@ -95,27 +101,45 @@ impl CgroupIdAttributionCache {
 }
 
 pub(super) fn scan_cgroup_id_cache(root: &Path) -> BTreeMap<u64, ContainerContext> {
+    scan_cgroup_id_cache_with_limits(
+        root,
+        MAX_CGROUP_ATTRIBUTION_SCAN_ENTRIES,
+        MAX_CGROUP_ATTRIBUTION_CACHE_ENTRIES,
+    )
+}
+
+fn scan_cgroup_id_cache_with_limits(
+    root: &Path,
+    max_scan_entries: usize,
+    max_cache_entries: usize,
+) -> BTreeMap<u64, ContainerContext> {
     let mut cache = BTreeMap::new();
+    if max_scan_entries == 0 || max_cache_entries == 0 {
+        return cache;
+    }
+
     let mut queue = vec![root.to_path_buf()];
+    let mut scanned_entries = 0_usize;
 
     while let Some(path) = queue.pop() {
-        if cache.len() >= MAX_CGROUP_ATTRIBUTION_CACHE_ENTRIES {
+        if cache.len() >= max_cache_entries || scanned_entries >= max_scan_entries {
             break;
         }
+        scanned_entries = scanned_entries.saturating_add(1);
         let Some(id) = cgroup_path_id(&path) else {
             continue;
         };
         if let Ok(relative) = path.strip_prefix(root) {
             let cgroup_path = normalized_cgroup_path(relative);
             if let Some(container) = parse_container_from_cgroup(&cgroup_path) {
-                insert_bounded(&mut cache, id, container);
+                insert_bounded(&mut cache, id, container, max_cache_entries);
             }
         }
         let Ok(entries) = fs::read_dir(&path) else {
             continue;
         };
         for entry in entries.filter_map(Result::ok) {
-            if queue.len().saturating_add(cache.len()) >= MAX_CGROUP_ATTRIBUTION_CACHE_ENTRIES {
+            if queue.len().saturating_add(scanned_entries) >= max_scan_entries {
                 break;
             }
             if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
@@ -140,8 +164,9 @@ fn insert_bounded(
     cache: &mut BTreeMap<u64, ContainerContext>,
     id: u64,
     container: ContainerContext,
+    max_cache_entries: usize,
 ) {
-    if cache.len() >= MAX_CGROUP_ATTRIBUTION_CACHE_ENTRIES
+    if cache.len() >= max_cache_entries
         && !cache.contains_key(&id)
         && let Some(oldest_id) = cache.keys().next().copied()
     {
@@ -200,6 +225,44 @@ mod tests {
         let cache = scan_cgroup_id_cache(&root);
 
         assert!(cache.len() <= MAX_CGROUP_ATTRIBUTION_CACHE_ENTRIES);
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn cgroup_id_cache_scan_entry_count_is_bounded() {
+        let root = std::env::temp_dir().join(format!(
+            "e-navigator-cgroup-id-scan-limit-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(format!("cri-containerd-{CONTAINER_ID}.scope")))
+            .expect("fixture directory");
+
+        let cache = scan_cgroup_id_cache_with_limits(&root, 1, 8);
+
+        assert!(cache.is_empty());
+
+        let cache = scan_cgroup_id_cache_with_limits(&root, 2, 8);
+
+        assert_eq!(cache.len(), 1);
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn cgroup_id_cache_scan_respects_cache_limit() {
+        let root = std::env::temp_dir().join(format!(
+            "e-navigator-cgroup-id-cache-limit-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        for index in 0..4 {
+            fs::create_dir_all(root.join(format!("cri-containerd-{CONTAINER_ID}-{index}.scope")))
+                .expect("fixture directory");
+        }
+
+        let cache = scan_cgroup_id_cache_with_limits(&root, 16, 1);
+
+        assert_eq!(cache.len(), 1);
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 }
