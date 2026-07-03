@@ -601,6 +601,7 @@ fn bounded_attributes(attributes: &[ProfilingAttribute]) -> Vec<ProfilingAttribu
         .iter()
         .filter(|attribute| {
             !is_sensitive_profiling_attribute_key(&attribute.key)
+                && !is_reserved_profile_attribute_key(&attribute.key)
                 && attribute.key.len() <= MAX_PROFILE_ATTRIBUTE_KEY_BYTES
                 && attribute.value.len() <= MAX_PROFILE_ATTRIBUTE_VALUE_BYTES
         })
@@ -609,6 +610,20 @@ fn bounded_attributes(attributes: &[ProfilingAttribute]) -> Vec<ProfilingAttribu
     attributes.sort();
     attributes.truncate(MAX_PROFILE_ATTRIBUTES);
     attributes
+}
+
+fn is_reserved_profile_attribute_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "schema"
+            | "profile_id"
+            | "profile_kind"
+            | "correlation_kind"
+            | "confidence"
+            | "sample_count"
+            | "stack_id"
+            | "frame_count"
+    )
 }
 
 fn merge_bounded_attributes(

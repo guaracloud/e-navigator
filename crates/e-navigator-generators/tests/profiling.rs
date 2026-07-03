@@ -188,6 +188,22 @@ async fn generated_sessions_filter_sensitive_profile_attributes() {
                 value: "steady_state".to_string(),
             },
             ProfilingAttribute {
+                key: "schema".to_string(),
+                value: "evil".to_string(),
+            },
+            ProfilingAttribute {
+                key: "profile_id".to_string(),
+                value: "evil".to_string(),
+            },
+            ProfilingAttribute {
+                key: "correlation_kind".to_string(),
+                value: "evil".to_string(),
+            },
+            ProfilingAttribute {
+                key: "confidence".to_string(),
+                value: "evil".to_string(),
+            },
+            ProfilingAttribute {
                 key: "k".repeat(129),
                 value: "oversized_key".to_string(),
             },
@@ -212,6 +228,10 @@ async fn generated_sessions_filter_sensitive_profile_attributes() {
             .iter()
             .any(|attribute| attribute.key == "authorization"
                 || attribute.value.contains("secret-token")
+                || attribute.key == "schema"
+                || attribute.key == "profile_id"
+                || attribute.key == "correlation_kind"
+                || attribute.key == "confidence"
                 || attribute.value == "oversized_key"
                 || attribute.key == "profiling.too_large")
     );
