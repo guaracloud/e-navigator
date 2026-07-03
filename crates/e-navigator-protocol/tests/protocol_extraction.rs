@@ -3025,6 +3025,36 @@ fn extracts_mysql_stmt_execute_operation_without_statement_or_parameter_values()
 }
 
 #[test]
+fn extracts_mysql_stmt_send_long_data_without_parameter_values() {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&42_u32.to_le_bytes());
+    payload.extend_from_slice(&7_u16.to_le_bytes());
+    payload.extend_from_slice(b"secret-long-parameter-value");
+    let bytes = mysql_packet(0x18, &payload);
+
+    let extraction = parse_mysql_command(&bytes, &ProtocolExtractionConfig::default())
+        .expect("mysql stmt send long data parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Mysql);
+    assert_eq!(extraction.operation.as_deref(), Some("SEND_LONG_DATA"));
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.operation" && attribute.value == "SEND_LONG_DATA"
+    }));
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.mysql.command" && attribute.value == "stmt_send_long_data"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("42")
+                || attribute.value.contains("7")
+                || attribute.value.contains("secret")
+                || attribute.value.contains("parameter"))
+    );
+}
+
+#[test]
 fn extracts_mysql_stmt_lifecycle_operations_without_statement_ids() {
     for (command, payload, operation, command_name) in [
         (0x19, 42_u32.to_le_bytes().to_vec(), "CLOSE", "stmt_close"),
@@ -3349,6 +3379,27 @@ fn rejects_malformed_and_unsupported_mysql_fixtures() {
     assert_eq!(
         parse_mysql_command(&mysql_packet(0x17, b"\x2a\0\0"), &config).unwrap_err(),
         MysqlExtraction::MalformedPacket
+    );
+    assert_eq!(
+        parse_mysql_command(&mysql_packet(0x18, b"\x2a\0\0\0\x07"), &config).unwrap_err(),
+        MysqlExtraction::MalformedPacket
+    );
+    let mut oversized_long_data = Vec::new();
+    oversized_long_data.extend_from_slice(&42_u32.to_le_bytes());
+    oversized_long_data.extend_from_slice(&7_u16.to_le_bytes());
+    oversized_long_data.extend_from_slice(b"value");
+    assert_eq!(
+        parse_mysql_command(
+            &mysql_packet(0x18, &oversized_long_data),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        MysqlExtraction::QueryTooLong
     );
     assert_eq!(
         parse_mysql_command(&mysql_packet(0x19, b"\x2a\0\0"), &config).unwrap_err(),

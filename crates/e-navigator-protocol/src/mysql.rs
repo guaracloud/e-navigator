@@ -8,6 +8,7 @@ const MYSQL_COM_QUERY: u8 = 0x03;
 const MYSQL_COM_PING: u8 = 0x0e;
 const MYSQL_COM_STMT_PREPARE: u8 = 0x16;
 const MYSQL_COM_STMT_EXECUTE: u8 = 0x17;
+const MYSQL_COM_STMT_SEND_LONG_DATA: u8 = 0x18;
 const MYSQL_COM_STMT_CLOSE: u8 = 0x19;
 const MYSQL_COM_STMT_RESET: u8 = 0x1a;
 const MYSQL_COM_STMT_FETCH: u8 = 0x1c;
@@ -65,6 +66,9 @@ pub fn parse_mysql_command(
         MYSQL_COM_QUIT => mysql_fixed_length_operation(payload, 1, "QUIT")?,
         MYSQL_COM_INIT_DB => mysql_init_db_operation(payload, config.max_request_line_bytes)?,
         MYSQL_COM_STMT_EXECUTE => mysql_stmt_execute_operation(payload)?,
+        MYSQL_COM_STMT_SEND_LONG_DATA => {
+            mysql_stmt_send_long_data_operation(payload, config.max_request_line_bytes)?
+        }
         MYSQL_COM_STMT_CLOSE => mysql_fixed_length_operation(payload, 5, "CLOSE")?,
         MYSQL_COM_STMT_RESET => mysql_fixed_length_operation(payload, 5, "RESET")?,
         MYSQL_COM_STMT_FETCH => mysql_fixed_length_operation(payload, 9, "FETCH")?,
@@ -161,6 +165,19 @@ fn mysql_init_db_operation(
     }
     let _schema = parse_query_bytes(&payload[1..], max_schema_bytes)?;
     Ok(Some("INIT_DB".to_string()))
+}
+
+fn mysql_stmt_send_long_data_operation(
+    payload: &[u8],
+    max_parameter_bytes: usize,
+) -> Result<Option<String>, MysqlExtraction> {
+    if payload.len() < 7 {
+        return Err(MysqlExtraction::MalformedPacket);
+    }
+    if payload[7..].len() > max_parameter_bytes {
+        return Err(MysqlExtraction::QueryTooLong);
+    }
+    Ok(Some("SEND_LONG_DATA".to_string()))
 }
 
 fn mysql_fixed_length_operation(
@@ -321,6 +338,7 @@ fn command_name(command: u8) -> &'static str {
         MYSQL_COM_PING => "ping",
         MYSQL_COM_STMT_PREPARE => "stmt_prepare",
         MYSQL_COM_STMT_EXECUTE => "stmt_execute",
+        MYSQL_COM_STMT_SEND_LONG_DATA => "stmt_send_long_data",
         MYSQL_COM_STMT_CLOSE => "stmt_close",
         MYSQL_COM_STMT_RESET => "stmt_reset",
         MYSQL_COM_STMT_FETCH => "stmt_fetch",
