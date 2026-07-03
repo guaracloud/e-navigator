@@ -103,8 +103,15 @@ impl ProfilingGenerator {
         }
 
         let mut outputs = Vec::new();
-        if let Some(session) = self.update_window(signal, sample)? {
-            outputs.push(session);
+        if let Some(update) = self.update_window(signal, sample)? {
+            let dropped_sample_count = update.dropped_sample_count;
+            outputs.push(update.signal);
+            if dropped_sample_count > 0
+                && let Some(warning) =
+                    self.dropped_samples_warning(signal, sample, dropped_sample_count)?
+            {
+                outputs.push(warning);
+            }
         }
         if sample.container.is_none()
             && sample.kubernetes.is_none()
@@ -120,19 +127,22 @@ impl ProfilingGenerator {
         &self,
         signal: &SignalEnvelope,
         sample: &ProfileSampleObservation,
-    ) -> CoreResult<Option<SignalEnvelope>> {
+    ) -> CoreResult<Option<WindowUpdate>> {
         let window = window_for(sample.timestamp_unix_nanos, self.window_nanos);
         let key = WindowKey::from_sample(signal, sample, &window);
         let mut windows = self.windows()?;
         let mut window_order = self.window_order()?;
         if let Some(state) = windows.get_mut(&key) {
-            state.update_from_sample(
+            let dropped_sample_count = state.update_from_sample(
                 sample,
                 self.max_stack_ids_per_window,
                 self.max_samples_per_window,
             );
             state.confidence = state.confidence.min(sample.confidence);
-            return Ok(Some(state.to_signal(signal.host.clone())));
+            return Ok(Some(WindowUpdate {
+                signal: state.to_signal(signal.host.clone()),
+                dropped_sample_count,
+            }));
         }
 
         if windows.len() >= self.max_windows.max(1)
@@ -150,10 +160,14 @@ impl ProfilingGenerator {
             self.max_stack_ids_per_window,
             self.max_samples_per_window,
         );
+        let dropped_sample_count = state.dropped_sample_count;
         let output = state.to_signal(signal.host.clone());
         window_order.insert(WindowOrderKey::new(&key));
         windows.insert(key, state);
-        Ok(Some(output))
+        Ok(Some(WindowUpdate {
+            signal: output,
+            dropped_sample_count,
+        }))
     }
 
     fn missing_attribution_warning(
@@ -161,23 +175,9 @@ impl ProfilingGenerator {
         signal: &SignalEnvelope,
         sample: &ProfileSampleObservation,
     ) -> CoreResult<Option<SignalEnvelope>> {
-        let fingerprint = WarningFingerprint {
-            source_signal_kind: signal.kind().to_string(),
-            source_module: signal.source.clone(),
-            timestamp_unix_nanos: sample.timestamp_unix_nanos,
-            stack_id: sample.stack_id.clone(),
-        };
-        let mut seen = self.seen_warnings()?;
-        if seen.contains(&fingerprint) {
+        if !self.mark_warning_seen("missing_attribution", signal, sample)? {
             return Ok(None);
         }
-        if seen.len() >= self.max_warnings.max(1)
-            && let Some(first) = seen.iter().next().cloned()
-        {
-            seen.remove(&first);
-        }
-        seen.insert(fingerprint);
-        drop(seen);
 
         Ok(Some(SignalEnvelope::profiling_warning_observation(
             "generator.profiling",
@@ -200,6 +200,71 @@ impl ProfilingGenerator {
                 }],
             },
         )))
+    }
+
+    fn dropped_samples_warning(
+        &self,
+        signal: &SignalEnvelope,
+        sample: &ProfileSampleObservation,
+        dropped_sample_count: u64,
+    ) -> CoreResult<Option<SignalEnvelope>> {
+        if !self.mark_warning_seen("dropped_profile_samples", signal, sample)? {
+            return Ok(None);
+        }
+
+        Ok(Some(SignalEnvelope::profiling_warning_observation(
+            "generator.profiling",
+            signal.host.clone(),
+            ProfilingWarningObservation {
+                warning_type: "dropped_profile_samples".to_string(),
+                message: "profile samples were dropped by bounded aggregation".to_string(),
+                timestamp_unix_nanos: sample.timestamp_unix_nanos,
+                source_signal_kind: signal.kind().to_string(),
+                source_module: signal.source.clone(),
+                profiling_kind: sample.profiling_kind,
+                correlation_kind: sample.correlation_kind,
+                confidence: ProfilingConfidence::Medium,
+                process: sample.process.clone(),
+                container: sample.container.clone(),
+                kubernetes: sample.kubernetes.clone(),
+                attributes: vec![
+                    ProfilingAttribute {
+                        key: "profiling.warning.source".to_string(),
+                        value: "profile_sample_observation".to_string(),
+                    },
+                    ProfilingAttribute {
+                        key: "profile.dropped_sample_count".to_string(),
+                        value: dropped_sample_count.to_string(),
+                    },
+                ],
+            },
+        )))
+    }
+
+    fn mark_warning_seen(
+        &self,
+        warning_type: &str,
+        signal: &SignalEnvelope,
+        sample: &ProfileSampleObservation,
+    ) -> CoreResult<bool> {
+        let fingerprint = WarningFingerprint {
+            warning_type: warning_type.to_string(),
+            source_signal_kind: signal.kind().to_string(),
+            source_module: signal.source.clone(),
+            timestamp_unix_nanos: sample.timestamp_unix_nanos,
+            stack_id: sample.stack_id.clone(),
+        };
+        let mut seen = self.seen_warnings()?;
+        if seen.contains(&fingerprint) {
+            return Ok(false);
+        }
+        if seen.len() >= self.max_warnings.max(1)
+            && let Some(first) = seen.iter().next().cloned()
+        {
+            seen.remove(&first);
+        }
+        seen.insert(fingerprint);
+        Ok(true)
     }
 
     fn mark_sample_seen(&self, fingerprint: SampleFingerprint) -> CoreResult<bool> {
@@ -353,6 +418,12 @@ impl WindowOrderKey {
 }
 
 #[derive(Debug, Clone)]
+struct WindowUpdate {
+    signal: SignalEnvelope,
+    dropped_sample_count: u64,
+}
+
+#[derive(Debug, Clone)]
 struct WindowState {
     profile_id: String,
     window: MetricAggregationWindow,
@@ -408,13 +479,14 @@ impl WindowState {
         sample: &ProfileSampleObservation,
         max_stack_ids_per_window: usize,
         max_samples_per_window: u64,
-    ) {
+    ) -> u64 {
         let remaining = max_samples_per_window.saturating_sub(self.observed_sample_count);
         let accepted = sample.sample_count.min(remaining);
+        let dropped_sample_count = sample.sample_count.saturating_sub(accepted);
         self.observed_sample_count = self.observed_sample_count.saturating_add(accepted);
         self.dropped_sample_count = self
             .dropped_sample_count
-            .saturating_add(sample.sample_count.saturating_sub(accepted));
+            .saturating_add(dropped_sample_count);
 
         if self.stack_ids.contains(&sample.stack_id)
             || self.stack_ids.len() < max_stack_ids_per_window
@@ -434,6 +506,7 @@ impl WindowState {
         if self.sampling_period_nanos.is_none() {
             self.sampling_period_nanos = sample.sampling_period_nanos;
         }
+        dropped_sample_count
     }
 
     fn to_signal(&self, host: Option<String>) -> SignalEnvelope {
@@ -503,6 +576,7 @@ impl SampleFingerprint {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct WarningFingerprint {
+    warning_type: String,
     source_signal_kind: String,
     source_module: String,
     timestamp_unix_nanos: u64,

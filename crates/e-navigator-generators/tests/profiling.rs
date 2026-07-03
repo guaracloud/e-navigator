@@ -283,6 +283,70 @@ async fn per_window_stack_and_sample_counts_are_bounded() {
 }
 
 #[tokio::test]
+async fn dropped_profile_samples_emit_structured_warning() {
+    let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
+    let mut signal = sample_signal_with_stack(1_500_000_000, "stack:a", Some(context()));
+    set_sample_count(&mut signal, 70);
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::ProfilingSessionObservation(window) = &outputs[0].payload else {
+        panic!("expected profiling session");
+    };
+    assert_eq!(window.observed_sample_count, 64);
+    assert_eq!(window.dropped_sample_count, 6);
+
+    let warning = outputs
+        .iter()
+        .find_map(|signal| match &signal.payload {
+            SignalPayload::ProfilingWarningObservation(warning)
+                if warning.warning_type == "dropped_profile_samples" =>
+            {
+                Some(warning)
+            }
+            _ => None,
+        })
+        .expect("dropped profile samples warning is emitted");
+    assert_eq!(
+        warning.message,
+        "profile samples were dropped by bounded aggregation"
+    );
+    assert_eq!(warning.confidence, ProfilingConfidence::Medium);
+    assert_eq!(warning.process.as_ref().expect("process").pid, 42);
+    assert_eq!(
+        warning.kubernetes.as_ref().expect("kubernetes").namespace,
+        "default"
+    );
+    assert!(warning.attributes.iter().any(|attribute| {
+        attribute.key == "profile.dropped_sample_count" && attribute.value == "6"
+    }));
+}
+
+#[tokio::test]
+async fn dropped_unattributed_profile_samples_emit_distinct_warnings() {
+    let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
+    let mut signal = sample_signal_with_stack(1_500_000_000, "stack:a", None);
+    set_sample_count(&mut signal, 70);
+
+    let outputs = observe(&generator, &signal).await;
+
+    assert!(outputs.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::ProfilingWarningObservation(warning)
+                if warning.warning_type == "dropped_profile_samples"
+        )
+    }));
+    assert!(outputs.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::ProfilingWarningObservation(warning)
+                if warning.warning_type == "missing_attribution"
+        )
+    }));
+}
+
+#[tokio::test]
 async fn duplicate_suppression_distinguishes_thread_and_sample_count() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let first = sample_signal_with_stack(1_500_000_000, "stack:a", Some(context()));
@@ -378,6 +442,13 @@ fn set_pid(signal: &mut SignalEnvelope, pid: u32) {
         panic!("expected profile sample");
     };
     sample.process.as_mut().expect("process").pid = pid;
+}
+
+fn set_sample_count(signal: &mut SignalEnvelope, sample_count: u64) {
+    let SignalPayload::ProfileSampleObservation(sample) = &mut signal.payload else {
+        panic!("expected profile sample");
+    };
+    sample.sample_count = sample_count;
 }
 
 fn context() -> (ContainerContext, KubernetesContext) {
