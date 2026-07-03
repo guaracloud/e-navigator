@@ -10,8 +10,8 @@ use e_navigator_protocol::{
         parse_kafka_delete_groups_response, parse_kafka_delete_records_response,
         parse_kafka_delete_acls_response, parse_kafka_delete_topics_response,
         parse_kafka_describe_acls_response, parse_kafka_describe_configs_response,
-        parse_kafka_describe_groups_response, parse_kafka_end_txn_response,
-        parse_kafka_fetch_response, parse_kafka_find_coordinator_response,
+        parse_kafka_describe_groups_response, parse_kafka_describe_log_dirs_response,
+        parse_kafka_end_txn_response, parse_kafka_fetch_response, parse_kafka_find_coordinator_response,
         parse_kafka_heartbeat_response, parse_kafka_init_producer_id_response,
         parse_kafka_join_group_response, parse_kafka_leave_group_response,
         parse_kafka_list_groups_response, parse_kafka_list_offsets_response,
@@ -51,6 +51,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_alter_configs_response(data, 0, &config);
     let _ = parse_kafka_alter_configs_response(data, 1, &config);
     let _ = parse_kafka_alter_replica_log_dirs_response(data, 1, &config);
+    let _ = parse_kafka_describe_log_dirs_response(data, 1, &config);
     let _ = parse_kafka_produce_response(data, 0, &config);
     let _ = parse_kafka_produce_response(data, 7, &config);
     let _ = parse_kafka_fetch_response(data, 0, &config);
