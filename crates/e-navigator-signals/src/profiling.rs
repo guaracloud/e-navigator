@@ -7,6 +7,7 @@ const MAX_PROFILING_ATTRIBUTE_KEY_BYTES: usize = 64;
 const MAX_PROFILING_ATTRIBUTE_VALUE_BYTES: usize = 256;
 const MAX_PROFILING_STACK_FRAMES: usize = 256;
 const MAX_PROFILING_FRAME_STRING_BYTES: usize = 256;
+const MAX_PROFILING_STRING_BYTES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -142,6 +143,14 @@ pub fn sanitize_profiling_frames(frames: &mut Vec<ProfilingFrame>) {
         truncate_optional_string(&mut frame.module, MAX_PROFILING_FRAME_STRING_BYTES);
         truncate_optional_string(&mut frame.file, MAX_PROFILING_FRAME_STRING_BYTES);
     }
+}
+
+pub(crate) fn sanitize_profiling_string(value: &mut String) {
+    *value = truncate_utf8(value, MAX_PROFILING_STRING_BYTES);
+}
+
+pub(crate) fn sanitize_optional_profiling_string(value: &mut Option<String>) {
+    truncate_optional_string(value, MAX_PROFILING_STRING_BYTES);
 }
 
 pub fn is_sensitive_profiling_attribute_key(key: &str) -> bool {

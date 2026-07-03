@@ -240,6 +240,128 @@ fn profile_sample_constructor_bounds_stack_frames_before_json_stdout() {
 }
 
 #[test]
+fn profiling_constructors_bound_scalar_strings_before_json_stdout() {
+    let long_value = "p".repeat(320);
+    let sample = SignalEnvelope::profile_sample_observation(
+        "source.synthetic_profile",
+        Some("node-a".to_string()),
+        e_navigator_signals::ProfileSampleObservation {
+            timestamp_unix_nanos: 1_000,
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::High,
+            sample_count: 1,
+            sampling_period_nanos: Some(10_000_000),
+            stack_id: long_value.clone(),
+            stack_frames: vec![],
+            process: None,
+            container: None,
+            kubernetes: None,
+            thread_id: None,
+            thread_name: Some(long_value.clone()),
+            attributes: vec![],
+        },
+    );
+    let session = SignalEnvelope::profiling_session_observation(
+        "generator.profiling",
+        Some("node-a".to_string()),
+        ProfilingSessionObservation {
+            window: MetricAggregationWindow {
+                start_unix_nanos: 1_000,
+                end_unix_nanos: 2_000,
+            },
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::Medium,
+            profile_id: long_value.clone(),
+            observed_sample_count: 5,
+            dropped_sample_count: 0,
+            distinct_stack_count: 2,
+            sampling_period_nanos: Some(10_000_000),
+            process: None,
+            container: None,
+            kubernetes: None,
+            source: long_value.clone(),
+            attributes: vec![],
+        },
+    );
+    let stack_trace = SignalEnvelope::profiling_stack_trace_observation(
+        "source.synthetic_profile",
+        Some("node-a".to_string()),
+        ProfilingStackTraceObservation {
+            timestamp_unix_nanos: 1_100,
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::Medium,
+            stack_id: long_value.clone(),
+            stack_frames: vec![],
+            process: None,
+            container: None,
+            kubernetes: None,
+            attributes: vec![],
+        },
+    );
+    let warning = SignalEnvelope::profiling_warning_observation(
+        "generator.profiling",
+        Some("node-a".to_string()),
+        ProfilingWarningObservation {
+            warning_type: long_value.clone(),
+            message: long_value.clone(),
+            timestamp_unix_nanos: 1_200,
+            source_signal_kind: long_value.clone(),
+            source_module: long_value,
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::Low,
+            process: None,
+            container: None,
+            kubernetes: None,
+            attributes: vec![],
+        },
+    );
+
+    let sample_json = serde_json::to_value(&sample).expect("sample serializes");
+    let session_json = serde_json::to_value(&session).expect("session serializes");
+    let stack_trace_json = serde_json::to_value(&stack_trace).expect("stack trace serializes");
+    let warning_json = serde_json::to_value(&warning).expect("warning serializes");
+
+    assert_eq!(
+        sample_json["payload"]["stack_id"].as_str().map(str::len),
+        Some(256)
+    );
+    assert_eq!(
+        sample_json["payload"]["thread_name"].as_str().map(str::len),
+        Some(256)
+    );
+    assert_eq!(
+        session_json["payload"]["profile_id"].as_str().map(str::len),
+        Some(256)
+    );
+    assert_eq!(
+        session_json["payload"]["source"].as_str().map(str::len),
+        Some(256)
+    );
+    assert_eq!(
+        stack_trace_json["payload"]["stack_id"]
+            .as_str()
+            .map(str::len),
+        Some(256)
+    );
+    assert_eq!(
+        warning_json["payload"]["warning_type"]
+            .as_str()
+            .map(str::len),
+        Some(256)
+    );
+    assert_eq!(
+        warning_json["payload"]["source_module"]
+            .as_str()
+            .map(str::len),
+        Some(256)
+    );
+}
+
+#[test]
 fn serializes_stack_trace_observation_with_optional_missing_symbols() {
     let signal = SignalEnvelope::profiling_stack_trace_observation(
         "source.synthetic_profile",

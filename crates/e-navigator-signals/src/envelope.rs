@@ -1,6 +1,7 @@
 use e_navigator_core::Signal;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 
+use crate::profiling::{sanitize_optional_profiling_string, sanitize_profiling_string};
 use crate::{
     CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
     CgroupPidsObservation, DependencyEdgeEvent, DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent,
@@ -945,6 +946,8 @@ impl SignalEnvelope {
     ) -> Self {
         sanitize_profiling_attributes(&mut observation.attributes);
         sanitize_profiling_frames(&mut observation.stack_frames);
+        sanitize_profiling_string(&mut observation.stack_id);
+        sanitize_optional_profiling_string(&mut observation.thread_name);
         Self::new(
             source,
             host,
@@ -960,6 +963,7 @@ impl SignalEnvelope {
     ) -> Self {
         sanitize_profiling_attributes(&mut observation.attributes);
         sanitize_profiling_frames(&mut observation.stack_frames);
+        sanitize_profiling_string(&mut observation.stack_id);
         Self::new(
             source,
             host,
@@ -974,6 +978,8 @@ impl SignalEnvelope {
         mut observation: ProfilingSessionObservation,
     ) -> Self {
         sanitize_profiling_attributes(&mut observation.attributes);
+        sanitize_profiling_string(&mut observation.profile_id);
+        sanitize_profiling_string(&mut observation.source);
         Self::new(
             source,
             host,
@@ -988,6 +994,10 @@ impl SignalEnvelope {
         mut observation: ProfilingWarningObservation,
     ) -> Self {
         sanitize_profiling_attributes(&mut observation.attributes);
+        sanitize_profiling_string(&mut observation.warning_type);
+        sanitize_profiling_string(&mut observation.message);
+        sanitize_profiling_string(&mut observation.source_signal_kind);
+        sanitize_profiling_string(&mut observation.source_module);
         Self::new(
             source,
             host,
