@@ -52,6 +52,7 @@ pub fn parse_postgres_message(
         b'D' => parse_describe_message(body)?,
         b'C' => parse_close_message(body)?,
         b'E' => parse_execute_message(body)?,
+        b'p' => parse_password_message(body, config.max_request_line_bytes)?,
         b'S' => parse_sync_message(body)?,
         b'H' => parse_flush_message(body)?,
         b'X' => parse_terminate_message(body)?,
@@ -62,6 +63,7 @@ pub fn parse_postgres_message(
         b'D' => Some("DESCRIBE".to_string()),
         b'C' => Some("CLOSE".to_string()),
         b'E' => Some("EXECUTE".to_string()),
+        b'p' => Some("PASSWORD".to_string()),
         b'S' => Some("SYNC".to_string()),
         b'H' => Some("FLUSH".to_string()),
         b'X' => Some("TERMINATE".to_string()),
@@ -376,6 +378,18 @@ fn parse_execute_message(body: &[u8]) -> Result<&str, PostgresExtraction> {
     Ok("EXECUTE")
 }
 
+fn parse_password_message(
+    body: &[u8],
+    max_password_bytes: usize,
+) -> Result<&str, PostgresExtraction> {
+    let mut cursor = 0;
+    let _password = parse_cstring(body, &mut cursor, max_password_bytes)?;
+    if cursor != body.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    Ok("PASSWORD")
+}
+
 fn parse_sync_message(body: &[u8]) -> Result<&str, PostgresExtraction> {
     if !body.is_empty() {
         return Err(PostgresExtraction::MalformedFrame);
@@ -490,6 +504,7 @@ fn message_type_name(message_type: u8) -> &'static str {
         b'D' => "describe",
         b'C' => "close",
         b'E' => "execute",
+        b'p' => "password",
         b'S' => "sync",
         b'H' => "flush",
         b'X' => "terminate",

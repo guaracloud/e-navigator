@@ -2244,6 +2244,37 @@ fn extracts_postgres_close_message_without_statement_or_portal_name() {
 }
 
 #[test]
+fn extracts_postgres_password_message_without_password_value() {
+    let bytes = postgres_frame(b'p', b"secret-password-value\0");
+
+    let extraction = parse_postgres_message(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres password message parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.operation.as_deref(), Some("PASSWORD"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.operation" && attribute.value == "PASSWORD")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.postgresql.message.type"
+                && attribute.value == "password")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("password-value"))
+    );
+}
+
+#[test]
 fn extracts_postgres_execute_message_without_portal_name() {
     let mut body = Vec::new();
     body.extend_from_slice(b"secret-portal-name\0");
@@ -2620,6 +2651,23 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     assert_eq!(
         parse_postgres_message(&postgres_frame(b'C', b"Ssecret\0extra"), &config).unwrap_err(),
         PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'p', b"secret\0extra"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_message(
+            &postgres_frame(b'p', b"secret-password-value\0"),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        PostgresExtraction::QueryTooLong
     );
     assert_eq!(
         parse_postgres_message(&postgres_frame(b'E', b"portal"), &config).unwrap_err(),

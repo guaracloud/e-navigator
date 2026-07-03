@@ -83,10 +83,10 @@ or chart rendering:
   response parsing with canonical
   SQLSTATE validation and build-checked parser fuzz coverage, NATS text command
   parsing with canonical command-token validation plus OK/error response parsing,
-  PostgreSQL Query/Parse/Bind/Describe/Close/Execute/Flush/Sync/Terminate
-  wire-message and CommandComplete/ReadyForQuery/ErrorResponse parsing with
-  canonical SQLSTATE validation and build-checked parser fuzz coverage, and
-  Redis RESP command plus
+  PostgreSQL Query/Parse/Bind/Describe/Close/Execute/Password/Flush/Sync/
+  Terminate wire-message and CommandComplete/ReadyForQuery/ErrorResponse
+  parsing with canonical SQLSTATE validation and build-checked parser fuzz
+  coverage, and Redis RESP command plus
   simple/integer/bulk/flat-array/error response parsing with declared
   frame-length bounds,
   bounded response-status token validation, and build-checked parser fuzz
@@ -216,10 +216,11 @@ These areas remain explicitly partial:
   error responses, but runtime capture, request/response matching, broad
   response coverage, and live MySQL proof are not implemented or proven.
 - **PostgreSQL protocol observability:** bounded simple Query, Parse, Bind,
-  Describe, Close, Execute, Flush, Sync, Terminate, CommandComplete,
-  ReadyForQuery, and ErrorResponse parsing is locally tested without exporting
-  raw SQL text or raw error messages, including canonical SQLSTATE validation
-  for error responses, but runtime capture, request/response matching, broad
+  Describe, Close, Execute, PasswordMessage, Flush, Sync, Terminate,
+  CommandComplete, ReadyForQuery, and ErrorResponse parsing is locally tested
+  without exporting raw SQL text, password values, or raw error messages,
+  including canonical SQLSTATE validation for error responses, but runtime
+  capture, request/response matching, broad
   response coverage, and live PostgreSQL proof are not implemented or proven.
 - **Redis protocol observability:** bounded RESP command and
   simple/integer/bulk/flat-array/error response parsing is locally tested
