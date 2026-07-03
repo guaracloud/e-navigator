@@ -8,7 +8,10 @@ use e_navigator_protocol::{
         MysqlExtraction, parse_mysql_command, parse_mysql_error_response, parse_mysql_response,
     },
     nats::{NatsExtraction, parse_nats_command, parse_nats_response},
-    postgres::{PostgresExtraction, parse_postgres_error_response, parse_postgres_message},
+    postgres::{
+        PostgresExtraction, parse_postgres_error_response, parse_postgres_message,
+        parse_postgres_response,
+    },
     redis::{RedisExtraction, parse_redis_command, parse_redis_response},
     trace_context::{TraceContextError, parse_traceparent},
 };
@@ -305,7 +308,7 @@ proptest! {
     }
 
     #[test]
-    fn arbitrary_postgres_error_response_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+    fn arbitrary_postgres_response_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
         let config = ProtocolExtractionConfig {
             max_header_bytes: 256,
             max_request_line_bytes: 64,
@@ -313,6 +316,7 @@ proptest! {
             max_tracestate_bytes: 32,
         };
 
+        let _ = parse_postgres_response(&bytes, &config);
         let _ = parse_postgres_error_response(&bytes, &config);
     }
 
@@ -332,7 +336,7 @@ proptest! {
         let parsed = parse_postgres_error_response(&bytes, &config)
             .expect("bounded postgres error parses");
         prop_assert_eq!(parsed.status_code.as_str(), sqlstate.as_str());
-        prop_assert_eq!(parsed.error_type.as_str(), parsed.status_code.as_str());
+        prop_assert_eq!(parsed.error_type.as_deref(), Some(parsed.status_code.as_str()));
         prop_assert!(parsed.attributes.len() <= config.max_attributes);
         prop_assert!(!parsed
             .attributes
@@ -1692,6 +1696,39 @@ fn extracts_postgres_operation_after_comments() {
 }
 
 #[test]
+fn extracts_postgres_command_complete_without_raw_tag() {
+    let bytes = postgres_frame(b'C', b"INSERT 0 1 secret-row-count-context\0");
+
+    let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres command complete response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.status_code, "OK");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.system" && attribute.value == "postgresql")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "OK"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn extracts_postgres_error_response_without_raw_message_fields() {
     let bytes =
         postgres_error_response_frame(b"23505", b"duplicate key value violates secret constraint");
@@ -1701,7 +1738,7 @@ fn extracts_postgres_error_response_without_raw_message_fields() {
 
     assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
     assert_eq!(extraction.status_code, "23505");
-    assert_eq!(extraction.error_type, "23505");
+    assert_eq!(extraction.error_type.as_deref(), Some("23505"));
     assert!(
         extraction
             .attributes
@@ -1805,6 +1842,14 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     );
     assert_eq!(
         parse_postgres_error_response(&postgres_frame(b'Q', b"select 1\0"), &config).unwrap_err(),
+        PostgresExtraction::UnsupportedMessage
+    );
+    assert_eq!(
+        parse_postgres_error_response(&postgres_frame(b'C', b"SELECT 1\0"), &config).unwrap_err(),
+        PostgresExtraction::UnsupportedMessage
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b'Q', b"select 1\0"), &config).unwrap_err(),
         PostgresExtraction::UnsupportedMessage
     );
     assert_eq!(

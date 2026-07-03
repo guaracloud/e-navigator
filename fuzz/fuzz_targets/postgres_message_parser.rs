@@ -2,7 +2,7 @@
 
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
-    postgres::{parse_postgres_error_response, parse_postgres_message},
+    postgres::{parse_postgres_error_response, parse_postgres_message, parse_postgres_response},
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -18,5 +18,6 @@ fuzz_target!(|data: &[u8]| {
     };
 
     let _ = parse_postgres_message(data, &config);
+    let _ = parse_postgres_response(data, &config);
     let _ = parse_postgres_error_response(data, &config);
 });

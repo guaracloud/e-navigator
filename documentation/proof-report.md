@@ -62,7 +62,7 @@ or chart rendering:
   and response-error parsing, MySQL command packet and OK/ERR response parsing
   with build-checked parser fuzz
   coverage, NATS text command plus OK/error response parsing, PostgreSQL
-  wire-message and ErrorResponse parsing with build-checked parser fuzz
+  wire-message and CommandComplete/ErrorResponse parsing with build-checked parser fuzz
   coverage, and Redis RESP command plus error-response parsing with
   build-checked parser fuzz coverage;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
@@ -172,9 +172,10 @@ These areas remain explicitly partial:
   request/response matching, broad response coverage, and live MySQL proof are
   not implemented or proven.
 - **PostgreSQL protocol observability:** bounded simple Query, Parse, and
-  ErrorResponse parsing is locally tested without exporting raw SQL text or raw
-  error messages, but runtime capture, request/response matching, broad response
-  coverage, and live PostgreSQL proof are not implemented or proven.
+  CommandComplete/ErrorResponse parsing is locally tested without exporting raw
+  SQL text or raw error messages, but runtime capture, request/response
+  matching, broad response coverage, and live PostgreSQL proof are not
+  implemented or proven.
 - **Redis protocol observability:** bounded RESP command and error-response
   parsing is locally tested without exporting raw key/value payloads or raw
   error messages, but runtime capture, request/response matching, broad response

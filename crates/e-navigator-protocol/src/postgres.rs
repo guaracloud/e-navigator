@@ -18,7 +18,7 @@ pub struct ParsedPostgresQuery {
 pub struct ParsedPostgresResponse {
     pub protocol: ProtocolKind,
     pub status_code: String,
-    pub error_type: String,
+    pub error_type: Option<String>,
     pub attributes: Vec<TraceAttribute>,
 }
 
@@ -83,46 +83,89 @@ pub fn parse_postgres_error_response(
     bytes: &[u8],
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    let response = parse_postgres_response(bytes, config)?;
+    if response.error_type.is_none() {
+        return Err(PostgresExtraction::UnsupportedMessage);
+    }
+    Ok(response)
+}
+
+pub fn parse_postgres_response(
+    bytes: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
     if bytes.len() > config.max_header_bytes {
         return Err(PostgresExtraction::FrameTooLong);
     }
     if bytes.len() < 5 {
         return Err(PostgresExtraction::MalformedFrame);
     }
-    if bytes[0] != b'E' {
-        return Err(PostgresExtraction::UnsupportedMessage);
-    }
 
     let body = frame_body(bytes, config.max_header_bytes)?;
-    let status_code = postgres_sqlstate(body)?.ok_or(PostgresExtraction::MissingSqlstate)?;
-    let error_type = status_code.clone();
+    match bytes[0] {
+        b'C' => postgres_command_complete_response(body, config),
+        b'E' => postgres_error_response(body, config.max_attributes),
+        _ => Err(PostgresExtraction::UnsupportedMessage),
+    }
+}
 
+fn postgres_command_complete_response(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    let mut cursor = 0;
+    let _tag = parse_cstring(body, &mut cursor, config.max_request_line_bytes)?;
+    if cursor != body.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    let status_code = "OK".to_string();
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        attributes: postgres_response_attributes(&status_code, None, config.max_attributes),
+        status_code,
+        error_type: None,
+    })
+}
+
+fn postgres_error_response(
+    body: &[u8],
+    max_attributes: usize,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    let status_code = postgres_sqlstate(body)?.ok_or(PostgresExtraction::MissingSqlstate)?;
+    let error_type = Some(status_code.clone());
+
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        attributes: postgres_response_attributes(
+            &status_code,
+            error_type.as_deref(),
+            max_attributes,
+        ),
+        status_code,
+        error_type,
+    })
+}
+
+fn postgres_response_attributes(
+    status_code: &str,
+    error_type: Option<&str>,
+    max_attributes: usize,
+) -> Vec<TraceAttribute> {
     let mut attributes = Vec::new();
     push_attribute(
         &mut attributes,
-        config.max_attributes,
+        max_attributes,
         "db.system",
         Some("postgresql"),
     );
     push_attribute(
         &mut attributes,
-        config.max_attributes,
+        max_attributes,
         "db.response.status_code",
-        Some(&status_code),
+        Some(status_code),
     );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        Some(&error_type),
-    );
-
-    Ok(ParsedPostgresResponse {
-        protocol: ProtocolKind::Postgresql,
-        status_code,
-        error_type,
-        attributes,
-    })
+    push_attribute(&mut attributes, max_attributes, "error.type", error_type);
+    attributes
 }
 
 fn frame_body(bytes: &[u8], max_frame_bytes: usize) -> Result<&[u8], PostgresExtraction> {
