@@ -92,13 +92,15 @@ or chart rendering:
   bounded final OTLP attribute key and string value conversion, and
   development-status profile sample records with
   deterministic, workload-aware IDs, bounded resource attributes, bounded stack
-  frames, bounded/sensitive attribute filtering, and session dropped-sample
-  records in fake-collector tests;
+  frames, final canonical-plus-user attribute caps, bounded/sensitive
+  attribute filtering, and session dropped-sample records in fake-collector
+  tests;
 - native profile record formatting with bounded identifiers, bounded resource
   attributes, and sensitive attribute filtering;
 - pprof-compatible profile sample protobuf rendering with bounded stack
   locations, sample-period scaling, bounded frame strings and workload labels,
-  and sensitive attribute filtering;
+  canonical label overwrite protection, and sensitive/canonical metadata
+  attribute filtering;
 - local Criterion hot-path benchmark harness compile coverage for host parsers,
   raw Aya decode harnesses, traceparent, HTTP, gRPC, Kafka, MongoDB, MySQL,
   NATS, PostgreSQL, and Redis protocol parsers, generators, and sink formatters;
