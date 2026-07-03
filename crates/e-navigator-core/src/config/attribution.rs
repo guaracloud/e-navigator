@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use super::{ConfigError, ConfigResult, KubernetesAttributionConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AttributionConfig {
     #[serde(default = "default_procfs_root")]
     pub procfs_root: PathBuf,

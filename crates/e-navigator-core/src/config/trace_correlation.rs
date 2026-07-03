@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::{ConfigError, ConfigResult};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TraceCorrelationConfig {
     #[serde(default = "default_trace_correlation_max_service_paths")]
     pub max_service_paths: usize,

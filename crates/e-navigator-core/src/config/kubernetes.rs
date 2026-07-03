@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use super::{ConfigError, ConfigResult};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KubernetesAttributionConfig {
     #[serde(default = "default_kubernetes_attribution_enabled")]
     pub enabled: bool,

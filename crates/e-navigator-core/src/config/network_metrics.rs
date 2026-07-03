@@ -4,6 +4,7 @@ use std::net::IpAddr;
 use super::{ConfigError, ConfigResult};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeSecurityConfig {
     #[serde(default)]
     pub kubernetes_api_endpoints: Vec<NetworkEndpointConfig>,
@@ -20,6 +21,7 @@ impl RuntimeSecurityConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NetworkEndpointConfig {
     pub address: String,
     pub port: u16,
@@ -46,6 +48,7 @@ impl NetworkEndpointConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NetworkMetricsConfig {
     #[serde(default = "default_network_metrics_max_metric_keys")]
     pub max_metric_keys: usize,

@@ -20,6 +20,17 @@ fn cpu_profile_modules() -> Vec<ModuleConfig> {
     ]
 }
 
+fn assert_toml_rejects_unknown_field(toml: &str, field: &str) {
+    let err = toml::from_str::<RuntimeConfig>(toml)
+        .expect_err("unknown config fields should be rejected");
+
+    assert!(
+        err.to_string()
+            .contains(&format!("unknown field `{field}`")),
+        "error {err:?} should mention unknown field {field:?}"
+    );
+}
+
 #[test]
 fn default_config_is_valid_and_preserves_expected_modules() {
     let config = RuntimeConfig::default();
@@ -69,6 +80,55 @@ fn known_modules_include_opt_in_dns_runtime_source_without_default_runtime_claim
     assert!(is_known_module_name("source.aya_http"));
     assert!(!config.module_enabled("source.aya_http"));
     assert!(is_known_module_name("generator.dns_metrics"));
+}
+
+#[test]
+fn runtime_config_rejects_unknown_top_level_fields() {
+    assert_toml_rejects_unknown_field(
+        r#"
+        queue_capacity = 64
+        queue_capcity = 128
+
+        [[modules]]
+        name = "source.synthetic_exec"
+        enabled = true
+        "#,
+        "queue_capcity",
+    );
+}
+
+#[test]
+fn runtime_config_rejects_unknown_nested_fields() {
+    assert_toml_rejects_unknown_field(
+        r#"
+        queue_capacity = 64
+
+        [attribution.kubernetes]
+        enabled = true
+        namespace_allowlist = ["default"]
+        namespace_alllowlist = ["typo"]
+
+        [[modules]]
+        name = "source.synthetic_exec"
+        enabled = true
+        "#,
+        "namespace_alllowlist",
+    );
+}
+
+#[test]
+fn runtime_config_rejects_unknown_module_fields() {
+    assert_toml_rejects_unknown_field(
+        r#"
+        queue_capacity = 64
+
+        [[modules]]
+        name = "source.synthetic_exec"
+        enabled = true
+        enabeld = false
+        "#,
+        "enabeld",
+    );
 }
 
 #[test]
@@ -1353,23 +1413,15 @@ fn representative_runtime_toml_deserializes_and_validates() {
 }
 
 #[test]
-fn omitted_optional_sections_and_unknown_fields_use_serde_defaults() {
+fn omitted_optional_sections_use_serde_defaults() {
     let config: RuntimeConfig = toml::from_str(
         r#"
-        unknown_root = "ignored"
-
-        [argv_capture]
-        unknown_nested = "ignored"
-
         [[modules]]
         name = "sink.json_stdout"
         enabled = true
-
-        [unknown_section]
-        enabled = false
         "#,
     )
-    .expect("unknown fields are ignored by serde");
+    .expect("omitted optional config sections use serde defaults");
 
     assert_eq!(config.log_level, RuntimeConfig::default().log_level);
     assert_eq!(

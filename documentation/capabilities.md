@@ -6,7 +6,7 @@ when implementation and evidence change together.
 
 | Area | Current state | Evidence level | Still missing |
 | --- | --- | --- | --- |
-| Static pipeline runtime | Implemented `Source -> Processor -> Generator -> Sink` runtime with registered modules | Cargo tests, synthetic CLI, Docker smoke | runtime plugin loading is not planned |
+| Static pipeline runtime | Implemented `Source -> Processor -> Generator -> Sink` runtime with registered modules and strict runtime config schema validation | Cargo tests, synthetic CLI, Docker smoke, and unknown-field config tests | runtime plugin loading is not planned |
 | JSON signal envelopes | Implemented versioned newline-delimited JSON output | Cargo tests, golden signal coverage, Docker smoke | storage and UI |
 | Process exec source | Implemented Aya exec/exit source | raw decode tests and guarded homelab observations | reduced-capability/non-root eBPF proof |
 | TCP network source | Implemented TCP-oriented network observations | raw decode tests and guarded homelab observations | full TCP state, retransmit/reset accounting |

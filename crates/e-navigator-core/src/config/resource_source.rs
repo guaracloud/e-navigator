@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use super::{ConfigError, ConfigResult};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResourceSourceConfig {
     #[serde(default = "default_procfs_root")]
     pub procfs_root: PathBuf,

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::{ConfigError, ConfigResult, RuntimeConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CpuProfileSourceConfig {
     #[serde(default = "default_cpu_profile_source_enabled")]
     pub enabled: bool,

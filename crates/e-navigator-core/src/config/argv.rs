@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::{ConfigError, ConfigResult};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ArgvCaptureConfig {
     #[serde(default = "default_argv_capture_enabled")]
     pub enabled: bool,

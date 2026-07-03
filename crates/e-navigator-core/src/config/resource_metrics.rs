@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::{ConfigError, ConfigResult};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResourceMetricsConfig {
     #[serde(default = "default_resource_metrics_max_keys")]
     pub max_keys: usize,

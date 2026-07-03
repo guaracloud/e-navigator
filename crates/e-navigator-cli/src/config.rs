@@ -90,6 +90,28 @@ mod tests {
     }
 
     #[test]
+    fn load_config_reports_unknown_runtime_config_fields() {
+        let path = temp_config_path("unknown-runtime-field");
+        fs::write(
+            &path,
+            r#"
+            queue_capacity = 64
+            queue_capcity = 128
+
+            [[modules]]
+            name = "source.synthetic_exec"
+            enabled = true
+            "#,
+        )
+        .expect("write config with unknown field");
+
+        let err = load_config(Some(&path)).expect_err("unknown runtime config field is rejected");
+        let _ = fs::remove_file(path);
+
+        assert!(err.to_string().contains("unknown field `queue_capcity`"));
+    }
+
+    #[test]
     fn kubernetes_configmap_embedded_runtime_config_validates() {
         let manifest = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

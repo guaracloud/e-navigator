@@ -2,6 +2,7 @@ use crate::ModuleKind;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModuleConfig {
     pub name: String,
     pub enabled: bool,

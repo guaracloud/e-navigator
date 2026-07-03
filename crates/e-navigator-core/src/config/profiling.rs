@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::{ConfigError, ConfigResult};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProfilingConfig {
     #[serde(default = "default_profiling_max_windows")]
     pub max_windows: usize,

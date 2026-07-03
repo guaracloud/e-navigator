@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::{ConfigError, ConfigResult};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RequestCorrelationConfig {
     #[serde(default = "default_request_correlation_max_seen_requests")]
     pub max_seen_requests: usize,
