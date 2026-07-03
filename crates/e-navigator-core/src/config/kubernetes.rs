@@ -69,6 +69,8 @@ impl KubernetesAttributionConfig {
     pub const MAX_PODS_LIMIT: usize = 65_536;
     pub const MAX_CACHE_ENTRIES_LIMIT: usize = 262_144;
     pub const MAX_LABELS_PER_POD_LIMIT: usize = 128;
+    pub const MAX_SELECTOR_ENTRIES_LIMIT: usize = 128;
+    pub const MAX_SELECTOR_VALUE_BYTES_LIMIT: usize = 253;
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
         if !self.enabled {
@@ -197,10 +199,31 @@ impl KubernetesAttributionConfig {
 }
 
 fn validate_non_empty_list(path: &'static str, values: &[String]) -> ConfigResult<()> {
+    if values.len() > KubernetesAttributionConfig::MAX_SELECTOR_ENTRIES_LIMIT {
+        return Err(ConfigError::invalid_value(
+            path,
+            format!(
+                "{path} must contain at most {} entries",
+                KubernetesAttributionConfig::MAX_SELECTOR_ENTRIES_LIMIT
+            ),
+        ));
+    }
     if values.iter().any(|value| value.trim().is_empty()) {
         return Err(ConfigError::invalid_value(
             path,
             format!("{path} entries must not be empty"),
+        ));
+    }
+    if values
+        .iter()
+        .any(|value| value.len() > KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT)
+    {
+        return Err(ConfigError::invalid_value(
+            path,
+            format!(
+                "{path} entries must be at most {} bytes",
+                KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT
+            ),
         ));
     }
     Ok(())
@@ -229,6 +252,15 @@ fn validate_label_selector(
     path: &'static str,
     selector: &BTreeMap<String, String>,
 ) -> ConfigResult<()> {
+    if selector.len() > KubernetesAttributionConfig::MAX_SELECTOR_ENTRIES_LIMIT {
+        return Err(ConfigError::invalid_value(
+            path,
+            format!(
+                "{path} must contain at most {} entries",
+                KubernetesAttributionConfig::MAX_SELECTOR_ENTRIES_LIMIT
+            ),
+        ));
+    }
     for (key, value) in selector {
         if key.trim().is_empty() {
             return Err(ConfigError::invalid_value(
@@ -236,10 +268,28 @@ fn validate_label_selector(
                 format!("{path} keys must not be empty"),
             ));
         }
+        if key.len() > KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT {
+            return Err(ConfigError::invalid_value(
+                path,
+                format!(
+                    "{path} keys must be at most {} bytes",
+                    KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT
+                ),
+            ));
+        }
         if value.trim().is_empty() {
             return Err(ConfigError::invalid_value(
                 path,
                 format!("{path} value for '{key}' must not be empty"),
+            ));
+        }
+        if value.len() > KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT {
+            return Err(ConfigError::invalid_value(
+                path,
+                format!(
+                    "{path} value for '{key}' must be at most {} bytes",
+                    KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT
+                ),
             ));
         }
     }

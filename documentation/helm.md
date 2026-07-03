@@ -85,6 +85,8 @@ Kubernetes attribution also validates response and cache bounds before runtime:
 `attribution.kubernetes.max_response_bytes` must be at most 33,554,432,
 `max_pods` at most 65,536, `max_cache_entries` at most 262,144, and
 `max_labels_per_pod` at most 128.
+Kubernetes selector lists and pod-label selector maps must each contain at most
+128 entries, and each selector string, key, or value must be at most 253 bytes.
 
 Host resource sampling validates its scan bounds before runtime:
 `resource_source.sample_interval_millis` must be greater than zero and at most

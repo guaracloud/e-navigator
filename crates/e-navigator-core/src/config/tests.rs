@@ -923,6 +923,44 @@ fn kubernetes_attribution_selectors_are_validated() {
         RuntimeConfig {
             attribution: AttributionConfig {
                 kubernetes: KubernetesAttributionConfig {
+                    label_allowlist: (0..=KubernetesAttributionConfig::MAX_SELECTOR_ENTRIES_LIMIT)
+                        .map(|index| format!("label-{index}"))
+                        .collect(),
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "attribution.kubernetes.label_allowlist must contain at most {} entries",
+            KubernetesAttributionConfig::MAX_SELECTOR_ENTRIES_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    namespace_allowlist: vec![
+                        "n".repeat(KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT + 1),
+                    ],
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "attribution.kubernetes.namespace_allowlist entries must be at most {} bytes",
+            KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
                     namespace_allowlist: vec!["default".to_string(), " ".to_string()],
                     ..KubernetesAttributionConfig::default()
                 },
@@ -960,6 +998,46 @@ fn kubernetes_attribution_selectors_are_validated() {
             ..RuntimeConfig::default()
         },
         "attribution.kubernetes.pod_label_selector value for 'app' must not be empty",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    pod_label_selector: (0
+                        ..=KubernetesAttributionConfig::MAX_SELECTOR_ENTRIES_LIMIT)
+                        .map(|index| (format!("label-{index}"), "value".to_string()))
+                        .collect(),
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "attribution.kubernetes.pod_label_selector must contain at most {} entries",
+            KubernetesAttributionConfig::MAX_SELECTOR_ENTRIES_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    pod_label_selector: BTreeMap::from([(
+                        "app".to_string(),
+                        "v".repeat(KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT + 1),
+                    )]),
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "attribution.kubernetes.pod_label_selector value for 'app' must be at most {} bytes",
+            KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT
+        ),
     );
 
     assert_invalid(

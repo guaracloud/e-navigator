@@ -25,9 +25,9 @@ or chart rendering:
 - strict config validation with unknown-field rejection, packaged config guards,
   runtime queue/derivation and runtime-security endpoint bounds, Prometheus and
   OTLP HTTP sink runtime-bound validation, OTLP HTTP endpoint-shape validation,
-  local Kubernetes attribution selector filtering plus response/cache/label
-  bounds, and host resource source scan plus metric-generator cardinality
-  bounds;
+  local Kubernetes attribution selector filtering and selector-shape bounds plus
+  response/cache/label bounds, and host resource source scan plus
+  metric-generator cardinality bounds;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/DNS/HTTP/profile
   events, including build-checked DNS and HTTP raw decode fuzz targets;
