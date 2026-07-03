@@ -43,8 +43,9 @@ or chart rendering:
   flow, deterministic service path keys, precise duplicate flow suppression,
   flow-attribution warnings, deterministic profile session IDs, and
   dropped-profile-sample warnings;
-- Prometheus HTTP formatting, profile session aggregate rendering, metric/profile
-  family toggles, health/readiness endpoints, and secret-like label filtering;
+- Prometheus HTTP formatting, profile session aggregate rendering, profiling
+  warning-count rendering, metric/profile family toggles, health/readiness
+  endpoints, and secret-like label filtering;
 - OTLP protobuf request encoding plus per-family endpoint routing for metrics,
   traces with HTTP, gRPC, and `error.type` request/error status mapping
   including Kafka, MongoDB, and Redis request spans, local warning trace-record

@@ -44,7 +44,7 @@ fn format_prometheus_metric_lines_with_families(
     }
 
     if profiles_enabled {
-        return format_profile_session_metric_lines(signal);
+        return format_profile_metric_lines(signal);
     }
 
     Vec::new()
@@ -86,6 +86,18 @@ fn format_otel_prometheus_metric_lines(record: OtelMetricRecord) -> Vec<Promethe
             value: value.to_string(),
         })
         .collect(),
+    }
+}
+
+fn format_profile_metric_lines(signal: &SignalEnvelope) -> Vec<PrometheusMetricLine> {
+    match &signal.payload {
+        SignalPayload::ProfilingSessionObservation(_) => {
+            format_profile_session_metric_lines(signal)
+        }
+        SignalPayload::ProfilingWarningObservation(_) => {
+            format_profile_warning_metric_lines(signal)
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -151,6 +163,56 @@ fn format_profile_session_metric_lines(signal: &SignalEnvelope) -> Vec<Prometheu
         });
     }
     lines
+}
+
+fn format_profile_warning_metric_lines(signal: &SignalEnvelope) -> Vec<PrometheusMetricLine> {
+    let SignalPayload::ProfilingWarningObservation(warning) = &signal.payload else {
+        return Vec::new();
+    };
+
+    let mut labels = BTreeMap::new();
+    insert_profile_resource_labels(
+        &mut labels,
+        signal,
+        warning.container.as_ref(),
+        warning.kubernetes.as_ref(),
+    );
+    insert_prometheus_label(
+        &mut labels,
+        "warning.type",
+        &serde_json::json!(warning.warning_type),
+    );
+    insert_prometheus_label(
+        &mut labels,
+        "trace.source.signal.kind",
+        &serde_json::json!(warning.source_signal_kind),
+    );
+    insert_prometheus_label(
+        &mut labels,
+        "trace.source.module",
+        &serde_json::json!(warning.source_module),
+    );
+    insert_prometheus_label(
+        &mut labels,
+        "profile.kind",
+        &serde_json::json!(profile_kind_name(warning.profiling_kind)),
+    );
+    insert_prometheus_label(
+        &mut labels,
+        "profile.correlation.kind",
+        &serde_json::json!(profile_correlation_kind_name(warning.correlation_kind)),
+    );
+    insert_prometheus_label(
+        &mut labels,
+        "profile.confidence",
+        &serde_json::json!(profile_confidence_name(warning.confidence)),
+    );
+
+    vec![PrometheusMetricLine {
+        name: sanitize_identifier("profiling.warning.count"),
+        labels,
+        value: "1".to_string(),
+    }]
 }
 
 pub fn render_prometheus_text(metrics: &[PrometheusMetricLine]) -> String {
@@ -365,6 +427,57 @@ fn insert_prometheus_label(
     }
 }
 
+fn insert_profile_resource_labels(
+    labels: &mut BTreeMap<String, String>,
+    signal: &SignalEnvelope,
+    container: Option<&e_navigator_signals::ContainerContext>,
+    kubernetes: Option<&e_navigator_signals::KubernetesContext>,
+) {
+    if let Some(host) = &signal.host {
+        insert_prometheus_label(labels, "host.name", &serde_json::json!(host));
+    }
+    if let Some(container) = container {
+        insert_prometheus_label(
+            labels,
+            "container.id",
+            &serde_json::json!(container.container_id),
+        );
+        if let Some(runtime) = &container.runtime {
+            insert_prometheus_label(labels, "container.runtime", &serde_json::json!(runtime));
+        }
+    }
+    if let Some(kubernetes) = kubernetes {
+        insert_prometheus_label(
+            labels,
+            "k8s.namespace.name",
+            &serde_json::json!(kubernetes.namespace),
+        );
+        insert_prometheus_label(
+            labels,
+            "k8s.pod.name",
+            &serde_json::json!(kubernetes.pod_name),
+        );
+        if let Some(container_name) = &kubernetes.container_name {
+            insert_prometheus_label(
+                labels,
+                "k8s.container.name",
+                &serde_json::json!(container_name),
+            );
+        }
+        if let Some(node_name) = &kubernetes.node_name {
+            insert_prometheus_label(labels, "k8s.node.name", &serde_json::json!(node_name));
+        }
+        if let Some(service_name) = kubernetes
+            .labels
+            .get("app.kubernetes.io/name")
+            .or_else(|| kubernetes.labels.get("app"))
+            .filter(|name| !name.is_empty())
+        {
+            insert_prometheus_label(labels, "service.name", &serde_json::json!(service_name));
+        }
+    }
+}
+
 fn prometheus_label_allowed(key: &str) -> bool {
     const AUTH_FRAGMENT: &str = concat!("au", "th");
     const AUTHS_FRAGMENT: &str = concat!("au", "ths");
@@ -448,6 +561,38 @@ fn prometheus_label_value(value: &serde_json::Value) -> Option<String> {
     }
 }
 
+fn profile_kind_name(kind: e_navigator_signals::ProfilingKind) -> &'static str {
+    match kind {
+        e_navigator_signals::ProfilingKind::Cpu => "cpu",
+        e_navigator_signals::ProfilingKind::Memory => "memory",
+        e_navigator_signals::ProfilingKind::Lock => "lock",
+        e_navigator_signals::ProfilingKind::Unknown => "unknown",
+        _ => "unknown",
+    }
+}
+
+fn profile_correlation_kind_name(
+    kind: e_navigator_signals::ProfilingCorrelationKind,
+) -> &'static str {
+    match kind {
+        e_navigator_signals::ProfilingCorrelationKind::ObservedProfileSample => {
+            "observed_profile_sample"
+        }
+        e_navigator_signals::ProfilingCorrelationKind::Synthetic => "synthetic",
+        e_navigator_signals::ProfilingCorrelationKind::RuntimeInferred => "runtime_inferred",
+        _ => "unknown",
+    }
+}
+
+fn profile_confidence_name(kind: e_navigator_signals::ProfilingConfidence) -> &'static str {
+    match kind {
+        e_navigator_signals::ProfilingConfidence::Low => "low",
+        e_navigator_signals::ProfilingConfidence::Medium => "medium",
+        e_navigator_signals::ProfilingConfidence::High => "high",
+        _ => "unknown",
+    }
+}
+
 fn escape_label_value(value: &str) -> String {
     value
         .replace('\\', "\\\\")
@@ -470,6 +615,7 @@ mod tests {
         ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkAddressFamily,
         NetworkCounterMetric, NetworkProcessIdentity, NetworkProtocol, ProfilingAttribute,
         ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind, ProfilingSessionObservation,
+        ProfilingWarningObservation,
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -541,6 +687,31 @@ mod tests {
         assert!(!rendered.contains("profile:abc"));
         assert!(!rendered.contains("stack_id"));
         assert!(!rendered.contains("checkout-api"));
+        assert!(!rendered.contains("container-abc"));
+        assert!(!rendered.contains("pod-uid"));
+        assert!(!rendered.contains("tenant"));
+        assert!(!rendered.contains("authorization"));
+    }
+
+    #[test]
+    fn renders_profile_warning_counts_with_bounded_labels() {
+        let signal = profile_warning_signal();
+
+        let lines = format_prometheus_metric_lines(&signal);
+        let rendered = render_prometheus_text(&lines);
+
+        assert_eq!(lines.len(), 1);
+        assert!(rendered.contains("profiling_warning_count{"));
+        assert!(rendered.contains("warning_type=\"dropped_profile_samples\""));
+        assert!(rendered.contains("trace_source_signal_kind=\"profile_sample_observation\""));
+        assert!(rendered.contains("trace_source_module=\"source.aya_cpu_profile\""));
+        assert!(rendered.contains("profile_kind=\"cpu\""));
+        assert!(rendered.contains("profile_correlation_kind=\"observed_profile_sample\""));
+        assert!(rendered.contains("profile_confidence=\"medium\""));
+        assert!(rendered.contains("k8s_namespace_name=\"e-navigator-bench\""));
+        assert!(rendered.contains("service_name=\"checkout\""));
+        assert!(rendered.contains(" 1\n"));
+        assert!(!rendered.contains("profile samples were dropped"));
         assert!(!rendered.contains("container-abc"));
         assert!(!rendered.contains("pod-uid"));
         assert!(!rendered.contains("tenant"));
@@ -775,6 +946,56 @@ mod tests {
                     labels,
                 }),
                 source: "source.aya_cpu_profile".to_string(),
+                attributes: vec![
+                    ProfilingAttribute {
+                        key: "tenant".to_string(),
+                        value: "customer-a".to_string(),
+                    },
+                    ProfilingAttribute {
+                        key: "authorization".to_string(),
+                        value: "secret".to_string(),
+                    },
+                ],
+            },
+        )
+    }
+
+    fn profile_warning_signal() -> SignalEnvelope {
+        let mut labels = BTreeMap::new();
+        labels.insert("app.kubernetes.io/name".to_string(), "checkout".to_string());
+
+        SignalEnvelope::profiling_warning_observation(
+            "generator.profiling",
+            Some("node-a".to_string()),
+            ProfilingWarningObservation {
+                warning_type: "dropped_profile_samples".to_string(),
+                message: "profile samples were dropped by bounded aggregation".to_string(),
+                timestamp_unix_nanos: 3,
+                source_signal_kind: "profile_sample_observation".to_string(),
+                source_module: "source.aya_cpu_profile".to_string(),
+                profiling_kind: ProfilingKind::Cpu,
+                correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+                confidence: ProfilingConfidence::Medium,
+                process: Some(NetworkProcessIdentity {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "checkout-api".to_string(),
+                    executable: Some("/app/checkout-api".to_string()),
+                    cgroup_id: None,
+                }),
+                container: Some(ContainerContext {
+                    container_id: "container-abc".to_string(),
+                    runtime: Some("containerd".to_string()),
+                }),
+                kubernetes: Some(KubernetesContext {
+                    namespace: "e-navigator-bench".to_string(),
+                    pod_name: "workload-a".to_string(),
+                    pod_uid: Some("pod-uid".to_string()),
+                    container_name: Some("workload".to_string()),
+                    node_name: Some("homelab-01".to_string()),
+                    labels,
+                }),
                 attributes: vec![
                     ProfilingAttribute {
                         key: "tenant".to_string(),
