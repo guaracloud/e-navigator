@@ -16,7 +16,7 @@ pub enum TraceContextError {
 }
 
 pub fn parse_traceparent(value: &str) -> Result<TraceContext, TraceContextError> {
-    let mut parts = value.trim().split('-');
+    let mut parts = value.split('-');
     let version = parts.next().ok_or(TraceContextError::Malformed)?;
     let trace_id = parts.next().ok_or(TraceContextError::Malformed)?;
     let span_id = parts.next().ok_or(TraceContextError::Malformed)?;

@@ -589,6 +589,8 @@ fn rejects_traceparent_length_and_separator_variants() {
         "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-0",
         "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-011",
         "00:4bf92f3577b34da6a3ce929d0e0e4736:00f067aa0ba902b7:01",
+        " 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01 ",
     ] {
         assert_eq!(
             parse_traceparent(value).unwrap_err(),

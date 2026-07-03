@@ -37,7 +37,7 @@ or chart rendering:
   parsing with configurable HTTP parser limits and validated header/sub-limit
   relationships plus HTTP/1.x version-token validation,
   HTTP response-status fixture parsing with version-token validation and a
-  build-checked parser fuzz target,
+  build-checked parser fuzz target, strict W3C traceparent parsing,
   decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with a
   build-checked parser fuzz target, Kafka request-header and ApiVersions
   response-error parsing, MongoDB wire-message and response-error parsing, MySQL
