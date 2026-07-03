@@ -506,6 +506,25 @@ fn otlp_http_sink_config_is_validated_when_enabled() {
             modules: enabled_modules(),
             otlp_http: OtlpHttpConfig {
                 enabled: true,
+                endpoint: format!(
+                    "http://{}",
+                    "a".repeat(OtlpHttpConfig::MAX_ENDPOINT_BYTES_LIMIT)
+                ),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "otlp_http.endpoint must be at most {} bytes",
+            OtlpHttpConfig::MAX_ENDPOINT_BYTES_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
                 metrics_endpoint: "ftp://127.0.0.1:4318/v1/metrics".to_string(),
                 ..OtlpHttpConfig::default()
             },

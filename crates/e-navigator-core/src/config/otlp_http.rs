@@ -58,6 +58,7 @@ impl OtlpHttpConfig {
     pub const MAX_BATCH_SIZE_LIMIT: usize = 4096;
     pub const MAX_TIMEOUT_MILLIS_LIMIT: u64 = 300_000;
     pub const MAX_RETRIES_LIMIT: usize = 16;
+    pub const MAX_ENDPOINT_BYTES_LIMIT: usize = 2048;
 
     pub fn effective_metrics_endpoint(&self) -> Option<&str> {
         self.effective_endpoint(&self.metrics_endpoint)
@@ -180,6 +181,15 @@ impl OtlpHttpConfig {
 fn validate_endpoint(path: &'static str, endpoint: &str) -> ConfigResult<()> {
     if endpoint.is_empty() {
         return Ok(());
+    }
+    if endpoint.len() > OtlpHttpConfig::MAX_ENDPOINT_BYTES_LIMIT {
+        return Err(ConfigError::invalid_value(
+            path,
+            format!(
+                "{path} must be at most {} bytes",
+                OtlpHttpConfig::MAX_ENDPOINT_BYTES_LIMIT
+            ),
+        ));
     }
     if endpoint.trim() != endpoint || endpoint.chars().any(char::is_whitespace) {
         return Err(ConfigError::invalid_value(
