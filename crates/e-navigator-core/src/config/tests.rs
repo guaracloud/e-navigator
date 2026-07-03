@@ -1096,6 +1096,34 @@ fn kubernetes_attribution_selectors_are_validated() {
         RuntimeConfig {
             attribution: AttributionConfig {
                 kubernetes: KubernetesAttributionConfig {
+                    label_allowlist: vec!["app".to_string(), "app".to_string()],
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "attribution.kubernetes.label_allowlist must not contain duplicate entry 'app'",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    namespace_allowlist: vec!["default".to_string(), "default".to_string()],
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "attribution.kubernetes.namespace_allowlist must not contain duplicate entry 'default'",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
                     namespace_allowlist: vec!["default".to_string()],
                     namespace_denylist: vec!["default".to_string()],
                     ..KubernetesAttributionConfig::default()

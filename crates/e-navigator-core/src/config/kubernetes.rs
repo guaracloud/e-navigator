@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::{ConfigError, ConfigResult};
@@ -241,6 +241,15 @@ fn validate_non_empty_list(path: &'static str, values: &[String]) -> ConfigResul
                 KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT
             ),
         ));
+    }
+    let mut seen = BTreeSet::new();
+    for value in values {
+        if !seen.insert(value.as_str()) {
+            return Err(ConfigError::invalid_value(
+                path,
+                format!("{path} must not contain duplicate entry '{value}'"),
+            ));
+        }
     }
     Ok(())
 }
