@@ -921,6 +921,59 @@ fn formats_nats_request_span_with_protocol_name() {
 }
 
 #[test]
+fn formats_nats_request_span_error_status_from_error_type_attribute() {
+    let signal = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "nats message".to_string(),
+            protocol: ProtocolKind::Nats,
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(1_500),
+            duration_nanos: Some(500),
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            service_name: Some("messaging-client".to_string()),
+            method: Some("pub".to_string()),
+            status_code: None,
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(trace_peer_context()),
+            attributes: vec![
+                TraceAttribute {
+                    key: "messaging.system".to_string(),
+                    value: "nats".to_string(),
+                },
+                TraceAttribute {
+                    key: "messaging.nats.status_code".to_string(),
+                    value: "ERR".to_string(),
+                },
+                TraceAttribute {
+                    key: "error.type".to_string(),
+                    value: "nats_error".to_string(),
+                },
+            ],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("nats request span formats");
+
+    assert_eq!(
+        record.status,
+        Some(OtelSpanStatus::Error {
+            message: "nats_error".to_string()
+        })
+    );
+    assert_eq!(record.attributes["network.protocol.name"], "nats");
+    assert_eq!(record.attributes["messaging.nats.status_code"], "ERR");
+    assert_eq!(record.attributes["error.type"], "nats_error");
+}
+
+#[test]
 fn formats_request_correlation_warning() {
     let signal = SignalEnvelope::request_correlation_warning(
         "generator.request_correlation",
