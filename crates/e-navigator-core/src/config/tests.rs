@@ -662,6 +662,20 @@ fn zero_queue_capacity_is_invalid_with_typed_error_metadata() {
 }
 
 #[test]
+fn runtime_queue_capacity_is_bounded() {
+    assert_invalid(
+        RuntimeConfig {
+            queue_capacity: RuntimeConfig::MAX_QUEUE_CAPACITY_LIMIT + 1,
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "queue_capacity must be less than or equal to {}",
+            RuntimeConfig::MAX_QUEUE_CAPACITY_LIMIT
+        ),
+    );
+}
+
+#[test]
 fn runtime_derived_signal_bounds_are_validated() {
     assert_invalid(
         RuntimeConfig {
@@ -673,10 +687,32 @@ fn runtime_derived_signal_bounds_are_validated() {
 
     assert_invalid(
         RuntimeConfig {
+            max_derived_signals_per_input: RuntimeConfig::MAX_DERIVED_SIGNALS_PER_INPUT_LIMIT + 1,
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "max_derived_signals_per_input must be less than or equal to {}",
+            RuntimeConfig::MAX_DERIVED_SIGNALS_PER_INPUT_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
             max_derived_signal_depth: 0,
             ..RuntimeConfig::default()
         },
         "max_derived_signal_depth must be greater than zero",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            max_derived_signal_depth: RuntimeConfig::MAX_DERIVED_SIGNAL_DEPTH_LIMIT + 1,
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "max_derived_signal_depth must be less than or equal to {}",
+            RuntimeConfig::MAX_DERIVED_SIGNAL_DEPTH_LIMIT
+        ),
     );
 }
 

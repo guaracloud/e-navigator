@@ -82,6 +82,10 @@ impl Default for RuntimeConfig {
 }
 
 impl RuntimeConfig {
+    pub const MAX_QUEUE_CAPACITY_LIMIT: usize = 65_536;
+    pub const MAX_DERIVED_SIGNALS_PER_INPUT_LIMIT: usize = 4096;
+    pub const MAX_DERIVED_SIGNAL_DEPTH_LIMIT: usize = 64;
+
     pub fn validate(&self) -> Result<(), String> {
         self.validate_typed().map_err(|err| err.to_string())
     }
@@ -91,6 +95,15 @@ impl RuntimeConfig {
             return Err(ConfigError::invalid_value(
                 "queue_capacity",
                 "queue_capacity must be greater than zero",
+            ));
+        }
+        if self.queue_capacity > Self::MAX_QUEUE_CAPACITY_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "queue_capacity",
+                format!(
+                    "queue_capacity must be less than or equal to {}",
+                    Self::MAX_QUEUE_CAPACITY_LIMIT
+                ),
             ));
         }
 
@@ -107,11 +120,29 @@ impl RuntimeConfig {
                 "max_derived_signals_per_input must be greater than zero",
             ));
         }
+        if self.max_derived_signals_per_input > Self::MAX_DERIVED_SIGNALS_PER_INPUT_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "max_derived_signals_per_input",
+                format!(
+                    "max_derived_signals_per_input must be less than or equal to {}",
+                    Self::MAX_DERIVED_SIGNALS_PER_INPUT_LIMIT
+                ),
+            ));
+        }
 
         if self.max_derived_signal_depth == 0 {
             return Err(ConfigError::invalid_value(
                 "max_derived_signal_depth",
                 "max_derived_signal_depth must be greater than zero",
+            ));
+        }
+        if self.max_derived_signal_depth > Self::MAX_DERIVED_SIGNAL_DEPTH_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "max_derived_signal_depth",
+                format!(
+                    "max_derived_signal_depth must be less than or equal to {}",
+                    Self::MAX_DERIVED_SIGNAL_DEPTH_LIMIT
+                ),
             ));
         }
 

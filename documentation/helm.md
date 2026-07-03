@@ -53,6 +53,11 @@ config:
     enabled = true
 ```
 
+Top-level runtime bounds are validated before startup:
+`queue_capacity` must be at most 65,536,
+`max_derived_signals_per_input` at most 4,096, and
+`max_derived_signal_depth` at most 64.
+
 For DNS capture, `dns_source.max_preview_bytes` must be less than or equal to
 `dns_source.max_packet_bytes`; the preview limit is only for diagnostics and
 cannot exceed the packet capture bound.
