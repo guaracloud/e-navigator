@@ -42,7 +42,7 @@ Current local benchmark targets:
 - profiling fixture normalization;
 - generator hot paths for network, DNS, resource, dependency graph, trace,
   request, profiling, runtime security, and native export;
-- JSON signal serialization, OpenTelemetry metric/profile formatting,
+- JSON signal serialization, OpenTelemetry metric/trace/profile formatting,
   Prometheus profile session/warning formatting, and bounded HTTP exporter queue
   enqueue behavior.
 
@@ -81,6 +81,19 @@ live kernel event cost. In this short local run, Criterion reported no
 statistically significant session-write change and a small warning-write
 regression against the prior local baseline, so the result is evidence of
 benchmark coverage rather than an optimization claim.
+
+Focused protocol error trace formatter smoke from this development host:
+
+```bash
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  --sample-size 10 formatter/otel_protocol_error_trace_record
+```
+
+- `formatter/otel_protocol_error_trace_record`: 1.5412-1.5687 us.
+
+This timing measures fixed-fixture internal OpenTelemetry trace-record
+formatting only. It does not prove OTLP collector latency, backend acceptance,
+or live protocol capture overhead.
 
 ## Guarded Runtime Proof
 

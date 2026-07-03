@@ -24,12 +24,12 @@ use e_navigator_signals::{
     NetworkProcessIdentity, NetworkProtocol, NodeCpuObservation, ProcessResourceContext,
     ProcessResourceObservation, ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence,
     ProfilingCorrelationKind, ProfilingFrame, ProfilingKind, ProfilingSessionObservation,
-    ProfilingWarningObservation, ProtocolKind, ProtocolRequestObservation, SignalEnvelope,
-    TraceAttribute, TraceConfidence, TraceCorrelationKind, TracePeerContext,
+    ProfilingWarningObservation, ProtocolKind, ProtocolRequestObservation, RequestSpanObservation,
+    SignalEnvelope, TraceAttribute, TraceConfidence, TraceCorrelationKind, TracePeerContext,
 };
 use e_navigator_sinks::{
     HttpExporterConfig, HttpJsonExporter, PrometheusHttpSink, format_otel_metric_record,
-    format_profile_record,
+    format_otel_trace_record, format_profile_record,
 };
 use e_navigator_sources_ebpf_aya::{
     cpu_profile::fuzz_decode_raw_cpu_profile_event, exec::fuzz_decode_raw_exec_event,
@@ -251,6 +251,7 @@ fn bench_serialization_and_exporter(c: &mut Criterion) {
     });
 
     let network_metric = network_flow_metric_signal();
+    let request_error_span = request_error_span_signal();
     let profile = profiling_signals().remove(0);
     let profile_session = profile_session_signal();
     let profile_warning = profile_warning_signal();
@@ -267,6 +268,9 @@ fn bench_serialization_and_exporter(c: &mut Criterion) {
     .unwrap();
     c.bench_function("formatter/otel_network_flow_metric", |b| {
         b.iter(|| format_otel_metric_record(black_box(&network_metric)).unwrap())
+    });
+    c.bench_function("formatter/otel_protocol_error_trace_record", |b| {
+        b.iter(|| format_otel_trace_record(black_box(&request_error_span)).unwrap())
     });
     c.bench_function("formatter/profile_record", |b| {
         b.iter(|| format_profile_record(black_box(&profile)).unwrap())
@@ -467,6 +471,52 @@ fn request_signals() -> Vec<SignalEnvelope> {
             )
         })
         .collect()
+}
+
+fn request_error_span_signal() -> SignalEnvelope {
+    SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "mongodb command".to_string(),
+            protocol: ProtocolKind::Mongodb,
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_000),
+            duration_nanos: Some(1_000),
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            service_name: Some("database-client".to_string()),
+            method: Some("find".to_string()),
+            status_code: None,
+            process: Some(process()),
+            container: Some(container()),
+            kubernetes: Some(kubernetes("database-client")),
+            peer: Some(TracePeerContext {
+                address: Some("10.43.12.30".to_string()),
+                port: Some(27017),
+                domain: Some("mongodb.e-navigator-bench.svc.cluster.local".to_string()),
+                workload: Some(kubernetes("mongodb")),
+                container: None,
+            }),
+            attributes: vec![
+                TraceAttribute {
+                    key: "db.system".to_string(),
+                    value: "mongodb".to_string(),
+                },
+                TraceAttribute {
+                    key: "db.response.status_code".to_string(),
+                    value: "13".to_string(),
+                },
+                TraceAttribute {
+                    key: "error.type".to_string(),
+                    value: "13".to_string(),
+                },
+            ],
+        },
+    )
 }
 
 fn profiling_signals() -> Vec<SignalEnvelope> {
