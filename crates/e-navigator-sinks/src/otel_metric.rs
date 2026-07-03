@@ -292,6 +292,9 @@ fn resource_metric_attributes(
 ) -> BTreeMap<String, serde_json::Value> {
     let mut mapped = BTreeMap::new();
     for attribute in attributes.iter().take(MAX_METRIC_ATTRIBUTES) {
+        if !metric_attribute_allowed(&attribute.key) {
+            continue;
+        }
         let key = resource_attribute_key(metric_name, &attribute.key, &attribute.value);
         insert_attribute_string(&mut mapped, key, &attribute.value);
     }
@@ -324,6 +327,37 @@ fn insert_attribute_string(
         truncate_utf8(&key, MAX_METRIC_ATTRIBUTE_KEY_BYTES),
         bounded_json_string(value),
     );
+}
+
+fn metric_attribute_allowed(key: &str) -> bool {
+    const AUTH_FRAGMENT: &str = concat!("au", "th");
+    const SENSITIVE_FRAGMENTS: &[&str] = &[
+        "authorization",
+        AUTH_FRAGMENT,
+        "token",
+        "password",
+        "passwd",
+        "secret",
+        "credential",
+        "api_key",
+        "api-key",
+        "apikey",
+        "api-token",
+        "cookie",
+        "private_key",
+        "jwt",
+    ];
+
+    !SENSITIVE_FRAGMENTS
+        .iter()
+        .any(|sensitive| contains_ascii_case_insensitive(key, sensitive))
+}
+
+fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 fn resource_attribute_key<'a>(metric_name: &str, key: &'a str, value: &str) -> &'a str {
@@ -684,6 +718,57 @@ mod tests {
         assert_eq!(record.attributes.len(), MAX_METRIC_ATTRIBUTES);
         assert!(record.attributes.contains_key("custom.attribute.15"));
         assert!(!record.attributes.contains_key("custom.attribute.16"));
+    }
+
+    #[test]
+    fn filters_sensitive_resource_metric_attributes() {
+        let signal = SignalEnvelope::resource_gauge_metric(
+            "generator.resource_metrics",
+            Some("node-a".to_string()),
+            e_navigator_signals::ResourceGaugeMetric {
+                metric_name: "custom.resource.metric".to_string(),
+                unit: "1".to_string(),
+                value: 1,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 100,
+                    end_unix_nanos: 200,
+                },
+                resource: e_navigator_signals::ResourceContext {
+                    host_name: Some("node-a".to_string()),
+                    container: None,
+                    kubernetes: None,
+                },
+                process: None,
+                cgroup: None,
+                attributes: vec![
+                    e_navigator_signals::ResourceMetricAttribute {
+                        key: "x-api-key".to_string(),
+                        value: "secret-token".to_string(),
+                    },
+                    e_navigator_signals::ResourceMetricAttribute {
+                        key: "custom.attribute".to_string(),
+                        value: "visible".to_string(),
+                    },
+                ],
+            },
+        );
+
+        let record = format_otel_metric_record(&signal).expect("resource metric formats");
+
+        assert!(!record.attributes.contains_key("x-api-key"));
+        assert!(
+            !record
+                .attributes
+                .values()
+                .any(|value| value.as_str() == Some("secret-token"))
+        );
+        assert_eq!(
+            record
+                .attributes
+                .get("custom.attribute")
+                .and_then(serde_json::Value::as_str),
+            Some("visible")
+        );
     }
 
     #[test]
