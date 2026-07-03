@@ -188,6 +188,7 @@ mod tests {
             metrics::v1::ExportMetricsServiceRequest, trace::v1::ExportTraceServiceRequest,
         },
         metrics::v1::{metric::Data, number_data_point},
+        trace::v1::status,
     };
     use prost::Message;
     use std::collections::BTreeMap;
@@ -351,6 +352,9 @@ mod tests {
             attribute.key == "http.request.method"
                 && format!("{:?}", attribute.value).contains("GET")
         }));
+        let status = span.status.as_ref().expect("span status is present");
+        assert_eq!(status.code, status::StatusCode::Error as i32);
+        assert_eq!(status.message, "HTTP status code 503");
     }
 
     #[tokio::test]
@@ -545,7 +549,7 @@ mod tests {
                 confidence: TraceConfidence::High,
                 service_name: Some("checkout-api".to_string()),
                 method: Some("GET".to_string()),
-                status_code: Some(200),
+                status_code: Some(503),
                 process: None,
                 container: Some(ContainerContext {
                     container_id: "container-a".to_string(),

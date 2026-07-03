@@ -1,9 +1,11 @@
-use crate::{ExporterError, OtelTraceRecord, OtelTraceRecordKind, otlp_common::key_values};
+use crate::{
+    ExporterError, OtelSpanStatus, OtelTraceRecord, OtelTraceRecordKind, otlp_common::key_values,
+};
 use opentelemetry_proto::tonic::{
     collector::trace::v1::ExportTraceServiceRequest,
     common::v1::InstrumentationScope,
     resource::v1::Resource,
-    trace::v1::{ResourceSpans, ScopeSpans, Span, span},
+    trace::v1::{ResourceSpans, ScopeSpans, Span, Status, span, status},
 };
 use prost::Message;
 
@@ -82,8 +84,17 @@ fn span_from_record(record: &OtelTraceRecord) -> Option<Span> {
         dropped_events_count: 0,
         links: Vec::new(),
         dropped_links_count: 0,
-        status: None,
+        status: record.status.as_ref().map(status_from_record),
     })
+}
+
+fn status_from_record(status: &OtelSpanStatus) -> Status {
+    match status {
+        OtelSpanStatus::Error { message } => Status {
+            message: message.clone(),
+            code: status::StatusCode::Error as i32,
+        },
+    }
 }
 
 fn span_kind(kind: &OtelTraceRecordKind) -> span::SpanKind {

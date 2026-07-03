@@ -5,7 +5,7 @@ use e_navigator_signals::{
     TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext, TraceServicePathObservation,
     TraceSpanObservation,
 };
-use e_navigator_sinks::{OtelTraceRecordKind, format_otel_trace_record};
+use e_navigator_sinks::{OtelSpanStatus, OtelTraceRecordKind, format_otel_trace_record};
 use std::collections::BTreeMap;
 
 #[test]
@@ -103,11 +103,47 @@ fn formats_service_interaction_without_inventing_trace_ids() {
     let record = format_otel_trace_record(&signal).expect("trace signal formats");
 
     assert_eq!(record.kind, OtelTraceRecordKind::ServiceInteraction);
+    assert_eq!(record.status, None);
     assert_eq!(record.trace_id, None);
     assert_eq!(record.span_id, None);
     assert_eq!(record.attributes["net.transport"], "tcp");
     assert_eq!(record.attributes["server.address"], "203.0.113.10");
     assert_eq!(record.attributes["server.port"], 443);
+}
+
+#[test]
+fn formats_service_interaction_error_status() {
+    let signal = SignalEnvelope::service_interaction_span_observation(
+        "generator.trace_correlation",
+        Some("node-a".to_string()),
+        ServiceInteractionSpanObservation {
+            name: "tcp client".to_string(),
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_000),
+            duration_nanos: Some(1_000),
+            correlation_kind: TraceCorrelationKind::NetworkInferred,
+            confidence: TraceConfidence::Medium,
+            source: source_endpoint(),
+            destination: destination_endpoint(),
+            protocol: NetworkProtocol::Tcp,
+            process: Some(network_process()),
+            error_type: Some("connection_refused".to_string()),
+            attributes: vec![],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("trace signal formats");
+
+    assert_eq!(
+        record.status,
+        Some(OtelSpanStatus::Error {
+            message: "connection_refused".to_string()
+        })
+    );
+    assert_eq!(record.attributes["error.type"], "connection_refused");
 }
 
 #[test]
@@ -230,6 +266,7 @@ fn formats_request_span_with_bounded_stable_attributes() {
 
     assert_eq!(record.name, "http request");
     assert_eq!(record.kind, OtelTraceRecordKind::RequestSpan);
+    assert_eq!(record.status, None);
     assert_eq!(
         record.trace_id,
         Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string())
@@ -250,6 +287,44 @@ fn formats_request_span_with_bounded_stable_attributes() {
     assert_eq!(record.attributes["http.response.status_code"], 200);
     assert_eq!(record.attributes["custom.value"], "kept");
     assert!(!record.attributes.contains_key("authorization"));
+}
+
+#[test]
+fn formats_http_request_span_error_status_from_status_code() {
+    let signal = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "http request".to_string(),
+            protocol: ProtocolKind::Http,
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_000),
+            duration_nanos: Some(1_000),
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            service_name: Some("checkout-api".to_string()),
+            method: Some("GET".to_string()),
+            status_code: Some(503),
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(trace_peer_context()),
+            attributes: vec![],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("request span formats");
+
+    assert_eq!(
+        record.status,
+        Some(OtelSpanStatus::Error {
+            message: "HTTP status code 503".to_string()
+        })
+    );
+    assert_eq!(record.attributes["http.response.status_code"], 503);
 }
 
 #[test]

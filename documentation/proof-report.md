@@ -32,7 +32,8 @@ or chart rendering:
 - Prometheus HTTP formatting, health/readiness endpoints, and secret-like label
   filtering;
 - OTLP protobuf request encoding plus per-family endpoint routing for metrics,
-  traces, and development-status profiles in fake-collector tests;
+  traces with request/error status mapping, and development-status profiles in
+  fake-collector tests;
 - Helm rendering, schema checks, and release verification workflow structure.
 
 ## Runtime-Proven Slices
@@ -71,6 +72,10 @@ These areas remain explicitly partial:
 - **HTTP capture:** selected `homelab-02` outbound cleartext paths work, but
   symmetric node coverage, inbound parsing, TLS, gRPC, status-code extraction,
   route templates, retries, app errors, and broader iovec shapes are not proven.
+- **Trace readiness:** OTLP trace protobuf export includes request span kind,
+  resource attributes, and local status mapping for HTTP status errors and
+  network interaction errors, but broad backend service-graph compatibility and
+  live collector proof for the new status mapping are not yet proven.
 - **Kafka protocol observability:** bounded request-header parsing for common
   API keys is locally tested without exporting client IDs, topics, or record
   payloads, but runtime capture, request/response matching, status/error

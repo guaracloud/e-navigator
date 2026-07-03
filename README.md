@@ -110,7 +110,8 @@ Evidence-backed today:
 - Kubernetes/container attribution for selected captured signals;
 - dependency graph, resource metrics, network metrics, Kafka, MongoDB, MySQL,
   NATS, PostgreSQL, and Redis parser foundations, request/trace/profile
-  foundations, and runtime security generator behavior through tests;
+  foundations with OTLP trace status mapping, and runtime security generator
+  behavior through tests;
 - selected guarded homelab proof for exec, network, DNS, HTTP, profile,
   resource, Prometheus, OTLP, and seccomp paths;
 - release artifact signing, SBOM generation, Helm packaging, and local quality

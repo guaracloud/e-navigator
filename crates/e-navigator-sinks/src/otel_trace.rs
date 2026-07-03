@@ -24,9 +24,16 @@ pub enum OtelTraceRecordKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "code")]
+pub enum OtelSpanStatus {
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OtelTraceRecord {
     pub name: String,
     pub kind: OtelTraceRecordKind,
+    pub status: Option<OtelSpanStatus>,
     pub trace_id: Option<String>,
     pub span_id: Option<String>,
     pub parent_span_id: Option<String>,
@@ -74,6 +81,7 @@ fn trace_span_record(signal: &SignalEnvelope, span: &TraceSpanObservation) -> Ot
     OtelTraceRecord {
         name: span.name.clone(),
         kind: OtelTraceRecordKind::Span,
+        status: None,
         trace_id: span.trace_id.clone(),
         span_id: span.span_id.clone(),
         parent_span_id: span.parent_span_id.clone(),
@@ -105,6 +113,7 @@ fn service_interaction_record(
     OtelTraceRecord {
         name: span.name.clone(),
         kind: OtelTraceRecordKind::ServiceInteraction,
+        status: span.error_type.as_deref().map(error_status),
         trace_id: span.trace_id.clone(),
         span_id: span.span_id.clone(),
         parent_span_id: span.parent_span_id.clone(),
@@ -145,6 +154,7 @@ fn service_path_record(
     OtelTraceRecord {
         name: "trace.service.path".to_string(),
         kind: OtelTraceRecordKind::ServicePath,
+        status: None,
         trace_id: None,
         span_id: None,
         parent_span_id: None,
@@ -195,6 +205,7 @@ fn correlation_warning_record(
     OtelTraceRecord {
         name: "trace.correlation.warning".to_string(),
         kind: OtelTraceRecordKind::CorrelationWarning,
+        status: None,
         trace_id: None,
         span_id: None,
         parent_span_id: None,
@@ -233,6 +244,7 @@ fn request_span_record(signal: &SignalEnvelope, span: &RequestSpanObservation) -
     OtelTraceRecord {
         name: span.name.clone(),
         kind: OtelTraceRecordKind::RequestSpan,
+        status: request_span_status(span),
         trace_id: span.trace_id.clone(),
         span_id: span.span_id.clone(),
         parent_span_id: span.parent_span_id.clone(),
@@ -284,6 +296,7 @@ fn request_warning_record(
     OtelTraceRecord {
         name: "request.correlation.warning".to_string(),
         kind: OtelTraceRecordKind::RequestWarning,
+        status: None,
         trace_id: None,
         span_id: None,
         parent_span_id: None,
@@ -297,6 +310,22 @@ fn request_warning_record(
             None,
         ),
         attributes,
+    }
+}
+
+fn request_span_status(span: &RequestSpanObservation) -> Option<OtelSpanStatus> {
+    if span.protocol == ProtocolKind::Http
+        && let Some(status_code) = span.status_code
+        && status_code >= 400
+    {
+        return Some(error_status(&format!("HTTP status code {status_code}")));
+    }
+    None
+}
+
+fn error_status(message: &str) -> OtelSpanStatus {
+    OtelSpanStatus::Error {
+        message: message.to_string(),
     }
 }
 
