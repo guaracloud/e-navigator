@@ -20,7 +20,8 @@ or chart rendering:
 - static module registration and runner fan-out;
 - versioned JSON signal envelopes;
 - synthetic source pipeline, including sanitized HTTP, Kafka, MongoDB, MySQL,
-  NATS, PostgreSQL, and Redis protocol request/span fixtures;
+  NATS, PostgreSQL, and Redis protocol request/span fixtures and
+  flow-attribution warnings;
 - config validation and packaged config guards;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/profile events;

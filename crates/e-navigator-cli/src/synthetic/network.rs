@@ -60,6 +60,35 @@ pub(super) fn close_signal(
     )
 }
 
+pub(super) fn unattributed_byte_close_signal(
+    host: Option<String>,
+    opened_at: u64,
+    duration_nanos: u64,
+) -> SignalEnvelope {
+    let close_started = opened_at.saturating_add(duration_nanos + 35_000);
+    SignalEnvelope::network_connection_close(
+        super::source_name(),
+        host,
+        NetworkConnectionCloseEvent {
+            process: super::process_identity(),
+            protocol: NetworkProtocol::Tcp,
+            address_family: NetworkAddressFamily::Ipv4,
+            local_address: Some("10.0.0.5".to_string()),
+            local_port: Some(45123),
+            remote_address: "198.51.100.30".to_string(),
+            remote_port: 9443,
+            fd: Some(91),
+            opened_at_unix_nanos: Some(close_started),
+            closed_at_unix_nanos: close_started.saturating_add(25_000),
+            duration_nanos: Some(25_000),
+            bytes_sent: Some(512),
+            bytes_received: Some(256),
+            container: None,
+            kubernetes: None,
+        },
+    )
+}
+
 pub(super) fn failure_signal(
     host: Option<String>,
     container: ContainerContext,

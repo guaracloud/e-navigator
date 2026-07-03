@@ -119,6 +119,14 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
         .await
         .map_err(|_| CoreError::PipelineClosed)?;
 
+        tx.send(network::unattributed_byte_close_signal(
+            self.host.clone(),
+            opened_at,
+            duration_nanos,
+        ))
+        .await
+        .map_err(|_| CoreError::PipelineClosed)?;
+
         tx.send(network::flow_summary_signal(self.host.clone(), opened_at))
             .await
             .map_err(|_| CoreError::PipelineClosed)?;
@@ -252,6 +260,16 @@ mod tests {
             &signal.payload,
             SignalPayload::NetworkConnectionFailure(failure)
                 if failure.remote_address == "198.51.100.20" && failure.errno == 111
+        )));
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::NetworkConnectionClose(close)
+                if close.remote_address == "198.51.100.30"
+                    && close.remote_port == 9443
+                    && close.bytes_sent == Some(512)
+                    && close.bytes_received == Some(256)
+                    && close.container.is_none()
+                    && close.kubernetes.is_none()
         )));
         assert!(signals.iter().any(|signal| matches!(
             &signal.payload,
