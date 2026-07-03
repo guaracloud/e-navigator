@@ -64,11 +64,12 @@ or chart rendering:
   request-header plus ApiVersions and Produce response-error parsing, MongoDB
   wire-message and response-error parsing, MySQL command packet and OK/ERR
   response parsing with canonical SQLSTATE validation and build-checked parser fuzz
-  coverage, NATS text command plus OK/error response parsing, PostgreSQL
-  wire-message and CommandComplete/ErrorResponse parsing with canonical
-  SQLSTATE validation and build-checked parser fuzz coverage, and Redis RESP
-  command plus simple/integer/bulk/error response parsing with build-checked
-  parser fuzz coverage;
+  coverage, NATS text command parsing with canonical command-token validation
+  plus OK/error response parsing, PostgreSQL wire-message and
+  CommandComplete/ErrorResponse parsing with canonical SQLSTATE validation and
+  build-checked parser fuzz coverage, and Redis RESP command plus
+  simple/integer/bulk/error response parsing with build-checked parser fuzz
+  coverage;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/error-span
   flow, deterministic service path keys, precise duplicate flow suppression,
@@ -172,9 +173,10 @@ These areas remain explicitly partial:
   not implemented or proven.
 - **NATS protocol observability:** bounded text command parsing for common
   publish, subscribe, message, and control lines plus OK/error response parsing
-  is locally tested without exporting raw subjects, payloads, or raw error
-  messages, but runtime capture, request/response matching, broad response
-  coverage, and live NATS proof are not implemented or proven.
+  is locally tested with canonical command-token validation and without
+  exporting raw subjects, payloads, or raw error messages, but runtime capture,
+  request/response matching, broad response coverage, and live NATS proof are
+  not implemented or proven.
 - **MySQL protocol observability:** bounded `COM_QUERY`,
   `COM_STMT_PREPARE`, and OK/ERR response parsing is locally tested without
   exporting raw SQL text or raw error messages, including canonical SQLSTATE
