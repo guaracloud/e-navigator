@@ -1,5 +1,5 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
-use e_navigator_core::Generator;
+use e_navigator_core::{Generator, PrometheusHttpConfig, Sink};
 use e_navigator_generators::{
     DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator, ProfilingGenerator,
     RequestCorrelationGenerator, ResourceMetricsGenerator, RuntimeSecurityGenerator,
@@ -23,12 +23,13 @@ use e_navigator_signals::{
     NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkCounterMetric,
     NetworkProcessIdentity, NetworkProtocol, NodeCpuObservation, ProcessResourceContext,
     ProcessResourceObservation, ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence,
-    ProfilingCorrelationKind, ProfilingFrame, ProfilingKind, ProtocolKind,
-    ProtocolRequestObservation, SignalEnvelope, TraceAttribute, TraceConfidence,
-    TraceCorrelationKind, TracePeerContext,
+    ProfilingCorrelationKind, ProfilingFrame, ProfilingKind, ProfilingSessionObservation,
+    ProfilingWarningObservation, ProtocolKind, ProtocolRequestObservation, SignalEnvelope,
+    TraceAttribute, TraceConfidence, TraceCorrelationKind, TracePeerContext,
 };
 use e_navigator_sinks::{
-    HttpExporterConfig, HttpJsonExporter, format_otel_metric_record, format_profile_record,
+    HttpExporterConfig, HttpJsonExporter, PrometheusHttpSink, format_otel_metric_record,
+    format_profile_record,
 };
 use e_navigator_sources_ebpf_aya::{
     cpu_profile::fuzz_decode_raw_cpu_profile_event, exec::fuzz_decode_raw_exec_event,
@@ -244,17 +245,45 @@ fn bench_generator<G>(
 
 fn bench_serialization_and_exporter(c: &mut Criterion) {
     let signal = network_open_signal(1_000);
+    let runtime = Runtime::new().unwrap();
     c.bench_function("json/signal_to_vec", |b| {
         b.iter(|| serde_json::to_vec(black_box(&signal)).unwrap())
     });
 
     let network_metric = network_flow_metric_signal();
     let profile = profiling_signals().remove(0);
+    let profile_session = profile_session_signal();
+    let profile_warning = profile_warning_signal();
+    // Binding outside a Tokio runtime keeps this benchmark focused on sink
+    // write formatting/storage without starting an HTTP server.
+    let prometheus_sink = PrometheusHttpSink::bind(PrometheusHttpConfig {
+        enabled: true,
+        bind_address: "127.0.0.1".to_string(),
+        port: 0,
+        max_metric_lines: 4096,
+        metrics_enabled: true,
+        profiles_enabled: true,
+    })
+    .unwrap();
     c.bench_function("formatter/otel_network_flow_metric", |b| {
         b.iter(|| format_otel_metric_record(black_box(&network_metric)).unwrap())
     });
     c.bench_function("formatter/profile_record", |b| {
         b.iter(|| format_profile_record(black_box(&profile)).unwrap())
+    });
+    c.bench_function("formatter/prometheus_profile_session_write", |b| {
+        b.iter(|| {
+            runtime
+                .block_on(prometheus_sink.write(black_box(&profile_session)))
+                .unwrap()
+        })
+    });
+    c.bench_function("formatter/prometheus_profile_warning_write", |b| {
+        b.iter(|| {
+            runtime
+                .block_on(prometheus_sink.write(black_box(&profile_warning)))
+                .unwrap()
+        })
     });
 
     c.bench_function("exporter/bounded_queue_enqueue", |b| {
@@ -481,6 +510,56 @@ fn profiling_signals() -> Vec<SignalEnvelope> {
             )
         })
         .collect()
+}
+
+fn profile_session_signal() -> SignalEnvelope {
+    SignalEnvelope::profiling_session_observation(
+        "generator.profiling",
+        Some("node-a".to_string()),
+        ProfilingSessionObservation {
+            window: window(1_000, 31_000),
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::Medium,
+            profile_id: "profile:benchmark".to_string(),
+            observed_sample_count: 256,
+            dropped_sample_count: 4,
+            distinct_stack_count: 64,
+            sampling_period_nanos: Some(20_000_000),
+            process: Some(process()),
+            container: Some(container()),
+            kubernetes: Some(kubernetes("api")),
+            source: "source.aya_cpu_profile".to_string(),
+            attributes: vec![ProfilingAttribute {
+                key: "profiling.source".to_string(),
+                value: "fixture".to_string(),
+            }],
+        },
+    )
+}
+
+fn profile_warning_signal() -> SignalEnvelope {
+    SignalEnvelope::profiling_warning_observation(
+        "generator.profiling",
+        Some("node-a".to_string()),
+        ProfilingWarningObservation {
+            warning_type: "dropped_profile_samples".to_string(),
+            message: "profile samples were dropped by bounded aggregation".to_string(),
+            timestamp_unix_nanos: 31_000,
+            source_signal_kind: "profile_sample_observation".to_string(),
+            source_module: "source.aya_cpu_profile".to_string(),
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::Medium,
+            process: Some(process()),
+            container: Some(container()),
+            kubernetes: Some(kubernetes("api")),
+            attributes: vec![ProfilingAttribute {
+                key: "profile.dropped_sample_count".to_string(),
+                value: "4".to_string(),
+            }],
+        },
+    )
 }
 
 fn security_signals() -> Vec<SignalEnvelope> {

@@ -42,8 +42,9 @@ Current local benchmark targets:
 - profiling fixture normalization;
 - generator hot paths for network, DNS, resource, dependency graph, trace,
   request, profiling, runtime security, and native export;
-- JSON signal serialization, OpenTelemetry metric/profile formatting, and
-  bounded HTTP exporter queue enqueue behavior.
+- JSON signal serialization, OpenTelemetry metric/profile formatting,
+  Prometheus profile session/warning formatting, and bounded HTTP exporter queue
+  enqueue behavior.
 
 Benchmark setup must stay outside measured loops where the code path supports
 that. Benchmarks use fixed in-memory fixtures only. They must not read live
@@ -63,6 +64,23 @@ Treat local Criterion output as:
 - **directional** for optimization work;
 - **not valid** as live eBPF, Kubernetes, collector, or production overhead
   proof.
+
+Focused Prometheus profile formatter smoke from this development host:
+
+```bash
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  --sample-size 10 formatter/prometheus_profile
+```
+
+- `formatter/prometheus_profile_session_write`: 6.1102-6.2853 us.
+- `formatter/prometheus_profile_warning_write`: 2.9423-2.9558 us.
+
+These timings measure fixed-fixture sink write formatting/storage only. They do
+not prove scrape latency, production profile overhead, collector behavior, or
+live kernel event cost. In this short local run, Criterion reported no
+statistically significant session-write change and a small warning-write
+regression against the prior local baseline, so the result is evidence of
+benchmark coverage rather than an optimization claim.
 
 ## Guarded Runtime Proof
 
