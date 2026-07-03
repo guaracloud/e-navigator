@@ -165,6 +165,8 @@ pub fn parse_redis_response(
             }
         }
         b'*' => parse_array_response(bytes, config.max_header_bytes)?,
+        b'%' => parse_aggregate_response(bytes, config.max_header_bytes, true)?,
+        b'~' => parse_aggregate_response(bytes, config.max_header_bytes, false)?,
         b'-' => {
             let status = parse_simple_token(bytes, 1)?;
             let status_code = parse_response_status(&status)?;
@@ -416,6 +418,47 @@ fn parse_array_response(
         return Err(RedisExtraction::MalformedFrame);
     }
 
+    response_from_first_error(first_error)
+}
+
+fn parse_aggregate_response(
+    bytes: &[u8],
+    max_frame_bytes: usize,
+    is_map: bool,
+) -> Result<RedisResponseToken, RedisExtraction> {
+    let mut cursor = 1;
+    let item_count = parse_decimal_line(bytes, &mut cursor)?;
+    if item_count == -1 {
+        return Ok(RedisResponseToken {
+            status_code: Some("OK".to_string()),
+            error_type: None,
+        });
+    }
+    if item_count < -1 {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+    let item_count = item_count as usize;
+    if item_count > MAX_REDIS_ARRAY_ITEMS {
+        return Err(RedisExtraction::FrameTooLong);
+    }
+    let frame_count = if is_map {
+        item_count
+            .checked_mul(2)
+            .ok_or(RedisExtraction::FrameTooLong)?
+    } else {
+        item_count
+    };
+
+    let first_error = parse_array_items(bytes, &mut cursor, frame_count, max_frame_bytes, 0)?;
+    if cursor != bytes.len() {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+    response_from_first_error(first_error)
+}
+
+fn response_from_first_error(
+    first_error: Option<(String, String)>,
+) -> Result<RedisResponseToken, RedisExtraction> {
     if let Some((status_code, error_type)) = first_error {
         return Ok(RedisResponseToken {
             status_code: Some(status_code),
@@ -480,6 +523,36 @@ fn parse_array_items(
                 if let Some(nested_error) =
                     parse_array_items(bytes, cursor, nested_count, max_frame_bytes, depth + 1)?
                     && first_error.is_none()
+                {
+                    first_error = Some(nested_error);
+                }
+            }
+            b'%' | b'~' => {
+                let nested_count = parse_decimal_line(bytes, cursor)?;
+                if nested_count == -1 {
+                    continue;
+                }
+                if nested_count < -1 {
+                    return Err(RedisExtraction::MalformedFrame);
+                }
+                let nested_count = nested_count as usize;
+                if nested_count > MAX_REDIS_ARRAY_ITEMS {
+                    return Err(RedisExtraction::FrameTooLong);
+                }
+                let nested_frame_count = if *frame_type == b'%' {
+                    nested_count
+                        .checked_mul(2)
+                        .ok_or(RedisExtraction::FrameTooLong)?
+                } else {
+                    nested_count
+                };
+                if let Some(nested_error) = parse_array_items(
+                    bytes,
+                    cursor,
+                    nested_frame_count,
+                    max_frame_bytes,
+                    depth + 1,
+                )? && first_error.is_none()
                 {
                     first_error = Some(nested_error);
                 }

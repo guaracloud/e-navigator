@@ -1459,6 +1459,44 @@ fn extracts_redis_nested_array_error_without_raw_error_message() {
 }
 
 #[test]
+fn extracts_redis_resp3_aggregate_responses_without_raw_values() {
+    let set = parse_redis_response(
+        b"~2\r\n$15\r\ncustomer-secret\r\n:42\r\n",
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("resp3 set response parses");
+
+    assert_eq!(set.protocol, ProtocolKind::Redis);
+    assert_eq!(set.status_code.as_deref(), Some("OK"));
+    assert_eq!(set.error_type, None);
+    assert!(!set.attributes.iter().any(|attribute| {
+        attribute.value.contains("customer")
+            || attribute.value.contains("secret")
+            || attribute.value.contains("42")
+    }));
+
+    let map = parse_redis_response(
+        b"%2\r\n+field\r\n$15\r\ncustomer-secret\r\n+other\r\n-BUSY secret script\r\n",
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("resp3 map response parses");
+
+    assert_eq!(map.protocol, ProtocolKind::Redis);
+    assert_eq!(map.status_code.as_deref(), Some("BUSY"));
+    assert_eq!(map.error_type.as_deref(), Some("redis_busy"));
+    assert!(
+        map.attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "redis_busy")
+    );
+    assert!(!map.attributes.iter().any(|attribute| {
+        attribute.value.contains("field")
+            || attribute.value.contains("customer")
+            || attribute.value.contains("secret")
+    }));
+}
+
+#[test]
 fn extracts_redis_error_type_without_raw_error_message() {
     let extraction = parse_redis_response(
         b"-WRONGTYPE Operation against a key holding the wrong kind of value secret-key\r\n",
@@ -1664,6 +1702,18 @@ fn rejects_malformed_and_unsupported_redis_fixtures() {
     assert_eq!(
         parse_redis_response(b"*1\r\n*65\r\n", &config).unwrap_err(),
         RedisExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_redis_response(b"%65\r\n", &config).unwrap_err(),
+        RedisExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_redis_response(b"%1\r\n+key\r\n", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b"~1\r\n+OK\r\ntrailing", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
     );
 }
 
