@@ -87,7 +87,7 @@ or chart rendering:
   plus OK/error response parsing,
   PostgreSQL Query/Parse/Bind/Describe/Close/Execute/FunctionCall/CopyData/
   CopyDone/CopyFail/Password/Flush/Sync/Terminate wire-message and
-  ParseComplete/BindComplete/CloseComplete/NoData/CommandComplete/
+  ParseComplete/BindComplete/CloseComplete/RowDescription/NoData/CommandComplete/
   NoticeResponse/ParameterStatus/ReadyForQuery/ErrorResponse parsing with
   canonical SQLSTATE validation and build-checked parser fuzz coverage, and
   Redis RESP command plus
@@ -230,12 +230,12 @@ These areas remain explicitly partial:
 - **PostgreSQL protocol observability:** bounded simple Query, Parse, Bind,
   Describe, Close, Execute, FunctionCall, CopyData, CopyDone, CopyFail,
   PasswordMessage, Flush, Sync, Terminate, ParseComplete, BindComplete,
-  CloseComplete, NoData, CommandComplete, NoticeResponse, ParameterStatus,
-  ReadyForQuery, and ErrorResponse parsing is locally tested without exporting
-  raw SQL text, function OIDs, argument values, copy payloads, copy failure text,
-  password values, notice text, parameter status values, or raw error messages,
-  including canonical SQLSTATE validation for notice and error responses, but
-  runtime capture,
+  CloseComplete, RowDescription, NoData, CommandComplete, NoticeResponse,
+  ParameterStatus, ReadyForQuery, and ErrorResponse parsing is locally tested
+  without exporting raw SQL text, function OIDs, argument values, copy payloads,
+  copy failure text, password values, row field names, notice text, parameter
+  status values, or raw error messages, including canonical SQLSTATE validation
+  for notice and error responses, but runtime capture,
   request/response matching, broad
   response coverage, and live PostgreSQL proof are not implemented or proven.
 - **Redis protocol observability:** bounded RESP command and

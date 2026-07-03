@@ -2942,6 +2942,24 @@ fn extracts_postgres_parameter_status_without_parameter_values() {
 }
 
 #[test]
+fn extracts_postgres_row_description_without_field_names() {
+    let bytes = postgres_row_description_frame(&[b"secret_customer_token"]);
+
+    let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres row description response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.status_code, "OK");
+    assert_eq!(extraction.error_type, None);
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "OK"
+    }));
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("secret") || attribute.value.contains("customer")
+    ));
+}
+
+#[test]
 fn extracts_postgres_ready_for_query_status_without_raw_fields() {
     let bytes = postgres_frame(b'Z', b"I");
 
@@ -3347,6 +3365,11 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
             &config
         )
         .unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b'T', b"\x00\x01secret_name\0"), &config)
+            .unwrap_err(),
         PostgresExtraction::MalformedFrame
     );
     assert_eq!(
@@ -4760,6 +4783,22 @@ fn postgres_notice_response_frame(sqlstate: &[u8], message: &[u8]) -> Vec<u8> {
     body.push(0);
     body.push(0);
     postgres_frame(b'N', &body)
+}
+
+fn postgres_row_description_frame(field_names: &[&[u8]]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&(field_names.len() as u16).to_be_bytes());
+    for field_name in field_names {
+        body.extend_from_slice(field_name);
+        body.push(0);
+        body.extend_from_slice(&0_u32.to_be_bytes());
+        body.extend_from_slice(&0_u16.to_be_bytes());
+        body.extend_from_slice(&25_u32.to_be_bytes());
+        body.extend_from_slice(&(-1_i16).to_be_bytes());
+        body.extend_from_slice(&(-1_i32).to_be_bytes());
+        body.extend_from_slice(&0_i16.to_be_bytes());
+    }
+    postgres_frame(b'T', &body)
 }
 
 fn mysql_packet(command: u8, query: &[u8]) -> Vec<u8> {

@@ -135,6 +135,7 @@ pub fn parse_postgres_response(
         b'E' => postgres_error_response(body, config.max_attributes),
         b'N' => postgres_notice_response(body, config.max_attributes),
         b'S' => postgres_parameter_status_response(body, config),
+        b'T' => postgres_row_description_response(body, config),
         b'Z' => postgres_ready_for_query_response(body, config.max_attributes),
         _ => Err(PostgresExtraction::UnsupportedMessage),
     }
@@ -184,6 +185,32 @@ fn postgres_parameter_status_response(
     if cursor != body.len() {
         return Err(PostgresExtraction::MalformedFrame);
     }
+    let status_code = "OK".to_string();
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        attributes: postgres_response_attributes(&status_code, None, config.max_attributes),
+        status_code,
+        error_type: None,
+    })
+}
+
+fn postgres_row_description_response(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    let mut cursor = 0;
+    let field_count = read_u16_be_cursor(body, &mut cursor)? as usize;
+    if field_count > MAX_POSTGRES_BIND_ITEMS {
+        return Err(PostgresExtraction::QueryTooLong);
+    }
+    for _ in 0..field_count {
+        let _field_name = parse_cstring(body, &mut cursor, config.max_request_line_bytes)?;
+        skip_bytes(body, &mut cursor, 18)?;
+    }
+    if cursor != body.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+
     let status_code = "OK".to_string();
     Ok(ParsedPostgresResponse {
         protocol: ProtocolKind::Postgresql,
