@@ -808,6 +808,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn runner_rejects_invalid_runtime_config_before_running() {
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(OneSignalSource))
+            .with_sink(Box::new(MemorySink {
+                seen: Arc::new(Mutex::new(Vec::new())),
+            }));
+
+        let err = Runner::new(
+            RuntimeConfig {
+                queue_capacity: 0,
+                ..RuntimeConfig::default()
+            },
+            registry,
+        )
+        .expect_err("invalid config is rejected before run");
+
+        assert_eq!(
+            err.to_string(),
+            "invalid config: queue_capacity must be greater than zero"
+        );
+    }
+
     #[tokio::test]
     async fn runner_routes_source_signal_to_sink() {
         let seen = Arc::new(Mutex::new(Vec::new()));
