@@ -128,7 +128,7 @@ fn scan_cgroup_id_cache_with_limits(
         if let Ok(relative) = path.strip_prefix(root) {
             let cgroup_path = normalized_cgroup_path(relative);
             if let Some(container) = parse_container_from_cgroup(&cgroup_path) {
-                insert_bounded(&mut cache, id, container, max_cache_entries);
+                cache.insert(id, container);
             }
         }
         let Ok(entries) = fs::read_dir(&path) else {
@@ -154,21 +154,6 @@ pub(super) fn normalized_cgroup_path(path: &Path) -> String {
     } else {
         format!("/{}", text.trim_start_matches('/'))
     }
-}
-
-fn insert_bounded(
-    cache: &mut BTreeMap<u64, ContainerContext>,
-    id: u64,
-    container: ContainerContext,
-    max_cache_entries: usize,
-) {
-    if cache.len() >= max_cache_entries
-        && !cache.contains_key(&id)
-        && let Some(oldest_id) = cache.keys().next().copied()
-    {
-        cache.remove(&oldest_id);
-    }
-    cache.insert(id, container);
 }
 
 #[cfg(unix)]
