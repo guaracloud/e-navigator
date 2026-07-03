@@ -90,6 +90,21 @@ async fn duplicate_samples_are_suppressed() {
 }
 
 #[tokio::test]
+async fn bounded_sample_dedupe_evicts_oldest_inserted_fingerprint() {
+    let generator = ProfilingGenerator::with_limits(8, 2, 8, 1_000_000_000);
+    let first = sample_signal_with_stack(3_500_000_000, "stack:a", Some(context()));
+    let second = sample_signal_with_stack(1_500_000_000, "stack:b", Some(context()));
+    let third = sample_signal_with_stack(2_500_000_000, "stack:c", Some(context()));
+
+    assert_eq!(observe(&generator, &first).await.len(), 1);
+    assert_eq!(observe(&generator, &second).await.len(), 1);
+    assert_eq!(observe(&generator, &third).await.len(), 1);
+
+    assert!(observe(&generator, &second).await.is_empty());
+    assert_eq!(observe(&generator, &first).await.len(), 1);
+}
+
+#[tokio::test]
 async fn aggregation_is_deterministic() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let first = observe(
@@ -540,6 +555,40 @@ async fn warning_dedupe_uses_warning_fingerprint_not_sample_fingerprint() {
     assert_eq!(profiling_warning_count(&second_outputs), 0);
 }
 
+#[tokio::test]
+async fn bounded_warning_dedupe_evicts_oldest_inserted_fingerprint() {
+    let generator = ProfilingGenerator::with_limits(8, 16, 2, 1_000_000_000);
+    let first = sample_signal_with_stack(3_500_000_000, "stack:a", None);
+    let second = sample_signal_with_stack(1_500_000_000, "stack:b", None);
+    let third = sample_signal_with_stack(2_500_000_000, "stack:c", None);
+
+    assert_eq!(
+        profiling_warning_count(&observe(&generator, &first).await),
+        1
+    );
+    assert_eq!(
+        profiling_warning_count(&observe(&generator, &second).await),
+        1
+    );
+    assert_eq!(
+        profiling_warning_count(&observe(&generator, &third).await),
+        1
+    );
+
+    let mut repeated_second = sample_signal_with_stack(1_500_000_000, "stack:b", None);
+    set_thread_id(&mut repeated_second, 99);
+    let mut repeated_first = sample_signal_with_stack(3_500_000_000, "stack:a", None);
+    set_thread_id(&mut repeated_first, 99);
+    assert_eq!(
+        profiling_warning_count(&observe(&generator, &repeated_second).await),
+        0
+    );
+    assert_eq!(
+        profiling_warning_count(&observe(&generator, &repeated_first).await),
+        1
+    );
+}
+
 async fn observe(generator: &ProfilingGenerator, signal: &SignalEnvelope) -> Vec<SignalEnvelope> {
     let (tx, mut rx) = mpsc::channel(8);
     generator
@@ -559,7 +608,7 @@ fn profiling_warning_count(outputs: &[SignalEnvelope]) -> usize {
         .iter()
         .filter(|signal| {
             matches!(
-                signal.payload,
+                &signal.payload,
                 SignalPayload::ProfilingWarningObservation(_)
             )
         })
@@ -637,6 +686,13 @@ fn set_sample_count(signal: &mut SignalEnvelope, sample_count: u64) {
         panic!("expected profile sample");
     };
     sample.sample_count = sample_count;
+}
+
+fn set_thread_id(signal: &mut SignalEnvelope, thread_id: u64) {
+    let SignalPayload::ProfileSampleObservation(sample) = &mut signal.payload else {
+        panic!("expected profile sample");
+    };
+    sample.thread_id = Some(thread_id);
 }
 
 fn context() -> (ContainerContext, KubernetesContext) {

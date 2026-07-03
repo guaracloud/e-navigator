@@ -94,9 +94,10 @@ or chart rendering:
   flow-summary destination pod-IP attribution before sinks, deterministic
   resource metric dedupe eviction, deterministic trace-correlation interaction
   and warning dedupe eviction,
-  deterministic profile session IDs with sampling-period separation, generated
-  profile session bounded and sensitive/reserved-attribute filtering, bounded
-  safe-attribute merging across samples, bounded profile stack-ID state,
+  deterministic profile sample and warning dedupe eviction, deterministic
+  profile session IDs with sampling-period separation, generated profile session
+  bounded and sensitive/reserved-attribute filtering, bounded safe-attribute
+  merging across samples, bounded profile stack-ID state,
   bounded request-span scalar fields and attributes with sensitive trace
   attribute filtering, deterministic request-correlation request and warning
   dedupe eviction, and dropped-profile-sample warnings;

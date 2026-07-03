@@ -6,7 +6,7 @@ use e_navigator_signals::{
     is_sensitive_profiling_attribute_key,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{Mutex, MutexGuard},
 };
 use tokio::sync::mpsc;
@@ -32,8 +32,8 @@ pub struct ProfilingGenerator {
     max_samples_per_window: u64,
     windows: Mutex<BTreeMap<WindowKey, WindowState>>,
     window_order: Mutex<BTreeSet<WindowOrderKey>>,
-    seen_samples: Mutex<BTreeSet<SampleFingerprint>>,
-    seen_warnings: Mutex<BTreeSet<WarningFingerprint>>,
+    seen_samples: Mutex<BoundedFingerprints<SampleFingerprint>>,
+    seen_warnings: Mutex<BoundedFingerprints<WarningFingerprint>>,
 }
 
 impl Default for ProfilingGenerator {
@@ -63,8 +63,8 @@ impl ProfilingGenerator {
             max_samples_per_window: DEFAULT_MAX_SAMPLES_PER_WINDOW,
             windows: Mutex::new(BTreeMap::new()),
             window_order: Mutex::new(BTreeSet::new()),
-            seen_samples: Mutex::new(BTreeSet::new()),
-            seen_warnings: Mutex::new(BTreeSet::new()),
+            seen_samples: Mutex::new(BoundedFingerprints::default()),
+            seen_warnings: Mutex::new(BoundedFingerprints::default()),
         }
     }
 }
@@ -260,30 +260,12 @@ impl ProfilingGenerator {
             stack_id: bounded_stack_id(&sample.stack_id),
         };
         let mut seen = self.seen_warnings()?;
-        if seen.contains(&fingerprint) {
-            return Ok(false);
-        }
-        if seen.len() >= self.max_warnings.max(1)
-            && let Some(first) = seen.iter().next().cloned()
-        {
-            seen.remove(&first);
-        }
-        seen.insert(fingerprint);
-        Ok(true)
+        Ok(seen.insert_if_new(fingerprint, self.max_warnings))
     }
 
     fn mark_sample_seen(&self, fingerprint: SampleFingerprint) -> CoreResult<bool> {
         let mut seen = self.seen_samples()?;
-        if seen.contains(&fingerprint) {
-            return Ok(false);
-        }
-        if seen.len() >= self.max_seen_samples.max(1)
-            && let Some(first) = seen.iter().next().cloned()
-        {
-            seen.remove(&first);
-        }
-        seen.insert(fingerprint);
-        Ok(true)
+        Ok(seen.insert_if_new(fingerprint, self.max_seen_samples))
     }
 
     fn windows(&self) -> CoreResult<MutexGuard<'_, BTreeMap<WindowKey, WindowState>>> {
@@ -294,12 +276,50 @@ impl ProfilingGenerator {
         self.window_order.lock().map_err(module_error)
     }
 
-    fn seen_samples(&self) -> CoreResult<MutexGuard<'_, BTreeSet<SampleFingerprint>>> {
+    fn seen_samples(&self) -> CoreResult<MutexGuard<'_, BoundedFingerprints<SampleFingerprint>>> {
         self.seen_samples.lock().map_err(module_error)
     }
 
-    fn seen_warnings(&self) -> CoreResult<MutexGuard<'_, BTreeSet<WarningFingerprint>>> {
+    fn seen_warnings(&self) -> CoreResult<MutexGuard<'_, BoundedFingerprints<WarningFingerprint>>> {
         self.seen_warnings.lock().map_err(module_error)
+    }
+}
+
+#[derive(Debug)]
+struct BoundedFingerprints<T> {
+    entries: BTreeSet<T>,
+    insertion_order: VecDeque<T>,
+}
+
+impl<T> Default for BoundedFingerprints<T> {
+    fn default() -> Self {
+        Self {
+            entries: BTreeSet::new(),
+            insertion_order: VecDeque::new(),
+        }
+    }
+}
+
+impl<T> BoundedFingerprints<T>
+where
+    T: Clone + Ord,
+{
+    fn insert_if_new(&mut self, fingerprint: T, max_entries: usize) -> bool {
+        if self.entries.contains(&fingerprint) {
+            return false;
+        }
+
+        let max_entries = max_entries.max(1);
+        while self.entries.len() >= max_entries {
+            let Some(oldest) = self.insertion_order.pop_front() else {
+                break;
+            };
+            self.entries.remove(&oldest);
+        }
+
+        self.insertion_order.push_back(fingerprint.clone());
+        self.entries.insert(fingerprint);
+        true
     }
 }
 
