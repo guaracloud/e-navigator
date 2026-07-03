@@ -1,6 +1,9 @@
 #![no_main]
 
-use e_navigator_protocol::{ProtocolExtractionConfig, mysql::parse_mysql_command};
+use e_navigator_protocol::{
+    ProtocolExtractionConfig,
+    mysql::{parse_mysql_command, parse_mysql_error_response},
+};
 use libfuzzer_sys::fuzz_target;
 
 const MAX_INPUT_BYTES: usize = 2048;
@@ -15,4 +18,5 @@ fuzz_target!(|data: &[u8]| {
     };
 
     let _ = parse_mysql_command(data, &config);
+    let _ = parse_mysql_error_response(data, &config);
 });

@@ -1,6 +1,9 @@
 #![no_main]
 
-use e_navigator_protocol::{ProtocolExtractionConfig, postgres::parse_postgres_message};
+use e_navigator_protocol::{
+    ProtocolExtractionConfig,
+    postgres::{parse_postgres_error_response, parse_postgres_message},
+};
 use libfuzzer_sys::fuzz_target;
 
 const MAX_INPUT_BYTES: usize = 2048;
@@ -15,4 +18,5 @@ fuzz_target!(|data: &[u8]| {
     };
 
     let _ = parse_postgres_message(data, &config);
+    let _ = parse_postgres_error_response(data, &config);
 });

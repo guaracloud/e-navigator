@@ -33,9 +33,11 @@ or chart rendering:
   decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with a
   build-checked parser fuzz target, Kafka request-header and ApiVersions
   response-error parsing, MongoDB wire-message and response-error parsing, MySQL
-  command packet and ERR response parsing, NATS text command plus OK/error
-  response parsing, PostgreSQL wire-message and ErrorResponse parsing, and Redis
-  RESP command plus error-response parsing;
+  command packet and ERR response parsing with build-checked parser fuzz
+  coverage, NATS text command plus OK/error response parsing, PostgreSQL
+  wire-message and ErrorResponse parsing with build-checked parser fuzz
+  coverage, and Redis RESP command plus error-response parsing with
+  build-checked parser fuzz coverage;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/error-span
   flow, precise duplicate flow suppression, flow-attribution warnings, and
