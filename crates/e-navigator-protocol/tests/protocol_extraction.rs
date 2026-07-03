@@ -1384,6 +1384,14 @@ fn rejects_malformed_and_unsupported_redis_fixtures() {
         RedisExtraction::InvalidUtf8
     );
     assert_eq!(
+        parse_redis_response(b"+OK!\r\n", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b"-ERR!\r\n", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
         parse_redis_response(b"$3\r\nkey", &config).unwrap_err(),
         RedisExtraction::MalformedFrame
     );

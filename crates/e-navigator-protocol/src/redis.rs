@@ -98,7 +98,7 @@ pub fn parse_redis_response(
         b'+' => {
             let status = parse_simple_token(bytes, 1)?;
             RedisResponseToken {
-                status_code: bounded_response_status(Some(&status)),
+                status_code: Some(parse_response_status(&status)?),
                 error_type: None,
             }
         }
@@ -119,12 +119,13 @@ pub fn parse_redis_response(
         }
         b'-' => {
             let status = parse_simple_token(bytes, 1)?;
-            let status_code = bounded_response_status(Some(&status));
-            let error_type = status_code
-                .as_ref()
-                .map(|status| format!("redis_{}", status.to_ascii_lowercase().replace('-', "_")));
+            let status_code = parse_response_status(&status)?;
+            let error_type = Some(format!(
+                "redis_{}",
+                status_code.to_ascii_lowercase().replace('-', "_")
+            ));
             RedisResponseToken {
-                status_code,
+                status_code: Some(status_code),
                 error_type,
             }
         }
@@ -313,17 +314,16 @@ fn bounded_command(value: Option<&str>) -> Option<String> {
     Some(value.to_ascii_uppercase())
 }
 
-fn bounded_response_status(value: Option<&str>) -> Option<String> {
-    let value = value?;
+fn parse_response_status(value: &str) -> Result<String, RedisExtraction> {
     if value.is_empty()
         || value.len() > MAX_REDIS_COMMAND_BYTES
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
     {
-        return None;
+        return Err(RedisExtraction::MalformedFrame);
     }
-    Some(value.to_ascii_uppercase())
+    Ok(value.to_ascii_uppercase())
 }
 
 fn push_attribute(
