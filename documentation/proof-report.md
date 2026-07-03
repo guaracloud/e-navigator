@@ -22,7 +22,7 @@ or chart rendering:
 - JSON stdout newline-delimited serialization and sink-side redaction, including
   exec and runtime-security matched-process argv redaction, protocol request
   observations without raw trace headers, network flow signals, and profiling
-  signal families;
+  signal families with bounded sanitized profiling attributes;
 - synthetic source pipeline, including sanitized HTTP, gRPC, Kafka, MongoDB,
   MySQL, NATS, PostgreSQL, and Redis protocol request/error-span fixtures and
   flow-attribution warnings;

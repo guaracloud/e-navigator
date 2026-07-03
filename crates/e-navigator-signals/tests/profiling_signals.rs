@@ -153,6 +153,49 @@ fn profile_sample_constructor_filters_sensitive_attributes_before_json_stdout() 
 }
 
 #[test]
+fn profile_sample_constructor_bounds_attributes_before_json_stdout() {
+    let mut attributes = vec![ProfilingAttribute {
+        key: "k".repeat(96),
+        value: "v".repeat(320),
+    }];
+    attributes.extend((0..20).map(|index| ProfilingAttribute {
+        key: format!("profiling.attribute.{index}"),
+        value: "value".to_string(),
+    }));
+
+    let signal = SignalEnvelope::profile_sample_observation(
+        "source.synthetic_profile",
+        Some("node-a".to_string()),
+        e_navigator_signals::ProfileSampleObservation {
+            timestamp_unix_nanos: 1_000,
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::High,
+            sample_count: 1,
+            sampling_period_nanos: Some(10_000_000),
+            stack_id: "stack:0123456789abcdef".to_string(),
+            stack_frames: vec![],
+            process: None,
+            container: None,
+            kubernetes: None,
+            thread_id: None,
+            thread_name: None,
+            attributes,
+        },
+    );
+
+    let json = serde_json::to_value(&signal).expect("signal serializes");
+    let attributes = json["payload"]["attributes"]
+        .as_array()
+        .expect("attributes are serialized");
+
+    assert_eq!(attributes.len(), 16);
+    assert_eq!(attributes[0]["key"].as_str().map(str::len), Some(64));
+    assert_eq!(attributes[0]["value"].as_str().map(str::len), Some(256));
+    assert_eq!(attributes[15]["key"], "profiling.attribute.14");
+}
+
+#[test]
 fn serializes_stack_trace_observation_with_optional_missing_symbols() {
     let signal = SignalEnvelope::profiling_stack_trace_observation(
         "source.synthetic_profile",

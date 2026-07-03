@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkProcessIdentity};
 
+const MAX_PROFILING_ATTRIBUTES: usize = 16;
+const MAX_PROFILING_ATTRIBUTE_KEY_BYTES: usize = 64;
+const MAX_PROFILING_ATTRIBUTE_VALUE_BYTES: usize = 256;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -117,7 +121,16 @@ pub struct ProfilingWarningObservation {
 }
 
 pub fn sanitize_profiling_attributes(attributes: &mut Vec<ProfilingAttribute>) {
-    attributes.retain(|attribute| !is_sensitive_profiling_attribute_key(&attribute.key));
+    let sanitized = attributes
+        .drain(..)
+        .filter(|attribute| !is_sensitive_profiling_attribute_key(&attribute.key))
+        .take(MAX_PROFILING_ATTRIBUTES)
+        .map(|attribute| ProfilingAttribute {
+            key: truncate_utf8(&attribute.key, MAX_PROFILING_ATTRIBUTE_KEY_BYTES),
+            value: truncate_utf8(&attribute.value, MAX_PROFILING_ATTRIBUTE_VALUE_BYTES),
+        })
+        .collect();
+    *attributes = sanitized;
 }
 
 pub fn is_sensitive_profiling_attribute_key(key: &str) -> bool {
@@ -133,4 +146,16 @@ pub fn is_sensitive_profiling_attribute_key(key: &str) -> bool {
         || key.contains("credential")
         || key.contains("private_key")
         || key.contains("jwt")
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
 }
