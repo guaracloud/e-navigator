@@ -105,6 +105,7 @@ pub fn parse_postgres_response(
     match bytes[0] {
         b'C' => postgres_command_complete_response(body, config),
         b'E' => postgres_error_response(body, config.max_attributes),
+        b'Z' => postgres_ready_for_query_response(body, config.max_attributes),
         _ => Err(PostgresExtraction::UnsupportedMessage),
     }
 }
@@ -124,6 +125,39 @@ fn postgres_command_complete_response(
         attributes: postgres_response_attributes(&status_code, None, config.max_attributes),
         status_code,
         error_type: None,
+    })
+}
+
+fn postgres_ready_for_query_response(
+    body: &[u8],
+    max_attributes: usize,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    if body.len() != 1 {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    let (transaction_status, status_code, error_type) = match body[0] {
+        b'I' => ("idle", "OK", None),
+        b'T' => ("transaction", "OK", None),
+        b'E' => (
+            "failed_transaction",
+            "FAILED_TRANSACTION",
+            Some("postgresql_failed_transaction"),
+        ),
+        _ => return Err(PostgresExtraction::MalformedFrame),
+    };
+    let mut attributes = postgres_response_attributes(status_code, error_type, max_attributes);
+    push_attribute(
+        &mut attributes,
+        max_attributes,
+        "db.postgresql.transaction.status",
+        Some(transaction_status),
+    );
+
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        status_code: status_code.to_string(),
+        error_type: error_type.map(str::to_string),
+        attributes,
     })
 }
 

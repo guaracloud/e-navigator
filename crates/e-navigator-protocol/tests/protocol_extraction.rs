@@ -2109,6 +2109,55 @@ fn extracts_postgres_command_complete_without_raw_tag() {
 }
 
 #[test]
+fn extracts_postgres_ready_for_query_status_without_raw_fields() {
+    let bytes = postgres_frame(b'Z', b"I");
+
+    let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres ready response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.status_code, "OK");
+    assert_eq!(extraction.error_type, None);
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "OK"
+    }));
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.postgresql.transaction.status" && attribute.value == "idle"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type")
+    );
+}
+
+#[test]
+fn extracts_postgres_failed_transaction_ready_status() {
+    let bytes = postgres_frame(b'Z', b"E");
+
+    let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres failed transaction ready response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.status_code, "FAILED_TRANSACTION");
+    assert_eq!(
+        extraction.error_type.as_deref(),
+        Some("postgresql_failed_transaction")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "FAILED_TRANSACTION"
+    }));
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.postgresql.transaction.status"
+            && attribute.value == "failed_transaction"
+    }));
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "error.type" && attribute.value == "postgresql_failed_transaction"
+    }));
+}
+
+#[test]
 fn extracts_postgres_error_response_without_raw_message_fields() {
     let bytes =
         postgres_error_response_frame(b"23505", b"duplicate key value violates secret constraint");
@@ -2194,6 +2243,18 @@ fn enforces_postgres_frame_query_and_attribute_bounds() {
         .unwrap_err(),
         PostgresExtraction::FrameTooLong
     );
+
+    let bounded_response = parse_postgres_response(
+        &postgres_frame(b'Z', b"T"),
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded postgres ready response parses");
+    assert_eq!(bounded_response.attributes.len(), 2);
 }
 
 #[test]
@@ -2231,6 +2292,14 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     assert_eq!(
         parse_postgres_response(&postgres_frame(b'Q', b"select 1\0"), &config).unwrap_err(),
         PostgresExtraction::UnsupportedMessage
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b'Z', b""), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b'Z', b"X"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
     );
     assert_eq!(
         parse_postgres_error_response(&postgres_frame(b'E', b"Msecret message\0\0"), &config)
