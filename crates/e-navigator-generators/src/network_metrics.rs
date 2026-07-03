@@ -940,8 +940,13 @@ struct EventFingerprint {
     kind: &'static str,
     pid: u32,
     fd: Option<i32>,
+    protocol: String,
+    address_family: String,
+    local_address: Option<String>,
+    local_port: Option<u16>,
     remote_address: String,
     remote_port: u16,
+    opened_at: Option<u64>,
     timestamp: u64,
     errno: Option<i32>,
 }
@@ -953,8 +958,13 @@ impl EventFingerprint {
                 kind: "open",
                 pid: event.process.pid,
                 fd: event.fd,
+                protocol: format!("{:?}", event.protocol),
+                address_family: format!("{:?}", event.address_family),
+                local_address: event.local_address.clone(),
+                local_port: event.local_port,
                 remote_address: event.remote_address.clone(),
                 remote_port: event.remote_port,
+                opened_at: None,
                 timestamp: event.timestamp_unix_nanos,
                 errno: None,
             }),
@@ -962,8 +972,13 @@ impl EventFingerprint {
                 kind: "close",
                 pid: event.process.pid,
                 fd: event.fd,
+                protocol: format!("{:?}", event.protocol),
+                address_family: format!("{:?}", event.address_family),
+                local_address: event.local_address.clone(),
+                local_port: event.local_port,
                 remote_address: event.remote_address.clone(),
                 remote_port: event.remote_port,
+                opened_at: event.opened_at_unix_nanos,
                 timestamp: event.closed_at_unix_nanos,
                 errno: None,
             }),
@@ -971,8 +986,13 @@ impl EventFingerprint {
                 kind: "failure",
                 pid: event.process.pid,
                 fd: event.fd,
+                protocol: format!("{:?}", event.protocol),
+                address_family: format!("{:?}", event.address_family),
+                local_address: None,
+                local_port: None,
                 remote_address: event.remote_address.clone(),
                 remote_port: event.remote_port,
+                opened_at: None,
                 timestamp: event.timestamp_unix_nanos,
                 errno: Some(event.errno),
             }),
@@ -1339,6 +1359,58 @@ mod tests {
 
         assert!(!first.is_empty());
         assert!(second.is_empty());
+    }
+
+    #[tokio::test]
+    async fn suppresses_duplicate_identical_close_observations() {
+        let generator = NetworkMetricsGenerator::default();
+        let signal =
+            network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
+
+        let first = observe(&generator, &signal).await;
+        let second = observe(&generator, &signal).await;
+
+        assert!(counter_metric_exists(&first, "network.flow.bytes"));
+        assert!(second.is_empty());
+    }
+
+    #[tokio::test]
+    async fn duplicate_suppression_distinguishes_distinct_local_flow_endpoints() {
+        let generator = NetworkMetricsGenerator::default();
+        let first =
+            network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
+        let mut second =
+            network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 32, 64);
+        let SignalPayload::NetworkConnectionClose(event) = &mut second.payload else {
+            panic!("expected network close");
+        };
+        event.local_port = Some(43513);
+
+        let first_outputs = observe(&generator, &first).await;
+        let second_outputs = observe(&generator, &second).await;
+
+        assert!(counter_metric_exists(&first_outputs, "network.flow.bytes"));
+        assert_eq!(
+            counter_metric(&second_outputs, "network.flow.bytes").value,
+            1536 + 96
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_suppression_distinguishes_reused_fd_close_windows() {
+        let generator = NetworkMetricsGenerator::default();
+        let first =
+            network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
+        let second = network_close_signal_with_bytes("10.0.0.20", 5432, 200, 900, Some(7), 32, 64);
+
+        let first_outputs = observe(&generator, &first).await;
+        let second_outputs = observe(&generator, &second).await;
+
+        assert!(counter_metric_exists(&first_outputs, "network.flow.bytes"));
+        assert_eq!(
+            counter_metric(&second_outputs, "network.flow.bytes").value,
+            1536 + 96
+        );
     }
 
     async fn observe(

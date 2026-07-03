@@ -36,7 +36,8 @@ or chart rendering:
   error-response parsing;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/error-span
-  flow, flow-attribution warnings, and dropped-profile-sample warnings;
+  flow, precise duplicate flow suppression, flow-attribution warnings, and
+  dropped-profile-sample warnings;
 - Prometheus HTTP formatting, health/readiness endpoints, and secret-like label
   filtering;
 - OTLP protobuf request encoding plus per-family endpoint routing for metrics,
