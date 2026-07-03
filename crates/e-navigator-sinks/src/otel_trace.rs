@@ -86,7 +86,7 @@ fn trace_span_record(signal: &SignalEnvelope, span: &TraceSpanObservation) -> Ot
     append_trace_attributes(&mut attributes, &span.attributes);
 
     OtelTraceRecord {
-        name: span.name.clone(),
+        name: truncate_utf8(&span.name, MAX_TRACE_ATTRIBUTE_VALUE_BYTES),
         kind: OtelTraceRecordKind::Span,
         status: None,
         trace_id: span.trace_id.clone(),
@@ -114,11 +114,11 @@ fn service_interaction_record(
     append_endpoint_attributes(&mut attributes, "server", &span.destination);
     append_trace_attributes(&mut attributes, &span.attributes);
     if let Some(error_type) = &span.error_type {
-        attributes.insert("error.type".to_string(), serde_json::json!(error_type));
+        attributes.insert("error.type".to_string(), bounded_json_string(error_type));
     }
 
     OtelTraceRecord {
-        name: span.name.clone(),
+        name: truncate_utf8(&span.name, MAX_TRACE_ATTRIBUTE_VALUE_BYTES),
         kind: OtelTraceRecordKind::ServiceInteraction,
         status: span.error_type.as_deref().map(error_status),
         trace_id: span.trace_id.clone(),
@@ -244,7 +244,7 @@ fn request_span_record(signal: &SignalEnvelope, span: &RequestSpanObservation) -
     append_trace_attributes(&mut attributes, &span.attributes);
 
     OtelTraceRecord {
-        name: span.name.clone(),
+        name: truncate_utf8(&span.name, MAX_TRACE_ATTRIBUTE_VALUE_BYTES),
         kind: OtelTraceRecordKind::RequestSpan,
         status: request_span_status(span),
         trace_id: span.trace_id.clone(),
@@ -459,7 +459,7 @@ fn request_error_type(span: &RequestSpanObservation) -> Option<&str> {
 
 fn error_status(message: &str) -> OtelSpanStatus {
     OtelSpanStatus::Error {
-        message: message.to_string(),
+        message: truncate_utf8(message, MAX_TRACE_ATTRIBUTE_VALUE_BYTES),
     }
 }
 

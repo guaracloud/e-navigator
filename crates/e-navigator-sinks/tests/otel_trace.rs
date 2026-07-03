@@ -149,6 +149,48 @@ fn formats_service_interaction_error_status() {
 }
 
 #[test]
+fn bounds_trace_record_name_and_status_message() {
+    const MAX_VALUE_BYTES: usize = 256;
+
+    let long_value = "e".repeat(MAX_VALUE_BYTES + 64);
+    let signal = SignalEnvelope::service_interaction_span_observation(
+        "generator.trace_correlation",
+        Some("node-a".to_string()),
+        ServiceInteractionSpanObservation {
+            name: long_value.clone(),
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_000),
+            duration_nanos: Some(1_000),
+            correlation_kind: TraceCorrelationKind::NetworkInferred,
+            confidence: TraceConfidence::Medium,
+            source: source_endpoint(),
+            destination: destination_endpoint(),
+            protocol: NetworkProtocol::Tcp,
+            process: Some(network_process()),
+            error_type: Some(long_value),
+            attributes: vec![],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("trace signal formats");
+
+    assert_eq!(record.name.len(), MAX_VALUE_BYTES);
+    assert_eq!(
+        record.attributes["error.type"].as_str().map(str::len),
+        Some(MAX_VALUE_BYTES)
+    );
+    assert_eq!(
+        record.status,
+        Some(OtelSpanStatus::Error {
+            message: "e".repeat(MAX_VALUE_BYTES)
+        })
+    );
+}
+
+#[test]
 fn formats_service_path_and_warning_trace_foundation_records() {
     let path = SignalEnvelope::trace_service_path_observation(
         "generator.trace_correlation",
