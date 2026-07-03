@@ -2920,6 +2920,28 @@ fn extracts_postgres_empty_success_responses_without_payload_values() {
 }
 
 #[test]
+fn extracts_postgres_parameter_status_without_parameter_values() {
+    let bytes = postgres_frame(b'S', b"application_name\0secret-client-name\0");
+
+    let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres parameter status response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.status_code, "OK");
+    assert_eq!(extraction.error_type, None);
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "OK"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("application_name")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn extracts_postgres_ready_for_query_status_without_raw_fields() {
     let bytes = postgres_frame(b'Z', b"I");
 
@@ -3276,6 +3298,18 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     );
     assert_eq!(
         parse_postgres_response(&postgres_frame(b'1', b"secret"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b'S', b"application_name\0"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(
+            &postgres_frame(b'S', b"application_name\0secret\0extra"),
+            &config
+        )
+        .unwrap_err(),
         PostgresExtraction::MalformedFrame
     );
     assert_eq!(

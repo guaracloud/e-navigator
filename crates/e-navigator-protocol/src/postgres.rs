@@ -133,6 +133,7 @@ pub fn parse_postgres_response(
         b'1' | b'2' | b'3' | b'n' => postgres_empty_ok_response(body, config.max_attributes),
         b'C' => postgres_command_complete_response(body, config),
         b'E' => postgres_error_response(body, config.max_attributes),
+        b'S' => postgres_parameter_status_response(body, config),
         b'Z' => postgres_ready_for_query_response(body, config.max_attributes),
         _ => Err(PostgresExtraction::UnsupportedMessage),
     }
@@ -160,6 +161,25 @@ fn postgres_command_complete_response(
 ) -> Result<ParsedPostgresResponse, PostgresExtraction> {
     let mut cursor = 0;
     let _tag = parse_cstring(body, &mut cursor, config.max_request_line_bytes)?;
+    if cursor != body.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    let status_code = "OK".to_string();
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        attributes: postgres_response_attributes(&status_code, None, config.max_attributes),
+        status_code,
+        error_type: None,
+    })
+}
+
+fn postgres_parameter_status_response(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    let mut cursor = 0;
+    let _parameter_name = parse_cstring(body, &mut cursor, config.max_request_line_bytes)?;
+    let _parameter_value = parse_cstring(body, &mut cursor, config.max_request_line_bytes)?;
     if cursor != body.len() {
         return Err(PostgresExtraction::MalformedFrame);
     }
