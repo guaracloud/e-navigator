@@ -794,6 +794,63 @@ fn resource_source_paths_and_bounds_are_validated() {
 }
 
 #[test]
+fn http_source_defaults_are_bounded() {
+    let config = RuntimeConfig::default();
+
+    assert_eq!(config.http_source.max_header_bytes, 8 * 1024);
+    assert_eq!(config.http_source.max_request_line_bytes, 1024);
+    assert_eq!(config.http_source.max_attributes, 8);
+    assert_eq!(config.http_source.max_tracestate_bytes, 512);
+}
+
+#[test]
+fn http_source_limits_are_validated() {
+    assert_invalid(
+        RuntimeConfig {
+            http_source: HttpSourceConfig {
+                max_header_bytes: 0,
+                ..HttpSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "http_source.max_header_bytes must be between 1 and 8192",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            http_source: HttpSourceConfig {
+                max_request_line_bytes: 0,
+                ..HttpSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "http_source.max_request_line_bytes must be between 1 and 1024",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            http_source: HttpSourceConfig {
+                max_attributes: HttpSourceConfig::MAX_ATTRIBUTES_LIMIT + 1,
+                ..HttpSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "http_source.max_attributes must be between 1 and 32",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            http_source: HttpSourceConfig {
+                max_tracestate_bytes: HttpSourceConfig::MAX_TRACESTATE_BYTES_LIMIT + 1,
+                ..HttpSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "http_source.max_tracestate_bytes must be between 1 and 4096",
+    );
+}
+
+#[test]
 fn resource_metrics_limits_are_validated() {
     assert_invalid(
         RuntimeConfig {
@@ -1306,6 +1363,12 @@ fn representative_runtime_toml_deserializes_and_validates() {
         max_fds_per_process = 1024
         max_file_bytes = 131072
 
+        [http_source]
+        max_header_bytes = 8192
+        max_request_line_bytes = 1024
+        max_attributes = 8
+        max_tracestate_bytes = 512
+
         [cpu_profile_source]
         enabled = false
         module_name = "source.aya_cpu_profile"
@@ -1432,6 +1495,7 @@ fn omitted_optional_sections_use_serde_defaults() {
     assert_eq!(config.attribution, AttributionConfig::default());
     assert_eq!(config.runtime_security, RuntimeSecurityConfig::default());
     assert_eq!(config.resource_source, ResourceSourceConfig::default());
+    assert_eq!(config.http_source, HttpSourceConfig::default());
     assert_eq!(config.cpu_profile_source, CpuProfileSourceConfig::default());
     assert_eq!(config.resource_metrics, ResourceMetricsConfig::default());
     assert_eq!(config.network_metrics, NetworkMetricsConfig::default());

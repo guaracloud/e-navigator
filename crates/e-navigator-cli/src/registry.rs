@@ -62,6 +62,7 @@ pub(crate) fn build_registry(
         registry = registry.with_source(Box::new(AyaHttpSource::new(
             host.clone(),
             config.attribution.procfs_root.clone(),
+            config.http_source.clone(),
         )));
     }
 

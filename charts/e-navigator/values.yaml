@@ -65,6 +65,12 @@ config:
     max_fds_per_process = 1024
     max_file_bytes = 131072
 
+    [http_source]
+    max_header_bytes = 8192
+    max_request_line_bytes = 1024
+    max_attributes = 8
+    max_tracestate_bytes = 512
+
     [cpu_profile_source]
     enabled = false
     module_name = "source.aya_cpu_profile"

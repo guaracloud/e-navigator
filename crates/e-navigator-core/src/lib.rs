@@ -8,11 +8,11 @@ pub mod pipeline;
 
 pub use config::{
     ArgvCaptureConfig, AttributionConfig, ConfigError, ConfigErrorKind, ConfigResult,
-    CpuProfileBackpressure, CpuProfileSourceConfig, DnsMetricsConfig, KNOWN_MODULES, KnownModule,
-    KubernetesAttributionConfig, ModuleConfig, NetworkEndpointConfig, NetworkMetricsConfig,
-    OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig, RequestCorrelationConfig,
-    ResourceMetricsConfig, ResourceSourceConfig, RuntimeConfig, RuntimeSecurityConfig,
-    TraceCorrelationConfig, is_known_module_name, known_module_names,
+    CpuProfileBackpressure, CpuProfileSourceConfig, DnsMetricsConfig, HttpSourceConfig,
+    KNOWN_MODULES, KnownModule, KubernetesAttributionConfig, ModuleConfig, NetworkEndpointConfig,
+    NetworkMetricsConfig, OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig,
+    RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig, RuntimeConfig,
+    RuntimeSecurityConfig, TraceCorrelationConfig, is_known_module_name, known_module_names,
 };
 pub use error::{CoreError, CoreResult};
 pub use module::{ModuleKind, ModuleMetadata};

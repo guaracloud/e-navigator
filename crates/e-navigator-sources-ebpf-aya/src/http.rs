@@ -218,19 +218,35 @@ fn raw_http_request_to_signal_result(
     observed_unix_nanos: u64,
     procfs_root: &std::path::Path,
 ) -> Result<SignalEnvelope, RawHttpDecodeError> {
+    raw_http_request_to_signal_result_with_config(
+        bytes,
+        host,
+        observed_unix_nanos,
+        procfs_root,
+        &ProtocolExtractionConfig::default(),
+    )
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn raw_http_request_to_signal_result_with_config(
+    bytes: &[u8],
+    host: Option<String>,
+    observed_unix_nanos: u64,
+    procfs_root: &std::path::Path,
+    protocol_config: &ProtocolExtractionConfig,
+) -> Result<SignalEnvelope, RawHttpDecodeError> {
     if bytes.len() < core::mem::size_of::<RawHttpRequestEvent>() {
         return Err(RawHttpDecodeError::RawSampleTooShort);
     }
 
     let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawHttpRequestEvent>()) };
     let request = compact_raw_http_request(&raw);
-    let parsed =
-        parse_http_request(&request, &ProtocolExtractionConfig::default()).map_err(|reason| {
-            RawHttpDecodeError::HttpExtraction {
-                reason,
-                sample: RawHttpInvalidSampleMetadata::from_raw(&raw),
-            }
-        })?;
+    let parsed = parse_http_request(&request, protocol_config).map_err(|reason| {
+        RawHttpDecodeError::HttpExtraction {
+            reason,
+            sample: RawHttpInvalidSampleMetadata::from_raw(&raw),
+        }
+    })?;
     let trace_context = parsed.trace_context.as_ref();
     let peer = peer_context(&raw, &parsed.attributes);
     let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
@@ -395,7 +411,10 @@ mod platform {
         programs::TracePoint,
         util::online_cpus,
     };
-    use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Source};
+    use e_navigator_core::{
+        CoreError, CoreResult, HttpSourceConfig, ModuleKind, ModuleMetadata, Source,
+    };
+    use e_navigator_protocol::ProtocolExtractionConfig;
     use e_navigator_signals::{SignalEnvelope, SignalPayload};
     use std::{
         path::PathBuf,
@@ -411,11 +430,16 @@ mod platform {
     pub struct AyaHttpSource {
         host: Option<String>,
         procfs_root: PathBuf,
+        protocol_config: ProtocolExtractionConfig,
     }
 
     impl AyaHttpSource {
-        pub fn new(host: Option<String>, procfs_root: PathBuf) -> Self {
-            Self { host, procfs_root }
+        pub fn new(host: Option<String>, procfs_root: PathBuf, config: HttpSourceConfig) -> Self {
+            Self {
+                host,
+                procfs_root,
+                protocol_config: protocol_config(config),
+            }
         }
     }
 
@@ -512,6 +536,7 @@ mod platform {
                 let cpu_tx = tx.clone();
                 let host = self.host.clone();
                 let procfs_root = self.procfs_root.clone();
+                let protocol_config = self.protocol_config;
                 let reader_shutdown = shutdown.clone();
                 let diagnostics = diagnostics.clone();
                 let telemetry = telemetry.clone();
@@ -528,11 +553,12 @@ mod platform {
                             match event {
                                 PerfEvent::Sample { head, tail } => {
                                     let bytes = perf_sample_bytes(head, tail);
-                                    match super::raw_http_request_to_signal_result(
+                                    match super::raw_http_request_to_signal_result_with_config(
                                         bytes.as_ref(),
                                         host.clone(),
                                         super::now_unix_nanos(),
                                         &procfs_root,
+                                        &protocol_config,
                                     ) {
                                         Ok(signal) => {
                                             telemetry.record_decoded_sample();
@@ -751,6 +777,15 @@ mod platform {
         Ok(())
     }
 
+    fn protocol_config(config: HttpSourceConfig) -> ProtocolExtractionConfig {
+        ProtocolExtractionConfig {
+            max_header_bytes: config.max_header_bytes,
+            max_request_line_bytes: config.max_request_line_bytes,
+            max_attributes: config.max_attributes,
+            max_tracestate_bytes: config.max_tracestate_bytes,
+        }
+    }
+
     #[derive(Clone)]
     struct ReaderShutdown {
         stopped: Arc<AtomicBool>,
@@ -808,7 +843,9 @@ mod platform {
 #[cfg(not(target_os = "linux"))]
 mod platform {
     use async_trait::async_trait;
-    use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Source};
+    use e_navigator_core::{
+        CoreError, CoreResult, HttpSourceConfig, ModuleKind, ModuleMetadata, Source,
+    };
     use e_navigator_signals::SignalEnvelope;
     use tokio::sync::mpsc;
 
@@ -816,13 +853,19 @@ mod platform {
     pub struct AyaHttpSource {
         host: Option<String>,
         _procfs_root: std::path::PathBuf,
+        _config: HttpSourceConfig,
     }
 
     impl AyaHttpSource {
-        pub fn new(host: Option<String>, procfs_root: std::path::PathBuf) -> Self {
+        pub fn new(
+            host: Option<String>,
+            procfs_root: std::path::PathBuf,
+            config: HttpSourceConfig,
+        ) -> Self {
             Self {
                 host,
                 _procfs_root: procfs_root,
+                _config: config,
             }
         }
     }
@@ -1094,6 +1137,53 @@ mod tests {
 
         assert_eq!(err, RawHttpDecodeError::RawSampleTooShort);
         assert_eq!(err.reason_name(), "raw_sample_too_short");
+    }
+
+    #[test]
+    fn raw_http_decode_result_uses_configured_parser_limits() {
+        let request = b"GET /checkout HTTP/1.1\r\nHost: example.test\r\n\r\n";
+        let mut raw = RawHttpRequestEvent {
+            pid: 42,
+            uid: 1000,
+            cgroup_id: 7,
+            fd: 9,
+            family: RAW_HTTP_AF_INET,
+            remote_port_be: 8080_u16.to_be(),
+            local_port_be: 39000_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([10, 43, 0, 77]),
+            local_addr_v4: u32::from_ne_bytes([10, 42, 1, 23]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 0,
+            request_len: request.len() as u32,
+            request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
+            command: fixed_command("curl"),
+            request: [0; RAW_HTTP_REQUEST_BYTES],
+        };
+        raw.request[..request.len()].copy_from_slice(request);
+
+        let err = raw_http_request_to_signal_result_with_config(
+            raw_as_bytes(&raw),
+            None,
+            1_000,
+            std::path::Path::new("/proc"),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 256,
+                max_request_line_bytes: 4,
+                max_attributes: 8,
+                max_tracestate_bytes: 512,
+            },
+        )
+        .expect_err("configured parser limits reject oversized request lines");
+
+        assert!(matches!(
+            err,
+            RawHttpDecodeError::HttpExtraction {
+                reason: HttpExtraction::RequestLineTooLong,
+                ..
+            }
+        ));
+        assert_eq!(err.reason_name(), "request_line_too_long");
     }
 
     #[test]

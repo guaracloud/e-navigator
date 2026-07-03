@@ -26,7 +26,7 @@ or chart rendering:
   and local Kubernetes attribution selector filtering;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/profile events;
-- bounded DNS/HTTP request and HTTP response-status fixture parsing, decoded
+- bounded DNS/HTTP request parsing with configurable HTTP parser limits, HTTP response-status fixture parsing, decoded
   gRPC-over-HTTP/2 metadata and trailer-status parsing, Kafka request-header
   and ApiVersions response-error parsing, MongoDB wire-message and
   response-error parsing, MySQL command packet and ERR response parsing, NATS

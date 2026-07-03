@@ -3,6 +3,7 @@ mod attribution;
 mod cpu_profile;
 mod dns_metrics;
 mod error;
+mod http_source;
 mod kubernetes;
 mod modules;
 mod network_metrics;
@@ -20,6 +21,7 @@ pub use attribution::AttributionConfig;
 pub use cpu_profile::{CpuProfileBackpressure, CpuProfileSourceConfig};
 pub use dns_metrics::DnsMetricsConfig;
 pub use error::{ConfigError, ConfigErrorKind, ConfigResult};
+pub use http_source::HttpSourceConfig;
 pub use kubernetes::KubernetesAttributionConfig;
 pub use modules::{
     KNOWN_MODULES, KnownModule, ModuleConfig, is_known_module_name, known_module_names,
