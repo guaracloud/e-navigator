@@ -599,6 +599,19 @@ fn otlp_http_sink_config_is_validated_when_enabled() {
             modules: enabled_modules(),
             otlp_http: OtlpHttpConfig {
                 enabled: true,
+                endpoint: "http://:4318/v1/metrics".to_string(),
+                ..OtlpHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "otlp_http.endpoint must include a host after the scheme",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: enabled_modules(),
+            otlp_http: OtlpHttpConfig {
+                enabled: true,
                 endpoint: format!(
                     "http://{}",
                     "a".repeat(OtlpHttpConfig::MAX_ENDPOINT_BYTES_LIMIT)

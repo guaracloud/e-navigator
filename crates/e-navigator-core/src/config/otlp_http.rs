@@ -216,7 +216,7 @@ fn validate_endpoint(path: &'static str, endpoint: &str) -> ConfigResult<()> {
         .split(['/', '?', '#'])
         .next()
         .expect("split always returns at least one segment");
-    if authority.is_empty() {
+    if authority.is_empty() || authority.starts_with(':') {
         return Err(ConfigError::invalid_value(
             path,
             format!("{path} must include a host after the scheme"),
