@@ -2933,6 +2933,38 @@ fn extracts_mysql_query_operation_without_raw_sql() {
 }
 
 #[test]
+fn extracts_mysql_connection_commands_without_schema_values() {
+    for (command, payload, operation, command_name) in [
+        (0x01, b"".as_slice(), "QUIT", "quit"),
+        (0x02, b"secret_schema".as_slice(), "INIT_DB", "init_db"),
+        (0x1f, b"".as_slice(), "RESET_CONNECTION", "reset_connection"),
+    ] {
+        let bytes = mysql_packet(command, payload);
+
+        let extraction = parse_mysql_command(&bytes, &ProtocolExtractionConfig::default())
+            .expect("mysql connection command parses");
+
+        assert_eq!(extraction.protocol, ProtocolKind::Mysql);
+        assert_eq!(extraction.operation.as_deref(), Some(operation));
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "db.operation" && attribute.value == operation)
+        );
+        assert!(extraction.attributes.iter().any(
+            |attribute| attribute.key == "db.mysql.command" && attribute.value == command_name
+        ));
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("secret_schema"))
+        );
+    }
+}
+
+#[test]
 fn extracts_mysql_stmt_prepare_operation_without_raw_sql() {
     let bytes = mysql_packet(0x16, b"insert into orders values (?, ?)");
 
@@ -3279,7 +3311,7 @@ fn rejects_malformed_and_unsupported_mysql_fixtures() {
     );
     assert_eq!(
         parse_mysql_command(&mysql_packet(0x01, b"ignored"), &config).unwrap_err(),
-        MysqlExtraction::UnsupportedCommand
+        MysqlExtraction::MalformedPacket
     );
 
     let mut truncated = mysql_packet(0x03, b"select 1");
@@ -3292,6 +3324,27 @@ fn rejects_malformed_and_unsupported_mysql_fixtures() {
     assert_eq!(
         parse_mysql_command(&mysql_packet(0x03, b"sel\xffct"), &config).unwrap_err(),
         MysqlExtraction::InvalidUtf8
+    );
+    assert_eq!(
+        parse_mysql_command(&mysql_packet(0x02, b""), &config).unwrap_err(),
+        MysqlExtraction::MalformedPacket
+    );
+    assert_eq!(
+        parse_mysql_command(&mysql_packet(0x02, b"schema\xff"), &config).unwrap_err(),
+        MysqlExtraction::InvalidUtf8
+    );
+    assert_eq!(
+        parse_mysql_command(
+            &mysql_packet(0x02, b"secret_schema"),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        MysqlExtraction::QueryTooLong
     );
     assert_eq!(
         parse_mysql_command(&mysql_packet(0x17, b"\x2a\0\0"), &config).unwrap_err(),
@@ -3307,6 +3360,10 @@ fn rejects_malformed_and_unsupported_mysql_fixtures() {
     );
     assert_eq!(
         parse_mysql_command(&mysql_packet(0x1c, b"\x2a\0\0\0"), &config).unwrap_err(),
+        MysqlExtraction::MalformedPacket
+    );
+    assert_eq!(
+        parse_mysql_command(&mysql_packet(0x1f, b"secret"), &config).unwrap_err(),
         MysqlExtraction::MalformedPacket
     );
     assert_eq!(
