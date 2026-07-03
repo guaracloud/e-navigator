@@ -129,7 +129,10 @@ pub struct ProfilingWarningObservation {
 pub fn sanitize_profiling_attributes(attributes: &mut Vec<ProfilingAttribute>) {
     let sanitized = attributes
         .drain(..)
-        .filter(|attribute| !is_sensitive_profiling_attribute_key(&attribute.key))
+        .filter(|attribute| {
+            !is_sensitive_profiling_attribute_key(&attribute.key)
+                && !is_reserved_profiling_attribute_key(&attribute.key)
+        })
         .take(MAX_PROFILING_ATTRIBUTES)
         .map(|attribute| ProfilingAttribute {
             key: truncate_utf8(&attribute.key, MAX_PROFILING_ATTRIBUTE_KEY_BYTES),
@@ -210,6 +213,20 @@ pub fn is_sensitive_profiling_attribute_key(key: &str) -> bool {
         || key.contains("credential")
         || key.contains("private_key")
         || key.contains("jwt")
+}
+
+fn is_reserved_profiling_attribute_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "schema"
+            | "profile_id"
+            | "profile_kind"
+            | "correlation_kind"
+            | "confidence"
+            | "sample_count"
+            | "stack_id"
+            | "frame_count"
+    )
 }
 
 fn truncate_utf8(value: &str, max_bytes: usize) -> String {

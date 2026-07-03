@@ -136,6 +136,14 @@ fn profile_sample_constructor_filters_sensitive_attributes_before_json_stdout() 
                     value: "secret".to_string(),
                 },
                 ProfilingAttribute {
+                    key: "profile_id".to_string(),
+                    value: "evil".to_string(),
+                },
+                ProfilingAttribute {
+                    key: "correlation_kind".to_string(),
+                    value: "evil".to_string(),
+                },
+                ProfilingAttribute {
                     key: "profiling.synthetic.fixture".to_string(),
                     value: "cpu_sample".to_string(),
                 },
