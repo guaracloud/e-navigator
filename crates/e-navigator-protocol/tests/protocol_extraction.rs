@@ -2581,6 +2581,36 @@ fn rejects_malformed_and_unsupported_mongodb_fixtures() {
         MongodbExtraction::MalformedFrame
     );
     assert_eq!(
+        parse_mongodb_message(
+            &mongodb_op_msg_with_extra_section(
+                &bson_command_document("find", "customers"),
+                &[0xff],
+            ),
+            &config,
+        )
+        .unwrap_err(),
+        MongodbExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_mongodb_response(
+            &mongodb_op_msg_with_extra_section(&bson_mongodb_ok_document(), &[0xff]),
+            &config,
+        )
+        .unwrap_err(),
+        MongodbExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_mongodb_response(
+            &mongodb_op_msg_with_extra_section(
+                &bson_mongodb_ok_document(),
+                &mongodb_op_msg_body_section(&bson_mongodb_ok_document()),
+            ),
+            &config,
+        )
+        .unwrap_err(),
+        MongodbExtraction::MalformedFrame
+    );
+    assert_eq!(
         parse_mongodb_response(
             &mongodb_op_msg(&bson_command_document("find", "customers")),
             &config,
@@ -3119,11 +3149,22 @@ fn mongodb_frame(opcode: i32, body: &[u8]) -> Vec<u8> {
 }
 
 fn mongodb_op_msg(document: &[u8]) -> Vec<u8> {
+    mongodb_op_msg_with_extra_section(document, &[])
+}
+
+fn mongodb_op_msg_with_extra_section(document: &[u8], extra_section: &[u8]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&0_u32.to_le_bytes());
-    body.push(0);
-    body.extend_from_slice(document);
+    body.extend_from_slice(&mongodb_op_msg_body_section(document));
+    body.extend_from_slice(extra_section);
     mongodb_frame(2013, &body)
+}
+
+fn mongodb_op_msg_body_section(document: &[u8]) -> Vec<u8> {
+    let mut section = Vec::new();
+    section.push(0);
+    section.extend_from_slice(document);
+    section
 }
 
 fn mongodb_op_query(namespace: &str, document: &[u8]) -> Vec<u8> {

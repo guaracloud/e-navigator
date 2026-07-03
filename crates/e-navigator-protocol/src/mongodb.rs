@@ -166,25 +166,8 @@ fn parse_op_msg_command(
     body: &[u8],
     max_document_bytes: usize,
 ) -> Result<Option<String>, MongodbExtraction> {
-    if body.len() < 5 {
-        return Err(MongodbExtraction::MalformedFrame);
-    }
-    let mut cursor = 4;
-    while cursor < body.len() {
-        let kind = body[cursor];
-        cursor += 1;
-        match kind {
-            OP_MSG_KIND_BODY => {
-                let document = read_document(body, &mut cursor, max_document_bytes)?;
-                return document_command_name(document);
-            }
-            OP_MSG_KIND_SEQUENCE => {
-                skip_document_sequence(body, &mut cursor, max_document_bytes)?;
-            }
-            _ => return Err(MongodbExtraction::MalformedFrame),
-        }
-    }
-    Err(MongodbExtraction::MalformedFrame)
+    let document = op_msg_body_document(body, max_document_bytes)?;
+    document_command_name(document)
 }
 
 fn parse_op_query_command(
@@ -211,17 +194,28 @@ fn parse_op_msg_response(
     body: &[u8],
     max_document_bytes: usize,
 ) -> Result<MongodbResponse, MongodbExtraction> {
+    let document = op_msg_body_document(body, max_document_bytes)?;
+    document_response_status(document)
+}
+
+fn op_msg_body_document(
+    body: &[u8],
+    max_document_bytes: usize,
+) -> Result<&[u8], MongodbExtraction> {
     if body.len() < 5 {
         return Err(MongodbExtraction::MalformedFrame);
     }
     let mut cursor = 4;
+    let mut body_document = None;
     while cursor < body.len() {
         let kind = body[cursor];
         cursor += 1;
         match kind {
             OP_MSG_KIND_BODY => {
                 let document = read_document(body, &mut cursor, max_document_bytes)?;
-                return document_response_status(document);
+                if body_document.replace(document).is_some() {
+                    return Err(MongodbExtraction::MalformedFrame);
+                }
             }
             OP_MSG_KIND_SEQUENCE => {
                 skip_document_sequence(body, &mut cursor, max_document_bytes)?;
@@ -229,7 +223,7 @@ fn parse_op_msg_response(
             _ => return Err(MongodbExtraction::MalformedFrame),
         }
     }
-    Err(MongodbExtraction::MalformedFrame)
+    body_document.ok_or(MongodbExtraction::MalformedFrame)
 }
 
 fn skip_document_sequence(

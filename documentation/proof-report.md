@@ -70,8 +70,9 @@ or chart rendering:
   content-type suffix validation, authority-port/userinfo validation, and a
   build-checked parser fuzz target, Kafka
   request-header plus ApiVersions and Produce response-error parsing, MongoDB
-  wire-message and response-error parsing with non-negative response-code
-  validation, MySQL command packet and OK/ERR response parsing with canonical
+  wire-message and response-error parsing with OP_MSG section validation and
+  non-negative response-code validation, MySQL command packet and OK/ERR
+  response parsing with canonical
   SQLSTATE validation and build-checked parser fuzz coverage, NATS text command
   parsing with canonical command-token validation plus OK/error response parsing,
   PostgreSQL wire-message and
