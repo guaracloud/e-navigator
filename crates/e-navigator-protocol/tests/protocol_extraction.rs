@@ -2962,6 +2962,29 @@ fn extracts_postgres_command_complete_without_raw_tag() {
 }
 
 #[test]
+fn extracts_postgres_notification_response_without_channel_or_payload_values() {
+    let bytes = postgres_notification_response_frame(b"secret_channel", b"secret payload");
+
+    let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres notification response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.status_code, "OK");
+    assert_eq!(extraction.error_type, None);
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "OK"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("channel")
+                || attribute.value.contains("payload"))
+    );
+}
+
+#[test]
 fn extracts_postgres_data_row_without_column_values() {
     let bytes = postgres_data_row_frame(&[Some(b"secret-cell-value".as_slice()), None]);
 
@@ -3523,6 +3546,32 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     assert_eq!(
         parse_postgres_response(&postgres_frame(b'Q', b"select 1\0"), &config).unwrap_err(),
         PostgresExtraction::UnsupportedMessage
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b'A', b"\x00\x00\x00\x2achannel\0"), &config)
+            .unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(
+            &postgres_frame(b'A', b"\x00\x00\x00\x2achannel\0payload\0extra"),
+            &config,
+        )
+        .unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(
+            &postgres_notification_response_frame(b"secret_channel", b"secret payload"),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        PostgresExtraction::QueryTooLong
     );
     assert_eq!(
         parse_postgres_response(&postgres_frame(b'R', b""), &config).unwrap_err(),
@@ -5076,6 +5125,16 @@ fn postgres_error_response_frame(sqlstate: &[u8], message: &[u8]) -> Vec<u8> {
     body.push(0);
     body.push(0);
     postgres_frame(b'E', &body)
+}
+
+fn postgres_notification_response_frame(channel: &[u8], payload: &[u8]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&42_i32.to_be_bytes());
+    body.extend_from_slice(channel);
+    body.push(0);
+    body.extend_from_slice(payload);
+    body.push(0);
+    postgres_frame(b'A', &body)
 }
 
 fn postgres_notice_response_frame(sqlstate: &[u8], message: &[u8]) -> Vec<u8> {

@@ -133,6 +133,7 @@ pub fn parse_postgres_response(
         b'1' | b'2' | b'3' | b'I' | b'c' | b'n' | b's' => {
             postgres_empty_ok_response(body, config.max_attributes)
         }
+        b'A' => postgres_notification_response(body, config),
         b'C' => postgres_command_complete_response(body, config),
         b'D' => postgres_data_row_response(body, config),
         b'E' => postgres_error_response(body, config.max_attributes),
@@ -175,6 +176,27 @@ fn postgres_command_complete_response(
     if cursor != body.len() {
         return Err(PostgresExtraction::MalformedFrame);
     }
+    let status_code = "OK".to_string();
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        attributes: postgres_response_attributes(&status_code, None, config.max_attributes),
+        status_code,
+        error_type: None,
+    })
+}
+
+fn postgres_notification_response(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    let mut cursor = 0;
+    skip_bytes(body, &mut cursor, 4)?;
+    let _channel = parse_cstring(body, &mut cursor, config.max_request_line_bytes)?;
+    let _payload = parse_cstring(body, &mut cursor, config.max_request_line_bytes)?;
+    if cursor != body.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+
     let status_code = "OK".to_string();
     Ok(ParsedPostgresResponse {
         protocol: ProtocolKind::Postgresql,
