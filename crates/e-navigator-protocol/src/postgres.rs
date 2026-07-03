@@ -48,12 +48,13 @@ pub fn parse_postgres_message(
         b'Q' => parse_simple_query(body, config.max_request_line_bytes)?,
         b'P' => parse_parse_message(body, config.max_request_line_bytes)?,
         b'E' => parse_execute_message(body)?,
+        b'S' => parse_sync_message(body)?,
         _ => return Err(PostgresExtraction::UnsupportedMessage),
     };
-    let operation = if bytes[0] == b'E' {
-        Some("EXECUTE".to_string())
-    } else {
-        postgres_operation(query)
+    let operation = match bytes[0] {
+        b'E' => Some("EXECUTE".to_string()),
+        b'S' => Some("SYNC".to_string()),
+        _ => postgres_operation(query),
     };
 
     let mut attributes = Vec::new();
@@ -298,6 +299,13 @@ fn parse_execute_message(body: &[u8]) -> Result<&str, PostgresExtraction> {
     Ok("EXECUTE")
 }
 
+fn parse_sync_message(body: &[u8]) -> Result<&str, PostgresExtraction> {
+    if !body.is_empty() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    Ok("SYNC")
+}
+
 fn parse_cstring<'a>(
     bytes: &'a [u8],
     cursor: &mut usize,
@@ -355,6 +363,7 @@ fn message_type_name(message_type: u8) -> &'static str {
         b'Q' => "query",
         b'P' => "parse",
         b'E' => "execute",
+        b'S' => "sync",
         _ => "unknown",
     }
 }

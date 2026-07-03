@@ -83,7 +83,7 @@ or chart rendering:
   response parsing with canonical
   SQLSTATE validation and build-checked parser fuzz coverage, NATS text command
   parsing with canonical command-token validation plus OK/error response parsing,
-  PostgreSQL Query/Parse/Execute wire-message and
+  PostgreSQL Query/Parse/Execute/Sync wire-message and
   CommandComplete/ReadyForQuery/ErrorResponse parsing with canonical SQLSTATE
   validation and build-checked parser fuzz coverage, and Redis RESP command plus
   simple/integer/bulk/flat-array/error response parsing with declared
@@ -215,8 +215,8 @@ These areas remain explicitly partial:
   error responses, but runtime capture, request/response matching, broad
   response coverage, and live MySQL proof are not implemented or proven.
 - **PostgreSQL protocol observability:** bounded simple Query, Parse, Execute,
-  CommandComplete, ReadyForQuery, and ErrorResponse parsing is locally tested
-  without exporting raw SQL text or raw error messages, including canonical
+  Sync, CommandComplete, ReadyForQuery, and ErrorResponse parsing is locally
+  tested without exporting raw SQL text or raw error messages, including canonical
   SQLSTATE validation for error responses, but runtime capture,
   request/response matching, broad response coverage, and live PostgreSQL proof
   are not implemented or proven.
