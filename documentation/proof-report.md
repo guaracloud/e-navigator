@@ -24,10 +24,10 @@ or chart rendering:
   flow-attribution warnings;
 - strict config validation with unknown-field rejection, packaged config guards,
   runtime log-level, queue/derivation, and runtime-security endpoint bounds,
-  Prometheus and OTLP HTTP sink runtime-bound validation, OTLP HTTP
-  endpoint-shape/length validation, local Kubernetes attribution selector
-  filtering and selector-shape bounds plus response/cache/label bounds, and
-  host resource source scan plus
+  Prometheus and OTLP HTTP sink runtime-bound validation, Prometheus bind-address
+  validation, OTLP HTTP endpoint-shape/length validation, local Kubernetes
+  attribution selector filtering and selector-shape bounds plus
+  response/cache/label bounds, and host resource source scan plus
   metric-generator cardinality bounds;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/DNS/HTTP/profile

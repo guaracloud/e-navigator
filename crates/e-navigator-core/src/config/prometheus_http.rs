@@ -34,6 +34,7 @@ impl Default for PrometheusHttpConfig {
 
 impl PrometheusHttpConfig {
     pub const MAX_METRIC_LINES_LIMIT: usize = 262_144;
+    pub const MAX_BIND_ADDRESS_BYTES_LIMIT: usize = 253;
 
     pub(super) fn validate(&self, module_enabled: bool) -> ConfigResult<()> {
         if !self.enabled {
@@ -49,6 +50,21 @@ impl PrometheusHttpConfig {
             return Err(ConfigError::invalid_value(
                 "prometheus_http.bind_address",
                 "prometheus_http.bind_address must not be empty when sink.prometheus_http is enabled",
+            ));
+        }
+        if self.bind_address.trim() != self.bind_address {
+            return Err(ConfigError::invalid_value(
+                "prometheus_http.bind_address",
+                "prometheus_http.bind_address must not have leading or trailing whitespace when sink.prometheus_http is enabled",
+            ));
+        }
+        if self.bind_address.len() > Self::MAX_BIND_ADDRESS_BYTES_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "prometheus_http.bind_address",
+                format!(
+                    "prometheus_http.bind_address must be at most {} bytes when sink.prometheus_http is enabled",
+                    Self::MAX_BIND_ADDRESS_BYTES_LIMIT
+                ),
             ));
         }
         if self.port == 0 {

@@ -125,7 +125,9 @@ serviceMonitor:
 `service.enabled=true` and `prometheusHttp.enabled=true`.
 
 Prometheus latest-metric storage is also validated before startup:
-`prometheus_http.max_metric_lines` must be at most 262,144.
+`prometheus_http.max_metric_lines` must be at most 262,144, and
+`prometheus_http.bind_address` must not have leading/trailing whitespace or
+exceed 253 bytes.
 
 OTLP HTTP export is configured inside the same `config.toml` override. The
 single `endpoint` remains the fallback for backward compatibility; set
