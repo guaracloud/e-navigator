@@ -8,10 +8,10 @@ use opentelemetry_proto::tonic::{
     resource::v1::Resource,
 };
 use prost::Message;
-use std::{
-    collections::BTreeMap,
-    hash::{Hash, Hasher},
-};
+use std::collections::BTreeMap;
+
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325_u64;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 pub(crate) fn encode_profile_export_request(
     records: &[OtelProfileRecord],
@@ -114,9 +114,38 @@ fn profile_id_bytes(profile_id: &str) -> Vec<u8> {
 }
 
 fn stable_hash64(bytes: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
+    let mut hash = FNV_OFFSET_BASIS;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+#[cfg(test)]
+mod tests {
+    use super::profile_id_bytes;
+
+    #[test]
+    fn profile_id_bytes_are_stable_and_otel_sized() {
+        assert_eq!(
+            profile_id_bytes("profile:abc"),
+            vec![
+                0xbc, 0xd2, 0x5d, 0x07, 0x0a, 0x7b, 0x77, 0xd4, 0x87, 0x4d, 0x5c, 0x71, 0xd8, 0x01,
+                0x58, 0xde,
+            ]
+        );
+    }
+
+    #[test]
+    fn profile_id_bytes_distinguish_profile_ids() {
+        let left = profile_id_bytes("profile-sample:d41180ea1f8882c9");
+        let right = profile_id_bytes("profile-sample:31690a3ed8baedf5");
+
+        assert_eq!(left.len(), 16);
+        assert_eq!(right.len(), 16);
+        assert_ne!(left, right);
+    }
 }
 
 #[derive(Debug)]
