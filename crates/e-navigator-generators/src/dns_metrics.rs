@@ -6,7 +6,7 @@ use e_navigator_signals::{
     SignalPayload,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{
         Mutex, MutexGuard,
         atomic::{AtomicU64, Ordering},
@@ -29,7 +29,7 @@ pub struct DnsMetricsGenerator {
     counters: Mutex<BTreeMap<CounterKey, CounterState>>,
     latencies: Mutex<BTreeMap<LatencyKey, LatencyState>>,
     edges: Mutex<BTreeMap<EdgeKey, EdgeState>>,
-    seen_events: Mutex<BTreeSet<EventFingerprint>>,
+    seen_events: Mutex<BoundedEventFingerprints>,
     suppressed_counters: AtomicU64,
     suppressed_latencies: AtomicU64,
     suppressed_edges: AtomicU64,
@@ -66,7 +66,7 @@ impl DnsMetricsGenerator {
             counters: Mutex::new(BTreeMap::new()),
             latencies: Mutex::new(BTreeMap::new()),
             edges: Mutex::new(BTreeMap::new()),
-            seen_events: Mutex::new(BTreeSet::new()),
+            seen_events: Mutex::new(BoundedEventFingerprints::default()),
             suppressed_counters: AtomicU64::new(0),
             suppressed_latencies: AtomicU64::new(0),
             suppressed_edges: AtomicU64::new(0),
@@ -302,15 +302,9 @@ impl DnsMetricsGenerator {
             return Ok(true);
         };
         let mut seen_events = self.seen_events()?;
-        if seen_events.contains(&fingerprint) {
+        if !seen_events.insert_if_new(fingerprint, self.max_domains.saturating_mul(4).max(1)) {
             return Ok(false);
         }
-        if seen_events.len() >= self.max_domains.saturating_mul(4).max(1)
-            && let Some(first) = seen_events.iter().next().cloned()
-        {
-            seen_events.remove(&first);
-        }
-        seen_events.insert(fingerprint);
         Ok(true)
     }
 
@@ -330,7 +324,7 @@ impl DnsMetricsGenerator {
         self.edges.lock().map_err(module_error)
     }
 
-    fn seen_events(&self) -> CoreResult<MutexGuard<'_, BTreeSet<EventFingerprint>>> {
+    fn seen_events(&self) -> CoreResult<MutexGuard<'_, BoundedEventFingerprints>> {
         self.seen_events.lock().map_err(module_error)
     }
 }
@@ -640,6 +634,29 @@ impl EventFingerprint {
     }
 }
 
+#[derive(Debug, Default)]
+struct BoundedEventFingerprints {
+    members: BTreeSet<EventFingerprint>,
+    order: VecDeque<EventFingerprint>,
+}
+
+impl BoundedEventFingerprints {
+    fn insert_if_new(&mut self, fingerprint: EventFingerprint, limit: usize) -> bool {
+        if self.members.contains(&fingerprint) {
+            return false;
+        }
+        while self.members.len() >= limit {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            self.members.remove(&oldest);
+        }
+        self.members.insert(fingerprint.clone());
+        self.order.push_back(fingerprint);
+        true
+    }
+}
+
 fn normalize_domain(raw_domain: &str) -> Option<String> {
     let domain = raw_domain.trim().trim_end_matches('.').to_ascii_lowercase();
     if domain.is_empty()
@@ -943,6 +960,18 @@ mod tests {
         assert_eq!(warned, vec![1, 2, 3, 4, 8, 16]);
     }
 
+    #[test]
+    fn bounded_seen_dns_event_state_evicts_oldest_inserted_fingerprint() {
+        let mut seen = BoundedEventFingerprints::default();
+        let first = event_fingerprint("z.example.com", 1_000);
+        let second = event_fingerprint("a.example.com", 2_000);
+
+        assert!(seen.insert_if_new(first.clone(), 1));
+        assert!(seen.insert_if_new(second.clone(), 1));
+        assert!(!seen.insert_if_new(second, 1));
+        assert!(seen.insert_if_new(first, 1));
+    }
+
     async fn observe(
         generator: &DnsMetricsGenerator,
         signal: &SignalEnvelope,
@@ -993,6 +1022,16 @@ mod tests {
                 _ => None,
             })
             .expect("dependency edge exists")
+    }
+
+    fn event_fingerprint(query_name: &str, timestamp: u64) -> EventFingerprint {
+        EventFingerprint {
+            kind: "query",
+            query_name: query_name.to_string(),
+            query_type: DnsQueryType::A,
+            response_code: None,
+            timestamp,
+        }
     }
 
     fn dns_query_signal(
