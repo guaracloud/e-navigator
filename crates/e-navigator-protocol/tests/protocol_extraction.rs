@@ -4402,6 +4402,14 @@ fn rejects_malformed_and_unsupported_nats_fixtures() {
         NatsExtraction::UnsupportedCommand
     );
     assert_eq!(
+        parse_nats_command(b"PING\r\nsecret", &config).unwrap_err(),
+        NatsExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_nats_command(b"SUB subject sid\r\nsecret", &config).unwrap_err(),
+        NatsExtraction::MalformedFrame
+    );
+    assert_eq!(
         parse_nats_command(b"pub subject 0\r\n\r\n", &config).unwrap_err(),
         NatsExtraction::UnsupportedCommand
     );
@@ -4416,6 +4424,14 @@ fn rejects_malformed_and_unsupported_nats_fixtures() {
     assert_eq!(
         parse_nats_response(b"+OK details\r\n", &config).unwrap_err(),
         NatsExtraction::UnsupportedCommand
+    );
+    assert_eq!(
+        parse_nats_response(b"+OK\r\nsecret", &config).unwrap_err(),
+        NatsExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_nats_response(b"-ERR secret-detail\r\nextra", &config).unwrap_err(),
+        NatsExtraction::MalformedFrame
     );
     assert_eq!(
         parse_nats_response(b"PING\r\n", &config).unwrap_err(),

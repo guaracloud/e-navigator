@@ -83,7 +83,8 @@ or chart rendering:
   MySQL command packet parsing for quit/init-db/query/ping/prepare/execute/
   send-long-data/close/reset/fetch/reset-connection plus OK/EOF/ERR response
   parsing with canonical SQLSTATE validation and build-checked parser fuzz coverage, NATS text command
-  parsing with canonical command-token validation plus OK/error response parsing,
+  parsing with canonical command-token and exact non-payload frame validation
+  plus OK/error response parsing,
   PostgreSQL Query/Parse/Bind/Describe/Close/Execute/FunctionCall/CopyData/
   CopyDone/CopyFail/Password/Flush/Sync/Terminate wire-message and
   CommandComplete/ReadyForQuery/ErrorResponse parsing with canonical SQLSTATE
@@ -209,9 +210,10 @@ These areas remain explicitly partial:
 - **NATS protocol observability:** bounded text command parsing for common
   publish, subscribe, message, and control lines plus OK/error response parsing
   is locally tested with canonical command-token validation and without
-  exporting raw subjects, payloads, or raw error messages, but runtime capture,
-  request/response matching, broad response coverage, and live NATS proof are
-  not implemented or proven.
+  exporting raw subjects, payloads, or raw error messages, including exact
+  frame-end validation for non-payload commands and responses, but runtime
+  capture, request/response matching, broad response coverage, and live NATS
+  proof are not implemented or proven.
 - **MySQL protocol observability:** bounded `COM_QUERY`,
   `COM_QUIT`, `COM_INIT_DB`, `COM_PING`, `COM_STMT_PREPARE`,
   `COM_STMT_EXECUTE`, `COM_STMT_SEND_LONG_DATA`, `COM_STMT_CLOSE`,

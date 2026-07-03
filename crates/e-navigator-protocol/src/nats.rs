@@ -84,6 +84,7 @@ pub fn parse_nats_response(
     }
     let line = std::str::from_utf8(&bytes[..line_end]).map_err(|_| NatsExtraction::InvalidUtf8)?;
     let response = parse_response_line(line)?;
+    validate_no_payload(bytes, line_end + 2)?;
 
     let mut attributes = Vec::new();
     push_attribute(
@@ -186,30 +187,35 @@ fn parse_control_line(
             if !(3..=4).contains(&fields.len()) {
                 return Err(NatsExtraction::MalformedFrame);
             }
+            validate_no_payload(bytes, payload_start)?;
             true
         }
         "UNSUB" => {
             if !(2..=3).contains(&fields.len()) {
                 return Err(NatsExtraction::MalformedFrame);
             }
+            validate_no_payload(bytes, payload_start)?;
             false
         }
         "CONNECT" | "INFO" => {
             if fields.len() < 2 {
                 return Err(NatsExtraction::MalformedFrame);
             }
+            validate_no_payload(bytes, payload_start)?;
             false
         }
         "PING" | "PONG" | "+OK" => {
             if fields.len() != 1 {
                 return Err(NatsExtraction::MalformedFrame);
             }
+            validate_no_payload(bytes, payload_start)?;
             false
         }
         "-ERR" => {
             if fields.len() < 2 {
                 return Err(NatsExtraction::MalformedFrame);
             }
+            validate_no_payload(bytes, payload_start)?;
             false
         }
         _ => return Err(NatsExtraction::UnsupportedCommand),
@@ -219,6 +225,13 @@ fn parse_control_line(
         operation: Some(command.to_ascii_lowercase()),
         subject_present,
     })
+}
+
+fn validate_no_payload(bytes: &[u8], frame_end: usize) -> Result<(), NatsExtraction> {
+    if frame_end != bytes.len() {
+        return Err(NatsExtraction::MalformedFrame);
+    }
+    Ok(())
 }
 
 fn pub_payload_len(fields: &[&str]) -> Result<usize, NatsExtraction> {
