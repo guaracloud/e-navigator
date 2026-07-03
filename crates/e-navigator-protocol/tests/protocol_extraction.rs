@@ -24,13 +24,14 @@ use e_navigator_protocol::{
         parse_kafka_init_producer_id_response, parse_kafka_join_group_response,
         parse_kafka_leave_group_response, parse_kafka_list_groups_response,
         parse_kafka_list_offsets_response, parse_kafka_list_partition_reassignments_response,
-        parse_kafka_metadata_response, parse_kafka_offset_commit_response,
-        parse_kafka_offset_delete_response, parse_kafka_offset_fetch_response,
-        parse_kafka_produce_response, parse_kafka_renew_delegation_token_response,
-        parse_kafka_request, parse_kafka_sasl_authenticate_response,
-        parse_kafka_sasl_handshake_response, parse_kafka_sync_group_response,
-        parse_kafka_txn_offset_commit_response, parse_kafka_unregister_broker_response,
-        parse_kafka_update_features_response, parse_kafka_write_txn_markers_response,
+        parse_kafka_list_transactions_response, parse_kafka_metadata_response,
+        parse_kafka_offset_commit_response, parse_kafka_offset_delete_response,
+        parse_kafka_offset_fetch_response, parse_kafka_produce_response,
+        parse_kafka_renew_delegation_token_response, parse_kafka_request,
+        parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
+        parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
+        parse_kafka_unregister_broker_response, parse_kafka_update_features_response,
+        parse_kafka_write_txn_markers_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -325,6 +326,7 @@ proptest! {
         let _ = parse_kafka_describe_producers_response(&bytes, 0, &config);
         let _ = parse_kafka_unregister_broker_response(&bytes, 0, &config);
         let _ = parse_kafka_describe_transactions_response(&bytes, 0, &config);
+        let _ = parse_kafka_list_transactions_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -3272,6 +3274,76 @@ fn validates_kafka_describe_transactions_request_without_transactional_id_values
 }
 
 #[test]
+fn validates_kafka_list_transactions_v0_request_without_filter_values() {
+    let body = kafka_list_transactions_request_body(0, &["ongoing.secret"], &[1001], None);
+    let bytes = kafka_flexible_request_frame(66, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka list transactions v0 request parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("list_transactions"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "66")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("ongoing")
+                || attribute.value.contains("1001")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn validates_kafka_list_transactions_v2_request_without_pattern_values() {
+    let body = kafka_list_transactions_request_body(
+        2,
+        &["prepare_abort.secret"],
+        &[1002],
+        Some("txn.*secret"),
+    );
+    let bytes = kafka_flexible_request_frame(66, 2, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka list transactions v2 request parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("list_transactions"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "66")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "2")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("abort")
+                || attribute.value.contains("txn")
+                || attribute.value.contains("1002")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn validates_kafka_alter_replica_log_dirs_requests_without_path_or_topic_values() {
     let body = kafka_alter_replica_log_dirs_request_body(
         "/var/lib/kafka/secret-dir",
@@ -5606,6 +5678,78 @@ fn extracts_kafka_describe_transactions_error_without_transaction_or_state_value
             .any(|attribute| attribute.value.contains("txn")
                 || attribute.value.contains("abort")
                 || attribute.value.contains("payments")
+                || attribute.value.contains("1002")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_list_transactions_ok_response_without_transaction_values() {
+    let states: &[ListTransactionsStateFixture<'_>] = &[("txn.secret", 1001, "ongoing.secret")];
+    let bytes = kafka_list_transactions_response_frame(0, 0, &[], states);
+
+    let extraction =
+        parse_kafka_list_transactions_response(&bytes, 0, &ProtocolExtractionConfig::default())
+            .expect("list transactions ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "list_transactions");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "66")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("txn")
+                || attribute.value.contains("ongoing")
+                || attribute.value.contains("1001")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_list_transactions_error_without_filter_or_state_values() {
+    let states: &[ListTransactionsStateFixture<'_>] =
+        &[("txn-denied.secret", 1002, "prepare_abort.secret")];
+    let bytes = kafka_list_transactions_response_frame(0, 35, &["unknown.secret"], states);
+
+    let extraction =
+        parse_kafka_list_transactions_response(&bytes, 2, &ProtocolExtractionConfig::default())
+            .expect("list transactions error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "list_transactions");
+    assert_eq!(extraction.status_code, "35");
+    assert_eq!(extraction.error_type.as_deref(), Some("35"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "2")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "35")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("unknown")
+                || attribute.value.contains("txn")
+                || attribute.value.contains("abort")
                 || attribute.value.contains("1002")
                 || attribute.value.contains("secret"))
     );
@@ -8302,6 +8446,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     .expect("bounded kafka describe transactions response parses");
     assert_eq!(bounded_describe_transactions_response.attributes.len(), 2);
 
+    let bounded_list_transactions_response = parse_kafka_list_transactions_response(
+        &kafka_list_transactions_response_frame(0, 0, &[], &[]),
+        2,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka list transactions response parses");
+    assert_eq!(bounded_list_transactions_response.attributes.len(), 2);
+
     let bounded_produce_response = parse_kafka_produce_response(
         &kafka_produce_response_frame(0, 1, &[("orders.secret", 6)]),
         1,
@@ -10801,6 +10958,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_list_transactions_response(
+            &kafka_list_transactions_response_frame(0, 0, &[], &[]),
+            3,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_sasl_handshake_response(
             &kafka_sasl_handshake_response_frame(0, 0, &["PLAIN"]),
             2,
@@ -11578,6 +11744,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_list_transactions_response(
+            &kafka_list_transactions_response_with_unknown_state_count_frame(1025),
+            2,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_list_transactions_response(
+            &kafka_list_transactions_response_with_state_count_frame(1025),
+            2,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_describe_cluster_response(
             &kafka_describe_cluster_response_frame(
                 0,
@@ -11619,6 +11803,25 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
                 &[(0, "txn.secret", "ongoing.secret", 1001, &[])],
             ),
             0,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_list_transactions_response(
+            &kafka_list_transactions_response_frame(
+                0,
+                0,
+                &["unknown.secret"],
+                &[("txn.secret", 1001, "ongoing.secret")],
+            ),
+            2,
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
                 max_request_line_bytes: 4,
@@ -12407,6 +12610,100 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::MalformedFrame
     );
 
+    let list_transactions_body =
+        kafka_list_transactions_request_body(2, &["ongoing.secret"], &[1001], Some("txn.*secret"));
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(66, 3, Some(b"client-a"), &list_transactions_body),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+
+    let mut oversized_list_transactions_states_body = Vec::new();
+    push_unsigned_varint(&mut oversized_list_transactions_states_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                66,
+                2,
+                Some(b"client-a"),
+                &oversized_list_transactions_states_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+
+    let mut oversized_list_transactions_producers_body = Vec::new();
+    push_unsigned_varint(&mut oversized_list_transactions_producers_body, 1);
+    push_unsigned_varint(&mut oversized_list_transactions_producers_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                66,
+                2,
+                Some(b"client-a"),
+                &oversized_list_transactions_producers_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+
+    let list_transactions_long_state_body =
+        kafka_list_transactions_request_body(2, &["ongoing.secret"], &[1001], None);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                66,
+                2,
+                Some(b"client-a"),
+                &list_transactions_long_state_body,
+            ),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+
+    let list_transactions_long_pattern_body =
+        kafka_list_transactions_request_body(2, &[], &[], Some("txn.*secret"));
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                66,
+                2,
+                Some(b"client-a"),
+                &list_transactions_long_pattern_body,
+            ),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(66, 2, Some(b"client-a"), b"\x01\x01\0"),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
     let mut truncated_response = kafka_produce_response_frame(0, 1, &[("orders", 6)]);
     truncated_response.truncate(10);
     assert_eq!(
@@ -12849,6 +13146,19 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
             &config,
         )
         .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_list_transactions_response = kafka_list_transactions_response_frame(
+        0,
+        35,
+        &["unknown.secret"],
+        &[("txn.secret", 1001, "ongoing.secret")],
+    );
+    truncated_list_transactions_response.truncate(18);
+    assert_eq!(
+        parse_kafka_list_transactions_response(&truncated_list_transactions_response, 2, &config)
+            .unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
 
@@ -16482,6 +16792,31 @@ fn kafka_describe_transactions_request_body(transactional_ids: &[&str]) -> Vec<u
     body
 }
 
+fn kafka_list_transactions_request_body(
+    api_version: i16,
+    state_filters: &[&str],
+    producer_id_filters: &[i64],
+    transactional_id_pattern: Option<&str>,
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_unsigned_varint(&mut body, state_filters.len() + 1);
+    for state_filter in state_filters {
+        push_compact_string(&mut body, state_filter);
+    }
+    push_unsigned_varint(&mut body, producer_id_filters.len() + 1);
+    for producer_id in producer_id_filters {
+        body.extend_from_slice(&producer_id.to_be_bytes());
+    }
+    if api_version >= 1 {
+        body.extend_from_slice(&123456_i64.to_be_bytes());
+    }
+    if api_version >= 2 {
+        push_compact_nullable_string(&mut body, transactional_id_pattern);
+    }
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 fn kafka_alter_replica_log_dirs_request_body(log_dir: &str, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&1_i32.to_be_bytes());
@@ -18823,6 +19158,57 @@ fn kafka_describe_transactions_response_with_topic_count_frame(topic_count: usiz
     response.extend_from_slice(&1001_i64.to_be_bytes());
     response.extend_from_slice(&1_i16.to_be_bytes());
     push_unsigned_varint(&mut response, topic_count + 1);
+    kafka_frame(&response)
+}
+
+type ListTransactionsStateFixture<'a> = (&'a str, i64, &'a str);
+
+fn kafka_list_transactions_response_frame(
+    correlation_id: i32,
+    error_code: i16,
+    unknown_state_filters: &[&str],
+    states: &[ListTransactionsStateFixture<'_>],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&error_code.to_be_bytes());
+    push_unsigned_varint(&mut response, unknown_state_filters.len() + 1);
+    for state_filter in unknown_state_filters {
+        push_compact_string(&mut response, state_filter);
+    }
+    push_unsigned_varint(&mut response, states.len() + 1);
+    for (transactional_id, producer_id, transaction_state) in states {
+        push_compact_string(&mut response, transactional_id);
+        response.extend_from_slice(&producer_id.to_be_bytes());
+        push_compact_string(&mut response, transaction_state);
+        push_unsigned_varint(&mut response, 0);
+    }
+    push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+fn kafka_list_transactions_response_with_unknown_state_count_frame(
+    unknown_state_count: usize,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    push_unsigned_varint(&mut response, unknown_state_count + 1);
+    kafka_frame(&response)
+}
+
+fn kafka_list_transactions_response_with_state_count_frame(state_count: usize) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    push_unsigned_varint(&mut response, 1);
+    push_unsigned_varint(&mut response, state_count + 1);
     kafka_frame(&response)
 }
 
