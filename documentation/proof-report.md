@@ -19,7 +19,8 @@ or chart rendering:
 
 - static module registration and runner fan-out;
 - versioned JSON signal envelopes;
-- synthetic source pipeline;
+- synthetic source pipeline, including sanitized HTTP, Kafka, MongoDB, MySQL,
+  NATS, PostgreSQL, and Redis protocol request/span fixtures;
 - config validation and packaged config guards;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/profile events;
@@ -27,7 +28,7 @@ or chart rendering:
   wire-message parsing, MySQL command packet parsing, NATS text command
   parsing, PostgreSQL wire-message parsing, and Redis RESP command parsing;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
-  security generator behavior;
+  security generator behavior, including synthetic protocol request/span flow;
 - Prometheus HTTP formatting, health/readiness endpoints, and secret-like label
   filtering;
 - OTLP protobuf request encoding plus per-family endpoint routing for metrics,

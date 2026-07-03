@@ -139,7 +139,8 @@ impl Source<SignalEnvelope> for SyntheticExecSource {
 mod tests {
     use super::*;
     use e_navigator_core::Source;
-    use e_navigator_signals::SignalPayload;
+    use e_navigator_signals::{ProtocolKind, SignalPayload};
+    use std::collections::BTreeSet;
     use tokio::sync::mpsc;
 
     #[tokio::test]
@@ -225,6 +226,28 @@ mod tests {
                     && request.trace_id.is_none()
                     && request.span_id.is_none()
         )));
+
+        let observed_protocols = signals
+            .iter()
+            .filter_map(|signal| match &signal.payload {
+                SignalPayload::ProtocolRequestObservation(request) => Some(request.protocol),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        assert!(observed_protocols.is_superset(&BTreeSet::from([
+            ProtocolKind::Http,
+            ProtocolKind::Kafka,
+            ProtocolKind::Mongodb,
+            ProtocolKind::Mysql,
+            ProtocolKind::Nats,
+            ProtocolKind::Postgresql,
+            ProtocolKind::Redis,
+        ])));
+        assert!(!signals.iter().any(|signal| {
+            format!("{:?}", signal.payload).contains("secret")
+                || format!("{:?}", signal.payload).contains("payload")
+                || format!("{:?}", signal.payload).contains("topic.")
+        }));
         assert!(signals.iter().any(|signal| matches!(
             &signal.payload,
             SignalPayload::NetworkConnectionFailure(failure)
