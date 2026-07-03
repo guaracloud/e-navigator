@@ -28,10 +28,10 @@ or chart rendering:
 - raw userspace decode paths for selected Aya exec/network/profile events;
 - bounded DNS/HTTP request and HTTP response-status fixture parsing, decoded
   gRPC-over-HTTP/2 metadata and trailer-status parsing, Kafka request-header
-  parsing, MongoDB wire-message parsing, MySQL command packet and ERR response
-  parsing, NATS text command plus OK/error response parsing, PostgreSQL
-  wire-message and ErrorResponse parsing, and Redis RESP command plus
-  error-response parsing;
+  parsing, MongoDB wire-message and response-error parsing, MySQL command
+  packet and ERR response parsing, NATS text command plus OK/error response
+  parsing, PostgreSQL wire-message and ErrorResponse parsing, and Redis RESP
+  command plus error-response parsing;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/span flow
   and flow-attribution warnings;
@@ -93,10 +93,11 @@ These areas remain explicitly partial:
   payloads, but runtime capture, request/response matching, status/error
   extraction, flexible-version body semantics, and live Kafka proof are not
   implemented or proven.
-- **MongoDB protocol observability:** bounded `OP_MSG` and command `OP_QUERY`
-  parsing is locally tested without exporting raw BSON values or namespaces, but
-  runtime capture, request/response matching, status/error extraction, and live
-  MongoDB proof are not implemented or proven.
+- **MongoDB protocol observability:** bounded `OP_MSG`, command `OP_QUERY`, and
+  OP_MSG response-error parsing is locally tested without exporting raw BSON
+  values, namespaces, or raw error messages, but runtime capture,
+  request/response matching, broad response coverage, and live MongoDB proof are
+  not implemented or proven.
 - **NATS protocol observability:** bounded text command parsing for common
   publish, subscribe, message, and control lines plus OK/error response parsing
   is locally tested without exporting raw subjects, payloads, or raw error

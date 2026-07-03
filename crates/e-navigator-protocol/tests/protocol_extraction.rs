@@ -3,7 +3,7 @@ use e_navigator_protocol::{
     grpc::{GrpcExtraction, parse_grpc_request_headers, parse_grpc_response_trailers},
     http::{HttpExtraction, parse_http_request, parse_http_response},
     kafka::{KafkaExtraction, parse_kafka_request},
-    mongodb::{MongodbExtraction, parse_mongodb_message},
+    mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{MysqlExtraction, parse_mysql_command, parse_mysql_error_response},
     nats::{NatsExtraction, parse_nats_command, parse_nats_response},
     postgres::{PostgresExtraction, parse_postgres_error_response, parse_postgres_message},
@@ -359,6 +359,43 @@ proptest! {
         };
 
         let _ = parse_mongodb_message(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_mongodb_response_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 4,
+            max_tracestate_bytes: 32,
+        };
+
+        let _ = parse_mongodb_response(&bytes, &config);
+    }
+
+    #[test]
+    fn mongodb_response_limits_are_respected(
+        code in 1i32..=65535,
+        message in "[A-Za-z0-9_.=/%+-]{0,40}",
+    ) {
+        let bytes = mongodb_op_msg(&bson_mongodb_error_document(code, message.as_bytes()));
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 128,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        };
+
+        let parsed = parse_mongodb_response(&bytes, &config)
+            .expect("bounded mongodb error parses");
+        let expected_status = code.to_string();
+        prop_assert_eq!(parsed.status_code.as_str(), expected_status.as_str());
+        prop_assert_eq!(parsed.error_type.as_deref(), Some(expected_status.as_str()));
+        prop_assert!(parsed.attributes.len() <= config.max_attributes);
+        prop_assert!(!parsed
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")));
     }
 
     #[test]
@@ -1852,7 +1889,88 @@ fn extracts_mongodb_op_query_command_without_namespace_or_values() {
 }
 
 #[test]
-fn enforces_mongodb_frame_document_and_attribute_bounds() {
+fn extracts_mongodb_ok_response_status() {
+    let bytes = mongodb_op_msg(&bson_mongodb_ok_document());
+
+    let extraction = parse_mongodb_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("mongo response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Mongodb);
+    assert_eq!(extraction.status_code, "1");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.system" && attribute.value == "mongodb")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.response.status_code" && attribute.value == "1")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type")
+    );
+}
+
+#[test]
+fn extracts_mongodb_error_response_without_raw_error_message() {
+    let bytes = mongodb_op_msg(&bson_mongodb_error_document(
+        13,
+        b"Authorization failed for secret.collection",
+    ));
+
+    let extraction = parse_mongodb_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("mongo error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Mongodb);
+    assert_eq!(extraction.status_code, "13");
+    assert_eq!(extraction.error_type.as_deref(), Some("13"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.response.status_code" && attribute.value == "13")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "13")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("Authorization")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_mongodb_error_without_code_as_generic_status() {
+    let bytes = mongodb_op_msg(&bson_mongodb_error_without_code_document(b"secret failure"));
+
+    let extraction = parse_mongodb_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("mongo code-less error response parses");
+
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type.as_deref(), Some("0"));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn enforces_mongodb_frame_document_response_and_attribute_bounds() {
     let bounded = parse_mongodb_message(
         &mongodb_op_msg(&bson_command_document("find", "customers")),
         &ProtocolExtractionConfig {
@@ -1864,6 +1982,18 @@ fn enforces_mongodb_frame_document_and_attribute_bounds() {
     )
     .expect("bounded mongo command parses");
     assert_eq!(bounded.attributes.len(), 2);
+
+    let bounded_response = parse_mongodb_response(
+        &mongodb_op_msg(&bson_mongodb_error_document(13, b"secret")),
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 96,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded mongo response parses");
+    assert_eq!(bounded_response.attributes.len(), 2);
 
     assert_eq!(
         parse_mongodb_message(
@@ -1892,6 +2022,32 @@ fn enforces_mongodb_frame_document_and_attribute_bounds() {
         .unwrap_err(),
         MongodbExtraction::DocumentTooLong
     );
+    assert_eq!(
+        parse_mongodb_response(
+            &mongodb_op_msg(&bson_mongodb_error_document(13, b"secret")),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 16,
+                max_request_line_bytes: 96,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        MongodbExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_mongodb_response(
+            &mongodb_op_msg(&bson_mongodb_error_document(13, b"secret")),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 8,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        MongodbExtraction::DocumentTooLong
+    );
 }
 
 #[test]
@@ -1906,12 +2062,28 @@ fn rejects_malformed_and_unsupported_mongodb_fixtures() {
         parse_mongodb_message(&mongodb_frame(1, b"ignored"), &config).unwrap_err(),
         MongodbExtraction::UnsupportedOpcode
     );
+    assert_eq!(
+        parse_mongodb_response(&mongodb_frame(1, b"ignored"), &config).unwrap_err(),
+        MongodbExtraction::UnsupportedOpcode
+    );
 
     let mut truncated = mongodb_op_msg(&bson_command_document("find", "customers"));
     truncated.truncate(18);
     assert_eq!(
         parse_mongodb_message(&truncated, &config).unwrap_err(),
         MongodbExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_mongodb_response(&truncated, &config).unwrap_err(),
+        MongodbExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_mongodb_response(
+            &mongodb_op_msg(&bson_command_document("find", "customers")),
+            &config,
+        )
+        .unwrap_err(),
+        MongodbExtraction::MissingStatus
     );
 
     let invalid_key = {
@@ -1925,6 +2097,10 @@ fn rejects_malformed_and_unsupported_mongodb_fixtures() {
     };
     assert_eq!(
         parse_mongodb_message(&mongodb_op_msg(&invalid_key), &config).unwrap_err(),
+        MongodbExtraction::InvalidUtf8
+    );
+    assert_eq!(
+        parse_mongodb_response(&mongodb_op_msg(&invalid_key), &config).unwrap_err(),
         MongodbExtraction::InvalidUtf8
     );
 }
@@ -2385,4 +2561,58 @@ fn bson_command_document(command: &str, value: &str) -> Vec<u8> {
     document.push(0);
     document.push(0);
     document
+}
+
+fn bson_mongodb_ok_document() -> Vec<u8> {
+    let mut elements = Vec::new();
+    push_bson_bool(&mut elements, "ok", true);
+    bson_document(elements)
+}
+
+fn bson_mongodb_error_document(code: i32, message: &[u8]) -> Vec<u8> {
+    let mut elements = Vec::new();
+    push_bson_bool(&mut elements, "ok", false);
+    push_bson_i32(&mut elements, "code", code);
+    push_bson_string(&mut elements, "errmsg", message);
+    bson_document(elements)
+}
+
+fn bson_mongodb_error_without_code_document(message: &[u8]) -> Vec<u8> {
+    let mut elements = Vec::new();
+    push_bson_i32(&mut elements, "ok", 0);
+    push_bson_string(&mut elements, "errmsg", message);
+    bson_document(elements)
+}
+
+fn bson_document(elements: Vec<u8>) -> Vec<u8> {
+    let document_len = elements.len() + 5;
+    let mut document = Vec::with_capacity(document_len);
+    document.extend_from_slice(&(document_len as i32).to_le_bytes());
+    document.extend_from_slice(&elements);
+    document.push(0);
+    document
+}
+
+fn push_bson_bool(elements: &mut Vec<u8>, key: &str, value: bool) {
+    elements.push(0x08);
+    elements.extend_from_slice(key.as_bytes());
+    elements.push(0);
+    elements.push(u8::from(value));
+}
+
+fn push_bson_i32(elements: &mut Vec<u8>, key: &str, value: i32) {
+    elements.push(0x10);
+    elements.extend_from_slice(key.as_bytes());
+    elements.push(0);
+    elements.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_bson_string(elements: &mut Vec<u8>, key: &str, value: &[u8]) {
+    let value_len = value.len() + 1;
+    elements.push(0x02);
+    elements.extend_from_slice(key.as_bytes());
+    elements.push(0);
+    elements.extend_from_slice(&(value_len as i32).to_le_bytes());
+    elements.extend_from_slice(value);
+    elements.push(0);
 }

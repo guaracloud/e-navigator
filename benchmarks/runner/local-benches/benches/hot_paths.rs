@@ -10,7 +10,7 @@ use e_navigator_protocol::{
     ProtocolExtractionConfig,
     http::parse_http_request,
     kafka::parse_kafka_request,
-    mongodb::parse_mongodb_message,
+    mongodb::{parse_mongodb_message, parse_mongodb_response},
     mysql::parse_mysql_command,
     nats::{parse_nats_command, parse_nats_response},
     postgres::parse_postgres_message,
@@ -100,6 +100,8 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     let http = b"GET /api/orders HTTP/1.1\r\nHost: api.example.test\r\nTraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\nTracestate: rojo=00f067aa0ba902b7\r\n\r\n";
     let mongodb =
         b"\x2e\0\0\0\x01\0\0\0\0\0\0\0\xdd\x07\0\0\0\0\0\0\0\x00\x19\0\0\0\x02find\0\x0a\0\0\0customers\0\0";
+    let mongodb_response =
+        b"<\0\0\0\x01\0\0\0\0\0\0\0\xdd\x07\0\0\0\0\0\0\0\x00'\0\0\0\x08ok\0\0\x10code\0\r\0\0\0\x02errmsg\0\x07\0\0\0secret\0\0";
     let kafka = b"\0\0\0\x1b\0\0\0\x08\0\0\0\x2a\0\x0cbench-clienttopic";
     let mysql = b"\x18\0\0\0\x03select * from customers";
     let nats = b"PUB orders.created 5\r\nhello\r\n";
@@ -134,6 +136,9 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     });
     c.bench_function("protocol/mongodb_op_msg_parse", |b| {
         b.iter(|| parse_mongodb_message(black_box(mongodb), &protocol_config).unwrap())
+    });
+    c.bench_function("protocol/mongodb_error_response_parse", |b| {
+        b.iter(|| parse_mongodb_response(black_box(mongodb_response), &protocol_config).unwrap())
     });
     c.bench_function("protocol/mysql_query_packet_parse", |b| {
         b.iter(|| parse_mysql_command(black_box(mysql), &protocol_config).unwrap())

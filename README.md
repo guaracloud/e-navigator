@@ -110,7 +110,7 @@ Evidence-backed today:
 - process and TCP network source foundations;
 - Kubernetes/container attribution for selected captured signals;
 - dependency graph, resource metrics, network metrics, HTTP response-status,
-  gRPC metadata/status, Kafka, MongoDB, MySQL command/error,
+  gRPC metadata/status, Kafka, MongoDB command/error, MySQL command/error,
   NATS command/error, PostgreSQL query/error, and Redis command/error parser
   foundations, request/trace/profile
   foundations with OTLP HTTP, gRPC, and `error.type` trace status mapping and

@@ -1,6 +1,9 @@
 #![no_main]
 
-use e_navigator_protocol::{ProtocolExtractionConfig, mongodb::parse_mongodb_message};
+use e_navigator_protocol::{
+    ProtocolExtractionConfig,
+    mongodb::{parse_mongodb_message, parse_mongodb_response},
+};
 use libfuzzer_sys::fuzz_target;
 
 const MAX_INPUT_BYTES: usize = 2048;
@@ -15,4 +18,5 @@ fuzz_target!(|data: &[u8]| {
     };
 
     let _ = parse_mongodb_message(data, &config);
+    let _ = parse_mongodb_response(data, &config);
 });
