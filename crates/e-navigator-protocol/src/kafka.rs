@@ -2970,6 +2970,70 @@ pub fn parse_kafka_alter_user_scram_credentials_response(
     })
 }
 
+pub fn parse_kafka_describe_quorum_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if !(0..=2).contains(&api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = describe_quorum_response_error_code(body, api_version, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("describe_quorum"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("55"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "describe_quorum".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_list_groups_response(
     bytes: &[u8],
     api_version: i16,
@@ -3205,6 +3269,7 @@ fn validate_request_body(
         49 => validate_alter_client_quotas_request_body(body, header, config),
         50 => validate_describe_user_scram_credentials_request_body(body, header, config),
         51 => validate_alter_user_scram_credentials_request_body(body, header, config),
+        55 => validate_describe_quorum_request_body(body, header, config),
         _ => Ok(()),
     }
 }
@@ -4287,6 +4352,33 @@ fn validate_alter_user_scram_credentials_request_body(
         skip_bytes(body, &mut cursor, 4)?;
         skip_compact_bytes(body, &mut cursor, config.max_header_bytes)?;
         skip_compact_bytes(body, &mut cursor, config.max_header_bytes)?;
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_describe_quorum_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if !(0..=2).contains(&header.api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+
+    let mut cursor = header.body_start;
+    let topic_count = read_compact_array_len(body, &mut cursor)?;
+    for _ in 0..topic_count {
+        skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+        let partition_count = read_compact_array_len(body, &mut cursor)?;
+        for _ in 0..partition_count {
+            skip_bytes(body, &mut cursor, 4)?;
+            skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+        }
         skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
     }
     skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
@@ -5415,6 +5507,84 @@ fn alter_user_scram_credentials_response_error_code(
     Ok(first_error_code.unwrap_or(0))
 }
 
+fn describe_quorum_response_error_code(
+    body: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    let top_level_error_code = read_i16_be_cursor(body, &mut cursor)?;
+    if api_version >= 2 {
+        skip_compact_nullable_string(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+
+    let topic_count = read_compact_array_len(body, &mut cursor)?;
+    let mut first_partition_error_code = None;
+    for _ in 0..topic_count {
+        skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+        let partition_count = read_compact_array_len(body, &mut cursor)?;
+        for _ in 0..partition_count {
+            skip_bytes(body, &mut cursor, 4)?;
+            let error_code = read_i16_be_cursor(body, &mut cursor)?;
+            if error_code != 0 && first_partition_error_code.is_none() {
+                first_partition_error_code = Some(error_code);
+            }
+            if api_version >= 2 {
+                skip_compact_nullable_string(body, &mut cursor, config.max_request_line_bytes)?;
+            }
+            skip_bytes(body, &mut cursor, 16)?;
+            skip_describe_quorum_replica_states(body, &mut cursor, api_version, config)?;
+            skip_describe_quorum_replica_states(body, &mut cursor, api_version, config)?;
+            skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+        }
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+
+    if api_version >= 2 {
+        let node_count = read_compact_array_len(body, &mut cursor)?;
+        for _ in 0..node_count {
+            skip_bytes(body, &mut cursor, 4)?;
+            let listener_count = read_compact_array_len(body, &mut cursor)?;
+            for _ in 0..listener_count {
+                skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+                skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+                skip_bytes(body, &mut cursor, 2)?;
+                skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+            }
+            skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+        }
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    if top_level_error_code != 0 {
+        return Ok(top_level_error_code);
+    }
+    Ok(first_partition_error_code.unwrap_or(0))
+}
+
+fn skip_describe_quorum_replica_states(
+    body: &[u8],
+    cursor: &mut usize,
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    let state_count = read_compact_array_len(body, cursor)?;
+    let state_bytes = match api_version {
+        0 => 12,
+        1 => 28,
+        2 => 44,
+        _ => return Err(KafkaExtraction::UnsupportedApiVersion),
+    };
+    for _ in 0..state_count {
+        skip_bytes(body, cursor, state_bytes)?;
+        skip_tagged_fields(body, cursor, config.max_request_line_bytes)?;
+    }
+    Ok(())
+}
+
 fn delete_groups_response_error_code(
     body: &[u8],
     config: &ProtocolExtractionConfig,
@@ -6259,6 +6429,7 @@ fn api_key_name(api_key: i16) -> Option<&'static str> {
         49 => Some("alter_client_quotas"),
         50 => Some("describe_user_scram_credentials"),
         51 => Some("alter_user_scram_credentials"),
+        55 => Some("describe_quorum"),
         _ => None,
     }
 }
