@@ -1,6 +1,10 @@
 use e_navigator_core::Signal;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 
+use crate::dns::{
+    sanitize_dns_counter_metric, sanitize_dns_latency_metric, sanitize_dns_query_event,
+    sanitize_dns_response_event,
+};
 use crate::profiling::{sanitize_optional_profiling_string, sanitize_profiling_string};
 use crate::resource::sanitize_resource_metric_attributes;
 use crate::trace::{
@@ -616,8 +620,9 @@ impl SignalEnvelope {
     pub fn dns_query(
         source: impl Into<String>,
         host: Option<String>,
-        event: DnsQueryEvent,
+        mut event: DnsQueryEvent,
     ) -> Self {
+        sanitize_dns_query_event(&mut event);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::DnsQuery,
@@ -630,8 +635,9 @@ impl SignalEnvelope {
     pub fn dns_response(
         source: impl Into<String>,
         host: Option<String>,
-        event: DnsResponseEvent,
+        mut event: DnsResponseEvent,
     ) -> Self {
+        sanitize_dns_response_event(&mut event);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::DnsResponse,
@@ -644,8 +650,9 @@ impl SignalEnvelope {
     pub fn dns_counter_metric(
         source: impl Into<String>,
         host: Option<String>,
-        metric: DnsCounterMetric,
+        mut metric: DnsCounterMetric,
     ) -> Self {
+        sanitize_dns_counter_metric(&mut metric);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::DnsCounterMetric,
@@ -658,8 +665,9 @@ impl SignalEnvelope {
     pub fn dns_latency_metric(
         source: impl Into<String>,
         host: Option<String>,
-        metric: DnsLatencyMetric,
+        mut metric: DnsLatencyMetric,
     ) -> Self {
+        sanitize_dns_latency_metric(&mut metric);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::DnsLatencyMetric,
@@ -2073,6 +2081,97 @@ mod tests {
     }
 
     #[test]
+    fn dns_constructors_bound_strings_before_json_stdout() {
+        let long_value = "d".repeat(320);
+        let query = SignalEnvelope::dns_query(
+            "source.synthetic_dns",
+            Some("node-a".to_string()),
+            DnsQueryEvent {
+                process: network_process(),
+                query_name: long_value.clone(),
+                query_type: DnsQueryType::A,
+                transport_protocol: NetworkProtocol::Udp,
+                server_address: Some(long_value.clone()),
+                server_port: Some(53),
+                timestamp_unix_nanos: 400,
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let response = SignalEnvelope::dns_response(
+            "source.synthetic_dns",
+            Some("node-a".to_string()),
+            DnsResponseEvent {
+                process: network_process(),
+                query_name: long_value.clone(),
+                query_type: DnsQueryType::Aaaa,
+                response_code: DnsResponseCode::NxDomain,
+                latency_nanos: Some(15_000),
+                transport_protocol: NetworkProtocol::Udp,
+                server_address: Some(long_value.clone()),
+                server_port: Some(53),
+                timestamp_unix_nanos: 415,
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let counter = SignalEnvelope::dns_counter_metric(
+            "generator.dns_metrics",
+            Some("node-a".to_string()),
+            DnsCounterMetric {
+                metric_name: long_value.clone(),
+                unit: long_value.clone(),
+                value: 1,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 400,
+                    end_unix_nanos: 415,
+                },
+                query_name: Some(long_value.clone()),
+                query_type: Some(DnsQueryType::A),
+                response_code: None,
+                server_address: Some(long_value.clone()),
+                server_port: Some(53),
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let latency = SignalEnvelope::dns_latency_metric(
+            "generator.dns_metrics",
+            Some("node-a".to_string()),
+            DnsLatencyMetric {
+                metric_name: long_value.clone(),
+                unit: long_value,
+                count: 1,
+                sum_nanos: 15_000,
+                min_nanos: 15_000,
+                max_nanos: 15_000,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 400,
+                    end_unix_nanos: 415,
+                },
+                query_name: Some("q".repeat(320)),
+                query_type: Some(DnsQueryType::A),
+                response_code: Some(DnsResponseCode::NoError),
+                server_address: Some("s".repeat(320)),
+                server_port: Some(53),
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        assert_dns_string_lengths(&query, &["query_name", "server_address"]);
+        assert_dns_string_lengths(&response, &["query_name", "server_address"]);
+        assert_dns_string_lengths(
+            &counter,
+            &["metric_name", "unit", "query_name", "server_address"],
+        );
+        assert_dns_string_lengths(
+            &latency,
+            &["metric_name", "unit", "query_name", "server_address"],
+        );
+    }
+
+    #[test]
     fn serializes_resource_observation_signals() {
         let window = MetricAggregationWindow {
             start_unix_nanos: 1_000,
@@ -2511,5 +2610,16 @@ mod tests {
         assert!(!json.to_string().contains(&"k".repeat(129)));
         assert!(!json.to_string().contains(&"v".repeat(257)));
         assert!(json.to_string().contains("valid.but.too_large"));
+    }
+
+    fn assert_dns_string_lengths(signal: &SignalEnvelope, fields: &[&str]) {
+        let json = serde_json::to_value(signal).expect("signal serializes");
+        for field in fields {
+            assert_eq!(
+                json["payload"][*field].as_str().map(str::len),
+                Some(256),
+                "{field} should be bounded"
+            );
+        }
     }
 }
