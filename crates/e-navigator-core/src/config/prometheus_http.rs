@@ -13,6 +13,10 @@ pub struct PrometheusHttpConfig {
     pub port: u16,
     #[serde(default = "default_max_metric_lines")]
     pub max_metric_lines: usize,
+    #[serde(default = "default_signal_family_enabled")]
+    pub metrics_enabled: bool,
+    #[serde(default = "default_signal_family_enabled")]
+    pub profiles_enabled: bool,
 }
 
 impl Default for PrometheusHttpConfig {
@@ -22,6 +26,8 @@ impl Default for PrometheusHttpConfig {
             bind_address: default_bind_address(),
             port: default_port(),
             max_metric_lines: default_max_metric_lines(),
+            metrics_enabled: default_signal_family_enabled(),
+            profiles_enabled: default_signal_family_enabled(),
         }
     }
 }
@@ -55,6 +61,12 @@ impl PrometheusHttpConfig {
                 "prometheus_http.max_metric_lines must be greater than zero when sink.prometheus_http is enabled",
             ));
         }
+        if !(self.metrics_enabled || self.profiles_enabled) {
+            return Err(ConfigError::invalid_value(
+                "prometheus_http",
+                "prometheus_http must enable at least one signal family when sink.prometheus_http is enabled",
+            ));
+        }
         Ok(())
     }
 }
@@ -69,4 +81,8 @@ fn default_port() -> u16 {
 
 fn default_max_metric_lines() -> usize {
     4096
+}
+
+fn default_signal_family_enabled() -> bool {
+    true
 }

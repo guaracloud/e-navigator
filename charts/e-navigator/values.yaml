@@ -117,6 +117,8 @@ config:
     bind_address = "0.0.0.0"
     port = 9090
     max_metric_lines = 4096
+    metrics_enabled = true
+    profiles_enabled = true
 
     [otlp_http]
     enabled = false

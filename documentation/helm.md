@@ -71,6 +71,13 @@ The chart does not expose port `9090` by default. Enable the Service only when a
 real HTTP surface is configured, for example when `sink.prometheus_http` and
 `[prometheus_http] enabled = true` are present in `config.toml`:
 
+```toml
+[prometheus_http]
+enabled = true
+metrics_enabled = true
+profiles_enabled = true
+```
+
 ```yaml
 prometheusHttp:
   enabled: true

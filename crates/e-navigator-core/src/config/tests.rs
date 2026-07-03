@@ -156,6 +156,8 @@ fn prometheus_http_sink_defaults_are_bounded_and_disabled() {
     assert_eq!(config.prometheus_http.bind_address, "0.0.0.0");
     assert_eq!(config.prometheus_http.port, 9090);
     assert_eq!(config.prometheus_http.max_metric_lines, 4096);
+    assert!(config.prometheus_http.metrics_enabled);
+    assert!(config.prometheus_http.profiles_enabled);
 }
 
 #[test]
@@ -206,6 +208,23 @@ fn prometheus_http_sink_config_is_validated_when_enabled() {
             ..RuntimeConfig::default()
         },
         "prometheus_http.max_metric_lines must be greater than zero when sink.prometheus_http is enabled",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.synthetic_exec"),
+                ModuleConfig::enabled("sink.prometheus_http"),
+            ],
+            prometheus_http: PrometheusHttpConfig {
+                enabled: true,
+                metrics_enabled: false,
+                profiles_enabled: false,
+                ..PrometheusHttpConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "prometheus_http must enable at least one signal family when sink.prometheus_http is enabled",
     );
 
     assert_invalid(

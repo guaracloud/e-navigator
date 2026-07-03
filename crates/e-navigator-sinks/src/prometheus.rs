@@ -29,12 +29,25 @@ pub struct PrometheusMetricLine {
     pub value: String,
 }
 
+#[cfg(test)]
 fn format_prometheus_metric_lines(signal: &SignalEnvelope) -> Vec<PrometheusMetricLine> {
-    let Some(record) = format_otel_metric_record(signal) else {
-        return format_profile_session_metric_lines(signal);
-    };
+    format_prometheus_metric_lines_with_families(signal, true, true)
+}
 
-    format_otel_prometheus_metric_lines(record)
+fn format_prometheus_metric_lines_with_families(
+    signal: &SignalEnvelope,
+    metrics_enabled: bool,
+    profiles_enabled: bool,
+) -> Vec<PrometheusMetricLine> {
+    if metrics_enabled && let Some(record) = format_otel_metric_record(signal) {
+        return format_otel_prometheus_metric_lines(record);
+    }
+
+    if profiles_enabled {
+        return format_profile_session_metric_lines(signal);
+    }
+
+    Vec::new()
 }
 
 fn format_otel_prometheus_metric_lines(record: OtelMetricRecord) -> Vec<PrometheusMetricLine> {
@@ -167,6 +180,8 @@ pub fn render_prometheus_text(metrics: &[PrometheusMetricLine]) -> String {
 #[derive(Debug)]
 pub struct PrometheusHttpSink {
     state: Arc<PrometheusState>,
+    metrics_enabled: bool,
+    profiles_enabled: bool,
 }
 
 impl PrometheusHttpSink {
@@ -179,12 +194,25 @@ impl PrometheusHttpSink {
             let listener = TcpListener::from_std(listener).map_err(module_error)?;
             spawn_http_server(listener, state.clone());
         }
-        Ok(Self { state })
+        Ok(Self {
+            state,
+            metrics_enabled: config.metrics_enabled,
+            profiles_enabled: config.profiles_enabled,
+        })
     }
 
     #[cfg(test)]
     pub async fn bind_for_test(
         max_metric_lines: usize,
+    ) -> CoreResult<(Self, std::net::SocketAddr)> {
+        Self::bind_for_test_with_families(max_metric_lines, true, true).await
+    }
+
+    #[cfg(test)]
+    pub async fn bind_for_test_with_families(
+        max_metric_lines: usize,
+        metrics_enabled: bool,
+        profiles_enabled: bool,
     ) -> CoreResult<(Self, std::net::SocketAddr)> {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(module_error)?;
         let address = listener.local_addr().map_err(module_error)?;
@@ -192,7 +220,14 @@ impl PrometheusHttpSink {
         let listener = TcpListener::from_std(listener).map_err(module_error)?;
         let state = Arc::new(PrometheusState::new(max_metric_lines));
         spawn_http_server(listener, state.clone());
-        Ok((Self { state }, address))
+        Ok((
+            Self {
+                state,
+                metrics_enabled,
+                profiles_enabled,
+            },
+            address,
+        ))
     }
 }
 
@@ -203,7 +238,11 @@ impl Sink<SignalEnvelope> for PrometheusHttpSink {
     }
 
     async fn write(&self, signal: &SignalEnvelope) -> CoreResult<()> {
-        for line in format_prometheus_metric_lines(signal) {
+        for line in format_prometheus_metric_lines_with_families(
+            signal,
+            self.metrics_enabled,
+            self.profiles_enabled,
+        ) {
             self.state.push(line)?;
         }
         Ok(())
@@ -605,6 +644,45 @@ mod tests {
         assert!(!metrics.contains("server_port"));
     }
 
+    #[tokio::test]
+    async fn prometheus_http_sink_respects_signal_family_toggles() {
+        let (profile_only_sink, profile_only_address) =
+            PrometheusHttpSink::bind_for_test_with_families(8, false, true)
+                .await
+                .expect("profile-only sink binds");
+        profile_only_sink
+            .write(&network_counter_signal())
+            .await
+            .expect("metric signal is accepted");
+        profile_only_sink
+            .write(&profile_session_signal())
+            .await
+            .expect("profile signal is accepted");
+
+        let profile_only_metrics = http_get(profile_only_address, "/metrics").await;
+
+        assert!(profile_only_metrics.contains("profile_session_samples_observed"));
+        assert!(!profile_only_metrics.contains("network_flow_bytes"));
+
+        let (metric_only_sink, metric_only_address) =
+            PrometheusHttpSink::bind_for_test_with_families(8, true, false)
+                .await
+                .expect("metric-only sink binds");
+        metric_only_sink
+            .write(&network_counter_signal())
+            .await
+            .expect("metric signal is accepted");
+        metric_only_sink
+            .write(&profile_session_signal())
+            .await
+            .expect("profile signal is accepted");
+
+        let metric_only_metrics = http_get(metric_only_address, "/metrics").await;
+
+        assert!(metric_only_metrics.contains("network_flow_bytes"));
+        assert!(!metric_only_metrics.contains("profile_session_samples_observed"));
+    }
+
     async fn http_get(address: std::net::SocketAddr, path: &str) -> String {
         let mut stream = TcpStream::connect(address).await.expect("connect");
         stream
@@ -628,6 +706,32 @@ mod tests {
             node_name: Some("homelab-01".to_string()),
             labels: BTreeMap::new(),
         }
+    }
+
+    fn network_counter_signal() -> SignalEnvelope {
+        SignalEnvelope::network_counter_metric(
+            "generator.network_metrics",
+            Some("node-a".to_string()),
+            NetworkCounterMetric {
+                metric_name: "network.flow.bytes".to_string(),
+                unit: "By".to_string(),
+                value: 2048,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 1,
+                    end_unix_nanos: 2,
+                },
+                process: None,
+                protocol: Some(NetworkProtocol::Tcp),
+                address_family: Some(NetworkAddressFamily::Ipv4),
+                local_address: None,
+                local_port: None,
+                remote_address: None,
+                remote_port: None,
+                errno: None,
+                container: None,
+                kubernetes: Some(kubernetes_context()),
+            },
+        )
     }
 
     fn profile_session_signal() -> SignalEnvelope {
