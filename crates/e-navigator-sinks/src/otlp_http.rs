@@ -238,6 +238,93 @@ mod tests {
         }
     }
 
+    #[test]
+    fn otlp_http_sink_rejects_invalid_runtime_bounds() {
+        for (config, expected_message) in [
+            (
+                OtlpHttpConfig {
+                    metrics_endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                    batch_size: 0,
+                    metrics_enabled: true,
+                    traces_enabled: false,
+                    profiles_enabled: false,
+                    ..OtlpHttpConfig::default()
+                },
+                "batch_size must be greater than zero",
+            ),
+            (
+                OtlpHttpConfig {
+                    metrics_endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                    batch_size: OtlpHttpConfig::MAX_BATCH_SIZE_LIMIT + 1,
+                    metrics_enabled: true,
+                    traces_enabled: false,
+                    profiles_enabled: false,
+                    ..OtlpHttpConfig::default()
+                },
+                "batch_size must be less than or equal to 4096",
+            ),
+            (
+                OtlpHttpConfig {
+                    metrics_endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                    queue_capacity: 0,
+                    metrics_enabled: true,
+                    traces_enabled: false,
+                    profiles_enabled: false,
+                    ..OtlpHttpConfig::default()
+                },
+                "queue_capacity must be greater than zero",
+            ),
+            (
+                OtlpHttpConfig {
+                    metrics_endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                    queue_capacity: OtlpHttpConfig::MAX_QUEUE_CAPACITY_LIMIT + 1,
+                    metrics_enabled: true,
+                    traces_enabled: false,
+                    profiles_enabled: false,
+                    ..OtlpHttpConfig::default()
+                },
+                "queue_capacity must be less than or equal to 65536",
+            ),
+            (
+                OtlpHttpConfig {
+                    metrics_endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                    timeout_millis: 0,
+                    metrics_enabled: true,
+                    traces_enabled: false,
+                    profiles_enabled: false,
+                    ..OtlpHttpConfig::default()
+                },
+                "timeout_millis must be greater than zero",
+            ),
+            (
+                OtlpHttpConfig {
+                    metrics_endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                    timeout_millis: OtlpHttpConfig::MAX_TIMEOUT_MILLIS_LIMIT + 1,
+                    metrics_enabled: true,
+                    traces_enabled: false,
+                    profiles_enabled: false,
+                    ..OtlpHttpConfig::default()
+                },
+                "timeout_millis must be less than or equal to 300000",
+            ),
+            (
+                OtlpHttpConfig {
+                    metrics_endpoint: "http://127.0.0.1:4318/v1/metrics".to_string(),
+                    max_retries: OtlpHttpConfig::MAX_RETRIES_LIMIT + 1,
+                    metrics_enabled: true,
+                    traces_enabled: false,
+                    profiles_enabled: false,
+                    ..OtlpHttpConfig::default()
+                },
+                "max_retries must be less than or equal to 16",
+            ),
+        ] {
+            let err = OtlpHttpSink::new(config).expect_err("invalid runtime bound fails");
+
+            assert!(err.to_string().contains(expected_message));
+        }
+    }
+
     #[tokio::test]
     async fn otlp_http_sink_exports_metric_records_as_otlp_protobuf() {
         let collector = FakeCollector::spawn(vec![200]).await;
