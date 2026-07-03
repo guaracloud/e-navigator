@@ -400,6 +400,14 @@ mod tests {
         value: u64,
     }
 
+    fn encode_test_records(batch: &[TestRecord]) -> Result<Vec<u8>, ExporterError> {
+        serde_json::to_vec(batch).map_err(|err| ExporterError::Encode(err.to_string()))
+    }
+
+    fn fail_encode_test_records(_batch: &[TestRecord]) -> Result<Vec<u8>, ExporterError> {
+        Err(ExporterError::Encode("encode failed".to_string()))
+    }
+
     fn valid_config() -> HttpExporterConfig {
         HttpExporterConfig {
             endpoint: "http://127.0.0.1:9".to_string(),
@@ -648,6 +656,55 @@ mod tests {
 
         assert_eq!(exporter.queued_len(), 1);
         assert_eq!(exporter.counters().dropped_queue_full, 1);
+    }
+
+    #[test]
+    fn protobuf_bounded_queue_drops_new_items_with_counter() {
+        let mut exporter = HttpProtobufExporter::new(
+            HttpExporterConfig {
+                endpoint: "http://127.0.0.1:9".to_string(),
+                headers: Vec::new(),
+                batch_size: 1,
+                queue_capacity: 1,
+                timeout_millis: 1,
+                max_retries: 0,
+                tls_insecure_skip_verify: false,
+            },
+            encode_test_records,
+        )
+        .expect("exporter builds");
+
+        exporter.enqueue(TestRecord { value: 1 });
+        exporter.enqueue(TestRecord { value: 2 });
+
+        assert_eq!(exporter.queued_len(), 1);
+        assert_eq!(exporter.counters().dropped_queue_full, 1);
+    }
+
+    #[tokio::test]
+    async fn protobuf_encode_failures_keep_queued_items() {
+        let mut exporter = HttpProtobufExporter::new(
+            HttpExporterConfig {
+                endpoint: "http://127.0.0.1:9".to_string(),
+                headers: Vec::new(),
+                batch_size: 1,
+                queue_capacity: 2,
+                timeout_millis: 1,
+                max_retries: 1,
+                tls_insecure_skip_verify: false,
+            },
+            fail_encode_test_records,
+        )
+        .expect("exporter builds");
+
+        exporter.enqueue(TestRecord { value: 7 });
+        let err = exporter.flush_once().await.expect_err("encode fails");
+
+        assert!(matches!(err, ExporterError::Encode(_)));
+        assert_eq!(exporter.queued_len(), 1);
+        assert_eq!(exporter.counters().failed_batches, 1);
+        assert_eq!(exporter.counters().retry_attempts, 1);
+        assert_eq!(exporter.counters().exported, 0);
     }
 
     #[derive(Debug)]
