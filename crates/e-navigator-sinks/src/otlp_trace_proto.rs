@@ -121,6 +121,9 @@ fn hex_to_bytes(value: &str, expected_len: usize) -> Option<Vec<u8>> {
         let low = hex_digit(chunk[1])?;
         bytes.push((high << 4) | low);
     }
+    if bytes.iter().all(|byte| *byte == 0) {
+        return None;
+    }
     Some(bytes)
 }
 
@@ -130,5 +133,54 @@ fn hex_digit(byte: u8) -> Option<u8> {
         b'a'..=b'f' => Some(byte - b'a' + 10),
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+
+    use super::*;
+
+    #[test]
+    fn rejects_all_zero_trace_and_span_ids() {
+        let mut record = trace_record();
+        record.trace_id = Some("00000000000000000000000000000000".to_string());
+        assert!(!trace_record_has_valid_ids(&record));
+
+        record.trace_id = Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string());
+        record.span_id = Some("0000000000000000".to_string());
+        assert!(!trace_record_has_valid_ids(&record));
+    }
+
+    #[test]
+    fn drops_all_zero_parent_span_id() {
+        let mut record = trace_record();
+        record.parent_span_id = Some("0000000000000000".to_string());
+
+        let bytes = encode_trace_export_request(&[record]).expect("trace request encodes");
+        let request =
+            ExportTraceServiceRequest::decode(bytes.as_slice()).expect("trace request decodes");
+        let span = &request.resource_spans[0].scope_spans[0].spans[0];
+
+        assert!(span.parent_span_id.is_empty());
+    }
+
+    fn trace_record() -> OtelTraceRecord {
+        OtelTraceRecord {
+            name: "request".to_string(),
+            kind: OtelTraceRecordKind::RequestSpan,
+            status: None,
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_000),
+            duration_nanos: Some(1_000),
+            resource: BTreeMap::new(),
+            attributes: BTreeMap::new(),
+        }
     }
 }
