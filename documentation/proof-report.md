@@ -75,9 +75,10 @@ or chart rendering:
   content-type suffix validation, POST pseudo-header validation,
   authority-port/userinfo validation, and a build-checked parser fuzz target,
   Kafka request-header plus bounded ApiVersions, non-flexible FindCoordinator,
-  ListOffsets, and Metadata request bodies, ApiVersions response, bounded
-  Produce request/response, and bounded non-flexible Fetch, FindCoordinator,
-  ListOffsets, and Metadata request/response-error parsing,
+  Heartbeat, ListOffsets, and Metadata request bodies, ApiVersions response,
+  bounded Produce request/response, and bounded non-flexible Fetch,
+  FindCoordinator, Heartbeat, ListOffsets, and Metadata request/response-error
+  parsing,
   MongoDB
   wire-message and response-error parsing with OP_MSG section and checksum
   validation, bounded OP_REPLY response parsing, and non-negative response-code validation,
@@ -203,14 +204,15 @@ These areas remain explicitly partial:
   mappings are not yet proven.
 - **Kafka protocol observability:** bounded request-header parsing for common
   API keys, bounded ApiVersions request-body validation, bounded non-flexible
-  Produce, Fetch, FindCoordinator, ListOffsets, and Metadata request-body
-  validation, and ApiVersions, Produce, and non-flexible Fetch,
-  FindCoordinator, ListOffsets, and Metadata response-error parsing is locally
-  tested without exporting client IDs, coordinator keys, software names, topics,
-  record payloads, broker hosts, cluster IDs, or response body values, but
-  runtime capture, request/response matching, broad response coverage,
-  flexible-version body semantics beyond ApiVersions, and live Kafka proof are
-  not implemented or proven.
+  Produce, Fetch, FindCoordinator, Heartbeat, ListOffsets, and Metadata
+  request-body validation, and ApiVersions, Produce, and non-flexible Fetch,
+  FindCoordinator, Heartbeat, ListOffsets, and Metadata response-error parsing
+  is locally tested without exporting client IDs, coordinator keys, consumer
+  group/member identifiers, software names, topics, record payloads, broker
+  hosts, cluster IDs, or response body values, but runtime capture,
+  request/response matching, broad response coverage, flexible-version body
+  semantics beyond ApiVersions, and live Kafka proof are not implemented or
+  proven.
 - **MongoDB protocol observability:** bounded `OP_MSG` including
   checksum-present messages, command `OP_QUERY`, OP_MSG response-error parsing,
   and OP_REPLY response parsing is locally tested without exporting raw BSON
