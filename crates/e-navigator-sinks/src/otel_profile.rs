@@ -286,6 +286,10 @@ fn append_bounded_attributes(
 }
 
 fn should_drop_attribute(key: &str) -> bool {
+    if key.is_empty() {
+        return true;
+    }
+
     let canonical_key = key.to_ascii_lowercase();
     matches!(
         canonical_key.as_str(),

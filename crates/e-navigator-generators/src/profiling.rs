@@ -626,7 +626,8 @@ fn bounded_attributes(attributes: &[ProfilingAttribute]) -> Vec<ProfilingAttribu
     let mut attributes = attributes
         .iter()
         .filter(|attribute| {
-            !is_sensitive_profiling_attribute_key(&attribute.key)
+            !attribute.key.is_empty()
+                && !is_sensitive_profiling_attribute_key(&attribute.key)
                 && !is_reserved_profile_attribute_key(&attribute.key)
                 && attribute.key.len() <= MAX_PROFILE_ATTRIBUTE_KEY_BYTES
                 && attribute.value.len() <= MAX_PROFILE_ATTRIBUTE_VALUE_BYTES

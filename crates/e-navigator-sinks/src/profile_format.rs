@@ -235,6 +235,10 @@ fn profile_sample_hash(
 }
 
 fn should_drop_attribute(key: &str) -> bool {
+    if key.is_empty() {
+        return true;
+    }
+
     const CANONICAL_FIELDS: &[&str] = &[
         "schema",
         "profile_id",

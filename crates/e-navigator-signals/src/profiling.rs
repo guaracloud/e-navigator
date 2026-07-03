@@ -130,7 +130,8 @@ pub fn sanitize_profiling_attributes(attributes: &mut Vec<ProfilingAttribute>) {
     let sanitized = attributes
         .drain(..)
         .filter(|attribute| {
-            !is_sensitive_profiling_attribute_key(&attribute.key)
+            !attribute.key.is_empty()
+                && !is_sensitive_profiling_attribute_key(&attribute.key)
                 && !is_reserved_profiling_attribute_key(&attribute.key)
         })
         .take(MAX_PROFILING_ATTRIBUTES)

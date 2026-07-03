@@ -96,7 +96,7 @@ or chart rendering:
   and warning dedupe eviction,
   deterministic profile sample and warning dedupe eviction, deterministic
   profile session IDs with sampling-period separation, generated profile session
-  bounded and sensitive/reserved-attribute filtering, bounded safe-attribute
+  bounded and non-empty sensitive/reserved-attribute filtering, bounded safe-attribute
   merging across samples, bounded profile stack-ID state,
   bounded request-span scalar fields and attributes with sensitive trace
   attribute filtering, deterministic request-correlation request and warning
@@ -124,7 +124,7 @@ or chart rendering:
   bounded/sensitive attribute filtering, and session dropped-sample records in
   fake-collector tests;
 - native profile record formatting with bounded identifiers, bounded resource
-  attributes, and sensitive attribute filtering;
+  attributes, and non-empty sensitive attribute filtering;
 - pprof-compatible profile sample protobuf rendering with bounded stack
   locations, sample-period scaling, bounded frame strings and workload labels,
   canonical label overwrite protection, and sensitive/canonical metadata

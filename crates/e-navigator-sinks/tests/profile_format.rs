@@ -834,6 +834,65 @@ fn bounds_attributes_and_filters_sensitive_keys() {
 }
 
 #[test]
+fn profile_formatters_drop_empty_attribute_keys() {
+    let mut session = SignalEnvelope::profiling_session_observation(
+        "generator.profiling",
+        None,
+        ProfilingSessionObservation {
+            window: MetricAggregationWindow {
+                start_unix_nanos: 1,
+                end_unix_nanos: 2,
+            },
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::Synthetic,
+            confidence: ProfilingConfidence::Medium,
+            profile_id: "profile:abc".to_string(),
+            observed_sample_count: 3,
+            dropped_sample_count: 0,
+            distinct_stack_count: 2,
+            sampling_period_nanos: None,
+            process: None,
+            container: None,
+            kubernetes: None,
+            source: "source.synthetic_profile".to_string(),
+            attributes: Vec::new(),
+        },
+    );
+    if let e_navigator_signals::SignalPayload::ProfilingSessionObservation(observation) =
+        &mut session.payload
+    {
+        observation.attributes = vec![attr("", "empty"), attr("alpha", "one")];
+    }
+
+    let native = format_profile_record(&session).expect("native profile record formats");
+    let otel = format_otel_profile_record(&session).expect("OTLP profile record formats");
+
+    assert!(!native.attributes.contains_key(""));
+    assert_eq!(native.attributes["alpha"], "one");
+    assert!(!otel.attributes.contains_key(""));
+    assert_eq!(otel.attributes["alpha"], "one");
+
+    let mut sample = profile_sample_signal(Some("node-a"), Some("container-a"), Some("pod-a"));
+    if let e_navigator_signals::SignalPayload::ProfileSampleObservation(observation) =
+        &mut sample.payload
+    {
+        observation.stack_frames = vec![ProfilingFrame {
+            symbol: Some("checkout::handler".to_string()),
+            module: Some("checkout".to_string()),
+            file: Some("/src/checkout.rs".to_string()),
+            line: Some(42),
+        }];
+        observation.attributes = vec![attr("", "empty"), attr("profiling.source", "fixture")];
+    }
+
+    let bytes = format_pprof_profile(&sample).expect("pprof profile formats");
+    let profile = pprof::Profile::decode(bytes.as_slice()).expect("pprof decodes");
+
+    assert_eq!(label_value(&profile, ""), None);
+    assert_eq!(label_value(&profile, "profiling.source"), Some("fixture"));
+}
+
+#[test]
 fn attribute_scan_is_bounded_even_with_duplicate_keys() {
     let mut attributes = (0..32)
         .map(|index| attr("same-key", &format!("value-{index}")))

@@ -189,6 +189,10 @@ fn bounded_attributes(attributes: &[ProfilingAttribute]) -> Vec<ProfilingAttribu
 }
 
 fn should_drop_attribute(key: &str) -> bool {
+    if key.is_empty() {
+        return true;
+    }
+
     const CANONICAL_FIELDS: &[&str] = &[
         "schema",
         "profile_id",
