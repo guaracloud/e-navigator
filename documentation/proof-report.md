@@ -28,10 +28,10 @@ or chart rendering:
 - raw userspace decode paths for selected Aya exec/network/profile events;
 - bounded DNS/HTTP request and HTTP response-status fixture parsing, decoded
   gRPC-over-HTTP/2 metadata and trailer-status parsing, Kafka request-header
-  parsing, MongoDB wire-message and response-error parsing, MySQL command
-  packet and ERR response parsing, NATS text command plus OK/error response
-  parsing, PostgreSQL wire-message and ErrorResponse parsing, and Redis RESP
-  command plus error-response parsing;
+  and ApiVersions response-error parsing, MongoDB wire-message and
+  response-error parsing, MySQL command packet and ERR response parsing, NATS
+  text command plus OK/error response parsing, PostgreSQL wire-message and
+  ErrorResponse parsing, and Redis RESP command plus error-response parsing;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/span flow
   and flow-attribution warnings;
@@ -89,10 +89,11 @@ These areas remain explicitly partial:
   service-graph compatibility and live collector proof for the status mappings
   are not yet proven.
 - **Kafka protocol observability:** bounded request-header parsing for common
-  API keys is locally tested without exporting client IDs, topics, or record
-  payloads, but runtime capture, request/response matching, status/error
-  extraction, flexible-version body semantics, and live Kafka proof are not
-  implemented or proven.
+  API keys plus ApiVersions response-error parsing is locally tested without
+  exporting client IDs, topics, record payloads, or response body values, but
+  runtime capture, request/response matching, broad response coverage,
+  flexible-version body semantics beyond the ApiVersions response header, and
+  live Kafka proof are not implemented or proven.
 - **MongoDB protocol observability:** bounded `OP_MSG`, command `OP_QUERY`, and
   OP_MSG response-error parsing is locally tested without exporting raw BSON
   values, namespaces, or raw error messages, but runtime capture,

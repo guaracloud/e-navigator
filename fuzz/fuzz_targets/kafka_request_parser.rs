@@ -1,6 +1,9 @@
 #![no_main]
 
-use e_navigator_protocol::{ProtocolExtractionConfig, kafka::parse_kafka_request};
+use e_navigator_protocol::{
+    ProtocolExtractionConfig,
+    kafka::{parse_kafka_api_versions_response, parse_kafka_request},
+};
 use libfuzzer_sys::fuzz_target;
 
 const MAX_INPUT_BYTES: usize = 2048;
@@ -15,4 +18,6 @@ fuzz_target!(|data: &[u8]| {
     };
 
     let _ = parse_kafka_request(data, &config);
+    let _ = parse_kafka_api_versions_response(data, 0, &config);
+    let _ = parse_kafka_api_versions_response(data, 3, &config);
 });

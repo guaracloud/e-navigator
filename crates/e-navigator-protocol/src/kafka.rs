@@ -13,6 +13,15 @@ pub struct ParsedKafkaRequest {
     pub attributes: Vec<TraceAttribute>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedKafkaResponse {
+    pub protocol: ProtocolKind,
+    pub operation: String,
+    pub status_code: String,
+    pub error_type: Option<String>,
+    pub attributes: Vec<TraceAttribute>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KafkaExtraction {
     FrameTooLong,
@@ -20,6 +29,7 @@ pub enum KafkaExtraction {
     MalformedFrame,
     ClientIdTooLong,
     UnsupportedApiKey,
+    UnsupportedApiVersion,
 }
 
 pub fn parse_kafka_request(
@@ -77,6 +87,71 @@ pub fn parse_kafka_request(
     })
 }
 
+pub fn parse_kafka_api_versions_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if api_version < 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = api_versions_response_error_code(body, api_version, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_key = "18";
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("api_versions"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some(api_key),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "api_versions".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KafkaRequestHeader {
     api_key: i16,
@@ -121,6 +196,22 @@ fn request_header(
         api_version,
         client_id_present: client,
     })
+}
+
+fn api_versions_response_error_code(
+    body: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    if api_version >= 3 {
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    let error_code = read_i16_be(body, cursor)?;
+    Ok(error_code)
 }
 
 fn parse_client_id(

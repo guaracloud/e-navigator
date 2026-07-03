@@ -35,10 +35,10 @@ Current local benchmark targets:
 - raw Aya userspace decode harnesses for exec, network, and CPU profile event
   bytes;
 - procfs, loadavg, meminfo, diskstats, and process stat parser paths;
-- traceparent, HTTP fixture parsing, Kafka request-header parsing, MongoDB
-  wire-message and response parsing, MySQL command packet parsing, NATS text
-  command and response parsing, PostgreSQL wire-message parsing, and Redis RESP
-  command parsing;
+- traceparent, HTTP fixture parsing, Kafka request-header and ApiVersions
+  response parsing, MongoDB wire-message and response parsing, MySQL command
+  packet parsing, NATS text command and response parsing, PostgreSQL
+  wire-message parsing, and Redis RESP command parsing;
 - profiling fixture normalization;
 - generator hot paths for network, DNS, resource, dependency graph, trace,
   request, profiling, runtime security, and native export;

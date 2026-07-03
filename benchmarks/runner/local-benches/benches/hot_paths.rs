@@ -9,7 +9,7 @@ use e_navigator_profiling::model::{NormalizationLimits, parse_profile_fixture};
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
     http::parse_http_request,
-    kafka::parse_kafka_request,
+    kafka::{parse_kafka_api_versions_response, parse_kafka_request},
     mongodb::{parse_mongodb_message, parse_mongodb_response},
     mysql::parse_mysql_command,
     nats::{parse_nats_command, parse_nats_response},
@@ -103,6 +103,7 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     let mongodb_response =
         b"<\0\0\0\x01\0\0\0\0\0\0\0\xdd\x07\0\0\0\0\0\0\0\x00'\0\0\0\x08ok\0\0\x10code\0\r\0\0\0\x02errmsg\0\x07\0\0\0secret\0\0";
     let kafka = b"\0\0\0\x1b\0\0\0\x08\0\0\0\x2a\0\x0cbench-clienttopic";
+    let kafka_response = b"\0\0\0\x15\0\0\0\x2a\0#secret-api-list";
     let mysql = b"\x18\0\0\0\x03select * from customers";
     let nats = b"PUB orders.created 5\r\nhello\r\n";
     let nats_response = b"-ERR 'Authorization Violation'\r\n";
@@ -133,6 +134,12 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     });
     c.bench_function("protocol/kafka_request_parse", |b| {
         b.iter(|| parse_kafka_request(black_box(kafka), &protocol_config).unwrap())
+    });
+    c.bench_function("protocol/kafka_api_versions_response_parse", |b| {
+        b.iter(|| {
+            parse_kafka_api_versions_response(black_box(kafka_response), 0, &protocol_config)
+                .unwrap()
+        })
     });
     c.bench_function("protocol/mongodb_op_msg_parse", |b| {
         b.iter(|| parse_mongodb_message(black_box(mongodb), &protocol_config).unwrap())
