@@ -474,6 +474,70 @@ pub fn parse_kafka_heartbeat_response(
     })
 }
 
+pub fn parse_kafka_leave_group_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if !(0..=3).contains(&api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = leave_group_response_error_code(body, api_version, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("leave_group"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("13"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "leave_group".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_metadata_response(
     bytes: &[u8],
     api_version: i16,
@@ -604,6 +668,7 @@ fn validate_request_body(
         3 => validate_metadata_request_body(body, header, config),
         10 => validate_find_coordinator_request_body(body, header, config),
         12 => validate_heartbeat_request_body(body, header, config),
+        13 => validate_leave_group_request_body(body, header, config),
         18 => validate_api_versions_request_body(body, header, config),
         _ => Ok(()),
     }
@@ -778,6 +843,35 @@ fn validate_heartbeat_request_body(
     skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
     if header.api_version >= 3 {
         skip_nullable_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_leave_group_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_version < 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if header.api_version > 3 {
+        return Ok(());
+    }
+
+    let mut cursor = header.body_start;
+    skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+    if header.api_version <= 2 {
+        skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+    } else {
+        let member_count = read_request_array_len(body, &mut cursor)?;
+        for _ in 0..member_count {
+            skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+            skip_nullable_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+        }
     }
     if cursor != body.len() {
         return Err(KafkaExtraction::MalformedFrame);
@@ -978,6 +1072,36 @@ fn heartbeat_response_error_code(body: &[u8], api_version: i16) -> Result<i16, K
         skip_bytes(body, &mut cursor, 4)?;
     }
     read_i16_be_cursor(body, &mut cursor)
+}
+
+fn leave_group_response_error_code(
+    body: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    if api_version >= 1 {
+        skip_bytes(body, &mut cursor, 4)?;
+    }
+    let top_level_error_code = read_i16_be_cursor(body, &mut cursor)?;
+    if top_level_error_code != 0 {
+        return Ok(top_level_error_code);
+    }
+    if api_version >= 3 {
+        let member_count = read_response_array_len(body, &mut cursor)?;
+        for _ in 0..member_count {
+            skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+            skip_nullable_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+            let member_error_code = read_i16_be_cursor(body, &mut cursor)?;
+            if member_error_code != 0 {
+                return Ok(member_error_code);
+            }
+        }
+    }
+    Ok(0)
 }
 
 fn metadata_response_error_code(

@@ -5,8 +5,8 @@ use e_navigator_protocol::{
     kafka::{
         KafkaExtraction, parse_kafka_api_versions_response, parse_kafka_fetch_response,
         parse_kafka_find_coordinator_response, parse_kafka_heartbeat_response,
-        parse_kafka_list_offsets_response, parse_kafka_metadata_response,
-        parse_kafka_produce_response, parse_kafka_request,
+        parse_kafka_leave_group_response, parse_kafka_list_offsets_response,
+        parse_kafka_metadata_response, parse_kafka_produce_response, parse_kafka_request,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -279,6 +279,7 @@ proptest! {
         let _ = parse_kafka_list_offsets_response(&bytes, api_version.clamp(1, 5), &config);
         let _ = parse_kafka_find_coordinator_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_heartbeat_response(&bytes, api_version.min(3), &config);
+        let _ = parse_kafka_leave_group_response(&bytes, api_version.min(3), &config);
         let _ = parse_kafka_metadata_response(&bytes, api_version.min(8), &config);
     }
 
@@ -2092,7 +2093,6 @@ fn validates_kafka_heartbeat_v3_request_without_group_or_member_values() {
             .attributes
             .iter()
             .any(|attribute| attribute.value.contains("secret")
-                || attribute.value.contains("group")
                 || attribute.value.contains("member")
                 || attribute.value.contains("instance"))
     );
@@ -2120,7 +2120,66 @@ fn validates_kafka_heartbeat_legacy_requests_without_group_or_member_values() {
                 .attributes
                 .iter()
                 .any(|attribute| attribute.value.contains("secret")
-                    || attribute.value.contains("group")
+                    || attribute.value.contains("member"))
+        );
+    }
+}
+
+#[test]
+fn validates_kafka_leave_group_v3_request_without_group_or_member_values() {
+    let body = kafka_leave_group_request_body(3);
+    let bytes = kafka_request_frame(13, 3, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka leave group v3 request parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation.as_deref(), Some("leave_group"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "13")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "3")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("member")
+                || attribute.value.contains("instance"))
+    );
+}
+
+#[test]
+fn validates_kafka_leave_group_legacy_requests_without_group_or_member_values() {
+    for api_version in 0..=2 {
+        let body = kafka_leave_group_request_body(api_version);
+        let bytes = kafka_request_frame(13, api_version, Some(b"secret-client"), &body);
+
+        let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+            .expect("kafka leave group request parses");
+
+        assert_eq!(extraction.operation.as_deref(), Some("leave_group"));
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                    && attribute.value == api_version.to_string())
+        );
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("secret")
                     || attribute.value.contains("member"))
         );
     }
@@ -2637,6 +2696,79 @@ fn extracts_kafka_heartbeat_error_response() {
 }
 
 #[test]
+fn extracts_kafka_leave_group_ok_response_without_member_values() {
+    let bytes = kafka_leave_group_response_frame(0, 3, 0, &[("member.secret", None, 0)]);
+
+    let extraction =
+        parse_kafka_leave_group_response(&bytes, 3, &ProtocolExtractionConfig::default())
+            .expect("leave group ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "leave_group");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "13")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("member"))
+    );
+}
+
+#[test]
+fn extracts_kafka_leave_group_error_response_without_member_values() {
+    let bytes = kafka_leave_group_response_frame(
+        0,
+        3,
+        0,
+        &[
+            ("member.secret", Some("instance.secret"), 0),
+            ("other.secret", None, 25),
+        ],
+    );
+
+    let extraction =
+        parse_kafka_leave_group_response(&bytes, 3, &ProtocolExtractionConfig::default())
+            .expect("leave group error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "leave_group");
+    assert_eq!(extraction.status_code, "25");
+    assert_eq!(extraction.error_type.as_deref(), Some("25"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "3")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "25")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("member")
+                || attribute.value.contains("instance"))
+    );
+}
+
+#[test]
 fn extracts_kafka_metadata_ok_response_without_cluster_broker_or_topic_values() {
     let bytes = kafka_metadata_response_frame(0, 8, &[("orders.secret", 0, 0)]);
 
@@ -2802,6 +2934,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     .expect("bounded kafka heartbeat response parses");
     assert_eq!(bounded_heartbeat_response.attributes.len(), 2);
 
+    let bounded_leave_group_response = parse_kafka_leave_group_response(
+        &kafka_leave_group_response_frame(0, 1, 25, &[]),
+        1,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka leave group response parses");
+    assert_eq!(bounded_leave_group_response.attributes.len(), 2);
+
     let bounded_metadata_response = parse_kafka_metadata_response(
         &kafka_metadata_response_frame(0, 1, &[("orders.secret", 6, 0)]),
         1,
@@ -2915,6 +3060,20 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     assert_eq!(
         parse_kafka_heartbeat_response(
             &kafka_heartbeat_response_frame(0, 1, 27),
+            1,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 8,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_leave_group_response(
+            &kafka_leave_group_response_frame(0, 1, 25, &[]),
             1,
             &ProtocolExtractionConfig {
                 max_header_bytes: 8,
@@ -3042,6 +3201,28 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_request(
             &kafka_request_frame(12, 3, None, &body),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(13, -1, None, b""), &config).unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(13, 3, None, b"\0\x01"), &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    let body = kafka_leave_group_request_body(3);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(13, 3, None, &body),
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
                 max_request_line_bytes: 4,
@@ -3260,6 +3441,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_leave_group_response(
+            &kafka_leave_group_response_frame(0, 4, 0, &[]),
+            4,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_metadata_response(
             &kafka_metadata_response_frame(0, 9, &[("orders", 0, 0)]),
             9,
@@ -3333,6 +3523,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::ClientIdTooLong
     );
     assert_eq!(
+        parse_kafka_leave_group_response(
+            &kafka_leave_group_response_with_member_count_frame(1025),
+            3,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_metadata_response(
             &kafka_metadata_response_with_topic_count_frame(1025),
             8,
@@ -3394,6 +3593,14 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     truncated_heartbeat_response.truncate(8);
     assert_eq!(
         parse_kafka_heartbeat_response(&truncated_heartbeat_response, 3, &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_leave_group_response =
+        kafka_leave_group_response_frame(0, 3, 0, &[("member", None, 25)]);
+    truncated_leave_group_response.truncate(12);
+    assert_eq!(
+        parse_kafka_leave_group_response(&truncated_leave_group_response, 3, &config).unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
 
@@ -6401,6 +6608,19 @@ fn kafka_heartbeat_request_body(api_version: i16, group_instance_id: Option<&str
     body
 }
 
+fn kafka_leave_group_request_body(api_version: i16) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_kafka_string(&mut body, "group.secret");
+    if api_version <= 2 {
+        push_kafka_string(&mut body, "member.secret");
+    } else {
+        body.extend_from_slice(&1_i32.to_be_bytes());
+        push_kafka_string(&mut body, "member.secret");
+        push_kafka_nullable_string(&mut body, Some("instance.secret"));
+    }
+    body
+}
+
 fn kafka_metadata_request_body(api_version: i16, topics: Option<&[&str]>) -> Vec<u8> {
     let mut body = Vec::new();
     if let Some(topics) = topics {
@@ -6670,6 +6890,38 @@ fn kafka_heartbeat_response_frame(
         response.extend_from_slice(&0_i32.to_be_bytes());
     }
     response.extend_from_slice(&error_code.to_be_bytes());
+    kafka_frame(&response)
+}
+
+fn kafka_leave_group_response_frame(
+    correlation_id: i32,
+    api_version: i16,
+    error_code: i16,
+    members: &[(&str, Option<&str>, i16)],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    if api_version >= 1 {
+        response.extend_from_slice(&0_i32.to_be_bytes());
+    }
+    response.extend_from_slice(&error_code.to_be_bytes());
+    if api_version >= 3 {
+        response.extend_from_slice(&(members.len() as i32).to_be_bytes());
+        for (member_id, group_instance_id, member_error_code) in members {
+            push_kafka_string(&mut response, member_id);
+            push_kafka_nullable_string(&mut response, *group_instance_id);
+            response.extend_from_slice(&member_error_code.to_be_bytes());
+        }
+    }
+    kafka_frame(&response)
+}
+
+fn kafka_leave_group_response_with_member_count_frame(member_count: i32) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    response.extend_from_slice(&member_count.to_be_bytes());
     kafka_frame(&response)
 }
 
