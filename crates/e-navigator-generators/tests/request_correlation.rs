@@ -565,6 +565,24 @@ async fn malformed_trace_context_emits_warning_without_inventing_ids() {
 }
 
 #[tokio::test]
+async fn whitespace_wrapped_traceparent_is_malformed_without_inventing_ids() {
+    let generator = RequestCorrelationGenerator::default();
+    let signal = protocol_request_signal(Some(format!(" {} ", valid_traceparent())), true);
+
+    let outputs = observe(&generator, &signal).await;
+
+    assert_eq!(outputs.len(), 2);
+    assert!(outputs.iter().any(|signal| {
+        matches!(
+            &signal.payload,
+            SignalPayload::RequestSpanObservation(span)
+                if span.trace_id.is_none() && span.span_id.is_none()
+        )
+    }));
+    assert_request_warning(&outputs, "malformed_trace_context");
+}
+
+#[tokio::test]
 async fn raw_tcp_only_signal_does_not_generate_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let signal = network_close_signal();
