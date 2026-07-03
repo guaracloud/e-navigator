@@ -2130,6 +2130,39 @@ fn extracts_postgres_parse_message_operation_without_statement_or_sql() {
 }
 
 #[test]
+fn extracts_postgres_execute_message_without_portal_name() {
+    let mut body = Vec::new();
+    body.extend_from_slice(b"secret-portal-name\0");
+    body.extend_from_slice(&0_i32.to_be_bytes());
+    let bytes = postgres_frame(b'E', &body);
+
+    let extraction = parse_postgres_message(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres execute message parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.operation.as_deref(), Some("EXECUTE"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.operation" && attribute.value == "EXECUTE")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.postgresql.message.type"
+                && attribute.value == "execute")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret-portal-name"))
+    );
+}
+
+#[test]
 fn extracts_postgres_operation_after_comments() {
     let bytes = postgres_frame(
         b'Q',
@@ -2347,6 +2380,25 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     assert_eq!(
         parse_postgres_message(&postgres_frame(b'Q', b"sel\xffct\0"), &config).unwrap_err(),
         PostgresExtraction::InvalidUtf8
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'E', b"portal"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'E', b"portal\0\x00\x00"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    let long_portal = {
+        let mut body = Vec::new();
+        body.extend(std::iter::repeat_n(b'p', 129));
+        body.push(0);
+        body.extend_from_slice(&0_i32.to_be_bytes());
+        body
+    };
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'E', &long_portal), &config).unwrap_err(),
+        PostgresExtraction::QueryTooLong
     );
     assert_eq!(
         parse_postgres_error_response(&postgres_frame(b'Q', b"select 1\0"), &config).unwrap_err(),

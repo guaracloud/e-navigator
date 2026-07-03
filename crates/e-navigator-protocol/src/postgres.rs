@@ -47,9 +47,14 @@ pub fn parse_postgres_message(
     let query = match bytes[0] {
         b'Q' => parse_simple_query(body, config.max_request_line_bytes)?,
         b'P' => parse_parse_message(body, config.max_request_line_bytes)?,
+        b'E' => parse_execute_message(body)?,
         _ => return Err(PostgresExtraction::UnsupportedMessage),
     };
-    let operation = postgres_operation(query);
+    let operation = if bytes[0] == b'E' {
+        Some("EXECUTE".to_string())
+    } else {
+        postgres_operation(query)
+    };
 
     let mut attributes = Vec::new();
     push_attribute(
@@ -278,6 +283,21 @@ fn parse_parse_message(body: &[u8], max_query_bytes: usize) -> Result<&str, Post
     Ok(query)
 }
 
+fn parse_execute_message(body: &[u8]) -> Result<&str, PostgresExtraction> {
+    let mut cursor = 0;
+    let _portal_name = parse_cstring(body, &mut cursor, MAX_POSTGRES_STATEMENT_NAME_BYTES)?;
+    if body.len().saturating_sub(cursor) != 4 {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    let _max_rows = i32::from_be_bytes([
+        body[cursor],
+        body[cursor + 1],
+        body[cursor + 2],
+        body[cursor + 3],
+    ]);
+    Ok("EXECUTE")
+}
+
 fn parse_cstring<'a>(
     bytes: &'a [u8],
     cursor: &mut usize,
@@ -334,6 +354,7 @@ fn message_type_name(message_type: u8) -> &'static str {
     match message_type {
         b'Q' => "query",
         b'P' => "parse",
+        b'E' => "execute",
         _ => "unknown",
     }
 }
