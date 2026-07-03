@@ -1206,6 +1206,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn suppresses_flow_outputs_when_kubernetes_attribution_is_missing() {
+        let generator = NetworkMetricsGenerator::default();
+        let mut close =
+            network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
+        let SignalPayload::NetworkConnectionClose(event) = &mut close.payload else {
+            panic!("expected network close");
+        };
+        event.kubernetes = None;
+
+        let outputs = observe(&generator, &close).await;
+        let warning = network_flow_warning(&outputs);
+
+        assert_eq!(warning.container, Some(container_context()));
+        assert_eq!(warning.kubernetes, None);
+        assert!(
+            !outputs
+                .iter()
+                .any(|signal| matches!(signal.payload, SignalPayload::NetworkFlowSummary(_)))
+        );
+        assert!(!counter_metric_exists(&outputs, "network.flow.bytes"));
+    }
+
+    #[tokio::test]
     async fn does_not_emit_network_flow_warning_without_byte_counters() {
         let generator = NetworkMetricsGenerator::default();
         let mut close = network_close_signal("10.0.0.20", 5432, 100, 900, Some(7));
