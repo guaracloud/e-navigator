@@ -354,13 +354,22 @@ impl KubernetesMetadataCache {
     fn from_pod_list(pod_list: PodList, config: &KubernetesAttributionConfig) -> Self {
         let mut by_container_id = BTreeMap::new();
         let mut by_pod_ip = BTreeMap::new();
+        let mut selected_pods = 0_usize;
 
-        for pod in pod_list.items.into_iter().take(config.max_pods) {
+        for pod in pod_list.items {
             let namespace = pod.metadata.namespace.unwrap_or_default();
             let pod_name = pod.metadata.name.unwrap_or_default();
             let pod_uid = pod.metadata.uid;
-            let labels = bounded_labels(pod.metadata.labels.unwrap_or_default(), config);
+            let raw_labels = pod.metadata.labels.unwrap_or_default();
             let node_name = pod.spec.and_then(|spec| spec.node_name);
+            if !pod_matches_scope(&namespace, node_name.as_deref(), &raw_labels, config) {
+                continue;
+            }
+            if selected_pods >= config.max_pods {
+                break;
+            }
+            selected_pods = selected_pods.saturating_add(1);
+            let labels = bounded_labels(raw_labels, config);
             if let Some(status) = pod.status {
                 let pod_ip = status.pod_ip;
                 for container in status.container_statuses.unwrap_or_default() {
@@ -402,6 +411,53 @@ impl KubernetesMetadataCache {
             by_pod_ip,
         }
     }
+}
+
+fn pod_matches_scope(
+    namespace: &str,
+    node_name: Option<&str>,
+    labels: &BTreeMap<String, String>,
+    config: &KubernetesAttributionConfig,
+) -> bool {
+    if !matches_string_selector(
+        namespace,
+        &config.namespace_allowlist,
+        &config.namespace_denylist,
+    ) {
+        return false;
+    }
+
+    match node_name {
+        Some(node_name)
+            if !matches_string_selector(
+                node_name,
+                &config.node_name_allowlist,
+                &config.node_name_denylist,
+            ) =>
+        {
+            return false;
+        }
+        None if !config.node_name_allowlist.is_empty() => return false,
+        _ => {}
+    }
+
+    if !config
+        .pod_label_selector
+        .iter()
+        .all(|(key, value)| labels.get(key) == Some(value))
+    {
+        return false;
+    }
+
+    !config
+        .pod_label_exclude_selector
+        .iter()
+        .any(|(key, value)| labels.get(key) == Some(value))
+}
+
+fn matches_string_selector(value: &str, allowlist: &[String], denylist: &[String]) -> bool {
+    (allowlist.is_empty() || allowlist.iter().any(|allowed| allowed == value))
+        && !denylist.iter().any(|denied| denied == value)
 }
 
 fn pod_list_url(
@@ -705,6 +761,100 @@ mod tests {
     }
 
     #[test]
+    fn pod_scope_selectors_filter_cache_entries() {
+        let pod_list = PodList {
+            items: vec![
+                scoped_pod(
+                    "checkout",
+                    "payments",
+                    "node-a",
+                    "10.0.0.10",
+                    "container-checkout",
+                    BTreeMap::from([
+                        ("app".to_string(), "checkout".to_string()),
+                        ("team".to_string(), "platform".to_string()),
+                    ]),
+                ),
+                scoped_pod(
+                    "orders",
+                    "orders",
+                    "node-a",
+                    "10.0.0.11",
+                    "container-orders",
+                    BTreeMap::from([
+                        ("app".to_string(), "orders".to_string()),
+                        ("team".to_string(), "platform".to_string()),
+                    ]),
+                ),
+                scoped_pod(
+                    "checkout-canary",
+                    "payments",
+                    "node-b",
+                    "10.0.0.12",
+                    "container-canary",
+                    BTreeMap::from([
+                        ("app".to_string(), "checkout".to_string()),
+                        ("track".to_string(), "canary".to_string()),
+                    ]),
+                ),
+            ],
+        };
+        let config = KubernetesAttributionConfig {
+            namespace_allowlist: vec!["payments".to_string()],
+            node_name_allowlist: vec!["node-a".to_string()],
+            pod_label_selector: BTreeMap::from([("app".to_string(), "checkout".to_string())]),
+            pod_label_exclude_selector: BTreeMap::from([(
+                "track".to_string(),
+                "canary".to_string(),
+            )]),
+            ..KubernetesAttributionConfig::default()
+        };
+
+        let cache = KubernetesMetadataCache::from_pod_list(pod_list, &config);
+
+        assert!(cache.contains_container("container-checkout"));
+        assert!(!cache.contains_container("container-orders"));
+        assert!(!cache.contains_container("container-canary"));
+        assert!(cache.get_by_pod_ip("10.0.0.10").is_some());
+        assert!(cache.get_by_pod_ip("10.0.0.11").is_none());
+        assert!(cache.get_by_pod_ip("10.0.0.12").is_none());
+    }
+
+    #[test]
+    fn excluded_pods_do_not_consume_selected_pod_limit() {
+        let pod_list = PodList {
+            items: vec![
+                scoped_pod(
+                    "excluded",
+                    "default",
+                    "node-a",
+                    "10.0.0.20",
+                    "container-excluded",
+                    BTreeMap::from([("app".to_string(), "excluded".to_string())]),
+                ),
+                scoped_pod(
+                    "included",
+                    "default",
+                    "node-a",
+                    "10.0.0.21",
+                    "container-included",
+                    BTreeMap::from([("app".to_string(), "included".to_string())]),
+                ),
+            ],
+        };
+        let config = KubernetesAttributionConfig {
+            max_pods: 1,
+            pod_label_selector: BTreeMap::from([("app".to_string(), "included".to_string())]),
+            ..KubernetesAttributionConfig::default()
+        };
+
+        let cache = KubernetesMetadataCache::from_pod_list(pod_list, &config);
+
+        assert!(cache.contains_container("container-included"));
+        assert!(!cache.contains_container("container-excluded"));
+    }
+
+    #[test]
     fn pod_count_limit_bounds_parsing_before_cache_limit() {
         let pod_list = PodList {
             items: (0..3)
@@ -826,6 +976,34 @@ mod tests {
             container_name: Some("app".to_string()),
             node_name: Some("node-a".to_string()),
             labels: BTreeMap::new(),
+        }
+    }
+
+    fn scoped_pod(
+        pod_name: &str,
+        namespace: &str,
+        node_name: &str,
+        pod_ip: &str,
+        container_id: &str,
+        labels: BTreeMap<String, String>,
+    ) -> Pod {
+        Pod {
+            metadata: PodMetadata {
+                name: Some(pod_name.to_string()),
+                namespace: Some(namespace.to_string()),
+                uid: Some(format!("uid-{pod_name}")),
+                labels: Some(labels),
+            },
+            spec: Some(PodSpec {
+                node_name: Some(node_name.to_string()),
+            }),
+            status: Some(PodStatus {
+                pod_ip: Some(pod_ip.to_string()),
+                container_statuses: Some(vec![ContainerStatus {
+                    name: "app".to_string(),
+                    container_id: Some(format!("containerd://{container_id}")),
+                }]),
+            }),
         }
     }
 }

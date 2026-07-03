@@ -22,7 +22,8 @@ or chart rendering:
 - synthetic source pipeline, including sanitized HTTP, Kafka, MongoDB, MySQL,
   NATS, PostgreSQL, and Redis protocol request/span fixtures and
   flow-attribution warnings;
-- config validation and packaged config guards;
+- config validation, packaged config guards, and local Kubernetes attribution
+  selector filtering;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/profile events;
 - bounded DNS/HTTP fixture parsing, Kafka request-header parsing, MongoDB

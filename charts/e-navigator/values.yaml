@@ -44,6 +44,12 @@ config:
     enabled = true
     token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
     ca_cert_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    namespace_allowlist = []
+    namespace_denylist = []
+    node_name_allowlist = []
+    node_name_denylist = []
+    pod_label_selector = {}
+    pod_label_exclude_selector = {}
 
     [runtime_security]
     # Kubernetes API endpoints are also discovered from

@@ -1,5 +1,6 @@
 use super::*;
 use crate::ModuleKind;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 fn assert_invalid(config: RuntimeConfig, expected: impl Into<String>) {
@@ -589,6 +590,73 @@ fn kubernetes_attribution_paths_are_validated_when_enabled() {
         ..RuntimeConfig::default()
     };
     assert!(config.validate().is_ok());
+}
+
+#[test]
+fn kubernetes_attribution_selectors_are_validated() {
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    namespace_allowlist: vec!["default".to_string(), " ".to_string()],
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "attribution.kubernetes.namespace_allowlist entries must not be empty",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    namespace_allowlist: vec!["default".to_string()],
+                    namespace_denylist: vec!["default".to_string()],
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "attribution.kubernetes.namespace_denylist cannot contain 'default' because it is also allowed",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    pod_label_selector: BTreeMap::from([("app".to_string(), String::new())]),
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "attribution.kubernetes.pod_label_selector value for 'app' must not be empty",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    pod_label_selector: BTreeMap::from([(
+                        "app".to_string(),
+                        "checkout".to_string(),
+                    )]),
+                    pod_label_exclude_selector: BTreeMap::from([(
+                        "app".to_string(),
+                        "checkout".to_string(),
+                    )]),
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "attribution.kubernetes pod label selector for 'app' cannot require and exclude the same value",
+    );
 }
 
 #[test]

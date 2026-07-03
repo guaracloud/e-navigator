@@ -53,6 +53,20 @@ config:
     enabled = true
 ```
 
+Kubernetes attribution can be scoped with generic selectors. Empty lists and
+maps keep the default permissive behavior; non-empty values are exact-match
+filters applied before pod metadata enters the attribution cache:
+
+```toml
+[attribution.kubernetes]
+namespace_allowlist = ["payments", "checkout"]
+namespace_denylist = ["kube-system"]
+node_name_allowlist = ["worker-a"]
+node_name_denylist = []
+pod_label_selector = { "app.kubernetes.io/name" = "checkout" }
+pod_label_exclude_selector = { "observability.e-navigator.dev/exclude" = "true" }
+```
+
 The chart does not expose port `9090` by default. Enable the Service only when a
 real HTTP surface is configured, for example when `sink.prometheus_http` and
 `[prometheus_http] enabled = true` are present in `config.toml`:

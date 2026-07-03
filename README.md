@@ -103,9 +103,9 @@ observations.
 
 Evidence-backed today:
 
-- static runtime, config parsing, JSON envelopes, and synthetic pipeline,
-  including sanitized protocol request/span fixtures and flow-attribution
-  warnings;
+- static runtime, config parsing, Kubernetes attribution selector validation,
+  JSON envelopes, and synthetic pipeline, including sanitized protocol
+  request/span fixtures and flow-attribution warnings;
 - host resource parsing and Docker synthetic fixtures;
 - process and TCP network source foundations;
 - Kubernetes/container attribution for selected captured signals;

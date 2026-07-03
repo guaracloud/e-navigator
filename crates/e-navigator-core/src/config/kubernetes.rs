@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use super::{ConfigError, ConfigResult};
@@ -25,6 +26,18 @@ pub struct KubernetesAttributionConfig {
     pub max_labels_per_pod: usize,
     #[serde(default)]
     pub label_allowlist: Vec<String>,
+    #[serde(default)]
+    pub namespace_allowlist: Vec<String>,
+    #[serde(default)]
+    pub namespace_denylist: Vec<String>,
+    #[serde(default)]
+    pub node_name_allowlist: Vec<String>,
+    #[serde(default)]
+    pub node_name_denylist: Vec<String>,
+    #[serde(default)]
+    pub pod_label_selector: BTreeMap<String, String>,
+    #[serde(default)]
+    pub pod_label_exclude_selector: BTreeMap<String, String>,
 }
 
 impl Default for KubernetesAttributionConfig {
@@ -40,6 +53,12 @@ impl Default for KubernetesAttributionConfig {
             max_cache_entries: default_max_cache_entries(),
             max_labels_per_pod: default_max_labels_per_pod(),
             label_allowlist: Vec::new(),
+            namespace_allowlist: Vec::new(),
+            namespace_denylist: Vec::new(),
+            node_name_allowlist: Vec::new(),
+            node_name_denylist: Vec::new(),
+            pod_label_selector: BTreeMap::new(),
+            pod_label_exclude_selector: BTreeMap::new(),
         }
     }
 }
@@ -92,9 +111,97 @@ impl KubernetesAttributionConfig {
                 "attribution.kubernetes.allow_cluster_wide_pod_list cannot be true when require_node_name is true",
             ));
         }
+        validate_non_empty_list(
+            "attribution.kubernetes.label_allowlist",
+            &self.label_allowlist,
+        )?;
+        validate_selector_lists(
+            "attribution.kubernetes.namespace_allowlist",
+            &self.namespace_allowlist,
+            "attribution.kubernetes.namespace_denylist",
+            &self.namespace_denylist,
+        )?;
+        validate_selector_lists(
+            "attribution.kubernetes.node_name_allowlist",
+            &self.node_name_allowlist,
+            "attribution.kubernetes.node_name_denylist",
+            &self.node_name_denylist,
+        )?;
+        validate_label_selector(
+            "attribution.kubernetes.pod_label_selector",
+            &self.pod_label_selector,
+        )?;
+        validate_label_selector(
+            "attribution.kubernetes.pod_label_exclude_selector",
+            &self.pod_label_exclude_selector,
+        )?;
+        for (key, value) in &self.pod_label_selector {
+            if self
+                .pod_label_exclude_selector
+                .get(key)
+                .is_some_and(|excluded| excluded == value)
+            {
+                return Err(ConfigError::invalid_value(
+                    "attribution.kubernetes.pod_label_exclude_selector",
+                    format!(
+                        "attribution.kubernetes pod label selector for '{key}' cannot require and exclude the same value"
+                    ),
+                ));
+            }
+        }
 
         Ok(())
     }
+}
+
+fn validate_non_empty_list(path: &'static str, values: &[String]) -> ConfigResult<()> {
+    if values.iter().any(|value| value.trim().is_empty()) {
+        return Err(ConfigError::invalid_value(
+            path,
+            format!("{path} entries must not be empty"),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_selector_lists(
+    allowlist_path: &'static str,
+    allowlist: &[String],
+    denylist_path: &'static str,
+    denylist: &[String],
+) -> ConfigResult<()> {
+    validate_non_empty_list(allowlist_path, allowlist)?;
+    validate_non_empty_list(denylist_path, denylist)?;
+    for allowed in allowlist {
+        if denylist.iter().any(|denied| denied == allowed) {
+            return Err(ConfigError::invalid_value(
+                denylist_path,
+                format!("{denylist_path} cannot contain '{allowed}' because it is also allowed"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_label_selector(
+    path: &'static str,
+    selector: &BTreeMap<String, String>,
+) -> ConfigResult<()> {
+    for (key, value) in selector {
+        if key.trim().is_empty() {
+            return Err(ConfigError::invalid_value(
+                path,
+                format!("{path} keys must not be empty"),
+            ));
+        }
+        if value.trim().is_empty() {
+            return Err(ConfigError::invalid_value(
+                path,
+                format!("{path} value for '{key}' must not be empty"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn default_kubernetes_attribution_enabled() -> bool {
