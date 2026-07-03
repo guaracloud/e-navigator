@@ -5,6 +5,7 @@ use crate::ProtocolExtractionConfig;
 const MONGODB_OP_QUERY: i32 = 2004;
 const MONGODB_OP_REPLY: i32 = 1;
 const MONGODB_OP_MSG: i32 = 2013;
+const OP_MSG_FLAG_CHECKSUM_PRESENT: i32 = 0x01;
 const OP_MSG_KIND_BODY: u8 = 0;
 const OP_MSG_KIND_SEQUENCE: u8 = 1;
 const MAX_MONGODB_OPERATION_BYTES: usize = 128;
@@ -236,20 +237,29 @@ fn op_msg_body_document(
     if body.len() < 5 {
         return Err(MongodbExtraction::MalformedFrame);
     }
+    let flags = read_i32_le(body, 0)?;
+    let sections = if flags & OP_MSG_FLAG_CHECKSUM_PRESENT != 0 {
+        if body.len() < 9 {
+            return Err(MongodbExtraction::MalformedFrame);
+        }
+        &body[..body.len() - 4]
+    } else {
+        body
+    };
     let mut cursor = 4;
     let mut body_document = None;
-    while cursor < body.len() {
-        let kind = body[cursor];
+    while cursor < sections.len() {
+        let kind = sections[cursor];
         cursor += 1;
         match kind {
             OP_MSG_KIND_BODY => {
-                let document = read_document(body, &mut cursor, max_document_bytes)?;
+                let document = read_document(sections, &mut cursor, max_document_bytes)?;
                 if body_document.replace(document).is_some() {
                     return Err(MongodbExtraction::MalformedFrame);
                 }
             }
             OP_MSG_KIND_SEQUENCE => {
-                skip_document_sequence(body, &mut cursor, max_document_bytes)?;
+                skip_document_sequence(sections, &mut cursor, max_document_bytes)?;
             }
             _ => return Err(MongodbExtraction::MalformedFrame),
         }

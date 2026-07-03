@@ -3727,6 +3727,45 @@ fn extracts_mongodb_op_msg_command_without_raw_bson_values() {
 }
 
 #[test]
+fn extracts_mongodb_op_msg_with_checksum_without_raw_values() {
+    let command_document = bson_command_document("find", "customers-secret");
+    let command = mongodb_op_msg_with_checksum(&command_document, 0x1234_5678);
+
+    let extraction = parse_mongodb_message(&command, &ProtocolExtractionConfig::default())
+        .expect("mongo op_msg checksum command parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Mongodb);
+    assert_eq!(extraction.operation.as_deref(), Some("find"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.mongodb.opcode" && attribute.value == "op_msg")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("customers")
+                || attribute.value.contains("305419896"))
+    );
+
+    let response = mongodb_op_msg_with_checksum(&bson_mongodb_ok_document(), 0x8765_4321);
+    let extraction = parse_mongodb_response(&response, &ProtocolExtractionConfig::default())
+        .expect("mongo op_msg checksum response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Mongodb);
+    assert_eq!(extraction.status_code, "1");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("2271560481"))
+    );
+}
+
+#[test]
 fn extracts_mongodb_op_query_command_without_namespace_or_values() {
     let document = bson_command_document("insert", "orders-secret");
     let bytes = mongodb_op_query("secret-db.$cmd", &document);
@@ -4003,6 +4042,10 @@ fn rejects_malformed_and_unsupported_mongodb_fixtures() {
     );
     assert_eq!(
         parse_mongodb_response(&mongodb_frame(1, b"ignored"), &config).unwrap_err(),
+        MongodbExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_mongodb_message(&mongodb_frame(2013, &1_i32.to_le_bytes()), &config).unwrap_err(),
         MongodbExtraction::MalformedFrame
     );
 
@@ -4688,6 +4731,14 @@ fn mongodb_frame(opcode: i32, body: &[u8]) -> Vec<u8> {
 
 fn mongodb_op_msg(document: &[u8]) -> Vec<u8> {
     mongodb_op_msg_with_extra_section(document, &[])
+}
+
+fn mongodb_op_msg_with_checksum(document: &[u8], checksum: u32) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&1_u32.to_le_bytes());
+    body.extend_from_slice(&mongodb_op_msg_body_section(document));
+    body.extend_from_slice(&checksum.to_le_bytes());
+    mongodb_frame(2013, &body)
 }
 
 fn mongodb_op_msg_with_extra_section(document: &[u8], extra_section: &[u8]) -> Vec<u8> {
