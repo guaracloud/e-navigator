@@ -577,6 +577,48 @@ fn pprof_profile_bounds_canonical_label_values() {
 }
 
 #[test]
+fn pprof_profile_attributes_cannot_overwrite_canonical_labels() {
+    let mut signal = profile_sample_signal(Some("node-a"), Some("container-a"), Some("pod-a"));
+
+    if let e_navigator_signals::SignalPayload::ProfileSampleObservation(sample) =
+        &mut signal.payload
+    {
+        sample.stack_frames = vec![ProfilingFrame {
+            symbol: Some("checkout::handler".to_string()),
+            module: Some("checkout".to_string()),
+            file: Some("/src/checkout.rs".to_string()),
+            line: Some(42),
+        }];
+        sample.thread_id = Some(7);
+        sample.thread_name = Some("worker".to_string());
+        if let Some(kubernetes) = &mut sample.kubernetes {
+            kubernetes
+                .labels
+                .insert("app".to_string(), "checkout-api".to_string());
+        }
+        sample.attributes = vec![
+            attr("profile.stack.id", "evil-stack"),
+            attr("thread.name", "evil-thread"),
+            attr("process.command", "evil-process"),
+            attr("service.name", "evil-service"),
+            attr("profiling.source", "fixture"),
+        ];
+    }
+
+    let bytes = format_pprof_profile(&signal).expect("pprof profile formats");
+    let profile = pprof::Profile::decode(bytes.as_slice()).expect("pprof decodes");
+
+    assert_eq!(label_value(&profile, "profile.stack.id"), Some("stack:abc"));
+    assert_eq!(label_value(&profile, "thread.name"), Some("worker"));
+    assert_eq!(
+        label_value(&profile, "process.command"),
+        Some("checkout-api")
+    );
+    assert_eq!(label_value(&profile, "service.name"), Some("checkout-api"));
+    assert_eq!(label_value(&profile, "profiling.source"), Some("fixture"));
+}
+
+#[test]
 fn pprof_profile_bounds_frame_string_values() {
     const MAX_FRAME_BYTES: usize = 256;
 

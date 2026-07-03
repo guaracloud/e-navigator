@@ -156,10 +156,9 @@ fn labels(
         insert_label(&mut labels, "service.name", &service_name);
     }
     for attribute in bounded_attributes(&sample.attributes) {
-        labels.insert(
-            attribute.key,
-            truncate_utf8(&attribute.value, MAX_LABEL_VALUE_BYTES),
-        );
+        labels
+            .entry(attribute.key)
+            .or_insert_with(|| truncate_utf8(&attribute.value, MAX_LABEL_VALUE_BYTES));
     }
 
     labels
