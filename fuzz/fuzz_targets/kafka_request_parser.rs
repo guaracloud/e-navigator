@@ -4,9 +4,9 @@ use e_navigator_protocol::{
     ProtocolExtractionConfig,
     kafka::{
         parse_kafka_add_offsets_to_txn_response, parse_kafka_api_versions_response,
-        parse_kafka_delete_records_response, parse_kafka_describe_groups_response,
-        parse_kafka_delete_groups_response, parse_kafka_delete_topics_response,
-        parse_kafka_end_txn_response,
+        parse_kafka_add_partitions_to_txn_response, parse_kafka_delete_groups_response,
+        parse_kafka_delete_records_response, parse_kafka_delete_topics_response,
+        parse_kafka_describe_groups_response, parse_kafka_end_txn_response,
         parse_kafka_fetch_response, parse_kafka_find_coordinator_response,
         parse_kafka_heartbeat_response, parse_kafka_init_producer_id_response,
         parse_kafka_join_group_response, parse_kafka_leave_group_response,
@@ -65,6 +65,8 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_delete_groups_response(data, 1, &config);
     let _ = parse_kafka_init_producer_id_response(data, 0, &config);
     let _ = parse_kafka_init_producer_id_response(data, 1, &config);
+    let _ = parse_kafka_add_partitions_to_txn_response(data, 0, &config);
+    let _ = parse_kafka_add_partitions_to_txn_response(data, 2, &config);
     let _ = parse_kafka_add_offsets_to_txn_response(data, 0, &config);
     let _ = parse_kafka_add_offsets_to_txn_response(data, 2, &config);
     let _ = parse_kafka_end_txn_response(data, 0, &config);
