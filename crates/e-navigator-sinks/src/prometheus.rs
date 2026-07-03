@@ -854,6 +854,28 @@ mod tests {
         assert!(!metric_only_metrics.contains("profile_session_samples_observed"));
     }
 
+    #[tokio::test]
+    async fn prometheus_http_sink_bounds_latest_metric_storage() {
+        let (sink, address) = PrometheusHttpSink::bind_for_test(2)
+            .await
+            .expect("sink binds");
+        for metric_name in [
+            "network.test.first",
+            "network.test.second",
+            "network.test.third",
+        ] {
+            sink.write(&network_counter_signal_named(metric_name))
+                .await
+                .expect("metric signal is accepted");
+        }
+
+        let metrics = http_get(address, "/metrics").await;
+
+        assert!(!metrics.contains("network_test_first"));
+        assert!(metrics.contains("network_test_second"));
+        assert!(metrics.contains("network_test_third"));
+    }
+
     async fn http_get(address: std::net::SocketAddr, path: &str) -> String {
         let mut stream = TcpStream::connect(address).await.expect("connect");
         stream
@@ -880,11 +902,15 @@ mod tests {
     }
 
     fn network_counter_signal() -> SignalEnvelope {
+        network_counter_signal_named("network.flow.bytes")
+    }
+
+    fn network_counter_signal_named(metric_name: &str) -> SignalEnvelope {
         SignalEnvelope::network_counter_metric(
             "generator.network_metrics",
             Some("node-a".to_string()),
             NetworkCounterMetric {
-                metric_name: "network.flow.bytes".to_string(),
+                metric_name: metric_name.to_string(),
                 unit: "By".to_string(),
                 value: 2048,
                 window: MetricAggregationWindow {
