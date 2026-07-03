@@ -16,6 +16,7 @@ use e_navigator_protocol::{
         parse_kafka_offset_fetch_response, parse_kafka_produce_response, parse_kafka_request,
         parse_kafka_sasl_authenticate_response, parse_kafka_sasl_handshake_response,
         parse_kafka_sync_group_response, parse_kafka_txn_offset_commit_response,
+        parse_kafka_write_txn_markers_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -301,6 +302,7 @@ proptest! {
         let _ = parse_kafka_add_offsets_to_txn_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_add_partitions_to_txn_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_end_txn_response(&bytes, api_version.min(2), &config);
+        let _ = parse_kafka_write_txn_markers_response(&bytes, api_version.clamp(1, 2), &config);
         let _ = parse_kafka_txn_offset_commit_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_sasl_authenticate_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_metadata_response(&bytes, api_version.min(8), &config);
@@ -2921,6 +2923,40 @@ fn validates_kafka_txn_offset_commit_requests_without_transaction_group_topic_or
 }
 
 #[test]
+fn validates_kafka_write_txn_markers_requests_without_topic_or_marker_values() {
+    for api_version in 1..=2 {
+        let body = kafka_write_txn_markers_request_body(api_version, &[("orders.secret", &[0])]);
+        let bytes = kafka_flexible_request_frame(27, api_version, Some(b"secret-client"), &body);
+
+        let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+            .expect("kafka write txn markers request parses");
+
+        assert_eq!(extraction.operation.as_deref(), Some("write_txn_markers"));
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "messaging.kafka.api_key"
+                    && attribute.value == "27")
+        );
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                    && attribute.value == api_version.to_string())
+        );
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("secret")
+                    || attribute.value.contains("orders"))
+        );
+    }
+}
+
+#[test]
 fn validates_kafka_metadata_v8_request_without_topic_values() {
     let body = kafka_metadata_request_body(8, Some(&["orders.secret", "payments.secret"]));
     let bytes = kafka_request_frame(3, 8, Some(b"secret-client"), &body);
@@ -4680,6 +4716,74 @@ fn extracts_kafka_txn_offset_commit_error_response_without_topic_values() {
 }
 
 #[test]
+fn extracts_kafka_write_txn_markers_ok_response_without_topic_values() {
+    let bytes = kafka_write_txn_markers_response_frame(&[("orders.secret", &[(0, 0)])]);
+
+    let extraction =
+        parse_kafka_write_txn_markers_response(&bytes, 2, &ProtocolExtractionConfig::default())
+            .expect("write txn markers ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "write_txn_markers");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "27")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_write_txn_markers_error_response_without_topic_values() {
+    let bytes = kafka_write_txn_markers_response_frame(&[
+        ("orders.secret", &[(0, 0)]),
+        ("payments.secret", &[(1, 48)]),
+    ]);
+
+    let extraction =
+        parse_kafka_write_txn_markers_response(&bytes, 1, &ProtocolExtractionConfig::default())
+            .expect("write txn markers error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "write_txn_markers");
+    assert_eq!(extraction.status_code, "48");
+    assert_eq!(extraction.error_type.as_deref(), Some("48"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "1")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "48")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("payments")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     let bounded = parse_kafka_request(
         &kafka_request_frame(3, 9, Some(b"client-a"), b"topic.secret"),
@@ -4978,6 +5082,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     )
     .expect("bounded kafka end txn response parses");
     assert_eq!(bounded_end_txn_response.attributes.len(), 2);
+
+    let bounded_write_txn_markers_response = parse_kafka_write_txn_markers_response(
+        &kafka_write_txn_markers_response_frame(&[("orders.secret", &[(0, 48)])]),
+        1,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka write txn markers response parses");
+    assert_eq!(bounded_write_txn_markers_response.attributes.len(), 2);
 
     let bounded_txn_offset_commit_response = parse_kafka_txn_offset_commit_response(
         &kafka_txn_offset_commit_response_frame(0, &[("orders.secret", &[(0, 27)])]),
@@ -5597,6 +5714,42 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::ClientIdTooLong
     );
     assert_eq!(
+        parse_kafka_request(&kafka_flexible_request_frame(27, 0, None, b""), &config).unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(27, 1, None, b"\0\x01"),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    let mut too_many_write_txn_markers = Vec::new();
+    push_unsigned_varint(&mut too_many_write_txn_markers, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(27, 1, None, &too_many_write_txn_markers),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    let body = kafka_write_txn_markers_request_body(1, &[("topic.secret.name", &[0])]);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(27, 1, None, &body),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
         parse_kafka_request(&kafka_request_frame(28, -1, None, b""), &config).unwrap_err(),
         KafkaExtraction::UnsupportedApiVersion
     );
@@ -6194,6 +6347,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_write_txn_markers_response(
+            &kafka_write_txn_markers_response_frame(&[("orders", &[(0, 0)])]),
+            0,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_txn_offset_commit_response(
             &kafka_txn_offset_commit_response_frame(0, &[("orders", &[(0, 0)])]),
             3,
@@ -6345,6 +6507,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_add_partitions_to_txn_response(
             &kafka_add_partitions_to_txn_response_with_partition_count_frame(1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_write_txn_markers_response(
+            &kafka_write_txn_markers_response_with_marker_count_frame(1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_write_txn_markers_response(
+            &kafka_write_txn_markers_response_with_partition_count_frame(1025),
             1,
             &config
         )
@@ -6689,6 +6869,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     truncated_end_txn_response.truncate(10);
     assert_eq!(
         parse_kafka_end_txn_response(&truncated_end_txn_response, 1, &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_write_txn_markers_response =
+        kafka_write_txn_markers_response_frame(&[("orders", &[(0, 48)])]);
+    truncated_write_txn_markers_response.truncate(16);
+    assert_eq!(
+        parse_kafka_write_txn_markers_response(&truncated_write_txn_markers_response, 1, &config)
+            .unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
 
@@ -9909,6 +10098,30 @@ fn kafka_end_txn_request_body() -> Vec<u8> {
     body
 }
 
+fn kafka_write_txn_markers_request_body(api_version: i16, topics: &[(&str, &[i32])]) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_unsigned_varint(&mut body, 2);
+    body.extend_from_slice(&42_i64.to_be_bytes());
+    body.extend_from_slice(&3_i16.to_be_bytes());
+    body.push(1);
+    push_unsigned_varint(&mut body, topics.len() + 1);
+    for (topic, partitions) in topics {
+        push_compact_string(&mut body, topic);
+        push_unsigned_varint(&mut body, partitions.len() + 1);
+        for partition in *partitions {
+            body.extend_from_slice(&partition.to_be_bytes());
+        }
+        push_unsigned_varint(&mut body, 0);
+    }
+    body.extend_from_slice(&7_i32.to_be_bytes());
+    if api_version >= 2 {
+        body.push(2);
+    }
+    push_unsigned_varint(&mut body, 0);
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 fn kafka_txn_offset_commit_request_body(api_version: i16, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     push_kafka_string(&mut body, "transaction.secret");
@@ -10376,6 +10589,48 @@ fn kafka_add_partitions_to_txn_response_with_partition_count_frame(
     kafka_frame(&response)
 }
 
+fn kafka_write_txn_markers_response_frame(topics: &[(&str, &[(i32, i16)])]) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    push_unsigned_varint(&mut response, 2);
+    response.extend_from_slice(&42_i64.to_be_bytes());
+    push_unsigned_varint(&mut response, topics.len() + 1);
+    for (topic, partitions) in topics {
+        push_compact_string(&mut response, topic);
+        push_unsigned_varint(&mut response, partitions.len() + 1);
+        for (partition, error_code) in *partitions {
+            response.extend_from_slice(&partition.to_be_bytes());
+            response.extend_from_slice(&error_code.to_be_bytes());
+            push_unsigned_varint(&mut response, 0);
+        }
+        push_unsigned_varint(&mut response, 0);
+    }
+    push_unsigned_varint(&mut response, 0);
+    push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+fn kafka_write_txn_markers_response_with_marker_count_frame(marker_count: usize) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    push_unsigned_varint(&mut response, marker_count + 1);
+    kafka_frame(&response)
+}
+
+fn kafka_write_txn_markers_response_with_partition_count_frame(partition_count: usize) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    push_unsigned_varint(&mut response, 2);
+    response.extend_from_slice(&42_i64.to_be_bytes());
+    push_unsigned_varint(&mut response, 2);
+    push_compact_string(&mut response, "orders");
+    push_unsigned_varint(&mut response, partition_count + 1);
+    kafka_frame(&response)
+}
+
 fn kafka_txn_offset_commit_response_frame(
     correlation_id: i32,
     topics: &[(&str, &[(i32, i16)])],
@@ -10795,6 +11050,11 @@ fn push_kafka_nullable_string(bytes: &mut Vec<u8>, value: Option<&str>) {
     } else {
         bytes.extend_from_slice(&(-1_i16).to_be_bytes());
     }
+}
+
+fn push_compact_string(bytes: &mut Vec<u8>, value: &str) {
+    push_unsigned_varint(bytes, value.len() + 1);
+    bytes.extend_from_slice(value.as_bytes());
 }
 
 fn push_kafka_bytes(bytes: &mut Vec<u8>, value: &[u8]) {

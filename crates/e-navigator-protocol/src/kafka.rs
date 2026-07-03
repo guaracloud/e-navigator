@@ -1306,6 +1306,70 @@ pub fn parse_kafka_txn_offset_commit_response(
     })
 }
 
+pub fn parse_kafka_write_txn_markers_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if !(1..=2).contains(&api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = write_txn_markers_response_error_code(body, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("write_txn_markers"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("27"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "write_txn_markers".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_sasl_authenticate_response(
     bytes: &[u8],
     api_version: i16,
@@ -1771,6 +1835,7 @@ fn validate_request_body(
         24 => validate_add_partitions_to_txn_request_body(body, header, config),
         25 => validate_add_offsets_to_txn_request_body(body, header, config),
         26 => validate_end_txn_request_body(body, header, config),
+        27 => validate_write_txn_markers_request_body(body, header, config),
         28 => validate_txn_offset_commit_request_body(body, header, config),
         36 => validate_sasl_authenticate_request_body(body, header, config),
         42 => validate_delete_groups_request_body(body, header, config),
@@ -2399,6 +2464,39 @@ fn validate_txn_offset_commit_request_body(
     Ok(())
 }
 
+fn validate_write_txn_markers_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if !(1..=2).contains(&header.api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+
+    let mut cursor = header.body_start;
+    let marker_count = read_compact_array_len(body, &mut cursor)?;
+    for _ in 0..marker_count {
+        skip_bytes(body, &mut cursor, 11)?;
+        let topic_count = read_compact_array_len(body, &mut cursor)?;
+        for _ in 0..topic_count {
+            skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+            let partition_count = read_compact_array_len(body, &mut cursor)?;
+            skip_bytes(body, &mut cursor, partition_count.saturating_mul(4))?;
+            skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+        }
+        skip_bytes(body, &mut cursor, 4)?;
+        if header.api_version >= 2 {
+            skip_bytes(body, &mut cursor, 1)?;
+        }
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
 fn validate_sasl_authenticate_request_body(
     body: &[u8],
     header: &KafkaRequestHeader,
@@ -2980,6 +3078,39 @@ fn txn_offset_commit_response_error_code(
     Ok(first_error_code.unwrap_or(0))
 }
 
+fn write_txn_markers_response_error_code(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    let marker_count = read_compact_array_len(body, &mut cursor)?;
+    let mut first_error_code = None;
+    for _ in 0..marker_count {
+        skip_bytes(body, &mut cursor, 8)?;
+        let topic_count = read_compact_array_len(body, &mut cursor)?;
+        for _ in 0..topic_count {
+            skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+            let partition_count = read_compact_array_len(body, &mut cursor)?;
+            for _ in 0..partition_count {
+                skip_bytes(body, &mut cursor, 4)?;
+                let error_code = read_i16_be_cursor(body, &mut cursor)?;
+                if error_code != 0 && first_error_code.is_none() {
+                    first_error_code = Some(error_code);
+                }
+                skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+            }
+            skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+        }
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    Ok(first_error_code.unwrap_or(0))
+}
+
 fn sasl_authenticate_response_error_code(
     body: &[u8],
     api_version: i16,
@@ -3100,6 +3231,20 @@ fn read_request_array_len(body: &[u8], cursor: &mut usize) -> Result<usize, Kafk
         return Err(KafkaExtraction::MalformedFrame);
     }
     let len = len as usize;
+    if len > MAX_KAFKA_RESPONSE_ENTRIES {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    Ok(len)
+}
+
+fn read_compact_array_len(body: &[u8], cursor: &mut usize) -> Result<usize, KafkaExtraction> {
+    let encoded_len = read_unsigned_varint(body, cursor)?;
+    if encoded_len == 0 {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    let len = encoded_len
+        .checked_sub(1)
+        .ok_or(KafkaExtraction::MalformedFrame)?;
     if len > MAX_KAFKA_RESPONSE_ENTRIES {
         return Err(KafkaExtraction::FrameTooLong);
     }
@@ -3418,6 +3563,7 @@ fn api_key_name(api_key: i16) -> Option<&'static str> {
         24 => Some("add_partitions_to_txn"),
         25 => Some("add_offsets_to_txn"),
         26 => Some("end_txn"),
+        27 => Some("write_txn_markers"),
         28 => Some("txn_offset_commit"),
         29 => Some("describe_acls"),
         30 => Some("create_acls"),
