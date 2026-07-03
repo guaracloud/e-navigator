@@ -752,13 +752,45 @@ async fn request_span_preserves_bounded_request_id_attribute() {
 
 #[tokio::test]
 async fn bounded_seen_state_evicts_oldest_fingerprint() {
-    let generator = RequestCorrelationGenerator::with_limits(1, 8);
-    let first = protocol_request_signal_at(1_000, Some(valid_traceparent()), true);
-    let second = protocol_request_signal_at(2_000, Some(valid_traceparent()), true);
+    let generator = RequestCorrelationGenerator::with_limits(2, 8);
+    let first = protocol_request_signal_at(3_000, Some(valid_traceparent()), true);
+    let second = protocol_request_signal_at(1_000, Some(valid_traceparent()), true);
+    let third = protocol_request_signal_at(2_000, Some(valid_traceparent()), true);
 
     assert_eq!(observe(&generator, &first).await.len(), 1);
     assert_eq!(observe(&generator, &second).await.len(), 1);
+    assert_eq!(observe(&generator, &third).await.len(), 1);
+
+    assert!(observe(&generator, &second).await.is_empty());
     assert_eq!(observe(&generator, &first).await.len(), 1);
+}
+
+#[tokio::test]
+async fn bounded_warning_state_evicts_oldest_fingerprint() {
+    let generator = RequestCorrelationGenerator::with_limits(8, 2);
+    let first = protocol_request_signal_at(3_000, Some(valid_traceparent()), false);
+    let second = protocol_request_signal_at(1_000, Some(valid_traceparent()), false);
+    let third = protocol_request_signal_at(2_000, Some(valid_traceparent()), false);
+
+    assert_eq!(request_warning_count(&observe(&generator, &first).await), 1);
+    assert_eq!(
+        request_warning_count(&observe(&generator, &second).await),
+        1
+    );
+    assert_eq!(request_warning_count(&observe(&generator, &third).await), 1);
+
+    let mut repeated_second = protocol_request_signal_at(1_000, Some(valid_traceparent()), false);
+    set_request_path(&mut repeated_second, "/second-retry");
+    let mut repeated_first = protocol_request_signal_at(3_000, Some(valid_traceparent()), false);
+    set_request_path(&mut repeated_first, "/first-retry");
+    assert_eq!(
+        request_warning_count(&observe(&generator, &repeated_second).await),
+        0
+    );
+    assert_eq!(
+        request_warning_count(&observe(&generator, &repeated_first).await),
+        1
+    );
 }
 
 #[tokio::test]
@@ -805,6 +837,13 @@ fn assert_request_warning(outputs: &[SignalEnvelope], warning_type: &str) {
                 if found == warning_type
         )
     }));
+}
+
+fn request_warning_count(outputs: &[SignalEnvelope]) -> usize {
+    outputs
+        .iter()
+        .filter(|signal| matches!(&signal.payload, SignalPayload::RequestCorrelationWarning(_)))
+        .count()
 }
 
 fn has_attribute(attributes: &[TraceAttribute], key: &str, value: &str) -> bool {

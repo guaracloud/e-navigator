@@ -98,7 +98,8 @@ or chart rendering:
   profile session bounded and sensitive/reserved-attribute filtering, bounded
   safe-attribute merging across samples, bounded profile stack-ID state,
   bounded request-span scalar fields and attributes with sensitive trace
-  attribute filtering, and dropped-profile-sample warnings;
+  attribute filtering, deterministic request-correlation request and warning
+  dedupe eviction, and dropped-profile-sample warnings;
 - Prometheus HTTP formatting, profile session aggregate rendering, profiling
   warning-count rendering, metric/profile family toggles, health/readiness
   endpoints, constructor-validated latest-metric storage bounds, bounded

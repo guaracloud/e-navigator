@@ -6,7 +6,7 @@ use e_navigator_signals::{
     SignalEnvelope, SignalPayload, TraceAttribute, TraceConfidence, TraceCorrelationKind,
 };
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, VecDeque},
     sync::{Mutex, MutexGuard},
 };
 use tokio::sync::mpsc;
@@ -24,8 +24,8 @@ const MAX_FINGERPRINT_VALUE_BYTES: usize = 64;
 pub struct RequestCorrelationGenerator {
     max_seen_requests: usize,
     max_warnings: usize,
-    seen_requests: Mutex<BTreeSet<RequestFingerprint>>,
-    seen_warnings: Mutex<BTreeSet<WarningFingerprint>>,
+    seen_requests: Mutex<BoundedFingerprints<RequestFingerprint>>,
+    seen_warnings: Mutex<BoundedFingerprints<WarningFingerprint>>,
 }
 
 impl Default for RequestCorrelationGenerator {
@@ -39,8 +39,8 @@ impl RequestCorrelationGenerator {
         Self {
             max_seen_requests,
             max_warnings,
-            seen_requests: Mutex::new(BTreeSet::new()),
-            seen_warnings: Mutex::new(BTreeSet::new()),
+            seen_requests: Mutex::new(BoundedFingerprints::default()),
+            seen_warnings: Mutex::new(BoundedFingerprints::default()),
         }
     }
 }
@@ -146,16 +146,7 @@ impl RequestCorrelationGenerator {
 
     fn mark_request_seen(&self, fingerprint: RequestFingerprint) -> CoreResult<bool> {
         let mut seen = self.seen_requests()?;
-        if seen.contains(&fingerprint) {
-            return Ok(false);
-        }
-        if seen.len() >= self.max_seen_requests.max(1)
-            && let Some(first) = seen.iter().next().cloned()
-        {
-            seen.remove(&first);
-        }
-        seen.insert(fingerprint);
-        Ok(true)
+        Ok(seen.insert_if_new(fingerprint, self.max_seen_requests))
     }
 
     fn warning(
@@ -171,15 +162,9 @@ impl RequestCorrelationGenerator {
             timestamp_unix_nanos: request.start_unix_nanos,
         };
         let mut seen = self.seen_warnings()?;
-        if seen.contains(&fingerprint) {
+        if !seen.insert_if_new(fingerprint, self.max_warnings) {
             return Ok(None);
         }
-        if seen.len() >= self.max_warnings.max(1)
-            && let Some(first) = seen.iter().next().cloned()
-        {
-            seen.remove(&first);
-        }
-        seen.insert(fingerprint);
         drop(seen);
 
         Ok(Some(SignalEnvelope::request_correlation_warning(
@@ -201,12 +186,50 @@ impl RequestCorrelationGenerator {
         )))
     }
 
-    fn seen_requests(&self) -> CoreResult<MutexGuard<'_, BTreeSet<RequestFingerprint>>> {
+    fn seen_requests(&self) -> CoreResult<MutexGuard<'_, BoundedFingerprints<RequestFingerprint>>> {
         self.seen_requests.lock().map_err(module_error)
     }
 
-    fn seen_warnings(&self) -> CoreResult<MutexGuard<'_, BTreeSet<WarningFingerprint>>> {
+    fn seen_warnings(&self) -> CoreResult<MutexGuard<'_, BoundedFingerprints<WarningFingerprint>>> {
         self.seen_warnings.lock().map_err(module_error)
+    }
+}
+
+#[derive(Debug)]
+struct BoundedFingerprints<T> {
+    entries: BTreeSet<T>,
+    insertion_order: VecDeque<T>,
+}
+
+impl<T> Default for BoundedFingerprints<T> {
+    fn default() -> Self {
+        Self {
+            entries: BTreeSet::new(),
+            insertion_order: VecDeque::new(),
+        }
+    }
+}
+
+impl<T> BoundedFingerprints<T>
+where
+    T: Clone + Ord,
+{
+    fn insert_if_new(&mut self, fingerprint: T, max_entries: usize) -> bool {
+        if self.entries.contains(&fingerprint) {
+            return false;
+        }
+
+        let max_entries = max_entries.max(1);
+        while self.entries.len() >= max_entries {
+            let Some(oldest) = self.insertion_order.pop_front() else {
+                break;
+            };
+            self.entries.remove(&oldest);
+        }
+
+        self.insertion_order.push_back(fingerprint.clone());
+        self.entries.insert(fingerprint);
+        true
     }
 }
 
