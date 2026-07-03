@@ -1,9 +1,9 @@
 use e_navigator_signals::{
-    ContainerContext, DependencyEndpoint, KubernetesContext, NetworkProcessIdentity,
-    NetworkProtocol, ProtocolKind, RequestCorrelationWarning, RequestSpanObservation,
-    ServiceInteractionSpanObservation, SignalEnvelope, SignalPayload, TraceAttribute,
-    TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext,
-    TraceServicePathObservation, TraceSpanObservation,
+    ContainerContext, DependencyEndpoint, KubernetesContext, NetworkAddressFamily,
+    NetworkFlowWarning, NetworkProcessIdentity, NetworkProtocol, ProtocolKind,
+    RequestCorrelationWarning, RequestSpanObservation, ServiceInteractionSpanObservation,
+    SignalEnvelope, SignalPayload, TraceAttribute, TraceConfidence, TraceCorrelationKind,
+    TraceCorrelationWarning, TracePeerContext, TraceServicePathObservation, TraceSpanObservation,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -21,6 +21,7 @@ pub enum OtelTraceRecordKind {
     CorrelationWarning,
     RequestSpan,
     RequestWarning,
+    NetworkFlowWarning,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -57,6 +58,9 @@ pub fn format_otel_trace_record(signal: &SignalEnvelope) -> Option<OtelTraceReco
         SignalPayload::RequestSpanObservation(span) => Some(request_span_record(signal, span)),
         SignalPayload::RequestCorrelationWarning(warning) => {
             Some(request_warning_record(signal, warning))
+        }
+        SignalPayload::NetworkFlowWarning(warning) => {
+            Some(network_flow_warning_record(signal, warning))
         }
         _ => None,
     }
@@ -296,6 +300,65 @@ fn request_warning_record(
     OtelTraceRecord {
         name: "request.correlation.warning".to_string(),
         kind: OtelTraceRecordKind::RequestWarning,
+        status: None,
+        trace_id: None,
+        span_id: None,
+        parent_span_id: None,
+        start_unix_nanos: warning.timestamp_unix_nanos,
+        end_unix_nanos: Some(warning.timestamp_unix_nanos),
+        duration_nanos: Some(0),
+        resource: resource_attributes(
+            signal,
+            warning.container.as_ref(),
+            warning.kubernetes.as_ref(),
+            None,
+        ),
+        attributes,
+    }
+}
+
+fn network_flow_warning_record(
+    signal: &SignalEnvelope,
+    warning: &NetworkFlowWarning,
+) -> OtelTraceRecord {
+    let mut attributes = BTreeMap::new();
+    attributes.insert(
+        "warning.type".to_string(),
+        serde_json::json!(warning.warning_type),
+    );
+    attributes.insert(
+        "warning.message".to_string(),
+        serde_json::json!(warning.message),
+    );
+    attributes.insert(
+        "trace.source.signal.kind".to_string(),
+        serde_json::json!(warning.source_signal_kind),
+    );
+    attributes.insert(
+        "trace.source.module".to_string(),
+        serde_json::json!(warning.source_module),
+    );
+    attributes.insert(
+        "network.protocol.name".to_string(),
+        serde_json::json!(protocol_name(warning.protocol)),
+    );
+    attributes.insert(
+        "network.address.family".to_string(),
+        serde_json::json!(address_family_name(warning.address_family)),
+    );
+    attributes.insert(
+        "server.address".to_string(),
+        serde_json::json!(warning.remote_address),
+    );
+    attributes.insert(
+        "server.port".to_string(),
+        serde_json::json!(warning.remote_port),
+    );
+    append_process_attributes(&mut attributes, Some(&warning.process));
+
+    OtelTraceRecord {
+        name: "network.flow.warning".to_string(),
+        kind: OtelTraceRecordKind::NetworkFlowWarning,
         status: None,
         trace_id: None,
         span_id: None,
@@ -572,6 +635,14 @@ fn protocol_kind_name(protocol: ProtocolKind) -> &'static str {
         ProtocolKind::Postgresql => "postgresql",
         ProtocolKind::Redis => "redis",
         ProtocolKind::Unknown => "unknown",
+        _ => "other",
+    }
+}
+
+fn address_family_name(address_family: NetworkAddressFamily) -> &'static str {
+    match address_family {
+        NetworkAddressFamily::Ipv4 => "ipv4",
+        NetworkAddressFamily::Ipv6 => "ipv6",
         _ => "other",
     }
 }

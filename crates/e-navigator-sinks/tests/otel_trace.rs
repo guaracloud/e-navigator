@@ -1,9 +1,9 @@
 use e_navigator_signals::{
-    ContainerContext, DependencyEndpoint, KubernetesContext, NetworkProcessIdentity,
-    NetworkProtocol, ProtocolKind, RequestCorrelationWarning, RequestSpanObservation,
-    ServiceInteractionSpanObservation, SignalEnvelope, TraceAttribute, TraceConfidence,
-    TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext, TraceServicePathObservation,
-    TraceSpanObservation,
+    ContainerContext, DependencyEndpoint, KubernetesContext, NetworkAddressFamily,
+    NetworkFlowWarning, NetworkProcessIdentity, NetworkProtocol, ProtocolKind,
+    RequestCorrelationWarning, RequestSpanObservation, ServiceInteractionSpanObservation,
+    SignalEnvelope, TraceAttribute, TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning,
+    TracePeerContext, TraceServicePathObservation, TraceSpanObservation,
 };
 use e_navigator_sinks::{OtelSpanStatus, OtelTraceRecordKind, format_otel_trace_record};
 use std::collections::BTreeMap;
@@ -621,6 +621,53 @@ fn formats_request_correlation_warning() {
         "protocol_request_observation"
     );
     assert_eq!(record.attributes["network.protocol.name"], "http");
+}
+
+#[test]
+fn formats_network_flow_warning_without_inventing_trace_ids() {
+    let signal = SignalEnvelope::network_flow_warning(
+        "generator.network_metrics",
+        Some("node-a".to_string()),
+        NetworkFlowWarning {
+            warning_type: "missing_attribution".to_string(),
+            message: "network flow has byte counters but incomplete source attribution".to_string(),
+            timestamp_unix_nanos: 1_500,
+            source_signal_kind: "network_connection_close".to_string(),
+            source_module: "source.synthetic_network".to_string(),
+            protocol: NetworkProtocol::Tcp,
+            address_family: NetworkAddressFamily::Ipv4,
+            remote_address: "198.51.100.30".to_string(),
+            remote_port: 9443,
+            process: network_process(),
+            container: None,
+            kubernetes: Some(kubernetes_context()),
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("network flow warning formats");
+
+    assert_eq!(record.kind, OtelTraceRecordKind::NetworkFlowWarning);
+    assert_eq!(record.name, "network.flow.warning");
+    assert_eq!(record.trace_id, None);
+    assert_eq!(record.span_id, None);
+    assert_eq!(record.parent_span_id, None);
+    assert_eq!(record.start_unix_nanos, 1_500);
+    assert_eq!(record.end_unix_nanos, Some(1_500));
+    assert_eq!(record.duration_nanos, Some(0));
+    assert_eq!(record.resource["host.name"], "node-a");
+    assert_eq!(record.resource["k8s.namespace.name"], "default");
+    assert_eq!(record.attributes["warning.type"], "missing_attribution");
+    assert_eq!(
+        record.attributes["trace.source.signal.kind"],
+        "network_connection_close"
+    );
+    assert_eq!(record.attributes["network.protocol.name"], "tcp");
+    assert_eq!(record.attributes["network.address.family"], "ipv4");
+    assert_eq!(record.attributes["server.address"], "198.51.100.30");
+    assert_eq!(record.attributes["server.port"], 9443);
+    assert_eq!(record.attributes["process.pid"], 42);
+    assert_eq!(record.attributes["process.command"], "api");
+    assert!(!record.attributes.contains_key("process.executable.path"));
 }
 
 #[test]

@@ -34,8 +34,8 @@ or chart rendering:
 - Prometheus HTTP formatting, health/readiness endpoints, and secret-like label
   filtering;
 - OTLP protobuf request encoding plus per-family endpoint routing for metrics,
-  traces with request/error status mapping, and development-status profiles in
-  fake-collector tests;
+  traces with request/error status mapping, local warning trace-record
+  formatting, and development-status profiles in fake-collector tests;
 - Helm rendering, schema checks, and release verification workflow structure.
 
 ## Runtime-Proven Slices

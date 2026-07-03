@@ -104,7 +104,8 @@ fn span_kind(kind: &OtelTraceRecordKind) -> span::SpanKind {
         OtelTraceRecordKind::Span
         | OtelTraceRecordKind::ServicePath
         | OtelTraceRecordKind::CorrelationWarning
-        | OtelTraceRecordKind::RequestWarning => span::SpanKind::Internal,
+        | OtelTraceRecordKind::RequestWarning
+        | OtelTraceRecordKind::NetworkFlowWarning => span::SpanKind::Internal,
     }
 }
 
