@@ -772,6 +772,23 @@ mod tests {
     }
 
     #[test]
+    fn escapes_prometheus_label_values() {
+        let mut labels = BTreeMap::new();
+        labels.insert("label".to_string(), "line\nquote\"backslash\\".to_string());
+
+        let rendered = render_prometheus_text(&[PrometheusMetricLine {
+            name: "test_metric".to_string(),
+            labels,
+            value: "1".to_string(),
+        }]);
+
+        assert_eq!(
+            rendered,
+            "test_metric{label=\"line\\nquote\\\"backslash\\\\\"} 1\n"
+        );
+    }
+
+    #[test]
     fn drops_oversized_prometheus_label_values() {
         assert_eq!(
             prometheus_label_value(&serde_json::json!(
