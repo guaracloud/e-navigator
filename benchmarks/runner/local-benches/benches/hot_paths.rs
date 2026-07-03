@@ -12,10 +12,10 @@ use e_navigator_protocol::{
     http::{parse_http_request, parse_http_response},
     kafka::{parse_kafka_api_versions_response, parse_kafka_produce_response, parse_kafka_request},
     mongodb::{parse_mongodb_message, parse_mongodb_response},
-    mysql::parse_mysql_command,
+    mysql::{parse_mysql_command, parse_mysql_response},
     nats::{parse_nats_command, parse_nats_response},
-    postgres::parse_postgres_message,
-    redis::parse_redis_command,
+    postgres::{parse_postgres_message, parse_postgres_response},
+    redis::{parse_redis_command, parse_redis_response},
     trace_context::parse_traceparent,
 };
 use e_navigator_signals::{
@@ -138,10 +138,13 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     let kafka_response = b"\0\0\0\x15\0\0\0\x2a\0#secret-api-list";
     let kafka_produce_response = kafka_produce_response_fixture();
     let mysql = b"\x18\0\0\0\x03select * from customers";
+    let mysql_ok_response = b"\x05\0\0\0\0\0\0\x02\0";
     let nats = b"PUB orders.created 5\r\nhello\r\n";
     let nats_response = b"-ERR 'Authorization Violation'\r\n";
     let postgres = b"Q\0\0\0\x1cselect * from customers\0";
+    let postgres_response = b"C\0\0\0\x0fINSERT 0 1\0";
     let redis = b"*2\r\n$3\r\nGET\r\n$16\r\ncustomer:pii:123\r\n";
+    let redis_response = b"+OK password-reset-complete\r\n";
     let protocol_config = ProtocolExtractionConfig::default();
     let profile_fixture = r#"{
         "timestamp_unix_nanos": 1000,
@@ -202,6 +205,9 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     c.bench_function("protocol/mysql_query_packet_parse", |b| {
         b.iter(|| parse_mysql_command(black_box(mysql), &protocol_config).unwrap())
     });
+    c.bench_function("protocol/mysql_ok_response_parse", |b| {
+        b.iter(|| parse_mysql_response(black_box(mysql_ok_response), &protocol_config).unwrap())
+    });
     c.bench_function("protocol/nats_pub_command_parse", |b| {
         b.iter(|| parse_nats_command(black_box(nats), &protocol_config).unwrap())
     });
@@ -211,8 +217,14 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     c.bench_function("protocol/postgres_simple_query_parse", |b| {
         b.iter(|| parse_postgres_message(black_box(postgres), &protocol_config).unwrap())
     });
+    c.bench_function("protocol/postgres_command_complete_response_parse", |b| {
+        b.iter(|| parse_postgres_response(black_box(postgres_response), &protocol_config).unwrap())
+    });
     c.bench_function("protocol/redis_resp_command_parse", |b| {
         b.iter(|| parse_redis_command(black_box(redis), &protocol_config).unwrap())
+    });
+    c.bench_function("protocol/redis_simple_response_parse", |b| {
+        b.iter(|| parse_redis_response(black_box(redis_response), &protocol_config).unwrap())
     });
     c.bench_function("profiling/fixture_normalize", |b| {
         b.iter(|| parse_profile_fixture(black_box(profile_fixture), &limits).unwrap())
