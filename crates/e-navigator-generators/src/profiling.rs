@@ -20,6 +20,7 @@ const DEFAULT_MAX_SAMPLES_PER_WINDOW: u64 = 64;
 const MAX_PROFILE_ATTRIBUTES: usize = 16;
 const MAX_PROFILE_ATTRIBUTE_KEY_BYTES: usize = 128;
 const MAX_PROFILE_ATTRIBUTE_VALUE_BYTES: usize = 256;
+const MAX_PROFILE_STACK_ID_BYTES: usize = 128;
 
 #[derive(Debug)]
 pub struct ProfilingGenerator {
@@ -256,7 +257,7 @@ impl ProfilingGenerator {
             source_signal_kind: signal.kind().to_string(),
             source_module: signal.source.clone(),
             timestamp_unix_nanos: sample.timestamp_unix_nanos,
-            stack_id: sample.stack_id.clone(),
+            stack_id: bounded_stack_id(&sample.stack_id),
         };
         let mut seen = self.seen_warnings()?;
         if seen.contains(&fingerprint) {
@@ -456,7 +457,7 @@ impl WindowState {
     ) -> Self {
         let mut stack_ids = BTreeSet::new();
         if max_stack_ids_per_window > 0 {
-            stack_ids.insert(sample.stack_id.clone());
+            stack_ids.insert(bounded_stack_id(&sample.stack_id));
         }
         let observed_sample_count = sample.sample_count.min(max_samples_per_window);
         let dropped_sample_count = sample.sample_count.saturating_sub(observed_sample_count);
@@ -492,10 +493,9 @@ impl WindowState {
             .dropped_sample_count
             .saturating_add(dropped_sample_count);
 
-        if self.stack_ids.contains(&sample.stack_id)
-            || self.stack_ids.len() < max_stack_ids_per_window
-        {
-            self.stack_ids.insert(sample.stack_id.clone());
+        let stack_id = bounded_stack_id(&sample.stack_id);
+        if self.stack_ids.contains(&stack_id) || self.stack_ids.len() < max_stack_ids_per_window {
+            self.stack_ids.insert(stack_id);
         }
 
         if self.process.is_none() {
@@ -560,7 +560,7 @@ impl SampleFingerprint {
             host: signal.host.clone(),
             timestamp_unix_nanos: sample.timestamp_unix_nanos,
             pid: sample.process.as_ref().map(|process| process.pid),
-            stack_id: sample.stack_id.clone(),
+            stack_id: bounded_stack_id(&sample.stack_id),
             profiling_kind: profiling_kind_name(sample.profiling_kind),
             correlation_kind: correlation_kind_name(sample.correlation_kind),
             thread_id: sample.thread_id,
@@ -610,6 +610,14 @@ fn bounded_attributes(attributes: &[ProfilingAttribute]) -> Vec<ProfilingAttribu
     attributes
 }
 
+fn bounded_stack_id(value: &str) -> String {
+    if value.len() <= MAX_PROFILE_STACK_ID_BYTES {
+        value.to_string()
+    } else {
+        format!("stack-hash:{:016x}", stable_hash64(value.as_bytes()))
+    }
+}
+
 fn profiling_kind_name(kind: e_navigator_signals::ProfilingKind) -> &'static str {
     match kind {
         e_navigator_signals::ProfilingKind::Cpu => "cpu",
@@ -652,5 +660,21 @@ fn module_error<T>(err: std::sync::PoisonError<T>) -> CoreError {
     CoreError::ModuleFailed {
         module: "generator.profiling".to_string(),
         message: err.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_stack_ids_are_represented_by_stable_hashes() {
+        let oversized = "s".repeat(MAX_PROFILE_STACK_ID_BYTES + 1);
+        let bounded = bounded_stack_id(&oversized);
+
+        assert!(bounded.starts_with("stack-hash:"));
+        assert!(bounded.len() <= MAX_PROFILE_STACK_ID_BYTES);
+        assert_eq!(bounded, bounded_stack_id(&oversized));
+        assert_ne!(bounded, oversized);
     }
 }
