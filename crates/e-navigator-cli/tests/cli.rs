@@ -61,6 +61,51 @@ fn validate_config_with_config_file_exits_without_running_source() {
 }
 
 #[test]
+fn validate_config_with_invalid_config_fails_without_running_source() {
+    let path = temp_config_path("invalid");
+    std::fs::write(
+        &path,
+        r#"
+        queue_capacity = 0
+
+        [[modules]]
+        name = "source.synthetic_exec"
+        enabled = true
+
+        [[modules]]
+        name = "sink.json_stdout"
+        enabled = true
+        "#,
+    )
+    .expect("write config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_e-navigator"))
+        .arg("--source")
+        .arg("synthetic")
+        .arg("--config")
+        .arg(&path)
+        .arg("--validate-config")
+        .output()
+        .expect("run e-navigator validate-config");
+    let _ = std::fs::remove_file(path);
+
+    assert!(
+        !output.status.success(),
+        "validate-config should reject invalid config"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "validate-config should not emit synthetic signals"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("queue_capacity must be greater than zero"),
+        "stderr should explain validation failure: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn synthetic_run_emits_generated_contract_families() {
     let output = Command::new(env!("CARGO_BIN_EXE_e-navigator"))
         .arg("--source")
