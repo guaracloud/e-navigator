@@ -3,11 +3,13 @@ use e_navigator_signals::{ProtocolKind, TraceAttribute};
 use crate::ProtocolExtractionConfig;
 
 const MONGODB_OP_QUERY: i32 = 2004;
+const MONGODB_OP_REPLY: i32 = 1;
 const MONGODB_OP_MSG: i32 = 2013;
 const OP_MSG_KIND_BODY: u8 = 0;
 const OP_MSG_KIND_SEQUENCE: u8 = 1;
 const MAX_MONGODB_OPERATION_BYTES: usize = 128;
 const MAX_MONGODB_NAMESPACE_BYTES: usize = 256;
+const MAX_MONGODB_REPLY_DOCUMENTS: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedMongodbCommand {
@@ -85,10 +87,11 @@ pub fn parse_mongodb_response(
         return Err(MongodbExtraction::FrameTooLong);
     }
     let frame = frame_body(bytes, config.max_header_bytes)?;
-    if frame.opcode != MONGODB_OP_MSG {
-        return Err(MongodbExtraction::UnsupportedOpcode);
-    }
-    let response = parse_op_msg_response(frame.body, config.max_request_line_bytes)?;
+    let response = match frame.opcode {
+        MONGODB_OP_MSG => parse_op_msg_response(frame.body, config.max_request_line_bytes)?,
+        MONGODB_OP_REPLY => parse_op_reply_response(frame.body, config.max_request_line_bytes)?,
+        _ => return Err(MongodbExtraction::UnsupportedOpcode),
+    };
     let status_code = match (response.ok, response.code) {
         (Some(false), Some(code)) if code < 0 => return Err(MongodbExtraction::MalformedFrame),
         (Some(false), Some(code)) => code.to_string(),
@@ -196,6 +199,34 @@ fn parse_op_msg_response(
 ) -> Result<MongodbResponse, MongodbExtraction> {
     let document = op_msg_body_document(body, max_document_bytes)?;
     document_response_status(document)
+}
+
+fn parse_op_reply_response(
+    body: &[u8],
+    max_document_bytes: usize,
+) -> Result<MongodbResponse, MongodbExtraction> {
+    if body.len() < 20 {
+        return Err(MongodbExtraction::MalformedFrame);
+    }
+    let number_returned = read_i32_le(body, 16)?;
+    if number_returned <= 0 {
+        return Err(MongodbExtraction::MissingStatus);
+    }
+    let number_returned = number_returned as usize;
+    if number_returned > MAX_MONGODB_REPLY_DOCUMENTS {
+        return Err(MongodbExtraction::DocumentTooLong);
+    }
+
+    let mut cursor = 20;
+    let first_document = read_document(body, &mut cursor, max_document_bytes)?;
+    let response = document_response_status(first_document)?;
+    for _ in 1..number_returned {
+        let _ = read_document(body, &mut cursor, max_document_bytes)?;
+    }
+    if cursor != body.len() {
+        return Err(MongodbExtraction::MalformedFrame);
+    }
+    Ok(response)
 }
 
 fn op_msg_body_document(

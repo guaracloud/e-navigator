@@ -2857,6 +2857,64 @@ fn extracts_mongodb_error_without_code_as_generic_status() {
 }
 
 #[test]
+fn extracts_mongodb_op_reply_ok_response_status() {
+    let bytes = mongodb_op_reply(&[bson_mongodb_ok_document()]);
+
+    let extraction = parse_mongodb_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("mongo op_reply ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Mongodb);
+    assert_eq!(extraction.status_code, "1");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.response.status_code" && attribute.value == "1")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type")
+    );
+}
+
+#[test]
+fn extracts_mongodb_op_reply_error_without_raw_error_message() {
+    let bytes = mongodb_op_reply(&[
+        bson_mongodb_error_document(13, b"Authorization failed for secret.collection"),
+        bson_mongodb_ok_document(),
+    ]);
+
+    let extraction = parse_mongodb_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("mongo op_reply error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Mongodb);
+    assert_eq!(extraction.status_code, "13");
+    assert_eq!(extraction.error_type.as_deref(), Some("13"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.response.status_code" && attribute.value == "13")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "13")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("Authorization")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn enforces_mongodb_frame_document_response_and_attribute_bounds() {
     let bounded = parse_mongodb_message(
         &mongodb_op_msg(&bson_command_document("find", "customers")),
@@ -2935,6 +2993,19 @@ fn enforces_mongodb_frame_document_response_and_attribute_bounds() {
         .unwrap_err(),
         MongodbExtraction::DocumentTooLong
     );
+    assert_eq!(
+        parse_mongodb_response(
+            &mongodb_op_reply_with_document_count(17),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 96,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        MongodbExtraction::DocumentTooLong
+    );
 }
 
 #[test]
@@ -2950,8 +3021,13 @@ fn rejects_malformed_and_unsupported_mongodb_fixtures() {
         MongodbExtraction::UnsupportedOpcode
     );
     assert_eq!(
-        parse_mongodb_response(&mongodb_frame(1, b"ignored"), &config).unwrap_err(),
+        parse_mongodb_message(&mongodb_op_reply(&[bson_mongodb_ok_document()]), &config)
+            .unwrap_err(),
         MongodbExtraction::UnsupportedOpcode
+    );
+    assert_eq!(
+        parse_mongodb_response(&mongodb_frame(1, b"ignored"), &config).unwrap_err(),
+        MongodbExtraction::MalformedFrame
     );
 
     let mut truncated = mongodb_op_msg(&bson_command_document("find", "customers"));
@@ -3008,6 +3084,24 @@ fn rejects_malformed_and_unsupported_mongodb_fixtures() {
             &config
         )
         .unwrap_err(),
+        MongodbExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_mongodb_response(&mongodb_op_reply(&[]), &config).unwrap_err(),
+        MongodbExtraction::MissingStatus
+    );
+    assert_eq!(
+        parse_mongodb_response(
+            &mongodb_op_reply(&[bson_mongodb_error_document(-1, b"secret")]),
+            &config
+        )
+        .unwrap_err(),
+        MongodbExtraction::MalformedFrame
+    );
+    let mut truncated_reply = mongodb_op_reply(&[bson_mongodb_ok_document()]);
+    truncated_reply.truncate(24);
+    assert_eq!(
+        parse_mongodb_response(&truncated_reply, &config).unwrap_err(),
         MongodbExtraction::MalformedFrame
     );
 
@@ -3644,6 +3738,27 @@ fn mongodb_op_query(namespace: &str, document: &[u8]) -> Vec<u8> {
     body.extend_from_slice(&1_i32.to_le_bytes());
     body.extend_from_slice(document);
     mongodb_frame(2004, &body)
+}
+
+fn mongodb_op_reply(documents: &[Vec<u8>]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&0_i32.to_le_bytes());
+    body.extend_from_slice(&0_i64.to_le_bytes());
+    body.extend_from_slice(&0_i32.to_le_bytes());
+    body.extend_from_slice(&(documents.len() as i32).to_le_bytes());
+    for document in documents {
+        body.extend_from_slice(document);
+    }
+    mongodb_frame(1, &body)
+}
+
+fn mongodb_op_reply_with_document_count(document_count: i32) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&0_i32.to_le_bytes());
+    body.extend_from_slice(&0_i64.to_le_bytes());
+    body.extend_from_slice(&0_i32.to_le_bytes());
+    body.extend_from_slice(&document_count.to_le_bytes());
+    mongodb_frame(1, &body)
 }
 
 fn bson_command_document(command: &str, value: &str) -> Vec<u8> {

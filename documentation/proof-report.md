@@ -77,8 +77,9 @@ or chart rendering:
   request-header plus ApiVersions, bounded Produce, and bounded Fetch
   response-error parsing,
   MongoDB
-  wire-message and response-error parsing with OP_MSG section validation and
-  non-negative response-code validation, MySQL command packet and OK/EOF/ERR
+  wire-message and response-error parsing with OP_MSG section validation,
+  bounded OP_REPLY response parsing, and non-negative response-code validation,
+  MySQL command packet and OK/EOF/ERR
   response parsing with canonical
   SQLSTATE validation and build-checked parser fuzz coverage, NATS text command
   parsing with canonical command-token validation plus OK/error response parsing,
@@ -195,11 +196,12 @@ These areas remain explicitly partial:
   matching, broad response
   coverage, flexible-version body semantics beyond the ApiVersions response
   header, and live Kafka proof are not implemented or proven.
-- **MongoDB protocol observability:** bounded `OP_MSG`, command `OP_QUERY`, and
-  OP_MSG response-error parsing is locally tested without exporting raw BSON
-  values, namespaces, or raw error messages, including non-negative
-  response-code validation, but runtime capture, request/response matching,
-  broad response coverage, and live MongoDB proof are not implemented or proven.
+- **MongoDB protocol observability:** bounded `OP_MSG`, command `OP_QUERY`,
+  OP_MSG response-error parsing, and OP_REPLY response parsing is locally
+  tested without exporting raw BSON values, namespaces, or raw error messages,
+  including bounded OP_REPLY document counts and non-negative response-code
+  validation, but runtime capture, request/response matching, broad response
+  coverage, and live MongoDB proof are not implemented or proven.
 - **NATS protocol observability:** bounded text command parsing for common
   publish, subscribe, message, and control lines plus OK/error response parsing
   is locally tested with canonical command-token validation and without
