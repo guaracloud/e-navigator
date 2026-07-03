@@ -8,15 +8,16 @@ use e_navigator_protocol::{
         parse_kafka_alter_configs_response, parse_kafka_alter_partition_reassignments_response,
         parse_kafka_alter_replica_log_dirs_response,
         parse_kafka_alter_user_scram_credentials_response, parse_kafka_api_versions_response,
-        parse_kafka_create_acls_response, parse_kafka_create_delegation_token_response,
-        parse_kafka_create_partitions_response, parse_kafka_create_topics_response,
-        parse_kafka_delete_acls_response, parse_kafka_delete_groups_response,
-        parse_kafka_delete_records_response, parse_kafka_delete_topics_response,
-        parse_kafka_describe_acls_response, parse_kafka_describe_client_quotas_response,
-        parse_kafka_describe_cluster_response, parse_kafka_describe_configs_response,
-        parse_kafka_describe_delegation_token_response, parse_kafka_describe_groups_response,
-        parse_kafka_describe_log_dirs_response, parse_kafka_describe_producers_response,
-        parse_kafka_describe_quorum_response, parse_kafka_describe_transactions_response,
+        parse_kafka_consumer_group_heartbeat_response, parse_kafka_create_acls_response,
+        parse_kafka_create_delegation_token_response, parse_kafka_create_partitions_response,
+        parse_kafka_create_topics_response, parse_kafka_delete_acls_response,
+        parse_kafka_delete_groups_response, parse_kafka_delete_records_response,
+        parse_kafka_delete_topics_response, parse_kafka_describe_acls_response,
+        parse_kafka_describe_client_quotas_response, parse_kafka_describe_cluster_response,
+        parse_kafka_describe_configs_response, parse_kafka_describe_delegation_token_response,
+        parse_kafka_describe_groups_response, parse_kafka_describe_log_dirs_response,
+        parse_kafka_describe_producers_response, parse_kafka_describe_quorum_response,
+        parse_kafka_describe_transactions_response,
         parse_kafka_describe_user_scram_credentials_response, parse_kafka_elect_leaders_response,
         parse_kafka_end_txn_response, parse_kafka_expire_delegation_token_response,
         parse_kafka_fetch_response, parse_kafka_find_coordinator_response,
@@ -327,6 +328,7 @@ proptest! {
         let _ = parse_kafka_unregister_broker_response(&bytes, 0, &config);
         let _ = parse_kafka_describe_transactions_response(&bytes, 0, &config);
         let _ = parse_kafka_list_transactions_response(&bytes, api_version.min(2), &config);
+        let _ = parse_kafka_consumer_group_heartbeat_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -3344,6 +3346,99 @@ fn validates_kafka_list_transactions_v2_request_without_pattern_values() {
 }
 
 #[test]
+fn validates_kafka_consumer_group_heartbeat_v0_request_without_group_or_assignment_values() {
+    let topic_partitions: &[ConsumerGroupHeartbeatTopicPartitionsFixture<'_>] =
+        &[([7_u8; 16], &[0, 1])];
+    let body = kafka_consumer_group_heartbeat_request_body(&ConsumerGroupHeartbeatRequestFixture {
+        api_version: 0,
+        group_id: "group.secret",
+        member_id: "member.secret",
+        instance_id: Some("instance.secret"),
+        rack_id: Some("rack.secret"),
+        subscribed_topic_names: Some(&["orders.secret"]),
+        subscribed_topic_regex: None,
+        server_assignor: Some("range.secret"),
+        topic_partitions: Some(topic_partitions),
+    });
+    let bytes = kafka_flexible_request_frame(68, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka consumer group heartbeat v0 request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("consumer_group_heartbeat")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "68")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("member")
+                || attribute.value.contains("orders")
+                || attribute.value.contains("range")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn validates_kafka_consumer_group_heartbeat_v1_request_without_regex_values() {
+    let body = kafka_consumer_group_heartbeat_request_body(&ConsumerGroupHeartbeatRequestFixture {
+        api_version: 1,
+        group_id: "group.secret",
+        member_id: "member.secret",
+        instance_id: None,
+        rack_id: None,
+        subscribed_topic_names: None,
+        subscribed_topic_regex: Some("orders.*secret"),
+        server_assignor: None,
+        topic_partitions: None,
+    });
+    let bytes = kafka_flexible_request_frame(68, 1, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka consumer group heartbeat v1 request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("consumer_group_heartbeat")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "68")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "1")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("member")
+                || attribute.value.contains("orders")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn validates_kafka_alter_replica_log_dirs_requests_without_path_or_topic_values() {
     let body = kafka_alter_replica_log_dirs_request_body(
         "/var/lib/kafka/secret-dir",
@@ -5751,6 +5846,91 @@ fn extracts_kafka_list_transactions_error_without_filter_or_state_values() {
                 || attribute.value.contains("txn")
                 || attribute.value.contains("abort")
                 || attribute.value.contains("1002")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_consumer_group_heartbeat_ok_response_without_member_or_assignment_values() {
+    let assignment: &[ConsumerGroupHeartbeatTopicPartitionsFixture<'_>] = &[([9_u8; 16], &[0, 1])];
+    let bytes = kafka_consumer_group_heartbeat_response_frame(
+        0,
+        0,
+        None,
+        Some("member.secret"),
+        Some(assignment),
+    );
+
+    let extraction = parse_kafka_consumer_group_heartbeat_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("consumer group heartbeat ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "consumer_group_heartbeat");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "68")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("member")
+                || attribute.value.contains("secret")
+                || attribute.value.contains("9"))
+    );
+}
+
+#[test]
+fn extracts_kafka_consumer_group_heartbeat_error_without_message_values() {
+    let bytes = kafka_consumer_group_heartbeat_response_frame(
+        0,
+        35,
+        Some("heartbeat secret denied"),
+        Some("member.secret"),
+        None,
+    );
+
+    let extraction = parse_kafka_consumer_group_heartbeat_response(
+        &bytes,
+        1,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("consumer group heartbeat error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "consumer_group_heartbeat");
+    assert_eq!(extraction.status_code, "35");
+    assert_eq!(extraction.error_type.as_deref(), Some("35"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "1")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "35")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("denied")
+                || attribute.value.contains("member")
                 || attribute.value.contains("secret"))
     );
 }
@@ -8459,6 +8639,22 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     .expect("bounded kafka list transactions response parses");
     assert_eq!(bounded_list_transactions_response.attributes.len(), 2);
 
+    let bounded_consumer_group_heartbeat_response = parse_kafka_consumer_group_heartbeat_response(
+        &kafka_consumer_group_heartbeat_response_frame(0, 0, None, None, None),
+        1,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka consumer group heartbeat response parses");
+    assert_eq!(
+        bounded_consumer_group_heartbeat_response.attributes.len(),
+        2
+    );
+
     let bounded_produce_response = parse_kafka_produce_response(
         &kafka_produce_response_frame(0, 1, &[("orders.secret", 6)]),
         1,
@@ -10967,6 +11163,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_consumer_group_heartbeat_response(
+            &kafka_consumer_group_heartbeat_response_frame(0, 0, None, None, None),
+            2,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_sasl_handshake_response(
             &kafka_sasl_handshake_response_frame(0, 0, &["PLAIN"]),
             2,
@@ -11762,6 +11967,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_consumer_group_heartbeat_response(
+            &kafka_consumer_group_heartbeat_response_with_assignment_count_frame(1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_describe_cluster_response(
             &kafka_describe_cluster_response_frame(
                 0,
@@ -11822,6 +12036,26 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
                 &[("txn.secret", 1001, "ongoing.secret")],
             ),
             2,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_consumer_group_heartbeat_response(
+            &kafka_consumer_group_heartbeat_response_frame(
+                0,
+                35,
+                Some("heartbeat secret denied"),
+                Some("member.secret"),
+                None,
+            ),
+            1,
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
                 max_request_line_bytes: 4,
@@ -12704,6 +12938,121 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::MalformedFrame
     );
 
+    let consumer_group_heartbeat_body =
+        kafka_consumer_group_heartbeat_request_body(&ConsumerGroupHeartbeatRequestFixture {
+            api_version: 1,
+            group_id: "group.secret",
+            member_id: "member.secret",
+            instance_id: Some("instance.secret"),
+            rack_id: Some("rack.secret"),
+            subscribed_topic_names: Some(&["orders.secret"]),
+            subscribed_topic_regex: Some("orders.*secret"),
+            server_assignor: Some("range.secret"),
+            topic_partitions: None,
+        });
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                68,
+                2,
+                Some(b"client-a"),
+                &consumer_group_heartbeat_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+
+    let consumer_group_heartbeat_long_group_body =
+        kafka_consumer_group_heartbeat_request_body(&ConsumerGroupHeartbeatRequestFixture {
+            api_version: 1,
+            group_id: "group.secret",
+            member_id: "member",
+            instance_id: None,
+            rack_id: None,
+            subscribed_topic_names: None,
+            subscribed_topic_regex: None,
+            server_assignor: None,
+            topic_partitions: None,
+        });
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                68,
+                1,
+                Some(b"client-a"),
+                &consumer_group_heartbeat_long_group_body,
+            ),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+
+    let mut oversized_consumer_group_heartbeat_topics_body =
+        kafka_consumer_group_heartbeat_prefix_body("group", "member", None, None);
+    push_unsigned_varint(&mut oversized_consumer_group_heartbeat_topics_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                68,
+                0,
+                Some(b"client-a"),
+                &oversized_consumer_group_heartbeat_topics_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+
+    let mut oversized_consumer_group_heartbeat_assignment_body =
+        kafka_consumer_group_heartbeat_prefix_body("group", "member", None, None);
+    push_unsigned_varint(&mut oversized_consumer_group_heartbeat_assignment_body, 0);
+    push_unsigned_varint(&mut oversized_consumer_group_heartbeat_assignment_body, 0);
+    push_unsigned_varint(
+        &mut oversized_consumer_group_heartbeat_assignment_body,
+        1026,
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                68,
+                0,
+                Some(b"client-a"),
+                &oversized_consumer_group_heartbeat_assignment_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+
+    let mut malformed_consumer_group_heartbeat_assignment_body =
+        kafka_consumer_group_heartbeat_prefix_body("group", "member", None, None);
+    push_unsigned_varint(&mut malformed_consumer_group_heartbeat_assignment_body, 0);
+    push_unsigned_varint(&mut malformed_consumer_group_heartbeat_assignment_body, 0);
+    malformed_consumer_group_heartbeat_assignment_body.push(1);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                68,
+                0,
+                Some(b"client-a"),
+                &malformed_consumer_group_heartbeat_assignment_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
     let mut truncated_response = kafka_produce_response_frame(0, 1, &[("orders", 6)]);
     truncated_response.truncate(10);
     assert_eq!(
@@ -13159,6 +13508,25 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_list_transactions_response(&truncated_list_transactions_response, 2, &config)
             .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_consumer_group_heartbeat_response =
+        kafka_consumer_group_heartbeat_response_frame(
+            0,
+            35,
+            Some("heartbeat secret denied"),
+            Some("member.secret"),
+            None,
+        );
+    truncated_consumer_group_heartbeat_response.truncate(18);
+    assert_eq!(
+        parse_kafka_consumer_group_heartbeat_response(
+            &truncated_consumer_group_heartbeat_response,
+            1,
+            &config,
+        )
+        .unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
 
@@ -16817,6 +17185,55 @@ fn kafka_list_transactions_request_body(
     body
 }
 
+type ConsumerGroupHeartbeatTopicPartitionsFixture<'a> = ([u8; 16], &'a [i32]);
+
+struct ConsumerGroupHeartbeatRequestFixture<'a> {
+    api_version: i16,
+    group_id: &'a str,
+    member_id: &'a str,
+    instance_id: Option<&'a str>,
+    rack_id: Option<&'a str>,
+    subscribed_topic_names: Option<&'a [&'a str]>,
+    subscribed_topic_regex: Option<&'a str>,
+    server_assignor: Option<&'a str>,
+    topic_partitions: Option<&'a [ConsumerGroupHeartbeatTopicPartitionsFixture<'a>]>,
+}
+
+fn kafka_consumer_group_heartbeat_prefix_body(
+    group_id: &str,
+    member_id: &str,
+    instance_id: Option<&str>,
+    rack_id: Option<&str>,
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_compact_string(&mut body, group_id);
+    push_compact_string(&mut body, member_id);
+    body.extend_from_slice(&1_i32.to_be_bytes());
+    push_compact_nullable_string(&mut body, instance_id);
+    push_compact_nullable_string(&mut body, rack_id);
+    body.extend_from_slice(&30_000_i32.to_be_bytes());
+    body
+}
+
+fn kafka_consumer_group_heartbeat_request_body(
+    fixture: &ConsumerGroupHeartbeatRequestFixture<'_>,
+) -> Vec<u8> {
+    let mut body = kafka_consumer_group_heartbeat_prefix_body(
+        fixture.group_id,
+        fixture.member_id,
+        fixture.instance_id,
+        fixture.rack_id,
+    );
+    push_compact_nullable_string_array(&mut body, fixture.subscribed_topic_names);
+    if fixture.api_version >= 1 {
+        push_compact_nullable_string(&mut body, fixture.subscribed_topic_regex);
+    }
+    push_compact_nullable_string(&mut body, fixture.server_assignor);
+    push_compact_nullable_topic_partitions(&mut body, fixture.topic_partitions);
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 fn kafka_alter_replica_log_dirs_request_body(log_dir: &str, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&1_i32.to_be_bytes());
@@ -19212,6 +19629,44 @@ fn kafka_list_transactions_response_with_state_count_frame(state_count: usize) -
     kafka_frame(&response)
 }
 
+fn kafka_consumer_group_heartbeat_response_frame(
+    correlation_id: i32,
+    error_code: i16,
+    error_message: Option<&str>,
+    member_id: Option<&str>,
+    assignment: Option<&[ConsumerGroupHeartbeatTopicPartitionsFixture<'_>]>,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&error_code.to_be_bytes());
+    push_compact_nullable_string(&mut response, error_message);
+    push_compact_nullable_string(&mut response, member_id);
+    response.extend_from_slice(&1_i32.to_be_bytes());
+    response.extend_from_slice(&3_000_i32.to_be_bytes());
+    push_nullable_topic_partition_assignment(&mut response, assignment);
+    push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+fn kafka_consumer_group_heartbeat_response_with_assignment_count_frame(
+    assignment_count: usize,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    push_compact_nullable_string(&mut response, None);
+    push_compact_nullable_string(&mut response, None);
+    response.extend_from_slice(&1_i32.to_be_bytes());
+    response.extend_from_slice(&3_000_i32.to_be_bytes());
+    response.push(1);
+    push_unsigned_varint(&mut response, assignment_count + 1);
+    kafka_frame(&response)
+}
+
 fn kafka_sasl_handshake_response_frame(
     correlation_id: i32,
     error_code: i16,
@@ -19380,6 +19835,51 @@ fn push_compact_nullable_string(bytes: &mut Vec<u8>, value: Option<&str>) {
         push_compact_string(bytes, value);
     } else {
         push_unsigned_varint(bytes, 0);
+    }
+}
+
+fn push_compact_nullable_string_array(bytes: &mut Vec<u8>, values: Option<&[&str]>) {
+    if let Some(values) = values {
+        push_unsigned_varint(bytes, values.len() + 1);
+        for value in values {
+            push_compact_string(bytes, value);
+        }
+    } else {
+        push_unsigned_varint(bytes, 0);
+    }
+}
+
+fn push_compact_nullable_topic_partitions(
+    bytes: &mut Vec<u8>,
+    values: Option<&[ConsumerGroupHeartbeatTopicPartitionsFixture<'_>]>,
+) {
+    if let Some(values) = values {
+        push_unsigned_varint(bytes, values.len() + 1);
+        for (topic_id, partitions) in values {
+            bytes.extend_from_slice(topic_id);
+            push_compact_int32_array(bytes, partitions);
+            push_unsigned_varint(bytes, 0);
+        }
+    } else {
+        push_unsigned_varint(bytes, 0);
+    }
+}
+
+fn push_nullable_topic_partition_assignment(
+    bytes: &mut Vec<u8>,
+    values: Option<&[ConsumerGroupHeartbeatTopicPartitionsFixture<'_>]>,
+) {
+    if let Some(values) = values {
+        bytes.push(1);
+        push_unsigned_varint(bytes, values.len() + 1);
+        for (topic_id, partitions) in values {
+            bytes.extend_from_slice(topic_id);
+            push_compact_int32_array(bytes, partitions);
+            push_unsigned_varint(bytes, 0);
+        }
+        push_unsigned_varint(bytes, 0);
+    } else {
+        bytes.push(0xff);
     }
 }
 
