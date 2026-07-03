@@ -1373,6 +1373,62 @@ mod tests {
     }
 
     #[test]
+    fn exec_constructors_bound_context_strings_before_json_stdout() {
+        let long = "k".repeat(320);
+        let exec = SignalEnvelope::exec(
+            "source.test",
+            None,
+            ExecEvent {
+                pid: 42,
+                ppid: Some(1),
+                uid: Some(1000),
+                command: "bash".to_string(),
+                executable: Some("/usr/bin/bash".to_string()),
+                arguments: vec!["bash".to_string()],
+                cgroup_id: Some(7),
+                timestamp_unix_nanos: 123,
+                container: Some(crate::ContainerContext {
+                    container_id: long.clone(),
+                    runtime: Some(long.clone()),
+                }),
+                kubernetes: Some(crate::KubernetesContext {
+                    namespace: long.clone(),
+                    pod_name: long.clone(),
+                    pod_uid: Some(long.clone()),
+                    container_name: Some(long.clone()),
+                    node_name: Some(long.clone()),
+                    labels: std::collections::BTreeMap::from_iter(
+                        (0..20).map(|index| (format!("label-{index}-{long}"), long.clone())),
+                    ),
+                }),
+            },
+        );
+
+        assert_payload_string_lengths(
+            &exec,
+            &[
+                &["container", "container_id"],
+                &["container", "runtime"],
+                &["kubernetes", "namespace"],
+                &["kubernetes", "pod_name"],
+                &["kubernetes", "pod_uid"],
+                &["kubernetes", "container_name"],
+                &["kubernetes", "node_name"],
+            ],
+        );
+        let json = serde_json::to_value(&exec).expect("exec serializes");
+        let labels = json["payload"]["kubernetes"]["labels"]
+            .as_object()
+            .expect("labels serialize as an object");
+        assert_eq!(labels.len(), 16);
+        assert!(
+            labels
+                .iter()
+                .all(|(key, value)| key.len() == 128 && value.as_str().map(str::len) == Some(256))
+        );
+    }
+
+    #[test]
     fn serializes_network_connection_open_signal_with_version() {
         let signal = SignalEnvelope::network_connection_open(
             "source.test",

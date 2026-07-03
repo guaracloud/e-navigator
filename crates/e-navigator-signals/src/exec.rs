@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 
 const MAX_EXEC_SIGNAL_STRING_BYTES: usize = 256;
 const MAX_EXEC_ARGUMENTS: usize = 32;
+const MAX_KUBERNETES_LABELS: usize = 16;
+const MAX_KUBERNETES_LABEL_KEY_BYTES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecEvent {
@@ -103,14 +105,20 @@ pub(crate) fn sanitize_exec_event(event: &mut ExecEvent) {
     for argument in &mut event.arguments {
         sanitize_exec_signal_string(argument);
     }
+    sanitize_optional_container_context(&mut event.container);
+    sanitize_optional_kubernetes_context(&mut event.kubernetes);
 }
 
 pub(crate) fn sanitize_process_exit_event(event: &mut ProcessExitEvent) {
     sanitize_exec_signal_string(&mut event.command);
+    sanitize_optional_container_context(&mut event.container);
+    sanitize_optional_kubernetes_context(&mut event.kubernetes);
 }
 
 pub(crate) fn sanitize_process_lifecycle_duration_event(event: &mut ProcessLifecycleDurationEvent) {
     sanitize_exec_signal_string(&mut event.command);
+    sanitize_optional_container_context(&mut event.container);
+    sanitize_optional_kubernetes_context(&mut event.kubernetes);
 }
 
 pub(crate) fn sanitize_runtime_security_finding(finding: &mut RuntimeSecurityFinding) {
@@ -119,6 +127,8 @@ pub(crate) fn sanitize_runtime_security_finding(finding: &mut RuntimeSecurityFin
     if let Some(connection) = &mut finding.matched_connection {
         sanitize_matched_network_connection(connection);
     }
+    sanitize_optional_container_context(&mut finding.container);
+    sanitize_optional_kubernetes_context(&mut finding.kubernetes);
 }
 
 fn sanitize_matched_process(process: &mut MatchedProcess) {
@@ -133,6 +143,35 @@ fn sanitize_matched_process(process: &mut MatchedProcess) {
 fn sanitize_matched_network_connection(connection: &mut MatchedNetworkConnection) {
     sanitize_exec_signal_string(&mut connection.remote_address);
     sanitize_optional_exec_signal_string(&mut connection.local_address);
+}
+
+fn sanitize_optional_container_context(context: &mut Option<ContainerContext>) {
+    if let Some(inner) = context {
+        sanitize_exec_signal_string(&mut inner.container_id);
+        sanitize_optional_exec_signal_string(&mut inner.runtime);
+    }
+}
+
+fn sanitize_optional_kubernetes_context(context: &mut Option<KubernetesContext>) {
+    if let Some(inner) = context {
+        sanitize_exec_signal_string(&mut inner.namespace);
+        sanitize_exec_signal_string(&mut inner.pod_name);
+        sanitize_optional_exec_signal_string(&mut inner.pod_uid);
+        sanitize_optional_exec_signal_string(&mut inner.container_name);
+        sanitize_optional_exec_signal_string(&mut inner.node_name);
+        inner.labels = inner
+            .labels
+            .iter()
+            .filter(|(key, _)| !key.is_empty())
+            .map(|(key, value)| {
+                (
+                    truncate_utf8(key, MAX_KUBERNETES_LABEL_KEY_BYTES),
+                    truncate_utf8(value, MAX_EXEC_SIGNAL_STRING_BYTES),
+                )
+            })
+            .take(MAX_KUBERNETES_LABELS)
+            .collect();
+    }
 }
 
 fn sanitize_exec_signal_string(value: &mut String) {
