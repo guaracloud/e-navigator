@@ -2893,6 +2893,115 @@ mod tests {
     }
 
     #[test]
+    fn dns_constructors_bound_context_strings_before_json_stdout() {
+        let long = "d".repeat(320);
+        let container = crate::ContainerContext {
+            container_id: long.clone(),
+            runtime: Some(long.clone()),
+        };
+        let kubernetes = crate::KubernetesContext {
+            namespace: long.clone(),
+            pod_name: long.clone(),
+            pod_uid: Some(long.clone()),
+            container_name: Some(long.clone()),
+            node_name: Some(long.clone()),
+            labels: std::collections::BTreeMap::from_iter(
+                (0..20).map(|index| (format!("label-{index}-{long}"), long.clone())),
+            ),
+        };
+        let window = MetricAggregationWindow {
+            start_unix_nanos: 400,
+            end_unix_nanos: 415,
+        };
+
+        let query = SignalEnvelope::dns_query(
+            "source.synthetic_dns",
+            None,
+            DnsQueryEvent {
+                process: network_process(),
+                query_name: "api.example.com".to_string(),
+                query_type: DnsQueryType::A,
+                transport_protocol: NetworkProtocol::Udp,
+                server_address: Some("10.96.0.10".to_string()),
+                server_port: Some(53),
+                timestamp_unix_nanos: 400,
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
+            },
+        );
+        let response = SignalEnvelope::dns_response(
+            "source.synthetic_dns",
+            None,
+            DnsResponseEvent {
+                process: network_process(),
+                query_name: "api.example.com".to_string(),
+                query_type: DnsQueryType::A,
+                response_code: DnsResponseCode::NoError,
+                latency_nanos: Some(15_000),
+                transport_protocol: NetworkProtocol::Udp,
+                server_address: Some("10.96.0.10".to_string()),
+                server_port: Some(53),
+                timestamp_unix_nanos: 415,
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
+            },
+        );
+        let counter = SignalEnvelope::dns_counter_metric(
+            "generator.dns_metrics",
+            None,
+            DnsCounterMetric {
+                metric_name: "dns.query.count".to_string(),
+                unit: "{query}".to_string(),
+                value: 1,
+                window: window.clone(),
+                query_name: Some("api.example.com".to_string()),
+                query_type: Some(DnsQueryType::A),
+                response_code: None,
+                server_address: Some("10.96.0.10".to_string()),
+                server_port: Some(53),
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
+            },
+        );
+        let latency = SignalEnvelope::dns_latency_metric(
+            "generator.dns_metrics",
+            None,
+            DnsLatencyMetric {
+                metric_name: "dns.lookup.duration".to_string(),
+                unit: "ns".to_string(),
+                count: 1,
+                sum_nanos: 15_000,
+                min_nanos: 15_000,
+                max_nanos: 15_000,
+                window,
+                query_name: Some("api.example.com".to_string()),
+                query_type: Some(DnsQueryType::A),
+                response_code: Some(DnsResponseCode::NoError),
+                server_address: Some("10.96.0.10".to_string()),
+                server_port: Some(53),
+                container: Some(container),
+                kubernetes: Some(kubernetes),
+            },
+        );
+
+        for signal in [query, response, counter, latency] {
+            assert_payload_string_lengths(
+                &signal,
+                &[
+                    &["container", "container_id"],
+                    &["container", "runtime"],
+                    &["kubernetes", "namespace"],
+                    &["kubernetes", "pod_name"],
+                    &["kubernetes", "pod_uid"],
+                    &["kubernetes", "container_name"],
+                    &["kubernetes", "node_name"],
+                ],
+            );
+            assert_payload_label_bounds(&signal, &["kubernetes", "labels"]);
+        }
+    }
+
+    #[test]
     fn serializes_resource_observation_signals() {
         let window = MetricAggregationWindow {
             start_unix_nanos: 1_000,

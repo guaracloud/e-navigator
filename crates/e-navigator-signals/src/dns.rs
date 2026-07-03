@@ -7,6 +7,8 @@ use crate::{
 };
 
 const MAX_DNS_SIGNAL_STRING_BYTES: usize = 256;
+const MAX_KUBERNETES_LABELS: usize = 16;
+const MAX_KUBERNETES_LABEL_KEY_BYTES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DnsQueryEvent {
@@ -98,12 +100,16 @@ pub(crate) fn sanitize_dns_query_event(event: &mut DnsQueryEvent) {
     sanitize_network_process_identity(&mut event.process);
     sanitize_dns_string(&mut event.query_name);
     sanitize_optional_dns_string(&mut event.server_address);
+    sanitize_optional_container_context(&mut event.container);
+    sanitize_optional_kubernetes_context(&mut event.kubernetes);
 }
 
 pub(crate) fn sanitize_dns_response_event(event: &mut DnsResponseEvent) {
     sanitize_network_process_identity(&mut event.process);
     sanitize_dns_string(&mut event.query_name);
     sanitize_optional_dns_string(&mut event.server_address);
+    sanitize_optional_container_context(&mut event.container);
+    sanitize_optional_kubernetes_context(&mut event.kubernetes);
 }
 
 pub(crate) fn sanitize_dns_counter_metric(metric: &mut DnsCounterMetric) {
@@ -111,6 +117,8 @@ pub(crate) fn sanitize_dns_counter_metric(metric: &mut DnsCounterMetric) {
     sanitize_dns_string(&mut metric.unit);
     sanitize_optional_dns_string(&mut metric.query_name);
     sanitize_optional_dns_string(&mut metric.server_address);
+    sanitize_optional_container_context(&mut metric.container);
+    sanitize_optional_kubernetes_context(&mut metric.kubernetes);
 }
 
 pub(crate) fn sanitize_dns_latency_metric(metric: &mut DnsLatencyMetric) {
@@ -118,6 +126,8 @@ pub(crate) fn sanitize_dns_latency_metric(metric: &mut DnsLatencyMetric) {
     sanitize_dns_string(&mut metric.unit);
     sanitize_optional_dns_string(&mut metric.query_name);
     sanitize_optional_dns_string(&mut metric.server_address);
+    sanitize_optional_container_context(&mut metric.container);
+    sanitize_optional_kubernetes_context(&mut metric.kubernetes);
 }
 
 fn sanitize_dns_string(value: &mut String) {
@@ -127,6 +137,35 @@ fn sanitize_dns_string(value: &mut String) {
 fn sanitize_optional_dns_string(value: &mut Option<String>) {
     if let Some(inner) = value {
         sanitize_dns_string(inner);
+    }
+}
+
+fn sanitize_optional_container_context(context: &mut Option<ContainerContext>) {
+    if let Some(inner) = context {
+        sanitize_dns_string(&mut inner.container_id);
+        sanitize_optional_dns_string(&mut inner.runtime);
+    }
+}
+
+fn sanitize_optional_kubernetes_context(context: &mut Option<KubernetesContext>) {
+    if let Some(inner) = context {
+        sanitize_dns_string(&mut inner.namespace);
+        sanitize_dns_string(&mut inner.pod_name);
+        sanitize_optional_dns_string(&mut inner.pod_uid);
+        sanitize_optional_dns_string(&mut inner.container_name);
+        sanitize_optional_dns_string(&mut inner.node_name);
+        inner.labels = inner
+            .labels
+            .iter()
+            .filter(|(key, _)| !key.is_empty())
+            .map(|(key, value)| {
+                (
+                    truncate_utf8(key, MAX_KUBERNETES_LABEL_KEY_BYTES),
+                    truncate_utf8(value, MAX_DNS_SIGNAL_STRING_BYTES),
+                )
+            })
+            .take(MAX_KUBERNETES_LABELS)
+            .collect();
     }
 }
 
