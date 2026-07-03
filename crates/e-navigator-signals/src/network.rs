@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ContainerContext, KubernetesContext};
 
+const MAX_NETWORK_SIGNAL_STRING_BYTES: usize = 256;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkConnectionOpenEvent {
     pub process: NetworkProcessIdentity,
@@ -146,4 +148,48 @@ pub struct DependencyEndpoint {
     pub address: Option<String>,
     pub port: Option<u16>,
     pub domain: Option<String>,
+}
+
+pub(crate) fn sanitize_network_connection_open_event(event: &mut NetworkConnectionOpenEvent) {
+    sanitize_network_process_identity(&mut event.process);
+    sanitize_optional_network_signal_string(&mut event.local_address);
+    sanitize_network_signal_string(&mut event.remote_address);
+}
+
+pub(crate) fn sanitize_network_connection_close_event(event: &mut NetworkConnectionCloseEvent) {
+    sanitize_network_process_identity(&mut event.process);
+    sanitize_optional_network_signal_string(&mut event.local_address);
+    sanitize_network_signal_string(&mut event.remote_address);
+}
+
+pub(crate) fn sanitize_network_connection_failure_event(event: &mut NetworkConnectionFailureEvent) {
+    sanitize_network_process_identity(&mut event.process);
+    sanitize_network_signal_string(&mut event.remote_address);
+}
+
+fn sanitize_network_process_identity(process: &mut NetworkProcessIdentity) {
+    sanitize_network_signal_string(&mut process.command);
+    sanitize_optional_network_signal_string(&mut process.executable);
+}
+
+fn sanitize_network_signal_string(value: &mut String) {
+    *value = truncate_utf8(value, MAX_NETWORK_SIGNAL_STRING_BYTES);
+}
+
+fn sanitize_optional_network_signal_string(value: &mut Option<String>) {
+    if let Some(inner) = value {
+        sanitize_network_signal_string(inner);
+    }
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
 }

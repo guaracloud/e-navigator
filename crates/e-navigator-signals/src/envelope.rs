@@ -9,6 +9,10 @@ use crate::metrics::{
     sanitize_network_counter_metric, sanitize_network_duration_metric,
     sanitize_network_gauge_metric,
 };
+use crate::network::{
+    sanitize_network_connection_close_event, sanitize_network_connection_failure_event,
+    sanitize_network_connection_open_event,
+};
 use crate::profiling::{sanitize_optional_profiling_string, sanitize_profiling_string};
 use crate::resource::sanitize_resource_metric_attributes;
 use crate::trace::{
@@ -512,8 +516,9 @@ impl SignalEnvelope {
     pub fn network_connection_open(
         source: impl Into<String>,
         host: Option<String>,
-        event: NetworkConnectionOpenEvent,
+        mut event: NetworkConnectionOpenEvent,
     ) -> Self {
+        sanitize_network_connection_open_event(&mut event);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::NetworkConnectionOpen,
@@ -526,8 +531,9 @@ impl SignalEnvelope {
     pub fn network_connection_close(
         source: impl Into<String>,
         host: Option<String>,
-        event: NetworkConnectionCloseEvent,
+        mut event: NetworkConnectionCloseEvent,
     ) -> Self {
+        sanitize_network_connection_close_event(&mut event);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::NetworkConnectionClose,
@@ -540,8 +546,9 @@ impl SignalEnvelope {
     pub fn network_connection_failure(
         source: impl Into<String>,
         host: Option<String>,
-        event: NetworkConnectionFailureEvent,
+        mut event: NetworkConnectionFailureEvent,
     ) -> Self {
+        sanitize_network_connection_failure_event(&mut event);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::NetworkConnectionFailure,
@@ -1328,6 +1335,101 @@ mod tests {
         assert_eq!(json["kind"], "network_connection_failure");
         assert_eq!(json["payload"]["errno"], 111);
         assert_eq!(json["payload"]["remote_address"], "203.0.113.10");
+    }
+
+    #[test]
+    fn network_connection_constructors_bound_strings_before_json_stdout() {
+        let long = "x".repeat(300);
+        let process = NetworkProcessIdentity {
+            pid: 42,
+            ppid: Some(1),
+            uid: Some(1000),
+            command: long.clone(),
+            executable: Some(long.clone()),
+            cgroup_id: None,
+        };
+
+        let open = SignalEnvelope::network_connection_open(
+            "source.test",
+            None,
+            NetworkConnectionOpenEvent {
+                process: process.clone(),
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some(long.clone()),
+                local_port: Some(43512),
+                remote_address: long.clone(),
+                remote_port: 5432,
+                fd: Some(7),
+                timestamp_unix_nanos: 300,
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let close = SignalEnvelope::network_connection_close(
+            "source.test",
+            None,
+            NetworkConnectionCloseEvent {
+                process: process.clone(),
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some(long.clone()),
+                local_port: Some(43512),
+                remote_address: long.clone(),
+                remote_port: 5432,
+                fd: Some(7),
+                opened_at_unix_nanos: Some(300),
+                closed_at_unix_nanos: 900,
+                duration_nanos: Some(600),
+                bytes_sent: None,
+                bytes_received: None,
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let failure = SignalEnvelope::network_connection_failure(
+            "source.test",
+            None,
+            NetworkConnectionFailureEvent {
+                process,
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                remote_address: long,
+                remote_port: 443,
+                fd: Some(7),
+                errno: 111,
+                timestamp_unix_nanos: 350,
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        assert_payload_string_lengths(
+            &open,
+            &[
+                &["process", "command"],
+                &["process", "executable"],
+                &["local_address"],
+                &["remote_address"],
+            ],
+        );
+        assert_payload_string_lengths(
+            &close,
+            &[
+                &["process", "command"],
+                &["process", "executable"],
+                &["local_address"],
+                &["remote_address"],
+            ],
+        );
+        assert_payload_string_lengths(
+            &failure,
+            &[
+                &["process", "command"],
+                &["process", "executable"],
+                &["remote_address"],
+            ],
+        );
     }
 
     #[test]
@@ -2765,6 +2867,21 @@ mod tests {
                 json["payload"][*field].as_str().map(str::len),
                 Some(256),
                 "{field} should be bounded"
+            );
+        }
+    }
+
+    fn assert_payload_string_lengths(signal: &SignalEnvelope, paths: &[&[&str]]) {
+        let json = serde_json::to_value(signal).expect("signal serializes");
+        for path in paths {
+            let mut value = &json["payload"];
+            for field in *path {
+                value = &value[*field];
+            }
+            assert_eq!(
+                value.as_str().map(str::len),
+                Some(256),
+                "{path:?} should be bounded"
             );
         }
     }
