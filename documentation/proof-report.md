@@ -112,7 +112,7 @@ or chart rendering:
   profiling warnings, explicit no-ID network-flow and profiling-warning trace
   export suppression, bounded profiling-warning trace attributes,
   hex-shape and nonzero trace/span ID filtering,
-  bounded final OTLP attribute key and string value conversion, and
+  bounded non-empty final OTLP attribute key and string value conversion, and
   development-status profile sample records with
   deterministic, workload-aware IDs, bounded session IDs, bounded resource
   attributes, bounded stack frames, final canonical-plus-user attribute caps,

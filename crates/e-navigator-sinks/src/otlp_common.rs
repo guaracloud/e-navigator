@@ -8,10 +8,13 @@ const MAX_OTLP_STRING_VALUE_BYTES: usize = 256;
 pub(crate) fn key_values(attributes: &BTreeMap<String, Value>) -> Vec<KeyValue> {
     attributes
         .iter()
-        .map(|(key, value)| KeyValue {
-            key: bounded_attribute_key(key),
-            value: Some(to_any_value(value)),
-            key_strindex: 0,
+        .filter_map(|(key, value)| {
+            let key = bounded_attribute_key(key);
+            (!key.is_empty()).then(|| KeyValue {
+                key,
+                value: Some(to_any_value(value)),
+                key_strindex: 0,
+            })
         })
         .collect()
 }
@@ -92,6 +95,18 @@ mod tests {
         assert_eq!(values.len(), 1);
         assert_eq!(values[0].key.len(), MAX_OTLP_ATTRIBUTE_KEY_BYTES);
         assert!(values[0].key.is_char_boundary(values[0].key.len()));
+    }
+
+    #[test]
+    fn drops_empty_attribute_keys() {
+        let mut attributes = BTreeMap::new();
+        attributes.insert(String::new(), serde_json::json!("value"));
+        attributes.insert("valid".to_string(), serde_json::json!("value"));
+
+        let values = key_values(&attributes);
+
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].key, "valid");
     }
 
     #[test]
