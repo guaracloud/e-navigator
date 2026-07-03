@@ -522,6 +522,26 @@ async fn request_attributes_are_count_and_byte_bounded() {
 }
 
 #[tokio::test]
+async fn request_span_scalar_fields_are_byte_bounded() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.service_name = Some("s".repeat(254));
+    request.method = Some("m".repeat(129));
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(span.service_name, None);
+    assert_eq!(span.method, None);
+    assert_eq!(span.status_code, Some(200));
+}
+
+#[tokio::test]
 async fn missing_trace_context_emits_warning_and_span_without_ids() {
     let generator = RequestCorrelationGenerator::default();
     let signal = protocol_request_signal(None, true);

@@ -16,6 +16,8 @@ const DEFAULT_MAX_WARNINGS: usize = 1024;
 const MAX_REQUEST_ATTRIBUTES: usize = 8;
 const MAX_REQUEST_ATTRIBUTE_KEY_BYTES: usize = 128;
 const MAX_REQUEST_ATTRIBUTE_VALUE_BYTES: usize = 256;
+const MAX_REQUEST_SERVICE_NAME_BYTES: usize = 253;
+const MAX_REQUEST_METHOD_BYTES: usize = 128;
 const MAX_FINGERPRINT_VALUE_BYTES: usize = 64;
 
 #[derive(Debug)]
@@ -112,8 +114,11 @@ impl RequestCorrelationGenerator {
                 duration_nanos: request.duration_nanos,
                 correlation_kind,
                 confidence,
-                service_name: request.service_name.clone(),
-                method: request.method.clone(),
+                service_name: bounded_optional_value(
+                    request.service_name.as_deref(),
+                    MAX_REQUEST_SERVICE_NAME_BYTES,
+                ),
+                method: bounded_optional_value(request.method.as_deref(), MAX_REQUEST_METHOD_BYTES),
                 status_code: request.status_code,
                 process: request.process.clone(),
                 container: request.container.clone(),
@@ -325,6 +330,11 @@ fn bounded_attributes(attributes: &[TraceAttribute]) -> Vec<TraceAttribute> {
         .take(MAX_REQUEST_ATTRIBUTES)
         .cloned()
         .collect()
+}
+
+fn bounded_optional_value(value: Option<&str>, max_bytes: usize) -> Option<String> {
+    let value = value?;
+    (value.len() <= max_bytes).then(|| value.to_string())
 }
 
 fn bounded_fingerprint_value(value: &str) -> String {
