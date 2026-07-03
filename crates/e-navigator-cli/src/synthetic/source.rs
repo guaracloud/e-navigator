@@ -215,8 +215,10 @@ mod tests {
         assert!(signals.iter().any(|signal| matches!(
             &signal.payload,
             SignalPayload::ProtocolRequestObservation(request)
-                if request.traceparent.as_deref()
-                    == Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+                if request.trace_id.as_deref() == Some("4bf92f3577b34da6a3ce929d0e0e4736")
+                    && request.span_id.as_deref() == Some("00f067aa0ba902b7")
+                    && request.traceparent.is_none()
+                    && request.tracestate.is_none()
                     && request.method.as_deref() == Some("GET")
                     && request.status_code == Some(200)
         )));
@@ -231,16 +233,28 @@ mod tests {
         assert!(signals.iter().any(|signal| matches!(
             &signal.payload,
             SignalPayload::ProtocolRequestObservation(request)
-                if request.traceparent.as_deref() == Some("00-bad")
+                if request.traceparent.is_none()
+                    && request.tracestate.is_none()
                     && request.trace_id.is_none()
                     && request.span_id.is_none()
+                    && has_attribute(
+                        &request.attributes,
+                        "trace.synthetic.fixture",
+                        "malformed_trace_context_request"
+                    )
         )));
         assert!(signals.iter().any(|signal| matches!(
             &signal.payload,
             SignalPayload::ProtocolRequestObservation(request)
                 if request.traceparent.is_none()
+                    && request.tracestate.is_none()
                     && request.trace_id.is_none()
                     && request.span_id.is_none()
+                    && has_attribute(
+                        &request.attributes,
+                        "trace.synthetic.fixture",
+                        "missing_trace_context_request"
+                    )
         )));
 
         let observed_protocols = signals
