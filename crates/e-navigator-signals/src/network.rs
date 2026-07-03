@@ -176,6 +176,27 @@ pub(crate) fn sanitize_network_flow_warning(warning: &mut NetworkFlowWarning) {
     sanitize_network_process_identity(&mut warning.process);
 }
 
+pub(crate) fn sanitize_network_flow_summary_event(event: &mut NetworkFlowSummaryEvent) {
+    sanitize_network_flow_endpoint(&mut event.source);
+    sanitize_network_flow_endpoint(&mut event.destination);
+}
+
+pub(crate) fn sanitize_dependency_edge_event(event: &mut DependencyEdgeEvent) {
+    sanitize_dependency_endpoint(&mut event.source);
+    sanitize_dependency_endpoint(&mut event.destination);
+}
+
+fn sanitize_network_flow_endpoint(endpoint: &mut NetworkFlowEndpoint) {
+    sanitize_optional_network_signal_string(&mut endpoint.address);
+    sanitize_optional_network_signal_string(&mut endpoint.owner_name);
+    sanitize_optional_network_signal_string(&mut endpoint.owner_type);
+}
+
+fn sanitize_dependency_endpoint(endpoint: &mut DependencyEndpoint) {
+    sanitize_optional_network_signal_string(&mut endpoint.address);
+    sanitize_optional_network_signal_string(&mut endpoint.domain);
+}
+
 fn sanitize_network_process_identity(process: &mut NetworkProcessIdentity) {
     sanitize_network_signal_string(&mut process.command);
     sanitize_optional_network_signal_string(&mut process.executable);

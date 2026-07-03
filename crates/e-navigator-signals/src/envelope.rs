@@ -10,8 +10,9 @@ use crate::metrics::{
     sanitize_network_gauge_metric,
 };
 use crate::network::{
-    sanitize_network_connection_close_event, sanitize_network_connection_failure_event,
-    sanitize_network_connection_open_event, sanitize_network_flow_warning,
+    sanitize_dependency_edge_event, sanitize_network_connection_close_event,
+    sanitize_network_connection_failure_event, sanitize_network_connection_open_event,
+    sanitize_network_flow_summary_event, sanitize_network_flow_warning,
 };
 use crate::profiling::{sanitize_optional_profiling_string, sanitize_profiling_string};
 use crate::resource::sanitize_resource_metric_attributes;
@@ -561,8 +562,9 @@ impl SignalEnvelope {
     pub fn network_flow_summary(
         source: impl Into<String>,
         host: Option<String>,
-        event: NetworkFlowSummaryEvent,
+        mut event: NetworkFlowSummaryEvent,
     ) -> Self {
+        sanitize_network_flow_summary_event(&mut event);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::NetworkFlowSummary,
@@ -695,8 +697,9 @@ impl SignalEnvelope {
     pub fn dependency_edge(
         source: impl Into<String>,
         host: Option<String>,
-        event: DependencyEdgeEvent,
+        mut event: DependencyEdgeEvent,
     ) -> Self {
+        sanitize_dependency_edge_event(&mut event);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::DependencyEdge,
@@ -1135,13 +1138,13 @@ mod tests {
         CgroupPidsObservation, CgroupResourceContext, DependencyEndpoint, DnsCounterMetric,
         DnsLatencyMetric, DnsQueryEvent, DnsQueryType, DnsResponseCode, DnsResponseEvent,
         MetricAggregationWindow, NetworkAddressFamily, NetworkCounterMetric, NetworkDurationMetric,
-        NetworkGaugeMetric, NetworkProcessIdentity, NetworkProtocol, NodeCpuObservation,
-        NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation,
-        NodeMemoryObservation, ProcessResourceContext, ProcessResourceObservation, ResourceContext,
-        ResourceCounterMetric, ResourceGaugeMetric, ResourceMetricAttribute,
-        ServiceInteractionSpanObservation, TraceAttribute, TraceConfidence, TraceCorrelationKind,
-        TraceCorrelationWarning, TracePeerContext, TraceServicePathObservation,
-        TraceSpanObservation,
+        NetworkFlowDirection, NetworkFlowEndpoint, NetworkGaugeMetric, NetworkProcessIdentity,
+        NetworkProtocol, NodeCpuObservation, NodeDiskIoObservation, NodeFilesystemObservation,
+        NodeLoadObservation, NodeMemoryObservation, ProcessResourceContext,
+        ProcessResourceObservation, ResourceContext, ResourceCounterMetric, ResourceGaugeMetric,
+        ResourceMetricAttribute, ServiceInteractionSpanObservation, TraceAttribute,
+        TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext,
+        TraceServicePathObservation, TraceSpanObservation,
     };
 
     #[test]
@@ -1548,6 +1551,75 @@ mod tests {
         assert_eq!(json["payload"]["observations"], 2);
         assert_eq!(json["payload"]["first_seen_unix_nanos"], 300);
         assert_eq!(json["payload"]["last_seen_unix_nanos"], 350);
+    }
+
+    #[test]
+    fn network_endpoint_constructors_bound_strings_before_json_stdout() {
+        let long = "x".repeat(300);
+        let endpoint = NetworkFlowEndpoint {
+            address: Some(long.clone()),
+            port: Some(443),
+            owner_name: Some(long.clone()),
+            owner_type: Some(long.clone()),
+            container: None,
+            kubernetes: None,
+        };
+        let dependency_endpoint = DependencyEndpoint {
+            workload: None,
+            container: None,
+            address: Some(long.clone()),
+            port: Some(443),
+            domain: Some(long.clone()),
+        };
+
+        let summary = SignalEnvelope::network_flow_summary(
+            "generator.test",
+            None,
+            NetworkFlowSummaryEvent {
+                source: endpoint.clone(),
+                destination: endpoint,
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                bytes: 512,
+                packets: Some(4),
+                direction: NetworkFlowDirection::Egress,
+                first_seen_unix_nanos: 300,
+                last_seen_unix_nanos: 350,
+            },
+        );
+        let dependency = SignalEnvelope::dependency_edge(
+            "generator.test",
+            None,
+            DependencyEdgeEvent {
+                source: dependency_endpoint.clone(),
+                destination: dependency_endpoint,
+                protocol: NetworkProtocol::Tcp,
+                observations: 2,
+                first_seen_unix_nanos: 300,
+                last_seen_unix_nanos: 350,
+            },
+        );
+
+        assert_payload_string_lengths(
+            &summary,
+            &[
+                &["source", "address"],
+                &["source", "owner_name"],
+                &["source", "owner_type"],
+                &["destination", "address"],
+                &["destination", "owner_name"],
+                &["destination", "owner_type"],
+            ],
+        );
+        assert_payload_string_lengths(
+            &dependency,
+            &[
+                &["source", "address"],
+                &["source", "domain"],
+                &["destination", "address"],
+                &["destination", "domain"],
+            ],
+        );
     }
 
     #[test]
