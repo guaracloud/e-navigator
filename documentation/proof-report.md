@@ -18,7 +18,7 @@ These areas are proven by local tests, fixtures, synthetic runs, Docker smoke,
 or chart rendering:
 
 - static module registration and runner fan-out;
-- versioned JSON signal envelopes;
+- versioned JSON signal envelopes with bounded source and host metadata;
 - JSON stdout newline-delimited serialization and sink-side redaction, including
   exec strings, argument count, and nested context strings/labels, exec and
   runtime-security matched-process argv redaction, bounded runtime-security

@@ -54,6 +54,7 @@ use crate::{
 };
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
+const MAX_ENVELOPE_STRING_BYTES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -482,13 +483,7 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
 impl SignalEnvelope {
     pub fn exec(source: impl Into<String>, host: Option<String>, mut event: ExecEvent) -> Self {
         sanitize_exec_event(&mut event);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::Exec,
-            source: source.into(),
-            host,
-            payload: SignalPayload::Exec(event),
-        }
+        Self::new(source, host, SignalKind::Exec, SignalPayload::Exec(event))
     }
 
     pub fn process_exit(
@@ -497,13 +492,12 @@ impl SignalEnvelope {
         mut event: ProcessExitEvent,
     ) -> Self {
         sanitize_process_exit_event(&mut event);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::ProcessExit,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::ProcessExit(event),
-        }
+            SignalKind::ProcessExit,
+            SignalPayload::ProcessExit(event),
+        )
     }
 
     pub fn process_lifecycle_duration(
@@ -512,13 +506,12 @@ impl SignalEnvelope {
         mut event: ProcessLifecycleDurationEvent,
     ) -> Self {
         sanitize_process_lifecycle_duration_event(&mut event);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::ProcessLifecycleDuration,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::ProcessLifecycleDuration(event),
-        }
+            SignalKind::ProcessLifecycleDuration,
+            SignalPayload::ProcessLifecycleDuration(event),
+        )
     }
 
     pub fn runtime_security_finding(
@@ -527,13 +520,12 @@ impl SignalEnvelope {
         mut finding: RuntimeSecurityFinding,
     ) -> Self {
         sanitize_runtime_security_finding(&mut finding);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::RuntimeSecurityFinding,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::RuntimeSecurityFinding(finding),
-        }
+            SignalKind::RuntimeSecurityFinding,
+            SignalPayload::RuntimeSecurityFinding(finding),
+        )
     }
 
     pub fn network_connection_open(
@@ -542,13 +534,12 @@ impl SignalEnvelope {
         mut event: NetworkConnectionOpenEvent,
     ) -> Self {
         sanitize_network_connection_open_event(&mut event);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::NetworkConnectionOpen,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::NetworkConnectionOpen(event),
-        }
+            SignalKind::NetworkConnectionOpen,
+            SignalPayload::NetworkConnectionOpen(event),
+        )
     }
 
     pub fn network_connection_close(
@@ -557,13 +548,12 @@ impl SignalEnvelope {
         mut event: NetworkConnectionCloseEvent,
     ) -> Self {
         sanitize_network_connection_close_event(&mut event);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::NetworkConnectionClose,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::NetworkConnectionClose(event),
-        }
+            SignalKind::NetworkConnectionClose,
+            SignalPayload::NetworkConnectionClose(event),
+        )
     }
 
     pub fn network_connection_failure(
@@ -572,13 +562,12 @@ impl SignalEnvelope {
         mut event: NetworkConnectionFailureEvent,
     ) -> Self {
         sanitize_network_connection_failure_event(&mut event);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::NetworkConnectionFailure,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::NetworkConnectionFailure(event),
-        }
+            SignalKind::NetworkConnectionFailure,
+            SignalPayload::NetworkConnectionFailure(event),
+        )
     }
 
     pub fn network_flow_summary(
@@ -587,13 +576,12 @@ impl SignalEnvelope {
         mut event: NetworkFlowSummaryEvent,
     ) -> Self {
         sanitize_network_flow_summary_event(&mut event);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::NetworkFlowSummary,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::NetworkFlowSummary(event),
-        }
+            SignalKind::NetworkFlowSummary,
+            SignalPayload::NetworkFlowSummary(event),
+        )
     }
 
     pub fn network_flow_warning(
@@ -602,13 +590,12 @@ impl SignalEnvelope {
         mut warning: NetworkFlowWarning,
     ) -> Self {
         sanitize_network_flow_warning(&mut warning);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::NetworkFlowWarning,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::NetworkFlowWarning(warning),
-        }
+            SignalKind::NetworkFlowWarning,
+            SignalPayload::NetworkFlowWarning(warning),
+        )
     }
 
     pub fn network_counter_metric(
@@ -617,13 +604,12 @@ impl SignalEnvelope {
         mut metric: NetworkCounterMetric,
     ) -> Self {
         sanitize_network_counter_metric(&mut metric);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::NetworkCounterMetric,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::NetworkCounterMetric(metric),
-        }
+            SignalKind::NetworkCounterMetric,
+            SignalPayload::NetworkCounterMetric(metric),
+        )
     }
 
     pub fn network_duration_metric(
@@ -632,13 +618,12 @@ impl SignalEnvelope {
         mut metric: NetworkDurationMetric,
     ) -> Self {
         sanitize_network_duration_metric(&mut metric);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::NetworkDurationMetric,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::NetworkDurationMetric(metric),
-        }
+            SignalKind::NetworkDurationMetric,
+            SignalPayload::NetworkDurationMetric(metric),
+        )
     }
 
     pub fn network_gauge_metric(
@@ -647,13 +632,12 @@ impl SignalEnvelope {
         mut metric: NetworkGaugeMetric,
     ) -> Self {
         sanitize_network_gauge_metric(&mut metric);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::NetworkGaugeMetric,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::NetworkGaugeMetric(metric),
-        }
+            SignalKind::NetworkGaugeMetric,
+            SignalPayload::NetworkGaugeMetric(metric),
+        )
     }
 
     pub fn dns_query(
@@ -662,13 +646,12 @@ impl SignalEnvelope {
         mut event: DnsQueryEvent,
     ) -> Self {
         sanitize_dns_query_event(&mut event);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::DnsQuery,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::DnsQuery(event),
-        }
+            SignalKind::DnsQuery,
+            SignalPayload::DnsQuery(event),
+        )
     }
 
     pub fn dns_response(
@@ -677,13 +660,12 @@ impl SignalEnvelope {
         mut event: DnsResponseEvent,
     ) -> Self {
         sanitize_dns_response_event(&mut event);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::DnsResponse,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::DnsResponse(event),
-        }
+            SignalKind::DnsResponse,
+            SignalPayload::DnsResponse(event),
+        )
     }
 
     pub fn dns_counter_metric(
@@ -692,13 +674,12 @@ impl SignalEnvelope {
         mut metric: DnsCounterMetric,
     ) -> Self {
         sanitize_dns_counter_metric(&mut metric);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::DnsCounterMetric,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::DnsCounterMetric(metric),
-        }
+            SignalKind::DnsCounterMetric,
+            SignalPayload::DnsCounterMetric(metric),
+        )
     }
 
     pub fn dns_latency_metric(
@@ -707,13 +688,12 @@ impl SignalEnvelope {
         mut metric: DnsLatencyMetric,
     ) -> Self {
         sanitize_dns_latency_metric(&mut metric);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::DnsLatencyMetric,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::DnsLatencyMetric(metric),
-        }
+            SignalKind::DnsLatencyMetric,
+            SignalPayload::DnsLatencyMetric(metric),
+        )
     }
 
     pub fn dependency_edge(
@@ -722,13 +702,12 @@ impl SignalEnvelope {
         mut event: DependencyEdgeEvent,
     ) -> Self {
         sanitize_dependency_edge_event(&mut event);
-        Self {
-            schema_version: SIGNAL_SCHEMA_VERSION,
-            kind: SignalKind::DependencyEdge,
-            source: source.into(),
+        Self::new(
+            source,
             host,
-            payload: SignalPayload::DependencyEdge(event),
-        }
+            SignalKind::DependencyEdge,
+            SignalPayload::DependencyEdge(event),
+        )
     }
 
     pub fn node_cpu_observation(
@@ -1141,10 +1120,14 @@ impl SignalEnvelope {
         kind: SignalKind,
         payload: SignalPayload,
     ) -> Self {
+        let mut source = source.into();
+        let mut host = host;
+        sanitize_envelope_string(&mut source);
+        sanitize_optional_envelope_string(&mut host);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind,
-            source: source.into(),
+            source,
             host,
             payload,
         }
@@ -1153,6 +1136,28 @@ impl SignalEnvelope {
     pub fn signal_kind(&self) -> SignalKind {
         self.kind
     }
+}
+
+fn sanitize_envelope_string(value: &mut String) {
+    *value = truncate_utf8(value, MAX_ENVELOPE_STRING_BYTES);
+}
+
+fn sanitize_optional_envelope_string(value: &mut Option<String>) {
+    if let Some(inner) = value {
+        sanitize_envelope_string(inner);
+    }
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
 }
 
 impl Signal for SignalEnvelope {
@@ -1252,6 +1257,33 @@ mod tests {
         assert_eq!(json["payload"]["executable"], "/usr/bin/bash");
         assert_eq!(json["payload"]["timestamp_unix_nanos"], 123);
         assert!(json["payload"].get("kind").is_none());
+    }
+
+    #[test]
+    fn constructors_bound_envelope_source_and_host_before_json_stdout() {
+        let long = "e".repeat(320);
+        let signal = SignalEnvelope::exec(
+            long.clone(),
+            Some(long),
+            ExecEvent {
+                pid: 42,
+                ppid: Some(1),
+                uid: Some(1000),
+                command: "bash".to_string(),
+                executable: Some("/usr/bin/bash".to_string()),
+                arguments: vec!["bash".to_string()],
+                cgroup_id: Some(7),
+                timestamp_unix_nanos: 123,
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+
+        assert_eq!(json["source"].as_str().map(str::len), Some(256));
+        assert_eq!(json["host"].as_str().map(str::len), Some(256));
+        assert!(!json.to_string().contains(&"e".repeat(257)));
     }
 
     #[test]
