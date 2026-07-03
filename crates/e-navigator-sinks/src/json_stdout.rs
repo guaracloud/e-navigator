@@ -126,7 +126,8 @@ mod tests {
         NetworkFlowWarning, NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation,
         ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
         ProfilingKind, ProfilingSessionObservation, ProfilingStackTraceObservation,
-        ProfilingWarningObservation,
+        ProfilingWarningObservation, ProtocolKind, ProtocolRequestObservation, TraceAttribute,
+        TraceConfidence, TraceCorrelationKind,
     };
     use std::collections::BTreeMap;
 
@@ -300,6 +301,53 @@ mod tests {
             value["payload"]["destination"]["kubernetes"]["pod_name"],
             "redis-0"
         );
+    }
+
+    #[test]
+    fn serializes_protocol_request_as_json_stdout_without_raw_trace_headers() {
+        let signal = SignalEnvelope::protocol_request_observation(
+            "source.protocol_fixture",
+            Some("node-a".to_string()),
+            ProtocolRequestObservation {
+                protocol: ProtocolKind::Grpc,
+                start_unix_nanos: 1_000,
+                end_unix_nanos: Some(2_500),
+                duration_nanos: Some(1_500),
+                trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+                span_id: Some("00f067aa0ba902b7".to_string()),
+                parent_span_id: None,
+                traceparent: Some(
+                    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string(),
+                ),
+                tracestate: Some("vendor=value".to_string()),
+                correlation_kind: TraceCorrelationKind::ProtocolObserved,
+                confidence: TraceConfidence::High,
+                service_name: Some("checkout-api".to_string()),
+                method: Some("GetCart".to_string()),
+                status_code: Some(0),
+                process: None,
+                container: None,
+                kubernetes: None,
+                peer: None,
+                attributes: vec![TraceAttribute {
+                    key: "rpc.system".to_string(),
+                    value: "grpc".to_string(),
+                }],
+            },
+        );
+
+        let line = serialize_signal_line(&signal).expect("signal serializes");
+        let value: serde_json::Value =
+            serde_json::from_slice(&line[..line.len() - 1]).expect("line is valid JSON");
+
+        assert!(line.ends_with(b"\n"));
+        assert_eq!(value["kind"], "protocol_request_observation");
+        assert_eq!(value["payload"]["protocol"], "grpc");
+        assert_eq!(value["payload"]["method"], "GetCart");
+        assert_eq!(value["payload"]["status_code"], 0);
+        assert_eq!(value["payload"]["attributes"][0]["key"], "rpc.system");
+        assert!(value["payload"].get("traceparent").is_none());
+        assert!(value["payload"].get("tracestate").is_none());
     }
 
     #[test]
