@@ -87,10 +87,11 @@ or chart rendering:
   plus OK/error response parsing,
   PostgreSQL Query/Parse/Bind/Describe/Close/Execute/FunctionCall/CopyData/
   CopyDone/CopyFail/Password/Flush/Sync/Terminate wire-message and
-  ParseComplete/BindComplete/CloseComplete/RowDescription/DataRow/
-  EmptyQueryResponse/NoData/PortalSuspended/CommandComplete/NoticeResponse/
-  ParameterStatus/ReadyForQuery/ErrorResponse parsing with canonical SQLSTATE
-  validation and build-checked parser fuzz coverage, and Redis RESP command plus
+  Authentication/ParseComplete/BindComplete/CloseComplete/RowDescription/
+  DataRow/EmptyQueryResponse/NoData/PortalSuspended/CommandComplete/
+  NoticeResponse/ParameterStatus/ReadyForQuery/ErrorResponse parsing with
+  canonical SQLSTATE validation and build-checked parser fuzz coverage, and
+  Redis RESP command plus
   simple/integer/bulk/RESP3-scalar/RESP3-blob-error/verbatim/flat-array/
   nested-array/RESP3-map/RESP3-set/RESP3-push/error response parsing with
   declared frame-length bounds,
@@ -229,14 +230,15 @@ These areas remain explicitly partial:
   response coverage, and live MySQL proof are not implemented or proven.
 - **PostgreSQL protocol observability:** bounded simple Query, Parse, Bind,
   Describe, Close, Execute, FunctionCall, CopyData, CopyDone, CopyFail,
-  PasswordMessage, Flush, Sync, Terminate, ParseComplete, BindComplete,
-  CloseComplete, RowDescription, DataRow, EmptyQueryResponse, NoData,
-  PortalSuspended, CommandComplete, NoticeResponse, ParameterStatus,
+  PasswordMessage, Flush, Sync, Terminate, Authentication, ParseComplete,
+  BindComplete, CloseComplete, RowDescription, DataRow, EmptyQueryResponse,
+  NoData, PortalSuspended, CommandComplete, NoticeResponse, ParameterStatus,
   ReadyForQuery, and ErrorResponse parsing is locally tested without exporting
-  raw SQL text, function OIDs, argument values, row values, copy payloads, copy
-  failure text, password values, row field names, notice text, parameter status
-  values, or raw error messages, including canonical SQLSTATE validation for
-  notice and error responses, but runtime capture,
+  raw SQL text, function OIDs, argument values, row values, authentication salts
+  or SASL data, copy payloads, copy failure text, password values, row field
+  names, notice text, parameter status values, or raw error messages, including
+  canonical SQLSTATE validation for notice and error responses, but runtime
+  capture,
   request/response matching, broad
   response coverage, and live PostgreSQL proof are not implemented or proven.
 - **Redis protocol observability:** bounded RESP command and

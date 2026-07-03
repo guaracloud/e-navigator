@@ -2915,6 +2915,42 @@ fn extracts_postgres_data_row_without_column_values() {
 }
 
 #[test]
+fn extracts_postgres_authentication_responses_without_auth_payload_values() {
+    let ok = parse_postgres_response(
+        &postgres_authentication_frame(0, b""),
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("postgres authentication ok parses");
+    assert_eq!(ok.status_code, "OK");
+    assert_eq!(ok.error_type, None);
+
+    let md5 = parse_postgres_response(
+        &postgres_authentication_frame(5, b"salt"),
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("postgres md5 authentication parses");
+    assert_eq!(md5.status_code, "AUTHENTICATION_REQUIRED");
+    assert_eq!(md5.error_type, None);
+    assert!(
+        !md5.attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("salt"))
+    );
+
+    let sasl = parse_postgres_response(
+        &postgres_authentication_frame(10, b"SCRAM-SHA-256\0secret-mechanism\0\0"),
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("postgres sasl authentication parses");
+    assert_eq!(sasl.status_code, "AUTHENTICATION_REQUIRED");
+    assert!(
+        !sasl.attributes.iter().any(
+            |attribute| attribute.value.contains("SCRAM") || attribute.value.contains("secret")
+        )
+    );
+}
+
+#[test]
 fn extracts_postgres_empty_success_responses_without_payload_values() {
     for message_type in [b'1', b'2', b'3', b'I', b'n', b's'] {
         let bytes = postgres_frame(message_type, b"");
@@ -3372,6 +3408,39 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     assert_eq!(
         parse_postgres_response(&postgres_frame(b'Q', b"select 1\0"), &config).unwrap_err(),
         PostgresExtraction::UnsupportedMessage
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b'R', b""), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_authentication_frame(5, b"sal"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(
+            &postgres_authentication_frame(10, b"SCRAM-SHA-256"),
+            &config
+        )
+        .unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_authentication_frame(99, b""), &config).unwrap_err(),
+        PostgresExtraction::UnsupportedMessage
+    );
+    assert_eq!(
+        parse_postgres_response(
+            &postgres_authentication_frame(10, b"SCRAM-SHA-256\0\0"),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        PostgresExtraction::QueryTooLong
     );
     assert_eq!(
         parse_postgres_response(&postgres_frame(b'D', b"\x00\x01\xff\xff\xff\xfe"), &config)
@@ -4870,6 +4939,13 @@ fn postgres_data_row_frame(values: &[Option<&[u8]>]) -> Vec<u8> {
         }
     }
     postgres_frame(b'D', &body)
+}
+
+fn postgres_authentication_frame(auth_code: u32, payload: &[u8]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&auth_code.to_be_bytes());
+    body.extend_from_slice(payload);
+    postgres_frame(b'R', &body)
 }
 
 fn mysql_packet(command: u8, query: &[u8]) -> Vec<u8> {

@@ -137,6 +137,7 @@ pub fn parse_postgres_response(
         b'D' => postgres_data_row_response(body, config),
         b'E' => postgres_error_response(body, config.max_attributes),
         b'N' => postgres_notice_response(body, config.max_attributes),
+        b'R' => postgres_authentication_response(body, config),
         b'S' => postgres_parameter_status_response(body, config),
         b'T' => postgres_row_description_response(body, config),
         b'Z' => postgres_ready_for_query_response(body, config.max_attributes),
@@ -323,6 +324,58 @@ fn postgres_notice_response(
         status_code,
         error_type: None,
     })
+}
+
+fn postgres_authentication_response(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    let mut cursor = 0;
+    let auth_code = read_u32_be_cursor(body, &mut cursor)?;
+    match auth_code {
+        0 | 2 | 3 | 6 | 7 | 9 => {
+            if cursor != body.len() {
+                return Err(PostgresExtraction::MalformedFrame);
+            }
+        }
+        5 => skip_bytes(body, &mut cursor, 4)?,
+        8 | 11 | 12 => {
+            cursor = body.len();
+        }
+        10 => {
+            parse_authentication_sasl_mechanisms(body, &mut cursor, config.max_request_line_bytes)?
+        }
+        _ => return Err(PostgresExtraction::UnsupportedMessage),
+    }
+    if cursor != body.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+
+    let status_code = if auth_code == 0 {
+        "OK"
+    } else {
+        "AUTHENTICATION_REQUIRED"
+    }
+    .to_string();
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        attributes: postgres_response_attributes(&status_code, None, config.max_attributes),
+        status_code,
+        error_type: None,
+    })
+}
+
+fn parse_authentication_sasl_mechanisms(
+    bytes: &[u8],
+    cursor: &mut usize,
+    max_mechanism_bytes: usize,
+) -> Result<(), PostgresExtraction> {
+    loop {
+        let mechanism = parse_cstring(bytes, cursor, max_mechanism_bytes)?;
+        if mechanism.is_empty() {
+            return Ok(());
+        }
+    }
 }
 
 fn postgres_response_attributes(
@@ -631,6 +684,17 @@ fn read_u16_be_cursor(bytes: &[u8], cursor: &mut usize) -> Result<u16, PostgresE
         .ok_or(PostgresExtraction::MalformedFrame)?;
     *cursor = end;
     Ok(u16::from_be_bytes([raw[0], raw[1]]))
+}
+
+fn read_u32_be_cursor(bytes: &[u8], cursor: &mut usize) -> Result<u32, PostgresExtraction> {
+    let end = cursor
+        .checked_add(4)
+        .ok_or(PostgresExtraction::MalformedFrame)?;
+    let raw = bytes
+        .get(*cursor..end)
+        .ok_or(PostgresExtraction::MalformedFrame)?;
+    *cursor = end;
+    Ok(u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]))
 }
 
 fn read_i32_be_cursor(bytes: &[u8], cursor: &mut usize) -> Result<i32, PostgresExtraction> {
