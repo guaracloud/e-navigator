@@ -2504,6 +2504,36 @@ fn extracts_mysql_ok_response_without_raw_session_state() {
 }
 
 #[test]
+fn extracts_mysql_eof_response_without_raw_status_flags() {
+    let bytes = mysql_packet(0xfe, b"\0\0\x02\0");
+
+    let extraction = parse_mysql_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("mysql eof parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Mysql);
+    assert_eq!(extraction.status_code, "EOF");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.system" && attribute.value == "mysql")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.response.status_code" && attribute.value == "EOF")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type")
+    );
+}
+
+#[test]
 fn extracts_mysql_error_response_without_raw_message() {
     let bytes = mysql_error_packet(1064, Some(b"42000"), b"syntax near secret table customers");
 
@@ -2608,6 +2638,18 @@ fn enforces_mysql_packet_query_and_attribute_bounds() {
         .unwrap_err(),
         MysqlExtraction::PacketTooLong
     );
+
+    let bounded_response = parse_mysql_response(
+        &mysql_packet(0xfe, b"\0\0\x02\0"),
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded mysql eof response parses");
+    assert_eq!(bounded_response.attributes.len(), 2);
 }
 
 #[test]
@@ -2644,6 +2686,14 @@ fn rejects_malformed_and_unsupported_mysql_fixtures() {
     );
     assert_eq!(
         parse_mysql_response(&mysql_packet(0x03, b"select 1"), &config).unwrap_err(),
+        MysqlExtraction::UnsupportedResponse
+    );
+    assert_eq!(
+        parse_mysql_response(&mysql_packet(0xfe, b"secret-payload"), &config).unwrap_err(),
+        MysqlExtraction::UnsupportedResponse
+    );
+    assert_eq!(
+        parse_mysql_error_response(&mysql_packet(0xfe, b"\0\0\x02\0"), &config).unwrap_err(),
         MysqlExtraction::UnsupportedResponse
     );
 

@@ -5,6 +5,7 @@ use crate::ProtocolExtractionConfig;
 const MYSQL_COM_QUERY: u8 = 0x03;
 const MYSQL_COM_STMT_PREPARE: u8 = 0x16;
 const MYSQL_OK_PACKET: u8 = 0x00;
+const MYSQL_EOF_PACKET: u8 = 0xfe;
 const MYSQL_ERR_PACKET: u8 = 0xff;
 const MAX_MYSQL_OPERATION_BYTES: usize = 64;
 const MYSQL_SQLSTATE_BYTES: usize = 5;
@@ -107,6 +108,10 @@ pub fn parse_mysql_response(
     let payload = packet_payload(bytes, config.max_header_bytes)?;
     match payload[0] {
         MYSQL_OK_PACKET => Ok(mysql_ok_response(config.max_attributes)),
+        MYSQL_EOF_PACKET if matches!(payload.len(), 1 | 5) => {
+            Ok(mysql_eof_response(config.max_attributes))
+        }
+        MYSQL_EOF_PACKET => Err(MysqlExtraction::UnsupportedResponse),
         MYSQL_ERR_PACKET => mysql_error_response(payload, config.max_attributes),
         _ => Err(MysqlExtraction::UnsupportedResponse),
     }
@@ -114,6 +119,16 @@ pub fn parse_mysql_response(
 
 fn mysql_ok_response(max_attributes: usize) -> ParsedMysqlResponse {
     let status_code = "OK".to_string();
+    ParsedMysqlResponse {
+        protocol: ProtocolKind::Mysql,
+        status_code: status_code.clone(),
+        error_type: None,
+        attributes: mysql_response_attributes(&status_code, None, max_attributes),
+    }
+}
+
+fn mysql_eof_response(max_attributes: usize) -> ParsedMysqlResponse {
+    let status_code = "EOF".to_string();
     ParsedMysqlResponse {
         protocol: ProtocolKind::Mysql,
         status_code: status_code.clone(),

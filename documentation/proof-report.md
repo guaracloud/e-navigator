@@ -78,7 +78,7 @@ or chart rendering:
   response-error parsing,
   MongoDB
   wire-message and response-error parsing with OP_MSG section validation and
-  non-negative response-code validation, MySQL command packet and OK/ERR
+  non-negative response-code validation, MySQL command packet and OK/EOF/ERR
   response parsing with canonical
   SQLSTATE validation and build-checked parser fuzz coverage, NATS text command
   parsing with canonical command-token validation plus OK/error response parsing,
@@ -207,7 +207,7 @@ These areas remain explicitly partial:
   request/response matching, broad response coverage, and live NATS proof are
   not implemented or proven.
 - **MySQL protocol observability:** bounded `COM_QUERY`,
-  `COM_STMT_PREPARE`, and OK/ERR response parsing is locally tested without
+  `COM_STMT_PREPARE`, and OK/EOF/ERR response parsing is locally tested without
   exporting raw SQL text or raw error messages, including canonical SQLSTATE
   validation for error responses, but runtime capture, request/response
   matching, broad response coverage, and live MySQL proof are not implemented or
