@@ -233,6 +233,17 @@ pub(crate) fn sanitize_node_disk_io_observation(observation: &mut NodeDiskIoObse
     sanitize_resource_signal_string(&mut observation.device);
 }
 
+pub(crate) fn sanitize_process_resource_observation(observation: &mut ProcessResourceObservation) {
+    sanitize_resource_signal_string(&mut observation.metric_name);
+    sanitize_resource_signal_string(&mut observation.unit);
+    sanitize_process_resource_context(&mut observation.process);
+}
+
+pub(crate) fn sanitize_process_resource_context(context: &mut ProcessResourceContext) {
+    sanitize_resource_signal_string(&mut context.command);
+    sanitize_optional_resource_signal_string(&mut context.executable);
+}
+
 fn sanitize_resource_signal_string(value: &mut String) {
     *value = truncate_utf8(value, MAX_RESOURCE_SIGNAL_STRING_BYTES);
 }

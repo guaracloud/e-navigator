@@ -18,7 +18,8 @@ use crate::profiling::{sanitize_optional_profiling_string, sanitize_profiling_st
 use crate::resource::{
     sanitize_node_cpu_observation, sanitize_node_disk_io_observation,
     sanitize_node_filesystem_observation, sanitize_node_load_observation,
-    sanitize_node_memory_observation, sanitize_resource_metric_attributes,
+    sanitize_node_memory_observation, sanitize_process_resource_observation,
+    sanitize_resource_metric_attributes,
 };
 use crate::trace::{
     sanitize_optional_trace_string, sanitize_trace_attributes, sanitize_trace_string,
@@ -786,8 +787,9 @@ impl SignalEnvelope {
     pub fn process_resource_observation(
         source: impl Into<String>,
         host: Option<String>,
-        observation: ProcessResourceObservation,
+        mut observation: ProcessResourceObservation,
     ) -> Self {
+        sanitize_process_resource_observation(&mut observation);
         Self::new(
             source,
             host,
@@ -2848,6 +2850,49 @@ mod tests {
             let decoded: SignalEnvelope = serde_json::from_value(json).expect("round trips");
             assert_eq!(decoded.schema_version, 1);
         }
+    }
+
+    #[test]
+    fn process_resource_constructor_bounds_strings_before_json_stdout() {
+        let long = "p".repeat(320);
+        let signal = SignalEnvelope::process_resource_observation(
+            "source.procfs_resource",
+            None,
+            ProcessResourceObservation {
+                metric_name: long.clone(),
+                unit: long.clone(),
+                timestamp_unix_nanos: 2_000,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 1_000,
+                    end_unix_nanos: 2_000,
+                },
+                process: ProcessResourceContext {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: long.clone(),
+                    executable: Some(long),
+                    container: None,
+                    kubernetes: None,
+                },
+                cpu_time_nanos: Some(500),
+                memory_rss_bytes: Some(4_096),
+                virtual_memory_bytes: Some(8_192),
+                open_fds: Some(12),
+                socket_count: Some(2),
+                thread_count: Some(4),
+            },
+        );
+
+        assert_payload_string_lengths(
+            &signal,
+            &[
+                &["metric_name"],
+                &["unit"],
+                &["process", "command"],
+                &["process", "executable"],
+            ],
+        );
     }
 
     #[test]

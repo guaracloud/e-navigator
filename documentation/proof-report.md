@@ -27,9 +27,10 @@ or chart rendering:
   process/address/source/message strings, network flow summary endpoint strings
   and dependency endpoint address/domain strings, DNS signal families with
   bounded DNS and process strings, network metric signal families with bounded
-  strings, node resource observation signals with bounded strings, resource
-  metric signals with bounded dynamic attributes, and profiling signal families
-  with bounded sanitized profiling attributes, stack frames, and scalar strings;
+  strings, node and process resource observation signals with bounded strings,
+  resource metric signals with bounded dynamic attributes, and profiling signal
+  families with bounded sanitized profiling attributes, stack frames, and
+  scalar strings;
 - synthetic source pipeline, including sanitized HTTP, gRPC, Kafka, MongoDB,
   MySQL, NATS, PostgreSQL, and Redis protocol request/error-span fixtures and
   flow-attribution warnings;
