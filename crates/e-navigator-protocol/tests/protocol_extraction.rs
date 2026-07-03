@@ -2349,6 +2349,54 @@ fn extracts_postgres_function_call_message_without_argument_values() {
 }
 
 #[test]
+fn extracts_postgres_copy_messages_without_payload_values() {
+    for (message_type, body, operation, message_type_name) in [
+        (
+            b'd',
+            b"secret-copy-row\tvalue\n".as_slice(),
+            "COPY_DATA",
+            "copy_data",
+        ),
+        (b'c', b"".as_slice(), "COPY_DONE", "copy_done"),
+        (
+            b'f',
+            b"secret-copy-failure-message\0".as_slice(),
+            "COPY_FAIL",
+            "copy_fail",
+        ),
+    ] {
+        let bytes = postgres_frame(message_type, body);
+
+        let extraction = parse_postgres_message(&bytes, &ProtocolExtractionConfig::default())
+            .expect("postgres copy message parses");
+
+        assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+        assert_eq!(extraction.operation.as_deref(), Some(operation));
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "db.operation" && attribute.value == operation)
+        );
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "db.postgresql.message.type"
+                    && attribute.value == message_type_name)
+        );
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("secret")
+                    || attribute.value.contains("copy-row")
+                    || attribute.value.contains("copy-failure"))
+        );
+    }
+}
+
+#[test]
 fn extracts_postgres_sync_message_without_payload_values() {
     let bytes = postgres_frame(b'S', b"");
 
@@ -2754,6 +2802,31 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     assert_eq!(
         parse_postgres_message(
             &postgres_frame(b'F', &oversized_function_call),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        PostgresExtraction::QueryTooLong
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'c', b"secret"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'f', b"secret"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_message(&postgres_frame(b'f', b"secret\0extra"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_message(
+            &postgres_frame(b'f', b"secret-copy-failure-message\0"),
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
                 max_request_line_bytes: 4,

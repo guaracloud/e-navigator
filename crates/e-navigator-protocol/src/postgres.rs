@@ -53,6 +53,9 @@ pub fn parse_postgres_message(
         b'C' => parse_close_message(body)?,
         b'E' => parse_execute_message(body)?,
         b'F' => parse_function_call_message(body, config.max_request_line_bytes)?,
+        b'd' => parse_copy_data_message(body),
+        b'c' => parse_copy_done_message(body)?,
+        b'f' => parse_copy_fail_message(body, config.max_request_line_bytes)?,
         b'p' => parse_password_message(body, config.max_request_line_bytes)?,
         b'S' => parse_sync_message(body)?,
         b'H' => parse_flush_message(body)?,
@@ -65,6 +68,9 @@ pub fn parse_postgres_message(
         b'C' => Some("CLOSE".to_string()),
         b'E' => Some("EXECUTE".to_string()),
         b'F' => Some("FUNCTION_CALL".to_string()),
+        b'd' => Some("COPY_DATA".to_string()),
+        b'c' => Some("COPY_DONE".to_string()),
+        b'f' => Some("COPY_FAIL".to_string()),
         b'p' => Some("PASSWORD".to_string()),
         b'S' => Some("SYNC".to_string()),
         b'H' => Some("FLUSH".to_string()),
@@ -423,6 +429,29 @@ fn parse_function_call_message(
     Ok("FUNCTION_CALL")
 }
 
+fn parse_copy_data_message(_body: &[u8]) -> &'static str {
+    "COPY_DATA"
+}
+
+fn parse_copy_done_message(body: &[u8]) -> Result<&str, PostgresExtraction> {
+    if !body.is_empty() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    Ok("COPY_DONE")
+}
+
+fn parse_copy_fail_message(
+    body: &[u8],
+    max_error_message_bytes: usize,
+) -> Result<&str, PostgresExtraction> {
+    let mut cursor = 0;
+    let _message = parse_cstring(body, &mut cursor, max_error_message_bytes)?;
+    if cursor != body.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    Ok("COPY_FAIL")
+}
+
 fn parse_password_message(
     body: &[u8],
     max_password_bytes: usize,
@@ -550,6 +579,9 @@ fn message_type_name(message_type: u8) -> &'static str {
         b'C' => "close",
         b'E' => "execute",
         b'F' => "function_call",
+        b'd' => "copy_data",
+        b'c' => "copy_done",
+        b'f' => "copy_fail",
         b'p' => "password",
         b'S' => "sync",
         b'H' => "flush",
