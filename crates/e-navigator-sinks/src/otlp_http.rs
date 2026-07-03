@@ -180,7 +180,7 @@ mod tests {
         ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkAddressFamily,
         NetworkCounterMetric, NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation,
         ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
-        ProfilingKind, RequestSpanObservation, SignalEnvelope, TraceConfidence,
+        ProfilingKind, ProtocolKind, RequestSpanObservation, SignalEnvelope, TraceConfidence,
         TraceCorrelationKind,
     };
     use opentelemetry_proto::tonic::{
@@ -355,6 +355,53 @@ mod tests {
         let status = span.status.as_ref().expect("span status is present");
         assert_eq!(status.code, status::StatusCode::Error as i32);
         assert_eq!(status.message, "HTTP status code 503");
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_exports_grpc_trace_error_status_as_otlp_protobuf() {
+        let collector = FakeCollector::spawn(vec![200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            traces_endpoint: collector.url_with_path("/v1/traces"),
+            metrics_enabled: false,
+            traces_enabled: true,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&grpc_request_span())
+            .await
+            .expect("trace export succeeds");
+        let request = collector.next_request().await;
+
+        let decoded =
+            ExportTraceServiceRequest::decode(request.body()).expect("OTLP trace request decodes");
+        let span = decoded
+            .resource_spans
+            .first()
+            .and_then(|resource_spans| resource_spans.scope_spans.first())
+            .and_then(|scope_spans| scope_spans.spans.first())
+            .expect("span is present");
+
+        assert_eq!(span.name, "grpc request");
+        assert!(span.attributes.iter().any(|attribute| {
+            attribute.key == "rpc.grpc.status_code"
+                && format!("{:?}", attribute.value).contains("13")
+        }));
+        assert!(
+            !span
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "http.response.status_code")
+        );
+        let status = span.status.as_ref().expect("span status is present");
+        assert_eq!(status.code, status::StatusCode::Error as i32);
+        assert_eq!(status.message, "gRPC status code 13 (internal)");
     }
 
     #[tokio::test]
@@ -550,6 +597,43 @@ mod tests {
                 service_name: Some("checkout-api".to_string()),
                 method: Some("GET".to_string()),
                 status_code: Some(503),
+                process: None,
+                container: Some(ContainerContext {
+                    container_id: "container-a".to_string(),
+                    runtime: Some("containerd".to_string()),
+                }),
+                kubernetes: Some(KubernetesContext {
+                    namespace: "default".to_string(),
+                    pod_name: "checkout-123".to_string(),
+                    pod_uid: Some("pod-uid".to_string()),
+                    container_name: Some("checkout".to_string()),
+                    node_name: Some("node-a".to_string()),
+                    labels: BTreeMap::new(),
+                }),
+                peer: None,
+                attributes: Vec::new(),
+            },
+        )
+    }
+
+    fn grpc_request_span() -> SignalEnvelope {
+        SignalEnvelope::request_span_observation(
+            "generator.request_correlation",
+            Some("node-a".to_string()),
+            RequestSpanObservation {
+                name: "grpc request".to_string(),
+                protocol: ProtocolKind::Grpc,
+                trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+                span_id: Some("00f067aa0ba902b7".to_string()),
+                parent_span_id: None,
+                start_unix_nanos: 1_000,
+                end_unix_nanos: Some(2_000),
+                duration_nanos: Some(1_000),
+                correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+                confidence: TraceConfidence::High,
+                service_name: Some("checkout-api".to_string()),
+                method: Some("GetCart".to_string()),
+                status_code: Some(13),
                 process: None,
                 container: Some(ContainerContext {
                     container_id: "container-a".to_string(),

@@ -235,12 +235,7 @@ fn request_span_record(signal: &SignalEnvelope, span: &RequestSpanObservation) -
     if let Some(method) = &span.method {
         attributes.insert("http.request.method".to_string(), serde_json::json!(method));
     }
-    if let Some(status_code) = span.status_code {
-        attributes.insert(
-            "http.response.status_code".to_string(),
-            serde_json::json!(status_code),
-        );
-    }
+    append_request_status_attribute(&mut attributes, span.protocol, span.status_code);
     append_process_attributes(&mut attributes, span.process.as_ref());
     append_peer_attributes(&mut attributes, span.peer.as_ref());
     append_trace_attributes(&mut attributes, &span.attributes);
@@ -377,18 +372,71 @@ fn network_flow_warning_record(
 }
 
 fn request_span_status(span: &RequestSpanObservation) -> Option<OtelSpanStatus> {
-    if span.protocol == ProtocolKind::Http
-        && let Some(status_code) = span.status_code
-        && status_code >= 400
-    {
-        return Some(error_status(&format!("HTTP status code {status_code}")));
+    match (span.protocol, span.status_code) {
+        (ProtocolKind::Http, Some(status_code)) if status_code >= 400 => {
+            Some(error_status(&format!("HTTP status code {status_code}")))
+        }
+        (ProtocolKind::Grpc, Some(status_code)) if status_code != 0 => {
+            Some(error_status(&format!(
+                "gRPC status code {status_code} ({})",
+                grpc_status_name(status_code)
+            )))
+        }
+        _ => None,
     }
-    None
 }
 
 fn error_status(message: &str) -> OtelSpanStatus {
     OtelSpanStatus::Error {
         message: message.to_string(),
+    }
+}
+
+fn append_request_status_attribute(
+    attributes: &mut BTreeMap<String, serde_json::Value>,
+    protocol: ProtocolKind,
+    status_code: Option<u16>,
+) {
+    let Some(status_code) = status_code else {
+        return;
+    };
+    match protocol {
+        ProtocolKind::Http => {
+            attributes.insert(
+                "http.response.status_code".to_string(),
+                serde_json::json!(status_code),
+            );
+        }
+        ProtocolKind::Grpc => {
+            attributes.insert(
+                "rpc.grpc.status_code".to_string(),
+                serde_json::json!(status_code),
+            );
+        }
+        _ => {}
+    }
+}
+
+fn grpc_status_name(status_code: u16) -> &'static str {
+    match status_code {
+        0 => "ok",
+        1 => "cancelled",
+        2 => "unknown",
+        3 => "invalid_argument",
+        4 => "deadline_exceeded",
+        5 => "not_found",
+        6 => "already_exists",
+        7 => "permission_denied",
+        8 => "resource_exhausted",
+        9 => "failed_precondition",
+        10 => "aborted",
+        11 => "out_of_range",
+        12 => "unimplemented",
+        13 => "internal",
+        14 => "unavailable",
+        15 => "data_loss",
+        16 => "unauthenticated",
+        _ => "unknown",
     }
 }
 

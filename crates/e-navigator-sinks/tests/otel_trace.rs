@@ -328,6 +328,83 @@ fn formats_http_request_span_error_status_from_status_code() {
 }
 
 #[test]
+fn formats_grpc_request_span_error_status_from_grpc_status_code() {
+    let signal = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "grpc request".to_string(),
+            protocol: ProtocolKind::Grpc,
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_000),
+            duration_nanos: Some(1_000),
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            service_name: Some("checkout-api".to_string()),
+            method: Some("GetCart".to_string()),
+            status_code: Some(13),
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(trace_peer_context()),
+            attributes: vec![TraceAttribute {
+                key: "rpc.system".to_string(),
+                value: "grpc".to_string(),
+            }],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("grpc request span formats");
+
+    assert_eq!(
+        record.status,
+        Some(OtelSpanStatus::Error {
+            message: "gRPC status code 13 (internal)".to_string()
+        })
+    );
+    assert_eq!(record.attributes["network.protocol.name"], "grpc");
+    assert_eq!(record.attributes["rpc.grpc.status_code"], 13);
+    assert!(!record.attributes.contains_key("http.response.status_code"));
+}
+
+#[test]
+fn formats_grpc_ok_status_without_error_status() {
+    let signal = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "grpc request".to_string(),
+            protocol: ProtocolKind::Grpc,
+            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+            span_id: Some("00f067aa0ba902b7".to_string()),
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(2_000),
+            duration_nanos: Some(1_000),
+            correlation_kind: TraceCorrelationKind::ObservedTraceContext,
+            confidence: TraceConfidence::High,
+            service_name: Some("checkout-api".to_string()),
+            method: Some("GetCart".to_string()),
+            status_code: Some(0),
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(trace_peer_context()),
+            attributes: vec![],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("grpc request span formats");
+
+    assert_eq!(record.status, None);
+    assert_eq!(record.attributes["rpc.grpc.status_code"], 0);
+    assert!(!record.attributes.contains_key("http.response.status_code"));
+}
+
+#[test]
 fn formats_redis_request_span_with_protocol_name() {
     let signal = SignalEnvelope::request_span_observation(
         "generator.request_correlation",

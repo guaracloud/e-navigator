@@ -36,8 +36,9 @@ or chart rendering:
 - Prometheus HTTP formatting, health/readiness endpoints, and secret-like label
   filtering;
 - OTLP protobuf request encoding plus per-family endpoint routing for metrics,
-  traces with request/error status mapping, local warning trace-record
-  formatting, and development-status profiles in fake-collector tests;
+  traces with HTTP and gRPC request/error status mapping, local warning
+  trace-record formatting, and development-status profiles in fake-collector
+  tests;
 - Helm rendering, schema checks, and release verification workflow structure.
 
 ## Runtime-Proven Slices
@@ -80,9 +81,10 @@ These areas remain explicitly partial:
   capture, gRPC status extraction, route templates, retries, app errors, and
   broader iovec shapes are not proven.
 - **Trace readiness:** OTLP trace protobuf export includes request span kind,
-  resource attributes, and local status mapping for HTTP status errors and
-  network interaction errors, but broad backend service-graph compatibility and
-  live collector proof for the new status mapping are not yet proven.
+  resource attributes, and local status mapping for HTTP status errors, gRPC
+  status errors, and network interaction errors, but broad backend
+  service-graph compatibility and live collector proof for the status mappings
+  are not yet proven.
 - **Kafka protocol observability:** bounded request-header parsing for common
   API keys is locally tested without exporting client IDs, topics, or record
   payloads, but runtime capture, request/response matching, status/error
