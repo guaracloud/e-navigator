@@ -1633,6 +1633,54 @@ mod tests {
     }
 
     #[test]
+    fn network_connection_constructors_bound_context_strings_before_json_stdout() {
+        let long = "n".repeat(320);
+        let signal = SignalEnvelope::network_connection_open(
+            "source.test",
+            None,
+            NetworkConnectionOpenEvent {
+                process: network_process(),
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.0.0.10".to_string()),
+                local_port: Some(43512),
+                remote_address: "10.0.0.20".to_string(),
+                remote_port: 5432,
+                fd: Some(7),
+                timestamp_unix_nanos: 300,
+                container: Some(crate::ContainerContext {
+                    container_id: long.clone(),
+                    runtime: Some(long.clone()),
+                }),
+                kubernetes: Some(crate::KubernetesContext {
+                    namespace: long.clone(),
+                    pod_name: long.clone(),
+                    pod_uid: Some(long.clone()),
+                    container_name: Some(long.clone()),
+                    node_name: Some(long.clone()),
+                    labels: std::collections::BTreeMap::from_iter(
+                        (0..20).map(|index| (format!("label-{index}-{long}"), long.clone())),
+                    ),
+                }),
+            },
+        );
+
+        assert_payload_string_lengths(
+            &signal,
+            &[
+                &["container", "container_id"],
+                &["container", "runtime"],
+                &["kubernetes", "namespace"],
+                &["kubernetes", "pod_name"],
+                &["kubernetes", "pod_uid"],
+                &["kubernetes", "container_name"],
+                &["kubernetes", "node_name"],
+            ],
+        );
+        assert_payload_label_bounds(&signal, &["kubernetes", "labels"]);
+    }
+
+    #[test]
     fn serializes_network_flow_warning_signal() {
         let signal = SignalEnvelope::network_flow_warning(
             "generator.network_metrics",
@@ -1816,6 +1864,103 @@ mod tests {
                 &["destination", "domain"],
             ],
         );
+    }
+
+    #[test]
+    fn network_endpoint_constructors_bound_context_strings_before_json_stdout() {
+        let long = "w".repeat(320);
+        let container = crate::ContainerContext {
+            container_id: long.clone(),
+            runtime: Some(long.clone()),
+        };
+        let kubernetes = crate::KubernetesContext {
+            namespace: long.clone(),
+            pod_name: long.clone(),
+            pod_uid: Some(long.clone()),
+            container_name: Some(long.clone()),
+            node_name: Some(long.clone()),
+            labels: std::collections::BTreeMap::from_iter(
+                (0..20).map(|index| (format!("label-{index}-{long}"), long.clone())),
+            ),
+        };
+
+        let summary = SignalEnvelope::network_flow_summary(
+            "generator.test",
+            None,
+            NetworkFlowSummaryEvent {
+                source: NetworkFlowEndpoint {
+                    address: Some("10.0.0.5".to_string()),
+                    port: Some(443),
+                    owner_name: None,
+                    owner_type: None,
+                    container: Some(container.clone()),
+                    kubernetes: Some(kubernetes.clone()),
+                },
+                destination: NetworkFlowEndpoint {
+                    address: Some("10.0.0.6".to_string()),
+                    port: Some(443),
+                    owner_name: None,
+                    owner_type: None,
+                    container: Some(container.clone()),
+                    kubernetes: Some(kubernetes.clone()),
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                bytes: 512,
+                packets: Some(4),
+                direction: NetworkFlowDirection::Egress,
+                first_seen_unix_nanos: 300,
+                last_seen_unix_nanos: 350,
+            },
+        );
+        let dependency = SignalEnvelope::dependency_edge(
+            "generator.test",
+            None,
+            DependencyEdgeEvent {
+                source: DependencyEndpoint {
+                    workload: Some(kubernetes.clone()),
+                    container: Some(container.clone()),
+                    address: Some("10.0.0.5".to_string()),
+                    port: Some(443),
+                    domain: None,
+                },
+                destination: DependencyEndpoint {
+                    workload: Some(kubernetes),
+                    container: Some(container),
+                    address: Some("10.0.0.6".to_string()),
+                    port: Some(443),
+                    domain: None,
+                },
+                protocol: NetworkProtocol::Tcp,
+                observations: 2,
+                first_seen_unix_nanos: 300,
+                last_seen_unix_nanos: 350,
+            },
+        );
+
+        assert_payload_string_lengths(
+            &summary,
+            &[
+                &["source", "container", "container_id"],
+                &["source", "container", "runtime"],
+                &["source", "kubernetes", "namespace"],
+                &["source", "kubernetes", "pod_name"],
+                &["destination", "container", "container_id"],
+                &["destination", "kubernetes", "container_name"],
+            ],
+        );
+        assert_payload_label_bounds(&summary, &["source", "kubernetes", "labels"]);
+        assert_payload_string_lengths(
+            &dependency,
+            &[
+                &["source", "container", "container_id"],
+                &["source", "workload", "namespace"],
+                &["source", "workload", "pod_name"],
+                &["destination", "container", "runtime"],
+                &["destination", "workload", "container_name"],
+            ],
+        );
+        assert_payload_label_bounds(&dependency, &["source", "workload", "labels"]);
     }
 
     #[test]
@@ -3502,5 +3647,20 @@ mod tests {
                 "{path:?} should be bounded"
             );
         }
+    }
+
+    fn assert_payload_label_bounds(signal: &SignalEnvelope, path: &[&str]) {
+        let json = serde_json::to_value(signal).expect("signal serializes");
+        let mut value = &json["payload"];
+        for field in path {
+            value = &value[*field];
+        }
+        let labels = value.as_object().expect("labels serialize as an object");
+        assert_eq!(labels.len(), 16);
+        assert!(
+            labels
+                .iter()
+                .all(|(key, value)| key.len() == 128 && value.as_str().map(str::len) == Some(256))
+        );
     }
 }

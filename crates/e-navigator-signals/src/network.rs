@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::{ContainerContext, KubernetesContext};
 
 const MAX_NETWORK_SIGNAL_STRING_BYTES: usize = 256;
+const MAX_KUBERNETES_LABELS: usize = 16;
+const MAX_KUBERNETES_LABEL_KEY_BYTES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkConnectionOpenEvent {
@@ -154,17 +156,23 @@ pub(crate) fn sanitize_network_connection_open_event(event: &mut NetworkConnecti
     sanitize_network_process_identity(&mut event.process);
     sanitize_optional_network_signal_string(&mut event.local_address);
     sanitize_network_signal_string(&mut event.remote_address);
+    sanitize_optional_container_context(&mut event.container);
+    sanitize_optional_kubernetes_context(&mut event.kubernetes);
 }
 
 pub(crate) fn sanitize_network_connection_close_event(event: &mut NetworkConnectionCloseEvent) {
     sanitize_network_process_identity(&mut event.process);
     sanitize_optional_network_signal_string(&mut event.local_address);
     sanitize_network_signal_string(&mut event.remote_address);
+    sanitize_optional_container_context(&mut event.container);
+    sanitize_optional_kubernetes_context(&mut event.kubernetes);
 }
 
 pub(crate) fn sanitize_network_connection_failure_event(event: &mut NetworkConnectionFailureEvent) {
     sanitize_network_process_identity(&mut event.process);
     sanitize_network_signal_string(&mut event.remote_address);
+    sanitize_optional_container_context(&mut event.container);
+    sanitize_optional_kubernetes_context(&mut event.kubernetes);
 }
 
 pub(crate) fn sanitize_network_flow_warning(warning: &mut NetworkFlowWarning) {
@@ -174,6 +182,8 @@ pub(crate) fn sanitize_network_flow_warning(warning: &mut NetworkFlowWarning) {
     sanitize_network_signal_string(&mut warning.source_module);
     sanitize_network_signal_string(&mut warning.remote_address);
     sanitize_network_process_identity(&mut warning.process);
+    sanitize_optional_container_context(&mut warning.container);
+    sanitize_optional_kubernetes_context(&mut warning.kubernetes);
 }
 
 pub(crate) fn sanitize_network_flow_summary_event(event: &mut NetworkFlowSummaryEvent) {
@@ -190,16 +200,49 @@ fn sanitize_network_flow_endpoint(endpoint: &mut NetworkFlowEndpoint) {
     sanitize_optional_network_signal_string(&mut endpoint.address);
     sanitize_optional_network_signal_string(&mut endpoint.owner_name);
     sanitize_optional_network_signal_string(&mut endpoint.owner_type);
+    sanitize_optional_container_context(&mut endpoint.container);
+    sanitize_optional_kubernetes_context(&mut endpoint.kubernetes);
 }
 
 fn sanitize_dependency_endpoint(endpoint: &mut DependencyEndpoint) {
     sanitize_optional_network_signal_string(&mut endpoint.address);
     sanitize_optional_network_signal_string(&mut endpoint.domain);
+    sanitize_optional_container_context(&mut endpoint.container);
+    sanitize_optional_kubernetes_context(&mut endpoint.workload);
 }
 
 pub(crate) fn sanitize_network_process_identity(process: &mut NetworkProcessIdentity) {
     sanitize_network_signal_string(&mut process.command);
     sanitize_optional_network_signal_string(&mut process.executable);
+}
+
+fn sanitize_optional_container_context(context: &mut Option<ContainerContext>) {
+    if let Some(inner) = context {
+        sanitize_network_signal_string(&mut inner.container_id);
+        sanitize_optional_network_signal_string(&mut inner.runtime);
+    }
+}
+
+fn sanitize_optional_kubernetes_context(context: &mut Option<KubernetesContext>) {
+    if let Some(inner) = context {
+        sanitize_network_signal_string(&mut inner.namespace);
+        sanitize_network_signal_string(&mut inner.pod_name);
+        sanitize_optional_network_signal_string(&mut inner.pod_uid);
+        sanitize_optional_network_signal_string(&mut inner.container_name);
+        sanitize_optional_network_signal_string(&mut inner.node_name);
+        inner.labels = inner
+            .labels
+            .iter()
+            .filter(|(key, _)| !key.is_empty())
+            .map(|(key, value)| {
+                (
+                    truncate_utf8(key, MAX_KUBERNETES_LABEL_KEY_BYTES),
+                    truncate_utf8(value, MAX_NETWORK_SIGNAL_STRING_BYTES),
+                )
+            })
+            .take(MAX_KUBERNETES_LABELS)
+            .collect();
+    }
 }
 
 fn sanitize_network_signal_string(value: &mut String) {
