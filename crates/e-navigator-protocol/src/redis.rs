@@ -5,6 +5,7 @@ use crate::ProtocolExtractionConfig;
 const MAX_REDIS_COMMAND_BYTES: usize = 64;
 const MAX_REDIS_BULK_STRING_BYTES: usize = 1024;
 const MAX_REDIS_ARRAY_ITEMS: usize = 64;
+const MAX_REDIS_ARRAY_DEPTH: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedRedisCommand {
@@ -284,35 +285,9 @@ fn parse_array_response(
         return Err(RedisExtraction::FrameTooLong);
     }
 
-    let mut first_error = None;
-    for _ in 0..item_count {
-        let Some(frame_type) = bytes.get(cursor) else {
-            return Err(RedisExtraction::MalformedFrame);
-        };
-        cursor += 1;
-        match frame_type {
-            b'+' => {
-                let status = parse_simple_token_cursor(bytes, &mut cursor)?;
-                let _ = parse_response_status(&status)?;
-            }
-            b':' => {
-                let _integer = parse_decimal_line(bytes, &mut cursor)?;
-            }
-            b'$' => skip_bulk_string_response_after_type(bytes, &mut cursor, max_frame_bytes)?,
-            b'-' => {
-                let status = parse_simple_token_cursor(bytes, &mut cursor)?;
-                let status_code = parse_response_status(&status)?;
-                if first_error.is_none() {
-                    let error_type = format!(
-                        "redis_{}",
-                        status_code.to_ascii_lowercase().replace('-', "_")
-                    );
-                    first_error = Some((status_code, error_type));
-                }
-            }
-            b'*' => return Err(RedisExtraction::UnsupportedFrame),
-            _ => return Err(RedisExtraction::UnsupportedFrame),
-        }
+    let first_error = parse_array_items(bytes, &mut cursor, item_count, max_frame_bytes, 0)?;
+    if cursor != bytes.len() {
+        return Err(RedisExtraction::MalformedFrame);
     }
 
     if let Some((status_code, error_type)) = first_error {
@@ -325,6 +300,68 @@ fn parse_array_response(
         status_code: Some("OK".to_string()),
         error_type: None,
     })
+}
+
+fn parse_array_items(
+    bytes: &[u8],
+    cursor: &mut usize,
+    item_count: usize,
+    max_frame_bytes: usize,
+    depth: usize,
+) -> Result<Option<(String, String)>, RedisExtraction> {
+    if depth > MAX_REDIS_ARRAY_DEPTH {
+        return Err(RedisExtraction::FrameTooLong);
+    }
+
+    let mut first_error = None;
+    for _ in 0..item_count {
+        let Some(frame_type) = bytes.get(*cursor) else {
+            return Err(RedisExtraction::MalformedFrame);
+        };
+        *cursor += 1;
+        match frame_type {
+            b'+' => {
+                let status = parse_simple_token_cursor(bytes, cursor)?;
+                let _ = parse_response_status(&status)?;
+            }
+            b':' => {
+                let _integer = parse_decimal_line(bytes, cursor)?;
+            }
+            b'$' => skip_bulk_string_response_after_type(bytes, cursor, max_frame_bytes)?,
+            b'-' => {
+                let status = parse_simple_token_cursor(bytes, cursor)?;
+                let status_code = parse_response_status(&status)?;
+                if first_error.is_none() {
+                    let error_type = format!(
+                        "redis_{}",
+                        status_code.to_ascii_lowercase().replace('-', "_")
+                    );
+                    first_error = Some((status_code, error_type));
+                }
+            }
+            b'*' => {
+                let nested_count = parse_decimal_line(bytes, cursor)?;
+                if nested_count == -1 {
+                    continue;
+                }
+                if nested_count < -1 {
+                    return Err(RedisExtraction::MalformedFrame);
+                }
+                let nested_count = nested_count as usize;
+                if nested_count > MAX_REDIS_ARRAY_ITEMS {
+                    return Err(RedisExtraction::FrameTooLong);
+                }
+                if let Some(nested_error) =
+                    parse_array_items(bytes, cursor, nested_count, max_frame_bytes, depth + 1)?
+                    && first_error.is_none()
+                {
+                    first_error = Some(nested_error);
+                }
+            }
+            _ => return Err(RedisExtraction::UnsupportedFrame),
+        }
+    }
+    Ok(first_error)
 }
 
 fn skip_bulk_string_response(

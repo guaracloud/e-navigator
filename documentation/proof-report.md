@@ -87,7 +87,7 @@ or chart rendering:
   CopyDone/CopyFail/Password/Flush/Sync/Terminate wire-message and
   CommandComplete/ReadyForQuery/ErrorResponse parsing with canonical SQLSTATE
   validation and build-checked parser fuzz coverage, and Redis RESP command plus
-  simple/integer/bulk/flat-array/error response parsing with declared
+  simple/integer/bulk/flat-array/nested-array/error response parsing with declared
   frame-length bounds,
   bounded response-status token validation, and build-checked parser fuzz
   coverage;
@@ -227,7 +227,7 @@ These areas remain explicitly partial:
   error responses, but runtime capture, request/response matching, broad
   response coverage, and live PostgreSQL proof are not implemented or proven.
 - **Redis protocol observability:** bounded RESP command and
-  simple/integer/bulk/flat-array/error response parsing is locally tested
+  simple/integer/bulk/flat-array/nested-array/error response parsing is locally tested
   without exporting raw key/value payloads or raw error messages, including
   declared frame-length bounds and bounded response-status token validation, but runtime
   capture, request/response matching, broad response coverage, and live Redis

@@ -1343,6 +1343,53 @@ fn extracts_redis_array_error_response_without_raw_error_message() {
 }
 
 #[test]
+fn extracts_redis_nested_array_response_without_raw_values() {
+    let extraction = parse_redis_response(
+        b"*2\r\n*2\r\n$15\r\ncustomer-secret\r\n:42\r\n+OK hidden-details\r\n",
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("nested array response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Redis);
+    assert_eq!(extraction.status_code.as_deref(), Some("OK"));
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.response.status_code" && attribute.value == "OK")
+    );
+    assert!(!extraction.attributes.iter().any(|attribute| {
+        attribute.value.contains("customer")
+            || attribute.value.contains("secret")
+            || attribute.value.contains("42")
+            || attribute.value.contains("hidden")
+    }));
+}
+
+#[test]
+fn extracts_redis_nested_array_error_without_raw_error_message() {
+    let extraction = parse_redis_response(
+        b"*2\r\n*2\r\n$15\r\ncustomer-secret\r\n-BUSY secret script running\r\n+OK details\r\n",
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("nested array error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Redis);
+    assert_eq!(extraction.status_code.as_deref(), Some("BUSY"));
+    assert_eq!(extraction.error_type.as_deref(), Some("redis_busy"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "redis_busy")
+    );
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("customer") || attribute.value.contains("secret")
+    ));
+}
+
+#[test]
 fn extracts_redis_error_type_without_raw_error_message() {
     let extraction = parse_redis_response(
         b"-WRONGTYPE Operation against a key holding the wrong kind of value secret-key\r\n",
@@ -1506,8 +1553,12 @@ fn rejects_malformed_and_unsupported_redis_fixtures() {
         RedisExtraction::BulkStringTooLong
     );
     assert_eq!(
-        parse_redis_response(b"*1\r\n*0\r\n", &config).unwrap_err(),
-        RedisExtraction::UnsupportedFrame
+        parse_redis_response(b"*1\r\n+OK\r\ntrailing", &config).unwrap_err(),
+        RedisExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_redis_response(b"*1\r\n*65\r\n", &config).unwrap_err(),
+        RedisExtraction::FrameTooLong
     );
 }
 
