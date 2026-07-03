@@ -205,6 +205,28 @@ pub fn sanitize_resource_metric_attributes(attributes: &mut Vec<ResourceMetricAt
     *attributes = sanitized;
 }
 
+pub(crate) fn sanitize_resource_gauge_metric(metric: &mut ResourceGaugeMetric) {
+    sanitize_resource_signal_string(&mut metric.metric_name);
+    sanitize_resource_signal_string(&mut metric.unit);
+    sanitize_resource_context(&mut metric.resource);
+    sanitize_optional_process_resource_context(&mut metric.process);
+    sanitize_optional_cgroup_resource_context(&mut metric.cgroup);
+    sanitize_resource_metric_attributes(&mut metric.attributes);
+}
+
+pub(crate) fn sanitize_resource_counter_metric(metric: &mut ResourceCounterMetric) {
+    sanitize_resource_signal_string(&mut metric.metric_name);
+    sanitize_resource_signal_string(&mut metric.unit);
+    sanitize_resource_context(&mut metric.resource);
+    sanitize_optional_process_resource_context(&mut metric.process);
+    sanitize_optional_cgroup_resource_context(&mut metric.cgroup);
+    sanitize_resource_metric_attributes(&mut metric.attributes);
+}
+
+fn sanitize_resource_context(context: &mut ResourceContext) {
+    sanitize_optional_resource_signal_string(&mut context.host_name);
+}
+
 pub(crate) fn sanitize_node_cpu_observation(observation: &mut NodeCpuObservation) {
     sanitize_resource_signal_string(&mut observation.metric_name);
     sanitize_resource_signal_string(&mut observation.unit);
@@ -244,6 +266,12 @@ pub(crate) fn sanitize_process_resource_context(context: &mut ProcessResourceCon
     sanitize_optional_resource_signal_string(&mut context.executable);
 }
 
+fn sanitize_optional_process_resource_context(context: &mut Option<ProcessResourceContext>) {
+    if let Some(inner) = context {
+        sanitize_process_resource_context(inner);
+    }
+}
+
 pub(crate) fn sanitize_cgroup_cpu_observation(observation: &mut CgroupCpuObservation) {
     sanitize_resource_signal_string(&mut observation.metric_name);
     sanitize_resource_signal_string(&mut observation.unit);
@@ -272,6 +300,12 @@ pub(crate) fn sanitize_cgroup_file_descriptor_observation(
 
 pub(crate) fn sanitize_cgroup_resource_context(context: &mut CgroupResourceContext) {
     sanitize_resource_signal_string(&mut context.cgroup_path);
+}
+
+fn sanitize_optional_cgroup_resource_context(context: &mut Option<CgroupResourceContext>) {
+    if let Some(inner) = context {
+        sanitize_cgroup_resource_context(inner);
+    }
 }
 
 fn sanitize_resource_signal_string(value: &mut String) {

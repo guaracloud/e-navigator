@@ -21,7 +21,7 @@ use crate::resource::{
     sanitize_node_cpu_observation, sanitize_node_disk_io_observation,
     sanitize_node_filesystem_observation, sanitize_node_load_observation,
     sanitize_node_memory_observation, sanitize_process_resource_observation,
-    sanitize_resource_metric_attributes,
+    sanitize_resource_counter_metric, sanitize_resource_gauge_metric,
 };
 use crate::trace::{
     sanitize_optional_trace_string, sanitize_trace_attributes, sanitize_trace_string,
@@ -861,7 +861,7 @@ impl SignalEnvelope {
         host: Option<String>,
         mut metric: ResourceGaugeMetric,
     ) -> Self {
-        sanitize_resource_metric_attributes(&mut metric.attributes);
+        sanitize_resource_gauge_metric(&mut metric);
         Self::new(
             source,
             host,
@@ -875,7 +875,7 @@ impl SignalEnvelope {
         host: Option<String>,
         mut metric: ResourceCounterMetric,
     ) -> Self {
-        sanitize_resource_metric_attributes(&mut metric.attributes);
+        sanitize_resource_counter_metric(&mut metric);
         Self::new(
             source,
             host,
@@ -2947,6 +2947,76 @@ mod tests {
 
         assert_bounded_resource_metric_attributes(&gauge);
         assert_bounded_resource_metric_attributes(&counter);
+    }
+
+    #[test]
+    fn resource_metric_constructors_bound_scalar_and_context_strings_before_json_stdout() {
+        let long = "m".repeat(320);
+        let process = ProcessResourceContext {
+            pid: 42,
+            ppid: Some(1),
+            uid: Some(1000),
+            command: long.clone(),
+            executable: Some(long.clone()),
+            container: None,
+            kubernetes: None,
+        };
+        let cgroup = CgroupResourceContext {
+            cgroup_path: long.clone(),
+            container: None,
+            kubernetes: None,
+        };
+        let resource = ResourceContext {
+            host_name: Some(long.clone()),
+            container: None,
+            kubernetes: None,
+        };
+        let window = MetricAggregationWindow {
+            start_unix_nanos: 1_000,
+            end_unix_nanos: 2_000,
+        };
+        let gauge = SignalEnvelope::resource_gauge_metric(
+            "generator.resource_metrics",
+            None,
+            ResourceGaugeMetric {
+                metric_name: long.clone(),
+                unit: long.clone(),
+                value: 4_096,
+                window: window.clone(),
+                resource: resource.clone(),
+                process: Some(process.clone()),
+                cgroup: Some(cgroup.clone()),
+                attributes: vec![],
+            },
+        );
+        let counter = SignalEnvelope::resource_counter_metric(
+            "generator.resource_metrics",
+            None,
+            ResourceCounterMetric {
+                metric_name: long.clone(),
+                unit: long,
+                value: 500,
+                window,
+                resource,
+                process: Some(process),
+                cgroup: Some(cgroup),
+                attributes: vec![],
+            },
+        );
+
+        for signal in [gauge, counter] {
+            assert_payload_string_lengths(
+                &signal,
+                &[
+                    &["metric_name"],
+                    &["unit"],
+                    &["resource", "host_name"],
+                    &["process", "command"],
+                    &["process", "executable"],
+                    &["cgroup", "cgroup_path"],
+                ],
+            );
+        }
     }
 
     #[test]
