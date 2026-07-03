@@ -725,7 +725,7 @@ fn normalize_domain(raw_domain: &str) -> Option<String> {
 }
 
 fn domain_label_byte_allowed(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
+    byte.is_ascii_alphanumeric() || byte == b'-'
 }
 
 fn missing_attribution(

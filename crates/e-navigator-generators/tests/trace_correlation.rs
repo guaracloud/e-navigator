@@ -129,6 +129,7 @@ async fn malformed_or_oversized_dns_domains_do_not_generate_service_paths() {
     for query_name in [
         "api..example.com",
         "bad label.example.com",
+        "bad_label.example.com",
         &format!("{}.example.com", "a".repeat(64)),
         &format!("{}.example.com", "a".repeat(254)),
     ] {
