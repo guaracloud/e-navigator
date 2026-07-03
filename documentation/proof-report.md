@@ -74,12 +74,12 @@ or chart rendering:
   decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with bounded
   content-type suffix validation, POST pseudo-header validation,
   authority-port/userinfo validation, and a build-checked parser fuzz target,
-  Kafka request-header plus bounded ApiVersions, non-flexible FindCoordinator,
-  Heartbeat, LeaveGroup, ListGroups, ListOffsets, Metadata, and SyncGroup
-  request bodies, ApiVersions response, bounded Produce request/response, and
-  bounded non-flexible Fetch, FindCoordinator, Heartbeat, LeaveGroup,
-  ListGroups, ListOffsets, Metadata, and SyncGroup request/response-error
-  parsing,
+  Kafka request-header plus bounded ApiVersions, non-flexible DescribeGroups,
+  FindCoordinator, Heartbeat, LeaveGroup, ListGroups, ListOffsets, Metadata,
+  and SyncGroup request bodies, ApiVersions response, bounded Produce
+  request/response, and bounded non-flexible DescribeGroups, Fetch,
+  FindCoordinator, Heartbeat, LeaveGroup, ListGroups, ListOffsets, Metadata, and
+  SyncGroup request/response-error parsing,
   MongoDB
   wire-message and response-error parsing with OP_MSG section and checksum
   validation, bounded OP_REPLY response parsing, and non-negative response-code validation,
@@ -205,16 +205,16 @@ These areas remain explicitly partial:
   mappings are not yet proven.
 - **Kafka protocol observability:** bounded request-header parsing for common
   API keys, bounded ApiVersions request-body validation, bounded non-flexible
-  Produce, Fetch, FindCoordinator, Heartbeat, LeaveGroup, ListGroups,
-  ListOffsets, Metadata, and SyncGroup request-body validation, and ApiVersions,
-  Produce, and non-flexible Fetch, FindCoordinator, Heartbeat, LeaveGroup,
-  ListGroups, ListOffsets, Metadata, and SyncGroup response-error parsing is
-  locally tested without exporting client IDs, coordinator keys, consumer
-  group/member identifiers, assignment payloads, software names, topics, record
-  payloads, broker hosts, cluster IDs, or response body values, but runtime
-  capture, request/response matching, broad response coverage, flexible-version
-  body semantics beyond ApiVersions, and live Kafka proof are not implemented or
-  proven.
+  Produce, Fetch, DescribeGroups, FindCoordinator, Heartbeat, LeaveGroup,
+  ListGroups, ListOffsets, Metadata, and SyncGroup request-body validation, and
+  ApiVersions, Produce, and non-flexible DescribeGroups, Fetch,
+  FindCoordinator, Heartbeat, LeaveGroup, ListGroups, ListOffsets, Metadata, and
+  SyncGroup response-error parsing is locally tested without exporting client
+  IDs, coordinator keys, consumer group/member identifiers, assignment payloads,
+  protocol metadata, software names, topics, record payloads, broker hosts,
+  cluster IDs, or response body values, but runtime capture, request/response
+  matching, broad response coverage, flexible-version body semantics beyond
+  ApiVersions, and live Kafka proof are not implemented or proven.
 - **MongoDB protocol observability:** bounded `OP_MSG` including
   checksum-present messages, command `OP_QUERY`, OP_MSG response-error parsing,
   and OP_REPLY response parsing is locally tested without exporting raw BSON
