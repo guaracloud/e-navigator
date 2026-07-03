@@ -25,6 +25,7 @@ async fn synthetic_cpu_sample_generates_profiling_window() {
     assert_eq!(window.distinct_stack_count, 1);
     assert_eq!(window.window.start_unix_nanos, 1_000_000_000);
     assert_eq!(window.window.end_unix_nanos, 2_000_000_000);
+    assert_eq!(window.profile_id, "profile:38f407a634326e87");
     assert_eq!(window.source, "source.synthetic_profile");
     assert_eq!(window.process.as_ref().expect("process").pid, 42);
     assert_eq!(
