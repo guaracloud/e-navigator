@@ -2522,6 +2522,14 @@ mod tests {
     #[test]
     fn network_metric_constructors_bound_strings_before_json_stdout() {
         let long = "x".repeat(300);
+        let process = NetworkProcessIdentity {
+            pid: 42,
+            ppid: Some(1),
+            uid: Some(1000),
+            command: long.clone(),
+            executable: Some(long.clone()),
+            cgroup_id: None,
+        };
         let window = MetricAggregationWindow {
             start_unix_nanos: 300,
             end_unix_nanos: 900,
@@ -2535,7 +2543,7 @@ mod tests {
                 unit: long.clone(),
                 value: 1,
                 window: window.clone(),
-                process: Some(network_process()),
+                process: Some(process.clone()),
                 protocol: Some(NetworkProtocol::Tcp),
                 address_family: Some(NetworkAddressFamily::Ipv4),
                 local_address: Some(long.clone()),
@@ -2558,7 +2566,7 @@ mod tests {
                 min_nanos: 600,
                 max_nanos: 600,
                 window: window.clone(),
-                process: Some(network_process()),
+                process: Some(process.clone()),
                 protocol: Some(NetworkProtocol::Tcp),
                 address_family: Some(NetworkAddressFamily::Ipv4),
                 remote_address: Some(long.clone()),
@@ -2575,7 +2583,7 @@ mod tests {
                 unit: long,
                 value: 1,
                 window,
-                process: Some(network_process()),
+                process: Some(process),
                 protocol: Some(NetworkProtocol::Tcp),
                 address_family: Some(NetworkAddressFamily::Ipv4),
                 remote_address: Some("x".repeat(300)),
@@ -2583,6 +2591,32 @@ mod tests {
                 container: None,
                 kubernetes: None,
             },
+        );
+
+        assert_payload_string_lengths(
+            &counter,
+            &[
+                &["process", "command"],
+                &["process", "executable"],
+                &["local_address"],
+                &["remote_address"],
+            ],
+        );
+        assert_payload_string_lengths(
+            &duration,
+            &[
+                &["process", "command"],
+                &["process", "executable"],
+                &["remote_address"],
+            ],
+        );
+        assert_payload_string_lengths(
+            &gauge,
+            &[
+                &["process", "command"],
+                &["process", "executable"],
+                &["remote_address"],
+            ],
         );
 
         let counter_json = serde_json::to_value(counter).expect("counter serializes");
@@ -2656,6 +2690,103 @@ mod tests {
                 .len(),
             256
         );
+    }
+
+    #[test]
+    fn network_metric_constructors_bound_context_strings_before_json_stdout() {
+        let long = "m".repeat(320);
+        let container = crate::ContainerContext {
+            container_id: long.clone(),
+            runtime: Some(long.clone()),
+        };
+        let kubernetes = crate::KubernetesContext {
+            namespace: long.clone(),
+            pod_name: long.clone(),
+            pod_uid: Some(long.clone()),
+            container_name: Some(long.clone()),
+            node_name: Some(long.clone()),
+            labels: std::collections::BTreeMap::from_iter(
+                (0..20).map(|index| (format!("label-{index}-{long}"), long.clone())),
+            ),
+        };
+        let window = MetricAggregationWindow {
+            start_unix_nanos: 300,
+            end_unix_nanos: 900,
+        };
+
+        let counter = SignalEnvelope::network_counter_metric(
+            "generator.test",
+            None,
+            NetworkCounterMetric {
+                metric_name: "network.connection.attempts".to_string(),
+                unit: "{connection}".to_string(),
+                value: 1,
+                window: window.clone(),
+                process: Some(network_process()),
+                protocol: Some(NetworkProtocol::Tcp),
+                address_family: Some(NetworkAddressFamily::Ipv4),
+                local_address: Some("10.0.0.10".to_string()),
+                local_port: Some(43512),
+                remote_address: Some("203.0.113.10".to_string()),
+                remote_port: Some(443),
+                errno: None,
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
+            },
+        );
+        let duration = SignalEnvelope::network_duration_metric(
+            "generator.test",
+            None,
+            NetworkDurationMetric {
+                metric_name: "network.connection.duration".to_string(),
+                unit: "ns".to_string(),
+                count: 1,
+                sum_nanos: 600,
+                min_nanos: 600,
+                max_nanos: 600,
+                window: window.clone(),
+                process: Some(network_process()),
+                protocol: Some(NetworkProtocol::Tcp),
+                address_family: Some(NetworkAddressFamily::Ipv4),
+                remote_address: Some("203.0.113.10".to_string()),
+                remote_port: Some(443),
+                container: Some(container.clone()),
+                kubernetes: Some(kubernetes.clone()),
+            },
+        );
+        let gauge = SignalEnvelope::network_gauge_metric(
+            "generator.test",
+            None,
+            NetworkGaugeMetric {
+                metric_name: "network.connection.active".to_string(),
+                unit: "{connection}".to_string(),
+                value: 1,
+                window,
+                process: Some(network_process()),
+                protocol: Some(NetworkProtocol::Tcp),
+                address_family: Some(NetworkAddressFamily::Ipv4),
+                remote_address: Some("203.0.113.10".to_string()),
+                remote_port: Some(443),
+                container: Some(container),
+                kubernetes: Some(kubernetes),
+            },
+        );
+
+        for signal in [counter, duration, gauge] {
+            assert_payload_string_lengths(
+                &signal,
+                &[
+                    &["container", "container_id"],
+                    &["container", "runtime"],
+                    &["kubernetes", "namespace"],
+                    &["kubernetes", "pod_name"],
+                    &["kubernetes", "pod_uid"],
+                    &["kubernetes", "container_name"],
+                    &["kubernetes", "node_name"],
+                ],
+            );
+            assert_payload_label_bounds(&signal, &["kubernetes", "labels"]);
+        }
     }
 
     #[test]

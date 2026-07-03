@@ -29,7 +29,8 @@ or chart rendering:
   bounded process/address/source/message/context strings, network flow summary
   endpoint strings and dependency endpoint address/domain/context strings and
   labels, DNS signal families with bounded DNS, process, and context strings
-  and labels, network metric signal families with bounded strings,
+  and labels, network metric signal families with bounded metric, process,
+  context strings and labels,
   node/process/cgroup resource observation signals with bounded strings,
   resource metric signals with bounded scalar/context strings and dynamic
   attributes, and profiling signal families with bounded sanitized profiling
