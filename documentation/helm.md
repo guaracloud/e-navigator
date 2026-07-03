@@ -91,6 +91,13 @@ Host resource sampling validates its scan bounds before runtime:
 `max_fds_per_process` at most 1,048,576, and `max_file_bytes` at most
 1,048,576.
 
+Metric generator cardinality bounds are validated before runtime:
+`resource_metrics.max_keys`, `network_metrics.max_metric_keys`,
+`dns_metrics.max_counters`, `dns_metrics.max_latencies`, and
+`dns_metrics.max_edges` must each be at most 262,144. `dns_metrics.max_domains`
+must be at most 65,536, and `network_metrics.max_active_connections` at most
+1,048,576.
+
 The chart does not expose port `9090` by default. Enable the Service only when a
 real HTTP surface is configured, for example when `sink.prometheus_http` and
 `[prometheus_http] enabled = true` are present in `config.toml`:

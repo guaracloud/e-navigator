@@ -1225,6 +1225,19 @@ fn resource_metrics_limits_are_validated() {
         },
         "resource_metrics.max_keys must be greater than zero",
     );
+
+    assert_invalid(
+        RuntimeConfig {
+            resource_metrics: ResourceMetricsConfig {
+                max_keys: ResourceMetricsConfig::MAX_KEYS_LIMIT + 1,
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "resource_metrics.max_keys must be less than or equal to {}",
+            ResourceMetricsConfig::MAX_KEYS_LIMIT
+        ),
+    );
 }
 
 #[test]
@@ -1243,12 +1256,40 @@ fn network_metrics_limits_are_validated() {
     assert_invalid(
         RuntimeConfig {
             network_metrics: NetworkMetricsConfig {
+                max_metric_keys: NetworkMetricsConfig::MAX_METRIC_KEYS_LIMIT + 1,
+                max_active_connections: 128,
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "network_metrics.max_metric_keys must be less than or equal to {}",
+            NetworkMetricsConfig::MAX_METRIC_KEYS_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            network_metrics: NetworkMetricsConfig {
                 max_metric_keys: 128,
                 max_active_connections: 0,
             },
             ..RuntimeConfig::default()
         },
         "network_metrics.max_active_connections must be greater than zero",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            network_metrics: NetworkMetricsConfig {
+                max_metric_keys: 128,
+                max_active_connections: NetworkMetricsConfig::MAX_ACTIVE_CONNECTIONS_LIMIT + 1,
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "network_metrics.max_active_connections must be less than or equal to {}",
+            NetworkMetricsConfig::MAX_ACTIVE_CONNECTIONS_LIMIT
+        ),
     );
 }
 
@@ -1363,12 +1404,40 @@ fn dns_metrics_limits_are_validated() {
     assert_invalid(
         RuntimeConfig {
             dns_metrics: DnsMetricsConfig {
+                max_domains: DnsMetricsConfig::MAX_DOMAINS_LIMIT + 1,
+                ..DnsMetricsConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "dns_metrics.max_domains must be less than or equal to {}",
+            DnsMetricsConfig::MAX_DOMAINS_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            dns_metrics: DnsMetricsConfig {
                 max_counters: 0,
                 ..DnsMetricsConfig::default()
             },
             ..RuntimeConfig::default()
         },
         "dns_metrics.max_counters must be greater than zero",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            dns_metrics: DnsMetricsConfig {
+                max_counters: DnsMetricsConfig::MAX_COUNTERS_LIMIT + 1,
+                ..DnsMetricsConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "dns_metrics.max_counters must be less than or equal to {}",
+            DnsMetricsConfig::MAX_COUNTERS_LIMIT
+        ),
     );
 
     assert_invalid(
@@ -1385,12 +1454,40 @@ fn dns_metrics_limits_are_validated() {
     assert_invalid(
         RuntimeConfig {
             dns_metrics: DnsMetricsConfig {
+                max_latencies: DnsMetricsConfig::MAX_LATENCIES_LIMIT + 1,
+                ..DnsMetricsConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "dns_metrics.max_latencies must be less than or equal to {}",
+            DnsMetricsConfig::MAX_LATENCIES_LIMIT
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            dns_metrics: DnsMetricsConfig {
                 max_edges: 0,
                 ..DnsMetricsConfig::default()
             },
             ..RuntimeConfig::default()
         },
         "dns_metrics.max_edges must be greater than zero",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            dns_metrics: DnsMetricsConfig {
+                max_edges: DnsMetricsConfig::MAX_EDGES_LIMIT + 1,
+                ..DnsMetricsConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "dns_metrics.max_edges must be less than or equal to {}",
+            DnsMetricsConfig::MAX_EDGES_LIMIT
+        ),
     );
 }
 

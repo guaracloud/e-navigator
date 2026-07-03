@@ -26,7 +26,7 @@ or chart rendering:
   runtime queue/derivation bounds, Prometheus and OTLP HTTP sink runtime-bound
   validation, OTLP HTTP endpoint-shape validation, local Kubernetes attribution
   selector filtering plus response/cache/label bounds, and host resource source
-  scan bounds;
+  scan plus metric-generator cardinality bounds;
 - procfs, sysfs, cgroup, loadavg, meminfo, diskstats, and process-stat parsing;
 - raw userspace decode paths for selected Aya exec/network/DNS/HTTP/profile
   events, including build-checked DNS and HTTP raw decode fuzz targets;

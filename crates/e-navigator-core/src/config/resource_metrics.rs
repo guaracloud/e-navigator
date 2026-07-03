@@ -18,11 +18,22 @@ impl Default for ResourceMetricsConfig {
 }
 
 impl ResourceMetricsConfig {
+    pub const MAX_KEYS_LIMIT: usize = 262_144;
+
     pub(super) fn validate(&self) -> ConfigResult<()> {
         if self.max_keys == 0 {
             return Err(ConfigError::invalid_value(
                 "resource_metrics.max_keys",
                 "resource_metrics.max_keys must be greater than zero",
+            ));
+        }
+        if self.max_keys > Self::MAX_KEYS_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "resource_metrics.max_keys",
+                format!(
+                    "resource_metrics.max_keys must be less than or equal to {}",
+                    Self::MAX_KEYS_LIMIT
+                ),
             ));
         }
         Ok(())

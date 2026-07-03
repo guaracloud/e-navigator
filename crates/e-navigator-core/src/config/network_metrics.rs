@@ -66,6 +66,9 @@ impl Default for NetworkMetricsConfig {
 }
 
 impl NetworkMetricsConfig {
+    pub const MAX_METRIC_KEYS_LIMIT: usize = 262_144;
+    pub const MAX_ACTIVE_CONNECTIONS_LIMIT: usize = 1_048_576;
+
     pub(super) fn validate(&self) -> ConfigResult<()> {
         if self.max_metric_keys == 0 {
             return Err(ConfigError::invalid_value(
@@ -73,11 +76,29 @@ impl NetworkMetricsConfig {
                 "network_metrics.max_metric_keys must be greater than zero",
             ));
         }
+        if self.max_metric_keys > Self::MAX_METRIC_KEYS_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "network_metrics.max_metric_keys",
+                format!(
+                    "network_metrics.max_metric_keys must be less than or equal to {}",
+                    Self::MAX_METRIC_KEYS_LIMIT
+                ),
+            ));
+        }
 
         if self.max_active_connections == 0 {
             return Err(ConfigError::invalid_value(
                 "network_metrics.max_active_connections",
                 "network_metrics.max_active_connections must be greater than zero",
+            ));
+        }
+        if self.max_active_connections > Self::MAX_ACTIVE_CONNECTIONS_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "network_metrics.max_active_connections",
+                format!(
+                    "network_metrics.max_active_connections must be less than or equal to {}",
+                    Self::MAX_ACTIVE_CONNECTIONS_LIMIT
+                ),
             ));
         }
 

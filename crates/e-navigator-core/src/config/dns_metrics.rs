@@ -27,11 +27,25 @@ impl Default for DnsMetricsConfig {
 }
 
 impl DnsMetricsConfig {
+    pub const MAX_DOMAINS_LIMIT: usize = 65_536;
+    pub const MAX_COUNTERS_LIMIT: usize = 262_144;
+    pub const MAX_LATENCIES_LIMIT: usize = 262_144;
+    pub const MAX_EDGES_LIMIT: usize = 262_144;
+
     pub(super) fn validate(&self) -> ConfigResult<()> {
         if self.max_domains == 0 {
             return Err(ConfigError::invalid_value(
                 "dns_metrics.max_domains",
                 "dns_metrics.max_domains must be greater than zero",
+            ));
+        }
+        if self.max_domains > Self::MAX_DOMAINS_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "dns_metrics.max_domains",
+                format!(
+                    "dns_metrics.max_domains must be less than or equal to {}",
+                    Self::MAX_DOMAINS_LIMIT
+                ),
             ));
         }
 
@@ -41,6 +55,15 @@ impl DnsMetricsConfig {
                 "dns_metrics.max_counters must be greater than zero",
             ));
         }
+        if self.max_counters > Self::MAX_COUNTERS_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "dns_metrics.max_counters",
+                format!(
+                    "dns_metrics.max_counters must be less than or equal to {}",
+                    Self::MAX_COUNTERS_LIMIT
+                ),
+            ));
+        }
 
         if self.max_latencies == 0 {
             return Err(ConfigError::invalid_value(
@@ -48,11 +71,29 @@ impl DnsMetricsConfig {
                 "dns_metrics.max_latencies must be greater than zero",
             ));
         }
+        if self.max_latencies > Self::MAX_LATENCIES_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "dns_metrics.max_latencies",
+                format!(
+                    "dns_metrics.max_latencies must be less than or equal to {}",
+                    Self::MAX_LATENCIES_LIMIT
+                ),
+            ));
+        }
 
         if self.max_edges == 0 {
             return Err(ConfigError::invalid_value(
                 "dns_metrics.max_edges",
                 "dns_metrics.max_edges must be greater than zero",
+            ));
+        }
+        if self.max_edges > Self::MAX_EDGES_LIMIT {
+            return Err(ConfigError::invalid_value(
+                "dns_metrics.max_edges",
+                format!(
+                    "dns_metrics.max_edges must be less than or equal to {}",
+                    Self::MAX_EDGES_LIMIT
+                ),
             ));
         }
 
