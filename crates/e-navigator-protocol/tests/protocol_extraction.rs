@@ -4,7 +4,7 @@ use e_navigator_protocol::{
     http::{HttpExtraction, parse_http_request, parse_http_response},
     kafka::{KafkaExtraction, parse_kafka_request},
     mongodb::{MongodbExtraction, parse_mongodb_message},
-    mysql::{MysqlExtraction, parse_mysql_command},
+    mysql::{MysqlExtraction, parse_mysql_command, parse_mysql_error_response},
     nats::{NatsExtraction, parse_nats_command},
     postgres::{PostgresExtraction, parse_postgres_message},
     redis::{RedisExtraction, parse_redis_command, parse_redis_response},
@@ -274,6 +274,45 @@ proptest! {
         };
 
         let _ = parse_mysql_command(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_mysql_error_response_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 4,
+            max_tracestate_bytes: 32,
+        };
+
+        let _ = parse_mysql_error_response(&bytes, &config);
+    }
+
+    #[test]
+    fn mysql_error_response_limits_are_respected(
+        vendor_code in 1u16..=65535,
+        sqlstate in "[A-Z0-9]{5}",
+        message in "[A-Za-z0-9_.=/%+-]{0,80}",
+    ) {
+        let bytes = mysql_error_packet(vendor_code, Some(sqlstate.as_bytes()), message.as_bytes());
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        };
+
+        let parsed = parse_mysql_error_response(&bytes, &config)
+            .expect("bounded mysql error parses");
+        let expected_status = format!("{sqlstate}/{vendor_code}");
+        prop_assert_eq!(parsed.status_code.as_str(), expected_status.as_str());
+        prop_assert_eq!(parsed.error_type.as_str(), parsed.status_code.as_str());
+        prop_assert!(parsed.attributes.len() <= config.max_attributes);
+        prop_assert!(!parsed
+            .attributes
+            .iter()
+            .any(|attribute| (!message.is_empty() && attribute.value.contains(&message))
+                || attribute.value.contains("secret")));
     }
 
     #[test]
@@ -1463,6 +1502,56 @@ fn extracts_mysql_operation_after_comments() {
 }
 
 #[test]
+fn extracts_mysql_error_response_without_raw_message() {
+    let bytes = mysql_error_packet(1064, Some(b"42000"), b"syntax near secret table customers");
+
+    let extraction = parse_mysql_error_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("mysql error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Mysql);
+    assert_eq!(extraction.status_code, "42000/1064");
+    assert_eq!(extraction.error_type, "42000/1064");
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "db.system" && attribute.value == "mysql")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "42000/1064"
+    }));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "42000/1064")
+    );
+    assert!(!extraction.attributes.iter().any(
+        |attribute| attribute.value.contains("secret") || attribute.value.contains("customers")
+    ));
+}
+
+#[test]
+fn extracts_mysql_error_response_without_sqlstate_marker() {
+    let bytes = mysql_error_packet(1045, None, b"access denied for secret user");
+
+    let extraction = parse_mysql_error_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("mysql error response parses");
+
+    assert_eq!(extraction.status_code, "1045");
+    assert_eq!(extraction.error_type, "1045");
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "1045"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn enforces_mysql_packet_query_and_attribute_bounds() {
     let bounded = parse_mysql_command(
         &mysql_packet(0x03, b"select * from customers"),
@@ -1503,6 +1592,20 @@ fn enforces_mysql_packet_query_and_attribute_bounds() {
         .unwrap_err(),
         MysqlExtraction::QueryTooLong
     );
+
+    assert_eq!(
+        parse_mysql_error_response(
+            &mysql_error_packet(1064, Some(b"42000"), b"syntax error"),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 8,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        MysqlExtraction::PacketTooLong
+    );
 }
 
 #[test]
@@ -1531,6 +1634,23 @@ fn rejects_malformed_and_unsupported_mysql_fixtures() {
 
     assert_eq!(
         parse_mysql_command(&mysql_packet(0x03, b"sel\xffct"), &config).unwrap_err(),
+        MysqlExtraction::InvalidUtf8
+    );
+    assert_eq!(
+        parse_mysql_error_response(&mysql_packet(0x00, b"ok"), &config).unwrap_err(),
+        MysqlExtraction::UnsupportedResponse
+    );
+
+    let mut truncated_sqlstate = mysql_error_packet(1064, Some(b"42000"), b"secret");
+    truncated_sqlstate.truncate(8);
+    assert_eq!(
+        parse_mysql_error_response(&truncated_sqlstate, &config).unwrap_err(),
+        MysqlExtraction::MalformedPacket
+    );
+
+    let invalid_sqlstate = mysql_error_packet(1064, Some(b"42\xff00"), b"secret");
+    assert_eq!(
+        parse_mysql_error_response(&invalid_sqlstate, &config).unwrap_err(),
         MysqlExtraction::InvalidUtf8
     );
 }
@@ -1870,6 +1990,25 @@ fn mysql_packet(command: u8, query: &[u8]) -> Vec<u8> {
     packet.push(0);
     packet.push(command);
     packet.extend_from_slice(query);
+    packet
+}
+
+fn mysql_error_packet(vendor_code: u16, sqlstate: Option<&[u8]>, message: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.push(0xff);
+    payload.extend_from_slice(&vendor_code.to_le_bytes());
+    if let Some(sqlstate) = sqlstate {
+        payload.push(b'#');
+        payload.extend_from_slice(sqlstate);
+    }
+    payload.extend_from_slice(message);
+
+    let mut packet = Vec::with_capacity(payload.len() + 4);
+    packet.push((payload.len() & 0xff) as u8);
+    packet.push(((payload.len() >> 8) & 0xff) as u8);
+    packet.push(((payload.len() >> 16) & 0xff) as u8);
+    packet.push(0);
+    packet.extend_from_slice(&payload);
     packet
 }
 
