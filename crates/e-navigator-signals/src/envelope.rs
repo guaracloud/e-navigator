@@ -7,6 +7,7 @@ use crate::dns::{
 };
 use crate::exec::{
     sanitize_exec_event, sanitize_process_exit_event, sanitize_process_lifecycle_duration_event,
+    sanitize_runtime_security_finding,
 };
 use crate::metrics::{
     sanitize_network_counter_metric, sanitize_network_duration_metric,
@@ -516,8 +517,9 @@ impl SignalEnvelope {
     pub fn runtime_security_finding(
         source: impl Into<String>,
         host: Option<String>,
-        finding: RuntimeSecurityFinding,
+        mut finding: RuntimeSecurityFinding,
     ) -> Self {
+        sanitize_runtime_security_finding(&mut finding);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
             kind: SignalKind::RuntimeSecurityFinding,
@@ -1169,6 +1171,7 @@ mod tests {
         TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext,
         TraceServicePathObservation, TraceSpanObservation,
     };
+    use crate::{MatchedNetworkConnection, MatchedProcess, RuntimeSecuritySeverity};
 
     #[test]
     fn serializes_exec_signal_with_version() {
@@ -1317,6 +1320,56 @@ mod tests {
         );
         assert_payload_string_lengths(&exit, &[&["command"]]);
         assert_payload_string_lengths(&lifecycle, &[&["command"]]);
+    }
+
+    #[test]
+    fn runtime_security_constructor_bounds_strings_before_json_stdout() {
+        let long = "s".repeat(320);
+        let signal = SignalEnvelope::runtime_security_finding(
+            "generator.runtime_security",
+            None,
+            RuntimeSecurityFinding {
+                rule_id: long.clone(),
+                severity: RuntimeSecuritySeverity::High,
+                matched_process: MatchedProcess {
+                    pid: 42,
+                    command: long.clone(),
+                    executable: Some(long.clone()),
+                    arguments: vec![long.clone(); 40],
+                },
+                matched_connection: Some(MatchedNetworkConnection {
+                    protocol: NetworkProtocol::Tcp,
+                    remote_address: long.clone(),
+                    remote_port: 443,
+                    local_address: Some(long),
+                    local_port: Some(43512),
+                    fd: Some(7),
+                }),
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        assert_payload_string_lengths(
+            &signal,
+            &[
+                &["rule_id"],
+                &["matched_process", "command"],
+                &["matched_process", "executable"],
+                &["matched_connection", "remote_address"],
+                &["matched_connection", "local_address"],
+            ],
+        );
+        let json = serde_json::to_value(&signal).expect("finding serializes");
+        let arguments = json["payload"]["matched_process"]["arguments"]
+            .as_array()
+            .expect("arguments serialize as an array");
+        assert_eq!(arguments.len(), 32);
+        assert!(
+            arguments
+                .iter()
+                .all(|argument| argument.as_str().map(str::len) == Some(256))
+        );
     }
 
     #[test]

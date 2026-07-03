@@ -113,6 +113,28 @@ pub(crate) fn sanitize_process_lifecycle_duration_event(event: &mut ProcessLifec
     sanitize_exec_signal_string(&mut event.command);
 }
 
+pub(crate) fn sanitize_runtime_security_finding(finding: &mut RuntimeSecurityFinding) {
+    sanitize_exec_signal_string(&mut finding.rule_id);
+    sanitize_matched_process(&mut finding.matched_process);
+    if let Some(connection) = &mut finding.matched_connection {
+        sanitize_matched_network_connection(connection);
+    }
+}
+
+fn sanitize_matched_process(process: &mut MatchedProcess) {
+    sanitize_exec_signal_string(&mut process.command);
+    sanitize_optional_exec_signal_string(&mut process.executable);
+    process.arguments.truncate(MAX_EXEC_ARGUMENTS);
+    for argument in &mut process.arguments {
+        sanitize_exec_signal_string(argument);
+    }
+}
+
+fn sanitize_matched_network_connection(connection: &mut MatchedNetworkConnection) {
+    sanitize_exec_signal_string(&mut connection.remote_address);
+    sanitize_optional_exec_signal_string(&mut connection.local_address);
+}
+
 fn sanitize_exec_signal_string(value: &mut String) {
     *value = truncate_utf8(value, MAX_EXEC_SIGNAL_STRING_BYTES);
 }

@@ -21,7 +21,8 @@ or chart rendering:
 - versioned JSON signal envelopes;
 - JSON stdout newline-delimited serialization and sink-side redaction, including
   exec strings and argument count, exec and runtime-security matched-process
-  argv redaction, protocol request observations without raw trace headers and
+  argv redaction, bounded runtime-security finding strings and matched-process
+  argument count, protocol request observations without raw trace headers and
   with bounded sanitized trace attributes and non-ID scalar strings, network
   connection signals with bounded process/address strings, network flow warning
   signals with bounded process/address/source/message strings, network flow
