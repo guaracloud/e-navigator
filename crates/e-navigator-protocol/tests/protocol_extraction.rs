@@ -1834,6 +1834,33 @@ fn extracts_kafka_produce_request_without_client_topic_or_payload_values() {
 }
 
 #[test]
+fn validates_kafka_produce_v2_request_without_topic_or_record_values() {
+    let body = kafka_produce_request_body(&[("topic.secret.name", 0, b"secret-records")]);
+    let bytes = kafka_request_frame(0, 2, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka produce v2 request parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation.as_deref(), Some("produce"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "2")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("topic")
+                || attribute.value.contains("records"))
+    );
+}
+
+#[test]
 fn extracts_kafka_flexible_api_versions_request_without_client_id_value() {
     let bytes = kafka_flexible_request_frame(
         18,
@@ -2225,6 +2252,36 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_request(&kafka_request_frame(18, 0, None, b"trailing"), &config).unwrap_err(),
         KafkaExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(0, 2, None, b"\0\x01"), &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    let mut too_many_produce_topics = Vec::new();
+    too_many_produce_topics.extend_from_slice(&1_i16.to_be_bytes());
+    too_many_produce_topics.extend_from_slice(&1_000_i32.to_be_bytes());
+    too_many_produce_topics.extend_from_slice(&1025_i32.to_be_bytes());
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(0, 2, None, &too_many_produce_topics),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    let body = kafka_produce_request_body(&[("topic.secret.name", 0, b"value")]);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(0, 2, None, &body),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
     );
     assert_eq!(
         parse_kafka_request(
@@ -4613,6 +4670,22 @@ fn kafka_request_frame(
     }
     request.extend_from_slice(body);
     kafka_frame(&request)
+}
+
+fn kafka_produce_request_body(topics: &[(&str, i32, &[u8])]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&1_i16.to_be_bytes());
+    body.extend_from_slice(&1_000_i32.to_be_bytes());
+    body.extend_from_slice(&(topics.len() as i32).to_be_bytes());
+    for (topic, partition, records) in topics {
+        body.extend_from_slice(&(topic.len() as i16).to_be_bytes());
+        body.extend_from_slice(topic.as_bytes());
+        body.extend_from_slice(&1_i32.to_be_bytes());
+        body.extend_from_slice(&partition.to_be_bytes());
+        body.extend_from_slice(&(records.len() as i32).to_be_bytes());
+        body.extend_from_slice(records);
+    }
+    body
 }
 
 fn kafka_flexible_request_frame(

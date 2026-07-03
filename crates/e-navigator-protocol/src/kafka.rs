@@ -341,9 +341,18 @@ fn validate_request_body(
     header: &KafkaRequestHeader,
     config: &ProtocolExtractionConfig,
 ) -> Result<(), KafkaExtraction> {
-    if header.api_key != 18 {
-        return Ok(());
+    match header.api_key {
+        0 => validate_produce_request_body(body, header, config),
+        18 => validate_api_versions_request_body(body, header, config),
+        _ => Ok(()),
     }
+}
+
+fn validate_api_versions_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
     if header.api_version < 0 {
         return Err(KafkaExtraction::UnsupportedApiVersion);
     }
@@ -352,6 +361,36 @@ fn validate_request_body(
         skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
         skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
         skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_produce_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_version < 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if header.api_version > 2 {
+        return Ok(());
+    }
+
+    let mut cursor = header.body_start;
+    let _acks = read_i16_be_cursor(body, &mut cursor)?;
+    skip_bytes(body, &mut cursor, 4)?;
+    let topic_count = read_request_array_len(body, &mut cursor)?;
+    for _ in 0..topic_count {
+        skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+        let partition_count = read_request_array_len(body, &mut cursor)?;
+        for _ in 0..partition_count {
+            skip_bytes(body, &mut cursor, 4)?;
+            skip_nullable_bytes(body, &mut cursor, config.max_header_bytes)?;
+        }
     }
     if cursor != body.len() {
         return Err(KafkaExtraction::MalformedFrame);
@@ -458,6 +497,10 @@ fn fetch_response_error_code(
 }
 
 fn read_response_array_len(body: &[u8], cursor: &mut usize) -> Result<usize, KafkaExtraction> {
+    read_request_array_len(body, cursor)
+}
+
+fn read_request_array_len(body: &[u8], cursor: &mut usize) -> Result<usize, KafkaExtraction> {
     let len = read_i32_be_cursor(body, cursor)?;
     if len < 0 {
         return Err(KafkaExtraction::MalformedFrame);
