@@ -58,9 +58,9 @@ or chart rendering:
   build-checked parser fuzz target, strict W3C traceparent parsing,
   decoded gRPC-over-HTTP/2 metadata and trailer-status parsing with bounded
   authority-port validation and a build-checked parser fuzz target, Kafka
-  request-header and ApiVersions response-error parsing, MongoDB wire-message
-  and response-error parsing, MySQL command packet and OK/ERR response parsing
-  with build-checked parser fuzz
+  request-header plus ApiVersions and Produce response-error parsing, MongoDB
+  wire-message and response-error parsing, MySQL command packet and OK/ERR
+  response parsing with build-checked parser fuzz
   coverage, NATS text command plus OK/error response parsing, PostgreSQL
   wire-message and CommandComplete/ErrorResponse parsing with build-checked parser fuzz
   coverage, and Redis RESP command plus simple/integer/bulk/error response
@@ -151,11 +151,11 @@ These areas remain explicitly partial:
   interaction errors, but broad backend service-graph compatibility and live
   collector proof for the status mappings are not yet proven.
 - **Kafka protocol observability:** bounded request-header parsing for common
-  API keys plus ApiVersions response-error parsing is locally tested without
-  exporting client IDs, topics, record payloads, or response body values, but
-  runtime capture, request/response matching, broad response coverage,
-  flexible-version body semantics beyond the ApiVersions response header, and
-  live Kafka proof are not implemented or proven.
+  API keys plus ApiVersions and Produce response-error parsing is locally
+  tested without exporting client IDs, topics, record payloads, or response body
+  values, but runtime capture, request/response matching, broad response
+  coverage, flexible-version body semantics beyond the ApiVersions response
+  header, and live Kafka proof are not implemented or proven.
 - **MongoDB protocol observability:** bounded `OP_MSG`, command `OP_QUERY`, and
   OP_MSG response-error parsing is locally tested without exporting raw BSON
   values, namespaces, or raw error messages, but runtime capture,

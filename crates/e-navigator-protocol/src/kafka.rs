@@ -4,6 +4,7 @@ use crate::ProtocolExtractionConfig;
 
 const MAX_KAFKA_TAGS: usize = 16;
 const MAX_VARINT_BYTES: usize = 5;
+const MAX_KAFKA_RESPONSE_ENTRIES: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedKafkaRequest {
@@ -152,6 +153,70 @@ pub fn parse_kafka_api_versions_response(
     })
 }
 
+pub fn parse_kafka_produce_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if !(0..=7).contains(&api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = produce_response_error_code(body, api_version, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("produce"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("0"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "produce".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KafkaRequestHeader {
     api_key: i16,
@@ -212,6 +277,83 @@ fn api_versions_response_error_code(
     }
     let error_code = read_i16_be(body, cursor)?;
     Ok(error_code)
+}
+
+fn produce_response_error_code(
+    body: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    let topic_count = read_response_array_len(body, &mut cursor)?;
+    let mut first_error_code = None;
+
+    for _ in 0..topic_count {
+        skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+        let partition_count = read_response_array_len(body, &mut cursor)?;
+        for _ in 0..partition_count {
+            skip_bytes(body, &mut cursor, 4)?;
+            let error_code = read_i16_be_cursor(body, &mut cursor)?;
+            if error_code != 0 && first_error_code.is_none() {
+                first_error_code = Some(error_code);
+            }
+            skip_bytes(body, &mut cursor, 8)?;
+            if api_version >= 2 {
+                skip_bytes(body, &mut cursor, 8)?;
+            }
+            if api_version >= 5 {
+                skip_bytes(body, &mut cursor, 8)?;
+            }
+        }
+    }
+
+    if api_version >= 1 {
+        skip_bytes(body, &mut cursor, 4)?;
+    }
+
+    Ok(first_error_code.unwrap_or(0))
+}
+
+fn read_response_array_len(body: &[u8], cursor: &mut usize) -> Result<usize, KafkaExtraction> {
+    let len = read_i32_be_cursor(body, cursor)?;
+    if len < 0 {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    let len = len as usize;
+    if len > MAX_KAFKA_RESPONSE_ENTRIES {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    Ok(len)
+}
+
+fn skip_kafka_string(
+    body: &[u8],
+    cursor: &mut usize,
+    max_string_bytes: usize,
+) -> Result<(), KafkaExtraction> {
+    let len = read_i16_be_cursor(body, cursor)?;
+    if len < 0 {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    let len = len as usize;
+    if len > max_string_bytes {
+        return Err(KafkaExtraction::ClientIdTooLong);
+    }
+    skip_bytes(body, cursor, len)
+}
+
+fn skip_bytes(body: &[u8], cursor: &mut usize, len: usize) -> Result<(), KafkaExtraction> {
+    let end = cursor
+        .checked_add(len)
+        .ok_or(KafkaExtraction::MalformedFrame)?;
+    if end > body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    *cursor = end;
+    Ok(())
 }
 
 fn parse_client_id(
@@ -337,6 +479,14 @@ fn read_i16_be(bytes: &[u8], offset: usize) -> Result<i16, KafkaExtraction> {
     Ok(i16::from_be_bytes([raw[0], raw[1]]))
 }
 
+fn read_i16_be_cursor(bytes: &[u8], cursor: &mut usize) -> Result<i16, KafkaExtraction> {
+    let value = read_i16_be(bytes, *cursor)?;
+    *cursor = cursor
+        .checked_add(2)
+        .ok_or(KafkaExtraction::MalformedFrame)?;
+    Ok(value)
+}
+
 fn read_i32_be(bytes: &[u8], offset: usize) -> Result<i32, KafkaExtraction> {
     let end = offset
         .checked_add(4)
@@ -345,6 +495,14 @@ fn read_i32_be(bytes: &[u8], offset: usize) -> Result<i32, KafkaExtraction> {
         .get(offset..end)
         .ok_or(KafkaExtraction::MalformedFrame)?;
     Ok(i32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]))
+}
+
+fn read_i32_be_cursor(bytes: &[u8], cursor: &mut usize) -> Result<i32, KafkaExtraction> {
+    let value = read_i32_be(bytes, *cursor)?;
+    *cursor = cursor
+        .checked_add(4)
+        .ok_or(KafkaExtraction::MalformedFrame)?;
+    Ok(value)
 }
 
 fn api_key_name(api_key: i16) -> Option<&'static str> {

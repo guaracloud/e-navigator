@@ -2,7 +2,7 @@
 
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
-    kafka::{parse_kafka_api_versions_response, parse_kafka_request},
+    kafka::{parse_kafka_api_versions_response, parse_kafka_produce_response, parse_kafka_request},
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -20,4 +20,6 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_request(data, &config);
     let _ = parse_kafka_api_versions_response(data, 0, &config);
     let _ = parse_kafka_api_versions_response(data, 3, &config);
+    let _ = parse_kafka_produce_response(data, 0, &config);
+    let _ = parse_kafka_produce_response(data, 7, &config);
 });
