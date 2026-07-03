@@ -147,6 +147,7 @@ pub fn parse_postgres_response(
         b'Z' => postgres_ready_for_query_response(body, config.max_attributes),
         b'd' => postgres_copy_data_response(config.max_attributes),
         b't' => postgres_parameter_description_response(body, config.max_attributes),
+        b'v' => postgres_negotiate_protocol_version_response(body, config),
         _ => Err(PostgresExtraction::UnsupportedMessage),
     }
 }
@@ -373,6 +374,36 @@ fn postgres_parameter_description_response(
     Ok(ParsedPostgresResponse {
         protocol: ProtocolKind::Postgresql,
         attributes: postgres_response_attributes(&status_code, None, max_attributes),
+        status_code,
+        error_type: None,
+    })
+}
+
+fn postgres_negotiate_protocol_version_response(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedPostgresResponse, PostgresExtraction> {
+    let mut cursor = 0;
+    skip_bytes(body, &mut cursor, 4)?;
+    let option_count = read_i32_be_cursor(body, &mut cursor)?;
+    if option_count < 0 {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    let option_count = option_count as usize;
+    if option_count > MAX_POSTGRES_BIND_ITEMS {
+        return Err(PostgresExtraction::QueryTooLong);
+    }
+    for _ in 0..option_count {
+        let _option_name = parse_cstring(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    if cursor != body.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+
+    let status_code = "OK".to_string();
+    Ok(ParsedPostgresResponse {
+        protocol: ProtocolKind::Postgresql,
+        attributes: postgres_response_attributes(&status_code, None, config.max_attributes),
         status_code,
         error_type: None,
     })

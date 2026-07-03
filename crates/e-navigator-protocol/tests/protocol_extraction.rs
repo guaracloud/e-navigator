@@ -2985,6 +2985,29 @@ fn extracts_postgres_notification_response_without_channel_or_payload_values() {
 }
 
 #[test]
+fn extracts_postgres_negotiate_protocol_version_without_option_values() {
+    let bytes = postgres_negotiate_protocol_version_frame(196_608, &[b"_pq_.secret_option"]);
+
+    let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres negotiate protocol response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.status_code, "OK");
+    assert_eq!(extraction.error_type, None);
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "OK"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("196608")
+                || attribute.value.contains("_pq_")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn extracts_postgres_data_row_without_column_values() {
     let bytes = postgres_data_row_frame(&[Some(b"secret-cell-value".as_slice()), None]);
 
@@ -3592,6 +3615,47 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     assert_eq!(
         parse_postgres_response(&postgres_authentication_frame(99, b""), &config).unwrap_err(),
         PostgresExtraction::UnsupportedMessage
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b'v', b"\x00\x03\x00\x00"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(
+            &postgres_frame(b'v', b"\x00\x03\x00\x00\xff\xff\xff\xff"),
+            &config,
+        )
+        .unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(
+            &postgres_frame(b'v', b"\x00\x03\x00\x00\x00\x00\x00\x01_pq_.secret"),
+            &config,
+        )
+        .unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(
+            &postgres_frame(b'v', b"\x00\x03\x00\x00\x00\x00\x04\x01"),
+            &config,
+        )
+        .unwrap_err(),
+        PostgresExtraction::QueryTooLong
+    );
+    assert_eq!(
+        parse_postgres_response(
+            &postgres_negotiate_protocol_version_frame(196_608, &[b"_pq_.secret_option"]),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        PostgresExtraction::QueryTooLong
     );
     assert_eq!(
         parse_postgres_response(&postgres_frame(b'G', b"\x00\x00"), &config).unwrap_err(),
@@ -5135,6 +5199,20 @@ fn postgres_notification_response_frame(channel: &[u8], payload: &[u8]) -> Vec<u
     body.extend_from_slice(payload);
     body.push(0);
     postgres_frame(b'A', &body)
+}
+
+fn postgres_negotiate_protocol_version_frame(
+    newest_protocol_version: i32,
+    unrecognized_options: &[&[u8]],
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&newest_protocol_version.to_be_bytes());
+    body.extend_from_slice(&(unrecognized_options.len() as i32).to_be_bytes());
+    for option in unrecognized_options {
+        body.extend_from_slice(option);
+        body.push(0);
+    }
+    postgres_frame(b'v', &body)
 }
 
 fn postgres_notice_response_frame(sqlstate: &[u8], message: &[u8]) -> Vec<u8> {
