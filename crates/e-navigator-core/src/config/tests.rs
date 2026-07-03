@@ -1096,6 +1096,20 @@ fn kubernetes_attribution_selectors_are_validated() {
         RuntimeConfig {
             attribution: AttributionConfig {
                 kubernetes: KubernetesAttributionConfig {
+                    namespace_allowlist: vec!["default\nprod".to_string()],
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "attribution.kubernetes.namespace_allowlist entries must not contain control characters",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
                     label_allowlist: vec!["app".to_string(), "app".to_string()],
                     ..KubernetesAttributionConfig::default()
                 },
@@ -1153,6 +1167,23 @@ fn kubernetes_attribution_selectors_are_validated() {
         RuntimeConfig {
             attribution: AttributionConfig {
                 kubernetes: KubernetesAttributionConfig {
+                    pod_label_selector: BTreeMap::from([(
+                        "app\nrole".to_string(),
+                        "checkout".to_string(),
+                    )]),
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "attribution.kubernetes.pod_label_selector keys must not contain control characters",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
                     pod_label_selector: (0
                         ..=KubernetesAttributionConfig::MAX_SELECTOR_ENTRIES_LIMIT)
                         .map(|index| (format!("label-{index}"), "value".to_string()))
@@ -1187,6 +1218,23 @@ fn kubernetes_attribution_selectors_are_validated() {
             "attribution.kubernetes.pod_label_selector value for 'app' must be at most {} bytes",
             KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT
         ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            attribution: AttributionConfig {
+                kubernetes: KubernetesAttributionConfig {
+                    pod_label_selector: BTreeMap::from([(
+                        "app".to_string(),
+                        "checkout\tapi".to_string(),
+                    )]),
+                    ..KubernetesAttributionConfig::default()
+                },
+                ..AttributionConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "attribution.kubernetes.pod_label_selector value for 'app' must not contain control characters",
     );
 
     assert_invalid(

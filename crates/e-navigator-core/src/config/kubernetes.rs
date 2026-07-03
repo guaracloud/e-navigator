@@ -242,6 +242,15 @@ fn validate_non_empty_list(path: &'static str, values: &[String]) -> ConfigResul
             ),
         ));
     }
+    if values
+        .iter()
+        .any(|value| value.bytes().any(|byte| byte.is_ascii_control()))
+    {
+        return Err(ConfigError::invalid_value(
+            path,
+            format!("{path} entries must not contain control characters"),
+        ));
+    }
     let mut seen = BTreeSet::new();
     for value in values {
         if !seen.insert(value.as_str()) {
@@ -302,6 +311,12 @@ fn validate_label_selector(
                 ),
             ));
         }
+        if key.bytes().any(|byte| byte.is_ascii_control()) {
+            return Err(ConfigError::invalid_value(
+                path,
+                format!("{path} keys must not contain control characters"),
+            ));
+        }
         if value.trim().is_empty() {
             return Err(ConfigError::invalid_value(
                 path,
@@ -315,6 +330,12 @@ fn validate_label_selector(
                     "{path} value for '{key}' must be at most {} bytes",
                     KubernetesAttributionConfig::MAX_SELECTOR_VALUE_BYTES_LIMIT
                 ),
+            ));
+        }
+        if value.bytes().any(|byte| byte.is_ascii_control()) {
+            return Err(ConfigError::invalid_value(
+                path,
+                format!("{path} value for '{key}' must not contain control characters"),
             ));
         }
     }
