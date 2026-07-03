@@ -4,6 +4,7 @@ use e_navigator_protocol::{
     ProtocolExtractionConfig,
     kafka::{
         parse_kafka_add_offsets_to_txn_response, parse_kafka_alter_configs_response,
+        parse_kafka_add_raft_voter_response,
         parse_kafka_alter_client_quotas_response, parse_kafka_alter_partition_reassignments_response,
         parse_kafka_alter_replica_log_dirs_response, parse_kafka_api_versions_response,
         parse_kafka_alter_user_scram_credentials_response,
@@ -99,6 +100,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_push_telemetry_response(data, 0, &config);
     let _ = parse_kafka_list_config_resources_response(data, 1, &config);
     let _ = parse_kafka_describe_topic_partitions_response(data, 0, &config);
+    let _ = parse_kafka_add_raft_voter_response(data, 1, &config);
     let _ = parse_kafka_produce_response(data, 0, &config);
     let _ = parse_kafka_produce_response(data, 7, &config);
     let _ = parse_kafka_fetch_response(data, 0, &config);
