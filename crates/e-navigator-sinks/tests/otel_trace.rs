@@ -1424,6 +1424,25 @@ fn formats_network_flow_warning_without_inventing_trace_ids() {
 
 #[test]
 fn formats_profiling_warning_without_inventing_trace_ids() {
+    let mut attributes = vec![
+        ProfilingAttribute {
+            key: "profile.dropped_sample_count".to_string(),
+            value: "12".to_string(),
+        },
+        ProfilingAttribute {
+            key: "warning.type".to_string(),
+            value: "evil".to_string(),
+        },
+        ProfilingAttribute {
+            key: "authorization".to_string(),
+            value: "Bearer token".to_string(),
+        },
+    ];
+    attributes.extend((0..20).map(|index| ProfilingAttribute {
+        key: format!("profiling.extra.{index:02}"),
+        value: format!("value-{index:02}"),
+    }));
+
     let signal = SignalEnvelope::profiling_warning_observation(
         "generator.profiling",
         Some("node-a".to_string()),
@@ -1439,20 +1458,7 @@ fn formats_profiling_warning_without_inventing_trace_ids() {
             process: Some(network_process()),
             container: Some(container_context()),
             kubernetes: Some(kubernetes_context()),
-            attributes: vec![
-                ProfilingAttribute {
-                    key: "profile.dropped_sample_count".to_string(),
-                    value: "12".to_string(),
-                },
-                ProfilingAttribute {
-                    key: "warning.type".to_string(),
-                    value: "evil".to_string(),
-                },
-                ProfilingAttribute {
-                    key: "authorization".to_string(),
-                    value: "Bearer token".to_string(),
-                },
-            ],
+            attributes,
         },
     );
 
@@ -1488,6 +1494,9 @@ fn formats_profiling_warning_without_inventing_trace_ids() {
     assert_eq!(record.attributes["process.command"], "api");
     assert!(!record.attributes.contains_key("authorization"));
     assert_eq!(record.attributes["warning.type"], "dropped_profile_samples");
+    assert_eq!(record.attributes.len(), 16);
+    assert!(record.attributes.contains_key("profiling.extra.03"));
+    assert!(!record.attributes.contains_key("profiling.extra.04"));
 }
 
 #[test]

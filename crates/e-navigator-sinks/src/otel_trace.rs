@@ -760,7 +760,9 @@ fn append_profiling_attributes(
 ) {
     let mut accepted = 0;
     for attribute in source {
-        if accepted >= MAX_FORMATTED_TRACE_ATTRIBUTES {
+        if accepted >= MAX_FORMATTED_TRACE_ATTRIBUTES
+            || attributes.len() >= MAX_FORMATTED_TRACE_ATTRIBUTES
+        {
             break;
         }
         if !profiling_attribute_allowed(attribute, attributes) {
