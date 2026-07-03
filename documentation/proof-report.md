@@ -48,11 +48,12 @@ or chart rendering:
   endpoints, and secret-like label filtering;
 - OTLP protobuf request encoding plus per-family endpoint routing for metrics,
   traces with HTTP, gRPC, and `error.type` request/error status mapping
-  including Kafka, MongoDB, NATS, and Redis request spans, local warning
-  trace-record formatting for trace, request, network-flow, and profiling
-  warnings, explicit no-ID profiling-warning trace export suppression, and
-  development-status profile sample records with deterministic, workload-aware
-  IDs plus session dropped-sample records in fake-collector tests;
+  including Kafka, MongoDB, MySQL, NATS, PostgreSQL, and Redis request spans,
+  local warning trace-record formatting for trace, request, network-flow, and
+  profiling warnings, explicit no-ID profiling-warning trace export
+  suppression, and development-status profile sample records with
+  deterministic, workload-aware IDs plus session dropped-sample records in
+  fake-collector tests;
 - Helm rendering, schema checks, and release verification workflow structure.
 
 ## Runtime-Proven Slices

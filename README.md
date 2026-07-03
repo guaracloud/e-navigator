@@ -118,8 +118,9 @@ Evidence-backed today:
   query/error, and Redis command/error parser foundations,
   request/trace/profile foundations with OTLP HTTP profile session
   dropped-sample export, Prometheus profile session aggregate and profiling
-  warning-count rendering, metric/profile family toggles, gRPC, NATS, and
-  `error.type` trace status mapping and warning trace-record formatting, and
+  warning-count rendering, metric/profile family toggles, gRPC, database, and
+  messaging `error.type` trace status mapping and warning trace-record
+  formatting, and
   runtime security generator behavior through tests, including
   flow-attribution and dropped-profile-sample warnings;
 - selected guarded homelab proof for exec, network, DNS, HTTP, profile,
