@@ -321,15 +321,38 @@ fn request_span_name(protocol: ProtocolKind) -> &'static str {
 }
 
 fn bounded_attributes(attributes: &[TraceAttribute]) -> Vec<TraceAttribute> {
-    attributes
-        .iter()
-        .filter(|attribute| {
-            attribute.key.len() <= MAX_REQUEST_ATTRIBUTE_KEY_BYTES
-                && attribute.value.len() <= MAX_REQUEST_ATTRIBUTE_VALUE_BYTES
-        })
-        .take(MAX_REQUEST_ATTRIBUTES)
-        .cloned()
-        .collect()
+    let mut bounded = Vec::new();
+    for attribute in attributes.iter().filter(|attribute| {
+        attribute.key.len() <= MAX_REQUEST_ATTRIBUTE_KEY_BYTES
+            && attribute.value.len() <= MAX_REQUEST_ATTRIBUTE_VALUE_BYTES
+    }) {
+        if bounded.len() < MAX_REQUEST_ATTRIBUTES {
+            bounded.push(attribute.clone());
+            continue;
+        }
+        if is_request_error_attribute(&attribute.key)
+            && !bounded.iter().any(|existing| existing.key == attribute.key)
+            && let Some(index) = bounded
+                .iter()
+                .rposition(|existing| !is_request_error_attribute(&existing.key))
+        {
+            bounded.remove(index);
+            bounded.push(attribute.clone());
+        }
+    }
+    bounded
+}
+
+fn is_request_error_attribute(key: &str) -> bool {
+    matches!(
+        key,
+        "error.type"
+            | "http.response.status_code"
+            | "rpc.grpc.status_code"
+            | "db.response.status_code"
+            | "messaging.kafka.response.error_code"
+            | "messaging.nats.status_code"
+    )
 }
 
 fn bounded_optional_value(value: Option<&str>, max_bytes: usize) -> Option<String> {

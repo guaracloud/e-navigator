@@ -404,6 +404,7 @@ async fn valid_traceparent_fallback_generates_request_span_ids() {
     };
     request.trace_id = None;
     request.span_id = None;
+    request.traceparent = Some(valid_traceparent());
 
     let outputs = observe(&generator, &signal).await;
 
@@ -522,6 +523,50 @@ async fn request_attributes_are_count_and_byte_bounded() {
 }
 
 #[tokio::test]
+async fn request_attribute_bounding_preserves_error_status_attributes() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.protocol = ProtocolKind::Redis;
+    request.status_code = None;
+    request.attributes = (0..10)
+        .map(|index| TraceAttribute {
+            key: format!("custom.attr.{index}"),
+            value: "value".to_string(),
+        })
+        .chain([
+            TraceAttribute {
+                key: "db.response.status_code".to_string(),
+                value: "WRONGTYPE".to_string(),
+            },
+            TraceAttribute {
+                key: "error.type".to_string(),
+                value: "redis_wrongtype".to_string(),
+            },
+        ])
+        .collect();
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(span.attributes.len(), 8);
+    assert!(has_attribute(
+        &span.attributes,
+        "db.response.status_code",
+        "WRONGTYPE"
+    ));
+    assert!(has_attribute(
+        &span.attributes,
+        "error.type",
+        "redis_wrongtype"
+    ));
+}
+
+#[tokio::test]
 async fn request_span_scalar_fields_are_byte_bounded() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
@@ -569,7 +614,8 @@ async fn missing_trace_context_emits_warning_and_span_without_ids() {
 #[tokio::test]
 async fn malformed_trace_context_emits_warning_without_inventing_ids() {
     let generator = RequestCorrelationGenerator::default();
-    let signal = protocol_request_signal(Some("00-bad".to_string()), true);
+    let mut signal = protocol_request_signal(Some("00-bad".to_string()), true);
+    set_raw_traceparent(&mut signal, "00-bad".to_string());
 
     let outputs = observe(&generator, &signal).await;
 
@@ -587,7 +633,8 @@ async fn malformed_trace_context_emits_warning_without_inventing_ids() {
 #[tokio::test]
 async fn whitespace_wrapped_traceparent_is_malformed_without_inventing_ids() {
     let generator = RequestCorrelationGenerator::default();
-    let signal = protocol_request_signal(Some(format!(" {} ", valid_traceparent())), true);
+    let mut signal = protocol_request_signal(Some(format!(" {} ", valid_traceparent())), true);
+    set_raw_traceparent(&mut signal, format!(" {} ", valid_traceparent()));
 
     let outputs = observe(&generator, &signal).await;
 
@@ -745,6 +792,13 @@ fn set_request_path(signal: &mut SignalEnvelope, path: &str) {
         key: "url.path".to_string(),
         value: path.to_string(),
     });
+}
+
+fn set_raw_traceparent(signal: &mut SignalEnvelope, traceparent: String) {
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.traceparent = Some(traceparent);
 }
 
 fn protocol_request_signal(traceparent: Option<String>, attributed: bool) -> SignalEnvelope {
