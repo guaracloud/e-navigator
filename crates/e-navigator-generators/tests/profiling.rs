@@ -218,6 +218,68 @@ async fn generated_sessions_filter_sensitive_profile_attributes() {
 }
 
 #[tokio::test]
+async fn generated_sessions_merge_safe_attributes_from_later_samples() {
+    let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
+    let mut first = sample_signal_with_stack(1_500_000_000, "stack:a", Some(context()));
+    let mut second = sample_signal_with_stack(1_600_000_000, "stack:b", Some(context()));
+    if let SignalPayload::ProfileSampleObservation(sample) = &mut first.payload {
+        sample.attributes = vec![ProfilingAttribute {
+            key: "profiling.phase".to_string(),
+            value: "startup".to_string(),
+        }];
+    }
+    if let SignalPayload::ProfileSampleObservation(sample) = &mut second.payload {
+        sample.attributes = vec![
+            ProfilingAttribute {
+                key: "authorization".to_string(),
+                value: "Bearer secret-token".to_string(),
+            },
+            ProfilingAttribute {
+                key: "profiling.phase".to_string(),
+                value: "steady_state".to_string(),
+            },
+            ProfilingAttribute {
+                key: "profiling.role".to_string(),
+                value: "worker".to_string(),
+            },
+            ProfilingAttribute {
+                key: "profiling.too_large".to_string(),
+                value: "v".repeat(257),
+            },
+        ];
+    }
+
+    assert_eq!(observe(&generator, &first).await.len(), 1);
+    let outputs = observe(&generator, &second).await;
+
+    let SignalPayload::ProfilingSessionObservation(window) = &outputs[0].payload else {
+        panic!("expected profiling session");
+    };
+    assert!(
+        window.attributes.iter().any(|attribute| {
+            attribute.key == "profiling.phase" && attribute.value == "startup"
+        })
+    );
+    assert!(window.attributes.iter().any(|attribute| {
+        attribute.key == "profiling.phase" && attribute.value == "steady_state"
+    }));
+    assert!(
+        window
+            .attributes
+            .iter()
+            .any(|attribute| { attribute.key == "profiling.role" && attribute.value == "worker" })
+    );
+    assert!(
+        !window
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "authorization"
+                || attribute.value.contains("secret-token")
+                || attribute.key == "profiling.too_large")
+    );
+}
+
+#[tokio::test]
 async fn later_attributed_samples_do_not_merge_with_unattributed_windows() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
 

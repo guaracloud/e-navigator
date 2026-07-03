@@ -510,6 +510,7 @@ impl WindowState {
         if self.sampling_period_nanos.is_none() {
             self.sampling_period_nanos = sample.sampling_period_nanos;
         }
+        merge_bounded_attributes(&mut self.attributes, &sample.attributes);
         dropped_sample_count
     }
 
@@ -608,6 +609,16 @@ fn bounded_attributes(attributes: &[ProfilingAttribute]) -> Vec<ProfilingAttribu
     attributes.sort();
     attributes.truncate(MAX_PROFILE_ATTRIBUTES);
     attributes
+}
+
+fn merge_bounded_attributes(
+    existing: &mut Vec<ProfilingAttribute>,
+    incoming: &[ProfilingAttribute],
+) {
+    existing.extend(bounded_attributes(incoming));
+    existing.sort();
+    existing.dedup();
+    existing.truncate(MAX_PROFILE_ATTRIBUTES);
 }
 
 fn bounded_stack_id(value: &str) -> String {
