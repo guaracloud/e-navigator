@@ -968,6 +968,12 @@ mod tests {
                 .iter()
                 .any(|attribute| attribute.key == "server.port" && attribute.value == "8080")
         );
+        assert!(
+            !event
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("secret"))
+        );
     }
 
     #[test]
