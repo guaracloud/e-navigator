@@ -255,6 +255,14 @@ mod tests {
         assert!(signals.iter().any(|signal| matches!(
             &signal.payload,
             SignalPayload::ProtocolRequestObservation(request)
+                if request.protocol == ProtocolKind::Grpc
+                    && request.method.as_deref() == Some("GetCart")
+                    && has_attribute(&request.attributes, "rpc.grpc.status_code", "13")
+                    && has_attribute(&request.attributes, "trace.synthetic.fixture", "grpc_protocol_error")
+        )));
+        assert!(signals.iter().any(|signal| matches!(
+            &signal.payload,
+            SignalPayload::ProtocolRequestObservation(request)
                 if request.protocol == ProtocolKind::Kafka
                     && request.method.as_deref() == Some("api_versions")
                     && has_attribute(&request.attributes, "messaging.kafka.response.error_code", "35")

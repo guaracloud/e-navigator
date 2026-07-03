@@ -172,6 +172,20 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
             ],
         },
         ProtocolFixture {
+            protocol: ProtocolKind::Grpc,
+            method: "GetCart",
+            address: "203.0.113.26",
+            port: 443,
+            domain: "grpc.example.com",
+            attributes: vec![
+                attr("rpc.system", "grpc"),
+                attr("rpc.service", "checkout.v1.CheckoutService"),
+                attr("rpc.method", "GetCart"),
+                attr("rpc.grpc.status_code", "13"),
+                attr("trace.synthetic.fixture", "grpc_protocol_error"),
+            ],
+        },
+        ProtocolFixture {
             protocol: ProtocolKind::Kafka,
             method: "produce",
             address: "203.0.113.20",
