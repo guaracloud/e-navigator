@@ -346,6 +346,70 @@ pub fn parse_kafka_list_offsets_response(
     })
 }
 
+pub fn parse_kafka_delete_records_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if !(0..=1).contains(&api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = delete_records_response_error_code(body, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("delete_records"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("21"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "delete_records".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_find_coordinator_response(
     bytes: &[u8],
     api_version: i16,
@@ -1251,6 +1315,7 @@ fn validate_request_body(
         15 => validate_describe_groups_request_body(body, header, config),
         16 => validate_empty_request_body(body, header),
         18 => validate_api_versions_request_body(body, header, config),
+        21 => validate_delete_records_request_body(body, header, config),
         22 => validate_init_producer_id_request_body(body, header, config),
         25 => validate_add_offsets_to_txn_request_body(body, header, config),
         26 => validate_end_txn_request_body(body, header, config),
@@ -1361,6 +1426,34 @@ fn validate_list_offsets_request_body(
             skip_bytes(body, &mut cursor, 8)?;
         }
     }
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_delete_records_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_version < 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if header.api_version > 1 {
+        return Ok(());
+    }
+
+    let mut cursor = header.body_start;
+    let topic_count = read_request_array_len(body, &mut cursor)?;
+    for _ in 0..topic_count {
+        skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+        let partition_count = read_request_array_len(body, &mut cursor)?;
+        for _ in 0..partition_count {
+            skip_bytes(body, &mut cursor, 12)?;
+        }
+    }
+    skip_bytes(body, &mut cursor, 4)?;
     if cursor != body.len() {
         return Err(KafkaExtraction::MalformedFrame);
     }
@@ -1848,6 +1941,33 @@ fn list_offsets_response_error_code(
             skip_bytes(body, &mut cursor, 16)?;
             if api_version >= 4 {
                 skip_bytes(body, &mut cursor, 4)?;
+            }
+        }
+    }
+
+    Ok(first_error_code.unwrap_or(0))
+}
+
+fn delete_records_response_error_code(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    skip_bytes(body, &mut cursor, 4)?;
+
+    let topic_count = read_response_array_len(body, &mut cursor)?;
+    let mut first_error_code = None;
+    for _ in 0..topic_count {
+        skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+        let partition_count = read_response_array_len(body, &mut cursor)?;
+        for _ in 0..partition_count {
+            skip_bytes(body, &mut cursor, 12)?;
+            let error_code = read_i16_be_cursor(body, &mut cursor)?;
+            if error_code != 0 && first_error_code.is_none() {
+                first_error_code = Some(error_code);
             }
         }
     }

@@ -5,13 +5,14 @@ use e_navigator_protocol::{
     kafka::{
         KafkaExtraction, parse_kafka_add_offsets_to_txn_response,
         parse_kafka_api_versions_response, parse_kafka_delete_groups_response,
-        parse_kafka_describe_groups_response, parse_kafka_end_txn_response,
-        parse_kafka_fetch_response, parse_kafka_find_coordinator_response,
-        parse_kafka_heartbeat_response, parse_kafka_init_producer_id_response,
-        parse_kafka_leave_group_response, parse_kafka_list_groups_response,
-        parse_kafka_list_offsets_response, parse_kafka_metadata_response,
-        parse_kafka_offset_commit_response, parse_kafka_offset_fetch_response,
-        parse_kafka_produce_response, parse_kafka_request, parse_kafka_sync_group_response,
+        parse_kafka_delete_records_response, parse_kafka_describe_groups_response,
+        parse_kafka_end_txn_response, parse_kafka_fetch_response,
+        parse_kafka_find_coordinator_response, parse_kafka_heartbeat_response,
+        parse_kafka_init_producer_id_response, parse_kafka_leave_group_response,
+        parse_kafka_list_groups_response, parse_kafka_list_offsets_response,
+        parse_kafka_metadata_response, parse_kafka_offset_commit_response,
+        parse_kafka_offset_fetch_response, parse_kafka_produce_response, parse_kafka_request,
+        parse_kafka_sync_group_response,
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
@@ -283,6 +284,7 @@ proptest! {
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
         let _ = parse_kafka_list_offsets_response(&bytes, api_version.clamp(1, 5), &config);
+        let _ = parse_kafka_delete_records_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_find_coordinator_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_heartbeat_response(&bytes, api_version.min(3), &config);
         let _ = parse_kafka_leave_group_response(&bytes, api_version.min(3), &config);
@@ -2163,6 +2165,40 @@ fn validates_kafka_list_offsets_legacy_requests_without_topic_values() {
 }
 
 #[test]
+fn validates_kafka_delete_records_requests_without_topic_values() {
+    for api_version in 0..=1 {
+        let body = kafka_delete_records_request_body(&[("orders.secret", &[0, 1])]);
+        let bytes = kafka_request_frame(21, api_version, Some(b"secret-client"), &body);
+
+        let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+            .expect("kafka delete records request parses");
+
+        assert_eq!(extraction.operation.as_deref(), Some("delete_records"));
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "messaging.kafka.api_key"
+                    && attribute.value == "21")
+        );
+        assert!(
+            extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                    && attribute.value == api_version.to_string())
+        );
+        assert!(
+            !extraction
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains("secret")
+                    || attribute.value.contains("orders"))
+        );
+    }
+}
+
+#[test]
 fn validates_kafka_find_coordinator_v2_request_without_key_value() {
     let body = kafka_find_coordinator_request_body(2, "group.secret");
     let bytes = kafka_request_frame(10, 2, Some(b"secret-client"), &body);
@@ -3179,6 +3215,72 @@ fn extracts_kafka_list_offsets_error_response_without_topic_values() {
 }
 
 #[test]
+fn extracts_kafka_delete_records_ok_response_without_topic_values() {
+    let bytes = kafka_delete_records_response_frame(0, &[("orders.secret", 0)]);
+
+    let extraction =
+        parse_kafka_delete_records_response(&bytes, 1, &ProtocolExtractionConfig::default())
+            .expect("delete records ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "delete_records");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "21")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_delete_records_error_response_without_topic_values() {
+    let bytes =
+        kafka_delete_records_response_frame(0, &[("orders.secret", 0), ("payments.secret", 6)]);
+
+    let extraction =
+        parse_kafka_delete_records_response(&bytes, 0, &ProtocolExtractionConfig::default())
+            .expect("delete records error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "delete_records");
+    assert_eq!(extraction.status_code, "6");
+    assert_eq!(extraction.error_type.as_deref(), Some("6"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "6")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("payments")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn extracts_kafka_find_coordinator_ok_response_without_host_or_message_values() {
     let bytes = kafka_find_coordinator_response_frame(0, 2, 0, None);
 
@@ -3935,6 +4037,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     .expect("bounded kafka list offsets response parses");
     assert_eq!(bounded_list_offsets_response.attributes.len(), 2);
 
+    let bounded_delete_records_response = parse_kafka_delete_records_response(
+        &kafka_delete_records_response_frame(0, &[("orders.secret", 6)]),
+        1,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka delete records response parses");
+    assert_eq!(bounded_delete_records_response.attributes.len(), 2);
+
     let bounded_find_coordinator_response = parse_kafka_find_coordinator_response(
         &kafka_find_coordinator_response_frame(0, 1, 15, Some("coordinator.secret")),
         1,
@@ -4176,6 +4291,20 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_delete_records_response(
+            &kafka_delete_records_response_frame(0, &[("orders.secret", 6)]),
+            1,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 16,
+                max_request_line_bytes: 64,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_find_coordinator_response(
             &kafka_find_coordinator_response_frame(0, 1, 15, Some("coordinator.secret")),
             1,
@@ -4387,6 +4516,38 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     assert_eq!(
         parse_kafka_request(
             &kafka_request_frame(2, 5, None, &body),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(21, -1, None, b""), &config).unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(21, 1, None, b"\0\x01"), &config).unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    let mut too_many_delete_records_topics = Vec::new();
+    too_many_delete_records_topics.extend_from_slice(&1025_i32.to_be_bytes());
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(21, 1, None, &too_many_delete_records_topics),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    let body = kafka_delete_records_request_body(&[("topic.secret.name", &[0])]);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(21, 1, None, &body),
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
                 max_request_line_bytes: 4,
@@ -4826,6 +4987,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_delete_records_response(
+            &kafka_delete_records_response_frame(0, &[("orders", 0)]),
+            2,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_find_coordinator_response(
             &kafka_find_coordinator_response_frame(0, 3, 0, None),
             3,
@@ -4990,6 +5160,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_delete_records_response(
+            &kafka_delete_records_response_with_topic_count_frame(1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_delete_records_response(
+            &kafka_delete_records_response_with_partition_count_frame(1025),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_find_coordinator_response(
             &kafka_find_coordinator_response_frame(0, 2, 15, Some("coordinator.secret")),
             2,
@@ -5116,6 +5304,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     truncated_list_offsets_response.truncate(24);
     assert_eq!(
         parse_kafka_list_offsets_response(&truncated_list_offsets_response, 5, &config)
+            .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_delete_records_response =
+        kafka_delete_records_response_frame(0, &[("orders", 6)]);
+    truncated_delete_records_response.truncate(20);
+    assert_eq!(
+        parse_kafka_delete_records_response(&truncated_delete_records_response, 1, &config)
             .unwrap_err(),
         KafkaExtraction::MalformedFrame
     );
@@ -8229,6 +8426,21 @@ fn kafka_list_offsets_request_body(api_version: i16, topics: &[(&str, &[i32])]) 
     body
 }
 
+fn kafka_delete_records_request_body(topics: &[(&str, &[i32])]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&(topics.len() as i32).to_be_bytes());
+    for (topic, partitions) in topics {
+        push_kafka_string(&mut body, topic);
+        body.extend_from_slice(&(partitions.len() as i32).to_be_bytes());
+        for partition in *partitions {
+            body.extend_from_slice(&partition.to_be_bytes());
+            body.extend_from_slice(&42_i64.to_be_bytes());
+        }
+    }
+    body.extend_from_slice(&60_000_i32.to_be_bytes());
+    body
+}
+
 fn kafka_find_coordinator_request_body(api_version: i16, key: &str) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&(key.len() as i16).to_be_bytes());
@@ -8627,6 +8839,40 @@ fn kafka_list_offsets_response_with_topic_count_frame(topic_count: i32) -> Vec<u
 }
 
 fn kafka_list_offsets_response_with_partition_count_frame(partition_count: i32) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&1_i32.to_be_bytes());
+    response.extend_from_slice(&6_i16.to_be_bytes());
+    response.extend_from_slice(b"orders");
+    response.extend_from_slice(&partition_count.to_be_bytes());
+    kafka_frame(&response)
+}
+
+fn kafka_delete_records_response_frame(correlation_id: i32, topics: &[(&str, i16)]) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&(topics.len() as i32).to_be_bytes());
+    for (topic, error_code) in topics {
+        push_kafka_string(&mut response, topic);
+        response.extend_from_slice(&1_i32.to_be_bytes());
+        response.extend_from_slice(&0_i32.to_be_bytes());
+        response.extend_from_slice(&42_i64.to_be_bytes());
+        response.extend_from_slice(&error_code.to_be_bytes());
+    }
+    kafka_frame(&response)
+}
+
+fn kafka_delete_records_response_with_topic_count_frame(topic_count: i32) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&topic_count.to_be_bytes());
+    kafka_frame(&response)
+}
+
+fn kafka_delete_records_response_with_partition_count_frame(partition_count: i32) -> Vec<u8> {
     let mut response = Vec::new();
     response.extend_from_slice(&0_i32.to_be_bytes());
     response.extend_from_slice(&0_i32.to_be_bytes());
