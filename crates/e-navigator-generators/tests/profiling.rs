@@ -365,6 +365,29 @@ async fn duplicate_suppression_distinguishes_thread_and_sample_count() {
     assert_eq!(window.observed_sample_count, 5);
 }
 
+#[tokio::test]
+async fn warning_dedupe_uses_warning_fingerprint_not_sample_fingerprint() {
+    let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
+    let first = sample_signal_with_stack(1_500_000_000, "stack:a", None);
+    let mut second = sample_signal_with_stack(1_500_000_000, "stack:a", None);
+    if let SignalPayload::ProfileSampleObservation(sample) = &mut second.payload {
+        sample.thread_id = Some(99);
+        sample.sample_count = 3;
+    }
+
+    assert_eq!(
+        profiling_warning_count(&observe(&generator, &first).await),
+        1
+    );
+    let second_outputs = observe(&generator, &second).await;
+
+    let SignalPayload::ProfilingSessionObservation(window) = &second_outputs[0].payload else {
+        panic!("expected profiling session");
+    };
+    assert_eq!(window.observed_sample_count, 5);
+    assert_eq!(profiling_warning_count(&second_outputs), 0);
+}
+
 async fn observe(generator: &ProfilingGenerator, signal: &SignalEnvelope) -> Vec<SignalEnvelope> {
     let (tx, mut rx) = mpsc::channel(8);
     generator
@@ -377,6 +400,18 @@ async fn observe(generator: &ProfilingGenerator, signal: &SignalEnvelope) -> Vec
         outputs.push(output);
     }
     outputs
+}
+
+fn profiling_warning_count(outputs: &[SignalEnvelope]) -> usize {
+    outputs
+        .iter()
+        .filter(|signal| {
+            matches!(
+                signal.payload,
+                SignalPayload::ProfilingWarningObservation(_)
+            )
+        })
+        .count()
 }
 
 fn sample_signal(
