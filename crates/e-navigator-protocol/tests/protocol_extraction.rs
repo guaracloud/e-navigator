@@ -2806,6 +2806,28 @@ fn extracts_postgres_copy_mode_responses_without_format_values() {
 }
 
 #[test]
+fn extracts_postgres_copy_data_responses_without_payload_values() {
+    let bytes = postgres_frame(b'd', b"secret-copy-output-row\tvalue\n");
+
+    let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("postgres copy data response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
+    assert_eq!(extraction.status_code, "OK");
+    assert_eq!(extraction.error_type, None);
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.response.status_code" && attribute.value == "OK"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("copy-output"))
+    );
+}
+
+#[test]
 fn extracts_postgres_sync_message_without_payload_values() {
     let bytes = postgres_frame(b'S', b"");
 
@@ -3543,6 +3565,10 @@ fn rejects_malformed_and_unsupported_postgres_fixtures() {
     );
     assert_eq!(
         parse_postgres_response(&postgres_frame(b'1', b"secret"), &config).unwrap_err(),
+        PostgresExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_postgres_response(&postgres_frame(b'c', b"secret"), &config).unwrap_err(),
         PostgresExtraction::MalformedFrame
     );
     assert_eq!(
