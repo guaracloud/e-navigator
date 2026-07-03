@@ -18,7 +18,7 @@ use e_navigator_protocol::{
         parse_kafka_describe_configs_response, parse_kafka_describe_delegation_token_response,
         parse_kafka_describe_groups_response, parse_kafka_describe_log_dirs_response,
         parse_kafka_describe_producers_response, parse_kafka_describe_quorum_response,
-        parse_kafka_describe_transactions_response,
+        parse_kafka_describe_topic_partitions_response, parse_kafka_describe_transactions_response,
         parse_kafka_describe_user_scram_credentials_response, parse_kafka_elect_leaders_response,
         parse_kafka_end_txn_response, parse_kafka_expire_delegation_token_response,
         parse_kafka_fetch_response, parse_kafka_find_coordinator_response,
@@ -335,6 +335,7 @@ proptest! {
         let _ = parse_kafka_get_telemetry_subscriptions_response(&bytes, 0, &config);
         let _ = parse_kafka_push_telemetry_response(&bytes, 0, &config);
         let _ = parse_kafka_list_config_resources_response(&bytes, api_version.min(1), &config);
+        let _ = parse_kafka_describe_topic_partitions_response(&bytes, 0, &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -3643,6 +3644,68 @@ fn validates_kafka_list_config_resources_v1_request_without_resource_type_values
 }
 
 #[test]
+fn validates_kafka_describe_topic_partitions_request_without_topic_values() {
+    let body =
+        kafka_describe_topic_partitions_request_body(&["orders.secret", "payments.secret"], None);
+    let bytes = kafka_flexible_request_frame(75, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka describe topic partitions request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("describe_topic_partitions")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "75")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("payments")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn validates_kafka_describe_topic_partitions_request_without_cursor_values() {
+    let body = kafka_describe_topic_partitions_request_body(
+        &["orders.secret"],
+        Some(("cursor.secret", 12)),
+    );
+    let bytes = kafka_flexible_request_frame(75, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka describe topic partitions cursor request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("describe_topic_partitions")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("cursor")
+                || attribute.value.contains("12")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
 fn validates_kafka_alter_replica_log_dirs_requests_without_path_or_topic_values() {
     let body = kafka_alter_replica_log_dirs_request_body(
         "/var/lib/kafka/secret-dir",
@@ -6425,6 +6488,136 @@ fn extracts_kafka_list_config_resources_v1_error_response_without_resource_value
 }
 
 #[test]
+fn extracts_kafka_describe_topic_partitions_ok_response_without_topic_values() {
+    let partitions: &[DescribeTopicPartitionsPartitionFixture<'_>] =
+        &[DescribeTopicPartitionsPartitionFixture {
+            error_code: 0,
+            partition_index: 0,
+            replica_nodes: &[1, 2],
+            isr_nodes: &[1],
+            eligible_leader_replicas: Some(&[2]),
+            last_known_elr: Some(&[3]),
+            offline_replicas: &[4],
+        }];
+    let topics: &[DescribeTopicPartitionsTopicFixture<'_>] =
+        &[DescribeTopicPartitionsTopicFixture {
+            error_code: 0,
+            name: Some("orders.secret"),
+            topic_id: [31_u8; 16],
+            partitions,
+        }];
+    let bytes =
+        kafka_describe_topic_partitions_response_frame(0, topics, Some(("cursor.secret", 12)));
+
+    let extraction = parse_kafka_describe_topic_partitions_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("describe topic partitions ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "describe_topic_partitions");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "75")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("cursor")
+                || attribute.value.contains("secret")
+                || attribute.value.contains("31"))
+    );
+}
+
+#[test]
+fn extracts_kafka_describe_topic_partitions_topic_error_without_topic_values() {
+    let topics: &[DescribeTopicPartitionsTopicFixture<'_>] =
+        &[DescribeTopicPartitionsTopicFixture {
+            error_code: 35,
+            name: Some("orders.secret"),
+            topic_id: [31_u8; 16],
+            partitions: &[],
+        }];
+    let bytes = kafka_describe_topic_partitions_response_frame(0, topics, None);
+
+    let extraction = parse_kafka_describe_topic_partitions_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("describe topic partitions topic error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "describe_topic_partitions");
+    assert_eq!(extraction.status_code, "35");
+    assert_eq!(extraction.error_type.as_deref(), Some("35"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "35")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("secret")
+                || attribute.value.contains("31"))
+    );
+}
+
+#[test]
+fn extracts_kafka_describe_topic_partitions_partition_error_without_topic_values() {
+    let partitions: &[DescribeTopicPartitionsPartitionFixture<'_>] =
+        &[DescribeTopicPartitionsPartitionFixture {
+            error_code: 6,
+            partition_index: 1,
+            replica_nodes: &[1],
+            isr_nodes: &[1],
+            eligible_leader_replicas: None,
+            last_known_elr: None,
+            offline_replicas: &[],
+        }];
+    let topics: &[DescribeTopicPartitionsTopicFixture<'_>] =
+        &[DescribeTopicPartitionsTopicFixture {
+            error_code: 0,
+            name: Some("orders.secret"),
+            topic_id: [31_u8; 16],
+            partitions,
+        }];
+    let bytes = kafka_describe_topic_partitions_response_frame(0, topics, None);
+
+    let extraction = parse_kafka_describe_topic_partitions_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("describe topic partitions partition error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "describe_topic_partitions");
+    assert_eq!(extraction.status_code, "6");
+    assert_eq!(extraction.error_type.as_deref(), Some("6"));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("secret")
+                || attribute.value.contains("31"))
+    );
+}
+
+#[test]
 fn extracts_kafka_list_offsets_ok_response_without_topic_values() {
     let bytes = kafka_list_offsets_response_frame(0, 5, &[("orders.secret", 0)]);
 
@@ -9202,6 +9395,23 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     .expect("bounded kafka list config resources response parses");
     assert_eq!(bounded_list_config_resources_response.attributes.len(), 2);
 
+    let bounded_describe_topic_partitions_response =
+        parse_kafka_describe_topic_partitions_response(
+            &kafka_describe_topic_partitions_response_frame(0, &[], None),
+            0,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 64,
+                max_attributes: 2,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .expect("bounded kafka describe topic partitions response parses");
+    assert_eq!(
+        bounded_describe_topic_partitions_response.attributes.len(),
+        2
+    );
+
     let bounded_produce_response = parse_kafka_produce_response(
         &kafka_produce_response_frame(0, 1, &[("orders.secret", 6)]),
         1,
@@ -11751,6 +11961,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::UnsupportedApiVersion
     );
     assert_eq!(
+        parse_kafka_describe_topic_partitions_response(
+            &kafka_describe_topic_partitions_response_frame(0, &[], None),
+            1,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
         parse_kafka_sasl_handshake_response(
             &kafka_sasl_handshake_response_frame(0, 0, &["PLAIN"]),
             2,
@@ -12591,6 +12810,24 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::FrameTooLong
     );
     assert_eq!(
+        parse_kafka_describe_topic_partitions_response(
+            &kafka_describe_topic_partitions_response_with_topic_count_frame(1025),
+            0,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_describe_topic_partitions_response(
+            &kafka_describe_topic_partitions_response_with_partition_count_frame(1025),
+            0,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
         parse_kafka_describe_cluster_response(
             &kafka_describe_cluster_response_frame(
                 0,
@@ -12730,6 +12967,29 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         parse_kafka_list_config_resources_response(
             &kafka_list_config_resources_response_frame(0, 1, 0, &[("secret.config", 2)]),
             1,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_describe_topic_partitions_response(
+            &kafka_describe_topic_partitions_response_frame(
+                0,
+                &[DescribeTopicPartitionsTopicFixture {
+                    error_code: 0,
+                    name: Some("orders.secret"),
+                    topic_id: [31_u8; 16],
+                    partitions: &[],
+                }],
+                None,
+            ),
+            0,
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
                 max_request_line_bytes: 4,
@@ -13913,6 +14173,74 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::MalformedFrame
     );
 
+    let describe_topic_partitions_body =
+        kafka_describe_topic_partitions_request_body(&["orders.secret"], None);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                75,
+                1,
+                Some(b"client-a"),
+                &describe_topic_partitions_body
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    let mut oversized_describe_topic_partitions_body = Vec::new();
+    push_unsigned_varint(&mut oversized_describe_topic_partitions_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                75,
+                0,
+                Some(b"client-a"),
+                &oversized_describe_topic_partitions_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    let describe_topic_partitions_long_topic_body =
+        kafka_describe_topic_partitions_request_body(&["orders.secret"], None);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                75,
+                0,
+                Some(b"client-a"),
+                &describe_topic_partitions_long_topic_body,
+            ),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    let mut malformed_describe_topic_partitions_cursor_body =
+        kafka_describe_topic_partitions_request_body(&["orders"], None);
+    let cursor_marker_index = malformed_describe_topic_partitions_cursor_body.len() - 2;
+    malformed_describe_topic_partitions_cursor_body[cursor_marker_index] = 1;
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                75,
+                0,
+                Some(b"client-a"),
+                &malformed_describe_topic_partitions_cursor_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
     let mut truncated_response = kafka_produce_response_frame(0, 1, &[("orders", 6)]);
     truncated_response.truncate(10);
     assert_eq!(
@@ -14448,6 +14776,28 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         parse_kafka_list_config_resources_response(
             &truncated_list_config_resources_response,
             1,
+            &config,
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_describe_topic_partitions_response =
+        kafka_describe_topic_partitions_response_frame(
+            0,
+            &[DescribeTopicPartitionsTopicFixture {
+                error_code: 35,
+                name: Some("orders.secret"),
+                topic_id: [31_u8; 16],
+                partitions: &[],
+            }],
+            None,
+        );
+    truncated_describe_topic_partitions_response.truncate(18);
+    assert_eq!(
+        parse_kafka_describe_topic_partitions_response(
+            &truncated_describe_topic_partitions_response,
+            0,
             &config,
         )
         .unwrap_err(),
@@ -18194,6 +18544,22 @@ fn kafka_list_config_resources_request_body(resource_types: &[i8]) -> Vec<u8> {
     body
 }
 
+fn kafka_describe_topic_partitions_request_body(
+    topics: &[&str],
+    cursor: Option<(&str, i32)>,
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_unsigned_varint(&mut body, topics.len() + 1);
+    for topic in topics {
+        push_compact_string(&mut body, topic);
+        push_unsigned_varint(&mut body, 0);
+    }
+    body.extend_from_slice(&100_i32.to_be_bytes());
+    push_nullable_topic_partition_cursor(&mut body, cursor);
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 fn kafka_alter_replica_log_dirs_request_body(log_dir: &str, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&1_i32.to_be_bytes());
@@ -20801,6 +21167,84 @@ fn kafka_list_config_resources_response_with_resource_count_frame(
     kafka_frame(&response)
 }
 
+struct DescribeTopicPartitionsPartitionFixture<'a> {
+    error_code: i16,
+    partition_index: i32,
+    replica_nodes: &'a [i32],
+    isr_nodes: &'a [i32],
+    eligible_leader_replicas: Option<&'a [i32]>,
+    last_known_elr: Option<&'a [i32]>,
+    offline_replicas: &'a [i32],
+}
+
+struct DescribeTopicPartitionsTopicFixture<'a> {
+    error_code: i16,
+    name: Option<&'a str>,
+    topic_id: [u8; 16],
+    partitions: &'a [DescribeTopicPartitionsPartitionFixture<'a>],
+}
+
+fn kafka_describe_topic_partitions_response_frame(
+    correlation_id: i32,
+    topics: &[DescribeTopicPartitionsTopicFixture<'_>],
+    next_cursor: Option<(&str, i32)>,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, topics.len() + 1);
+    for topic in topics {
+        response.extend_from_slice(&topic.error_code.to_be_bytes());
+        push_compact_nullable_string(&mut response, topic.name);
+        response.extend_from_slice(&topic.topic_id);
+        response.push(0);
+        push_unsigned_varint(&mut response, topic.partitions.len() + 1);
+        for partition in topic.partitions {
+            response.extend_from_slice(&partition.error_code.to_be_bytes());
+            response.extend_from_slice(&partition.partition_index.to_be_bytes());
+            response.extend_from_slice(&1_i32.to_be_bytes());
+            response.extend_from_slice(&1_i32.to_be_bytes());
+            push_compact_int32_array(&mut response, partition.replica_nodes);
+            push_compact_int32_array(&mut response, partition.isr_nodes);
+            push_compact_nullable_int32_array(&mut response, partition.eligible_leader_replicas);
+            push_compact_nullable_int32_array(&mut response, partition.last_known_elr);
+            push_compact_int32_array(&mut response, partition.offline_replicas);
+            push_unsigned_varint(&mut response, 0);
+        }
+        response.extend_from_slice(&0_i32.to_be_bytes());
+        push_unsigned_varint(&mut response, 0);
+    }
+    push_nullable_topic_partition_cursor(&mut response, next_cursor);
+    push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+fn kafka_describe_topic_partitions_response_with_topic_count_frame(topic_count: usize) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, topic_count + 1);
+    kafka_frame(&response)
+}
+
+fn kafka_describe_topic_partitions_response_with_partition_count_frame(
+    partition_count: usize,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 2);
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    push_compact_nullable_string(&mut response, Some("orders.secret"));
+    response.extend_from_slice(&[31_u8; 16]);
+    response.push(0);
+    push_unsigned_varint(&mut response, partition_count + 1);
+    kafka_frame(&response)
+}
+
 fn kafka_sasl_handshake_response_frame(
     correlation_id: i32,
     error_code: i16,
@@ -21025,6 +21469,16 @@ fn push_topic_partition_assignment_with_names(
         push_unsigned_varint(bytes, 0);
     }
     push_unsigned_varint(bytes, 0);
+}
+
+fn push_nullable_topic_partition_cursor(bytes: &mut Vec<u8>, cursor: Option<(&str, i32)>) {
+    if let Some((topic_name, partition_index)) = cursor {
+        push_compact_string(bytes, topic_name);
+        bytes.extend_from_slice(&partition_index.to_be_bytes());
+        push_unsigned_varint(bytes, 0);
+    } else {
+        bytes.push(0xff);
+    }
 }
 
 fn push_nullable_topic_partition_assignment(

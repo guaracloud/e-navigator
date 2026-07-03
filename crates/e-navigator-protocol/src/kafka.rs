@@ -3738,6 +3738,70 @@ pub fn parse_kafka_list_config_resources_response(
     })
 }
 
+pub fn parse_kafka_describe_topic_partitions_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if api_version != 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = describe_topic_partitions_response_error_code(body, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("describe_topic_partitions"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("75"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "describe_topic_partitions".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_list_groups_response(
     bytes: &[u8],
     api_version: i16,
@@ -3985,6 +4049,7 @@ fn validate_request_body(
         71 => validate_get_telemetry_subscriptions_request_body(body, header, config),
         72 => validate_push_telemetry_request_body(body, header, config),
         74 => validate_list_config_resources_request_body(body, header, config),
+        75 => validate_describe_topic_partitions_request_body(body, header, config),
         _ => Ok(()),
     }
 }
@@ -5349,6 +5414,30 @@ fn validate_list_config_resources_request_body(
     if header.api_version >= 1 {
         skip_compact_int8_array(body, &mut cursor)?;
     }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_describe_topic_partitions_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if header.api_version != 0 {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+
+    let mut cursor = header.body_start;
+    let topic_count = read_compact_array_len(body, &mut cursor)?;
+    for _ in 0..topic_count {
+        skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    skip_bytes(body, &mut cursor, 4)?;
+    skip_nullable_topic_partition_cursor(body, &mut cursor, config)?;
     skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
     if cursor != body.len() {
         return Err(KafkaExtraction::MalformedFrame);
@@ -6860,6 +6949,50 @@ fn list_config_resources_response_error_code(
     Ok(error_code)
 }
 
+fn describe_topic_partitions_response_error_code(
+    body: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    skip_bytes(body, &mut cursor, 4)?;
+
+    let topic_count = read_compact_array_len(body, &mut cursor)?;
+    let mut first_error_code = None;
+    for _ in 0..topic_count {
+        let topic_error_code = read_i16_be_cursor(body, &mut cursor)?;
+        if topic_error_code != 0 && first_error_code.is_none() {
+            first_error_code = Some(topic_error_code);
+        }
+        skip_compact_nullable_string(body, &mut cursor, config.max_request_line_bytes)?;
+        skip_bytes(body, &mut cursor, 17)?;
+
+        let partition_count = read_compact_array_len(body, &mut cursor)?;
+        for _ in 0..partition_count {
+            let partition_error_code = read_i16_be_cursor(body, &mut cursor)?;
+            if partition_error_code != 0 && first_error_code.is_none() {
+                first_error_code = Some(partition_error_code);
+            }
+            skip_bytes(body, &mut cursor, 12)?;
+            skip_compact_int32_array(body, &mut cursor)?;
+            skip_compact_int32_array(body, &mut cursor)?;
+            skip_compact_nullable_int32_array(body, &mut cursor)?;
+            skip_compact_nullable_int32_array(body, &mut cursor)?;
+            skip_compact_int32_array(body, &mut cursor)?;
+            skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+        }
+
+        skip_bytes(body, &mut cursor, 4)?;
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    skip_nullable_topic_partition_cursor(body, &mut cursor, config)?;
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    Ok(first_error_code.unwrap_or(0))
+}
+
 fn delete_groups_response_error_code(
     body: &[u8],
     config: &ProtocolExtractionConfig,
@@ -7448,6 +7581,24 @@ fn skip_topic_partition_assignment_with_names(
     skip_tagged_fields(body, cursor, config.max_request_line_bytes)
 }
 
+fn skip_nullable_topic_partition_cursor(
+    body: &[u8],
+    cursor: &mut usize,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    let marker = *body.get(*cursor).ok_or(KafkaExtraction::MalformedFrame)?;
+    if marker == 0xff {
+        *cursor = cursor
+            .checked_add(1)
+            .ok_or(KafkaExtraction::MalformedFrame)?;
+        return Ok(());
+    }
+
+    skip_compact_string(body, cursor, config.max_request_line_bytes)?;
+    skip_bytes(body, cursor, 4)?;
+    skip_tagged_fields(body, cursor, config.max_request_line_bytes)
+}
+
 fn skip_compact_bytes(
     body: &[u8],
     cursor: &mut usize,
@@ -7800,6 +7951,7 @@ fn api_key_name(api_key: i16) -> Option<&'static str> {
         71 => Some("get_telemetry_subscriptions"),
         72 => Some("push_telemetry"),
         74 => Some("list_config_resources"),
+        75 => Some("describe_topic_partitions"),
         _ => None,
     }
 }
