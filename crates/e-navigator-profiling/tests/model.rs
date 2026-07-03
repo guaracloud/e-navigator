@@ -248,6 +248,47 @@ fn stack_truncation_marker_is_retained_when_attribute_capacity_is_full() {
 }
 
 #[test]
+fn stack_truncation_marker_is_owned_by_normalization() {
+    let untruncated = raw_sample(vec![frame(Some("checkout::handler".to_string()))])
+        .with_attributes(vec![e_navigator_signals::ProfilingAttribute {
+            key: "profiling.stack.truncated".to_string(),
+            value: "true".to_string(),
+        }])
+        .normalize(&NormalizationLimits::default())
+        .expect("sample normalizes");
+
+    assert!(
+        !untruncated
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "profiling.stack.truncated")
+    );
+
+    let truncated = raw_sample(
+        (0..6)
+            .map(|index| frame(Some(format!("fn{index}"))))
+            .collect(),
+    )
+    .with_attributes(vec![e_navigator_signals::ProfilingAttribute {
+        key: "profiling.stack.truncated".to_string(),
+        value: "false".to_string(),
+    }])
+    .normalize(&NormalizationLimits {
+        max_frames_per_stack: 3,
+        ..NormalizationLimits::default()
+    })
+    .expect("sample normalizes");
+
+    let markers = truncated
+        .attributes
+        .iter()
+        .filter(|attribute| attribute.key == "profiling.stack.truncated")
+        .collect::<Vec<_>>();
+    assert_eq!(markers.len(), 1);
+    assert_eq!(markers[0].value, "true");
+}
+
+#[test]
 fn synthetic_profile_sample_normalization_sets_profile_fields() {
     let normalized = raw_sample(vec![frame(Some("checkout::handler".to_string()))])
         .normalize(&NormalizationLimits::default())

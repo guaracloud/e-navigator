@@ -208,6 +208,7 @@ fn is_reserved_profile_attribute_key(key: &str) -> bool {
             | "sample_count"
             | "stack_id"
             | "frame_count"
+            | "profiling.stack.truncated"
     )
 }
 
