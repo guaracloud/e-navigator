@@ -9,7 +9,7 @@ use e_navigator_protocol::{
         parse_kafka_alter_configs_response, parse_kafka_alter_partition_reassignments_response,
         parse_kafka_alter_replica_log_dirs_response,
         parse_kafka_alter_user_scram_credentials_response, parse_kafka_api_versions_response,
-        parse_kafka_consumer_group_describe_response,
+        parse_kafka_broker_heartbeat_response, parse_kafka_consumer_group_describe_response,
         parse_kafka_consumer_group_heartbeat_response, parse_kafka_create_acls_response,
         parse_kafka_create_delegation_token_response, parse_kafka_create_partitions_response,
         parse_kafka_create_topics_response, parse_kafka_delete_acls_response,
@@ -334,6 +334,7 @@ proptest! {
         let _ = parse_kafka_update_features_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_describe_cluster_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_describe_producers_response(&bytes, 0, &config);
+        let _ = parse_kafka_broker_heartbeat_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_unregister_broker_response(&bytes, 0, &config);
         let _ = parse_kafka_describe_transactions_response(&bytes, 0, &config);
         let _ = parse_kafka_list_transactions_response(&bytes, api_version.min(2), &config);
@@ -3235,6 +3236,107 @@ fn validates_kafka_describe_producers_request_without_topic_values() {
             .iter()
             .any(|attribute| attribute.value.contains("orders")
                 || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn validates_kafka_broker_heartbeat_v0_request_without_broker_values() {
+    let body = kafka_broker_heartbeat_request_body(0, 42, 9_876, 123_456, false, true);
+    let bytes = kafka_flexible_request_frame(63, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka broker heartbeat v0 request parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("broker_heartbeat"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "63")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("42")
+                || attribute.value.contains("9876")
+                || attribute.value.contains("123456")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn validates_kafka_broker_heartbeat_v2_request_without_tagged_log_dir_values() {
+    let body = kafka_broker_heartbeat_request_body(2, 42, 9_876, 123_456, true, false);
+    let bytes = kafka_flexible_request_frame(63, 2, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka broker heartbeat v2 request parses");
+
+    assert_eq!(extraction.operation.as_deref(), Some("broker_heartbeat"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "63")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "2")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("42")
+                || attribute.value.contains("9876")
+                || attribute.value.contains("123456")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn rejects_malformed_kafka_broker_heartbeat_requests() {
+    let config = ProtocolExtractionConfig::default();
+    let body = kafka_broker_heartbeat_request_body(0, 42, 9_876, 123_456, false, true);
+
+    assert_eq!(
+        parse_kafka_request(&kafka_flexible_request_frame(63, 3, None, &body), &config),
+        Err(KafkaExtraction::UnsupportedApiVersion)
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(63, 0, None, b"\0\0\0\x2a"),
+            &config,
+        ),
+        Err(KafkaExtraction::MalformedFrame)
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                63,
+                2,
+                None,
+                &kafka_broker_heartbeat_request_body_with_tag_value_len(65),
+            ),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 64,
+                max_attributes: 8,
+                max_tracestate_bytes: 32,
+            },
+        ),
+        Err(KafkaExtraction::FrameTooLong)
     );
 }
 
@@ -6459,6 +6561,90 @@ fn extracts_kafka_unregister_broker_ok_response() {
     assert!(extraction.attributes.iter().any(|attribute| {
         attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
     }));
+}
+
+#[test]
+fn extracts_kafka_broker_heartbeat_ok_response() {
+    let bytes = kafka_broker_heartbeat_response_frame(0, 0, true, false, false);
+
+    let extraction =
+        parse_kafka_broker_heartbeat_response(&bytes, 0, &ProtocolExtractionConfig::default())
+            .expect("broker heartbeat ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "broker_heartbeat");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "63")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+}
+
+#[test]
+fn extracts_kafka_broker_heartbeat_error_response() {
+    let bytes = kafka_broker_heartbeat_response_frame(0, 35, false, true, true);
+
+    let extraction =
+        parse_kafka_broker_heartbeat_response(&bytes, 2, &ProtocolExtractionConfig::default())
+            .expect("broker heartbeat error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "broker_heartbeat");
+    assert_eq!(extraction.status_code, "35");
+    assert_eq!(extraction.error_type.as_deref(), Some("35"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "2")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "35")
+    );
+}
+
+#[test]
+fn rejects_malformed_kafka_broker_heartbeat_responses() {
+    let config = ProtocolExtractionConfig::default();
+
+    assert_eq!(
+        parse_kafka_broker_heartbeat_response(
+            &kafka_broker_heartbeat_response_frame(0, 0, true, false, false),
+            3,
+            &config,
+        ),
+        Err(KafkaExtraction::UnsupportedApiVersion)
+    );
+
+    let mut truncated = kafka_broker_heartbeat_response_frame(0, 0, true, false, false);
+    truncated.truncate(12);
+    assert_eq!(
+        parse_kafka_broker_heartbeat_response(&truncated, 0, &config),
+        Err(KafkaExtraction::MalformedFrame)
+    );
+    assert_eq!(
+        parse_kafka_broker_heartbeat_response(
+            &kafka_broker_heartbeat_response_with_tag_value_len_frame(5),
+            2,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 8,
+                max_tracestate_bytes: 32,
+            },
+        ),
+        Err(KafkaExtraction::FrameTooLong)
+    );
 }
 
 #[test]
@@ -10687,6 +10873,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     )
     .expect("bounded kafka describe producers response parses");
     assert_eq!(bounded_describe_producers_response.attributes.len(), 2);
+
+    let bounded_broker_heartbeat_response = parse_kafka_broker_heartbeat_response(
+        &kafka_broker_heartbeat_response_frame(0, 0, true, false, false),
+        2,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka broker heartbeat response parses");
+    assert_eq!(bounded_broker_heartbeat_response.attributes.len(), 2);
 
     let bounded_unregister_broker_response = parse_kafka_unregister_broker_response(
         &kafka_unregister_broker_response_frame(0, 0, None),
@@ -21119,6 +21318,55 @@ fn kafka_describe_producers_request_body(
     body
 }
 
+fn kafka_broker_heartbeat_request_body(
+    api_version: i16,
+    broker_id: i32,
+    broker_epoch: i64,
+    metadata_offset: i64,
+    want_fence: bool,
+    want_shutdown: bool,
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&broker_id.to_be_bytes());
+    body.extend_from_slice(&broker_epoch.to_be_bytes());
+    body.extend_from_slice(&metadata_offset.to_be_bytes());
+    body.push(u8::from(want_fence));
+    body.push(u8::from(want_shutdown));
+    if api_version == 0 {
+        push_unsigned_varint(&mut body, 0);
+    } else {
+        push_unsigned_varint(&mut body, if api_version >= 2 { 2 } else { 1 });
+        push_unsigned_varint(&mut body, 0);
+        let mut offline_log_dirs = Vec::new();
+        push_unsigned_varint(&mut offline_log_dirs, 2);
+        offline_log_dirs.extend_from_slice(&[7_u8; 16]);
+        push_unsigned_varint(&mut body, offline_log_dirs.len());
+        body.extend_from_slice(&offline_log_dirs);
+        if api_version >= 2 {
+            push_unsigned_varint(&mut body, 1);
+            let mut cordoned_log_dirs = Vec::new();
+            push_unsigned_varint(&mut cordoned_log_dirs, 0);
+            push_unsigned_varint(&mut body, cordoned_log_dirs.len());
+            body.extend_from_slice(&cordoned_log_dirs);
+        }
+    }
+    body
+}
+
+fn kafka_broker_heartbeat_request_body_with_tag_value_len(tag_value_len: usize) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&42_i32.to_be_bytes());
+    body.extend_from_slice(&9_876_i64.to_be_bytes());
+    body.extend_from_slice(&123_456_i64.to_be_bytes());
+    body.push(1);
+    body.push(0);
+    push_unsigned_varint(&mut body, 1);
+    push_unsigned_varint(&mut body, 0);
+    push_unsigned_varint(&mut body, tag_value_len);
+    body.resize(body.len() + tag_value_len, 0);
+    body
+}
+
 fn kafka_unregister_broker_request_body(broker_id: i32) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&broker_id.to_be_bytes());
@@ -23792,6 +24040,41 @@ fn kafka_describe_producers_response_with_partition_count_frame(partition_count:
     push_unsigned_varint(&mut response, 2);
     push_compact_string(&mut response, "orders");
     push_unsigned_varint(&mut response, partition_count + 1);
+    kafka_frame(&response)
+}
+
+fn kafka_broker_heartbeat_response_frame(
+    correlation_id: i32,
+    error_code: i16,
+    is_caught_up: bool,
+    is_fenced: bool,
+    should_shutdown: bool,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&error_code.to_be_bytes());
+    response.push(u8::from(is_caught_up));
+    response.push(u8::from(is_fenced));
+    response.push(u8::from(should_shutdown));
+    push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+fn kafka_broker_heartbeat_response_with_tag_value_len_frame(tag_value_len: usize) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    response.push(1);
+    response.push(0);
+    response.push(0);
+    push_unsigned_varint(&mut response, 1);
+    push_unsigned_varint(&mut response, 0);
+    push_unsigned_varint(&mut response, tag_value_len);
+    response.resize(response.len() + tag_value_len, 0);
     kafka_frame(&response)
 }
 

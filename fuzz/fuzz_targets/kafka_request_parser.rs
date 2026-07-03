@@ -8,6 +8,7 @@ use e_navigator_protocol::{
         parse_kafka_alter_client_quotas_response, parse_kafka_alter_partition_reassignments_response,
         parse_kafka_alter_replica_log_dirs_response, parse_kafka_api_versions_response,
         parse_kafka_alter_user_scram_credentials_response,
+        parse_kafka_broker_heartbeat_response,
         parse_kafka_add_partitions_to_txn_response, parse_kafka_consumer_group_describe_response,
         parse_kafka_consumer_group_heartbeat_response, parse_kafka_create_acls_response,
         parse_kafka_create_delegation_token_response, parse_kafka_create_partitions_response,
@@ -97,6 +98,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_describe_cluster_response(data, 0, &config);
     let _ = parse_kafka_describe_cluster_response(data, 2, &config);
     let _ = parse_kafka_describe_producers_response(data, 0, &config);
+    let _ = parse_kafka_broker_heartbeat_response(data, 2, &config);
     let _ = parse_kafka_unregister_broker_response(data, 0, &config);
     let _ = parse_kafka_describe_transactions_response(data, 0, &config);
     let _ = parse_kafka_list_transactions_response(data, 2, &config);
