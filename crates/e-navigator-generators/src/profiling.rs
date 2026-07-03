@@ -3,6 +3,7 @@ use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetad
 use e_navigator_signals::{
     MetricAggregationWindow, ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence,
     ProfilingSessionObservation, ProfilingWarningObservation, SignalEnvelope, SignalPayload,
+    is_sensitive_profiling_attribute_key,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -16,6 +17,9 @@ const DEFAULT_MAX_WARNINGS: usize = 1024;
 const DEFAULT_WINDOW_NANOS: u64 = 30_000_000_000;
 const DEFAULT_MAX_STACK_IDS_PER_WINDOW: usize = 64;
 const DEFAULT_MAX_SAMPLES_PER_WINDOW: u64 = 64;
+const MAX_PROFILE_ATTRIBUTES: usize = 16;
+const MAX_PROFILE_ATTRIBUTE_KEY_BYTES: usize = 128;
+const MAX_PROFILE_ATTRIBUTE_VALUE_BYTES: usize = 256;
 
 #[derive(Debug)]
 pub struct ProfilingGenerator {
@@ -592,9 +596,17 @@ fn window_for(timestamp_unix_nanos: u64, window_nanos: u64) -> MetricAggregation
 }
 
 fn bounded_attributes(attributes: &[ProfilingAttribute]) -> Vec<ProfilingAttribute> {
-    let mut attributes = attributes.to_vec();
+    let mut attributes = attributes
+        .iter()
+        .filter(|attribute| {
+            !is_sensitive_profiling_attribute_key(&attribute.key)
+                && attribute.key.len() <= MAX_PROFILE_ATTRIBUTE_KEY_BYTES
+                && attribute.value.len() <= MAX_PROFILE_ATTRIBUTE_VALUE_BYTES
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     attributes.sort();
-    attributes.truncate(16);
+    attributes.truncate(MAX_PROFILE_ATTRIBUTES);
     attributes
 }
 

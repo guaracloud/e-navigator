@@ -187,6 +187,14 @@ async fn generated_sessions_filter_sensitive_profile_attributes() {
                 key: "profiling.phase".to_string(),
                 value: "steady_state".to_string(),
             },
+            ProfilingAttribute {
+                key: "k".repeat(129),
+                value: "oversized_key".to_string(),
+            },
+            ProfilingAttribute {
+                key: "profiling.too_large".to_string(),
+                value: "v".repeat(257),
+            },
         ]);
     }
 
@@ -203,7 +211,9 @@ async fn generated_sessions_filter_sensitive_profile_attributes() {
             .attributes
             .iter()
             .any(|attribute| attribute.key == "authorization"
-                || attribute.value.contains("secret-token"))
+                || attribute.value.contains("secret-token")
+                || attribute.value == "oversized_key"
+                || attribute.key == "profiling.too_large")
     );
 }
 

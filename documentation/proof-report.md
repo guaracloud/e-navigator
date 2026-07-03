@@ -56,7 +56,7 @@ or chart rendering:
   bounded flow-byte aggregation across remote destinations, flow-attribution
   warnings, bounded DNS-derived service-path domains, generated flow-summary
   destination pod-IP attribution before sinks,
-  deterministic profile session IDs, generated profile session
+  deterministic profile session IDs, generated profile session bounded and
   sensitive-attribute filtering, bounded request-span scalar fields and
   attributes, and
   dropped-profile-sample warnings;
