@@ -15,6 +15,12 @@ e-navigator-sources-host = { path = "../crates/e-navigator-sources-host" }
 libfuzzer-sys = "0.4"
 
 [[bin]]
+name = "protocol_stream_decoder"
+path = "fuzz_targets/protocol_stream_decoder.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "traceparent_parser"
 path = "fuzz_targets/traceparent_parser.rs"
 test = false

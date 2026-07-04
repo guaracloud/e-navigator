@@ -9,6 +9,7 @@ pub mod mysql;
 pub mod nats;
 pub mod postgres;
 pub mod redis;
+pub mod stream;
 pub mod trace_context;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
