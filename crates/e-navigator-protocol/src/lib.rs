@@ -3,6 +3,7 @@
 
 pub mod grpc;
 pub mod http;
+pub mod http2;
 pub mod kafka;
 pub mod mongodb;
 pub mod mysql;
