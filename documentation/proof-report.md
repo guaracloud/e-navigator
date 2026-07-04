@@ -194,6 +194,17 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   exported record. This is local smoke proof only, not production or
   Kubernetes proof; Kafka, PostgreSQL, MySQL, MongoDB, and NATS live capture
   paths are implemented but not yet runtime-proven.
+- Live CPU profile symbolization and pprof serving on the local OrbStack
+  Docker VM (2026-07-04, host PID namespace): the aya-cpu-profile source
+  captured ~32k samples under a busy workload and resolved frame-pointer
+  frames to real modules and module-relative offsets (for example
+  `/opt/orb/scon-agent+0x3f643c` with `module_offset` set), and the
+  Prometheus sink `/debug/pprof/profile` endpoint served a ~30 KB pprof
+  protobuf carrying module mappings and location addresses. Frames requiring
+  DWARF unwinding (interpreted/JIT stacks) and idle `swapper` samples
+  correctly fall back to raw `ip:` addresses. Local smoke proof only; the
+  32-frame kernel cap, DWARF unwinding, and Kubernetes-node symbolization
+  remain out of scope or unproven.
 - Live inbound (server-side) HTTP capture on the local OrbStack Docker VM
   (2026-07-04): with `http_source.inbound_enabled`, five curl requests
   against a local Python HTTP server produced exactly five
