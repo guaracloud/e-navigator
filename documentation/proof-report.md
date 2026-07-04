@@ -194,6 +194,16 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   exported record. This is local smoke proof only, not production or
   Kubernetes proof; Kafka, PostgreSQL, MySQL, MongoDB, and NATS live capture
   paths are implemented but not yet runtime-proven.
+- Live TCP stack accounting on the local OrbStack Docker VM (2026-07-04,
+  host PID namespace): the aya-network source emitted 30
+  `network_tcp_stat_observation` reset signals (send direction, correct
+  loopback tuple and python3 process attribution) from abortive SO_LINGER
+  closes, plus 182 state-transition observations across established, close,
+  syn_sent, syn_recv, and listen. Retransmit capture attaches its
+  tracepoint but was not induced (loopback has no loss); the retransmit
+  decode and generator aggregation are unit-tested. Counter aggregation
+  (network.tcp.retransmits/resets/transitions) is unit-tested; this run
+  exercised the source observation path only. Local smoke proof only.
 - Live CPU profile symbolization and pprof serving on the local OrbStack
   Docker VM (2026-07-04, host PID namespace): the aya-cpu-profile source
   captured ~32k samples under a busy workload and resolved frame-pointer
