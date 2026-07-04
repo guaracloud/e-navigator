@@ -85,7 +85,7 @@ pub(crate) struct RawProtocolDataEvent {
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RawProtocolInvalidSampleMetadata {
+pub struct RawProtocolInvalidSampleMetadata {
     pid: u32,
     uid: u32,
     cgroup_id: u64,
@@ -120,7 +120,7 @@ impl RawProtocolInvalidSampleMetadata {
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RawProtocolDecodeError {
+pub enum RawProtocolDecodeError {
     RawSampleTooShort,
     InvalidPayloadLength {
         sample: RawProtocolInvalidSampleMetadata,
@@ -272,7 +272,7 @@ struct ConnectionStream {
 /// Per-connection reassembly and parsing state for the protocol source.
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug)]
-pub(crate) struct ProtocolStreamRegistry {
+pub struct ProtocolStreamRegistry {
     host: Option<String>,
     procfs_root: std::path::PathBuf,
     ports: ProtocolPortMap,
@@ -286,7 +286,7 @@ pub(crate) struct ProtocolStreamRegistry {
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 impl ProtocolStreamRegistry {
-    pub(crate) fn new(
+    pub fn new(
         host: Option<String>,
         procfs_root: std::path::PathBuf,
         config: &ProtocolSourceConfig,
@@ -321,7 +321,7 @@ impl ProtocolStreamRegistry {
 
     /// Decodes one raw perf sample and appends any resulting protocol
     /// request observations to `signals`.
-    pub(crate) fn handle_event(
+    pub fn handle_event(
         &mut self,
         bytes: &[u8],
         observed_unix_nanos: u64,

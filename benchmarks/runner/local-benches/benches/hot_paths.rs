@@ -272,7 +272,9 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
 }
 
 fn bench_protocol_stream(c: &mut Criterion) {
-    use e_navigator_protocol::stream::{RequestStreamDecoder, StreamDecodeLimits, StreamProtocol};
+    use e_navigator_protocol::stream::{
+        ProtocolStreamDecoder, StreamDecodeLimits, StreamDirection, StreamProtocol,
+    };
 
     let redis_pipeline = b"*1\r\n$4\r\nPING\r\n*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n".to_vec();
     let mut kafka_frame = 27_i32.to_be_bytes().to_vec();
@@ -280,8 +282,11 @@ fn bench_protocol_stream(c: &mut Criterion) {
     kafka_frame.extend_from_slice(b"bench-clienttopic");
 
     c.bench_function("protocol_stream/redis_pipeline_push_chunk", |b| {
-        let mut decoder =
-            RequestStreamDecoder::new(StreamProtocol::Redis, StreamDecodeLimits::default());
+        let mut decoder = ProtocolStreamDecoder::new(
+            StreamProtocol::Redis,
+            StreamDirection::Request,
+            StreamDecodeLimits::default(),
+        );
         let mut frames = Vec::new();
         b.iter(|| {
             frames.clear();
@@ -295,8 +300,11 @@ fn bench_protocol_stream(c: &mut Criterion) {
     });
 
     c.bench_function("protocol_stream/kafka_split_frame_push_chunk", |b| {
-        let mut decoder =
-            RequestStreamDecoder::new(StreamProtocol::Kafka, StreamDecodeLimits::default());
+        let mut decoder = ProtocolStreamDecoder::new(
+            StreamProtocol::Kafka,
+            StreamDirection::Request,
+            StreamDecodeLimits::default(),
+        );
         let mut frames = Vec::new();
         let (head, tail) = kafka_frame.split_at(9);
         b.iter(|| {
@@ -311,6 +319,49 @@ fn bench_protocol_stream(c: &mut Criterion) {
     c.bench_function("aya_decode/protocol_data_fuzz_harness", |b| {
         b.iter(|| fuzz_decode_raw_protocol_data_event(black_box(&raw_protocol_event)))
     });
+
+    c.bench_function("protocol_stream/request_response_match", |b| {
+        use e_navigator_core::ProtocolSourceConfig;
+        use e_navigator_sources_ebpf_aya::protocol::ProtocolStreamRegistry;
+
+        let mut registry = ProtocolStreamRegistry::new(
+            None,
+            std::path::PathBuf::from("__bench_no_procfs__"),
+            &ProtocolSourceConfig::default(),
+        );
+        let request = raw_protocol_data_event_fixture();
+        let response = raw_protocol_response_event_fixture();
+        let mut signals = Vec::new();
+        b.iter(|| {
+            signals.clear();
+            assert!(
+                registry
+                    .handle_event(black_box(&request), 5_000, &mut signals)
+                    .is_ok()
+            );
+            assert!(
+                registry
+                    .handle_event(black_box(&response), 6_000, &mut signals)
+                    .is_ok()
+            );
+            black_box(signals.len())
+        })
+    });
+}
+
+/// Byte-encodes the read-direction response ("+OK\r\n") for the fixture
+/// connection used by `raw_protocol_data_event_fixture`.
+fn raw_protocol_response_event_fixture() -> Vec<u8> {
+    let mut bytes = raw_protocol_data_event_fixture();
+    bytes[20..24].copy_from_slice(&1_u32.to_ne_bytes());
+    let payload = b"+OK\r\n";
+    bytes[80..84].copy_from_slice(&(payload.len() as u32).to_ne_bytes());
+    bytes[84..88].copy_from_slice(&(payload.len() as u32).to_ne_bytes());
+    for byte in bytes[104..360].iter_mut() {
+        *byte = 0;
+    }
+    bytes[104..104 + payload.len()].copy_from_slice(payload);
+    bytes
 }
 
 /// Byte-encodes a valid `RawProtocolDataEvent` (write-direction Redis GET on
