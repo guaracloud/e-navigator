@@ -1498,6 +1498,70 @@ pub fn parse_kafka_delete_records_response(
     })
 }
 
+pub fn parse_kafka_offset_for_leader_epoch_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if !(2..=4).contains(&api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = offset_for_leader_epoch_response_error_code(body, api_version, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("offset_for_leader_epoch"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("23"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "offset_for_leader_epoch".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_delete_topics_response(
     bytes: &[u8],
     api_version: i16,
@@ -4777,6 +4841,7 @@ fn validate_request_body(
         20 => validate_delete_topics_request_body(body, header, config),
         21 => validate_delete_records_request_body(body, header, config),
         22 => validate_init_producer_id_request_body(body, header, config),
+        23 => validate_offset_for_leader_epoch_request_body(body, header, config),
         24 => validate_add_partitions_to_txn_request_body(body, header, config),
         25 => validate_add_offsets_to_txn_request_body(body, header, config),
         26 => validate_end_txn_request_body(body, header, config),
@@ -5451,6 +5516,47 @@ fn validate_offset_delete_request_body(
     for _ in 0..topic_count {
         skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
         skip_int32_array(body, &mut cursor)?;
+    }
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_offset_for_leader_epoch_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if !(2..=4).contains(&header.api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+
+    let mut cursor = header.body_start;
+    if header.api_version >= 3 {
+        skip_bytes(body, &mut cursor, 4)?;
+    }
+    if header.api_version >= 4 {
+        let topic_count = read_compact_array_len(body, &mut cursor)?;
+        for _ in 0..topic_count {
+            skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+            let partition_count = read_compact_array_len(body, &mut cursor)?;
+            for _ in 0..partition_count {
+                skip_bytes(body, &mut cursor, 12)?;
+                skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+            }
+            skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+        }
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    } else {
+        let topic_count = read_response_array_len(body, &mut cursor)?;
+        for _ in 0..topic_count {
+            skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+            let partition_count = read_response_array_len(body, &mut cursor)?;
+            for _ in 0..partition_count {
+                skip_bytes(body, &mut cursor, 12)?;
+            }
+        }
     }
     if cursor != body.len() {
         return Err(KafkaExtraction::MalformedFrame);
@@ -7497,6 +7603,54 @@ fn offset_delete_response_error_code(
     Ok(first_partition_error_code.unwrap_or(0))
 }
 
+fn offset_for_leader_epoch_response_error_code(
+    body: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    if api_version >= 4 {
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    skip_bytes(body, &mut cursor, 4)?;
+
+    let mut first_error_code = None;
+    if api_version >= 4 {
+        let topic_count = read_compact_array_len(body, &mut cursor)?;
+        for _ in 0..topic_count {
+            skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+            let partition_count = read_compact_array_len(body, &mut cursor)?;
+            for _ in 0..partition_count {
+                let error_code = read_i16_be_cursor(body, &mut cursor)?;
+                if error_code != 0 && first_error_code.is_none() {
+                    first_error_code = Some(error_code);
+                }
+                skip_bytes(body, &mut cursor, 16)?;
+                skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+            }
+            skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+        }
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    } else {
+        let topic_count = read_response_array_len(body, &mut cursor)?;
+        for _ in 0..topic_count {
+            skip_kafka_string(body, &mut cursor, config.max_request_line_bytes)?;
+            let partition_count = read_response_array_len(body, &mut cursor)?;
+            for _ in 0..partition_count {
+                let error_code = read_i16_be_cursor(body, &mut cursor)?;
+                if error_code != 0 && first_error_code.is_none() {
+                    first_error_code = Some(error_code);
+                }
+                skip_bytes(body, &mut cursor, 16)?;
+            }
+        }
+    }
+    Ok(first_error_code.unwrap_or(0))
+}
+
 fn describe_client_quotas_response_error_code(
     body: &[u8],
     api_version: i16,
@@ -9281,6 +9435,7 @@ fn api_key_name(api_key: i16) -> Option<&'static str> {
         20 => Some("delete_topics"),
         21 => Some("delete_records"),
         22 => Some("init_producer_id"),
+        23 => Some("offset_for_leader_epoch"),
         24 => Some("add_partitions_to_txn"),
         25 => Some("add_offsets_to_txn"),
         26 => Some("end_txn"),

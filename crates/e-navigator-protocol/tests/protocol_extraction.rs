@@ -33,8 +33,8 @@ use e_navigator_protocol::{
         parse_kafka_list_partition_reassignments_response, parse_kafka_list_transactions_response,
         parse_kafka_metadata_response, parse_kafka_offset_commit_response,
         parse_kafka_offset_delete_response, parse_kafka_offset_fetch_response,
-        parse_kafka_produce_response, parse_kafka_push_telemetry_response,
-        parse_kafka_read_share_group_state_response,
+        parse_kafka_offset_for_leader_epoch_response, parse_kafka_produce_response,
+        parse_kafka_push_telemetry_response, parse_kafka_read_share_group_state_response,
         parse_kafka_read_share_group_state_summary_response,
         parse_kafka_remove_raft_voter_response, parse_kafka_renew_delegation_token_response,
         parse_kafka_request, parse_kafka_sasl_authenticate_response,
@@ -367,6 +367,11 @@ proptest! {
         let _ = parse_kafka_delete_records_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_delete_topics_response(&bytes, api_version.clamp(1, 3), &config);
         let _ = parse_kafka_offset_delete_response(&bytes, 0, &config);
+        let _ = parse_kafka_offset_for_leader_epoch_response(
+            &bytes,
+            api_version.clamp(2, 4),
+            &config,
+        );
         let _ = parse_kafka_find_coordinator_response(&bytes, api_version.min(2), &config);
         let _ = parse_kafka_join_group_response(&bytes, api_version.clamp(0, 5), &config);
         let _ = parse_kafka_heartbeat_response(&bytes, api_version.min(3), &config);
@@ -2222,6 +2227,119 @@ fn validates_kafka_offset_delete_request_without_group_or_topic_values() {
             .any(|attribute| attribute.value.contains("secret")
                 || attribute.value.contains("orders")
                 || attribute.value.contains("group"))
+    );
+}
+
+#[test]
+fn validates_kafka_offset_for_leader_epoch_v2_request_without_topic_values() {
+    let topics: &[OffsetForLeaderEpochRequestTopicFixture<'_>] =
+        &[("orders.secret", &[(0, 12, 11)])];
+    let body = kafka_offset_for_leader_epoch_request_body(2, topics);
+    let bytes = kafka_request_frame(23, 2, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka offset for leader epoch v2 request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("offset_for_leader_epoch")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "23")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "2")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn validates_kafka_offset_for_leader_epoch_v4_request_without_topic_values() {
+    let topics: &[OffsetForLeaderEpochRequestTopicFixture<'_>] =
+        &[("orders.secret", &[(0, 12, 11)])];
+    let body = kafka_offset_for_leader_epoch_request_body(4, topics);
+    let bytes = kafka_flexible_request_frame(23, 4, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka offset for leader epoch v4 request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("offset_for_leader_epoch")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "23")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "4")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn rejects_malformed_kafka_offset_for_leader_epoch_requests() {
+    let config = ProtocolExtractionConfig::default();
+    let topics: &[OffsetForLeaderEpochRequestTopicFixture<'_>] =
+        &[("orders.secret", &[(0, 12, 11)])];
+    let body = kafka_offset_for_leader_epoch_request_body(2, topics);
+
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(23, 1, None, &body), &config),
+        Err(KafkaExtraction::UnsupportedApiVersion)
+    );
+    assert_eq!(
+        parse_kafka_request(&kafka_request_frame(23, 2, None, b"\0\0\0\x01"), &config),
+        Err(KafkaExtraction::MalformedFrame)
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_request_frame(
+                23,
+                2,
+                None,
+                &kafka_offset_for_leader_epoch_request_with_topic_count_body(1025),
+            ),
+            &config,
+        ),
+        Err(KafkaExtraction::FrameTooLong)
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                23,
+                4,
+                None,
+                &kafka_offset_for_leader_epoch_flexible_request_with_partition_count_body(1025),
+            ),
+            &config,
+        ),
+        Err(KafkaExtraction::FrameTooLong)
     );
 }
 
@@ -8399,6 +8517,110 @@ fn extracts_kafka_read_share_group_state_summary_error_response_without_topic_me
 }
 
 #[test]
+fn extracts_kafka_offset_for_leader_epoch_v2_ok_response_without_topic_or_offset_values() {
+    let topics: &[OffsetForLeaderEpochResponseTopicFixture<'_>] =
+        &[("orders.secret", &[(0, 0, 12, 99_999)])];
+    let bytes = kafka_offset_for_leader_epoch_response_frame(0, 2, topics);
+
+    let extraction = parse_kafka_offset_for_leader_epoch_response(
+        &bytes,
+        2,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("offset for leader epoch v2 response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "offset_for_leader_epoch");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "23")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("99999")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_kafka_offset_for_leader_epoch_v4_error_response_without_topic_or_offset_values() {
+    let topics: &[OffsetForLeaderEpochResponseTopicFixture<'_>] =
+        &[("orders.secret", &[(0, 0, 12, 99_999), (6, 1, 13, 100_000)])];
+    let bytes = kafka_offset_for_leader_epoch_response_frame(0, 4, topics);
+
+    let extraction = parse_kafka_offset_for_leader_epoch_response(
+        &bytes,
+        4,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("offset for leader epoch v4 response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "offset_for_leader_epoch");
+    assert_eq!(extraction.status_code, "6");
+    assert_eq!(extraction.error_type.as_deref(), Some("6"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "4")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "6")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("orders")
+                || attribute.value.contains("100000")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn rejects_malformed_kafka_offset_for_leader_epoch_responses() {
+    let config = ProtocolExtractionConfig::default();
+    let topics: &[OffsetForLeaderEpochResponseTopicFixture<'_>] =
+        &[("orders.secret", &[(0, 0, 12, 99_999)])];
+
+    assert_eq!(
+        parse_kafka_offset_for_leader_epoch_response(
+            &kafka_offset_for_leader_epoch_response_frame(0, 2, topics),
+            1,
+            &config,
+        ),
+        Err(KafkaExtraction::UnsupportedApiVersion)
+    );
+
+    let mut truncated = kafka_offset_for_leader_epoch_response_frame(0, 2, topics);
+    truncated.truncate(14);
+    assert_eq!(
+        parse_kafka_offset_for_leader_epoch_response(&truncated, 2, &config),
+        Err(KafkaExtraction::MalformedFrame)
+    );
+    assert_eq!(
+        parse_kafka_offset_for_leader_epoch_response(
+            &kafka_offset_for_leader_epoch_response_with_topic_count_frame(4, 1025),
+            4,
+            &config,
+        ),
+        Err(KafkaExtraction::FrameTooLong)
+    );
+}
+
+#[test]
 fn extracts_kafka_list_offsets_ok_response_without_topic_values() {
     let bytes = kafka_list_offsets_response_frame(0, 5, &[("orders.secret", 0)]);
 
@@ -11010,6 +11232,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     )
     .expect("bounded kafka response parses");
     assert_eq!(bounded_response.attributes.len(), 2);
+
+    let bounded_offset_for_leader_epoch_response = parse_kafka_offset_for_leader_epoch_response(
+        &kafka_offset_for_leader_epoch_response_frame(0, 4, &[]),
+        4,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka offset for leader epoch response parses");
+    assert_eq!(bounded_offset_for_leader_epoch_response.attributes.len(), 2);
 
     let bounded_describe_quorum_response = parse_kafka_describe_quorum_response(
         &kafka_describe_quorum_response_frame(0, 0, 0, None, &[], &[]),
@@ -21065,6 +21300,64 @@ fn kafka_offset_delete_request_body(topics: &[(&str, &[i32])]) -> Vec<u8> {
     body
 }
 
+type OffsetForLeaderEpochRequestPartitionFixture = (i32, i32, i32);
+type OffsetForLeaderEpochRequestTopicFixture<'a> =
+    (&'a str, &'a [OffsetForLeaderEpochRequestPartitionFixture]);
+
+fn kafka_offset_for_leader_epoch_request_body(
+    api_version: i16,
+    topics: &[OffsetForLeaderEpochRequestTopicFixture<'_>],
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    if api_version >= 3 {
+        body.extend_from_slice(&(-2_i32).to_be_bytes());
+    }
+    if api_version >= 4 {
+        push_unsigned_varint(&mut body, topics.len() + 1);
+        for (topic, partitions) in topics {
+            push_compact_string(&mut body, topic);
+            push_unsigned_varint(&mut body, partitions.len() + 1);
+            for (partition, current_leader_epoch, leader_epoch) in *partitions {
+                body.extend_from_slice(&partition.to_be_bytes());
+                body.extend_from_slice(&current_leader_epoch.to_be_bytes());
+                body.extend_from_slice(&leader_epoch.to_be_bytes());
+                push_unsigned_varint(&mut body, 0);
+            }
+            push_unsigned_varint(&mut body, 0);
+        }
+        push_unsigned_varint(&mut body, 0);
+    } else {
+        body.extend_from_slice(&(topics.len() as i32).to_be_bytes());
+        for (topic, partitions) in topics {
+            push_kafka_string(&mut body, topic);
+            body.extend_from_slice(&(partitions.len() as i32).to_be_bytes());
+            for (partition, current_leader_epoch, leader_epoch) in *partitions {
+                body.extend_from_slice(&partition.to_be_bytes());
+                body.extend_from_slice(&current_leader_epoch.to_be_bytes());
+                body.extend_from_slice(&leader_epoch.to_be_bytes());
+            }
+        }
+    }
+    body
+}
+
+fn kafka_offset_for_leader_epoch_request_with_topic_count_body(topic_count: i32) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&topic_count.to_be_bytes());
+    body
+}
+
+fn kafka_offset_for_leader_epoch_flexible_request_with_partition_count_body(
+    partition_count: usize,
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&(-2_i32).to_be_bytes());
+    push_unsigned_varint(&mut body, 2);
+    push_compact_string(&mut body, "orders");
+    push_unsigned_varint(&mut body, partition_count + 1);
+    body
+}
+
 fn kafka_list_offsets_request_body(api_version: i16, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&(-1_i32).to_be_bytes());
@@ -22590,6 +22883,70 @@ fn kafka_offset_delete_response_with_partition_count_frame(partition_count: i32)
     response.extend_from_slice(&6_i16.to_be_bytes());
     response.extend_from_slice(b"orders");
     response.extend_from_slice(&partition_count.to_be_bytes());
+    kafka_frame(&response)
+}
+
+type OffsetForLeaderEpochResponsePartitionFixture = (i16, i32, i32, i64);
+type OffsetForLeaderEpochResponseTopicFixture<'a> =
+    (&'a str, &'a [OffsetForLeaderEpochResponsePartitionFixture]);
+
+fn kafka_offset_for_leader_epoch_response_frame(
+    correlation_id: i32,
+    api_version: i16,
+    topics: &[OffsetForLeaderEpochResponseTopicFixture<'_>],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    if api_version >= 4 {
+        push_unsigned_varint(&mut response, 0);
+    }
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    if api_version >= 4 {
+        push_unsigned_varint(&mut response, topics.len() + 1);
+        for (topic, partitions) in topics {
+            push_compact_string(&mut response, topic);
+            push_unsigned_varint(&mut response, partitions.len() + 1);
+            for (error_code, partition, leader_epoch, end_offset) in *partitions {
+                response.extend_from_slice(&error_code.to_be_bytes());
+                response.extend_from_slice(&partition.to_be_bytes());
+                response.extend_from_slice(&leader_epoch.to_be_bytes());
+                response.extend_from_slice(&end_offset.to_be_bytes());
+                push_unsigned_varint(&mut response, 0);
+            }
+            push_unsigned_varint(&mut response, 0);
+        }
+        push_unsigned_varint(&mut response, 0);
+    } else {
+        response.extend_from_slice(&(topics.len() as i32).to_be_bytes());
+        for (topic, partitions) in topics {
+            push_kafka_string(&mut response, topic);
+            response.extend_from_slice(&(partitions.len() as i32).to_be_bytes());
+            for (error_code, partition, leader_epoch, end_offset) in *partitions {
+                response.extend_from_slice(&error_code.to_be_bytes());
+                response.extend_from_slice(&partition.to_be_bytes());
+                response.extend_from_slice(&leader_epoch.to_be_bytes());
+                response.extend_from_slice(&end_offset.to_be_bytes());
+            }
+        }
+    }
+    kafka_frame(&response)
+}
+
+fn kafka_offset_for_leader_epoch_response_with_topic_count_frame(
+    api_version: i16,
+    topic_count: usize,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    if api_version >= 4 {
+        push_unsigned_varint(&mut response, 0);
+    }
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    if api_version >= 4 {
+        push_unsigned_varint(&mut response, topic_count + 1);
+    } else {
+        response.extend_from_slice(&(topic_count as i32).to_be_bytes());
+    }
     kafka_frame(&response)
 }
 

@@ -35,7 +35,8 @@ use e_navigator_protocol::{
         parse_kafka_list_transactions_response, parse_kafka_metadata_response,
         parse_kafka_offset_commit_response,
         parse_kafka_offset_delete_response, parse_kafka_offset_fetch_response,
-        parse_kafka_produce_response, parse_kafka_push_telemetry_response,
+        parse_kafka_offset_for_leader_epoch_response, parse_kafka_produce_response,
+        parse_kafka_push_telemetry_response,
         parse_kafka_read_share_group_state_response,
         parse_kafka_read_share_group_state_summary_response, parse_kafka_remove_raft_voter_response,
         parse_kafka_request, parse_kafka_renew_delegation_token_response,
@@ -129,6 +130,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_offset_fetch_response(data, 1, &config);
     let _ = parse_kafka_offset_fetch_response(data, 5, &config);
     let _ = parse_kafka_offset_delete_response(data, 0, &config);
+    let _ = parse_kafka_offset_for_leader_epoch_response(data, 4, &config);
     let _ = parse_kafka_list_offsets_response(data, 1, &config);
     let _ = parse_kafka_list_offsets_response(data, 5, &config);
     let _ = parse_kafka_delete_records_response(data, 0, &config);
