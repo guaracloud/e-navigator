@@ -5,6 +5,10 @@ use e_navigator_core::ProtocolSourceConfig;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
+    http2::{
+        HTTP2_FLAG_END_STREAM, HTTP2_FRAME_TYPE_HEADERS, HpackDecoder, parse_http2_frame_header,
+        parse_http2_request_headers_frame, parse_http2_response_headers_frame,
+    },
     kafka::{parse_kafka_request, parse_kafka_response_for_api_key},
     mongodb::{parse_mongodb_message, parse_mongodb_response},
     mysql::{parse_mysql_command, parse_mysql_response},
@@ -166,6 +170,7 @@ impl ProtocolPortMap {
     pub(crate) fn from_config(config: &ProtocolSourceConfig) -> Self {
         let mut entries = Vec::new();
         let protocols = [
+            (StreamProtocol::Http2, &config.http2_ports),
             (StreamProtocol::Kafka, &config.kafka_ports),
             (StreamProtocol::Mongodb, &config.mongodb_ports),
             (StreamProtocol::Mysql, &config.mysql_ports),
@@ -260,11 +265,20 @@ struct InFlightRequest {
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug)]
+struct Http2ConnectionState {
+    request_hpack: HpackDecoder,
+    response_hpack: HpackDecoder,
+    streams: std::collections::BTreeMap<u32, InFlightRequest>,
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug)]
 struct ConnectionStream {
     protocol: StreamProtocol,
     request_decoder: ProtocolStreamDecoder,
     response_decoder: ProtocolStreamDecoder,
     in_flight: std::collections::VecDeque<InFlightRequest>,
+    http2: Option<Http2ConnectionState>,
     context: ObservationContext,
     last_seen_unix_nanos: u64,
 }
@@ -384,6 +398,11 @@ impl ProtocolStreamRegistry {
                     limits,
                 ),
                 in_flight: std::collections::VecDeque::new(),
+                http2: (protocol == StreamProtocol::Http2).then(|| Http2ConnectionState {
+                    request_hpack: HpackDecoder::new(),
+                    response_hpack: HpackDecoder::new(),
+                    streams: std::collections::BTreeMap::new(),
+                }),
                 context: ObservationContext::from_raw(&raw),
                 last_seen_unix_nanos: observed_unix_nanos,
             });
@@ -399,7 +418,19 @@ impl ProtocolStreamRegistry {
         };
         decoder.push_chunk(payload, u64::from(raw.payload_total_len), &mut frames);
 
-        if raw.direction == RAW_PROTOCOL_DIRECTION_WRITE {
+        if stream.protocol == StreamProtocol::Http2 {
+            handle_http2_frames(
+                stream,
+                &frames,
+                raw.direction == RAW_PROTOCOL_DIRECTION_WRITE,
+                &self.extraction,
+                &self.host,
+                &self.procfs_root,
+                &mut self.counters,
+                observed_unix_nanos,
+                signals,
+            );
+        } else if raw.direction == RAW_PROTOCOL_DIRECTION_WRITE {
             handle_request_frames(
                 stream,
                 &frames,
@@ -442,6 +473,19 @@ impl ProtocolStreamRegistry {
             && let Some(mut stream) = self.connections.remove(&id)
         {
             self.counters.evicted_connections += 1;
+            if let Some(http2) = stream.http2.as_mut() {
+                while let Some((_, entry)) = http2.streams.pop_first() {
+                    self.counters.unmatched_evicted += 1;
+                    signals.push(build_observation(
+                        self.host.clone(),
+                        &self.procfs_root,
+                        &stream.context,
+                        entry.parsed,
+                        entry.started_unix_nanos,
+                        None,
+                    ));
+                }
+            }
             for entry in stream.in_flight.drain(..) {
                 self.counters.unmatched_evicted += 1;
                 signals.push(build_observation(
@@ -561,6 +605,8 @@ enum ResponseAction {
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn response_action(protocol: StreamProtocol, frame: &[u8]) -> ResponseAction {
     match protocol {
+        // HTTP/2 uses stream-id matching, never the FIFO queue.
+        StreamProtocol::Http2 => ResponseAction::Ignore,
         StreamProtocol::Kafka | StreamProtocol::Mongodb | StreamProtocol::Redis => {
             ResponseAction::PopOne
         }
@@ -677,6 +723,177 @@ fn handle_response_frames(
     }
 }
 
+/// Processes reassembled HTTP/2 frames for one direction. Requests are
+/// keyed by stream id; responses merge status semantics into the stream
+/// entry and emit when the stream ends.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[allow(clippy::too_many_arguments)]
+fn handle_http2_frames(
+    stream: &mut ConnectionStream,
+    frames: &[StreamFrame],
+    is_request_direction: bool,
+    extraction: &ProtocolExtractionConfig,
+    host: &Option<String>,
+    procfs_root: &std::path::Path,
+    counters: &mut ProtocolRegistryCounters,
+    observed_unix_nanos: u64,
+    signals: &mut Vec<SignalEnvelope>,
+) {
+    for frame in frames {
+        let (frame_bytes, truncated) = match frame {
+            StreamFrame::Complete(frame_bytes) => (frame_bytes.as_slice(), false),
+            StreamFrame::Truncated { prefix, .. } => {
+                counters.truncated_frames += 1;
+                (prefix.as_slice(), true)
+            }
+        };
+        // The client connection preface is not a frame.
+        if is_request_direction && frame_bytes.starts_with(b"PRI * HTTP/2.0") {
+            continue;
+        }
+        let Ok(header) = parse_http2_frame_header(frame_bytes) else {
+            counters.unparsed_frames += 1;
+            continue;
+        };
+        let payload = &frame_bytes[frame_bytes.len().min(9)..];
+        let Some(http2) = stream.http2.as_mut() else {
+            return;
+        };
+
+        if is_request_direction {
+            if header.frame_type != HTTP2_FRAME_TYPE_HEADERS || header.stream_id == 0 {
+                counters.response_continuations += 1;
+                continue;
+            }
+            let parsed = if truncated {
+                counters.unparsed_frames += 1;
+                ParsedRequestFrame {
+                    protocol: ProtocolKind::Http,
+                    operation: None,
+                    warning: Some("truncated_request_frame".to_string()),
+                    attributes: Vec::new(),
+                }
+            } else {
+                match parse_http2_request_headers_frame(
+                    &mut http2.request_hpack,
+                    &header,
+                    payload,
+                    extraction,
+                ) {
+                    Ok(parsed) => ParsedRequestFrame {
+                        protocol: parsed.protocol,
+                        operation: parsed.method,
+                        warning: parsed.warning,
+                        attributes: parsed.attributes,
+                    },
+                    Err(_) => {
+                        counters.unparsed_frames += 1;
+                        ParsedRequestFrame {
+                            protocol: ProtocolKind::Http,
+                            operation: None,
+                            warning: Some("unparsed_request_frame".to_string()),
+                            attributes: Vec::new(),
+                        }
+                    }
+                }
+            };
+            if http2.streams.len() >= MAX_IN_FLIGHT_REQUESTS
+                && let Some((_, entry)) = http2.streams.pop_first()
+            {
+                counters.unmatched_overflow += 1;
+                signals.push(build_observation(
+                    host.clone(),
+                    procfs_root,
+                    &stream.context,
+                    entry.parsed,
+                    entry.started_unix_nanos,
+                    None,
+                ));
+            }
+            http2.streams.insert(
+                header.stream_id,
+                InFlightRequest {
+                    parsed,
+                    started_unix_nanos: observed_unix_nanos,
+                    kafka_api_key: -1,
+                    kafka_api_version: -1,
+                },
+            );
+            continue;
+        }
+
+        // Response direction.
+        if header.stream_id == 0 {
+            counters.response_continuations += 1;
+            continue;
+        }
+        let Some(mut entry) = http2.streams.remove(&header.stream_id) else {
+            if header.frame_type == HTTP2_FRAME_TYPE_HEADERS {
+                counters.orphan_responses += 1;
+            }
+            continue;
+        };
+
+        if header.frame_type == HTTP2_FRAME_TYPE_HEADERS {
+            if truncated {
+                counters.unparsed_responses += 1;
+                entry
+                    .parsed
+                    .warning
+                    .get_or_insert_with(|| "truncated_response_frame".to_string());
+            } else {
+                match parse_http2_response_headers_frame(
+                    &mut http2.response_hpack,
+                    &header,
+                    payload,
+                    extraction,
+                ) {
+                    Ok(response) => {
+                        counters.matched_responses += 1;
+                        if response.protocol == ProtocolKind::Grpc {
+                            entry.parsed.protocol = ProtocolKind::Grpc;
+                        }
+                        for attribute in response.attributes {
+                            if entry.parsed.attributes.len() >= extraction.max_attributes {
+                                break;
+                            }
+                            if !entry
+                                .parsed
+                                .attributes
+                                .iter()
+                                .any(|existing| existing.key == attribute.key)
+                            {
+                                entry.parsed.attributes.push(attribute);
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        counters.unparsed_responses += 1;
+                        entry
+                            .parsed
+                            .warning
+                            .get_or_insert_with(|| "unparsed_response_frame".to_string());
+                    }
+                }
+            }
+        }
+
+        if header.flags & HTTP2_FLAG_END_STREAM != 0 {
+            signals.push(build_observation(
+                host.clone(),
+                procfs_root,
+                &stream.context,
+                entry.parsed,
+                entry.started_unix_nanos,
+                Some(observed_unix_nanos),
+            ));
+        } else {
+            // Stream continues (for example gRPC trailers still pending).
+            http2.streams.insert(header.stream_id, entry);
+        }
+    }
+}
+
 /// Emits and drops in-flight requests older than the match timeout.
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn expire_in_flight(
@@ -722,6 +939,7 @@ fn placeholder_request(protocol: StreamProtocol, warning: &str) -> ParsedRequest
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn protocol_kind(protocol: StreamProtocol) -> ProtocolKind {
     match protocol {
+        StreamProtocol::Http2 => ProtocolKind::Http,
         StreamProtocol::Kafka => ProtocolKind::Kafka,
         StreamProtocol::Mongodb => ProtocolKind::Mongodb,
         StreamProtocol::Mysql => ProtocolKind::Mysql,
@@ -811,6 +1029,7 @@ fn parse_request_frame(
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedRequestFrame, &'static str> {
     match protocol {
+        StreamProtocol::Http2 => Err("http2_handled_separately"),
         StreamProtocol::Kafka => parse_kafka_request(frame, config)
             .map(|parsed| ParsedRequestFrame {
                 protocol: parsed.protocol,
@@ -880,6 +1099,7 @@ fn parse_response_frame(
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedResponseFrame, &'static str> {
     match protocol {
+        StreamProtocol::Http2 => Err("http2_handled_separately"),
         StreamProtocol::Kafka => {
             parse_kafka_response_for_api_key(kafka_api_key, kafka_api_version, frame, config)
                 .map(|parsed| ParsedResponseFrame {
@@ -1818,6 +2038,147 @@ mod tests {
 
         assert_eq!(registry.tracked_connections(), 2);
         assert_eq!(registry.counters().evicted_connections, 1);
+    }
+
+    fn http2_frame(frame_type: u8, flags: u8, stream_id: u32, payload: &[u8]) -> Vec<u8> {
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&(payload.len() as u32).to_be_bytes()[1..]);
+        frame.push(frame_type);
+        frame.push(flags);
+        frame.extend_from_slice(&stream_id.to_be_bytes());
+        frame.extend_from_slice(payload);
+        frame
+    }
+
+    #[test]
+    fn http2_request_matches_stream_response() {
+        let config = ProtocolSourceConfig {
+            http2_ports: vec![50051],
+            ..ProtocolSourceConfig::default()
+        };
+        let mut registry = ProtocolStreamRegistry::new(
+            None,
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
+        );
+
+        // Preface, then HEADERS for stream 1: :method GET (0x82), :path / (0x84).
+        let mut request_payload = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_vec();
+        request_payload.extend_from_slice(&http2_frame(1, 0x4, 1, &[0x82, 0x84]));
+        let request = raw_event(50051, &request_payload, request_payload.len() as u32);
+        assert!(handle_at(&mut registry, &request, 5_000).is_empty());
+
+        // Response HEADERS with :status 200 (0x88) and END_STREAM|END_HEADERS.
+        let response_payload = http2_frame(1, 0x4 | 0x1, 1, &[0x88]);
+        let mut response = raw_event(50051, &response_payload, response_payload.len() as u32);
+        response.direction = RAW_PROTOCOL_DIRECTION_READ;
+        let signals = handle_at(&mut registry, &response, 6_200);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.protocol, ProtocolKind::Http);
+        assert_eq!(observation.method.as_deref(), Some("GET"));
+        assert_eq!(observation.duration_nanos, Some(1_200));
+        assert!(
+            observation
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "http.response.status_code"
+                    && attribute.value == "200"),
+        );
+    }
+
+    #[test]
+    fn http2_multiplexed_streams_match_out_of_order() {
+        let config = ProtocolSourceConfig {
+            http2_ports: vec![50051],
+            ..ProtocolSourceConfig::default()
+        };
+        let mut registry = ProtocolStreamRegistry::new(
+            None,
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
+        );
+
+        let mut request_payload = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_vec();
+        request_payload.extend_from_slice(&http2_frame(1, 0x4, 1, &[0x82, 0x84]));
+        request_payload.extend_from_slice(&http2_frame(1, 0x4, 3, &[0x83, 0x84]));
+        let request = raw_event(50051, &request_payload, request_payload.len() as u32);
+        assert!(handle_at(&mut registry, &request, 5_000).is_empty());
+
+        // Stream 3 responds before stream 1.
+        let mut response_payload = http2_frame(1, 0x4 | 0x1, 3, &[0x88]);
+        response_payload.extend_from_slice(&http2_frame(1, 0x4 | 0x1, 1, &[0x88]));
+        let mut response = raw_event(50051, &response_payload, response_payload.len() as u32);
+        response.direction = RAW_PROTOCOL_DIRECTION_READ;
+        let signals = handle_at(&mut registry, &response, 6_000);
+
+        assert_eq!(signals.len(), 2);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("POST"));
+        assert_eq!(observation(&signals[1]).method.as_deref(), Some("GET"));
+    }
+
+    #[test]
+    fn http2_grpc_trailers_complete_the_stream() {
+        let config = ProtocolSourceConfig {
+            http2_ports: vec![50051],
+            ..ProtocolSourceConfig::default()
+        };
+        let mut registry = ProtocolStreamRegistry::new(
+            None,
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
+        );
+
+        // gRPC request: :method POST, :path /pkg.Svc/Do, content-type
+        // application/grpc (all literal without indexing where needed).
+        let mut block = vec![0x83, 0x04];
+        let path = b"/pkg.Svc/Do";
+        block.push(path.len() as u8);
+        block.extend_from_slice(path);
+        block.push(0x0f);
+        block.push(31 - 15);
+        let content_type = b"application/grpc";
+        block.push(content_type.len() as u8);
+        block.extend_from_slice(content_type);
+        let mut request_payload = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_vec();
+        request_payload.extend_from_slice(&http2_frame(1, 0x4, 1, &block));
+        let request = raw_event(50051, &request_payload, request_payload.len() as u32);
+        assert!(handle_at(&mut registry, &request, 5_000).is_empty());
+
+        // Response headers without END_STREAM, then trailers with grpc-status.
+        let headers = http2_frame(1, 0x4, 1, &[0x88]);
+        let mut response = raw_event(50051, &headers, headers.len() as u32);
+        response.direction = RAW_PROTOCOL_DIRECTION_READ;
+        assert!(handle_at(&mut registry, &response, 5_500).is_empty());
+
+        let mut trailer_block = vec![0x00];
+        let name = b"grpc-status";
+        trailer_block.push(name.len() as u8);
+        trailer_block.extend_from_slice(name);
+        trailer_block.push(1);
+        trailer_block.push(b'0');
+        let trailers = http2_frame(1, 0x4 | 0x1, 1, &trailer_block);
+        let mut response = raw_event(50051, &trailers, trailers.len() as u32);
+        response.direction = RAW_PROTOCOL_DIRECTION_READ;
+        let signals = handle_at(&mut registry, &response, 6_000);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.protocol, ProtocolKind::Grpc);
+        assert_eq!(observation.duration_nanos, Some(1_000));
+        assert!(
+            observation
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "rpc.service" && attribute.value == "pkg.Svc"),
+        );
+        assert!(
+            observation
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "rpc.grpc.status_code" && attribute.value == "0"),
+        );
     }
 
     #[test]

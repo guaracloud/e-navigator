@@ -5,6 +5,9 @@ use super::{ConfigError, ConfigResult};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProtocolSourceConfig {
+    /// Cleartext HTTP/2 (h2c/gRPC) ports; empty disables HTTP/2 capture.
+    #[serde(default)]
+    pub http2_ports: Vec<u16>,
     #[serde(default = "default_protocol_source_kafka_ports")]
     pub kafka_ports: Vec<u16>,
     #[serde(default = "default_protocol_source_mongodb_ports")]
@@ -28,6 +31,7 @@ pub struct ProtocolSourceConfig {
 impl Default for ProtocolSourceConfig {
     fn default() -> Self {
         Self {
+            http2_ports: Vec::new(),
             kafka_ports: default_protocol_source_kafka_ports(),
             mongodb_ports: default_protocol_source_mongodb_ports(),
             mysql_ports: default_protocol_source_mysql_ports(),
@@ -51,6 +55,7 @@ impl ProtocolSourceConfig {
 
     pub fn port_protocols(&self) -> impl Iterator<Item = (&'static str, &[u16])> {
         [
+            ("http2", self.http2_ports.as_slice()),
             ("kafka", self.kafka_ports.as_slice()),
             ("mongodb", self.mongodb_ports.as_slice()),
             ("mysql", self.mysql_ports.as_slice()),
@@ -125,6 +130,7 @@ impl ProtocolSourceConfig {
 
 fn port_field(protocol: &str) -> &'static str {
     match protocol {
+        "http2" => "protocol_source.http2_ports",
         "kafka" => "protocol_source.kafka_ports",
         "mongodb" => "protocol_source.mongodb_ports",
         "mysql" => "protocol_source.mysql_ports",

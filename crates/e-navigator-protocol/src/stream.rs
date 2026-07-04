@@ -13,6 +13,7 @@ const MAX_REDIS_BOUNDARY_ITEMS: usize = 1024;
 /// Application protocol carried by a captured request stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamProtocol {
+    Http2,
     Kafka,
     Mongodb,
     Mysql,
@@ -311,6 +312,12 @@ pub fn frame_boundary(
         return FrameBoundary::NeedMoreBytes;
     }
     match (protocol, direction) {
+        (StreamProtocol::Http2, StreamDirection::Request) => {
+            http2_boundary(bytes, max_frame_bytes, true)
+        }
+        (StreamProtocol::Http2, StreamDirection::Response) => {
+            http2_boundary(bytes, max_frame_bytes, false)
+        }
         (StreamProtocol::Kafka, _) => kafka_boundary(bytes, max_frame_bytes),
         (StreamProtocol::Mongodb, _) => mongodb_boundary(bytes, max_frame_bytes),
         (StreamProtocol::Mysql, _) => mysql_boundary(bytes, max_frame_bytes),
@@ -331,6 +338,31 @@ fn checked_frame(total_len: usize, max_frame_bytes: usize) -> FrameBoundary {
         return FrameBoundary::Invalid;
     }
     FrameBoundary::Frame { total_len }
+}
+
+const HTTP2_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+const HTTP2_FRAME_HEADER_BYTES: usize = 9;
+
+fn http2_boundary(bytes: &[u8], max_frame_bytes: usize, allow_preface: bool) -> FrameBoundary {
+    if allow_preface && bytes[0] == b'P' {
+        let comparable = bytes.len().min(HTTP2_PREFACE.len());
+        if bytes[..comparable] != HTTP2_PREFACE[..comparable] {
+            return FrameBoundary::Invalid;
+        }
+        if bytes.len() < HTTP2_PREFACE.len() {
+            return FrameBoundary::NeedMoreBytes;
+        }
+        return checked_frame(HTTP2_PREFACE.len(), max_frame_bytes);
+    }
+    if bytes.len() < HTTP2_FRAME_HEADER_BYTES {
+        return FrameBoundary::NeedMoreBytes;
+    }
+    let length =
+        (usize::from(bytes[0]) << 16) | (usize::from(bytes[1]) << 8) | usize::from(bytes[2]);
+    match length.checked_add(HTTP2_FRAME_HEADER_BYTES) {
+        Some(total_len) => checked_frame(total_len, max_frame_bytes),
+        None => FrameBoundary::Invalid,
+    }
 }
 
 fn kafka_boundary(bytes: &[u8], max_frame_bytes: usize) -> FrameBoundary {
@@ -1044,6 +1076,50 @@ mod tests {
     }
 
     #[test]
+    fn http2_boundary_handles_preface_and_frames() {
+        let preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+        assert_eq!(
+            request_frame_boundary(StreamProtocol::Http2, preface, 1024),
+            FrameBoundary::Frame { total_len: 24 },
+        );
+        assert_eq!(
+            request_frame_boundary(StreamProtocol::Http2, &preface[..10], 1024),
+            FrameBoundary::NeedMoreBytes,
+        );
+        // Responses never contain the preface; 'P' starts a frame header.
+        let frame = [
+            0x00, 0x00, 0x04, 0x01, 0x04, 0x00, 0x00, 0x00, 0x01, 1, 2, 3, 4,
+        ];
+        assert_eq!(
+            frame_boundary(
+                StreamProtocol::Http2,
+                StreamDirection::Response,
+                &frame,
+                1024
+            ),
+            FrameBoundary::Frame { total_len: 13 },
+        );
+        assert_eq!(
+            frame_boundary(
+                StreamProtocol::Http2,
+                StreamDirection::Request,
+                &frame,
+                1024
+            ),
+            FrameBoundary::Frame { total_len: 13 },
+        );
+        assert_eq!(
+            frame_boundary(
+                StreamProtocol::Http2,
+                StreamDirection::Response,
+                &frame[..5],
+                1024
+            ),
+            FrameBoundary::NeedMoreBytes,
+        );
+    }
+
+    #[test]
     fn redis_response_boundary_walks_resp_values() {
         let cases: [(&[u8], FrameBoundary); 8] = [
             (b"+OK\r\n", FrameBoundary::Frame { total_len: 5 }),
@@ -1155,6 +1231,7 @@ mod tests {
     #[test]
     fn boundary_never_panics_on_arbitrary_bytes() {
         let protocols = [
+            StreamProtocol::Http2,
             StreamProtocol::Kafka,
             StreamProtocol::Mongodb,
             StreamProtocol::Mysql,

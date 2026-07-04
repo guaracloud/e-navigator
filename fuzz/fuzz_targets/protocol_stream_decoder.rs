@@ -7,7 +7,8 @@ use libfuzzer_sys::fuzz_target;
 
 const MAX_INPUT_BYTES: usize = 2048;
 
-const PROTOCOLS: [StreamProtocol; 6] = [
+const PROTOCOLS: [StreamProtocol; 7] = [
+    StreamProtocol::Http2,
     StreamProtocol::Kafka,
     StreamProtocol::Mongodb,
     StreamProtocol::Mysql,
