@@ -11,7 +11,7 @@ use e_navigator_signals::{
 };
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-pub(crate) const RAW_CPU_PROFILE_MAX_FRAMES: usize = 4;
+pub(crate) const RAW_CPU_PROFILE_MAX_FRAMES: usize = 32;
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[repr(C)]
@@ -488,7 +488,7 @@ mod tests {
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
             frame_count: 2,
-            instruction_pointers: [0xabc, 0xdef, 0, 0],
+            instruction_pointers: padded_pointers(&[0xabc, 0xdef, 0, 0]),
         };
 
         let signal = raw_cpu_profile_to_signal_with_clock(
@@ -572,7 +572,7 @@ mod tests {
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
             frame_count: RAW_CPU_PROFILE_MAX_FRAMES as u32,
-            instruction_pointers: [0x1, 0x2, 0x3, 0x4],
+            instruction_pointers: padded_pointers(&[0x1, 0x2, 0x3, 0x4]),
         };
         let config = CpuProfileSourceConfig {
             max_frames_per_sample: 2,
@@ -615,7 +615,7 @@ mod tests {
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
             frame_count: 1,
-            instruction_pointers: [0xabc, 0, 0, 0],
+            instruction_pointers: padded_pointers(&[0xabc, 0, 0, 0]),
         };
 
         assert!(
@@ -640,7 +640,7 @@ mod tests {
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
             frame_count: 2,
-            instruction_pointers: [0xabc, 0xdef, 0, 0],
+            instruction_pointers: padded_pointers(&[0xabc, 0xdef, 0, 0]),
         };
 
         let first = raw_cpu_profile_to_signal_with_clock(
@@ -768,7 +768,13 @@ mod tests {
 
     #[test]
     fn raw_cpu_profile_event_layout_size_matches_ebpf_abi() {
-        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 96);
+        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 320);
+    }
+
+    fn padded_pointers(values: &[u64]) -> [u64; RAW_CPU_PROFILE_MAX_FRAMES] {
+        let mut pointers = [0_u64; RAW_CPU_PROFILE_MAX_FRAMES];
+        pointers[..values.len()].copy_from_slice(values);
+        pointers
     }
 
     fn source_config() -> CpuProfileSourceConfig {

@@ -69,7 +69,7 @@ const NETWORK_IO_WRITE: u32 = 2;
 const NEG_EINPROGRESS: i64 = -115;
 const EXEC_EVENT_SOURCE_SYSCALL_ENTER: u32 = 1;
 const EXEC_EVENT_SOURCE_SCHED_EXEC: u32 = 2;
-const CPU_PROFILE_MAX_FRAMES: usize = 4;
+const CPU_PROFILE_MAX_FRAMES: usize = 32;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
