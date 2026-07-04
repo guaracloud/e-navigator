@@ -10,7 +10,8 @@ use e_navigator_protocol::{
         parse_kafka_alter_replica_log_dirs_response,
         parse_kafka_alter_user_scram_credentials_response, parse_kafka_api_versions_response,
         parse_kafka_broker_heartbeat_response, parse_kafka_consumer_group_describe_response,
-        parse_kafka_consumer_group_heartbeat_response, parse_kafka_create_acls_response,
+        parse_kafka_consumer_group_heartbeat_response,
+        parse_kafka_controller_registration_response, parse_kafka_create_acls_response,
         parse_kafka_create_delegation_token_response, parse_kafka_create_partitions_response,
         parse_kafka_create_topics_response, parse_kafka_delete_acls_response,
         parse_kafka_delete_groups_response, parse_kafka_delete_records_response,
@@ -341,6 +342,7 @@ proptest! {
         let _ = parse_kafka_allocate_producer_ids_response(&bytes, 0, &config);
         let _ = parse_kafka_consumer_group_heartbeat_response(&bytes, api_version.min(1), &config);
         let _ = parse_kafka_consumer_group_describe_response(&bytes, api_version.min(1), &config);
+        let _ = parse_kafka_controller_registration_response(&bytes, 0, &config);
         let _ = parse_kafka_get_telemetry_subscriptions_response(&bytes, 0, &config);
         let _ = parse_kafka_push_telemetry_response(&bytes, 0, &config);
         let _ = parse_kafka_list_config_resources_response(&bytes, api_version.min(1), &config);
@@ -3764,6 +3766,95 @@ fn rejects_malformed_kafka_share_group_heartbeat_requests() {
 }
 
 #[test]
+fn validates_kafka_controller_registration_request_without_listener_or_feature_values() {
+    let listeners: &[ControllerRegistrationListenerFixture<'_>] =
+        &[("controller.secret", "host.secret", 9093, 1)];
+    let features: &[ControllerRegistrationFeatureFixture<'_>] = &[("metadata.secret", 1, 9)];
+    let body = kafka_controller_registration_request_body(42, [7_u8; 16], listeners, features);
+    let bytes = kafka_flexible_request_frame(70, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka controller registration request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("controller_registration")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "70")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("42")
+                || attribute.value.contains("host")
+                || attribute.value.contains("metadata")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn rejects_malformed_kafka_controller_registration_requests() {
+    let config = ProtocolExtractionConfig::default();
+    let body = kafka_controller_registration_request_body(42, [7_u8; 16], &[], &[]);
+
+    assert_eq!(
+        parse_kafka_request(&kafka_flexible_request_frame(70, 1, None, &body), &config),
+        Err(KafkaExtraction::UnsupportedApiVersion)
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(70, 0, None, b"\0\0\0\x2a"),
+            &config
+        ),
+        Err(KafkaExtraction::MalformedFrame)
+    );
+
+    let long_listener_body = kafka_controller_registration_request_body(
+        42,
+        [7_u8; 16],
+        &[("controller.secret", "host", 9093, 1)],
+        &[],
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(70, 0, None, &long_listener_body),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 8,
+                max_tracestate_bytes: 32,
+            },
+        ),
+        Err(KafkaExtraction::ClientIdTooLong)
+    );
+
+    let mut oversized_listeners_body = Vec::new();
+    oversized_listeners_body.extend_from_slice(&42_i32.to_be_bytes());
+    oversized_listeners_body.extend_from_slice(&[7_u8; 16]);
+    oversized_listeners_body.push(1);
+    push_unsigned_varint(&mut oversized_listeners_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(70, 0, None, &oversized_listeners_body),
+            &config,
+        ),
+        Err(KafkaExtraction::FrameTooLong)
+    );
+}
+
+#[test]
 fn validates_kafka_consumer_group_describe_v1_request_without_group_values() {
     let body = kafka_consumer_group_describe_request_body(1, &["alpha.secret"]);
     let bytes = kafka_flexible_request_frame(69, 1, Some(b"secret-client"), &body);
@@ -7136,6 +7227,104 @@ fn rejects_malformed_kafka_share_group_heartbeat_responses() {
     assert_eq!(
         parse_kafka_share_group_heartbeat_response(&truncated, 1, &config),
         Err(KafkaExtraction::MalformedFrame)
+    );
+}
+
+#[test]
+fn extracts_kafka_controller_registration_ok_response_without_message_values() {
+    let bytes = kafka_controller_registration_response_frame(0, 0, None);
+
+    let extraction = parse_kafka_controller_registration_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("controller registration ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "controller_registration");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "70")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+}
+
+#[test]
+fn extracts_kafka_controller_registration_error_without_message_values() {
+    let bytes =
+        kafka_controller_registration_response_frame(0, 35, Some("controller secret denied"));
+
+    let extraction = parse_kafka_controller_registration_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("controller registration error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "controller_registration");
+    assert_eq!(extraction.status_code, "35");
+    assert_eq!(extraction.error_type.as_deref(), Some("35"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "35")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("denied")
+                || attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn rejects_malformed_kafka_controller_registration_responses() {
+    let config = ProtocolExtractionConfig::default();
+
+    assert_eq!(
+        parse_kafka_controller_registration_response(
+            &kafka_controller_registration_response_frame(0, 0, None),
+            1,
+            &config,
+        ),
+        Err(KafkaExtraction::UnsupportedApiVersion)
+    );
+
+    let mut truncated = kafka_controller_registration_response_frame(0, 0, None);
+    truncated.truncate(10);
+    assert_eq!(
+        parse_kafka_controller_registration_response(&truncated, 0, &config),
+        Err(KafkaExtraction::MalformedFrame)
+    );
+    assert_eq!(
+        parse_kafka_controller_registration_response(
+            &kafka_controller_registration_response_with_tag_value_len_frame(5),
+            0,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 8,
+                max_tracestate_bytes: 32,
+            },
+        ),
+        Err(KafkaExtraction::FrameTooLong)
     );
 }
 
@@ -10980,6 +11169,19 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
     )
     .expect("bounded kafka consumer group describe response parses");
     assert_eq!(bounded_consumer_group_describe_response.attributes.len(), 2);
+
+    let bounded_controller_registration_response = parse_kafka_controller_registration_response(
+        &kafka_controller_registration_response_frame(0, 0, None),
+        0,
+        &ProtocolExtractionConfig {
+            max_header_bytes: 128,
+            max_request_line_bytes: 64,
+            max_attributes: 2,
+            max_tracestate_bytes: 32,
+        },
+    )
+    .expect("bounded kafka controller registration response parses");
+    assert_eq!(bounded_controller_registration_response.attributes.len(), 2);
 
     let bounded_get_telemetry_subscriptions_response =
         parse_kafka_get_telemetry_subscriptions_response(
@@ -21486,6 +21688,38 @@ fn kafka_share_group_heartbeat_request_body(
     body
 }
 
+type ControllerRegistrationListenerFixture<'a> = (&'a str, &'a str, u16, i16);
+type ControllerRegistrationFeatureFixture<'a> = (&'a str, i16, i16);
+
+fn kafka_controller_registration_request_body(
+    controller_id: i32,
+    incarnation_id: [u8; 16],
+    listeners: &[ControllerRegistrationListenerFixture<'_>],
+    features: &[ControllerRegistrationFeatureFixture<'_>],
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&controller_id.to_be_bytes());
+    body.extend_from_slice(&incarnation_id);
+    body.push(1);
+    push_unsigned_varint(&mut body, listeners.len() + 1);
+    for (name, host, port, security_protocol) in listeners {
+        push_compact_string(&mut body, name);
+        push_compact_string(&mut body, host);
+        body.extend_from_slice(&port.to_be_bytes());
+        body.extend_from_slice(&security_protocol.to_be_bytes());
+        push_unsigned_varint(&mut body, 0);
+    }
+    push_unsigned_varint(&mut body, features.len() + 1);
+    for (name, min_version, max_version) in features {
+        push_compact_string(&mut body, name);
+        body.extend_from_slice(&min_version.to_be_bytes());
+        body.extend_from_slice(&max_version.to_be_bytes());
+        push_unsigned_varint(&mut body, 0);
+    }
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 fn kafka_consumer_group_describe_request_body(_api_version: i16, group_ids: &[&str]) -> Vec<u8> {
     let mut body = Vec::new();
     push_unsigned_varint(&mut body, group_ids.len() + 1);
@@ -24317,6 +24551,37 @@ fn kafka_share_group_heartbeat_response_with_partition_count_frame(
     push_unsigned_varint(&mut response, 2);
     response.extend_from_slice(&[7_u8; 16]);
     push_unsigned_varint(&mut response, partition_count + 1);
+    kafka_frame(&response)
+}
+
+fn kafka_controller_registration_response_frame(
+    correlation_id: i32,
+    error_code: i16,
+    error_message: Option<&str>,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&error_code.to_be_bytes());
+    push_compact_nullable_string(&mut response, error_message);
+    push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+fn kafka_controller_registration_response_with_tag_value_len_frame(
+    tag_value_len: usize,
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    push_compact_nullable_string(&mut response, None);
+    push_unsigned_varint(&mut response, 1);
+    push_unsigned_varint(&mut response, 0);
+    push_unsigned_varint(&mut response, tag_value_len);
+    response.resize(response.len() + tag_value_len, 0);
     kafka_frame(&response)
 }
 

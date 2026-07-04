@@ -11,6 +11,7 @@ use e_navigator_protocol::{
         parse_kafka_broker_heartbeat_response,
         parse_kafka_add_partitions_to_txn_response, parse_kafka_consumer_group_describe_response,
         parse_kafka_consumer_group_heartbeat_response, parse_kafka_create_acls_response,
+        parse_kafka_controller_registration_response,
         parse_kafka_create_delegation_token_response, parse_kafka_create_partitions_response,
         parse_kafka_create_topics_response, parse_kafka_delete_groups_response,
         parse_kafka_delete_records_response, parse_kafka_delete_acls_response,
@@ -105,6 +106,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_allocate_producer_ids_response(data, 0, &config);
     let _ = parse_kafka_consumer_group_heartbeat_response(data, 1, &config);
     let _ = parse_kafka_consumer_group_describe_response(data, 1, &config);
+    let _ = parse_kafka_controller_registration_response(data, 0, &config);
     let _ = parse_kafka_get_telemetry_subscriptions_response(data, 0, &config);
     let _ = parse_kafka_push_telemetry_response(data, 0, &config);
     let _ = parse_kafka_list_config_resources_response(data, 1, &config);
