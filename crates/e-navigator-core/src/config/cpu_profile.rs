@@ -25,6 +25,22 @@ pub struct CpuProfileSourceConfig {
     pub max_file_bytes: usize,
     #[serde(default)]
     pub backpressure: CpuProfileBackpressure,
+    /// Resolve captured instruction pointers to module and offset (and
+    /// best-effort local ELF symbol names) from procfs.
+    #[serde(default = "default_cpu_profile_symbolize")]
+    pub symbolize: bool,
+    /// Read local ELF symbol tables for function-name resolution. Disable to
+    /// export only module-relative offsets for offline symbolization.
+    #[serde(default = "default_cpu_profile_resolve_symbol_names")]
+    pub resolve_symbol_names: bool,
+}
+
+fn default_cpu_profile_symbolize() -> bool {
+    true
+}
+
+fn default_cpu_profile_resolve_symbol_names() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +64,8 @@ impl Default for CpuProfileSourceConfig {
             max_module_bytes: default_cpu_profile_max_module_bytes(),
             max_file_bytes: default_cpu_profile_max_file_bytes(),
             backpressure: CpuProfileBackpressure::default(),
+            symbolize: default_cpu_profile_symbolize(),
+            resolve_symbol_names: default_cpu_profile_resolve_symbol_names(),
         }
     }
 }

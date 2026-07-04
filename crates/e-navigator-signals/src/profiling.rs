@@ -54,6 +54,10 @@ pub struct ProfilingFrame {
     pub module: Option<String>,
     pub file: Option<String>,
     pub line: Option<u32>,
+    /// Module-relative virtual address (file offset into `module`) for the
+    /// captured instruction pointer, enabling offline symbolization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_offset: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

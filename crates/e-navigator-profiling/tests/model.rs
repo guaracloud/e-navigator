@@ -97,6 +97,7 @@ fn oversized_symbols_modules_and_files_are_truncated_on_char_boundaries() {
         module: Some("moduleabcdef".to_string()),
         file: Some("src/checkout/mod.rs".to_string()),
         line: Some(12),
+        module_offset: None,
     }]);
 
     let normalized = sample
@@ -171,6 +172,7 @@ fn missing_symbols_remain_missing_without_inventing_frames() {
         module: Some("libunknown.so".to_string()),
         file: None,
         line: None,
+        module_offset: None,
     }]);
     let normalized = sample
         .normalize(&NormalizationLimits::default())
@@ -209,6 +211,7 @@ fn deterministic_stack_ids_distinguish_missing_from_empty_fields() {
         module: Some("checkout".to_string()),
         file: None,
         line: None,
+        module_offset: None,
     }])
     .normalize(&NormalizationLimits::default())
     .expect("missing sample normalizes");
@@ -217,6 +220,7 @@ fn deterministic_stack_ids_distinguish_missing_from_empty_fields() {
         module: Some("checkout".to_string()),
         file: None,
         line: None,
+        module_offset: None,
     }])
     .normalize(&NormalizationLimits::default())
     .expect("empty sample normalizes");
@@ -422,6 +426,7 @@ fn frame(symbol: Option<String>) -> RawProfileFrame {
         module: Some("checkout".to_string()),
         file: None,
         line: None,
+        module_offset: None,
     }
 }
 
@@ -437,6 +442,7 @@ fn raw_frame_strategy() -> impl Strategy<Value = RawProfileFrame> {
             module,
             file,
             line,
+            module_offset: None,
         })
 }
 

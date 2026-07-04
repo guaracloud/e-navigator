@@ -646,6 +646,7 @@ fn sample_signal_with_stack(
                 module: Some("checkout".to_string()),
                 file: None,
                 line: None,
+                module_offset: None,
             }],
             process: Some(NetworkProcessIdentity {
                 pid: 42,

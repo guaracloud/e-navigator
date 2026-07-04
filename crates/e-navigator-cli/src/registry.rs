@@ -36,6 +36,7 @@ pub(crate) fn build_registry(
         {
             registry = registry.with_source(Box::new(AyaCpuProfileSource::new(
                 host.clone(),
+                config.attribution.procfs_root.clone(),
                 config.cpu_profile_source.clone(),
             )));
         }

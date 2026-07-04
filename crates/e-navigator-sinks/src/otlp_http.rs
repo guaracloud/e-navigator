@@ -1662,6 +1662,7 @@ mod tests {
                     module: Some("checkout".to_string()),
                     file: Some("/src/checkout.rs".to_string()),
                     line: Some(42),
+                    module_offset: None,
                 }],
                 process: Some(NetworkProcessIdentity {
                     pid: 42,

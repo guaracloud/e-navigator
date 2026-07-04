@@ -1900,6 +1900,7 @@ async fn profile_samples_reuse_existing_container_attribution_before_generation(
                 module: Some("profile-client".to_string()),
                 file: None,
                 line: None,
+                module_offset: None,
             }],
             process: Some(NetworkProcessIdentity {
                 pid: 101,

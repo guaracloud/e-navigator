@@ -62,6 +62,7 @@ pub(super) fn signals(
                 module: Some("libunknown.so".to_string()),
                 file: None,
                 line: None,
+                module_offset: None,
             }],
             process: Some(process.clone()),
             container: Some(container.clone()),
@@ -144,6 +145,7 @@ fn raw_profile_frame(symbol: Option<&str>, module: Option<&str>) -> RawProfileFr
         module: module.map(ToString::to_string),
         file: None,
         line: None,
+        module_offset: None,
     }
 }
 

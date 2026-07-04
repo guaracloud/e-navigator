@@ -40,6 +40,8 @@ pub struct RawProfileFrame {
     pub module: Option<String>,
     pub file: Option<String>,
     pub line: Option<u32>,
+    #[serde(default)]
+    pub module_offset: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,6 +172,7 @@ fn normalize_frame(frame: RawProfileFrame, limits: &NormalizationLimits) -> Prof
             .file
             .map(|value| truncate_utf8(&value, limits.max_file_bytes)),
         line: frame.line,
+        module_offset: frame.module_offset,
     }
 }
 
@@ -223,6 +226,10 @@ fn deterministic_stack_id(frames: &[ProfilingFrame]) -> String {
         hash_bytes(&mut hash, "\x1f");
         if let Some(line) = frame.line {
             hash_bytes(&mut hash, &line.to_string());
+        }
+        hash_bytes(&mut hash, "\x1f");
+        if let Some(offset) = frame.module_offset {
+            hash_bytes(&mut hash, &offset.to_string());
         }
         hash_bytes(&mut hash, "\x1e");
     }

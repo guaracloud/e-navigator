@@ -4,6 +4,8 @@ use e_navigator_core::CpuProfileBackpressure;
 use e_navigator_core::CpuProfileSourceConfig;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_profiling::model::{NormalizationLimits, RawProfileFrame, RawProfileSample};
+#[cfg(any(target_os = "linux", test))]
+use e_navigator_profiling::symbolize::{ElfSymbolTable, ProcessModuleMap};
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_signals::{
     NetworkProcessIdentity, ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind,
@@ -28,14 +30,136 @@ pub(crate) struct RawCpuProfileEvent {
     pub instruction_pointers: [u64; RAW_CPU_PROFILE_MAX_FRAMES],
 }
 
+/// Resolves a captured instruction pointer for a pid into a stack frame.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) trait FrameResolver {
+    fn resolve(&mut self, pid: u32, ip: u64) -> RawProfileFrame;
+}
+
+/// Fallback resolver that carries the raw instruction pointer as a hex
+/// symbol without module attribution.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug, Default)]
+pub(crate) struct RawAddressResolver;
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+impl FrameResolver for RawAddressResolver {
+    fn resolve(&mut self, _pid: u32, ip: u64) -> RawProfileFrame {
+        RawProfileFrame {
+            symbol: Some(format!("ip:{ip:016x}")),
+            module: None,
+            file: None,
+            line: None,
+            module_offset: None,
+        }
+    }
+}
+
+/// procfs-backed symbolizer: resolves instruction pointers to module and
+/// module-relative offset from `/proc/<pid>/maps`, with best-effort local
+/// ELF symbol-table name resolution. Per-pid maps and per-module symbol
+/// tables are cached with bounded capacity.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug)]
+pub(crate) struct ProcfsSymbolizer {
+    procfs_root: std::path::PathBuf,
+    resolve_symbols: bool,
+    max_cached_pids: usize,
+    max_cached_modules: usize,
+    maps: std::collections::BTreeMap<u32, ProcessModuleMap>,
+    symbols: std::collections::BTreeMap<String, Option<ElfSymbolTable>>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl ProcfsSymbolizer {
+    const MAX_MODULE_IMAGE_BYTES: u64 = 512 * 1024 * 1024;
+
+    pub(crate) fn new(procfs_root: std::path::PathBuf, resolve_symbols: bool) -> Self {
+        Self {
+            procfs_root,
+            resolve_symbols,
+            max_cached_pids: 1024,
+            max_cached_modules: 512,
+            maps: std::collections::BTreeMap::new(),
+            symbols: std::collections::BTreeMap::new(),
+        }
+    }
+
+    fn process_map(&mut self, pid: u32) -> &ProcessModuleMap {
+        if !self.maps.contains_key(&pid) {
+            if self.maps.len() >= self.max_cached_pids
+                && let Some(&oldest) = self.maps.keys().next()
+            {
+                self.maps.remove(&oldest);
+            }
+            let path = self.procfs_root.join(pid.to_string()).join("maps");
+            let parsed = std::fs::read_to_string(&path)
+                .map(|contents| ProcessModuleMap::parse_maps(&contents))
+                .unwrap_or_default();
+            self.maps.insert(pid, parsed);
+        }
+        self.maps.get(&pid).expect("map inserted above")
+    }
+
+    fn symbol_name(&mut self, module: &str, offset: u64) -> Option<String> {
+        if !self.resolve_symbols {
+            return None;
+        }
+        if !self.symbols.contains_key(module) {
+            if self.symbols.len() >= self.max_cached_modules
+                && let Some(oldest) = self.symbols.keys().next().cloned()
+            {
+                self.symbols.remove(&oldest);
+            }
+            let table = self.load_symbol_table(module);
+            self.symbols.insert(module.to_string(), table);
+        }
+        self.symbols
+            .get(module)
+            .and_then(|table| table.as_ref())
+            .and_then(|table| table.resolve(offset))
+            .map(ToString::to_string)
+    }
+
+    fn load_symbol_table(&self, module: &str) -> Option<ElfSymbolTable> {
+        let metadata = std::fs::metadata(module).ok()?;
+        if metadata.len() > Self::MAX_MODULE_IMAGE_BYTES {
+            return None;
+        }
+        let image = std::fs::read(module).ok()?;
+        let table = ElfSymbolTable::parse(&image);
+        (!table.is_empty()).then_some(table)
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl FrameResolver for ProcfsSymbolizer {
+    fn resolve(&mut self, pid: u32, ip: u64) -> RawProfileFrame {
+        let Some(location) = self.process_map(pid).resolve(ip) else {
+            return RawAddressResolver.resolve(pid, ip);
+        };
+        let symbol = self
+            .symbol_name(&location.module, location.module_offset)
+            .unwrap_or_else(|| format!("{}+{:#x}", location.module, location.module_offset));
+        RawProfileFrame {
+            symbol: Some(symbol),
+            module: Some(location.module),
+            file: None,
+            line: None,
+            module_offset: Some(location.module_offset),
+        }
+    }
+}
+
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn raw_cpu_profile_to_signal(
     bytes: &[u8],
     host: Option<String>,
     config: &CpuProfileSourceConfig,
+    resolver: &mut impl FrameResolver,
 ) -> Option<SignalEnvelope> {
-    raw_cpu_profile_to_signal_with_clock(bytes, host, config, now_unix_nanos())
+    raw_cpu_profile_to_signal_with_clock(bytes, host, config, now_unix_nanos(), resolver)
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -44,6 +168,7 @@ fn raw_cpu_profile_to_signal_with_clock(
     host: Option<String>,
     config: &CpuProfileSourceConfig,
     observed_unix_nanos: u64,
+    resolver: &mut impl FrameResolver,
 ) -> Option<SignalEnvelope> {
     if bytes.len() < core::mem::size_of::<RawCpuProfileEvent>() {
         return None;
@@ -60,12 +185,7 @@ fn raw_cpu_profile_to_signal_with_clock(
         .copied()
         .take(frame_count)
         .filter(|ip| *ip != 0)
-        .map(|ip| RawProfileFrame {
-            symbol: Some(format!("ip:{ip:016x}")),
-            module: None,
-            file: None,
-            line: None,
-        })
+        .map(|ip| resolver.resolve(raw.pid, ip))
         .collect::<Vec<_>>();
     let timestamp_unix_nanos = if raw.timestamp_unix_nanos == 0 {
         observed_unix_nanos
@@ -132,7 +252,8 @@ pub fn fuzz_decode_raw_cpu_profile_event(bytes: &[u8]) -> bool {
         ..CpuProfileSourceConfig::default()
     };
 
-    raw_cpu_profile_to_signal_with_clock(bytes, None, &config, 1_000).is_some()
+    raw_cpu_profile_to_signal_with_clock(bytes, None, &config, 1_000, &mut RawAddressResolver)
+        .is_some()
 }
 
 #[cfg(test)]
@@ -146,7 +267,13 @@ fn decode_cpu_profile_batch(
         .iter()
         .take(config.max_samples_per_batch)
         .filter_map(|event| {
-            raw_cpu_profile_to_signal_with_clock(event, host.clone(), config, observed_unix_nanos)
+            raw_cpu_profile_to_signal_with_clock(
+                event,
+                host.clone(),
+                config,
+                observed_unix_nanos,
+                &mut RawAddressResolver,
+            )
         })
         .collect()
 }
@@ -222,12 +349,21 @@ mod platform {
     #[derive(Debug, Clone)]
     pub struct AyaCpuProfileSource {
         host: Option<String>,
+        procfs_root: std::path::PathBuf,
         config: CpuProfileSourceConfig,
     }
 
     impl AyaCpuProfileSource {
-        pub fn new(host: Option<String>, config: CpuProfileSourceConfig) -> Self {
-            Self { host, config }
+        pub fn new(
+            host: Option<String>,
+            procfs_root: std::path::PathBuf,
+            config: CpuProfileSourceConfig,
+        ) -> Self {
+            Self {
+                host,
+                procfs_root,
+                config,
+            }
         }
     }
 
@@ -287,6 +423,11 @@ mod platform {
                 let config = self.config.clone();
                 let backpressure = config.backpressure;
                 let reader_shutdown = shutdown.clone();
+                let mut resolver = super::ProcfsSymbolizer::new(
+                    self.procfs_root.clone(),
+                    config.resolve_symbol_names,
+                );
+                let symbolize = config.symbolize;
 
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     while !reader_shutdown.is_stopped() {
@@ -302,11 +443,22 @@ mod platform {
                             match event {
                                 PerfBufferEvent::Sample { head, tail } => {
                                     let bytes = perf_sample_bytes(head, tail);
-                                    let Some(signal) = raw_cpu_profile_to_signal(
-                                        bytes.as_ref(),
-                                        host.clone(),
-                                        &config,
-                                    ) else {
+                                    let signal = if symbolize {
+                                        raw_cpu_profile_to_signal(
+                                            bytes.as_ref(),
+                                            host.clone(),
+                                            &config,
+                                            &mut resolver,
+                                        )
+                                    } else {
+                                        raw_cpu_profile_to_signal(
+                                            bytes.as_ref(),
+                                            host.clone(),
+                                            &config,
+                                            &mut super::RawAddressResolver,
+                                        )
+                                    };
+                                    let Some(signal) = signal else {
                                         return;
                                     };
                                     accepted += 1;
@@ -437,13 +589,19 @@ mod platform {
     #[derive(Debug, Clone)]
     pub struct AyaCpuProfileSource {
         host: Option<String>,
+        _procfs_root: std::path::PathBuf,
         _config: CpuProfileSourceConfig,
     }
 
     impl AyaCpuProfileSource {
-        pub fn new(host: Option<String>, config: CpuProfileSourceConfig) -> Self {
+        pub fn new(
+            host: Option<String>,
+            procfs_root: std::path::PathBuf,
+            config: CpuProfileSourceConfig,
+        ) -> Self {
             Self {
                 host,
+                _procfs_root: procfs_root,
                 _config: config,
             }
         }
@@ -496,6 +654,7 @@ mod tests {
             Some("node-a".to_string()),
             &source_config(),
             10_000,
+            &mut RawAddressResolver,
         )
         .expect("raw profile event decodes");
 
@@ -550,6 +709,7 @@ mod tests {
             None,
             &source_config(),
             10_000,
+            &mut RawAddressResolver,
         )
         .expect("raw profile event decodes");
         let SignalPayload::ProfileSampleObservation(sample) = signal.payload else {
@@ -579,9 +739,14 @@ mod tests {
             ..source_config()
         };
 
-        let signal =
-            raw_cpu_profile_to_signal_with_clock(raw_as_bytes(&raw), None, &config, 10_000)
-                .expect("raw profile event decodes");
+        let signal = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &config,
+            10_000,
+            &mut RawAddressResolver,
+        )
+        .expect("raw profile event decodes");
         let SignalPayload::ProfileSampleObservation(sample) = signal.payload else {
             panic!("expected profile sample");
         };
@@ -597,10 +762,93 @@ mod tests {
     }
 
     #[test]
+    fn procfs_symbolizer_reads_maps_from_root() {
+        let dir = std::env::temp_dir().join(format!("e-nav-symtest-{}", std::process::id()));
+        let pid_dir = dir.join("777");
+        std::fs::create_dir_all(&pid_dir).expect("create procfs dir");
+        std::fs::write(
+            pid_dir.join("maps"),
+            "55f000000000-55f000010000 r-xp 00001000 fd:00 100 /usr/bin/app\n",
+        )
+        .expect("write maps");
+
+        let mut symbolizer = ProcfsSymbolizer::new(dir.clone(), false);
+        let frame = symbolizer.resolve(777, 0x55f000000500);
+        assert_eq!(frame.module.as_deref(), Some("/usr/bin/app"));
+        assert_eq!(frame.module_offset, Some(0x1500));
+        // An unmapped ip falls back to a raw hex symbol.
+        let fallback = symbolizer.resolve(777, 0x10);
+        assert_eq!(fallback.module, None);
+        assert!(fallback.symbol.as_deref().unwrap().starts_with("ip:"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn procfs_symbolizer_resolves_module_and_offset() {
+        struct FixedMapResolver;
+        impl FrameResolver for FixedMapResolver {
+            fn resolve(&mut self, _pid: u32, ip: u64) -> RawProfileFrame {
+                let map = e_navigator_profiling::symbolize::ProcessModuleMap::parse_maps(
+                    "55f000000000-55f000010000 r-xp 00001000 fd:00 100 /usr/bin/app\n",
+                );
+                match map.resolve(ip) {
+                    Some(location) => RawProfileFrame {
+                        symbol: Some(format!("{}+{:#x}", location.module, location.module_offset)),
+                        module: Some(location.module),
+                        file: None,
+                        line: None,
+                        module_offset: Some(location.module_offset),
+                    },
+                    None => RawAddressResolver.resolve(0, ip),
+                }
+            }
+        }
+
+        let raw = RawCpuProfileEvent {
+            pid: 4242,
+            tid: 4243,
+            uid: 1000,
+            cgroup_id: 0,
+            sample_count: 1,
+            timestamp_unix_nanos: 1_000,
+            command: fixed_command("app"),
+            frame_count: 1,
+            instruction_pointers: {
+                let mut pointers = [0_u64; RAW_CPU_PROFILE_MAX_FRAMES];
+                pointers[0] = 0x55f000000500;
+                pointers
+            },
+        };
+        let signal = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &source_config(),
+            10_000,
+            &mut FixedMapResolver,
+        )
+        .expect("symbolized sample decodes");
+        let SignalPayload::ProfileSampleObservation(sample) = signal.payload else {
+            panic!("expected profile sample");
+        };
+        assert_eq!(sample.stack_frames.len(), 1);
+        let frame = &sample.stack_frames[0];
+        assert_eq!(frame.module.as_deref(), Some("/usr/bin/app"));
+        assert_eq!(frame.module_offset, Some(0x1500));
+        assert_eq!(frame.symbol.as_deref(), Some("/usr/bin/app+0x1500"));
+    }
+
+    #[test]
     fn malformed_event_is_rejected() {
         assert!(
-            raw_cpu_profile_to_signal_with_clock(&[1, 2, 3], None, &source_config(), 10_000)
-                .is_none()
+            raw_cpu_profile_to_signal_with_clock(
+                &[1, 2, 3],
+                None,
+                &source_config(),
+                10_000,
+                &mut RawAddressResolver,
+            )
+            .is_none()
         );
     }
 
@@ -623,7 +871,8 @@ mod tests {
                 raw_as_bytes(&raw),
                 None,
                 &source_config(),
-                10_000
+                10_000,
+                &mut RawAddressResolver,
             )
             .is_none()
         );
@@ -648,6 +897,7 @@ mod tests {
             Some("node-a".to_string()),
             &source_config(),
             10_000,
+            &mut RawAddressResolver,
         )
         .expect("first sample decodes");
         let second = raw_cpu_profile_to_signal_with_clock(
@@ -655,6 +905,7 @@ mod tests {
             Some("node-a".to_string()),
             &source_config(),
             10_000,
+            &mut RawAddressResolver,
         )
         .expect("second sample decodes");
 
@@ -706,6 +957,7 @@ mod tests {
             Some("node-a".to_string()),
             &source_config(),
             10_000,
+            &mut RawAddressResolver,
         )
         .expect("raw profile event decodes");
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
@@ -742,6 +994,7 @@ mod tests {
             Some("node-a".to_string()),
             &source_config(),
             10_000,
+            &mut RawAddressResolver,
         )
         .expect("raw profile event decodes");
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);

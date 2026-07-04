@@ -33,6 +33,7 @@ proptest! {
                     module: Some("checkout".to_string()),
                     file: None,
                     line: None,
+                    module_offset: None,
                 }],
                 process: Some(process()),
                 container: Some(container()),
@@ -72,6 +73,7 @@ fn serializes_cpu_profile_sample_with_bounded_stack_and_context() {
                 module: Some("checkout".to_string()),
                 file: None,
                 line: None,
+                module_offset: None,
             }],
             process: Some(process()),
             container: Some(container()),
@@ -252,6 +254,7 @@ fn profile_sample_constructor_bounds_stack_frames_before_json_stdout() {
             module: Some("m".repeat(320)),
             file: Some("f".repeat(320)),
             line: Some(index),
+            module_offset: None,
         })
         .collect();
 
@@ -550,6 +553,7 @@ fn serializes_stack_trace_observation_with_optional_missing_symbols() {
                 module: Some("libunknown.so".to_string()),
                 file: None,
                 line: None,
+                module_offset: None,
             }],
             process: Some(process()),
             container: Some(container()),

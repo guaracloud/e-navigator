@@ -137,6 +137,7 @@ fn formats_profile_sample_without_raw_stack_attribute_labels() {
                 module: Some("checkout".to_string()),
                 file: Some("/src/checkout.rs".to_string()),
                 line: Some(42),
+                module_offset: None,
             }],
             process: None,
             container: None,
@@ -251,6 +252,7 @@ fn otlp_profile_bounds_sample_attributes_and_stack_frames() {
                 module: Some(long_value.clone()),
                 file: Some(long_value.clone()),
                 line: Some(index as u32),
+                module_offset: None,
             })
             .collect();
     }
@@ -460,12 +462,14 @@ fn pprof_profile_sample_encodes_stack_values_and_safe_labels() {
                     module: Some("checkout".to_string()),
                     file: Some("/src/checkout.rs".to_string()),
                     line: Some(42),
+                    module_offset: None,
                 },
                 ProfilingFrame {
                     symbol: Some("tokio::runtime".to_string()),
                     module: Some("tokio".to_string()),
                     file: None,
                     line: None,
+                    module_offset: None,
                 },
             ],
             process: Some(NetworkProcessIdentity {
@@ -545,6 +549,7 @@ fn pprof_profile_bounds_canonical_label_values() {
             module: Some("checkout".to_string()),
             file: Some("/src/checkout.rs".to_string()),
             line: Some(42),
+            module_offset: None,
         }];
         sample.thread_name = Some(long_value.clone());
         if let Some(process) = &mut sample.process {
@@ -596,6 +601,7 @@ fn pprof_profile_attributes_cannot_overwrite_canonical_labels() {
             module: Some("checkout".to_string()),
             file: Some("/src/checkout.rs".to_string()),
             line: Some(42),
+            module_offset: None,
         }];
         sample.thread_id = Some(7);
         sample.thread_name = Some("worker".to_string());
@@ -647,6 +653,7 @@ fn pprof_profile_bounds_frame_string_values() {
                 module: Some("checkout".to_string()),
                 file: Some(long_value),
                 line: Some(42),
+                module_offset: None,
             }],
             process: None,
             container: None,
@@ -685,6 +692,7 @@ fn pprof_profile_bounds_stack_frame_count() {
             module: Some("checkout".to_string()),
             file: Some(format!("/src/frame_{index}.rs")),
             line: Some(index as u32),
+            module_offset: None,
         })
         .collect();
     let signal = SignalEnvelope::profile_sample_observation(
@@ -881,6 +889,7 @@ fn profile_formatters_drop_empty_attribute_keys() {
             module: Some("checkout".to_string()),
             file: Some("/src/checkout.rs".to_string()),
             line: Some(42),
+            module_offset: None,
         }];
         observation.attributes = vec![attr("", "empty"), attr("profiling.source", "fixture")];
     }
