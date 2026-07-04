@@ -48,7 +48,7 @@ const RAW_SAMPLE_CHANNEL_CAPACITY: usize = 1024;
 #[cfg(any(target_os = "linux", test))]
 const PROTOCOL_DIAGNOSTIC_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 #[cfg(any(target_os = "linux", test))]
-const PROTOCOL_DIAGNOSTIC_COUNTERS_LEN: usize = 9;
+const PROTOCOL_DIAGNOSTIC_COUNTERS_LEN: usize = 11;
 #[cfg(any(target_os = "linux", test))]
 const PROTOCOL_DIAGNOSTIC_COUNTER_NAMES: [&str; PROTOCOL_DIAGNOSTIC_COUNTERS_LEN] = [
     "write_enter",
@@ -60,6 +60,8 @@ const PROTOCOL_DIAGNOSTIC_COUNTER_NAMES: [&str; PROTOCOL_DIAGNOSTIC_COUNTERS_LEN
     "null_or_empty",
     "copy_empty",
     "output_attempt",
+    "writev_enter",
+    "sendmsg_enter",
 ];
 
 /// Raw payload capture event; must stay byte-identical to the eBPF-side
@@ -1309,6 +1311,18 @@ mod platform {
             )?;
             attach_tracepoint(
                 &mut ebpf,
+                "tracepoint_protocol_writev_enter",
+                "syscalls",
+                "sys_enter_writev",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_protocol_sendmsg_enter",
+                "syscalls",
+                "sys_enter_sendmsg",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
                 "tracepoint_protocol_read_enter",
                 "syscalls",
                 "sys_enter_read",
@@ -1611,6 +1625,8 @@ mod platform {
                             null_or_empty = delta.get(6),
                             copy_empty = delta.get(7),
                             output_attempt = delta.get(8),
+                            writev_enter = delta.get(9),
+                            sendmsg_enter = delta.get(10),
                             stage_names = ?super::PROTOCOL_DIAGNOSTIC_COUNTER_NAMES,
                             "source diagnostic protocol stage counters"
                         );

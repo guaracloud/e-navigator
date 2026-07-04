@@ -57,7 +57,10 @@ const PROTOCOL_DIAG_NON_TCP_CONNECTION: u32 = 5;
 const PROTOCOL_DIAG_NULL_OR_EMPTY: u32 = 6;
 const PROTOCOL_DIAG_COPY_EMPTY: u32 = 7;
 const PROTOCOL_DIAG_OUTPUT_ATTEMPT: u32 = 8;
-const PROTOCOL_DIAGNOSTIC_COUNTERS_LEN: u32 = 9;
+const PROTOCOL_DIAG_WRITEV_ENTER: u32 = 9;
+const PROTOCOL_DIAG_SENDMSG_ENTER: u32 = 10;
+const PROTOCOL_DIAGNOSTIC_COUNTERS_LEN: u32 = 11;
+const PROTOCOL_TOTAL_LEN_IOVECS: usize = 8;
 const NETWORK_EVENT_OPEN: u32 = 1;
 const NETWORK_EVENT_CLOSE: u32 = 2;
 const NETWORK_EVENT_FAILURE: u32 = 3;
@@ -574,6 +577,24 @@ pub fn tracepoint_protocol_write_enter(ctx: TracePointContext) -> u32 {
 #[tracepoint]
 pub fn tracepoint_protocol_sendto_enter(ctx: TracePointContext) -> u32 {
     match try_tracepoint_protocol_write_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_writev_enter(ctx: TracePointContext) -> u32 {
+    record_protocol_diagnostic(PROTOCOL_DIAG_WRITEV_ENTER);
+    match try_tracepoint_protocol_writev_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_sendmsg_enter(ctx: TracePointContext) -> u32 {
+    record_protocol_diagnostic(PROTOCOL_DIAG_SENDMSG_ENTER);
+    match try_tracepoint_protocol_sendmsg_enter(&ctx) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
@@ -1495,6 +1516,93 @@ fn try_tracepoint_protocol_write_enter(ctx: &TracePointContext) -> Result<u32, i
         None => return Ok(0),
     };
     emit_protocol_data_event(ctx, &connection, fd, NETWORK_IO_WRITE, buffer, len)
+}
+
+fn try_tracepoint_protocol_writev_enter(ctx: &TracePointContext) -> Result<u32, i64> {
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let iov = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    let iov_len = unsafe { ctx.read_at::<u64>(32) }.map_err(|err| err as i64)?;
+    emit_protocol_iovec_event(ctx, fd, iov, iov_len)
+}
+
+fn try_tracepoint_protocol_sendmsg_enter(ctx: &TracePointContext) -> Result<u32, i64> {
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let message = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    if message.is_null() {
+        record_protocol_diagnostic(PROTOCOL_DIAG_NULL_OR_EMPTY);
+        return Ok(0);
+    }
+    let (iov, iov_len) = read_msghdr_iovecs(message)?;
+    emit_protocol_iovec_event(ctx, fd, iov, iov_len)
+}
+
+#[inline(always)]
+fn emit_protocol_iovec_event(
+    ctx: &TracePointContext,
+    fd: i32,
+    iov: *const u8,
+    iov_len: u64,
+) -> Result<u32, i64> {
+    if iov.is_null() || iov_len == 0 {
+        record_protocol_diagnostic(PROTOCOL_DIAG_NULL_OR_EMPTY);
+        return Ok(0);
+    }
+
+    let connection = match protocol_capture_connection(fd) {
+        Some(value) => value,
+        None => return Ok(0),
+    };
+
+    let event = protocol_data_event_scratch()?;
+    event.pid = connection.pid;
+    event.uid = connection.uid;
+    event.cgroup_id = current_cgroup_id();
+    event.fd = fd;
+    event.direction = NETWORK_IO_WRITE;
+    event.family = connection.family;
+    event.remote_port_be = connection.remote_port_be;
+    event.local_port_be = connection.local_port_be;
+    event.remote_addr_v4 = connection.remote_addr_v4;
+    event.local_addr_v4 = connection.local_addr_v4;
+    event.remote_addr_v6 = connection.remote_addr_v6;
+    event.local_addr_v6 = connection.local_addr_v6;
+    event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
+    event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
+
+    // Only the first iovec is copied; the remaining iovec bytes are
+    // accounted as an uncaptured tail gap through payload_total_len so the
+    // userspace stream decoder never splices non-adjacent bytes.
+    let mut total_len: u64 = 0;
+    let mut index: usize = 0;
+    while index < PROTOCOL_TOTAL_LEN_IOVECS {
+        if index as u64 >= iov_len {
+            break;
+        }
+        let entry = unsafe { iov.add(index * 16) };
+        let len = unsafe { bpf_probe_read_user::<u64>(entry.add(8).cast::<u64>()) }
+            .map_err(|err| err as i64)?;
+        total_len = total_len.saturating_add(len);
+        index += 1;
+    }
+    let first_buffer = unsafe { bpf_probe_read_user::<*const u8>(iov.cast::<*const u8>()) }
+        .map_err(|err| err as i64)?;
+    let first_len = unsafe { bpf_probe_read_user::<u64>(iov.add(8).cast::<u64>()) }
+        .map_err(|err| err as i64)?;
+    if !first_buffer.is_null() && first_len > 0 {
+        copy_protocol_payload(first_buffer, first_len, event)?;
+    }
+    event.payload_total_len = if total_len > u32::MAX as u64 {
+        u32::MAX
+    } else {
+        total_len as u32
+    };
+    if event.payload_len == 0 {
+        record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
+        return Ok(0);
+    }
+    record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
+    PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
+    Ok(0)
 }
 
 fn try_tracepoint_protocol_read_enter(ctx: &TracePointContext) -> Result<u32, i64> {
