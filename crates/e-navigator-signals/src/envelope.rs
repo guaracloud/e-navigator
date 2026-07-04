@@ -43,14 +43,14 @@ use crate::{
     DnsResponseEvent, ExecEvent, ExtractedTraceContextObservation, NetworkConnectionCloseEvent,
     NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkCounterMetric,
     NetworkDurationMetric, NetworkFlowSummaryEvent, NetworkFlowWarning, NetworkGaugeMetric,
-    NodeCpuObservation, NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation,
-    NodeMemoryObservation, ProcessExitEvent, ProcessLifecycleDurationEvent,
-    ProcessResourceObservation, ProfileSampleObservation, ProfilingSessionObservation,
-    ProfilingStackTraceObservation, ProfilingWarningObservation, ProtocolRequestObservation,
-    RequestCorrelationWarning, RequestSpanObservation, ResourceCounterMetric, ResourceGaugeMetric,
-    RuntimeSecurityFinding, ServiceInteractionSpanObservation, TraceCorrelationWarning,
-    TraceServicePathObservation, TraceSpanObservation, sanitize_profiling_attributes,
-    sanitize_profiling_frames,
+    NetworkTcpStatObservation, NodeCpuObservation, NodeDiskIoObservation,
+    NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation, ProcessExitEvent,
+    ProcessLifecycleDurationEvent, ProcessResourceObservation, ProfileSampleObservation,
+    ProfilingSessionObservation, ProfilingStackTraceObservation, ProfilingWarningObservation,
+    ProtocolRequestObservation, RequestCorrelationWarning, RequestSpanObservation,
+    ResourceCounterMetric, ResourceGaugeMetric, RuntimeSecurityFinding,
+    ServiceInteractionSpanObservation, TraceCorrelationWarning, TraceServicePathObservation,
+    TraceSpanObservation, sanitize_profiling_attributes, sanitize_profiling_frames,
 };
 
 pub const SIGNAL_SCHEMA_VERSION: u16 = 1;
@@ -71,6 +71,7 @@ pub enum SignalKind {
     NetworkCounterMetric,
     NetworkDurationMetric,
     NetworkGaugeMetric,
+    NetworkTcpStatObservation,
     DnsQuery,
     DnsResponse,
     DnsCounterMetric,
@@ -118,6 +119,7 @@ pub enum SignalPayload {
     NetworkCounterMetric(NetworkCounterMetric),
     NetworkDurationMetric(NetworkDurationMetric),
     NetworkGaugeMetric(NetworkGaugeMetric),
+    NetworkTcpStatObservation(NetworkTcpStatObservation),
     DnsQuery(DnsQueryEvent),
     DnsResponse(DnsResponseEvent),
     DnsCounterMetric(DnsCounterMetric),
@@ -242,6 +244,15 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
                     .map(SignalPayload::NetworkGaugeMetric)
                     .map_err(|err| {
                         D::Error::custom(format!("invalid network_gauge_metric payload: {err}"))
+                    })?
+            }
+            SignalKind::NetworkTcpStatObservation => {
+                serde_json::from_value::<NetworkTcpStatObservation>(raw.payload)
+                    .map(SignalPayload::NetworkTcpStatObservation)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid network_tcp_stat_observation payload: {err}"
+                        ))
                     })?
             }
             SignalKind::DnsQuery => serde_json::from_value::<DnsQueryEvent>(raw.payload)
@@ -567,6 +578,20 @@ impl SignalEnvelope {
             host,
             SignalKind::NetworkConnectionFailure,
             SignalPayload::NetworkConnectionFailure(event),
+        )
+    }
+
+    pub fn network_tcp_stat_observation(
+        source: impl Into<String>,
+        host: Option<String>,
+        mut event: NetworkTcpStatObservation,
+    ) -> Self {
+        crate::network::sanitize_network_tcp_stat_observation(&mut event);
+        Self::new(
+            source,
+            host,
+            SignalKind::NetworkTcpStatObservation,
+            SignalPayload::NetworkTcpStatObservation(event),
         )
     }
 
@@ -1188,6 +1213,7 @@ impl Signal for SignalEnvelope {
             SignalKind::NetworkConnectionOpen => "network_connection_open",
             SignalKind::NetworkConnectionClose => "network_connection_close",
             SignalKind::NetworkConnectionFailure => "network_connection_failure",
+            SignalKind::NetworkTcpStatObservation => "network_tcp_stat_observation",
             SignalKind::NetworkFlowSummary => "network_flow_summary",
             SignalKind::NetworkFlowWarning => "network_flow_warning",
             SignalKind::NetworkCounterMetric => "network_counter_metric",

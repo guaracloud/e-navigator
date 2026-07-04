@@ -64,6 +64,12 @@ const PROTOCOL_TOTAL_LEN_IOVECS: usize = 8;
 const NETWORK_EVENT_OPEN: u32 = 1;
 const NETWORK_EVENT_CLOSE: u32 = 2;
 const NETWORK_EVENT_FAILURE: u32 = 3;
+const TCP_STAT_KIND_RETRANSMIT: u32 = 1;
+const TCP_STAT_KIND_RESET: u32 = 2;
+const TCP_STAT_KIND_STATE: u32 = 3;
+const TCP_RESET_DIRECTION_SEND: u32 = 1;
+const TCP_RESET_DIRECTION_RECEIVE: u32 = 2;
+const AF_INET_U16: u16 = 2;
 const NETWORK_IO_READ: u32 = 1;
 const NETWORK_IO_WRITE: u32 = 2;
 const NEG_EINPROGRESS: i64 = -115;
@@ -115,6 +121,26 @@ pub struct RawNetworkEvent {
     pub duration_nanos: u64,
     pub bytes_sent: u64,
     pub bytes_received: u64,
+    pub command: [u8; 16],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RawTcpStatEvent {
+    pub kind: u32,
+    pub pid: u32,
+    pub cgroup_id: u64,
+    pub family: u32,
+    pub old_state: i32,
+    pub new_state: i32,
+    pub reset_direction: u32,
+    pub remote_port: u16,
+    pub local_port: u16,
+    pub remote_addr_v4: u32,
+    pub local_addr_v4: u32,
+    pub remote_addr_v6: [u8; 16],
+    pub local_addr_v6: [u8; 16],
+    pub timestamp_unix_nanos: u64,
     pub command: [u8; 16],
 }
 
@@ -268,6 +294,12 @@ static EXIT_EVENTS: PerfEventArray<RawExitEvent> = PerfEventArray::new(0);
 
 #[map]
 static NETWORK_EVENTS: PerfEventArray<RawNetworkEvent> = PerfEventArray::new(0);
+
+#[map]
+static TCP_STAT_EVENTS: PerfEventArray<RawTcpStatEvent> = PerfEventArray::new(0);
+
+#[map]
+static TCP_STAT_EVENT_SCRATCH: PerCpuArray<RawTcpStatEvent> = PerCpuArray::with_max_entries(1, 0);
 
 #[map]
 static CPU_PROFILE_EVENTS: PerfEventArray<RawCpuProfileEvent> = PerfEventArray::new(0);
@@ -764,6 +796,38 @@ pub fn tracepoint_recvmsg_exit(ctx: TracePointContext) -> u32 {
     }
 }
 
+#[tracepoint]
+pub fn tracepoint_tcp_set_state(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_tcp_set_state(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_tcp_retransmit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_tcp_retransmit(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_tcp_send_reset(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_tcp_reset(&ctx, TCP_RESET_DIRECTION_SEND) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_tcp_receive_reset(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_tcp_reset(&ctx, TCP_RESET_DIRECTION_RECEIVE) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
 #[perf_event]
 pub fn sample_cpu_profile(ctx: PerfEventContext) -> u32 {
     match try_sample_cpu_profile(ctx) {
@@ -845,6 +909,123 @@ fn try_tracepoint_process_exit(ctx: TracePointContext) -> Result<u32, i64> {
 
     EXIT_EVENTS.output(&ctx, &*event, 0);
     Ok(0)
+}
+
+fn tcp_stat_event_scratch() -> Result<&'static mut RawTcpStatEvent, i64> {
+    let ptr = TCP_STAT_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+    let event = unsafe { &mut *ptr };
+    event.kind = 0;
+    event.pid = 0;
+    event.cgroup_id = 0;
+    event.family = 0;
+    event.old_state = 0;
+    event.new_state = 0;
+    event.reset_direction = 0;
+    event.remote_port = 0;
+    event.local_port = 0;
+    event.remote_addr_v4 = 0;
+    event.local_addr_v4 = 0;
+    event.remote_addr_v6 = [0; 16];
+    event.local_addr_v6 = [0; 16];
+    event.timestamp_unix_nanos = 0;
+    event.command = [0; 16];
+    Ok(event)
+}
+
+fn tcp_stat_common(event: &mut RawTcpStatEvent) -> Result<(), i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    event.pid = (pid_tgid >> 32) as u32;
+    event.cgroup_id = current_cgroup_id();
+    event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
+    event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
+    Ok(())
+}
+
+// sock:inet_sock_set_state field offsets (stable): oldstate@16, newstate@20,
+// sport@24 (host order), dport@26 (host order), family@28, protocol@30,
+// saddr@32, daddr@36, saddr_v6@40, daddr_v6@56.
+fn try_tracepoint_tcp_set_state(ctx: &TracePointContext) -> Result<u32, i64> {
+    let protocol = unsafe { ctx.read_at::<u16>(30) }.map_err(|err| err as i64)?;
+    if u32::from(protocol) != IPPROTO_TCP {
+        return Ok(0);
+    }
+    let family = unsafe { ctx.read_at::<u16>(28) }.map_err(|err| err as i64)?;
+    let event = tcp_stat_event_scratch()?;
+    tcp_stat_common(event)?;
+    event.kind = TCP_STAT_KIND_STATE;
+    event.family = family as u32;
+    event.old_state = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    event.new_state = unsafe { ctx.read_at::<i32>(20) }.map_err(|err| err as i64)?;
+    event.local_port = unsafe { ctx.read_at::<u16>(24) }.map_err(|err| err as i64)?;
+    event.remote_port = unsafe { ctx.read_at::<u16>(26) }.map_err(|err| err as i64)?;
+    read_tcp_tuple_addrs(ctx, family, 32, 36, 40, 56, event)?;
+    TCP_STAT_EVENTS.output(ctx, &*event, 0);
+    Ok(0)
+}
+
+// tcp:tcp_retransmit_skb: sport@28 (host order), dport@30 (host order),
+// family@32, saddr@34, daddr@38, saddr_v6@42, daddr_v6@58.
+fn try_tracepoint_tcp_retransmit(ctx: &TracePointContext) -> Result<u32, i64> {
+    let family = unsafe { ctx.read_at::<u16>(32) }.map_err(|err| err as i64)?;
+    let event = tcp_stat_event_scratch()?;
+    tcp_stat_common(event)?;
+    event.kind = TCP_STAT_KIND_RETRANSMIT;
+    event.family = family as u32;
+    event.local_port = unsafe { ctx.read_at::<u16>(28) }.map_err(|err| err as i64)?;
+    event.remote_port = unsafe { ctx.read_at::<u16>(30) }.map_err(|err| err as i64)?;
+    read_tcp_tuple_addrs(ctx, family, 34, 38, 42, 58, event)?;
+    TCP_STAT_EVENTS.output(ctx, &*event, 0);
+    Ok(0)
+}
+
+// tcp:tcp_send_reset / tcp_receive_reset: src sockaddr@32, dest sockaddr@60
+// (sockaddr_in/in6). Within each: family@+0, port@+2 (network order),
+// v4 addr@+4, v6 addr@+8.
+fn try_tracepoint_tcp_reset(ctx: &TracePointContext, direction: u32) -> Result<u32, i64> {
+    let family = unsafe { ctx.read_at::<u16>(32) }.map_err(|err| err as i64)?;
+    if family != AF_INET_U16 && family as u32 != AF_INET6 {
+        return Ok(0);
+    }
+    let event = tcp_stat_event_scratch()?;
+    tcp_stat_common(event)?;
+    event.kind = TCP_STAT_KIND_RESET;
+    event.family = family as u32;
+    event.reset_direction = direction;
+    // src is local, dest is remote.
+    event.local_port = u16::from_be(unsafe { ctx.read_at::<u16>(34) }.map_err(|err| err as i64)?);
+    event.remote_port = u16::from_be(unsafe { ctx.read_at::<u16>(62) }.map_err(|err| err as i64)?);
+    if family == AF_INET_U16 {
+        event.local_addr_v4 = unsafe { ctx.read_at::<u32>(36) }.map_err(|err| err as i64)?;
+        event.remote_addr_v4 = unsafe { ctx.read_at::<u32>(64) }.map_err(|err| err as i64)?;
+    } else {
+        event.local_addr_v6 = unsafe { ctx.read_at::<[u8; 16]>(40) }.map_err(|err| err as i64)?;
+        event.remote_addr_v6 = unsafe { ctx.read_at::<[u8; 16]>(68) }.map_err(|err| err as i64)?;
+    }
+    TCP_STAT_EVENTS.output(ctx, &*event, 0);
+    Ok(0)
+}
+
+fn read_tcp_tuple_addrs(
+    ctx: &TracePointContext,
+    family: u16,
+    local_v4_offset: usize,
+    remote_v4_offset: usize,
+    local_v6_offset: usize,
+    remote_v6_offset: usize,
+    event: &mut RawTcpStatEvent,
+) -> Result<(), i64> {
+    if family == AF_INET_U16 {
+        event.local_addr_v4 =
+            unsafe { ctx.read_at::<u32>(local_v4_offset) }.map_err(|err| err as i64)?;
+        event.remote_addr_v4 =
+            unsafe { ctx.read_at::<u32>(remote_v4_offset) }.map_err(|err| err as i64)?;
+    } else if family as u32 == AF_INET6 {
+        event.local_addr_v6 =
+            unsafe { ctx.read_at::<[u8; 16]>(local_v6_offset) }.map_err(|err| err as i64)?;
+        event.remote_addr_v6 =
+            unsafe { ctx.read_at::<[u8; 16]>(remote_v6_offset) }.map_err(|err| err as i64)?;
+    }
+    Ok(())
 }
 
 fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {

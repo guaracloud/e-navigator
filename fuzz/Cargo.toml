@@ -117,6 +117,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "raw_tcp_stat_event_decode"
+path = "fuzz_targets/raw_tcp_stat_event_decode.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "raw_dns_event_decode"
 path = "fuzz_targets/raw_dns_event_decode.rs"
 test = false

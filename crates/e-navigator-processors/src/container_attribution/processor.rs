@@ -138,6 +138,19 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                 )
                 .await;
             }
+            SignalPayload::NetworkTcpStatObservation(event) => {
+                if let Some(process) = event.process.as_ref() {
+                    let pid = process.pid;
+                    let cgroup_id = process.cgroup_id;
+                    self.enrich_context(
+                        pid,
+                        cgroup_id,
+                        &mut event.container,
+                        &mut event.kubernetes,
+                    )
+                    .await;
+                }
+            }
             SignalPayload::NetworkFlowSummary(event) => {
                 self.enrich_network_flow_endpoint(&mut event.source);
                 self.enrich_network_flow_endpoint(&mut event.destination);

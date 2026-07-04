@@ -152,6 +152,124 @@ pub struct DependencyEndpoint {
     pub domain: Option<String>,
 }
 
+/// Whether a captured TCP stat is a retransmit, reset, or state transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum NetworkTcpStatKind {
+    Retransmit,
+    Reset,
+    StateTransition,
+}
+
+/// TCP connection state (subset of the kernel state machine).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum NetworkTcpState {
+    Established,
+    SynSent,
+    SynRecv,
+    FinWait1,
+    FinWait2,
+    TimeWait,
+    Close,
+    CloseWait,
+    LastAck,
+    Listen,
+    Closing,
+    NewSynRecv,
+}
+
+impl NetworkTcpState {
+    /// Maps a kernel TCP state number (1..=12) to a typed state.
+    pub fn from_kernel(state: i32) -> Option<Self> {
+        match state {
+            1 => Some(Self::Established),
+            2 => Some(Self::SynSent),
+            3 => Some(Self::SynRecv),
+            4 => Some(Self::FinWait1),
+            5 => Some(Self::FinWait2),
+            6 => Some(Self::TimeWait),
+            7 => Some(Self::Close),
+            8 => Some(Self::CloseWait),
+            9 => Some(Self::LastAck),
+            10 => Some(Self::Listen),
+            11 => Some(Self::Closing),
+            12 => Some(Self::NewSynRecv),
+            _ => None,
+        }
+    }
+
+    /// Stable low-cardinality label for the state.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Established => "established",
+            Self::SynSent => "syn_sent",
+            Self::SynRecv => "syn_recv",
+            Self::FinWait1 => "fin_wait1",
+            Self::FinWait2 => "fin_wait2",
+            Self::TimeWait => "time_wait",
+            Self::Close => "close",
+            Self::CloseWait => "close_wait",
+            Self::LastAck => "last_ack",
+            Self::Listen => "listen",
+            Self::Closing => "closing",
+            Self::NewSynRecv => "new_syn_recv",
+        }
+    }
+}
+
+/// Direction of an observed TCP reset relative to the local host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum NetworkTcpResetDirection {
+    Send,
+    Receive,
+}
+
+impl NetworkTcpResetDirection {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Send => "send",
+            Self::Receive => "receive",
+        }
+    }
+}
+
+/// A TCP stack event: retransmission, reset, or state transition, captured
+/// from kernel `tcp`/`sock` tracepoints with best-effort process attribution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkTcpStatObservation {
+    pub stat: NetworkTcpStatKind,
+    pub address_family: NetworkAddressFamily,
+    pub local_address: Option<String>,
+    pub local_port: Option<u16>,
+    pub remote_address: Option<String>,
+    pub remote_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_state: Option<NetworkTcpState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_state: Option<NetworkTcpState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_direction: Option<NetworkTcpResetDirection>,
+    pub timestamp_unix_nanos: u64,
+    pub process: Option<NetworkProcessIdentity>,
+    pub container: Option<ContainerContext>,
+    pub kubernetes: Option<KubernetesContext>,
+}
+
+pub(crate) fn sanitize_network_tcp_stat_observation(event: &mut NetworkTcpStatObservation) {
+    if let Some(process) = event.process.as_mut() {
+        sanitize_network_process_identity(process);
+    }
+    sanitize_optional_network_signal_string(&mut event.local_address);
+    sanitize_optional_network_signal_string(&mut event.remote_address);
+    sanitize_optional_container_context(&mut event.container);
+    sanitize_optional_kubernetes_context(&mut event.kubernetes);
+}
+
 pub(crate) fn sanitize_network_connection_open_event(event: &mut NetworkConnectionOpenEvent) {
     sanitize_network_process_identity(&mut event.process);
     sanitize_optional_network_signal_string(&mut event.local_address);

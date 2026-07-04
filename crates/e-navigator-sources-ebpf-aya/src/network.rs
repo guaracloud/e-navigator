@@ -1,7 +1,8 @@
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_signals::{
     NetworkAddressFamily, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
-    NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol, SignalEnvelope,
+    NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol, NetworkTcpResetDirection,
+    NetworkTcpStatKind, NetworkTcpStatObservation, NetworkTcpState, SignalEnvelope,
 };
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -16,6 +17,16 @@ pub(crate) const RAW_AF_INET: u32 = 2;
 pub(crate) const RAW_AF_INET6: u32 = 10;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_PROTO_TCP: u32 = 6;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_TCP_STAT_RETRANSMIT: u32 = 1;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_TCP_STAT_RESET: u32 = 2;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_TCP_STAT_STATE: u32 = 3;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_TCP_RESET_SEND: u32 = 1;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_TCP_RESET_RECEIVE: u32 = 2;
 #[cfg(any(target_os = "linux", test))]
 const PERF_BUFFER_PAGE_COUNT: usize = 64;
 #[cfg(any(target_os = "linux", test))]
@@ -44,6 +55,123 @@ pub(crate) struct RawNetworkEvent {
     pub bytes_sent: u64,
     pub bytes_received: u64,
     pub command: [u8; 16],
+}
+
+/// Byte-identical to the eBPF-side `RawTcpStatEvent`.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct RawTcpStatEvent {
+    pub kind: u32,
+    pub pid: u32,
+    pub cgroup_id: u64,
+    pub family: u32,
+    pub old_state: i32,
+    pub new_state: i32,
+    pub reset_direction: u32,
+    pub remote_port: u16,
+    pub local_port: u16,
+    pub remote_addr_v4: u32,
+    pub local_addr_v4: u32,
+    pub remote_addr_v6: [u8; 16],
+    pub local_addr_v6: [u8; 16],
+    pub timestamp_unix_nanos: u64,
+    pub command: [u8; 16],
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn raw_tcp_stat_to_signal_with_procfs(
+    bytes: &[u8],
+    host: Option<String>,
+    observed_unix_nanos: u64,
+    procfs_root: &std::path::Path,
+) -> Option<SignalEnvelope> {
+    if bytes.len() < core::mem::size_of::<RawTcpStatEvent>() {
+        return None;
+    }
+    let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawTcpStatEvent>()) };
+    let address_family = address_family(raw.family)?;
+    let stat = match raw.kind {
+        RAW_TCP_STAT_RETRANSMIT => NetworkTcpStatKind::Retransmit,
+        RAW_TCP_STAT_RESET => NetworkTcpStatKind::Reset,
+        RAW_TCP_STAT_STATE => NetworkTcpStatKind::StateTransition,
+        _ => return None,
+    };
+
+    let remote_address = match address_family {
+        NetworkAddressFamily::Ipv4 if raw.remote_addr_v4 != 0 => {
+            Some(ipv4_to_string(raw.remote_addr_v4))
+        }
+        NetworkAddressFamily::Ipv6 if raw.remote_addr_v6.iter().any(|byte| *byte != 0) => {
+            Some(ipv6_to_string(raw.remote_addr_v6))
+        }
+        _ => None,
+    };
+    let local_address = match address_family {
+        NetworkAddressFamily::Ipv4 if raw.local_addr_v4 != 0 => {
+            Some(ipv4_to_string(raw.local_addr_v4))
+        }
+        NetworkAddressFamily::Ipv6 if raw.local_addr_v6.iter().any(|byte| *byte != 0) => {
+            Some(ipv6_to_string(raw.local_addr_v6))
+        }
+        _ => None,
+    };
+
+    let old_state = (raw.kind == RAW_TCP_STAT_STATE)
+        .then(|| NetworkTcpState::from_kernel(raw.old_state))
+        .flatten();
+    let new_state = (raw.kind == RAW_TCP_STAT_STATE)
+        .then(|| NetworkTcpState::from_kernel(raw.new_state))
+        .flatten();
+    let reset_direction = match raw.reset_direction {
+        RAW_TCP_RESET_SEND => Some(NetworkTcpResetDirection::Send),
+        RAW_TCP_RESET_RECEIVE => Some(NetworkTcpResetDirection::Receive),
+        _ => None,
+    };
+    let process = (raw.pid != 0).then(|| NetworkProcessIdentity {
+        pid: raw.pid,
+        ppid: None,
+        uid: None,
+        command: bytes_to_string(&raw.command),
+        executable: None,
+        cgroup_id: (raw.cgroup_id != 0).then_some(raw.cgroup_id),
+    });
+    let container = (raw.pid != 0)
+        .then(|| crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid))
+        .flatten();
+
+    Some(SignalEnvelope::network_tcp_stat_observation(
+        "source.aya_network",
+        host,
+        NetworkTcpStatObservation {
+            stat,
+            address_family,
+            local_address,
+            local_port: (raw.local_port != 0).then_some(raw.local_port),
+            remote_address,
+            remote_port: (raw.remote_port != 0).then_some(raw.remote_port),
+            old_state,
+            new_state,
+            reset_direction,
+            timestamp_unix_nanos: observed_unix_nanos,
+            process,
+            container,
+            kubernetes: None,
+        },
+    ))
+}
+
+#[cfg(feature = "fuzzing")]
+pub fn fuzz_decode_raw_tcp_stat_event(bytes: &[u8]) -> bool {
+    const MAX_FUZZ_BYTES: usize = 1024;
+    let bytes = &bytes[..bytes.len().min(MAX_FUZZ_BYTES)];
+    raw_tcp_stat_to_signal_with_procfs(
+        bytes,
+        None,
+        1_000,
+        std::path::Path::new("__e_navigator_fuzz_no_procfs__"),
+    )
+    .is_some()
 }
 
 #[cfg(test)]
@@ -376,6 +504,41 @@ mod platform {
                 "syscalls",
                 "sys_exit_recvmsg",
             )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_tcp_set_state",
+                "sock",
+                "inet_sock_set_state",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_tcp_retransmit",
+                "tcp",
+                "tcp_retransmit_skb",
+            )?;
+            // TCP reset tracepoints are best-effort: not all kernels expose
+            // both directions, so attachment failures for these are tolerated.
+            let _ = attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_tcp_send_reset",
+                "tcp",
+                "tcp_send_reset",
+            );
+            let _ = attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_tcp_receive_reset",
+                "tcp",
+                "tcp_receive_reset",
+            );
+
+            let mut tcp_stat_array =
+                PerfEventArray::try_from(ebpf.take_map("TCP_STAT_EVENTS").ok_or_else(|| {
+                    CoreError::ModuleFailed {
+                        module: "source.aya_network".to_string(),
+                        message: "missing TCP_STAT_EVENTS map".to_string(),
+                    }
+                })?)
+                .map_err(module_error)?;
 
             let mut perf_array =
                 PerfEventArray::try_from(ebpf.take_map("NETWORK_EVENTS").ok_or_else(|| {
@@ -444,6 +607,61 @@ mod platform {
                             return;
                         }
 
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            super::PERF_READER_POLL_INTERVAL_MS,
+                        ));
+                    }
+                }));
+            }
+
+            let tcp_cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
+            for cpu_id in tcp_cpus {
+                let mut buffer = tcp_stat_array
+                    .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
+                    .map_err(module_error)?;
+                let cpu_tx = tx.clone();
+                let host = self.host.clone();
+                let procfs_root = self.procfs_root.clone();
+                let reader_shutdown = shutdown.clone();
+                let telemetry = telemetry.clone();
+
+                reader_handles.push(tokio::task::spawn_blocking(move || {
+                    let mut closed = false;
+                    while !reader_shutdown.is_stopped() {
+                        buffer.for_each(|event| {
+                            if closed {
+                                return;
+                            }
+                            match event {
+                                PerfEvent::Sample { head, tail } => {
+                                    let bytes = perf_sample_bytes(head, tail);
+                                    if let Some(signal) = super::raw_tcp_stat_to_signal_with_procfs(
+                                        bytes.as_ref(),
+                                        host.clone(),
+                                        super::now_unix_nanos(),
+                                        &procfs_root,
+                                    ) {
+                                        telemetry.record_decoded_sample();
+                                        if cpu_tx.blocking_send(signal).is_err() {
+                                            telemetry.record_send_failure();
+                                            closed = true;
+                                        } else {
+                                            telemetry.record_sent_signal();
+                                        }
+                                    } else {
+                                        telemetry.record_invalid_sample();
+                                    }
+                                }
+                                PerfEvent::Lost { count } => {
+                                    telemetry.record_lost_perf_events(count);
+                                    warn!(count, "lost tcp stat perf events");
+                                }
+                            }
+                            telemetry.maybe_log_summary();
+                        });
+                        if closed {
+                            return;
+                        }
                         std::thread::sleep(std::time::Duration::from_millis(
                             super::PERF_READER_POLL_INTERVAL_MS,
                         ));
@@ -1069,6 +1287,129 @@ mod tests {
     #[test]
     fn raw_network_event_layout_size_matches_ebpf_abi() {
         assert_eq!(std::mem::size_of::<RawNetworkEvent>(), 136);
+    }
+
+    fn tcp_stat_as_bytes(raw: &RawTcpStatEvent) -> &[u8] {
+        unsafe {
+            std::slice::from_raw_parts(
+                std::ptr::from_ref(raw).cast::<u8>(),
+                std::mem::size_of::<RawTcpStatEvent>(),
+            )
+        }
+    }
+
+    fn tcp_stat_event(kind: u32) -> RawTcpStatEvent {
+        RawTcpStatEvent {
+            kind,
+            pid: 4242,
+            cgroup_id: 77,
+            family: RAW_AF_INET,
+            old_state: 0,
+            new_state: 0,
+            reset_direction: 0,
+            remote_port: 6379,
+            local_port: 44000,
+            remote_addr_v4: u32::from_ne_bytes([10, 0, 0, 5]),
+            local_addr_v4: u32::from_ne_bytes([10, 0, 0, 9]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 1_000,
+            command: fixed_command("app"),
+        }
+    }
+
+    fn tcp_stat_observation(
+        signal: &SignalEnvelope,
+    ) -> &e_navigator_signals::NetworkTcpStatObservation {
+        match &signal.payload {
+            SignalPayload::NetworkTcpStatObservation(observation) => observation,
+            other => panic!("expected tcp stat observation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tcp_retransmit_event_decodes_to_observation() {
+        let raw = tcp_stat_event(RAW_TCP_STAT_RETRANSMIT);
+        let signal = raw_tcp_stat_to_signal_with_procfs(
+            tcp_stat_as_bytes(&raw),
+            Some("node-a".to_string()),
+            5_000,
+            std::path::Path::new("__missing__"),
+        )
+        .expect("retransmit decodes");
+        let observation = tcp_stat_observation(&signal);
+        assert_eq!(
+            observation.stat,
+            e_navigator_signals::NetworkTcpStatKind::Retransmit
+        );
+        assert_eq!(observation.remote_address.as_deref(), Some("10.0.0.5"));
+        assert_eq!(observation.remote_port, Some(6379));
+        assert_eq!(observation.new_state, None);
+    }
+
+    #[test]
+    fn tcp_state_transition_event_decodes_states() {
+        let mut raw = tcp_stat_event(RAW_TCP_STAT_STATE);
+        raw.old_state = 2; // SYN_SENT
+        raw.new_state = 1; // ESTABLISHED
+        let signal = raw_tcp_stat_to_signal_with_procfs(
+            tcp_stat_as_bytes(&raw),
+            None,
+            5_000,
+            std::path::Path::new("__missing__"),
+        )
+        .expect("state transition decodes");
+        let observation = tcp_stat_observation(&signal);
+        assert_eq!(
+            observation.new_state,
+            Some(e_navigator_signals::NetworkTcpState::Established)
+        );
+        assert_eq!(
+            observation.old_state,
+            Some(e_navigator_signals::NetworkTcpState::SynSent)
+        );
+    }
+
+    #[test]
+    fn tcp_reset_event_carries_direction() {
+        let mut raw = tcp_stat_event(RAW_TCP_STAT_RESET);
+        raw.reset_direction = RAW_TCP_RESET_RECEIVE;
+        let signal = raw_tcp_stat_to_signal_with_procfs(
+            tcp_stat_as_bytes(&raw),
+            None,
+            5_000,
+            std::path::Path::new("__missing__"),
+        )
+        .expect("reset decodes");
+        let observation = tcp_stat_observation(&signal);
+        assert_eq!(
+            observation.reset_direction,
+            Some(e_navigator_signals::NetworkTcpResetDirection::Receive)
+        );
+    }
+
+    #[test]
+    fn tcp_stat_short_or_unknown_kind_is_rejected() {
+        assert!(
+            raw_tcp_stat_to_signal_with_procfs(
+                &[0_u8; 8],
+                None,
+                5_000,
+                std::path::Path::new("__missing__"),
+            )
+            .is_none()
+        );
+        let mut raw = tcp_stat_event(99);
+        raw.family = RAW_AF_INET;
+        assert!(
+            raw_tcp_stat_to_signal_with_procfs(
+                tcp_stat_as_bytes(&raw),
+                None,
+                5_000,
+                std::path::Path::new("__missing__"),
+            )
+            .is_none()
+        );
     }
 
     #[test]

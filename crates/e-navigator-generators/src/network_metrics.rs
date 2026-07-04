@@ -4,7 +4,8 @@ use e_navigator_signals::{
     MetricAggregationWindow, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
     NetworkConnectionOpenEvent, NetworkCounterMetric, NetworkDurationMetric, NetworkFlowDirection,
     NetworkFlowEndpoint, NetworkFlowSummaryEvent, NetworkFlowWarning, NetworkGaugeMetric,
-    NetworkProcessIdentity, SignalEnvelope, SignalPayload,
+    NetworkProcessIdentity, NetworkProtocol, NetworkTcpResetDirection, NetworkTcpStatKind,
+    NetworkTcpStatObservation, NetworkTcpState, SignalEnvelope, SignalPayload,
 };
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -89,6 +90,9 @@ impl Generator<SignalEnvelope> for NetworkMetricsGenerator {
             SignalPayload::NetworkConnectionClose(event) => self.observe_close(signal, event)?,
             SignalPayload::NetworkConnectionFailure(event) => {
                 self.observe_failure(signal, event)?
+            }
+            SignalPayload::NetworkTcpStatObservation(event) => {
+                self.observe_tcp_stat(signal, event)?
             }
             _ => Vec::new(),
         };
@@ -196,6 +200,25 @@ impl NetworkMetricsGenerator {
             .update_counter(
                 CounterKey::connection_failure(event),
                 CounterTemplate::connection_failure(event),
+                event.timestamp_unix_nanos,
+                signal.host.clone(),
+            )?
+            .into_iter()
+            .collect())
+    }
+
+    fn observe_tcp_stat(
+        &self,
+        signal: &SignalEnvelope,
+        event: &NetworkTcpStatObservation,
+    ) -> CoreResult<Vec<SignalEnvelope>> {
+        let Some(metric_name) = tcp_stat_metric_name(event) else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .update_counter(
+                CounterKey::tcp_stat(metric_name, event),
+                CounterTemplate::tcp_stat(metric_name, event),
                 event.timestamp_unix_nanos,
                 signal.host.clone(),
             )?
@@ -556,6 +579,22 @@ impl CounterKey {
         }
     }
 
+    fn tcp_stat(metric_name: &'static str, event: &NetworkTcpStatObservation) -> Self {
+        CounterKey {
+            metric_name,
+            workload: event.kubernetes.as_ref().map(workload_key),
+            container: event
+                .container
+                .as_ref()
+                .map(|container| container.container_id.clone()),
+            protocol: Some(format!("{:?}", NetworkProtocol::Tcp)),
+            address_family: Some(format!("{:?}", event.address_family)),
+            remote_address: event.remote_address.clone(),
+            remote_port: event.remote_port,
+            errno: None,
+        }
+    }
+
     fn flow_bytes(event: &NetworkConnectionCloseEvent) -> Self {
         CounterKey {
             metric_name: "network.flow.bytes",
@@ -570,6 +609,25 @@ impl CounterKey {
             remote_port: None,
             errno: None,
         }
+    }
+}
+
+/// Maps a TCP stat observation to a stable static counter name, or None
+/// for transitions that are not counted.
+fn tcp_stat_metric_name(event: &NetworkTcpStatObservation) -> Option<&'static str> {
+    match event.stat {
+        NetworkTcpStatKind::Retransmit => Some("network.tcp.retransmits"),
+        NetworkTcpStatKind::Reset => match event.reset_direction {
+            Some(NetworkTcpResetDirection::Send) => Some("network.tcp.resets.sent"),
+            Some(NetworkTcpResetDirection::Receive) => Some("network.tcp.resets.received"),
+            _ => Some("network.tcp.resets"),
+        },
+        NetworkTcpStatKind::StateTransition => match event.new_state {
+            Some(NetworkTcpState::Established) => Some("network.tcp.transitions.established"),
+            Some(NetworkTcpState::Close) => Some("network.tcp.transitions.closed"),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -635,6 +693,30 @@ impl CounterTemplate {
             remote_address: Some(event.remote_address.clone()),
             remote_port: Some(event.remote_port),
             errno: Some(event.errno),
+            container: event.container.clone(),
+            kubernetes: event.kubernetes.clone(),
+        }
+    }
+
+    fn tcp_stat(metric_name: &'static str, event: &NetworkTcpStatObservation) -> Self {
+        let unit = if metric_name.starts_with("network.tcp.retransmits") {
+            "{segment}"
+        } else if metric_name.starts_with("network.tcp.transitions") {
+            "{transition}"
+        } else {
+            "{connection}"
+        };
+        Self {
+            metric_name,
+            unit,
+            process: event.process.clone(),
+            protocol: Some(NetworkProtocol::Tcp),
+            address_family: Some(event.address_family),
+            local_address: event.local_address.clone(),
+            local_port: event.local_port,
+            remote_address: event.remote_address.clone(),
+            remote_port: event.remote_port,
+            errno: None,
             container: event.container.clone(),
             kubernetes: event.kubernetes.clone(),
         }
@@ -1101,6 +1183,116 @@ mod tests {
             &metrics,
             "network.traffic.destination.count"
         ));
+    }
+
+    fn tcp_stat_signal(
+        stat: NetworkTcpStatKind,
+        new_state: Option<NetworkTcpState>,
+        reset_direction: Option<NetworkTcpResetDirection>,
+        remote_port: u16,
+        timestamp: u64,
+    ) -> SignalEnvelope {
+        SignalEnvelope::network_tcp_stat_observation(
+            "source.aya_network",
+            Some("node-a".to_string()),
+            NetworkTcpStatObservation {
+                stat,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.0.0.9".to_string()),
+                local_port: Some(44000),
+                remote_address: Some("10.0.0.5".to_string()),
+                remote_port: Some(remote_port),
+                old_state: None,
+                new_state,
+                reset_direction,
+                timestamp_unix_nanos: timestamp,
+                process: None,
+                container: None,
+                kubernetes: None,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn tcp_retransmits_aggregate_into_counter() {
+        let generator = NetworkMetricsGenerator::default();
+
+        let first = observe(
+            &generator,
+            &tcp_stat_signal(NetworkTcpStatKind::Retransmit, None, None, 443, 100),
+        )
+        .await;
+        assert_eq!(counter_metric(&first, "network.tcp.retransmits").value, 1);
+        assert_eq!(
+            counter_metric(&first, "network.tcp.retransmits").unit,
+            "{segment}"
+        );
+
+        let second = observe(
+            &generator,
+            &tcp_stat_signal(NetworkTcpStatKind::Retransmit, None, None, 443, 200),
+        )
+        .await;
+        let counter = counter_metric(&second, "network.tcp.retransmits");
+        assert_eq!(counter.value, 2);
+        assert_eq!(counter.remote_port, Some(443));
+        assert_eq!(counter.window.start_unix_nanos, 100);
+        assert_eq!(counter.window.end_unix_nanos, 200);
+    }
+
+    #[tokio::test]
+    async fn tcp_reset_direction_selects_metric_name() {
+        let generator = NetworkMetricsGenerator::default();
+        let received = observe(
+            &generator,
+            &tcp_stat_signal(
+                NetworkTcpStatKind::Reset,
+                None,
+                Some(NetworkTcpResetDirection::Receive),
+                8080,
+                100,
+            ),
+        )
+        .await;
+        assert!(counter_metric_exists(
+            &received,
+            "network.tcp.resets.received"
+        ));
+        assert!(!counter_metric_exists(&received, "network.tcp.resets.sent"));
+    }
+
+    #[tokio::test]
+    async fn tcp_state_transitions_count_established_and_closed_only() {
+        let generator = NetworkMetricsGenerator::default();
+        let established = observe(
+            &generator,
+            &tcp_stat_signal(
+                NetworkTcpStatKind::StateTransition,
+                Some(NetworkTcpState::Established),
+                None,
+                5432,
+                100,
+            ),
+        )
+        .await;
+        assert!(counter_metric_exists(
+            &established,
+            "network.tcp.transitions.established"
+        ));
+
+        // A TIME_WAIT transition is not counted.
+        let time_wait = observe(
+            &generator,
+            &tcp_stat_signal(
+                NetworkTcpStatKind::StateTransition,
+                Some(NetworkTcpState::TimeWait),
+                None,
+                5432,
+                200,
+            ),
+        )
+        .await;
+        assert!(time_wait.is_empty());
     }
 
     #[tokio::test]
