@@ -194,6 +194,13 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   exported record. This is local smoke proof only, not production or
   Kubernetes proof; Kafka, PostgreSQL, MySQL, MongoDB, and NATS live capture
   paths are implemented but not yet runtime-proven.
+- Live inbound (server-side) HTTP capture on the local OrbStack Docker VM
+  (2026-07-04): with `http_source.inbound_enabled`, five curl requests
+  against a local Python HTTP server produced exactly five
+  `protocol_request_observation` records with `role=server`, correct
+  method/path attributes, and client peer attribution, alongside the
+  existing client-role capture. Local smoke proof only; inbound capture on
+  Kubernetes nodes and non-loopback traffic is not yet runtime-proven.
 - Live `source.aya_protocol` request/response matching on the same local
   OrbStack Docker setup (2026-07-04): with read-direction capture and the
   in-flight matcher enabled, all 10 captured Redis observations carried
