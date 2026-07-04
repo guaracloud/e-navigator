@@ -201,6 +201,14 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   method/path attributes, and client peer attribution, alongside the
   existing client-role capture. Local smoke proof only; inbound capture on
   Kubernetes nodes and non-loopback traffic is not yet runtime-proven.
+- Live HTTP/2 capture with HPACK decoding on the local OrbStack Docker VM
+  (2026-07-04): with `protocol_source.http2_ports = [8080]`, five nghttp
+  h2c requests against a local nghttpd produced five observations with
+  Huffman-decoded method/path (`GET /index.html`), stream-id-matched
+  responses carrying `http.response.status_code=200`, and real durations,
+  through the writev capture path. Local smoke proof only; TLS, gRPC live
+  traffic, CONTINUATION reassembly, and HEADERS frames larger than the
+  256-byte capture bound remain unproven or out of scope.
 - Live `source.aya_protocol` request/response matching on the same local
   OrbStack Docker setup (2026-07-04): with read-direction capture and the
   in-flight matcher enabled, all 10 captured Redis observations carried
