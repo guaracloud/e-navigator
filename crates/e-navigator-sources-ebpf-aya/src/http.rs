@@ -21,6 +21,10 @@ pub(crate) const RAW_HTTP_REQUEST_BYTES: usize = RAW_HTTP_IOVEC_CHUNK_BYTES * RA
 pub(crate) const RAW_HTTP_AF_INET: u32 = 2;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_HTTP_AF_INET6: u32 = 10;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_HTTP_ROLE_CLIENT: u32 = 0;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_HTTP_ROLE_SERVER: u32 = 1;
 #[cfg(any(target_os = "linux", test))]
 const PERF_BUFFER_PAGE_COUNT: usize = 64;
 #[cfg(any(target_os = "linux", test))]
@@ -28,7 +32,7 @@ const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
 #[cfg(any(target_os = "linux", test))]
 const HTTP_DIAGNOSTIC_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 #[cfg(any(target_os = "linux", test))]
-const HTTP_DIAGNOSTIC_COUNTERS_LEN: usize = 15;
+const HTTP_DIAGNOSTIC_COUNTERS_LEN: usize = 18;
 #[cfg(any(target_os = "linux", test))]
 const HTTP_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_DIAGNOSTIC_COUNTERS_LEN] = [
     "connect_enter",
@@ -46,6 +50,9 @@ const HTTP_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_DIAGNOSTIC_COUNTERS_LEN] = [
     "fallback_candidate",
     "fallback_non_http_start",
     "fallback_output_attempt",
+    "accept_active",
+    "inbound_read_enter",
+    "inbound_output_attempt",
 ];
 
 #[cfg(any(target_os = "linux", test))]
@@ -101,6 +108,7 @@ pub(crate) struct RawHttpRequestEvent {
     pub cgroup_id: u64,
     pub fd: i32,
     pub family: u32,
+    pub role: u32,
     pub remote_port_be: u16,
     pub local_port_be: u16,
     pub remote_addr_v4: u32,
@@ -269,7 +277,11 @@ fn raw_http_request_to_signal_result_with_config(
         host,
         ProtocolRequestObservation {
             protocol: parsed.protocol,
-            role: Some(ProtocolCaptureRole::Client),
+            role: Some(if raw.role == RAW_HTTP_ROLE_SERVER {
+                ProtocolCaptureRole::Server
+            } else {
+                ProtocolCaptureRole::Client
+            }),
             start_unix_nanos: observed_unix_nanos,
             end_unix_nanos: None,
             duration_nanos: None,
@@ -442,14 +454,17 @@ mod platform {
         host: Option<String>,
         procfs_root: PathBuf,
         protocol_config: ProtocolExtractionConfig,
+        inbound_enabled: bool,
     }
 
     impl AyaHttpSource {
         pub fn new(host: Option<String>, procfs_root: PathBuf, config: HttpSourceConfig) -> Self {
+            let inbound_enabled = config.inbound_enabled;
             Self {
                 host,
                 procfs_root,
                 protocol_config: protocol_config(config),
+                inbound_enabled,
             }
         }
     }
@@ -514,6 +529,56 @@ mod platform {
                 "syscalls",
                 "sys_enter_sendmsg",
             )?;
+            if self.inbound_enabled {
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_accept_enter",
+                    "syscalls",
+                    "sys_enter_accept",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_accept_exit",
+                    "syscalls",
+                    "sys_exit_accept",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_accept4_enter",
+                    "syscalls",
+                    "sys_enter_accept4",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_accept4_exit",
+                    "syscalls",
+                    "sys_exit_accept4",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_read_enter",
+                    "syscalls",
+                    "sys_enter_read",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_read_exit",
+                    "syscalls",
+                    "sys_exit_read",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_recvfrom_enter",
+                    "syscalls",
+                    "sys_enter_recvfrom",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_recvfrom_exit",
+                    "syscalls",
+                    "sys_exit_recvfrom",
+                )?;
+            }
 
             if diagnostics.enabled() {
                 let diagnostic_counters =
@@ -917,6 +982,7 @@ mod tests {
         );
         let mut raw = RawHttpRequestEvent {
             pid: 42,
+            role: RAW_HTTP_ROLE_CLIENT,
             uid: 1000,
             cgroup_id: 7,
             fd: 9,
@@ -999,6 +1065,7 @@ mod tests {
         .as_bytes();
         let mut raw = RawHttpRequestEvent {
             pid: 42,
+            role: RAW_HTTP_ROLE_CLIENT,
             uid: 1000,
             cgroup_id: 7,
             fd: 9,
@@ -1053,6 +1120,7 @@ mod tests {
         let part3 = b"X-Request-Id: req-three\r\n\r\n";
         let mut raw = RawHttpRequestEvent {
             pid: 42,
+            role: RAW_HTTP_ROLE_CLIENT,
             uid: 1000,
             cgroup_id: 7,
             fd: 9,
@@ -1117,6 +1185,7 @@ mod tests {
         let payload = b"not an http request";
         let mut raw = RawHttpRequestEvent {
             pid: 42,
+            role: RAW_HTTP_ROLE_CLIENT,
             uid: 1000,
             cgroup_id: 7,
             fd: 9,
@@ -1161,6 +1230,7 @@ mod tests {
         let request = b"GET /checkout HTTP/1.1\r\nHost: example.test\r\n\r\n";
         let mut raw = RawHttpRequestEvent {
             pid: 42,
+            role: RAW_HTTP_ROLE_CLIENT,
             uid: 1000,
             cgroup_id: 7,
             fd: 9,
@@ -1208,6 +1278,7 @@ mod tests {
         let payload = b"not an http request";
         let mut raw = RawHttpRequestEvent {
             pid: 42,
+            role: RAW_HTTP_ROLE_CLIENT,
             uid: 1000,
             cgroup_id: 7,
             fd: 9,
@@ -1249,6 +1320,7 @@ mod tests {
         let payload = b"not an http request";
         let mut raw = RawHttpRequestEvent {
             pid: 42,
+            role: RAW_HTTP_ROLE_CLIENT,
             uid: 1000,
             cgroup_id: 7,
             fd: 9,
@@ -1296,6 +1368,7 @@ mod tests {
         let part2 = b"-iovec HTTP/1.1\r\nHost: api.example.test\r\n\r\n";
         let mut raw = RawHttpRequestEvent {
             pid: 42,
+            role: RAW_HTTP_ROLE_CLIENT,
             uid: 1000,
             cgroup_id: 7,
             fd: 9,
@@ -1348,6 +1421,7 @@ mod tests {
         );
         let mut raw = RawHttpRequestEvent {
             pid: 42,
+            role: RAW_HTTP_ROLE_CLIENT,
             uid: 1000,
             cgroup_id: 7,
             fd: 9,
@@ -1387,10 +1461,10 @@ mod tests {
     #[test]
     fn http_diagnostic_counter_snapshot_returns_stage_deltas() {
         let previous = HttpDiagnosticCounterSnapshot::from_counters([
-            10, 5, 100, 30, 1, 0, 2, 7, 0, 20, 3, 20, 4, 3, 1,
+            10, 5, 100, 30, 1, 0, 2, 7, 0, 20, 3, 20, 4, 3, 1, 0, 0, 0,
         ]);
         let current = HttpDiagnosticCounterSnapshot::from_counters([
-            12, 8, 100, 45, 1, 4, 2, 11, 0, 35, 3, 35, 10, 8, 2,
+            12, 8, 100, 45, 1, 4, 2, 11, 0, 35, 3, 35, 10, 8, 2, 5, 6, 7,
         ]);
 
         let delta = current.delta_since(&previous);
@@ -1419,8 +1493,55 @@ mod tests {
                 "fallback_candidate",
                 "fallback_non_http_start",
                 "fallback_output_attempt",
+                "accept_active",
+                "inbound_read_enter",
+                "inbound_output_attempt",
             ]
         );
+    }
+
+    #[test]
+    fn server_role_event_reports_server_capture_role() {
+        let request = b"GET /inbound HTTP/1.1\r\nHost: svc.local\r\n\r\n";
+        let mut raw = RawHttpRequestEvent {
+            pid: 77,
+            role: RAW_HTTP_ROLE_CLIENT,
+            uid: 10,
+            cgroup_id: 5,
+            fd: 4,
+            family: RAW_HTTP_AF_INET,
+            remote_port_be: 51000_u16.to_be(),
+            local_port_be: 8080_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([10, 0, 0, 40]),
+            local_addr_v4: u32::from_ne_bytes([10, 0, 0, 41]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 1,
+            request_len: request.len() as u32,
+            request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
+            command: fixed_command("server"),
+            request: [0; RAW_HTTP_REQUEST_BYTES],
+        };
+        raw.role = RAW_HTTP_ROLE_SERVER;
+        raw.request[..request.len()].copy_from_slice(request);
+
+        let signal = raw_http_request_to_signal_result(
+            raw_as_bytes(&raw),
+            None,
+            9,
+            std::path::Path::new("__missing__"),
+        )
+        .expect("server-side request decodes");
+        let e_navigator_signals::SignalPayload::ProtocolRequestObservation(observation) =
+            &signal.payload
+        else {
+            panic!("expected protocol request observation");
+        };
+        assert_eq!(
+            observation.role,
+            Some(e_navigator_signals::ProtocolCaptureRole::Server)
+        );
+        assert_eq!(observation.method.as_deref(), Some("GET"));
     }
 
     #[test]

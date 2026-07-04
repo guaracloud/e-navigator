@@ -13,6 +13,10 @@ pub struct HttpSourceConfig {
     pub max_attributes: usize,
     #[serde(default = "default_http_source_max_tracestate_bytes")]
     pub max_tracestate_bytes: usize,
+    /// Enables server-side (inbound) HTTP request capture through accept
+    /// tracking and read-side payload capture.
+    #[serde(default)]
+    pub inbound_enabled: bool,
 }
 
 impl Default for HttpSourceConfig {
@@ -22,6 +26,7 @@ impl Default for HttpSourceConfig {
             max_request_line_bytes: default_http_source_max_request_line_bytes(),
             max_attributes: default_http_source_max_attributes(),
             max_tracestate_bytes: default_http_source_max_tracestate_bytes(),
+            inbound_enabled: false,
         }
     }
 }

@@ -41,7 +41,12 @@ const HTTP_DIAG_OUTPUT_ATTEMPT: u32 = 11;
 const HTTP_DIAG_FALLBACK_CANDIDATE: u32 = 12;
 const HTTP_DIAG_FALLBACK_NON_HTTP_START: u32 = 13;
 const HTTP_DIAG_FALLBACK_OUTPUT_ATTEMPT: u32 = 14;
-const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 15;
+const HTTP_DIAG_ACCEPT_ACTIVE: u32 = 15;
+const HTTP_DIAG_INBOUND_READ_ENTER: u32 = 16;
+const HTTP_DIAG_INBOUND_OUTPUT_ATTEMPT: u32 = 17;
+const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 18;
+const CONNECTION_ROLE_CLIENT: u32 = 0;
+const CONNECTION_ROLE_SERVER: u32 = 1;
 const PROTOCOL_DATA_BYTES: usize = 256;
 const PROTOCOL_DIAG_WRITE_ENTER: u32 = 0;
 const PROTOCOL_DIAG_READ_ENTER: u32 = 1;
@@ -148,6 +153,7 @@ pub struct RawHttpRequestEvent {
     pub cgroup_id: u64,
     pub fd: i32,
     pub family: u32,
+    pub role: u32,
     pub remote_port_be: u16,
     pub local_port_be: u16,
     pub remote_addr_v4: u32,
@@ -199,6 +205,7 @@ pub struct PendingConnect {
     pub cgroup_id: u64,
     pub fd: i32,
     pub family: u32,
+    pub role: u32,
     pub protocol: u32,
     pub remote_port_be: u16,
     pub local_port_be: u16,
@@ -233,6 +240,14 @@ pub struct PendingDnsRecv {
     pub server_addr_v4: u32,
     pub started_at_nanos: u64,
     pub command: [u8; 16],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PendingHttpRead {
+    pub fd: i32,
+    pub reserved: u32,
+    pub buffer_ptr: u64,
 }
 
 #[repr(C)]
@@ -317,6 +332,12 @@ static PENDING_NETWORK_IO: HashMap<u64, PendingNetworkIo> = HashMap::with_max_en
 
 #[map]
 static PENDING_DNS_RECVS: HashMap<u64, PendingDnsRecv> = HashMap::with_max_entries(4096, 0);
+
+#[map]
+static PENDING_ACCEPTS: HashMap<u64, u64> = HashMap::with_max_entries(4096, 0);
+
+#[map]
+static PENDING_HTTP_READS: HashMap<u64, PendingHttpRead> = HashMap::with_max_entries(4096, 0);
 
 #[tracepoint]
 pub fn tracepoint_execve(ctx: TracePointContext) -> u32 {
@@ -449,6 +470,70 @@ pub fn tracepoint_http_sendto_enter(ctx: TracePointContext) -> u32 {
 #[tracepoint]
 pub fn tracepoint_http_sendmsg_enter(ctx: TracePointContext) -> u32 {
     match try_tracepoint_http_sendmsg_enter(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_http_accept_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_http_accept_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_http_accept4_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_http_accept_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_http_accept_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_http_accept_exit(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_http_accept4_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_http_accept_exit(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_http_read_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_http_read_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_http_read_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_http_read_exit(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_http_recvfrom_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_http_read_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_http_recvfrom_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_http_read_exit(&ctx) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
@@ -793,6 +878,7 @@ fn track_connect_enter(ctx: &TracePointContext) -> Result<u32, i64> {
         cgroup_id: current_cgroup_id(),
         fd,
         family: family as u32,
+        role: CONNECTION_ROLE_CLIENT,
         protocol: IPPROTO_TCP,
         remote_port_be: 0,
         local_port_be: 0,
@@ -1222,6 +1308,162 @@ fn emit_http_request_iovecs_event_without_connection(
     }
     record_http_diagnostic(HTTP_DIAG_COPY_SUCCESS);
     record_http_diagnostic(HTTP_DIAG_FALLBACK_OUTPUT_ATTEMPT);
+    record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
+    HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
+    Ok(0)
+}
+
+fn try_tracepoint_http_accept_enter(ctx: &TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let sockaddr = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    let sockaddr_ptr = sockaddr as u64;
+    PENDING_ACCEPTS
+        .insert(&pid_tgid, &sockaddr_ptr, 0)
+        .map_err(|err| err as i64)?;
+    Ok(0)
+}
+
+fn try_tracepoint_http_accept_exit(ctx: &TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let sockaddr_ptr = match unsafe { PENDING_ACCEPTS.get(&pid_tgid) } {
+        Some(value) => *value,
+        None => return Ok(0),
+    };
+    PENDING_ACCEPTS.remove(&pid_tgid).ok();
+
+    let retval = unsafe { ctx.read_at::<i64>(16) }.map_err(|err| err as i64)?;
+    if retval < 0 {
+        return Ok(0);
+    }
+
+    let uid_gid = bpf_get_current_uid_gid();
+    let mut pending = PendingConnect {
+        pid: (pid_tgid >> 32) as u32,
+        uid: uid_gid as u32,
+        cgroup_id: current_cgroup_id(),
+        fd: retval as i32,
+        family: 0,
+        role: CONNECTION_ROLE_SERVER,
+        protocol: IPPROTO_TCP,
+        remote_port_be: 0,
+        local_port_be: 0,
+        remote_addr_v4: 0,
+        local_addr_v4: 0,
+        remote_addr_v6: [0; 16],
+        local_addr_v6: [0; 16],
+        started_at_nanos: unsafe { bpf_ktime_get_ns() },
+        bytes_sent: 0,
+        bytes_received: 0,
+        command: bpf_get_current_comm().map_err(|err| err as i64)?,
+    };
+
+    if sockaddr_ptr != 0 {
+        let sockaddr = sockaddr_ptr as *const u8;
+        let family = unsafe { bpf_probe_read_user::<u16>(sockaddr.cast::<u16>()) }
+            .map_err(|err| err as i64)?;
+        pending.family = family as u32;
+        if family as u32 == AF_INET {
+            read_sockaddr_in(sockaddr, &mut pending)?;
+        } else if family as u32 == AF_INET6 {
+            read_sockaddr_in6(sockaddr, &mut pending)?;
+        }
+    }
+
+    let key = ConnectionKey {
+        tgid: pending.pid,
+        fd: pending.fd,
+    };
+    ACTIVE_CONNECTIONS
+        .insert(&key, &pending, 0)
+        .map_err(|err| err as i64)?;
+    record_http_diagnostic(HTTP_DIAG_ACCEPT_ACTIVE);
+    Ok(0)
+}
+
+fn try_tracepoint_http_read_enter(ctx: &TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let buffer = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    if buffer.is_null() {
+        return Ok(0);
+    }
+
+    let key = ConnectionKey {
+        tgid: (pid_tgid >> 32) as u32,
+        fd,
+    };
+    let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
+        Some(value) => *value,
+        None => return Ok(0),
+    };
+    if connection.role != CONNECTION_ROLE_SERVER {
+        return Ok(0);
+    }
+    record_http_diagnostic(HTTP_DIAG_INBOUND_READ_ENTER);
+
+    let pending = PendingHttpRead {
+        fd,
+        reserved: 0,
+        buffer_ptr: buffer as u64,
+    };
+    PENDING_HTTP_READS
+        .insert(&pid_tgid, &pending, 0)
+        .map_err(|err| err as i64)?;
+    Ok(0)
+}
+
+fn try_tracepoint_http_read_exit(ctx: &TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let pending = match unsafe { PENDING_HTTP_READS.get(&pid_tgid) } {
+        Some(value) => *value,
+        None => return Ok(0),
+    };
+    PENDING_HTTP_READS.remove(&pid_tgid).ok();
+
+    let retval = unsafe { ctx.read_at::<i64>(16) }.map_err(|err| err as i64)?;
+    if retval <= 0 {
+        return Ok(0);
+    }
+
+    let key = ConnectionKey {
+        tgid: (pid_tgid >> 32) as u32,
+        fd: pending.fd,
+    };
+    let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
+        Some(value) => *value,
+        None => return Ok(0),
+    };
+    if connection.role != CONNECTION_ROLE_SERVER {
+        return Ok(0);
+    }
+
+    let buffer = pending.buffer_ptr as *const u8;
+    if !http_buffer_starts_like_request(buffer)? {
+        return Ok(0);
+    }
+
+    let event = http_request_event_scratch()?;
+    event.pid = connection.pid;
+    event.uid = connection.uid;
+    event.cgroup_id = current_cgroup_id();
+    event.fd = pending.fd;
+    event.family = connection.family;
+    event.role = CONNECTION_ROLE_SERVER;
+    event.remote_port_be = connection.remote_port_be;
+    event.local_port_be = connection.local_port_be;
+    event.remote_addr_v4 = connection.remote_addr_v4;
+    event.local_addr_v4 = connection.local_addr_v4;
+    event.remote_addr_v6 = connection.remote_addr_v6;
+    event.local_addr_v6 = connection.local_addr_v6;
+    event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
+    event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
+    copy_http_request(buffer, retval as u64, event)?;
+    if event.request_len == 0 {
+        record_http_diagnostic(HTTP_DIAG_COPY_EMPTY);
+        return Ok(0);
+    }
+    record_http_diagnostic(HTTP_DIAG_COPY_SUCCESS);
+    record_http_diagnostic(HTTP_DIAG_INBOUND_OUTPUT_ATTEMPT);
     record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
     HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
     Ok(0)
@@ -1847,6 +2089,7 @@ fn http_request_event_scratch() -> Result<&'static mut RawHttpRequestEvent, i64>
     event.cgroup_id = 0;
     event.fd = -1;
     event.family = 0;
+    event.role = CONNECTION_ROLE_CLIENT;
     event.remote_port_be = 0;
     event.local_port_be = 0;
     event.remote_addr_v4 = 0;
