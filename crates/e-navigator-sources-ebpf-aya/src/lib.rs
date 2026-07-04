@@ -11,6 +11,7 @@ pub mod network;
 mod perf_sample;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 mod procfs;
+pub mod protocol;
 #[cfg(any(target_os = "linux", test))]
 mod source_telemetry;
 
@@ -19,3 +20,4 @@ pub use dns::AyaDnsSource;
 pub use exec::AyaExecSource;
 pub use http::AyaHttpSource;
 pub use network::AyaNetworkSource;
+pub use protocol::AyaProtocolSource;

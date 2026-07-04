@@ -598,6 +598,7 @@ dependencies = [
  "e-navigator-protocol",
  "e-navigator-signals",
  "libc",
+ "serde_json",
  "tokio",
  "tracing",
 ]
