@@ -5,8 +5,9 @@ use super::modules::{default_modules, is_known_module_name, known_module_names};
 use super::{
     ArgvCaptureConfig, AttributionConfig, ConfigError, ConfigResult, CpuProfileSourceConfig,
     DnsMetricsConfig, DnsSourceConfig, HttpSourceConfig, ModuleConfig, NetworkMetricsConfig,
-    OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig, RequestCorrelationConfig,
-    ResourceMetricsConfig, ResourceSourceConfig, RuntimeSecurityConfig, TraceCorrelationConfig,
+    OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig, ProtocolSourceConfig,
+    RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig, RuntimeSecurityConfig,
+    TraceCorrelationConfig,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +35,8 @@ pub struct RuntimeConfig {
     pub dns_source: DnsSourceConfig,
     #[serde(default)]
     pub http_source: HttpSourceConfig,
+    #[serde(default)]
+    pub protocol_source: ProtocolSourceConfig,
     #[serde(default)]
     pub cpu_profile_source: CpuProfileSourceConfig,
     #[serde(default)]
@@ -68,6 +71,7 @@ impl Default for RuntimeConfig {
             resource_source: ResourceSourceConfig::default(),
             dns_source: DnsSourceConfig::default(),
             http_source: HttpSourceConfig::default(),
+            protocol_source: ProtocolSourceConfig::default(),
             cpu_profile_source: CpuProfileSourceConfig::default(),
             resource_metrics: ResourceMetricsConfig::default(),
             network_metrics: NetworkMetricsConfig::default(),
@@ -183,6 +187,7 @@ impl RuntimeConfig {
         self.resource_source.validate()?;
         self.dns_source.validate()?;
         self.http_source.validate()?;
+        self.protocol_source.validate()?;
         self.cpu_profile_source.validate(self)?;
         self.resource_metrics.validate()?;
         self.network_metrics.validate()?;

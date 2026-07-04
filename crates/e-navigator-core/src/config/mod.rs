@@ -11,6 +11,7 @@ mod network_metrics;
 mod otlp_http;
 mod profiling;
 mod prometheus_http;
+mod protocol_source;
 mod request_correlation;
 mod resource_metrics;
 mod resource_source;
@@ -32,6 +33,7 @@ pub use network_metrics::{NetworkEndpointConfig, NetworkMetricsConfig, RuntimeSe
 pub use otlp_http::OtlpHttpConfig;
 pub use profiling::ProfilingConfig;
 pub use prometheus_http::PrometheusHttpConfig;
+pub use protocol_source::ProtocolSourceConfig;
 pub use request_correlation::RequestCorrelationConfig;
 pub use resource_metrics::ResourceMetricsConfig;
 pub use resource_source::ResourceSourceConfig;

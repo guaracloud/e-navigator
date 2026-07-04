@@ -44,6 +44,7 @@ fn default_config_is_valid_and_preserves_expected_modules() {
             ModuleConfig::enabled("source.aya_network"),
             ModuleConfig::disabled("source.aya_dns"),
             ModuleConfig::disabled("source.aya_http"),
+            ModuleConfig::disabled("source.aya_protocol"),
             ModuleConfig::disabled("source.aya_cpu_profile"),
             ModuleConfig::enabled("source.host_resource"),
             ModuleConfig::enabled("source.synthetic_exec"),
@@ -808,7 +809,7 @@ fn unknown_module_names_are_invalid_and_list_known_modules() {
             ],
             ..RuntimeConfig::default()
         },
-        "unknown module 'generator.dns_typo'; known modules: source.aya_exec, source.aya_network, source.aya_dns, source.aya_http, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, sink.json_stdout, sink.prometheus_http, sink.otlp_http",
+        "unknown module 'generator.dns_typo'; known modules: source.aya_exec, source.aya_network, source.aya_dns, source.aya_http, source.aya_protocol, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, sink.json_stdout, sink.prometheus_http, sink.otlp_http",
     );
 }
 
@@ -2539,4 +2540,100 @@ fn omitted_optional_sections_use_serde_defaults() {
     );
     assert_eq!(config.profiling, ProfilingConfig::default());
     assert!(config.validate().is_ok());
+}
+
+#[test]
+fn protocol_source_defaults_are_bounded() {
+    let config = RuntimeConfig::default();
+
+    assert_eq!(config.protocol_source.kafka_ports, vec![9092]);
+    assert_eq!(config.protocol_source.mongodb_ports, vec![27017]);
+    assert_eq!(config.protocol_source.mysql_ports, vec![3306]);
+    assert_eq!(config.protocol_source.nats_ports, vec![4222]);
+    assert_eq!(config.protocol_source.postgresql_ports, vec![5432]);
+    assert_eq!(config.protocol_source.redis_ports, vec![6379]);
+    assert_eq!(
+        config.protocol_source.max_buffered_bytes_per_connection,
+        8 * 1024
+    );
+    assert_eq!(config.protocol_source.max_tracked_connections, 2048);
+    assert_eq!(config.protocol_source.max_attributes, 8);
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn protocol_source_rejects_duplicate_and_zero_ports() {
+    assert_invalid(
+        RuntimeConfig {
+            protocol_source: ProtocolSourceConfig {
+                redis_ports: vec![9092],
+                ..ProtocolSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "port 9092 is assigned to both kafka and redis; each port must map to exactly one protocol",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            protocol_source: ProtocolSourceConfig {
+                nats_ports: vec![0],
+                ..ProtocolSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "protocol_source.nats_ports must not contain port 0",
+    );
+}
+
+#[test]
+fn protocol_source_limits_are_validated() {
+    assert_invalid(
+        RuntimeConfig {
+            protocol_source: ProtocolSourceConfig {
+                kafka_ports: (1..=65_u16).collect(),
+                mongodb_ports: Vec::new(),
+                mysql_ports: Vec::new(),
+                nats_ports: Vec::new(),
+                postgresql_ports: Vec::new(),
+                redis_ports: Vec::new(),
+                ..ProtocolSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "protocol_source port lists declare 65 ports; at most 64 are supported",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            protocol_source: ProtocolSourceConfig {
+                max_buffered_bytes_per_connection: 0,
+                ..ProtocolSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "protocol_source.max_buffered_bytes_per_connection must be between 1 and 65536",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            protocol_source: ProtocolSourceConfig {
+                max_tracked_connections: ProtocolSourceConfig::MAX_TRACKED_CONNECTIONS_LIMIT + 1,
+                ..ProtocolSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "protocol_source.max_tracked_connections must be between 1 and 65536",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            protocol_source: ProtocolSourceConfig {
+                max_attributes: 0,
+                ..ProtocolSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "protocol_source.max_attributes must be between 1 and 32",
+    );
 }

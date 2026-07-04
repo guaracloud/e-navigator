@@ -66,6 +66,11 @@ pub const KNOWN_MODULES: &[KnownModule] = &[
         default_enabled: false,
     },
     KnownModule {
+        name: "source.aya_protocol",
+        kind: ModuleKind::Source,
+        default_enabled: false,
+    },
+    KnownModule {
         name: "source.aya_cpu_profile",
         kind: ModuleKind::Source,
         default_enabled: false,
