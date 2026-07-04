@@ -4698,6 +4698,70 @@ pub fn parse_kafka_delete_share_group_offsets_response(
     })
 }
 
+pub fn parse_kafka_describe_share_group_offsets_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    if !(0..=1).contains(&api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    let error_code = describe_share_group_offsets_response_error_code(body, api_version, config)?;
+    let status_code = error_code.to_string();
+    let error_type = (error_code != 0).then(|| status_code.clone());
+    let api_version = api_version.to_string();
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.system",
+        Some("kafka"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.operation",
+        Some("describe_share_group_offsets"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_key",
+        Some("90"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.api_version",
+        Some(&api_version),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "messaging.kafka.response.error_code",
+        Some(&status_code),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "error.type",
+        error_type.as_deref(),
+    );
+
+    Ok(ParsedKafkaResponse {
+        protocol: ProtocolKind::Kafka,
+        operation: "describe_share_group_offsets".to_string(),
+        status_code,
+        error_type,
+        attributes,
+    })
+}
+
 pub fn parse_kafka_list_groups_response(
     bytes: &[u8],
     api_version: i16,
@@ -4959,6 +5023,7 @@ fn validate_request_body(
         85 => validate_write_share_group_state_request_body(body, header, config),
         86 => validate_delete_share_group_state_request_body(body, header, config),
         87 => validate_read_share_group_state_summary_request_body(body, header, config),
+        90 => validate_describe_share_group_offsets_request_body(body, header, config),
         92 => validate_delete_share_group_offsets_request_body(body, header, config),
         _ => Ok(()),
     }
@@ -6701,6 +6766,35 @@ fn validate_read_share_group_state_summary_request_body(
         for _ in 0..partition_count {
             skip_bytes(body, &mut cursor, 8)?;
             skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+        }
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    if cursor != body.len() {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    Ok(())
+}
+
+fn validate_describe_share_group_offsets_request_body(
+    body: &[u8],
+    header: &KafkaRequestHeader,
+    config: &ProtocolExtractionConfig,
+) -> Result<(), KafkaExtraction> {
+    if !(0..=1).contains(&header.api_version) {
+        return Err(KafkaExtraction::UnsupportedApiVersion);
+    }
+
+    let mut cursor = header.body_start;
+    let group_count = read_compact_array_len(body, &mut cursor)?;
+    for _ in 0..group_count {
+        skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+        if let Some(topic_count) = read_compact_nullable_array_len(body, &mut cursor)? {
+            for _ in 0..topic_count {
+                skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+                skip_compact_int32_array(body, &mut cursor)?;
+                skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+            }
         }
         skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
     }
@@ -8605,6 +8699,56 @@ fn read_share_group_state_summary_response_error_code(
     Ok(first_error_code.unwrap_or(0))
 }
 
+fn describe_share_group_offsets_response_error_code(
+    body: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<i16, KafkaExtraction> {
+    let mut cursor = 4;
+    if body.len() < cursor {
+        return Err(KafkaExtraction::MalformedFrame);
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    skip_bytes(body, &mut cursor, 4)?;
+
+    let group_count = read_compact_array_len(body, &mut cursor)?;
+    let mut first_group_error_code = None;
+    let mut first_partition_error_code = None;
+    for _ in 0..group_count {
+        skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+        let topic_count = read_compact_array_len(body, &mut cursor)?;
+        for _ in 0..topic_count {
+            skip_compact_string(body, &mut cursor, config.max_request_line_bytes)?;
+            skip_bytes(body, &mut cursor, 16)?;
+            let partition_count = read_compact_array_len(body, &mut cursor)?;
+            for _ in 0..partition_count {
+                skip_bytes(body, &mut cursor, 16)?;
+                if api_version >= 1 {
+                    skip_bytes(body, &mut cursor, 8)?;
+                }
+                let error_code = read_i16_be_cursor(body, &mut cursor)?;
+                if error_code != 0 && first_partition_error_code.is_none() {
+                    first_partition_error_code = Some(error_code);
+                }
+                skip_compact_nullable_string(body, &mut cursor, config.max_request_line_bytes)?;
+                skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+            }
+            skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+        }
+        let error_code = read_i16_be_cursor(body, &mut cursor)?;
+        if error_code != 0 && first_group_error_code.is_none() {
+            first_group_error_code = Some(error_code);
+        }
+        skip_compact_nullable_string(body, &mut cursor, config.max_request_line_bytes)?;
+        skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    }
+    skip_tagged_fields(body, &mut cursor, config.max_request_line_bytes)?;
+    if let Some(error_code) = first_group_error_code {
+        return Ok(error_code);
+    }
+    Ok(first_partition_error_code.unwrap_or(0))
+}
+
 fn delete_share_group_offsets_response_error_code(
     body: &[u8],
     config: &ProtocolExtractionConfig,
@@ -9609,6 +9753,7 @@ fn api_key_name(api_key: i16) -> Option<&'static str> {
         85 => Some("write_share_group_state"),
         86 => Some("delete_share_group_state"),
         87 => Some("read_share_group_state_summary"),
+        90 => Some("describe_share_group_offsets"),
         92 => Some("delete_share_group_offsets"),
         _ => None,
     }

@@ -21,7 +21,8 @@ use e_navigator_protocol::{
         parse_kafka_describe_cluster_response, parse_kafka_describe_configs_response,
         parse_kafka_describe_delegation_token_response, parse_kafka_describe_groups_response,
         parse_kafka_describe_log_dirs_response, parse_kafka_describe_producers_response,
-        parse_kafka_describe_quorum_response, parse_kafka_describe_topic_partitions_response,
+        parse_kafka_describe_quorum_response, parse_kafka_describe_share_group_offsets_response,
+        parse_kafka_describe_topic_partitions_response,
         parse_kafka_describe_user_scram_credentials_response, parse_kafka_describe_transactions_response,
         parse_kafka_elect_leaders_response, parse_kafka_end_txn_response,
         parse_kafka_expire_delegation_token_response, parse_kafka_fetch_response,
@@ -123,6 +124,8 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_kafka_delete_share_group_state_response(data, 0, &config);
     let _ = parse_kafka_read_share_group_state_summary_response(data, 1, &config);
     let _ = parse_kafka_delete_share_group_offsets_response(data, 0, &config);
+    let _ = parse_kafka_describe_share_group_offsets_response(data, 0, &config);
+    let _ = parse_kafka_describe_share_group_offsets_response(data, 1, &config);
     let _ = parse_kafka_produce_response(data, 0, &config);
     let _ = parse_kafka_produce_response(data, 7, &config);
     let _ = parse_kafka_fetch_response(data, 0, &config);
