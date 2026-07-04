@@ -28,16 +28,21 @@ E-Navigator does not currently claim:
 
 - production observability backend behavior;
 - trace storage, profile storage, flamegraph UI, dashboards, or query UI;
-- runtime pprof endpoint or upload sink;
-- complete live HTTP/gRPC protocol parsing;
-- live Kafka protocol capture or request/response matching;
-- live NATS protocol capture or request/response matching;
-- live MongoDB protocol capture or request/response matching;
-- live MySQL protocol capture or request/response matching;
-- live PostgreSQL protocol capture or request/response matching;
-- live Redis protocol capture or request/response matching;
+- profile upload sink to an external profiling backend (a local
+  `/debug/pprof/profile` serving endpoint is implemented);
+- complete production HTTP/gRPC protocol coverage (bounded HTTP/1 and
+  HTTP/2/HPACK request capture with request/response matching is implemented
+  and locally proven for Redis and HTTP/2; TLS and CONTINUATION reassembly
+  are not covered);
+- live Kafka protocol capture proof (capture, reassembly, and request/response
+  matching are implemented and unit-tested; only Redis and HTTP/2 are live
+  proven);
+- live NATS, MongoDB, MySQL, or PostgreSQL protocol capture proof (implemented
+  and unit-tested, not yet runtime-proven);
 - TLS payload inspection;
-- full TCP state tracking, packet accounting, retransmits, or resets;
+- full per-connection TCP state-machine tracking or packet accounting (TCP
+  retransmit, reset, and state-transition observation and counting are
+  implemented, with resets and state transitions locally proven);
 - lossless DNS or HTTP capture across every node and workload shape;
 - live native `network.flow.bytes` export from traffic after the native metric
   migration, including flow-attribution warning proof;
