@@ -42,6 +42,17 @@ const HTTP_DIAG_FALLBACK_CANDIDATE: u32 = 12;
 const HTTP_DIAG_FALLBACK_NON_HTTP_START: u32 = 13;
 const HTTP_DIAG_FALLBACK_OUTPUT_ATTEMPT: u32 = 14;
 const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 15;
+const PROTOCOL_DATA_BYTES: usize = 256;
+const PROTOCOL_DIAG_WRITE_ENTER: u32 = 0;
+const PROTOCOL_DIAG_READ_ENTER: u32 = 1;
+const PROTOCOL_DIAG_READ_EXIT: u32 = 2;
+const PROTOCOL_DIAG_CONNECTION_MISS: u32 = 3;
+const PROTOCOL_DIAG_PORT_FILTERED: u32 = 4;
+const PROTOCOL_DIAG_NON_TCP_CONNECTION: u32 = 5;
+const PROTOCOL_DIAG_NULL_OR_EMPTY: u32 = 6;
+const PROTOCOL_DIAG_COPY_EMPTY: u32 = 7;
+const PROTOCOL_DIAG_OUTPUT_ATTEMPT: u32 = 8;
+const PROTOCOL_DIAGNOSTIC_COUNTERS_LEN: u32 = 9;
 const NETWORK_EVENT_OPEN: u32 = 1;
 const NETWORK_EVENT_CLOSE: u32 = 2;
 const NETWORK_EVENT_FAILURE: u32 = 3;
@@ -152,6 +163,36 @@ pub struct RawHttpRequestEvent {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct RawProtocolDataEvent {
+    pub pid: u32,
+    pub uid: u32,
+    pub cgroup_id: u64,
+    pub fd: i32,
+    pub direction: u32,
+    pub family: u32,
+    pub remote_port_be: u16,
+    pub local_port_be: u16,
+    pub remote_addr_v4: u32,
+    pub local_addr_v4: u32,
+    pub remote_addr_v6: [u8; 16],
+    pub local_addr_v6: [u8; 16],
+    pub timestamp_unix_nanos: u64,
+    pub payload_len: u32,
+    pub payload_total_len: u32,
+    pub command: [u8; 16],
+    pub payload: [u8; PROTOCOL_DATA_BYTES],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PendingProtocolRead {
+    pub fd: i32,
+    pub reserved: u32,
+    pub buffer_ptr: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct PendingConnect {
     pub pid: u32,
     pub uid: u32,
@@ -222,6 +263,24 @@ static HTTP_REQUEST_EVENTS: PerfEventArray<RawHttpRequestEvent> = PerfEventArray
 #[map]
 static HTTP_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
     PerCpuArray::with_max_entries(HTTP_DIAGNOSTIC_COUNTERS_LEN, 0);
+
+#[map]
+static PROTOCOL_DATA_EVENTS: PerfEventArray<RawProtocolDataEvent> = PerfEventArray::new(0);
+
+#[map]
+static PROTOCOL_DATA_EVENT_SCRATCH: PerCpuArray<RawProtocolDataEvent> =
+    PerCpuArray::with_max_entries(1, 0);
+
+#[map]
+static PROTOCOL_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
+    PerCpuArray::with_max_entries(PROTOCOL_DIAGNOSTIC_COUNTERS_LEN, 0);
+
+#[map]
+static PROTOCOL_CAPTURE_PORTS: HashMap<u16, u32> = HashMap::with_max_entries(64, 0);
+
+#[map]
+static PENDING_PROTOCOL_READS: HashMap<u64, PendingProtocolRead> =
+    HashMap::with_max_entries(4096, 0);
 
 #[map]
 static EXEC_EVENT_SCRATCH: PerCpuArray<RawExecEvent> = PerCpuArray::with_max_entries(1, 0);
@@ -390,6 +449,78 @@ pub fn tracepoint_http_sendto_enter(ctx: TracePointContext) -> u32 {
 #[tracepoint]
 pub fn tracepoint_http_sendmsg_enter(ctx: TracePointContext) -> u32 {
     match try_tracepoint_http_sendmsg_enter(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_connect_enter(ctx: TracePointContext) -> u32 {
+    match track_connect_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_connect_exit(ctx: TracePointContext) -> u32 {
+    match track_connected_tcp_exit(&ctx) {
+        Ok(_) => 0,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_close_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_protocol_close_enter(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_write_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_protocol_write_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_sendto_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_protocol_write_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_read_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_protocol_read_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_read_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_protocol_read_exit(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_recvfrom_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_protocol_read_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_recvfrom_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_protocol_read_exit(&ctx) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
@@ -789,7 +920,11 @@ fn try_tracepoint_http_connect_enter(ctx: TracePointContext) -> Result<u32, i64>
 }
 
 fn try_tracepoint_http_connect_exit(ctx: TracePointContext) -> Result<u32, i64> {
-    track_connected_tcp_exit(&ctx)
+    let activated = track_connected_tcp_exit(&ctx)?;
+    if activated {
+        record_http_diagnostic(HTTP_DIAG_CONNECT_ACTIVE);
+    }
+    Ok(0)
 }
 
 fn try_tracepoint_http_close_enter(ctx: TracePointContext) -> Result<u32, i64> {
@@ -893,20 +1028,20 @@ fn try_tracepoint_network_io_exit(ctx: &TracePointContext) -> Result<u32, i64> {
     Ok(0)
 }
 
-fn track_connected_tcp_exit(ctx: &TracePointContext) -> Result<u32, i64> {
+fn track_connected_tcp_exit(ctx: &TracePointContext) -> Result<bool, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let retval = unsafe { ctx.read_at::<i64>(16) }.map_err(|err| err as i64)?;
     let pending = match unsafe { PENDING_CONNECTS.get(&pid_tgid) } {
         Some(value) => *value,
-        None => return Ok(0),
+        None => return Ok(false),
     };
     PENDING_CONNECTS.remove(&pid_tgid).ok();
 
     if retval < 0 && retval != NEG_EINPROGRESS {
-        return Ok(0);
+        return Ok(false);
     }
     if pending.protocol != IPPROTO_TCP {
-        return Ok(0);
+        return Ok(false);
     }
 
     let key = ConnectionKey {
@@ -916,8 +1051,7 @@ fn track_connected_tcp_exit(ctx: &TracePointContext) -> Result<u32, i64> {
     ACTIVE_CONNECTIONS
         .insert(&key, &pending, 0)
         .map_err(|err| err as i64)?;
-    record_http_diagnostic(HTTP_DIAG_CONNECT_ACTIVE);
-    Ok(0)
+    Ok(true)
 }
 
 fn emit_http_request_event(
@@ -1091,6 +1225,203 @@ fn emit_http_request_iovecs_event_without_connection(
     record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
     HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
     Ok(0)
+}
+
+fn try_tracepoint_protocol_close_enter(ctx: TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let key = ConnectionKey {
+        tgid: (pid_tgid >> 32) as u32,
+        fd,
+    };
+    ACTIVE_CONNECTIONS.remove(&key).ok();
+    Ok(0)
+}
+
+fn try_tracepoint_protocol_write_enter(ctx: &TracePointContext) -> Result<u32, i64> {
+    record_protocol_diagnostic(PROTOCOL_DIAG_WRITE_ENTER);
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let buffer = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    let len = unsafe { ctx.read_at::<u64>(32) }.map_err(|err| err as i64)?;
+    if buffer.is_null() || len == 0 {
+        record_protocol_diagnostic(PROTOCOL_DIAG_NULL_OR_EMPTY);
+        return Ok(0);
+    }
+
+    let connection = match protocol_capture_connection(fd) {
+        Some(value) => value,
+        None => return Ok(0),
+    };
+    emit_protocol_data_event(ctx, &connection, fd, NETWORK_IO_WRITE, buffer, len)
+}
+
+fn try_tracepoint_protocol_read_enter(ctx: &TracePointContext) -> Result<u32, i64> {
+    record_protocol_diagnostic(PROTOCOL_DIAG_READ_ENTER);
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let buffer = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    if buffer.is_null() {
+        record_protocol_diagnostic(PROTOCOL_DIAG_NULL_OR_EMPTY);
+        return Ok(0);
+    }
+
+    if protocol_capture_connection(fd).is_none() {
+        return Ok(0);
+    }
+
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let pending = PendingProtocolRead {
+        fd,
+        reserved: 0,
+        buffer_ptr: buffer as u64,
+    };
+    PENDING_PROTOCOL_READS
+        .insert(&pid_tgid, &pending, 0)
+        .map_err(|err| err as i64)?;
+    Ok(0)
+}
+
+fn try_tracepoint_protocol_read_exit(ctx: &TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let pending = match unsafe { PENDING_PROTOCOL_READS.get(&pid_tgid) } {
+        Some(value) => *value,
+        None => return Ok(0),
+    };
+    PENDING_PROTOCOL_READS.remove(&pid_tgid).ok();
+
+    let retval = unsafe { ctx.read_at::<i64>(16) }.map_err(|err| err as i64)?;
+    if retval <= 0 {
+        return Ok(0);
+    }
+
+    let connection = match protocol_capture_connection(pending.fd) {
+        Some(value) => value,
+        None => return Ok(0),
+    };
+    record_protocol_diagnostic(PROTOCOL_DIAG_READ_EXIT);
+    emit_protocol_data_event(
+        ctx,
+        &connection,
+        pending.fd,
+        NETWORK_IO_READ,
+        pending.buffer_ptr as *const u8,
+        retval as u64,
+    )
+}
+
+fn protocol_capture_connection(fd: i32) -> Option<PendingConnect> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let key = ConnectionKey {
+        tgid: (pid_tgid >> 32) as u32,
+        fd,
+    };
+    let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
+        Some(value) => *value,
+        None => {
+            record_protocol_diagnostic(PROTOCOL_DIAG_CONNECTION_MISS);
+            return None;
+        }
+    };
+    if connection.protocol != IPPROTO_TCP {
+        record_protocol_diagnostic(PROTOCOL_DIAG_NON_TCP_CONNECTION);
+        return None;
+    }
+    let remote_port = u16::from_be(connection.remote_port_be);
+    if unsafe { PROTOCOL_CAPTURE_PORTS.get(&remote_port) }.is_none() {
+        record_protocol_diagnostic(PROTOCOL_DIAG_PORT_FILTERED);
+        return None;
+    }
+    Some(connection)
+}
+
+#[inline(always)]
+fn emit_protocol_data_event(
+    ctx: &TracePointContext,
+    connection: &PendingConnect,
+    fd: i32,
+    direction: u32,
+    buffer: *const u8,
+    len: u64,
+) -> Result<u32, i64> {
+    let event = protocol_data_event_scratch()?;
+    event.pid = connection.pid;
+    event.uid = connection.uid;
+    event.cgroup_id = current_cgroup_id();
+    event.fd = fd;
+    event.direction = direction;
+    event.family = connection.family;
+    event.remote_port_be = connection.remote_port_be;
+    event.local_port_be = connection.local_port_be;
+    event.remote_addr_v4 = connection.remote_addr_v4;
+    event.local_addr_v4 = connection.local_addr_v4;
+    event.remote_addr_v6 = connection.remote_addr_v6;
+    event.local_addr_v6 = connection.local_addr_v6;
+    event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
+    event.payload_total_len = if len > u32::MAX as u64 {
+        u32::MAX
+    } else {
+        len as u32
+    };
+    event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
+    copy_protocol_payload(buffer, len, event)?;
+    if event.payload_len == 0 {
+        record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
+        return Ok(0);
+    }
+    record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
+    PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
+    Ok(0)
+}
+
+fn copy_protocol_payload(
+    buffer: *const u8,
+    len: u64,
+    event: &mut RawProtocolDataEvent,
+) -> Result<(), i64> {
+    let capped_len = if len > PROTOCOL_DATA_BYTES as u64 {
+        PROTOCOL_DATA_BYTES
+    } else {
+        len as usize
+    };
+    if capped_len == 0 {
+        return Ok(());
+    }
+
+    unsafe { bpf_probe_read_user_buf(buffer, &mut event.payload[..capped_len]) }
+        .map_err(|err| err as i64)?;
+    event.payload_len = capped_len as u32;
+    Ok(())
+}
+
+fn protocol_data_event_scratch() -> Result<&'static mut RawProtocolDataEvent, i64> {
+    let ptr = PROTOCOL_DATA_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+    let event = unsafe { &mut *ptr };
+    event.pid = 0;
+    event.uid = 0;
+    event.cgroup_id = 0;
+    event.fd = -1;
+    event.direction = 0;
+    event.family = 0;
+    event.remote_port_be = 0;
+    event.local_port_be = 0;
+    event.remote_addr_v4 = 0;
+    event.local_addr_v4 = 0;
+    event.remote_addr_v6 = [0; 16];
+    event.local_addr_v6 = [0; 16];
+    event.timestamp_unix_nanos = 0;
+    event.payload_len = 0;
+    event.payload_total_len = 0;
+    event.command = [0; 16];
+    event.payload = [0; PROTOCOL_DATA_BYTES];
+    Ok(event)
+}
+
+#[inline(always)]
+fn record_protocol_diagnostic(stage: u32) {
+    if let Some(counter) = PROTOCOL_DIAGNOSTIC_COUNTERS.get_ptr_mut(stage) {
+        unsafe {
+            *counter = (*counter).wrapping_add(1);
+        }
+    }
 }
 
 fn try_tracepoint_dns_sendto_enter(ctx: &TracePointContext) -> Result<u32, i64> {
