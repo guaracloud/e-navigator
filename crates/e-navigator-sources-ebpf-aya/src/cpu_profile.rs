@@ -303,6 +303,123 @@ fn sample_period_nanos(sample_frequency_hz: u32) -> u64 {
     1_000_000_000_u64 / u64::from(sample_frequency_hz.max(1))
 }
 
+/// Source-layer CPU profile sample drop accounting: kernel perf-buffer
+/// losses and userspace backpressure drops, neither of which is visible to
+/// the aggregation-layer dropped-sample count.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Default)]
+pub(crate) struct CpuProfileDropCounters {
+    lost_perf_events: std::sync::atomic::AtomicU64,
+    backpressure_dropped: std::sync::atomic::AtomicU64,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl CpuProfileDropCounters {
+    pub(crate) fn record_lost_perf_events(&self, count: u64) {
+        self.lost_perf_events
+            .fetch_add(count, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_backpressure_drop(&self) {
+        self.backpressure_dropped
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Atomically reads and resets both counters, returning
+    /// (lost_perf_events, backpressure_dropped) since the last drain.
+    pub(crate) fn drain(&self) -> (u64, u64) {
+        (
+            self.lost_perf_events
+                .swap(0, std::sync::atomic::Ordering::Relaxed),
+            self.backpressure_dropped
+                .swap(0, std::sync::atomic::Ordering::Relaxed),
+        )
+    }
+}
+
+/// Builds a bounded profiling warning reporting source-layer sample drops.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn source_drop_warning(
+    host: Option<String>,
+    lost_perf_events: u64,
+    backpressure_dropped: u64,
+    timestamp_unix_nanos: u64,
+) -> SignalEnvelope {
+    use e_navigator_signals::{
+        ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind,
+        ProfilingWarningObservation,
+    };
+    SignalEnvelope::profiling_warning_observation(
+        "source.aya_cpu_profile",
+        host,
+        ProfilingWarningObservation {
+            warning_type: "source_dropped_samples".to_string(),
+            message: "cpu profile samples dropped before aggregation".to_string(),
+            timestamp_unix_nanos,
+            source_signal_kind: "profile_sample_observation".to_string(),
+            source_module: "source.aya_cpu_profile".to_string(),
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::High,
+            process: None,
+            container: None,
+            kubernetes: None,
+            attributes: vec![
+                ProfilingAttribute {
+                    key: "profiling.dropped.lost_perf_events".to_string(),
+                    value: lost_perf_events.to_string(),
+                },
+                ProfilingAttribute {
+                    key: "profiling.dropped.backpressure".to_string(),
+                    value: backpressure_dropped.to_string(),
+                },
+            ],
+        },
+    )
+}
+
+/// Builds a bounded profiling warning reporting that CPU sampling coverage
+/// is capped below the online CPU count.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn coverage_gap_warning(
+    host: Option<String>,
+    online_cpus: usize,
+    active_cpus: usize,
+    timestamp_unix_nanos: u64,
+) -> SignalEnvelope {
+    use e_navigator_signals::{
+        ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind,
+        ProfilingWarningObservation,
+    };
+    SignalEnvelope::profiling_warning_observation(
+        "source.aya_cpu_profile",
+        host,
+        ProfilingWarningObservation {
+            warning_type: "coverage_capped".to_string(),
+            message: "cpu profile sampling covers fewer cpus than are online".to_string(),
+            timestamp_unix_nanos,
+            source_signal_kind: "profile_sample_observation".to_string(),
+            source_module: "source.aya_cpu_profile".to_string(),
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::High,
+            process: None,
+            container: None,
+            kubernetes: None,
+            attributes: vec![
+                ProfilingAttribute {
+                    key: "profiling.coverage.online_cpus".to_string(),
+                    value: online_cpus.to_string(),
+                },
+                ProfilingAttribute {
+                    key: "profiling.coverage.active_cpus".to_string(),
+                    value: active_cpus.to_string(),
+                },
+            ],
+        },
+    )
+}
+
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn now_unix_nanos() -> u64 {
@@ -377,6 +494,7 @@ mod platform {
             bump_memlock_rlimit();
             let shutdown = ReaderShutdown::new();
             let mut reader_handles = Vec::new();
+            let drop_counters = std::sync::Arc::new(super::CpuProfileDropCounters::default());
             let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
                 env!("OUT_DIR"),
                 "/e-navigator-ebpf-programs"
@@ -396,6 +514,22 @@ mod platform {
             let sample_policy = SamplePolicy::Frequency(self.config.sample_frequency_hz.into());
             let cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
             let active_cpus = bounded_cpu_targets(&cpus, self.config.max_active_targets);
+            if active_cpus.len() < cpus.len() {
+                let uncovered = cpus.len() - active_cpus.len();
+                warn!(
+                    online_cpus = cpus.len(),
+                    active_cpus = active_cpus.len(),
+                    uncovered,
+                    "cpu profile coverage is capped by max_active_targets; some cpus are unsampled"
+                );
+                let warning = super::coverage_gap_warning(
+                    self.host.clone(),
+                    cpus.len(),
+                    active_cpus.len(),
+                    super::now_unix_nanos(),
+                );
+                let _ = tx.send(warning).await;
+            }
             for cpu in active_cpus.iter().copied() {
                 program
                     .attach(
@@ -423,6 +557,7 @@ mod platform {
                 let config = self.config.clone();
                 let backpressure = config.backpressure;
                 let reader_shutdown = shutdown.clone();
+                let drop_counters = drop_counters.clone();
                 let mut resolver = super::ProcfsSymbolizer::new(
                     self.procfs_root.clone(),
                     config.resolve_symbol_names,
@@ -470,11 +605,13 @@ mod platform {
                                             reader_shutdown.stop();
                                             exit = ReaderExit::BackpressureStop;
                                         } else {
+                                            drop_counters.record_backpressure_drop();
                                             warn!("dropped cpu profile sample due to backpressure");
                                         }
                                     }
                                 }
                                 PerfBufferEvent::Lost { count } => {
+                                    drop_counters.record_lost_perf_events(count);
                                     warn!(count, "lost cpu profile perf events");
                                 }
                             }
@@ -490,6 +627,31 @@ mod platform {
                 }));
             }
 
+            {
+                let emitter_shutdown = shutdown.clone();
+                let emitter_counters = drop_counters.clone();
+                let emitter_tx = tx.clone();
+                let emitter_host = self.host.clone();
+                reader_handles.push(tokio::task::spawn_blocking(move || {
+                    while !emitter_shutdown.is_stopped() {
+                        std::thread::sleep(std::time::Duration::from_secs(10));
+                        let (lost, dropped) = emitter_counters.drain();
+                        if lost == 0 && dropped == 0 {
+                            continue;
+                        }
+                        let warning = super::source_drop_warning(
+                            emitter_host.clone(),
+                            lost,
+                            dropped,
+                            super::now_unix_nanos(),
+                        );
+                        if emitter_tx.blocking_send(warning).is_err() {
+                            return ReaderExit::Stopped;
+                        }
+                    }
+                    ReaderExit::Stopped
+                }));
+            }
             debug!("aya cpu profile source attached");
             let reader_results = join_reader_handles(reader_handles);
             tokio::pin!(reader_results);
@@ -836,6 +998,48 @@ mod tests {
         assert_eq!(frame.module.as_deref(), Some("/usr/bin/app"));
         assert_eq!(frame.module_offset, Some(0x1500));
         assert_eq!(frame.symbol.as_deref(), Some("/usr/bin/app+0x1500"));
+    }
+
+    #[test]
+    fn coverage_gap_warning_reports_cpu_counts() {
+        let signal = coverage_gap_warning(None, 16, 8, 1_000);
+        let SignalPayload::ProfilingWarningObservation(warning) = signal.payload else {
+            panic!("expected profiling warning");
+        };
+        assert_eq!(warning.warning_type, "coverage_capped");
+        assert!(warning.attributes.iter().any(|attribute| attribute.key
+            == "profiling.coverage.online_cpus"
+            && attribute.value == "16"));
+        assert!(warning.attributes.iter().any(|attribute| attribute.key
+            == "profiling.coverage.active_cpus"
+            && attribute.value == "8"));
+    }
+
+    #[test]
+    fn drop_counters_accumulate_and_drain() {
+        let counters = CpuProfileDropCounters::default();
+        counters.record_lost_perf_events(3);
+        counters.record_lost_perf_events(2);
+        counters.record_backpressure_drop();
+        assert_eq!(counters.drain(), (5, 1));
+        // Draining resets both counters.
+        assert_eq!(counters.drain(), (0, 0));
+    }
+
+    #[test]
+    fn source_drop_warning_reports_bounded_counts() {
+        let signal = source_drop_warning(Some("node-a".to_string()), 7, 4, 12_000);
+        let SignalPayload::ProfilingWarningObservation(warning) = signal.payload else {
+            panic!("expected profiling warning");
+        };
+        assert_eq!(warning.warning_type, "source_dropped_samples");
+        assert_eq!(warning.source_module, "source.aya_cpu_profile");
+        assert!(warning.attributes.iter().any(|attribute| attribute.key
+            == "profiling.dropped.lost_perf_events"
+            && attribute.value == "7"));
+        assert!(warning.attributes.iter().any(|attribute| attribute.key
+            == "profiling.dropped.backpressure"
+            && attribute.value == "4"));
     }
 
     #[test]
