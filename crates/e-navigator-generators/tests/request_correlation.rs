@@ -892,6 +892,7 @@ fn protocol_request_signal_at(
         Some("node-a".to_string()),
         ProtocolRequestObservation {
             protocol: ProtocolKind::Http,
+            role: None,
             start_unix_nanos,
             end_unix_nanos: Some(start_unix_nanos + 1_500),
             duration_nanos: Some(1_500),

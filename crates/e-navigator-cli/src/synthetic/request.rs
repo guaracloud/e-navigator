@@ -26,6 +26,7 @@ pub(super) fn signals(
             host.clone(),
             ProtocolRequestObservation {
                 protocol: ProtocolKind::Http,
+                role: None,
                 start_unix_nanos: started,
                 end_unix_nanos: Some(started.saturating_add(duration_nanos)),
                 duration_nanos: Some(duration_nanos),
@@ -54,6 +55,7 @@ pub(super) fn signals(
             host.clone(),
             ProtocolRequestObservation {
                 protocol: ProtocolKind::Http,
+                role: None,
                 start_unix_nanos: started.saturating_add(duration_nanos + 5_000),
                 end_unix_nanos: Some(started.saturating_add(duration_nanos + 6_000)),
                 duration_nanos: Some(1_000),
@@ -82,6 +84,7 @@ pub(super) fn signals(
             host.clone(),
             ProtocolRequestObservation {
                 protocol: ProtocolKind::Http,
+                role: None,
                 start_unix_nanos: started.saturating_add(duration_nanos + 10_000),
                 end_unix_nanos: Some(started.saturating_add(duration_nanos + 11_000)),
                 duration_nanos: Some(1_000),
@@ -110,6 +113,7 @@ pub(super) fn signals(
             host.clone(),
             ProtocolRequestObservation {
                 protocol: ProtocolKind::Http,
+                role: None,
                 start_unix_nanos: started.saturating_add(duration_nanos + 20_000),
                 end_unix_nanos: Some(started.saturating_add(duration_nanos + 21_000)),
                 duration_nanos: Some(1_000),
@@ -143,6 +147,7 @@ pub(super) fn signals(
             host.clone(),
             ProtocolRequestObservation {
                 protocol: fixture.protocol,
+                role: None,
                 start_unix_nanos: start,
                 end_unix_nanos: Some(start.saturating_add(fixture_duration)),
                 duration_nanos: Some(fixture_duration),

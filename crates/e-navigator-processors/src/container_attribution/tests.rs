@@ -1266,6 +1266,7 @@ async fn protocol_request_observations_reuse_existing_container_attribution() {
         Some("node-a".to_string()),
         ProtocolRequestObservation {
             protocol: ProtocolKind::Http,
+            role: None,
             start_unix_nanos: 1_000,
             end_unix_nanos: Some(2_000),
             duration_nanos: Some(1_000),

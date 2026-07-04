@@ -37,8 +37,8 @@ pub use profiling::{
     sanitize_profiling_attributes, sanitize_profiling_frames,
 };
 pub use request::{
-    ExtractedTraceContextObservation, ProtocolKind, ProtocolRequestObservation,
-    RequestCorrelationWarning, RequestSpanObservation,
+    ExtractedTraceContextObservation, ProtocolCaptureRole, ProtocolKind,
+    ProtocolRequestObservation, RequestCorrelationWarning, RequestSpanObservation,
 };
 pub use resource::{
     CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,

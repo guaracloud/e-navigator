@@ -351,6 +351,7 @@ mod tests {
             Some("node-a".to_string()),
             ProtocolRequestObservation {
                 protocol: ProtocolKind::Grpc,
+                role: None,
                 start_unix_nanos: 1_000,
                 end_unix_nanos: Some(2_500),
                 duration_nanos: Some(1_500),

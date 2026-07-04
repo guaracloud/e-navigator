@@ -60,6 +60,7 @@ fn serializes_protocol_request_observation_with_explicit_context() {
         Some("node-a".to_string()),
         ProtocolRequestObservation {
             protocol: ProtocolKind::Http,
+            role: None,
             start_unix_nanos: 1_000,
             end_unix_nanos: Some(2_500),
             duration_nanos: Some(1_500),
@@ -121,6 +122,7 @@ fn request_constructors_bound_and_filter_trace_attributes_before_json_stdout() {
         Some("node-a".to_string()),
         ProtocolRequestObservation {
             protocol: ProtocolKind::Http,
+            role: None,
             start_unix_nanos: 1_000,
             end_unix_nanos: Some(2_500),
             duration_nanos: Some(1_500),
@@ -199,6 +201,7 @@ fn request_constructors_bound_scalar_strings_before_json_stdout() {
         Some("node-a".to_string()),
         ProtocolRequestObservation {
             protocol: ProtocolKind::Http,
+            role: None,
             start_unix_nanos: 1_000,
             end_unix_nanos: Some(2_500),
             duration_nanos: Some(1_500),
@@ -305,6 +308,7 @@ fn request_constructors_bound_identifier_strings_before_json_stdout() {
         None,
         ProtocolRequestObservation {
             protocol: ProtocolKind::Http,
+            role: None,
             start_unix_nanos: 1_000,
             end_unix_nanos: Some(2_500),
             duration_nanos: Some(1_500),
@@ -420,6 +424,7 @@ fn request_constructors_bound_context_strings_before_json_stdout() {
         None,
         ProtocolRequestObservation {
             protocol: ProtocolKind::Http,
+            role: None,
             start_unix_nanos: 1_000,
             end_unix_nanos: Some(2_500),
             duration_nanos: Some(1_500),
@@ -533,6 +538,7 @@ fn serializes_redis_protocol_request_observation_without_payload_values() {
         Some("node-a".to_string()),
         ProtocolRequestObservation {
             protocol: ProtocolKind::Redis,
+            role: None,
             start_unix_nanos: 1_000,
             end_unix_nanos: None,
             duration_nanos: None,
@@ -587,6 +593,7 @@ fn serializes_postgresql_protocol_request_observation_without_query_text() {
         Some("node-a".to_string()),
         ProtocolRequestObservation {
             protocol: ProtocolKind::Postgresql,
+            role: None,
             start_unix_nanos: 1_000,
             end_unix_nanos: None,
             duration_nanos: None,
@@ -637,6 +644,7 @@ fn serializes_mysql_protocol_request_observation_without_query_text() {
         Some("node-a".to_string()),
         ProtocolRequestObservation {
             protocol: ProtocolKind::Mysql,
+            role: None,
             start_unix_nanos: 1_000,
             end_unix_nanos: None,
             duration_nanos: None,
@@ -687,6 +695,7 @@ fn serializes_mongodb_protocol_request_observation_without_bson_values() {
         Some("node-a".to_string()),
         ProtocolRequestObservation {
             protocol: ProtocolKind::Mongodb,
+            role: None,
             start_unix_nanos: 1_000,
             end_unix_nanos: None,
             duration_nanos: None,
@@ -737,6 +746,7 @@ fn serializes_kafka_protocol_request_observation_without_client_topic_or_payload
         Some("node-a".to_string()),
         ProtocolRequestObservation {
             protocol: ProtocolKind::Kafka,
+            role: None,
             start_unix_nanos: 1_000,
             end_unix_nanos: None,
             duration_nanos: None,
@@ -793,6 +803,7 @@ fn serializes_nats_protocol_request_observation_without_subject_or_payload() {
         Some("node-a".to_string()),
         ProtocolRequestObservation {
             protocol: ProtocolKind::Nats,
+            role: None,
             start_unix_nanos: 1_000,
             end_unix_nanos: None,
             duration_nanos: None,

@@ -7,8 +7,8 @@ use e_navigator_protocol::{
 };
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_signals::{
-    NetworkProcessIdentity, ProtocolRequestObservation, SignalEnvelope, TraceConfidence,
-    TraceCorrelationKind, TracePeerContext,
+    NetworkProcessIdentity, ProtocolCaptureRole, ProtocolRequestObservation, SignalEnvelope,
+    TraceConfidence, TraceCorrelationKind, TracePeerContext,
 };
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -269,6 +269,7 @@ fn raw_http_request_to_signal_result_with_config(
         host,
         ProtocolRequestObservation {
             protocol: parsed.protocol,
+            role: Some(ProtocolCaptureRole::Client),
             start_unix_nanos: observed_unix_nanos,
             end_unix_nanos: None,
             duration_nanos: None,

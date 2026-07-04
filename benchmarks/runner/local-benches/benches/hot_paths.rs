@@ -734,6 +734,7 @@ fn request_signals() -> Vec<SignalEnvelope> {
                 Some("node-a".to_string()),
                 ProtocolRequestObservation {
                     protocol: ProtocolKind::Http,
+                    role: None,
                     start_unix_nanos: 1_000 + index,
                     end_unix_nanos: Some(2_000 + index),
                     duration_nanos: Some(1_000),

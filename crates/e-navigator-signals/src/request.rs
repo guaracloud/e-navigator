@@ -20,9 +20,20 @@ pub enum ProtocolKind {
     Unknown,
 }
 
+/// Which side of the connection the observed process was on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ProtocolCaptureRole {
+    Client,
+    Server,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProtocolRequestObservation {
     pub protocol: ProtocolKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<ProtocolCaptureRole>,
     pub start_unix_nanos: u64,
     pub end_unix_nanos: Option<u64>,
     pub duration_nanos: Option<u64>,
