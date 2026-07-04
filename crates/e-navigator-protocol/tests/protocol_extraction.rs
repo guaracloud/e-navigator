@@ -15,6 +15,7 @@ use e_navigator_protocol::{
         parse_kafka_create_delegation_token_response, parse_kafka_create_partitions_response,
         parse_kafka_create_topics_response, parse_kafka_delete_acls_response,
         parse_kafka_delete_groups_response, parse_kafka_delete_records_response,
+        parse_kafka_delete_share_group_offsets_response,
         parse_kafka_delete_share_group_state_response, parse_kafka_delete_topics_response,
         parse_kafka_describe_acls_response, parse_kafka_describe_client_quotas_response,
         parse_kafka_describe_cluster_response, parse_kafka_describe_configs_response,
@@ -360,6 +361,7 @@ proptest! {
             api_version.min(1),
             &config,
         );
+        let _ = parse_kafka_delete_share_group_offsets_response(&bytes, 0, &config);
         let _ = parse_kafka_produce_response(&bytes, api_version.min(4), &config);
         let _ = parse_kafka_fetch_response(&bytes, api_version.min(5), &config);
         let _ = parse_kafka_offset_commit_response(&bytes, api_version.clamp(2, 7), &config);
@@ -4551,6 +4553,40 @@ fn validates_kafka_read_share_group_state_summary_request_without_group_or_topic
 }
 
 #[test]
+fn validates_kafka_delete_share_group_offsets_request_without_group_or_topic_values() {
+    let body = kafka_delete_share_group_offsets_request_body("group.secret", &["orders.secret"]);
+    let bytes = kafka_flexible_request_frame(92, 0, Some(b"secret-client"), &body);
+
+    let extraction = parse_kafka_request(&bytes, &ProtocolExtractionConfig::default())
+        .expect("kafka delete share group offsets request parses");
+
+    assert_eq!(
+        extraction.operation.as_deref(),
+        Some("delete_share_group_offsets")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "92")
+    );
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_version"
+                && attribute.value == "0")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("orders"))
+    );
+}
+
+#[test]
 fn validates_kafka_alter_replica_log_dirs_requests_without_path_or_topic_values() {
     let body = kafka_alter_replica_log_dirs_request_body(
         "/var/lib/kafka/secret-dir",
@@ -8517,6 +8553,112 @@ fn extracts_kafka_read_share_group_state_summary_error_response_without_topic_me
 }
 
 #[test]
+fn extracts_kafka_delete_share_group_offsets_ok_response_without_topic_or_message_values() {
+    let topics: &[DeleteShareGroupOffsetsResponseTopicFixture<'_>] =
+        &[("orders.secret", [29_u8; 16], 0, Some("secret message"))];
+    let bytes = kafka_delete_share_group_offsets_response_frame(0, 0, None, topics);
+
+    let extraction = parse_kafka_delete_share_group_offsets_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("delete share group offsets ok response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "delete_share_group_offsets");
+    assert_eq!(extraction.status_code, "0");
+    assert_eq!(extraction.error_type, None);
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "messaging.kafka.api_key" && attribute.value == "92")
+    );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "messaging.kafka.response.error_code" && attribute.value == "0"
+    }));
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("orders")
+                || attribute.value.contains("message")
+                || attribute.value.contains("29"))
+    );
+}
+
+#[test]
+fn extracts_kafka_delete_share_group_offsets_topic_error_without_topic_or_message_values() {
+    let topics: &[DeleteShareGroupOffsetsResponseTopicFixture<'_>] =
+        &[("orders.secret", [29_u8; 16], 6, Some("topic secret denied"))];
+    let bytes = kafka_delete_share_group_offsets_response_frame(0, 0, None, topics);
+
+    let extraction = parse_kafka_delete_share_group_offsets_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("delete share group offsets topic error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "delete_share_group_offsets");
+    assert_eq!(extraction.status_code, "6");
+    assert_eq!(extraction.error_type.as_deref(), Some("6"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "6")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("orders")
+                || attribute.value.contains("denied")
+                || attribute.value.contains("29"))
+    );
+}
+
+#[test]
+fn extracts_kafka_delete_share_group_offsets_top_level_error_without_message_values() {
+    let topics: &[DeleteShareGroupOffsetsResponseTopicFixture<'_>] =
+        &[("orders.secret", [29_u8; 16], 6, Some("topic secret denied"))];
+    let bytes =
+        kafka_delete_share_group_offsets_response_frame(0, 30, Some("top secret denied"), topics);
+
+    let extraction = parse_kafka_delete_share_group_offsets_response(
+        &bytes,
+        0,
+        &ProtocolExtractionConfig::default(),
+    )
+    .expect("delete share group offsets top-level error response parses");
+
+    assert_eq!(extraction.protocol, ProtocolKind::Kafka);
+    assert_eq!(extraction.operation, "delete_share_group_offsets");
+    assert_eq!(extraction.status_code, "30");
+    assert_eq!(extraction.error_type.as_deref(), Some("30"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "error.type" && attribute.value == "30")
+    );
+    assert!(
+        !extraction
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret")
+                || attribute.value.contains("orders")
+                || attribute.value.contains("denied")
+                || attribute.value.contains("29"))
+    );
+}
+
+#[test]
 fn extracts_kafka_offset_for_leader_epoch_v2_ok_response_without_topic_or_offset_values() {
     let topics: &[OffsetForLeaderEpochResponseTopicFixture<'_>] =
         &[("orders.secret", &[(0, 0, 12, 99_999)])];
@@ -11599,6 +11741,23 @@ fn enforces_kafka_frame_client_id_response_and_attribute_bounds() {
         2
     );
 
+    let bounded_delete_share_group_offsets_response =
+        parse_kafka_delete_share_group_offsets_response(
+            &kafka_delete_share_group_offsets_response_frame(0, 0, None, &[]),
+            0,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 64,
+                max_attributes: 2,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .expect("bounded kafka delete share group offsets response parses");
+    assert_eq!(
+        bounded_delete_share_group_offsets_response.attributes.len(),
+        2
+    );
+
     let bounded_produce_response = parse_kafka_produce_response(
         &kafka_produce_response_frame(0, 1, &[("orders.secret", 6)]),
         1,
@@ -14223,6 +14382,15 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         parse_kafka_read_share_group_state_summary_response(
             &kafka_read_share_group_state_summary_response_frame(0, &[], 1),
             2,
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_delete_share_group_offsets_response(
+            &kafka_delete_share_group_offsets_response_frame(0, 0, None, &[]),
+            1,
             &config
         )
         .unwrap_err(),
@@ -17422,6 +17590,64 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         KafkaExtraction::MalformedFrame
     );
 
+    let delete_share_group_offsets_body =
+        kafka_delete_share_group_offsets_request_body("group.secret", &["orders.secret"]);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                92,
+                1,
+                Some(b"client-a"),
+                &delete_share_group_offsets_body
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::UnsupportedApiVersion
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                92,
+                0,
+                Some(b"client-a"),
+                &delete_share_group_offsets_body
+            ),
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    let mut oversized_delete_share_group_offsets_body = Vec::new();
+    push_compact_string(&mut oversized_delete_share_group_offsets_body, "grp");
+    push_unsigned_varint(&mut oversized_delete_share_group_offsets_body, 1026);
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(
+                92,
+                0,
+                Some(b"client-a"),
+                &oversized_delete_share_group_offsets_body,
+            ),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
+    );
+    assert_eq!(
+        parse_kafka_request(
+            &kafka_flexible_request_frame(92, 0, Some(b"client-a"), b"\0"),
+            &config
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+
     let mut truncated_response = kafka_produce_response_frame(0, 1, &[("orders", 6)]);
     truncated_response.truncate(10);
     assert_eq!(
@@ -18140,6 +18366,47 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
         )
         .unwrap_err(),
         KafkaExtraction::MalformedFrame
+    );
+
+    let mut truncated_delete_share_group_offsets_response =
+        kafka_delete_share_group_offsets_response_frame(
+            0,
+            0,
+            None,
+            &[("orders.secret", [29_u8; 16], 6, Some("secret message"))],
+        );
+    truncated_delete_share_group_offsets_response.truncate(18);
+    assert_eq!(
+        parse_kafka_delete_share_group_offsets_response(
+            &truncated_delete_share_group_offsets_response,
+            0,
+            &config,
+        )
+        .unwrap_err(),
+        KafkaExtraction::MalformedFrame
+    );
+    assert_eq!(
+        parse_kafka_delete_share_group_offsets_response(
+            &kafka_delete_share_group_offsets_response_frame(0, 6, Some("secret message"), &[],),
+            0,
+            &ProtocolExtractionConfig {
+                max_header_bytes: 128,
+                max_request_line_bytes: 4,
+                max_attributes: 4,
+                max_tracestate_bytes: 32,
+            },
+        )
+        .unwrap_err(),
+        KafkaExtraction::ClientIdTooLong
+    );
+    assert_eq!(
+        parse_kafka_delete_share_group_offsets_response(
+            &kafka_delete_share_group_offsets_response_with_topic_count_frame(1025),
+            0,
+            &config,
+        )
+        .unwrap_err(),
+        KafkaExtraction::FrameTooLong
     );
 
     let mut truncated_join_group_response =
@@ -22305,6 +22572,18 @@ fn kafka_read_share_group_state_summary_request_body(
     body
 }
 
+fn kafka_delete_share_group_offsets_request_body(group_id: &str, topics: &[&str]) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_compact_string(&mut body, group_id);
+    push_unsigned_varint(&mut body, topics.len() + 1);
+    for topic in topics {
+        push_compact_string(&mut body, topic);
+        push_unsigned_varint(&mut body, 0);
+    }
+    push_unsigned_varint(&mut body, 0);
+    body
+}
+
 fn kafka_alter_replica_log_dirs_request_body(log_dir: &str, topics: &[(&str, &[i32])]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&1_i32.to_be_bytes());
@@ -25594,6 +25873,43 @@ fn kafka_read_share_group_state_summary_response_with_partition_count_frame(
     push_unsigned_varint(&mut response, 2);
     response.extend_from_slice(&[29_u8; 16]);
     push_unsigned_varint(&mut response, partition_count + 1);
+    kafka_frame(&response)
+}
+
+type DeleteShareGroupOffsetsResponseTopicFixture<'a> = (&'a str, [u8; 16], i16, Option<&'a str>);
+
+fn kafka_delete_share_group_offsets_response_frame(
+    correlation_id: i32,
+    top_level_error_code: i16,
+    top_level_error_message: Option<&str>,
+    topics: &[DeleteShareGroupOffsetsResponseTopicFixture<'_>],
+) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&correlation_id.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&top_level_error_code.to_be_bytes());
+    push_compact_nullable_string(&mut response, top_level_error_message);
+    push_unsigned_varint(&mut response, topics.len() + 1);
+    for (topic, topic_id, error_code, error_message) in topics {
+        push_compact_string(&mut response, topic);
+        response.extend_from_slice(topic_id);
+        response.extend_from_slice(&error_code.to_be_bytes());
+        push_compact_nullable_string(&mut response, *error_message);
+        push_unsigned_varint(&mut response, 0);
+    }
+    push_unsigned_varint(&mut response, 0);
+    kafka_frame(&response)
+}
+
+fn kafka_delete_share_group_offsets_response_with_topic_count_frame(topic_count: usize) -> Vec<u8> {
+    let mut response = Vec::new();
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    push_unsigned_varint(&mut response, 0);
+    response.extend_from_slice(&0_i32.to_be_bytes());
+    response.extend_from_slice(&0_i16.to_be_bytes());
+    push_compact_nullable_string(&mut response, None);
+    push_unsigned_varint(&mut response, topic_count + 1);
     kafka_frame(&response)
 }
 
