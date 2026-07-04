@@ -32,8 +32,10 @@ cargo bench --locked -p e-navigator-local-benches --bench hot_paths
 
 Current local benchmark targets:
 
-- raw Aya userspace decode harnesses for exec, network, and CPU profile event
-  bytes;
+- raw Aya userspace decode harnesses for exec, network, CPU profile, and
+  protocol data event bytes;
+- protocol request-stream reassembly (Redis pipelined chunk decode and Kafka
+  split-frame reassembly through `RequestStreamDecoder`);
 - procfs, loadavg, meminfo, diskstats, and process stat parser paths;
 - traceparent, HTTP request/response fixture parsing, gRPC decoded HTTP/2
   metadata/trailer parsing, Kafka request-header and ApiVersions response
@@ -84,6 +86,22 @@ live kernel event cost. In this short local run, Criterion reported no
 statistically significant session-write change and a small warning-write
 regression against the prior local baseline, so the result is evidence of
 benchmark coverage rather than an optimization claim.
+
+Focused protocol stream reassembly smoke from this development host:
+
+```bash
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  'protocol_stream|protocol_data'
+```
+
+- `protocol_stream/redis_pipeline_push_chunk`: 44.486-45.005 ns (two pipelined
+  RESP commands reassembled and framed per iteration).
+- `protocol_stream/kafka_split_frame_push_chunk`: 24.365-24.720 ns (one Kafka
+  request frame split across two captured chunks per iteration).
+- `aya_decode/protocol_data_fuzz_harness`: 1.6794-1.7021 us (full raw event
+  decode path including per-call registry construction and procfs-miss
+  container lookup; the steady-state source reuses one registry, so this is an
+  upper bound for per-event decode cost, not a live capture claim).
 
 Focused protocol error trace formatter smoke from this development host:
 

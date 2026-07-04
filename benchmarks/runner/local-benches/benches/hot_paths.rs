@@ -35,7 +35,7 @@ use e_navigator_sinks::{
 };
 use e_navigator_sources_ebpf_aya::{
     cpu_profile::fuzz_decode_raw_cpu_profile_event, exec::fuzz_decode_raw_exec_event,
-    network::fuzz_decode_raw_network_event,
+    network::fuzz_decode_raw_network_event, protocol::fuzz_decode_raw_protocol_data_event,
 };
 use e_navigator_sources_host::{
     parse_cpu_stat, parse_diskstats, parse_loadavg, parse_meminfo, parse_process_stat,
@@ -269,6 +269,70 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     c.bench_function("profiling/fixture_normalize", |b| {
         b.iter(|| parse_profile_fixture(black_box(profile_fixture), &limits).unwrap())
     });
+}
+
+fn bench_protocol_stream(c: &mut Criterion) {
+    use e_navigator_protocol::stream::{RequestStreamDecoder, StreamDecodeLimits, StreamProtocol};
+
+    let redis_pipeline = b"*1\r\n$4\r\nPING\r\n*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n".to_vec();
+    let mut kafka_frame = 27_i32.to_be_bytes().to_vec();
+    kafka_frame.extend_from_slice(&[0, 3, 0, 9, 0, 0, 0, 42, 0, 12]);
+    kafka_frame.extend_from_slice(b"bench-clienttopic");
+
+    c.bench_function("protocol_stream/redis_pipeline_push_chunk", |b| {
+        let mut decoder =
+            RequestStreamDecoder::new(StreamProtocol::Redis, StreamDecodeLimits::default());
+        let mut frames = Vec::new();
+        b.iter(|| {
+            frames.clear();
+            decoder.push_chunk(
+                black_box(&redis_pipeline),
+                redis_pipeline.len() as u64,
+                &mut frames,
+            );
+            black_box(frames.len())
+        })
+    });
+
+    c.bench_function("protocol_stream/kafka_split_frame_push_chunk", |b| {
+        let mut decoder =
+            RequestStreamDecoder::new(StreamProtocol::Kafka, StreamDecodeLimits::default());
+        let mut frames = Vec::new();
+        let (head, tail) = kafka_frame.split_at(9);
+        b.iter(|| {
+            frames.clear();
+            decoder.push_chunk(black_box(head), head.len() as u64, &mut frames);
+            decoder.push_chunk(black_box(tail), tail.len() as u64, &mut frames);
+            black_box(frames.len())
+        })
+    });
+
+    let raw_protocol_event = raw_protocol_data_event_fixture();
+    c.bench_function("aya_decode/protocol_data_fuzz_harness", |b| {
+        b.iter(|| fuzz_decode_raw_protocol_data_event(black_box(&raw_protocol_event)))
+    });
+}
+
+/// Byte-encodes a valid `RawProtocolDataEvent` (write-direction Redis GET on
+/// port 6379) matching the eBPF struct layout.
+fn raw_protocol_data_event_fixture() -> Vec<u8> {
+    let mut bytes = vec![0_u8; 360];
+    bytes[0..4].copy_from_slice(&4242_u32.to_ne_bytes());
+    bytes[4..8].copy_from_slice(&1000_u32.to_ne_bytes());
+    bytes[8..16].copy_from_slice(&77_u64.to_ne_bytes());
+    bytes[16..20].copy_from_slice(&9_i32.to_ne_bytes());
+    bytes[20..24].copy_from_slice(&2_u32.to_ne_bytes());
+    bytes[24..28].copy_from_slice(&2_u32.to_ne_bytes());
+    bytes[28..30].copy_from_slice(&6379_u16.to_be_bytes());
+    bytes[30..32].copy_from_slice(&43210_u16.to_be_bytes());
+    bytes[32..36].copy_from_slice(&u32::from_ne_bytes([10, 0, 0, 5]).to_ne_bytes());
+    bytes[72..80].copy_from_slice(&1_000_u64.to_ne_bytes());
+    let payload = b"*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n";
+    bytes[80..84].copy_from_slice(&(payload.len() as u32).to_ne_bytes());
+    bytes[84..88].copy_from_slice(&(payload.len() as u32).to_ne_bytes());
+    bytes[88..94].copy_from_slice(b"client");
+    bytes[104..104 + payload.len()].copy_from_slice(payload);
+    bytes
 }
 
 fn bench_processors(c: &mut Criterion) {
@@ -957,6 +1021,7 @@ criterion_group!(
     bench_raw_aya_decoders,
     bench_host_parsers,
     bench_protocol_and_profiles,
+    bench_protocol_stream,
     bench_processors,
     bench_generators,
     bench_serialization_and_exporter
