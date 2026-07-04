@@ -5,13 +5,15 @@ use e_navigator_core::ProtocolSourceConfig;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
-    kafka::parse_kafka_request,
-    mongodb::parse_mongodb_message,
-    mysql::parse_mysql_command,
+    kafka::{parse_kafka_request, parse_kafka_response_for_api_key},
+    mongodb::{parse_mongodb_message, parse_mongodb_response},
+    mysql::{parse_mysql_command, parse_mysql_response},
     nats::parse_nats_command,
-    postgres::parse_postgres_message,
-    redis::parse_redis_command,
-    stream::{RequestStreamDecoder, StreamDecodeLimits, StreamFrame, StreamProtocol},
+    postgres::{parse_postgres_message, parse_postgres_response},
+    redis::{parse_redis_command, parse_redis_response},
+    stream::{
+        ProtocolStreamDecoder, StreamDecodeLimits, StreamDirection, StreamFrame, StreamProtocol,
+    },
 };
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_signals::{
@@ -29,6 +31,10 @@ pub(crate) const RAW_PROTOCOL_DIRECTION_WRITE: u32 = 2;
 pub(crate) const RAW_PROTOCOL_AF_INET: u32 = 2;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_PROTOCOL_AF_INET6: u32 = 10;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const MAX_IN_FLIGHT_REQUESTS: usize = 32;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const REQUEST_MATCH_TIMEOUT_NANOS: u64 = 30_000_000_000;
 #[cfg(any(target_os = "linux", test))]
 const PERF_BUFFER_PAGE_COUNT: usize = 64;
 #[cfg(any(target_os = "linux", test))]
@@ -119,6 +125,9 @@ pub(crate) enum RawProtocolDecodeError {
     InvalidPayloadLength {
         sample: RawProtocolInvalidSampleMetadata,
     },
+    InvalidDirection {
+        sample: RawProtocolInvalidSampleMetadata,
+    },
     UnmappedPort {
         sample: RawProtocolInvalidSampleMetadata,
     },
@@ -130,6 +139,7 @@ impl RawProtocolDecodeError {
         match self {
             Self::RawSampleTooShort => "raw_sample_too_short",
             Self::InvalidPayloadLength { .. } => "invalid_payload_length",
+            Self::InvalidDirection { .. } => "invalid_direction",
             Self::UnmappedPort { .. } => "unmapped_port",
         }
     }
@@ -138,6 +148,7 @@ impl RawProtocolDecodeError {
         match self {
             Self::RawSampleTooShort => None,
             Self::InvalidPayloadLength { sample } => Some(sample),
+            Self::InvalidDirection { sample } => Some(sample),
             Self::UnmappedPort { sample } => Some(sample),
         }
     }
@@ -192,6 +203,13 @@ pub(crate) struct ProtocolRegistryCounters {
     pub truncated_frames: u64,
     pub unparsed_frames: u64,
     pub evicted_connections: u64,
+    pub matched_responses: u64,
+    pub orphan_responses: u64,
+    pub unparsed_responses: u64,
+    pub response_continuations: u64,
+    pub unmatched_overflow: u64,
+    pub unmatched_expired: u64,
+    pub unmatched_evicted: u64,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -201,10 +219,53 @@ struct ConnectionId {
     fd: i32,
 }
 
+/// Connection identity fields retained for deferred emission.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug, Clone, Copy)]
+struct ObservationContext {
+    pid: u32,
+    uid: u32,
+    cgroup_id: u64,
+    family: u32,
+    remote_port_be: u16,
+    remote_addr_v4: u32,
+    remote_addr_v6: [u8; 16],
+    command: [u8; 16],
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+impl ObservationContext {
+    fn from_raw(raw: &RawProtocolDataEvent) -> Self {
+        Self {
+            pid: raw.pid,
+            uid: raw.uid,
+            cgroup_id: raw.cgroup_id,
+            family: raw.family,
+            remote_port_be: raw.remote_port_be,
+            remote_addr_v4: raw.remote_addr_v4,
+            remote_addr_v6: raw.remote_addr_v6,
+            command: raw.command,
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug)]
+struct InFlightRequest {
+    parsed: ParsedRequestFrame,
+    started_unix_nanos: u64,
+    kafka_api_key: i16,
+    kafka_api_version: i16,
+}
+
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug)]
 struct ConnectionStream {
-    decoder: RequestStreamDecoder,
+    protocol: StreamProtocol,
+    request_decoder: ProtocolStreamDecoder,
+    response_decoder: ProtocolStreamDecoder,
+    in_flight: std::collections::VecDeque<InFlightRequest>,
+    context: ObservationContext,
     last_seen_unix_nanos: u64,
 }
 
@@ -279,11 +340,12 @@ impl ProtocolStreamRegistry {
                 sample: RawProtocolInvalidSampleMetadata::from_raw(&raw),
             });
         }
-        if raw.direction != RAW_PROTOCOL_DIRECTION_WRITE {
-            // Response-direction capture is decoded once request/response
-            // matching lands; until then it is counted, not guessed at.
-            self.counters.ignored_read_events += 1;
-            return Ok(());
+        if raw.direction != RAW_PROTOCOL_DIRECTION_WRITE
+            && raw.direction != RAW_PROTOCOL_DIRECTION_READ
+        {
+            return Err(RawProtocolDecodeError::InvalidDirection {
+                sample: RawProtocolInvalidSampleMetadata::from_raw(&raw),
+            });
         }
 
         let remote_port = u16::from_be(raw.remote_port_be);
@@ -293,51 +355,79 @@ impl ProtocolStreamRegistry {
             });
         };
 
+        // NATS commands are fire-and-forget; server-to-client traffic is
+        // asynchronous message delivery, not per-request responses.
+        if raw.direction == RAW_PROTOCOL_DIRECTION_READ && protocol == StreamProtocol::Nats {
+            self.counters.ignored_read_events += 1;
+            return Ok(());
+        }
+
         let connection_id = ConnectionId {
             pid: raw.pid,
             fd: raw.fd,
         };
-        self.evict_if_needed(connection_id);
+        self.evict_if_needed(connection_id, signals);
         let limits = self.limits;
         let stream = self
             .connections
             .entry(connection_id)
             .or_insert_with(|| ConnectionStream {
-                decoder: RequestStreamDecoder::new(protocol, limits),
+                protocol,
+                request_decoder: ProtocolStreamDecoder::new(
+                    protocol,
+                    StreamDirection::Request,
+                    limits,
+                ),
+                response_decoder: ProtocolStreamDecoder::new(
+                    protocol,
+                    StreamDirection::Response,
+                    limits,
+                ),
+                in_flight: std::collections::VecDeque::new(),
+                context: ObservationContext::from_raw(&raw),
                 last_seen_unix_nanos: observed_unix_nanos,
             });
         stream.last_seen_unix_nanos = observed_unix_nanos;
 
         let payload = &raw.payload[..raw.payload_len as usize];
-        self.frames.clear();
-        stream
-            .decoder
-            .push_chunk(payload, u64::from(raw.payload_total_len), &mut self.frames);
+        let mut frames = std::mem::take(&mut self.frames);
+        frames.clear();
+        let decoder = if raw.direction == RAW_PROTOCOL_DIRECTION_WRITE {
+            &mut stream.request_decoder
+        } else {
+            &mut stream.response_decoder
+        };
+        decoder.push_chunk(payload, u64::from(raw.payload_total_len), &mut frames);
 
-        let frames = std::mem::take(&mut self.frames);
-        for frame in &frames {
-            match frame {
-                StreamFrame::Complete(frame_bytes) => {
-                    match parse_request_frame(protocol, frame_bytes, &self.extraction) {
-                        Ok(parsed) => {
-                            signals.push(self.build_observation(&raw, parsed, observed_unix_nanos));
-                        }
-                        Err(_) => {
-                            self.counters.unparsed_frames += 1;
-                        }
-                    }
-                }
-                StreamFrame::Truncated { .. } => {
-                    self.counters.truncated_frames += 1;
-                }
-            }
+        if raw.direction == RAW_PROTOCOL_DIRECTION_WRITE {
+            handle_request_frames(
+                stream,
+                &frames,
+                &self.extraction,
+                &self.host,
+                &self.procfs_root,
+                &mut self.counters,
+                observed_unix_nanos,
+                signals,
+            );
+        } else {
+            handle_response_frames(
+                stream,
+                &frames,
+                &self.extraction,
+                &self.host,
+                &self.procfs_root,
+                &mut self.counters,
+                observed_unix_nanos,
+                signals,
+            );
         }
+        frames.clear();
         self.frames = frames;
-        self.frames.clear();
         Ok(())
     }
 
-    fn evict_if_needed(&mut self, incoming: ConnectionId) {
+    fn evict_if_needed(&mut self, incoming: ConnectionId, signals: &mut Vec<SignalEnvelope>) {
         if self.connections.contains_key(&incoming)
             || self.connections.len() < self.max_tracked_connections
         {
@@ -348,59 +438,360 @@ impl ProtocolStreamRegistry {
             .iter()
             .min_by_key(|(_, stream)| stream.last_seen_unix_nanos)
             .map(|(id, _)| *id);
-        if let Some(id) = oldest {
-            self.connections.remove(&id);
+        if let Some(id) = oldest
+            && let Some(mut stream) = self.connections.remove(&id)
+        {
             self.counters.evicted_connections += 1;
+            for entry in stream.in_flight.drain(..) {
+                self.counters.unmatched_evicted += 1;
+                signals.push(build_observation(
+                    self.host.clone(),
+                    &self.procfs_root,
+                    &stream.context,
+                    entry.parsed,
+                    entry.started_unix_nanos,
+                    None,
+                ));
+            }
         }
     }
+}
 
-    fn build_observation(
-        &self,
-        raw: &RawProtocolDataEvent,
-        parsed: ParsedRequestFrame,
-        observed_unix_nanos: u64,
-    ) -> SignalEnvelope {
-        let peer = peer_context(raw);
-        let container = crate::procfs::container_from_pid_cgroup(&self.procfs_root, raw.pid);
-        let process = NetworkProcessIdentity {
-            pid: raw.pid,
-            ppid: None,
-            uid: Some(raw.uid),
-            command: bytes_to_string(&raw.command),
-            executable: None,
-            cgroup_id: (raw.cgroup_id != 0).then_some(raw.cgroup_id),
+/// Processes reassembled request frames: parsed requests join the bounded
+/// in-flight queue (NATS emits immediately); overflow and expiry emit
+/// unmatched observations rather than growing state.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[allow(clippy::too_many_arguments)]
+fn handle_request_frames(
+    stream: &mut ConnectionStream,
+    frames: &[StreamFrame],
+    extraction: &ProtocolExtractionConfig,
+    host: &Option<String>,
+    procfs_root: &std::path::Path,
+    counters: &mut ProtocolRegistryCounters,
+    observed_unix_nanos: u64,
+    signals: &mut Vec<SignalEnvelope>,
+) {
+    for frame in frames {
+        let (parsed, frame_bytes) = match frame {
+            StreamFrame::Complete(frame_bytes) => {
+                match parse_request_frame(stream.protocol, frame_bytes, extraction) {
+                    Ok(parsed) => (parsed, Some(frame_bytes.as_slice())),
+                    Err(_) => {
+                        counters.unparsed_frames += 1;
+                        (
+                            placeholder_request(stream.protocol, "unparsed_request_frame"),
+                            Some(frame_bytes.as_slice()),
+                        )
+                    }
+                }
+            }
+            StreamFrame::Truncated { prefix, .. } => {
+                counters.truncated_frames += 1;
+                (
+                    placeholder_request(stream.protocol, "truncated_request_frame"),
+                    Some(prefix.as_slice()),
+                )
+            }
         };
 
-        SignalEnvelope::protocol_request_observation(
-            "source.aya_protocol",
-            self.host.clone(),
-            ProtocolRequestObservation {
-                protocol: parsed.protocol,
-                start_unix_nanos: observed_unix_nanos,
-                end_unix_nanos: None,
-                duration_nanos: None,
-                trace_id: None,
-                span_id: None,
-                parent_span_id: None,
-                traceparent: None,
-                tracestate: None,
-                correlation_kind: TraceCorrelationKind::ProtocolObserved,
-                confidence: if parsed.warning.is_none() {
-                    TraceConfidence::High
-                } else {
-                    TraceConfidence::Low
-                },
-                service_name: Some(process.command.clone()),
-                method: parsed.operation,
-                status_code: None,
-                process: Some(process),
-                container,
-                kubernetes: None,
-                peer,
-                attributes: parsed.attributes,
-            },
-        )
+        if stream.protocol == StreamProtocol::Nats {
+            signals.push(build_observation(
+                host.clone(),
+                procfs_root,
+                &stream.context,
+                parsed,
+                observed_unix_nanos,
+                None,
+            ));
+            continue;
+        }
+
+        let (kafka_api_key, kafka_api_version) = frame_bytes
+            .filter(|_| stream.protocol == StreamProtocol::Kafka)
+            .and_then(kafka_request_header_prefix)
+            .unwrap_or((-1, -1));
+
+        expire_in_flight(
+            stream,
+            host,
+            procfs_root,
+            counters,
+            observed_unix_nanos,
+            signals,
+        );
+        if stream.in_flight.len() >= MAX_IN_FLIGHT_REQUESTS
+            && let Some(entry) = stream.in_flight.pop_front()
+        {
+            counters.unmatched_overflow += 1;
+            signals.push(build_observation(
+                host.clone(),
+                procfs_root,
+                &stream.context,
+                entry.parsed,
+                entry.started_unix_nanos,
+                None,
+            ));
+        }
+        stream.in_flight.push_back(InFlightRequest {
+            parsed,
+            started_unix_nanos: observed_unix_nanos,
+            kafka_api_key,
+            kafka_api_version,
+        });
     }
+}
+
+/// How a response frame interacts with the in-flight request queue.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponseAction {
+    /// The frame completes exactly the oldest in-flight request.
+    PopOne,
+    /// The frame completes every queued request (PostgreSQL ReadyForQuery
+    /// ends a pipelined batch).
+    PopAll,
+    /// The frame continues an already-completed or in-progress response and
+    /// must not consume a queued request.
+    Ignore,
+}
+
+/// Multi-frame response protocols need per-frame queue policies so latency
+/// is never attributed to the wrong request.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn response_action(protocol: StreamProtocol, frame: &[u8]) -> ResponseAction {
+    match protocol {
+        StreamProtocol::Kafka | StreamProtocol::Mongodb | StreamProtocol::Redis => {
+            ResponseAction::PopOne
+        }
+        // MySQL response packets to one command increment the sequence id;
+        // only the first packet (sequence 1) marks the response start.
+        StreamProtocol::Mysql => {
+            if frame.len() >= 4 && frame[3] == 1 {
+                ResponseAction::PopOne
+            } else {
+                ResponseAction::Ignore
+            }
+        }
+        // PostgreSQL answers one frontend batch with many backend messages;
+        // ErrorResponse completes the current request, ReadyForQuery closes
+        // the batch, everything else is response payload.
+        StreamProtocol::Postgresql => match frame.first() {
+            Some(b'E') => ResponseAction::PopOne,
+            Some(b'Z') => ResponseAction::PopAll,
+            _ => ResponseAction::Ignore,
+        },
+        StreamProtocol::Nats => ResponseAction::Ignore,
+    }
+}
+
+/// Processes reassembled response frames by completing in-flight requests
+/// with latency and response status semantics.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[allow(clippy::too_many_arguments)]
+fn handle_response_frames(
+    stream: &mut ConnectionStream,
+    frames: &[StreamFrame],
+    extraction: &ProtocolExtractionConfig,
+    host: &Option<String>,
+    procfs_root: &std::path::Path,
+    counters: &mut ProtocolRegistryCounters,
+    observed_unix_nanos: u64,
+    signals: &mut Vec<SignalEnvelope>,
+) {
+    for frame in frames {
+        let (frame_bytes, truncated) = match frame {
+            StreamFrame::Complete(frame_bytes) => (frame_bytes.as_slice(), false),
+            StreamFrame::Truncated { prefix, .. } => {
+                counters.truncated_frames += 1;
+                (prefix.as_slice(), true)
+            }
+        };
+
+        let action = response_action(stream.protocol, frame_bytes);
+        if action == ResponseAction::Ignore {
+            counters.response_continuations += 1;
+            continue;
+        }
+        if stream.in_flight.is_empty() {
+            counters.orphan_responses += 1;
+            continue;
+        }
+
+        let response = if truncated {
+            Err("truncated_response_frame")
+        } else {
+            let front = stream
+                .in_flight
+                .front()
+                .expect("in-flight queue checked non-empty");
+            parse_response_frame(
+                stream.protocol,
+                frame_bytes,
+                front.kafka_api_key,
+                front.kafka_api_version,
+                extraction,
+            )
+        };
+
+        let pop_count = match action {
+            ResponseAction::PopOne => 1,
+            ResponseAction::PopAll => stream.in_flight.len(),
+            ResponseAction::Ignore => 0,
+        };
+        for _ in 0..pop_count {
+            let Some(entry) = stream.in_flight.pop_front() else {
+                break;
+            };
+            let mut parsed = entry.parsed;
+            match &response {
+                Ok(response) => {
+                    counters.matched_responses += 1;
+                    for attribute in &response.attributes {
+                        if parsed.attributes.len() >= extraction.max_attributes {
+                            break;
+                        }
+                        if !parsed
+                            .attributes
+                            .iter()
+                            .any(|existing| existing.key == attribute.key)
+                        {
+                            parsed.attributes.push(attribute.clone());
+                        }
+                    }
+                }
+                Err(reason) => {
+                    counters.unparsed_responses += 1;
+                    parsed.warning.get_or_insert_with(|| (*reason).to_string());
+                }
+            }
+            signals.push(build_observation(
+                host.clone(),
+                procfs_root,
+                &stream.context,
+                parsed,
+                entry.started_unix_nanos,
+                Some(observed_unix_nanos),
+            ));
+        }
+    }
+}
+
+/// Emits and drops in-flight requests older than the match timeout.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn expire_in_flight(
+    stream: &mut ConnectionStream,
+    host: &Option<String>,
+    procfs_root: &std::path::Path,
+    counters: &mut ProtocolRegistryCounters,
+    observed_unix_nanos: u64,
+    signals: &mut Vec<SignalEnvelope>,
+) {
+    while let Some(entry) = stream.in_flight.front() {
+        if observed_unix_nanos.saturating_sub(entry.started_unix_nanos)
+            < REQUEST_MATCH_TIMEOUT_NANOS
+        {
+            return;
+        }
+        let entry = stream
+            .in_flight
+            .pop_front()
+            .expect("front entry exists while expiring");
+        counters.unmatched_expired += 1;
+        signals.push(build_observation(
+            host.clone(),
+            procfs_root,
+            &stream.context,
+            entry.parsed,
+            entry.started_unix_nanos,
+            None,
+        ));
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn placeholder_request(protocol: StreamProtocol, warning: &str) -> ParsedRequestFrame {
+    ParsedRequestFrame {
+        protocol: protocol_kind(protocol),
+        operation: None,
+        warning: Some(warning.to_string()),
+        attributes: Vec::new(),
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn protocol_kind(protocol: StreamProtocol) -> ProtocolKind {
+    match protocol {
+        StreamProtocol::Kafka => ProtocolKind::Kafka,
+        StreamProtocol::Mongodb => ProtocolKind::Mongodb,
+        StreamProtocol::Mysql => ProtocolKind::Mysql,
+        StreamProtocol::Nats => ProtocolKind::Nats,
+        StreamProtocol::Postgresql => ProtocolKind::Postgresql,
+        StreamProtocol::Redis => ProtocolKind::Redis,
+    }
+}
+
+/// Reads the API key and version from a Kafka request frame prefix.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn kafka_request_header_prefix(frame: &[u8]) -> Option<(i16, i16)> {
+    if frame.len() < 8 {
+        return None;
+    }
+    let api_key = i16::from_be_bytes([frame[4], frame[5]]);
+    let api_version = i16::from_be_bytes([frame[6], frame[7]]);
+    Some((api_key, api_version))
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn build_observation(
+    host: Option<String>,
+    procfs_root: &std::path::Path,
+    context: &ObservationContext,
+    parsed: ParsedRequestFrame,
+    start_unix_nanos: u64,
+    end_unix_nanos: Option<u64>,
+) -> SignalEnvelope {
+    let peer = context_peer(context);
+    let container = crate::procfs::container_from_pid_cgroup(procfs_root, context.pid);
+    let process = NetworkProcessIdentity {
+        pid: context.pid,
+        ppid: None,
+        uid: Some(context.uid),
+        command: bytes_to_string(&context.command),
+        executable: None,
+        cgroup_id: (context.cgroup_id != 0).then_some(context.cgroup_id),
+    };
+
+    SignalEnvelope::protocol_request_observation(
+        "source.aya_protocol",
+        host,
+        ProtocolRequestObservation {
+            protocol: parsed.protocol,
+            start_unix_nanos,
+            end_unix_nanos,
+            duration_nanos: end_unix_nanos
+                .map(|end_nanos| end_nanos.saturating_sub(start_unix_nanos)),
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            traceparent: None,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: if parsed.warning.is_none() {
+                TraceConfidence::High
+            } else {
+                TraceConfidence::Low
+            },
+            service_name: Some(process.command.clone()),
+            method: parsed.operation,
+            status_code: None,
+            process: Some(process),
+            container,
+            kubernetes: None,
+            peer,
+            attributes: parsed.attributes,
+        },
+    )
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -470,14 +861,73 @@ fn parse_request_frame(
     }
 }
 
+/// Uniform response summary derived from the per-protocol response parsers.
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-fn peer_context(raw: &RawProtocolDataEvent) -> Option<TracePeerContext> {
-    let address = match raw.family {
-        RAW_PROTOCOL_AF_INET => Some(ipv4_to_string(raw.remote_addr_v4)),
-        RAW_PROTOCOL_AF_INET6 => Some(ipv6_to_string(raw.remote_addr_v6)),
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedResponseFrame {
+    status_code: Option<String>,
+    error_type: Option<String>,
+    attributes: Vec<TraceAttribute>,
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn parse_response_frame(
+    protocol: StreamProtocol,
+    frame: &[u8],
+    kafka_api_key: i16,
+    kafka_api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedResponseFrame, &'static str> {
+    match protocol {
+        StreamProtocol::Kafka => {
+            parse_kafka_response_for_api_key(kafka_api_key, kafka_api_version, frame, config)
+                .map(|parsed| ParsedResponseFrame {
+                    status_code: Some(parsed.status_code),
+                    error_type: parsed.error_type,
+                    attributes: parsed.attributes,
+                })
+                .map_err(|_| "kafka_response")
+        }
+        StreamProtocol::Mongodb => parse_mongodb_response(frame, config)
+            .map(|parsed| ParsedResponseFrame {
+                status_code: Some(parsed.status_code),
+                error_type: parsed.error_type,
+                attributes: parsed.attributes,
+            })
+            .map_err(|_| "mongodb_response"),
+        StreamProtocol::Mysql => parse_mysql_response(frame, config)
+            .map(|parsed| ParsedResponseFrame {
+                status_code: Some(parsed.status_code),
+                error_type: parsed.error_type,
+                attributes: parsed.attributes,
+            })
+            .map_err(|_| "mysql_response"),
+        StreamProtocol::Nats => Err("nats_response_unmatched"),
+        StreamProtocol::Postgresql => parse_postgres_response(frame, config)
+            .map(|parsed| ParsedResponseFrame {
+                status_code: Some(parsed.status_code),
+                error_type: parsed.error_type,
+                attributes: parsed.attributes,
+            })
+            .map_err(|_| "postgres_response"),
+        StreamProtocol::Redis => parse_redis_response(frame, config)
+            .map(|parsed| ParsedResponseFrame {
+                status_code: parsed.status_code,
+                error_type: parsed.error_type,
+                attributes: parsed.attributes,
+            })
+            .map_err(|_| "redis_response"),
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn context_peer(context: &ObservationContext) -> Option<TracePeerContext> {
+    let address = match context.family {
+        RAW_PROTOCOL_AF_INET => Some(ipv4_to_string(context.remote_addr_v4)),
+        RAW_PROTOCOL_AF_INET6 => Some(ipv6_to_string(context.remote_addr_v6)),
         _ => None,
     };
-    let port = u16::from_be(raw.remote_port_be);
+    let port = u16::from_be(context.remote_port_be);
     let port = (port != 0).then_some(port);
     if address.is_none() && port.is_none() {
         return None;
@@ -635,6 +1085,30 @@ mod platform {
                 "tracepoint_protocol_sendto_enter",
                 "syscalls",
                 "sys_enter_sendto",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_protocol_read_enter",
+                "syscalls",
+                "sys_enter_read",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_protocol_read_exit",
+                "syscalls",
+                "sys_exit_read",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_protocol_recvfrom_enter",
+                "syscalls",
+                "sys_enter_recvfrom",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_protocol_recvfrom_exit",
+                "syscalls",
+                "sys_exit_recvfrom",
             )?;
 
             if diagnostics.enabled() {
@@ -1122,11 +1596,25 @@ mod tests {
         registry: &mut ProtocolStreamRegistry,
         event: &RawProtocolDataEvent,
     ) -> Vec<SignalEnvelope> {
+        handle_at(registry, event, 5_000)
+    }
+
+    fn handle_at(
+        registry: &mut ProtocolStreamRegistry,
+        event: &RawProtocolDataEvent,
+        observed_unix_nanos: u64,
+    ) -> Vec<SignalEnvelope> {
         let mut signals = Vec::new();
         registry
-            .handle_event(raw_as_bytes(event), 5_000, &mut signals)
+            .handle_event(raw_as_bytes(event), observed_unix_nanos, &mut signals)
             .expect("valid event decodes");
         signals
+    }
+
+    fn response_event(remote_port: u16, payload: &[u8]) -> RawProtocolDataEvent {
+        let mut event = raw_event(remote_port, payload, payload.len() as u32);
+        event.direction = RAW_PROTOCOL_DIRECTION_READ;
+        event
     }
 
     fn observation(signal: &SignalEnvelope) -> &ProtocolRequestObservation {
@@ -1137,46 +1625,86 @@ mod tests {
     }
 
     #[test]
-    fn redis_command_produces_observation() {
+    fn redis_command_matches_response_with_latency() {
         let mut registry = registry();
         let payload = b"*2\r\n$3\r\nGET\r\n$10\r\nsecret-key\r\n";
         let event = raw_event(6379, payload, payload.len() as u32);
-        let signals = handle(&mut registry, &event);
+        assert!(handle_at(&mut registry, &event, 5_000).is_empty());
+
+        let response = response_event(6379, b"$5\r\nhello\r\n");
+        let signals = handle_at(&mut registry, &response, 7_500);
 
         assert_eq!(signals.len(), 1);
         let observation = observation(&signals[0]);
         assert_eq!(observation.protocol, ProtocolKind::Redis);
         assert_eq!(observation.method.as_deref(), Some("GET"));
         assert_eq!(observation.confidence, TraceConfidence::High);
+        assert_eq!(observation.start_unix_nanos, 5_000);
+        assert_eq!(observation.end_unix_nanos, Some(7_500));
+        assert_eq!(observation.duration_nanos, Some(2_500));
         let process = observation.process.as_ref().expect("process identity");
         assert_eq!(process.pid, 4242);
         assert_eq!(process.command, "client");
         let peer = observation.peer.as_ref().expect("peer context");
         assert_eq!(peer.address.as_deref(), Some("10.0.0.5"));
         assert_eq!(peer.port, Some(6379));
+        assert_eq!(registry.counters().matched_responses, 1);
 
-        // The key must never appear anywhere in the serialized signal.
+        // Neither the key nor the response value may appear in the signal.
         let serialized = serde_json::to_string(&signals[0]).expect("signal serializes");
         assert!(!serialized.contains("secret-key"));
+        assert!(!serialized.contains("hello"));
     }
 
     #[test]
-    fn kafka_request_reassembles_across_chunks() {
+    fn redis_error_response_attaches_error_attributes() {
         let mut registry = registry();
-        // api_key=3 (metadata), api_version=9, correlation_id=7, client_id len=-1.
-        let body = [0, 3, 0, 9, 0, 0, 0, 7, 0xff, 0xff];
+        let request = raw_event(6379, b"*1\r\n$4\r\nPING\r\n", 14);
+        assert!(handle_at(&mut registry, &request, 5_000).is_empty());
+
+        let response = response_event(6379, b"-ERR unknown command\r\n");
+        let signals = handle_at(&mut registry, &response, 6_000);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.duration_nanos, Some(1_000));
+        assert!(
+            observation
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "error.type" || attribute.key.contains("status")),
+            "expected response status attributes, got {:?}",
+            observation.attributes,
+        );
+    }
+
+    #[test]
+    fn kafka_request_reassembles_and_matches_response() {
+        let mut registry = registry();
+        // api_key=18 (api_versions), api_version=0, correlation_id=7,
+        // client_id len=-1.
+        let body = [0, 18, 0, 0, 0, 0, 0, 7, 0xff, 0xff];
         let mut frame = (body.len() as i32).to_be_bytes().to_vec();
         frame.extend_from_slice(&body);
 
         let first = raw_event(9092, &frame[..6], 6);
-        assert!(handle(&mut registry, &first).is_empty());
-
+        assert!(handle_at(&mut registry, &first, 5_000).is_empty());
         let second = raw_event(9092, &frame[6..], (frame.len() - 6) as u32);
-        let signals = handle(&mut registry, &second);
+        assert!(handle_at(&mut registry, &second, 5_100).is_empty());
+
+        // ApiVersions v0 response: correlation id + error code 0.
+        let response_body = [0, 0, 0, 7, 0, 0];
+        let mut response_frame = (response_body.len() as i32).to_be_bytes().to_vec();
+        response_frame.extend_from_slice(&response_body);
+        let response = response_event(9092, &response_frame);
+        let signals = handle_at(&mut registry, &response, 9_100);
+
         assert_eq!(signals.len(), 1);
         let observation = observation(&signals[0]);
         assert_eq!(observation.protocol, ProtocolKind::Kafka);
-        assert_eq!(observation.method.as_deref(), Some("metadata"));
+        assert_eq!(observation.method.as_deref(), Some("api_versions"));
+        assert_eq!(observation.duration_nanos, Some(4_000));
+        assert_eq!(registry.counters().matched_responses, 1);
     }
 
     #[test]
@@ -1192,15 +1720,23 @@ mod tests {
     }
 
     #[test]
-    fn read_direction_events_are_ignored() {
+    fn nats_read_direction_is_ignored() {
         let mut registry = registry();
-        let payload = b"+OK\r\n";
-        let mut event = raw_event(6379, payload, payload.len() as u32);
-        event.direction = RAW_PROTOCOL_DIRECTION_READ;
+        let event = response_event(4222, b"MSG updates 1 5\r\nhello\r\n");
         let signals = handle(&mut registry, &event);
 
         assert!(signals.is_empty());
         assert_eq!(registry.counters().ignored_read_events, 1);
+    }
+
+    #[test]
+    fn orphan_responses_are_counted_not_matched() {
+        let mut registry = registry();
+        let event = response_event(6379, b"+OK\r\n");
+        let signals = handle(&mut registry, &event);
+
+        assert!(signals.is_empty());
+        assert_eq!(registry.counters().orphan_responses, 1);
     }
 
     #[test]
@@ -1239,15 +1775,22 @@ mod tests {
     }
 
     #[test]
-    fn unparsed_frames_are_counted() {
+    fn unparsed_request_frames_hold_queue_position() {
         let mut registry = registry();
-        // A valid MySQL packet header carrying an unknown command byte.
+        // A valid MySQL packet header carrying an unknown command byte: it
+        // cannot be parsed, but its response slot must stay aligned.
         let packet = [1, 0, 0, 0, 0xfb];
         let event = raw_event(3306, &packet, packet.len() as u32);
-        let signals = handle(&mut registry, &event);
-
-        assert!(signals.is_empty());
+        assert!(handle_at(&mut registry, &event, 5_000).is_empty());
         assert_eq!(registry.counters().unparsed_frames, 1);
+
+        let response = response_event(3306, &[5, 0, 0, 1, 0, 0, 0, 2, 0]);
+        let signals = handle_at(&mut registry, &response, 6_000);
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method, None);
+        assert_eq!(observation.confidence, TraceConfidence::Low);
+        assert_eq!(observation.duration_nanos, Some(1_000));
     }
 
     #[test]
@@ -1277,21 +1820,54 @@ mod tests {
     }
 
     #[test]
-    fn postgres_query_produces_observation() {
+    fn postgres_query_matches_ready_for_query() {
         let mut registry = registry();
         let statement = b"SELECT 1\0";
         let mut frame = vec![b'Q'];
         frame.extend_from_slice(&((statement.len() + 4) as u32).to_be_bytes());
         frame.extend_from_slice(statement);
         let event = raw_event(5432, &frame, frame.len() as u32);
-        let signals = handle(&mut registry, &event);
+        assert!(handle_at(&mut registry, &event, 5_000).is_empty());
+
+        // CommandComplete is response payload; ReadyForQuery closes the batch.
+        let mut response_payload = Vec::new();
+        response_payload.push(b'C');
+        response_payload.extend_from_slice(&13_u32.to_be_bytes());
+        response_payload.extend_from_slice(b"SELECT 1\0");
+        response_payload.push(b'Z');
+        response_payload.extend_from_slice(&5_u32.to_be_bytes());
+        response_payload.push(b'I');
+        let response = response_event(5432, &response_payload);
+        let signals = handle_at(&mut registry, &response, 8_000);
 
         assert_eq!(signals.len(), 1);
         let observation = observation(&signals[0]);
         assert_eq!(observation.protocol, ProtocolKind::Postgresql);
         assert_eq!(observation.method.as_deref(), Some("SELECT"));
+        assert_eq!(observation.duration_nanos, Some(3_000));
+        assert_eq!(registry.counters().response_continuations, 1);
         let serialized = serde_json::to_string(&signals[0]).expect("signal serializes");
         assert!(!serialized.contains("SELECT 1"));
+    }
+
+    #[test]
+    fn mysql_response_pops_only_on_first_sequence_packet() {
+        let mut registry = registry();
+        // COM_QUERY packet, then a two-packet response: sequence 1 (OK-ish
+        // header) pops the request, sequence 2 must be ignored.
+        let request = [6, 0, 0, 0, 3, b's', b'e', b'l', b'e', b'c'];
+        let event = raw_event(3306, &request, request.len() as u32);
+        assert!(handle_at(&mut registry, &event, 5_000).is_empty());
+
+        let mut response_payload = Vec::new();
+        response_payload.extend_from_slice(&[5, 0, 0, 1, 0, 0, 0, 2, 0]);
+        response_payload.extend_from_slice(&[1, 0, 0, 2, 0xfe]);
+        let response = response_event(3306, &response_payload);
+        let signals = handle_at(&mut registry, &response, 6_000);
+
+        assert_eq!(signals.len(), 1);
+        assert_eq!(registry.counters().response_continuations, 1);
+        assert_eq!(registry.counters().orphan_responses, 0);
     }
 
     #[test]
@@ -1310,12 +1886,50 @@ mod tests {
     }
 
     #[test]
-    fn pipelined_commands_emit_multiple_observations() {
+    fn pipelined_commands_match_pipelined_responses() {
         let mut registry = registry();
         let payload = b"*1\r\n$4\r\nPING\r\n*1\r\n$4\r\nPING\r\n";
         let event = raw_event(6379, payload, payload.len() as u32);
-        let signals = handle(&mut registry, &event);
+        assert!(handle_at(&mut registry, &event, 5_000).is_empty());
+
+        let response = response_event(6379, b"+PONG\r\n+PONG\r\n");
+        let signals = handle_at(&mut registry, &response, 5_400);
 
         assert_eq!(signals.len(), 2);
+        for signal in &signals {
+            assert_eq!(observation(signal).duration_nanos, Some(400));
+        }
+    }
+
+    #[test]
+    fn in_flight_overflow_emits_unmatched_observation() {
+        let mut registry = registry();
+        let payload = b"*1\r\n$4\r\nPING\r\n";
+        let mut emitted = Vec::new();
+        for index in 0..(MAX_IN_FLIGHT_REQUESTS + 1) {
+            let event = raw_event(6379, payload, payload.len() as u32);
+            emitted.extend(handle_at(&mut registry, &event, 5_000 + index as u64));
+        }
+
+        assert_eq!(emitted.len(), 1);
+        let observation = observation(&emitted[0]);
+        assert_eq!(observation.end_unix_nanos, None);
+        assert_eq!(observation.duration_nanos, None);
+        assert_eq!(registry.counters().unmatched_overflow, 1);
+    }
+
+    #[test]
+    fn stale_in_flight_requests_expire_unmatched() {
+        let mut registry = registry();
+        let payload = b"*1\r\n$4\r\nPING\r\n";
+        let event = raw_event(6379, payload, payload.len() as u32);
+        assert!(handle_at(&mut registry, &event, 5_000).is_empty());
+
+        let later = 5_000 + REQUEST_MATCH_TIMEOUT_NANOS + 1;
+        let signals = handle_at(&mut registry, &event, later);
+
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).duration_nanos, None);
+        assert_eq!(registry.counters().unmatched_expired, 1);
     }
 }
