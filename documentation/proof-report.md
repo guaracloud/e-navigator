@@ -184,6 +184,16 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   development-status profile protobuf slices.
 - Workload scheduling, workload cleanup, and collector wait behavior for the
   guarded homelab harness.
+- Live `source.aya_protocol` Redis request capture on a local OrbStack Docker
+  VM (2026-07-04): with only `source.aya_protocol` enabled, a privileged run
+  captured pipelined RESP traffic from a Python client to a throwaway Redis
+  container and emitted one `protocol_request_observation` per command (10
+  observations for 5 connections sending pipelined GET+PING), with correct
+  process identity, peer address/port, `db.operation`, high confidence, and
+  `db.redis.key_present=true` while the key bytes were absent from every
+  exported record. This is local smoke proof only, not production or
+  Kubernetes proof; Kafka, PostgreSQL, MySQL, MongoDB, and NATS live capture
+  paths are implemented but not yet runtime-proven.
 
 ## Partial Or Not Yet Proven
 
