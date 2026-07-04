@@ -1,7 +1,7 @@
 #![no_main]
 
 use e_navigator_protocol::stream::{
-    RequestStreamDecoder, StreamDecodeLimits, StreamProtocol, request_frame_boundary,
+    ProtocolStreamDecoder, StreamDecodeLimits, StreamDirection, StreamProtocol, frame_boundary,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -25,10 +25,15 @@ fuzz_target!(|data: &[u8]| {
     };
 
     for protocol in PROTOCOLS {
-        let _ = request_frame_boundary(protocol, data, limits.max_frame_bytes);
+        for direction in [StreamDirection::Request, StreamDirection::Response] {
+            let _ = frame_boundary(protocol, direction, data, limits.max_frame_bytes);
+        }
 
-        let mut decoder = RequestStreamDecoder::new(protocol, limits);
+        let mut decoder = ProtocolStreamDecoder::new(protocol, StreamDirection::Request, limits);
+        let mut response_decoder =
+            ProtocolStreamDecoder::new(protocol, StreamDirection::Response, limits);
         let mut frames = Vec::new();
+        response_decoder.push_chunk(data, data.len() as u64, &mut frames);
         // Feed the same input as several chunk shapes: contiguous, split,
         // and with an uncaptured tail beyond the captured length.
         decoder.push_chunk(data, data.len() as u64, &mut frames);

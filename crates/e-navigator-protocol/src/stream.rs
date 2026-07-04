@@ -21,6 +21,15 @@ pub enum StreamProtocol {
     Redis,
 }
 
+/// Direction of a captured stream relative to the observed client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamDirection {
+    /// Client-to-server bytes (requests/commands).
+    Request,
+    /// Server-to-client bytes (responses).
+    Response,
+}
+
 /// Bounds applied to stream reassembly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StreamDecodeLimits {
@@ -77,8 +86,9 @@ pub struct StreamDecodeStats {
 
 /// Reassembles one direction of one connection into protocol frames.
 #[derive(Debug)]
-pub struct RequestStreamDecoder {
+pub struct ProtocolStreamDecoder {
     protocol: StreamProtocol,
+    direction: StreamDirection,
     limits: StreamDecodeLimits,
     buffer: Vec<u8>,
     pending_skip: u64,
@@ -86,10 +96,15 @@ pub struct RequestStreamDecoder {
     stats: StreamDecodeStats,
 }
 
-impl RequestStreamDecoder {
-    pub fn new(protocol: StreamProtocol, limits: StreamDecodeLimits) -> Self {
+impl ProtocolStreamDecoder {
+    pub fn new(
+        protocol: StreamProtocol,
+        direction: StreamDirection,
+        limits: StreamDecodeLimits,
+    ) -> Self {
         Self {
             protocol,
+            direction,
             limits,
             buffer: Vec::new(),
             pending_skip: 0,
@@ -191,7 +206,12 @@ impl RequestStreamDecoder {
 
     fn extract_frames(&mut self, mut gap: u64, frames: &mut Vec<StreamFrame>) {
         for _ in 0..self.limits.max_frames_per_chunk {
-            match request_frame_boundary(self.protocol, &self.buffer, self.limits.max_frame_bytes) {
+            match frame_boundary(
+                self.protocol,
+                self.direction,
+                &self.buffer,
+                self.limits.max_frame_bytes,
+            ) {
                 FrameBoundary::Frame { total_len } if total_len <= self.buffer.len() => {
                     frames.push(StreamFrame::Complete(self.buffer[..total_len].to_vec()));
                     self.buffer.drain(..total_len);
@@ -271,22 +291,38 @@ impl RequestStreamDecoder {
     }
 }
 
-/// Determines where the frame starting at `bytes[0]` ends.
+/// Determines where the request frame starting at `bytes[0]` ends.
 pub fn request_frame_boundary(
     protocol: StreamProtocol,
+    bytes: &[u8],
+    max_frame_bytes: usize,
+) -> FrameBoundary {
+    frame_boundary(protocol, StreamDirection::Request, bytes, max_frame_bytes)
+}
+
+/// Determines where the frame starting at `bytes[0]` ends.
+pub fn frame_boundary(
+    protocol: StreamProtocol,
+    direction: StreamDirection,
     bytes: &[u8],
     max_frame_bytes: usize,
 ) -> FrameBoundary {
     if bytes.is_empty() {
         return FrameBoundary::NeedMoreBytes;
     }
-    match protocol {
-        StreamProtocol::Kafka => kafka_boundary(bytes, max_frame_bytes),
-        StreamProtocol::Mongodb => mongodb_boundary(bytes, max_frame_bytes),
-        StreamProtocol::Mysql => mysql_boundary(bytes, max_frame_bytes),
-        StreamProtocol::Nats => nats_boundary(bytes, max_frame_bytes),
-        StreamProtocol::Postgresql => postgres_boundary(bytes, max_frame_bytes),
-        StreamProtocol::Redis => redis_boundary(bytes, max_frame_bytes),
+    match (protocol, direction) {
+        (StreamProtocol::Kafka, _) => kafka_boundary(bytes, max_frame_bytes),
+        (StreamProtocol::Mongodb, _) => mongodb_boundary(bytes, max_frame_bytes),
+        (StreamProtocol::Mysql, _) => mysql_boundary(bytes, max_frame_bytes),
+        (StreamProtocol::Nats, StreamDirection::Request) => nats_boundary(bytes, max_frame_bytes),
+        (StreamProtocol::Nats, StreamDirection::Response) => {
+            nats_response_boundary(bytes, max_frame_bytes)
+        }
+        (StreamProtocol::Postgresql, _) => postgres_boundary(bytes, max_frame_bytes),
+        (StreamProtocol::Redis, StreamDirection::Request) => redis_boundary(bytes, max_frame_bytes),
+        (StreamProtocol::Redis, StreamDirection::Response) => {
+            redis_response_boundary(bytes, max_frame_bytes)
+        }
     }
 }
 
@@ -466,8 +502,205 @@ fn redis_boundary(bytes: &[u8], max_frame_bytes: usize) -> FrameBoundary {
     checked_frame(cursor, max_frame_bytes)
 }
 
+fn nats_response_boundary(bytes: &[u8], max_frame_bytes: usize) -> FrameBoundary {
+    let line_cap = bytes.len().min(max_frame_bytes);
+    let Some(line_len) = find_crlf(&bytes[..line_cap]) else {
+        if bytes.len() >= max_frame_bytes {
+            return FrameBoundary::Invalid;
+        }
+        return FrameBoundary::NeedMoreBytes;
+    };
+    let Ok(line) = std::str::from_utf8(&bytes[..line_len]) else {
+        return FrameBoundary::Invalid;
+    };
+    let mut tokens = line.split_ascii_whitespace();
+    let Some(verb) = tokens.next() else {
+        return FrameBoundary::Invalid;
+    };
+    let line_total = line_len + 2;
+    let payload_len = if verb.eq_ignore_ascii_case("msg") || verb.eq_ignore_ascii_case("hmsg") {
+        let Some(size_token) = tokens.last() else {
+            return FrameBoundary::Invalid;
+        };
+        if size_token.len() > MAX_FRAME_LENGTH_DIGITS {
+            return FrameBoundary::Invalid;
+        }
+        match size_token.parse::<usize>() {
+            Ok(size) => Some(size),
+            Err(_) => return FrameBoundary::Invalid,
+        }
+    } else if verb.eq_ignore_ascii_case("+ok")
+        || verb.eq_ignore_ascii_case("-err")
+        || verb.eq_ignore_ascii_case("ping")
+        || verb.eq_ignore_ascii_case("pong")
+        || verb.eq_ignore_ascii_case("info")
+    {
+        None
+    } else {
+        return FrameBoundary::Invalid;
+    };
+
+    let total_len = match payload_len {
+        Some(size) => match line_total
+            .checked_add(size)
+            .and_then(|len| len.checked_add(2))
+        {
+            Some(total) => total,
+            None => return FrameBoundary::Invalid,
+        },
+        None => line_total,
+    };
+    checked_frame(total_len, max_frame_bytes)
+}
+
+const MAX_RESP_VALUE_DEPTH: usize = 4;
+
+fn redis_response_boundary(bytes: &[u8], max_frame_bytes: usize) -> FrameBoundary {
+    let mut cursor = 0;
+    match resp_value_end(bytes, &mut cursor, max_frame_bytes, MAX_RESP_VALUE_DEPTH) {
+        RespWalk::Complete => checked_frame(cursor, max_frame_bytes),
+        RespWalk::NeedMoreBytes => {
+            if bytes.len() >= max_frame_bytes {
+                return FrameBoundary::Invalid;
+            }
+            FrameBoundary::NeedMoreBytes
+        }
+        RespWalk::Invalid => FrameBoundary::Invalid,
+    }
+}
+
+enum RespWalk {
+    Complete,
+    NeedMoreBytes,
+    Invalid,
+}
+
+/// Walks one RESP2/RESP3 value starting at `*cursor` and advances the cursor
+/// past it. Bounded by `max_frame_bytes`, item counts, and nesting depth.
+fn resp_value_end(
+    bytes: &[u8],
+    cursor: &mut usize,
+    max_frame_bytes: usize,
+    depth: usize,
+) -> RespWalk {
+    if depth == 0 {
+        return RespWalk::Invalid;
+    }
+    if *cursor >= max_frame_bytes {
+        return RespWalk::Invalid;
+    }
+    if *cursor >= bytes.len() {
+        return RespWalk::NeedMoreBytes;
+    }
+
+    let type_byte = bytes[*cursor];
+    *cursor += 1;
+    match type_byte {
+        // Line-delimited scalars.
+        b'+' | b'-' | b':' | b'#' | b',' | b'(' | b'_' => {
+            let remaining = &bytes[*cursor..bytes.len().min(max_frame_bytes)];
+            match find_crlf(remaining) {
+                Some(line_len) => {
+                    *cursor += line_len + 2;
+                    RespWalk::Complete
+                }
+                None => {
+                    if bytes.len() >= max_frame_bytes {
+                        RespWalk::Invalid
+                    } else {
+                        RespWalk::NeedMoreBytes
+                    }
+                }
+            }
+        }
+        // Length-prefixed blobs (bulk string, verbatim string, bulk error).
+        b'$' | b'=' | b'!' => {
+            let length = match read_signed_decimal_line(bytes, cursor) {
+                SignedDecimalLine::Value(value) => value,
+                SignedDecimalLine::NeedMoreBytes => return RespWalk::NeedMoreBytes,
+                SignedDecimalLine::Invalid => return RespWalk::Invalid,
+            };
+            if length < 0 {
+                // Null bulk value: no blob follows.
+                return RespWalk::Complete;
+            }
+            let Some(end) = cursor
+                .checked_add(length as usize)
+                .and_then(|end| end.checked_add(2))
+            else {
+                return RespWalk::Invalid;
+            };
+            if end > max_frame_bytes {
+                return RespWalk::Invalid;
+            }
+            if end > bytes.len() {
+                return RespWalk::NeedMoreBytes;
+            }
+            *cursor = end;
+            RespWalk::Complete
+        }
+        // Aggregates: array, set, push, map (map counts pairs).
+        b'*' | b'~' | b'>' | b'%' => {
+            let count = match read_signed_decimal_line(bytes, cursor) {
+                SignedDecimalLine::Value(value) => value,
+                SignedDecimalLine::NeedMoreBytes => return RespWalk::NeedMoreBytes,
+                SignedDecimalLine::Invalid => return RespWalk::Invalid,
+            };
+            if count < 0 {
+                // Null aggregate.
+                return RespWalk::Complete;
+            }
+            let count = count as usize;
+            if count > MAX_REDIS_BOUNDARY_ITEMS {
+                return RespWalk::Invalid;
+            }
+            let items = if type_byte == b'%' {
+                match count.checked_mul(2) {
+                    Some(items) if items <= MAX_REDIS_BOUNDARY_ITEMS => items,
+                    _ => return RespWalk::Invalid,
+                }
+            } else {
+                count
+            };
+            for _ in 0..items {
+                match resp_value_end(bytes, cursor, max_frame_bytes, depth - 1) {
+                    RespWalk::Complete => {}
+                    other => return other,
+                }
+            }
+            RespWalk::Complete
+        }
+        _ => RespWalk::Invalid,
+    }
+}
+
 enum DecimalLine {
     Value(u64),
+    NeedMoreBytes,
+    Invalid,
+}
+
+/// Reads a CRLF-terminated decimal with optional leading minus starting at
+/// `*cursor` and advances the cursor past the CRLF.
+fn read_signed_decimal_line(bytes: &[u8], cursor: &mut usize) -> SignedDecimalLine {
+    let negative = if *cursor < bytes.len() && bytes[*cursor] == b'-' {
+        *cursor += 1;
+        true
+    } else {
+        false
+    };
+    match read_decimal_line(bytes, cursor) {
+        DecimalLine::Value(value) => {
+            let signed = value as i64;
+            SignedDecimalLine::Value(if negative { -signed } else { signed })
+        }
+        DecimalLine::NeedMoreBytes => SignedDecimalLine::NeedMoreBytes,
+        DecimalLine::Invalid => SignedDecimalLine::Invalid,
+    }
+}
+
+enum SignedDecimalLine {
+    Value(i64),
     NeedMoreBytes,
     Invalid,
 }
@@ -522,8 +755,12 @@ fn find_crlf(bytes: &[u8]) -> Option<usize> {
 mod tests {
     use super::*;
 
-    fn decoder(protocol: StreamProtocol) -> RequestStreamDecoder {
-        RequestStreamDecoder::new(protocol, StreamDecodeLimits::default())
+    fn decoder(protocol: StreamProtocol) -> ProtocolStreamDecoder {
+        ProtocolStreamDecoder::new(
+            protocol,
+            StreamDirection::Request,
+            StreamDecodeLimits::default(),
+        )
     }
 
     fn kafka_frame(body: &[u8]) -> Vec<u8> {
@@ -532,7 +769,7 @@ mod tests {
         frame
     }
 
-    fn push(decoder: &mut RequestStreamDecoder, chunk: &[u8]) -> Vec<StreamFrame> {
+    fn push(decoder: &mut ProtocolStreamDecoder, chunk: &[u8]) -> Vec<StreamFrame> {
         let mut frames = Vec::new();
         decoder.push_chunk(chunk, chunk.len() as u64, &mut frames);
         frames
@@ -742,7 +979,8 @@ mod tests {
             max_buffered_bytes: 64,
             ..StreamDecodeLimits::default()
         };
-        let mut decoder = RequestStreamDecoder::new(StreamProtocol::Kafka, limits);
+        let mut decoder =
+            ProtocolStreamDecoder::new(StreamProtocol::Kafka, StreamDirection::Request, limits);
         let frame = kafka_frame(&[0; 256]);
         let mut frames = Vec::new();
         decoder.push_chunk(&frame[..128], frame.len() as u64, &mut frames);
@@ -806,6 +1044,115 @@ mod tests {
     }
 
     #[test]
+    fn redis_response_boundary_walks_resp_values() {
+        let cases: [(&[u8], FrameBoundary); 8] = [
+            (b"+OK\r\n", FrameBoundary::Frame { total_len: 5 }),
+            (b"-ERR unknown\r\n", FrameBoundary::Frame { total_len: 14 }),
+            (b":42\r\n", FrameBoundary::Frame { total_len: 5 }),
+            (b"$5\r\nhello\r\n", FrameBoundary::Frame { total_len: 11 }),
+            (b"$-1\r\n", FrameBoundary::Frame { total_len: 5 }),
+            (
+                b"*2\r\n$1\r\na\r\n:9\r\n",
+                FrameBoundary::Frame { total_len: 15 },
+            ),
+            (
+                b"%1\r\n+key\r\n+value\r\n",
+                FrameBoundary::Frame { total_len: 18 },
+            ),
+            (b"$5\r\nhel", FrameBoundary::NeedMoreBytes),
+        ];
+        for (bytes, expected) in cases {
+            assert_eq!(
+                frame_boundary(
+                    StreamProtocol::Redis,
+                    StreamDirection::Response,
+                    bytes,
+                    1024
+                ),
+                expected,
+                "case {:?}",
+                String::from_utf8_lossy(bytes),
+            );
+        }
+        assert_eq!(
+            frame_boundary(
+                StreamProtocol::Redis,
+                StreamDirection::Response,
+                b"?bogus\r\n",
+                1024,
+            ),
+            FrameBoundary::Invalid,
+        );
+    }
+
+    #[test]
+    fn redis_response_boundary_bounds_nesting_depth() {
+        // Five levels of nesting exceeds MAX_RESP_VALUE_DEPTH.
+        let deep = b"*1\r\n*1\r\n*1\r\n*1\r\n*1\r\n+x\r\n";
+        assert_eq!(
+            frame_boundary(StreamProtocol::Redis, StreamDirection::Response, deep, 1024),
+            FrameBoundary::Invalid,
+        );
+    }
+
+    #[test]
+    fn nats_response_boundary_includes_msg_payload() {
+        let msg = b"MSG updates 1 5\r\nhello\r\n";
+        assert_eq!(
+            frame_boundary(StreamProtocol::Nats, StreamDirection::Response, msg, 1024),
+            FrameBoundary::Frame {
+                total_len: msg.len()
+            },
+        );
+        assert_eq!(
+            frame_boundary(
+                StreamProtocol::Nats,
+                StreamDirection::Response,
+                b"+OK\r\n",
+                1024
+            ),
+            FrameBoundary::Frame { total_len: 5 },
+        );
+        assert_eq!(
+            frame_boundary(
+                StreamProtocol::Nats,
+                StreamDirection::Response,
+                b"-ERR 'Unknown Subject'\r\n",
+                1024,
+            ),
+            FrameBoundary::Frame { total_len: 24 },
+        );
+        assert_eq!(
+            frame_boundary(
+                StreamProtocol::Nats,
+                StreamDirection::Response,
+                b"PUB updates 5\r\n",
+                1024,
+            ),
+            FrameBoundary::Invalid,
+        );
+    }
+
+    #[test]
+    fn response_decoder_extracts_pipelined_responses() {
+        let mut decoder = ProtocolStreamDecoder::new(
+            StreamProtocol::Redis,
+            StreamDirection::Response,
+            StreamDecodeLimits::default(),
+        );
+        let mut frames = Vec::new();
+        let chunk = b"$5\r\nhello\r\n+PONG\r\n";
+        decoder.push_chunk(chunk, chunk.len() as u64, &mut frames);
+        assert_eq!(
+            frames,
+            vec![
+                StreamFrame::Complete(b"$5\r\nhello\r\n".to_vec()),
+                StreamFrame::Complete(b"+PONG\r\n".to_vec()),
+            ],
+        );
+    }
+
+    #[test]
     fn boundary_never_panics_on_arbitrary_bytes() {
         let protocols = [
             StreamProtocol::Kafka,
@@ -819,8 +1166,11 @@ mod tests {
             for seed in 0..=u8::MAX {
                 let bytes: Vec<u8> = (0..32).map(|index| seed.wrapping_add(index)).collect();
                 let _ = request_frame_boundary(protocol, &bytes, 1024);
-                let mut decoder =
-                    RequestStreamDecoder::new(protocol, StreamDecodeLimits::default());
+                let mut decoder = ProtocolStreamDecoder::new(
+                    protocol,
+                    StreamDirection::Request,
+                    StreamDecodeLimits::default(),
+                );
                 let mut frames = Vec::new();
                 decoder.push_chunk(&bytes, bytes.len() as u64 + u64::from(seed), &mut frames);
                 decoder.push_chunk(&bytes, bytes.len() as u64, &mut frames);
