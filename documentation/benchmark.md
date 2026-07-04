@@ -102,6 +102,10 @@ cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
   decode path including per-call registry construction and procfs-miss
   container lookup; the steady-state source reuses one registry, so this is an
   upper bound for per-event decode cost, not a live capture claim).
+- `protocol_stream/request_response_match`: 1.7394-1.7527 us for one full
+  matched pair on a persistent registry: request raw-event decode, reassembly,
+  parse, in-flight queue push, response raw-event decode, response parse, and
+  matched observation emission including a procfs-miss container lookup.
 
 Focused protocol error trace formatter smoke from this development host:
 

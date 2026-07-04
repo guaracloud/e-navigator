@@ -194,6 +194,14 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   exported record. This is local smoke proof only, not production or
   Kubernetes proof; Kafka, PostgreSQL, MySQL, MongoDB, and NATS live capture
   paths are implemented but not yet runtime-proven.
+- Live `source.aya_protocol` request/response matching on the same local
+  OrbStack Docker setup (2026-07-04): with read-direction capture and the
+  in-flight matcher enabled, all 10 captured Redis observations carried
+  `end_unix_nanos`, real `duration_nanos` (4-28 us round trips), and
+  `db.response.status_code` values (`OK`/`PONG`) matched from live response
+  bytes. Local smoke proof only; latency/error matching for Kafka,
+  PostgreSQL, MySQL, and MongoDB is implemented and unit-tested but not yet
+  runtime-proven.
 
 ## Partial Or Not Yet Proven
 
