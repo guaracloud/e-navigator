@@ -5,7 +5,7 @@ use e_navigator_signals::{
 };
 use e_navigator_sinks::{
     E_NAVIGATOR_CPU_PROFILE_METRIC_NAME, format_otel_profile_record, format_pprof_profile,
-    format_profile_record,
+    format_pprof_profile_batch, format_profile_record,
 };
 use prost::Message;
 use std::collections::BTreeMap;
@@ -1142,6 +1142,10 @@ mod pprof {
     pub(super) struct Mapping {
         #[prost(uint64, tag = "1")]
         pub(super) id: u64,
+        #[prost(uint64, tag = "4")]
+        pub(super) file_offset: u64,
+        #[prost(int64, tag = "5")]
+        pub(super) filename: i64,
     }
 
     #[derive(Clone, PartialEq, Message)]
@@ -1179,4 +1183,98 @@ mod pprof {
         #[prost(int64, tag = "5")]
         pub(super) start_line: i64,
     }
+}
+
+#[test]
+fn pprof_batch_emits_addresses_and_shared_mappings() {
+    fn sample_signal(pid: u32, module_offset: u64, symbol: &str) -> SignalEnvelope {
+        SignalEnvelope::profile_sample_observation(
+            "source.aya_cpu_profile",
+            Some("node-a".to_string()),
+            ProfileSampleObservation {
+                timestamp_unix_nanos: u64::from(pid),
+                profiling_kind: ProfilingKind::Cpu,
+                correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+                confidence: ProfilingConfidence::Medium,
+                sample_count: 2,
+                sampling_period_nanos: Some(20_000_000),
+                stack_id: format!("stack:{pid}"),
+                stack_frames: vec![ProfilingFrame {
+                    symbol: Some(symbol.to_string()),
+                    module: Some("/usr/bin/app".to_string()),
+                    file: None,
+                    line: None,
+                    module_offset: Some(module_offset),
+                }],
+                process: None,
+                container: None,
+                kubernetes: None,
+                thread_id: None,
+                thread_name: None,
+                attributes: vec![],
+            },
+        )
+    }
+
+    let first = sample_signal(1, 0x1500, "handle_request");
+    let second = sample_signal(2, 0x1500, "handle_request");
+    let third = sample_signal(3, 0x2600, "/usr/bin/app+0x2600");
+    let signals = [&first, &second, &third];
+
+    let bytes = format_pprof_profile_batch(&signals).expect("batch pprof formats");
+    let profile = pprof::Profile::decode(bytes.as_slice()).expect("pprof decodes");
+
+    assert_eq!(profile.sample.len(), 3);
+    // One shared module mapping for /usr/bin/app.
+    assert_eq!(profile.mapping.len(), 1);
+    // Two distinct locations: (0x1500) and (0x2600).
+    assert_eq!(profile.location.len(), 2);
+    assert!(
+        profile
+            .location
+            .iter()
+            .any(|location| location.address == 0x1500)
+    );
+    assert!(
+        profile
+            .location
+            .iter()
+            .any(|location| location.address == 0x2600)
+    );
+    assert!(
+        profile
+            .location
+            .iter()
+            .all(|location| location.mapping_id == profile.mapping[0].id)
+    );
+    let mapping_name = profile
+        .string_table
+        .get(profile.mapping[0].filename as usize)
+        .map(String::as_str);
+    assert_eq!(mapping_name, Some("/usr/bin/app"));
+    // The two identical frames collapse to one location; the value is per-sample.
+    assert_eq!(profile.sample[0].value, vec![40_000_000]);
+}
+
+#[test]
+fn pprof_batch_skips_non_sample_signals() {
+    let session = SignalEnvelope::profiling_warning_observation(
+        "generator.profiling",
+        None,
+        e_navigator_signals::ProfilingWarningObservation {
+            warning_type: "dropped_profile_samples".to_string(),
+            message: "x".to_string(),
+            timestamp_unix_nanos: 1,
+            source_signal_kind: "profile_sample_observation".to_string(),
+            source_module: "source.aya_cpu_profile".to_string(),
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::High,
+            process: None,
+            container: None,
+            kubernetes: None,
+            attributes: vec![],
+        },
+    );
+    assert!(format_pprof_profile_batch(&[&session]).is_none());
 }

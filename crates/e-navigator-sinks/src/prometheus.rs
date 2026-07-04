@@ -326,14 +326,25 @@ impl Sink<SignalEnvelope> for PrometheusHttpSink {
         ) {
             self.state.push(line)?;
         }
+        if self.profiles_enabled
+            && matches!(
+                signal.payload,
+                e_navigator_signals::SignalPayload::ProfileSampleObservation(_)
+            )
+        {
+            self.state.push_profile(signal.clone())?;
+        }
         Ok(())
     }
 }
+
+const MAX_PPROF_WINDOW_SAMPLES: usize = 4096;
 
 #[derive(Debug)]
 struct PrometheusState {
     max_metric_lines: usize,
     metrics: Mutex<PrometheusMetricStore>,
+    profiles: Mutex<std::collections::VecDeque<SignalEnvelope>>,
     healthy: AtomicBool,
 }
 
@@ -342,6 +353,7 @@ impl PrometheusState {
         Self {
             max_metric_lines,
             metrics: Mutex::new(PrometheusMetricStore::default()),
+            profiles: Mutex::new(std::collections::VecDeque::new()),
             healthy: AtomicBool::new(true),
         }
     }
@@ -353,6 +365,27 @@ impl PrometheusState {
             .map_err(|err| module_error(err.to_string()))?;
         metrics.push(line, self.max_metric_lines);
         Ok(())
+    }
+
+    fn push_profile(&self, signal: SignalEnvelope) -> CoreResult<()> {
+        let mut profiles = self
+            .profiles
+            .lock()
+            .map_err(|_| module_error("prometheus profile window lock poisoned"))?;
+        if profiles.len() >= MAX_PPROF_WINDOW_SAMPLES {
+            profiles.pop_front();
+        }
+        profiles.push_back(signal);
+        Ok(())
+    }
+
+    fn render_pprof(&self) -> CoreResult<Option<Vec<u8>>> {
+        let profiles = self
+            .profiles
+            .lock()
+            .map_err(|_| module_error("prometheus profile window lock poisoned"))?;
+        let refs = profiles.iter().collect::<Vec<_>>();
+        Ok(crate::pprof_profile::format_pprof_profile_batch(&refs))
     }
 
     fn render(&self) -> CoreResult<String> {
@@ -430,32 +463,42 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<PrometheusState>) -
     let bytes = stream.read(&mut buffer).await?;
     let request = String::from_utf8_lossy(&buffer[..bytes]);
     let path = request_path(&request);
-    let (status, content_type, body) = match path {
+    let (status, content_type, body): (&str, &str, Vec<u8>) = match path {
         Some("/metrics") => (
             "200 OK",
             "text/plain; version=0.0.4; charset=utf-8",
-            state.render().unwrap_or_default(),
+            state.render().unwrap_or_default().into_bytes(),
         ),
-        Some("/healthz") => ("200 OK", "text/plain; charset=utf-8", "ok\n".to_string()),
+        Some("/debug/pprof/profile") => match state.render_pprof() {
+            Ok(Some(bytes)) => ("200 OK", "application/octet-stream", bytes),
+            Ok(None) => ("204 No Content", "text/plain; charset=utf-8", Vec::new()),
+            Err(_) => (
+                "500 Internal Server Error",
+                "text/plain; charset=utf-8",
+                b"pprof render failed\n".to_vec(),
+            ),
+        },
+        Some("/healthz") => ("200 OK", "text/plain; charset=utf-8", b"ok\n".to_vec()),
         Some("/readyz") if state.healthy.load(Ordering::Relaxed) => {
-            ("200 OK", "text/plain; charset=utf-8", "ready\n".to_string())
+            ("200 OK", "text/plain; charset=utf-8", b"ready\n".to_vec())
         }
         Some("/readyz") => (
             "503 Service Unavailable",
             "text/plain; charset=utf-8",
-            "not ready\n".to_string(),
+            b"not ready\n".to_vec(),
         ),
         _ => (
             "404 Not Found",
             "text/plain; charset=utf-8",
-            "not found\n".to_string(),
+            b"not found\n".to_vec(),
         ),
     };
-    let response = format!(
-        "HTTP/1.1 {status}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+    let header = format!(
+        "HTTP/1.1 {status}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
         body.len()
     );
-    stream.write_all(response.as_bytes()).await
+    stream.write_all(header.as_bytes()).await?;
+    stream.write_all(&body).await
 }
 
 fn request_path(request: &str) -> Option<&str> {
@@ -670,9 +713,9 @@ mod tests {
     use e_navigator_core::Sink;
     use e_navigator_signals::{
         ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkAddressFamily,
-        NetworkCounterMetric, NetworkProcessIdentity, NetworkProtocol, ProfilingAttribute,
-        ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind, ProfilingSessionObservation,
-        ProfilingWarningObservation,
+        NetworkCounterMetric, NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation,
+        ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
+        ProfilingKind, ProfilingSessionObservation, ProfilingWarningObservation,
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -1041,6 +1084,93 @@ mod tests {
             .await
             .expect("read response");
         response
+    }
+
+    async fn http_get_bytes(address: std::net::SocketAddr, path: &str) -> (String, Vec<u8>) {
+        let mut stream = TcpStream::connect(address).await.expect("connect");
+        stream
+            .write_all(format!("GET {path} HTTP/1.1\r\nhost: test\r\n\r\n").as_bytes())
+            .await
+            .expect("write request");
+        let mut response = Vec::new();
+        stream
+            .read_to_end(&mut response)
+            .await
+            .expect("read response");
+        let split = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .expect("headers terminate");
+        let headers = String::from_utf8_lossy(&response[..split]).to_string();
+        let body = response[split + 4..].to_vec();
+        (headers, body)
+    }
+
+    fn cpu_profile_sample_signal() -> SignalEnvelope {
+        SignalEnvelope::profile_sample_observation(
+            "source.aya_cpu_profile",
+            Some("node-a".to_string()),
+            ProfileSampleObservation {
+                timestamp_unix_nanos: 1_000,
+                profiling_kind: ProfilingKind::Cpu,
+                correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+                confidence: ProfilingConfidence::Medium,
+                sample_count: 3,
+                sampling_period_nanos: Some(20_000_000),
+                stack_id: "stack:aa".to_string(),
+                stack_frames: vec![ProfilingFrame {
+                    symbol: Some("/usr/bin/app+0x1500".to_string()),
+                    module: Some("/usr/bin/app".to_string()),
+                    file: None,
+                    line: None,
+                    module_offset: Some(0x1500),
+                }],
+                process: None,
+                container: None,
+                kubernetes: None,
+                thread_id: None,
+                thread_name: None,
+                attributes: vec![],
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn prometheus_http_sink_serves_pprof_profile() {
+        let (sink, address) = PrometheusHttpSink::bind_for_test(8)
+            .await
+            .expect("bind prometheus sink");
+
+        // No samples yet: the endpoint returns 204.
+        let (headers, body) = http_get_bytes(address, "/debug/pprof/profile").await;
+        assert!(headers.contains("204 No Content"), "{headers}");
+        assert!(body.is_empty());
+
+        sink.write(&cpu_profile_sample_signal())
+            .await
+            .expect("write profile sample");
+
+        let (headers, body) = http_get_bytes(address, "/debug/pprof/profile").await;
+        assert!(headers.contains("200 OK"), "{headers}");
+        assert!(headers.contains("application/octet-stream"), "{headers}");
+        assert!(!body.is_empty());
+        // The body is a decodable pprof profile carrying the module address.
+        let profile = crate::pprof_profile::format_pprof_profile(&cpu_profile_sample_signal())
+            .expect("reference profile");
+        assert!(!profile.is_empty());
+    }
+
+    #[tokio::test]
+    async fn prometheus_http_sink_omits_pprof_when_profiles_disabled() {
+        let (sink, address) = PrometheusHttpSink::bind_for_test_with_families(8, true, false)
+            .await
+            .expect("bind prometheus sink");
+        sink.write(&cpu_profile_sample_signal())
+            .await
+            .expect("write profile sample");
+        let (headers, body) = http_get_bytes(address, "/debug/pprof/profile").await;
+        assert!(headers.contains("204 No Content"), "{headers}");
+        assert!(body.is_empty());
     }
 
     fn kubernetes_context() -> KubernetesContext {
