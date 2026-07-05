@@ -4,11 +4,12 @@
 
 use aya_ebpf::{
     EbpfContext,
-    bindings::BPF_F_USER_STACK,
+    bindings::{BPF_F_USER_STACK, bpf_pidns_info},
     helpers::{
         bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_get_stack,
         bpf_ktime_get_ns, bpf_probe_read_user, bpf_probe_read_user_buf,
-        bpf_probe_read_user_str_bytes, generated::bpf_get_current_cgroup_id,
+        bpf_probe_read_user_str_bytes,
+        generated::{bpf_get_current_cgroup_id, bpf_get_ns_current_pid_tgid},
     },
     macros::{map, perf_event, tracepoint, uprobe, uretprobe},
     maps::{Array, HashMap, PerCpuArray, PerfEventArray},
@@ -82,6 +83,7 @@ const EXEC_EVENT_SOURCE_SCHED_EXEC: u32 = 2;
 const CPU_PROFILE_MAX_FRAMES: usize = 128;
 const CPU_PROFILE_MIN_FRAMES: u32 = 1;
 const CPU_PROFILE_FLAG_TRUNCATED: u32 = 1;
+const CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED: u32 = 2;
 const TLS_DIAG_IO_ENTER: u32 = 0;
 const TLS_DIAG_IO_EXIT: u32 = 1;
 const TLS_DIAG_FD_UNRESOLVED: u32 = 2;
@@ -393,6 +395,11 @@ static CPU_PROFILE_EVENT_SCRATCH: PerCpuArray<RawCpuProfileEvent> =
 
 #[map]
 static CPU_PROFILE_FRAME_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
+
+/// dev (index 0) and inode (index 1) of the pid namespace backing the
+/// procfs view userspace symbolizes from; zero inode disables translation.
+#[map]
+static CPU_PROFILE_PIDNS: Array<u64> = Array::with_max_entries(2, 0);
 
 #[map]
 static DNS_EVENT_SCRATCH: PerCpuArray<RawDnsEvent> = PerCpuArray::with_max_entries(1, 0);
@@ -1207,6 +1214,30 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     event.frame_count = 0;
     event.flags = 0;
+    // Translate the pid into the namespace of the procfs view userspace
+    // symbolizes from. The helper only succeeds when that namespace is the
+    // task's active pid namespace; otherwise the event keeps the
+    // root-namespace pid and is flagged so userspace verifies the pid
+    // against procfs before attributing frames to it.
+    let pidns_dev = CPU_PROFILE_PIDNS.get(0).copied().unwrap_or(0);
+    let pidns_ino = CPU_PROFILE_PIDNS.get(1).copied().unwrap_or(0);
+    if pidns_ino != 0 {
+        let mut pidns = bpf_pidns_info { pid: 0, tgid: 0 };
+        let rc = unsafe {
+            bpf_get_ns_current_pid_tgid(
+                pidns_dev,
+                pidns_ino,
+                &mut pidns,
+                core::mem::size_of::<bpf_pidns_info>() as u32,
+            )
+        };
+        if rc == 0 {
+            event.pid = pidns.tgid;
+            event.tid = pidns.pid;
+        } else {
+            event.flags |= CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED;
+        }
+    }
     event.instruction_pointers = [0; CPU_PROFILE_MAX_FRAMES];
     let frame_limit = cpu_profile_frame_limit();
     let stack_bytes = unsafe {

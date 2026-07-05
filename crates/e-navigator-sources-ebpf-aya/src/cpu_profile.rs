@@ -20,6 +20,13 @@ pub(crate) const RAW_CPU_PROFILE_MAX_FRAMES: usize = 128;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_CPU_PROFILE_FLAG_TRUNCATED: u32 = 1;
 
+/// The kernel could not translate the pid into the symbolization pid
+/// namespace (the sampled process's active namespace differs), so the
+/// event carries the root-namespace pid and userspace must verify the pid
+/// against procfs before attributing frames to it.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED: u32 = 2;
+
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -45,12 +52,22 @@ pub(crate) struct DecodedCpuProfileSample {
     /// True when the kernel filled the configured frame budget and the
     /// stack may be deeper than what was captured.
     pub capture_truncated: bool,
+    /// True when the sample's untranslated pid failed procfs identity
+    /// verification and frames were left as raw addresses.
+    pub pid_unverified: bool,
 }
 
 /// Resolves a captured instruction pointer for a pid into a stack frame.
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) trait FrameResolver {
     fn resolve(&mut self, pid: u32, ip: u64) -> RawProfileFrame;
+
+    /// Confirms that `pid`/`tid` in the resolver's procfs view refer to
+    /// the sampled thread (matching thread comm). Resolvers that never
+    /// consult procfs have nothing to mis-attribute and accept every pid.
+    fn verify_thread(&mut self, _pid: u32, _tid: u32, _command: &str) -> bool {
+        true
+    }
 }
 
 /// Fallback resolver that carries the raw instruction pointer as a hex
@@ -85,6 +102,11 @@ pub(crate) struct ProcfsSymbolizer {
     max_cached_modules: usize,
     maps: std::collections::BTreeMap<u32, ProcessModuleMap>,
     symbols: std::collections::BTreeMap<String, Option<ElfSymbolTable>>,
+    /// Cached thread comms for untranslated pids, keyed by (pid, tid);
+    /// `None` records an unreadable thread. Bounded like the other caches;
+    /// like them it can go stale on pid reuse, which at worst withholds or
+    /// restores symbolization for later samples of a reused pid.
+    thread_comms: std::collections::BTreeMap<(u32, u32), Option<String>>,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -99,6 +121,7 @@ impl ProcfsSymbolizer {
             max_cached_modules: 512,
             maps: std::collections::BTreeMap::new(),
             symbols: std::collections::BTreeMap::new(),
+            thread_comms: std::collections::BTreeMap::new(),
         }
     }
 
@@ -138,6 +161,29 @@ impl ProcfsSymbolizer {
             .map(ToString::to_string)
     }
 
+    fn thread_comm(&mut self, pid: u32, tid: u32) -> Option<&str> {
+        if !self.thread_comms.contains_key(&(pid, tid)) {
+            if self.thread_comms.len() >= self.max_cached_pids
+                && let Some(&oldest) = self.thread_comms.keys().next()
+            {
+                self.thread_comms.remove(&oldest);
+            }
+            let comm_path = self
+                .procfs_root
+                .join(pid.to_string())
+                .join("task")
+                .join(tid.to_string())
+                .join("comm");
+            let comm = std::fs::read_to_string(&comm_path)
+                .ok()
+                .map(|comm| comm.trim_end_matches('\n').to_string());
+            self.thread_comms.insert((pid, tid), comm);
+        }
+        self.thread_comms
+            .get(&(pid, tid))
+            .and_then(|comm| comm.as_deref())
+    }
+
     fn load_symbol_table(&self, module: &str) -> Option<ElfSymbolTable> {
         let metadata = std::fs::metadata(module).ok()?;
         if metadata.len() > Self::MAX_MODULE_IMAGE_BYTES {
@@ -165,6 +211,10 @@ impl FrameResolver for ProcfsSymbolizer {
             line: None,
             module_offset: Some(location.module_offset),
         }
+    }
+
+    fn verify_thread(&mut self, pid: u32, tid: u32, command: &str) -> bool {
+        self.thread_comm(pid, tid) == Some(command)
     }
 }
 
@@ -196,6 +246,12 @@ fn raw_cpu_profile_to_signal_with_clock(
         return None;
     }
     let capture_truncated = raw.flags & RAW_CPU_PROFILE_FLAG_TRUNCATED != 0;
+    let command = bytes_to_string(&raw.command);
+    // An untranslated pid may belong to an unrelated same-numbered process
+    // in the symbolization procfs view; only symbolize it after the
+    // resolver confirms the thread identity there.
+    let pid_unverified = raw.flags & RAW_CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED != 0
+        && !resolver.verify_thread(raw.pid, raw.tid, &command);
     let frame_count = (raw.frame_count as usize).min(RAW_CPU_PROFILE_MAX_FRAMES);
     let stack_frames = raw
         .instruction_pointers
@@ -203,7 +259,13 @@ fn raw_cpu_profile_to_signal_with_clock(
         .copied()
         .take(frame_count)
         .filter(|ip| *ip != 0)
-        .map(|ip| resolver.resolve(raw.pid, ip))
+        .map(|ip| {
+            if pid_unverified {
+                RawAddressResolver.resolve(raw.pid, ip)
+            } else {
+                resolver.resolve(raw.pid, ip)
+            }
+        })
         .collect::<Vec<_>>();
     let timestamp_unix_nanos = if raw.timestamp_unix_nanos == 0 {
         observed_unix_nanos
@@ -222,7 +284,7 @@ fn raw_cpu_profile_to_signal_with_clock(
             pid: raw.pid,
             ppid: None,
             uid: Some(raw.uid),
-            command: bytes_to_string(&raw.command),
+            command: command.clone(),
             executable: None,
             cgroup_id: (raw.cgroup_id != 0).then_some(raw.cgroup_id),
         }),
@@ -247,6 +309,12 @@ fn raw_cpu_profile_to_signal_with_clock(
                     value: "true".to_string(),
                 });
             }
+            if pid_unverified {
+                attributes.push(ProfilingAttribute {
+                    key: "profiling.stack.pid_ns".to_string(),
+                    value: "unverified".to_string(),
+                });
+            }
             attributes
         },
     };
@@ -268,6 +336,7 @@ fn raw_cpu_profile_to_signal_with_clock(
                 sample,
             ),
             capture_truncated,
+            pid_unverified,
         })
 }
 
@@ -362,6 +431,7 @@ pub(crate) struct CpuProfileDropCounters {
     lost_perf_events: std::sync::atomic::AtomicU64,
     backpressure_dropped: std::sync::atomic::AtomicU64,
     truncated_stacks: std::sync::atomic::AtomicU64,
+    pid_unverified_samples: std::sync::atomic::AtomicU64,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -381,16 +451,23 @@ impl CpuProfileDropCounters {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
+    pub(crate) fn record_pid_unverified_sample(&self) {
+        self.pid_unverified_samples
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Atomically reads and resets all counters, returning
-    /// (lost_perf_events, backpressure_dropped, truncated_stacks) since the
-    /// last drain.
-    pub(crate) fn drain(&self) -> (u64, u64, u64) {
+    /// (lost_perf_events, backpressure_dropped, truncated_stacks,
+    /// pid_unverified_samples) since the last drain.
+    pub(crate) fn drain(&self) -> (u64, u64, u64, u64) {
         (
             self.lost_perf_events
                 .swap(0, std::sync::atomic::Ordering::Relaxed),
             self.backpressure_dropped
                 .swap(0, std::sync::atomic::Ordering::Relaxed),
             self.truncated_stacks
+                .swap(0, std::sync::atomic::Ordering::Relaxed),
+            self.pid_unverified_samples
                 .swap(0, std::sync::atomic::Ordering::Relaxed),
         )
     }
@@ -433,6 +510,44 @@ pub(crate) fn source_drop_warning(
                     value: backpressure_dropped.to_string(),
                 },
             ],
+        },
+    )
+}
+
+/// Builds a bounded profiling warning reporting samples whose processes
+/// live outside the symbolization pid namespace and therefore carry raw
+/// addresses instead of symbolized frames.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn pid_unverified_warning(
+    host: Option<String>,
+    foreign_samples: u64,
+    timestamp_unix_nanos: u64,
+) -> SignalEnvelope {
+    use e_navigator_signals::{
+        ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind,
+        ProfilingWarningObservation,
+    };
+    SignalEnvelope::profiling_warning_observation(
+        "source.aya_cpu_profile",
+        host,
+        ProfilingWarningObservation {
+            warning_type: "pid_unverified_samples".to_string(),
+            message: "cpu samples from processes outside the symbolization pid namespace \
+                      carry raw addresses"
+                .to_string(),
+            timestamp_unix_nanos,
+            source_signal_kind: "profile_sample_observation".to_string(),
+            source_module: "source.aya_cpu_profile".to_string(),
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::High,
+            process: None,
+            container: None,
+            kubernetes: None,
+            attributes: vec![ProfilingAttribute {
+                key: "profiling.stack.pid_unverified_samples".to_string(),
+                value: foreign_samples.to_string(),
+            }],
         },
     )
 }
@@ -609,6 +724,7 @@ mod platform {
             )))
             .map_err(module_error)?;
             populate_frame_limit(&mut ebpf, &self.config)?;
+            populate_pid_namespace(&mut ebpf, &self.procfs_root);
 
             let program: &mut PerfEvent = ebpf
                 .program_mut("sample_cpu_profile")
@@ -714,6 +830,9 @@ mod platform {
                                     if decoded.capture_truncated {
                                         drop_counters.record_truncated_stack();
                                     }
+                                    if decoded.pid_unverified {
+                                        drop_counters.record_pid_unverified_sample();
+                                    }
                                     let signal = decoded.signal;
                                     accepted += 1;
                                     if !send_with_backpressure(&cpu_tx, signal, backpressure) {
@@ -755,7 +874,7 @@ mod platform {
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     while !emitter_shutdown.is_stopped() {
                         std::thread::sleep(std::time::Duration::from_secs(10));
-                        let (lost, dropped, truncated) = emitter_counters.drain();
+                        let (lost, dropped, truncated, foreign) = emitter_counters.drain();
                         if lost > 0 || dropped > 0 {
                             let warning = super::source_drop_warning(
                                 emitter_host.clone(),
@@ -772,6 +891,16 @@ mod platform {
                                 emitter_host.clone(),
                                 truncated,
                                 frame_limit,
+                                super::now_unix_nanos(),
+                            );
+                            if emitter_tx.blocking_send(warning).is_err() {
+                                return ReaderExit::Stopped;
+                            }
+                        }
+                        if foreign > 0 {
+                            let warning = super::pid_unverified_warning(
+                                emitter_host.clone(),
+                                foreign,
                                 super::now_unix_nanos(),
                             );
                             if emitter_tx.blocking_send(warning).is_err() {
@@ -864,6 +993,42 @@ mod platform {
             .clamp(1, super::RAW_CPU_PROFILE_MAX_FRAMES) as u32;
         limit.set(0, frames, 0).map_err(module_error)?;
         Ok(())
+    }
+
+    /// Points the in-kernel pid translation at the pid namespace of the
+    /// procfs view used for symbolization (the namespace of that view's
+    /// pid 1). Best-effort: when the namespace cannot be identified the
+    /// map stays zeroed, translation stays off, and behavior matches the
+    /// pre-translation agent.
+    fn populate_pid_namespace(ebpf: &mut Ebpf, procfs_root: &std::path::Path) {
+        use std::os::linux::fs::MetadataExt;
+
+        let ns_path = procfs_root.join("1").join("ns").join("pid");
+        let metadata = match std::fs::metadata(&ns_path) {
+            Ok(metadata) => metadata,
+            Err(err) => {
+                warn!(
+                    path = %ns_path.display(),
+                    %err,
+                    "cannot identify symbolization pid namespace; \
+                     cross-namespace samples may carry unresolvable pids"
+                );
+                return;
+            }
+        };
+        let Some(map) = ebpf.map_mut("CPU_PROFILE_PIDNS") else {
+            warn!("missing CPU_PROFILE_PIDNS map; pid namespace translation disabled");
+            return;
+        };
+        let Ok(mut pidns) = AyaArray::<&mut MapData, u64>::try_from(map) else {
+            warn!("CPU_PROFILE_PIDNS map has unexpected shape; pid namespace translation disabled");
+            return;
+        };
+        if pidns.set(0, metadata.st_dev(), 0).is_err()
+            || pidns.set(1, metadata.st_ino(), 0).is_err()
+        {
+            warn!("failed to record pid namespace; pid namespace translation disabled");
+        }
     }
 
     fn bump_memlock_rlimit() {
@@ -1177,9 +1342,10 @@ mod tests {
         counters.record_backpressure_drop();
         counters.record_truncated_stack();
         counters.record_truncated_stack();
-        assert_eq!(counters.drain(), (5, 1, 2));
+        counters.record_pid_unverified_sample();
+        assert_eq!(counters.drain(), (5, 1, 2, 1));
         // Draining resets all counters.
-        assert_eq!(counters.drain(), (0, 0, 0));
+        assert_eq!(counters.drain(), (0, 0, 0, 0));
     }
 
     #[test]
@@ -1480,6 +1646,134 @@ mod tests {
         assert!((4..=64).contains(&default_pages));
         // Extreme frequencies clamp instead of growing unbounded.
         assert_eq!(cpu_profile_perf_pages(999, event_bytes), 64);
+    }
+
+    struct VerdictResolver {
+        verified: bool,
+    }
+
+    impl FrameResolver for VerdictResolver {
+        fn resolve(&mut self, _pid: u32, _ip: u64) -> RawProfileFrame {
+            RawProfileFrame {
+                symbol: Some("resolved_fn".to_string()),
+                module: Some("/usr/bin/app".to_string()),
+                file: None,
+                line: None,
+                module_offset: Some(0x10),
+            }
+        }
+
+        fn verify_thread(&mut self, _pid: u32, _tid: u32, _command: &str) -> bool {
+            self.verified
+        }
+    }
+
+    #[test]
+    fn untranslated_pid_failing_verification_keeps_raw_addresses() {
+        let raw = RawCpuProfileEvent {
+            pid: 42,
+            tid: 43,
+            uid: 1000,
+            cgroup_id: 0,
+            sample_count: 1,
+            timestamp_unix_nanos: 1_000,
+            command: fixed_command("api"),
+            frame_count: 1,
+            flags: RAW_CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED,
+            instruction_pointers: padded_pointers(&[0xabc]),
+        };
+
+        let decoded = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &source_config(),
+            10_000,
+            &mut VerdictResolver { verified: false },
+        )
+        .expect("raw profile event decodes");
+        assert!(decoded.pid_unverified);
+        let SignalPayload::ProfileSampleObservation(sample) = decoded.signal.payload else {
+            panic!("expected profile sample");
+        };
+        assert_eq!(
+            sample.stack_frames[0].symbol.as_deref(),
+            Some("ip:0000000000000abc")
+        );
+        assert_eq!(sample.stack_frames[0].module, None);
+        assert!(
+            sample
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "profiling.stack.pid_ns"
+                    && attribute.value == "unverified")
+        );
+    }
+
+    #[test]
+    fn untranslated_pid_passing_verification_symbolizes_normally() {
+        let raw = RawCpuProfileEvent {
+            pid: 42,
+            tid: 43,
+            uid: 1000,
+            cgroup_id: 0,
+            sample_count: 1,
+            timestamp_unix_nanos: 1_000,
+            command: fixed_command("api"),
+            frame_count: 1,
+            flags: RAW_CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED,
+            instruction_pointers: padded_pointers(&[0xabc]),
+        };
+
+        let decoded = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &source_config(),
+            10_000,
+            &mut VerdictResolver { verified: true },
+        )
+        .expect("raw profile event decodes");
+        assert!(!decoded.pid_unverified);
+        let SignalPayload::ProfileSampleObservation(sample) = decoded.signal.payload else {
+            panic!("expected profile sample");
+        };
+        assert_eq!(
+            sample.stack_frames[0].symbol.as_deref(),
+            Some("resolved_fn")
+        );
+        assert!(
+            !sample
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "profiling.stack.pid_ns")
+        );
+    }
+
+    #[test]
+    fn procfs_symbolizer_verifies_thread_comm() {
+        let dir = std::env::temp_dir().join(format!("e-nav-commtest-{}", std::process::id()));
+        let task_dir = dir.join("900").join("task").join("901");
+        std::fs::create_dir_all(&task_dir).expect("create task dir");
+        std::fs::write(task_dir.join("comm"), "worker\n").expect("write comm");
+
+        let mut symbolizer = ProcfsSymbolizer::new(dir.clone(), false);
+        assert!(symbolizer.verify_thread(900, 901, "worker"));
+        assert!(!symbolizer.verify_thread(900, 901, "other"));
+        // Missing pid/tid fails closed.
+        assert!(!symbolizer.verify_thread(900, 999, "worker"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn pid_unverified_warning_reports_count() {
+        let signal = pid_unverified_warning(Some("node-a".to_string()), 5, 12_000);
+        let SignalPayload::ProfilingWarningObservation(warning) = signal.payload else {
+            panic!("expected profiling warning");
+        };
+        assert_eq!(warning.warning_type, "pid_unverified_samples");
+        assert!(warning.attributes.iter().any(|attribute| attribute.key
+            == "profiling.stack.pid_unverified_samples"
+            && attribute.value == "5"));
     }
 
     #[test]
