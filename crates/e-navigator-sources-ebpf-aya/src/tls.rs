@@ -14,6 +14,9 @@ const TLS_PERF_BUFFER_PAGE_COUNT: usize = 64;
 const TLS_PERF_READER_POLL_INTERVAL_MS: u64 = 25;
 #[cfg(target_os = "linux")]
 const TLS_RAW_SAMPLE_CHANNEL_CAPACITY: usize = 1024;
+/// How often to rescan process maps for newly loaded TLS libraries.
+#[cfg(target_os = "linux")]
+const TLS_LIBRARY_RESCAN_SECS: u64 = 15;
 
 /// Builds a protocol-source configuration that reuses the existing stream
 /// registry for the stream-framed protocols carried over TLS. HTTP/1 ports
@@ -241,21 +244,36 @@ mod platform {
                 attach_tracepoint(&mut ebpf, program, category, name)?;
             }
 
+            load_uprobe_programs(&mut ebpf, OPENSSL_BINDINGS);
+            load_uprobe_programs(&mut ebpf, GNUTLS_BINDINGS);
+            let mut attached_openssl: BTreeSet<PathBuf> = BTreeSet::new();
+            let mut attached_gnutls: BTreeSet<PathBuf> = BTreeSet::new();
             let libraries = discover_tls_libraries(&self.procfs_root);
-            if libraries.openssl.is_empty() && libraries.gnutls.is_empty() {
+            let openssl_attached = attach_uprobe_libraries(
+                &mut ebpf,
+                OPENSSL_BINDINGS,
+                &libraries.openssl,
+                &mut attached_openssl,
+            );
+            let gnutls_attached = attach_uprobe_libraries(
+                &mut ebpf,
+                GNUTLS_BINDINGS,
+                &libraries.gnutls,
+                &mut attached_gnutls,
+            );
+            if attached_openssl.is_empty() && attached_gnutls.is_empty() {
                 warn!(
                     source = "source.aya_tls",
-                    "no OpenSSL/BoringSSL or GnuTLS libraries found in process maps; \
-                     TLS capture will produce nothing until a TLS workload starts"
+                    "no OpenSSL/BoringSSL or GnuTLS libraries mapped yet; TLS capture \
+                     starts once a TLS workload is running (libraries are rescanned \
+                     periodically)"
                 );
             }
-            let openssl_attached = attach_uprobes(&mut ebpf, OPENSSL_BINDINGS, &libraries.openssl);
-            let gnutls_attached = attach_uprobes(&mut ebpf, GNUTLS_BINDINGS, &libraries.gnutls);
             info!(
                 source = "source.aya_tls",
-                openssl_libraries = libraries.openssl.len(),
+                openssl_libraries = attached_openssl.len(),
                 openssl_probes_attached = openssl_attached,
-                gnutls_libraries = libraries.gnutls.len(),
+                gnutls_libraries = attached_gnutls.len(),
                 gnutls_probes_attached = gnutls_attached,
                 "attached TLS uprobes"
             );
@@ -347,7 +365,41 @@ mod platform {
             }));
 
             debug!("aya tls source attached");
-            tokio::signal::ctrl_c().await.map_err(module_error)?;
+            // TLS libraries mapped by processes that start after the agent are
+            // picked up on this cadence, so late-starting workloads are not
+            // silently missed.
+            let rescan_interval = std::time::Duration::from_secs(super::TLS_LIBRARY_RESCAN_SECS);
+            loop {
+                tokio::select! {
+                    result = tokio::signal::ctrl_c() => {
+                        result.map_err(module_error)?;
+                        break;
+                    }
+                    _ = tokio::time::sleep(rescan_interval) => {
+                        let libraries = discover_tls_libraries(&self.procfs_root);
+                        let openssl_new = attach_uprobe_libraries(
+                            &mut ebpf,
+                            OPENSSL_BINDINGS,
+                            &libraries.openssl,
+                            &mut attached_openssl,
+                        );
+                        let gnutls_new = attach_uprobe_libraries(
+                            &mut ebpf,
+                            GNUTLS_BINDINGS,
+                            &libraries.gnutls,
+                            &mut attached_gnutls,
+                        );
+                        if openssl_new + gnutls_new > 0 {
+                            info!(
+                                source = "source.aya_tls",
+                                openssl_probes_attached = openssl_new,
+                                gnutls_probes_attached = gnutls_new,
+                                "attached uprobes for newly mapped TLS libraries"
+                            );
+                        }
+                    }
+                }
+            }
             shutdown.stop();
             join_reader_handles(reader_handles).await
         }
@@ -409,13 +461,11 @@ mod platform {
         }
     }
 
-    /// Loads each program once and attaches it to every discovered library
-    /// exporting its symbol. Libraries missing a symbol (for example a
-    /// BoringSSL build without `SSL_set_fd`) are accounted by the lower count,
-    /// never silently assumed present. Returns the number of successful
-    /// (program, library) attachments.
-    fn attach_uprobes(ebpf: &mut Ebpf, bindings: &[UprobeBinding], libraries: &[PathBuf]) -> usize {
-        let mut attached = 0;
+    /// Loads each uprobe program once so it can later be attached to any
+    /// number of library files. Loading is separate from attaching because a
+    /// program is attached to every discovered library and re-attached to
+    /// libraries that appear after startup.
+    fn load_uprobe_programs(ebpf: &mut Ebpf, bindings: &[UprobeBinding]) {
         for binding in bindings {
             let program: &mut UProbe = match ebpf
                 .program_mut(binding.program)
@@ -429,9 +479,34 @@ mod platform {
             };
             if let Err(err) = program.load() {
                 warn!(program = binding.program, error = %err, "failed to load TLS uprobe");
+            }
+        }
+    }
+
+    /// Attaches every binding to each library not already attached, recording
+    /// attached paths so a periodic rescan only probes newly mapped libraries.
+    /// Libraries missing a symbol (for example a BoringSSL build without
+    /// `SSL_set_fd`) are accounted by the lower count, never silently assumed
+    /// present. Returns the number of new (program, library) attachments.
+    fn attach_uprobe_libraries(
+        ebpf: &mut Ebpf,
+        bindings: &[UprobeBinding],
+        libraries: &[PathBuf],
+        attached_paths: &mut BTreeSet<PathBuf>,
+    ) -> usize {
+        let mut attached = 0;
+        for library in libraries {
+            if !attached_paths.insert(library.clone()) {
                 continue;
             }
-            for library in libraries {
+            for binding in bindings {
+                let program: &mut UProbe = match ebpf
+                    .program_mut(binding.program)
+                    .and_then(|program| program.try_into().ok())
+                {
+                    Some(program) => program,
+                    None => continue,
+                };
                 match program.attach(binding.symbol, library, UProbeScope::AllProcesses) {
                     Ok(_) => attached += 1,
                     Err(err) => {
