@@ -14,6 +14,7 @@ mod procfs;
 pub mod protocol;
 #[cfg(any(target_os = "linux", test))]
 mod source_telemetry;
+pub mod tls;
 
 pub use cpu_profile::AyaCpuProfileSource;
 pub use dns::AyaDnsSource;
@@ -21,3 +22,4 @@ pub use exec::AyaExecSource;
 pub use http::AyaHttpSource;
 pub use network::AyaNetworkSource;
 pub use protocol::AyaProtocolSource;
+pub use tls::AyaTlsSource;

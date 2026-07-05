@@ -10,9 +10,9 @@ use aya_ebpf::{
         bpf_ktime_get_ns, bpf_probe_read_user, bpf_probe_read_user_buf,
         bpf_probe_read_user_str_bytes, generated::bpf_get_current_cgroup_id,
     },
-    macros::{map, perf_event, tracepoint},
+    macros::{map, perf_event, tracepoint, uprobe, uretprobe},
     maps::{Array, HashMap, PerCpuArray, PerfEventArray},
-    programs::{PerfEventContext, TracePointContext},
+    programs::{PerfEventContext, ProbeContext, RetProbeContext, TracePointContext},
 };
 
 const EXECUTABLE_LEN: usize = 256;
@@ -80,6 +80,17 @@ const NEG_EINPROGRESS: i64 = -115;
 const EXEC_EVENT_SOURCE_SYSCALL_ENTER: u32 = 1;
 const EXEC_EVENT_SOURCE_SCHED_EXEC: u32 = 2;
 const CPU_PROFILE_MAX_FRAMES: usize = 32;
+const TLS_DIAG_IO_ENTER: u32 = 0;
+const TLS_DIAG_IO_EXIT: u32 = 1;
+const TLS_DIAG_FD_UNRESOLVED: u32 = 2;
+const TLS_DIAG_CONNECTION_MISS: u32 = 3;
+const TLS_DIAG_PORT_FILTERED: u32 = 4;
+const TLS_DIAG_NON_TCP_CONNECTION: u32 = 5;
+const TLS_DIAG_NULL_OR_EMPTY: u32 = 6;
+const TLS_DIAG_COPY_EMPTY: u32 = 7;
+const TLS_DIAG_OUTPUT_ATTEMPT: u32 = 8;
+const TLS_DIAG_SET_FD: u32 = 9;
+const TLS_DIAGNOSTIC_COUNTERS_LEN: u32 = 10;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -232,6 +243,25 @@ pub struct PendingProtocolRead {
     pub buffer_ptr: u64,
 }
 
+/// Keys the userspace TLS object pointer (`SSL*` or GnuTLS session) to the
+/// process so the same pointer value in two processes never collides.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct TlsHandleKey {
+    pub tgid: u32,
+    pub reserved: u32,
+    pub handle: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PendingTlsIo {
+    pub handle: u64,
+    pub buffer_ptr: u64,
+    pub direction: u32,
+    pub reserved: u32,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PendingConnect {
@@ -382,6 +412,29 @@ static PENDING_ACCEPTS: HashMap<u64, u64> = HashMap::with_max_entries(4096, 0);
 
 #[map]
 static PENDING_HTTP_READS: HashMap<u64, PendingHttpRead> = HashMap::with_max_entries(4096, 0);
+
+#[map]
+static TLS_DATA_EVENTS: PerfEventArray<RawProtocolDataEvent> = PerfEventArray::new(0);
+
+#[map]
+static TLS_DATA_EVENT_SCRATCH: PerCpuArray<RawProtocolDataEvent> =
+    PerCpuArray::with_max_entries(1, 0);
+
+#[map]
+static TLS_CAPTURE_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
+
+#[map]
+static TLS_CAPTURE_PORTS: HashMap<u16, u32> = HashMap::with_max_entries(64, 0);
+
+#[map]
+static TLS_HANDLE_FDS: HashMap<TlsHandleKey, i32> = HashMap::with_max_entries(16384, 0);
+
+#[map]
+static PENDING_TLS_IO: HashMap<u64, PendingTlsIo> = HashMap::with_max_entries(8192, 0);
+
+#[map]
+static TLS_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
+    PerCpuArray::with_max_entries(TLS_DIAGNOSTIC_COUNTERS_LEN, 0);
 
 #[tracepoint]
 pub fn tracepoint_execve(ctx: TracePointContext) -> u32 {
@@ -845,6 +898,64 @@ pub fn sample_cpu_profile(ctx: PerfEventContext) -> u32 {
     }
 }
 
+// OpenSSL/BoringSSL: int SSL_write(SSL *ssl, const void *buf, int num).
+#[uprobe]
+pub fn uprobe_ssl_write_enter(ctx: ProbeContext) -> u32 {
+    tls_io_enter(&ctx, NETWORK_IO_WRITE)
+}
+
+#[uretprobe]
+pub fn uretprobe_ssl_write_exit(ctx: RetProbeContext) -> u32 {
+    tls_io_exit(&ctx, NETWORK_IO_WRITE)
+}
+
+// OpenSSL/BoringSSL: int SSL_read(SSL *ssl, void *buf, int num).
+#[uprobe]
+pub fn uprobe_ssl_read_enter(ctx: ProbeContext) -> u32 {
+    tls_io_enter(&ctx, NETWORK_IO_READ)
+}
+
+#[uretprobe]
+pub fn uretprobe_ssl_read_exit(ctx: RetProbeContext) -> u32 {
+    tls_io_exit(&ctx, NETWORK_IO_READ)
+}
+
+// OpenSSL/BoringSSL: int SSL_set_fd(SSL *ssl, int fd).
+#[uprobe]
+pub fn uprobe_ssl_set_fd(ctx: ProbeContext) -> u32 {
+    tls_set_handle_fd(&ctx, 1)
+}
+
+// GnuTLS: ssize_t gnutls_record_send(gnutls_session_t s, const void *d, size_t n).
+#[uprobe]
+pub fn uprobe_gnutls_record_send_enter(ctx: ProbeContext) -> u32 {
+    tls_io_enter(&ctx, NETWORK_IO_WRITE)
+}
+
+#[uretprobe]
+pub fn uretprobe_gnutls_record_send_exit(ctx: RetProbeContext) -> u32 {
+    tls_io_exit(&ctx, NETWORK_IO_WRITE)
+}
+
+// GnuTLS: ssize_t gnutls_record_recv(gnutls_session_t s, void *d, size_t n).
+#[uprobe]
+pub fn uprobe_gnutls_record_recv_enter(ctx: ProbeContext) -> u32 {
+    tls_io_enter(&ctx, NETWORK_IO_READ)
+}
+
+#[uretprobe]
+pub fn uretprobe_gnutls_record_recv_exit(ctx: RetProbeContext) -> u32 {
+    tls_io_exit(&ctx, NETWORK_IO_READ)
+}
+
+// GnuTLS: void gnutls_transport_set_ptr(gnutls_session_t s, gnutls_transport_ptr_t p).
+// gnutls_transport_set_int(s, fd) expands to set_ptr(s, (void*)(intptr_t)fd),
+// so the fd travels in the pointer argument.
+#[uprobe]
+pub fn uprobe_gnutls_transport_set_ptr(ctx: ProbeContext) -> u32 {
+    tls_set_handle_fd(&ctx, 1)
+}
+
 fn try_tracepoint_execve(ctx: TracePointContext) -> Result<u32, i64> {
     try_tracepoint_exec_common(ctx, 16, 24)
 }
@@ -1069,6 +1180,239 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
 
     CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
     Ok(0)
+}
+
+#[inline(always)]
+fn record_tls_diagnostic(stage: u32) {
+    if let Some(counter) = TLS_DIAGNOSTIC_COUNTERS.get_ptr_mut(stage) {
+        unsafe {
+            *counter = (*counter).wrapping_add(1);
+        }
+    }
+}
+
+#[inline(always)]
+fn tls_capture_limit() -> u32 {
+    let configured = TLS_CAPTURE_LIMIT
+        .get(0)
+        .copied()
+        .unwrap_or(PROTOCOL_MIN_CAPTURE_BYTES);
+    configured.clamp(PROTOCOL_MIN_CAPTURE_BYTES, PROTOCOL_MAX_CAPTURE_BYTES)
+}
+
+/// Records the fd behind a userspace TLS handle (`SSL*` or GnuTLS session).
+/// `fd_arg_index` is the probe argument carrying the fd (or, for GnuTLS, the
+/// pointer whose integer value is the fd).
+#[inline(always)]
+fn tls_set_handle_fd(ctx: &ProbeContext, fd_arg_index: usize) -> u32 {
+    let handle: u64 = match ctx.arg(0) {
+        Some(value) => value,
+        None => return 0,
+    };
+    let fd_value: i64 = match ctx.arg(fd_arg_index) {
+        Some(value) => value,
+        None => return 0,
+    };
+    if handle == 0 || fd_value < 0 {
+        return 0;
+    }
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let key = TlsHandleKey {
+        tgid: (pid_tgid >> 32) as u32,
+        reserved: 0,
+        handle,
+    };
+    if TLS_HANDLE_FDS.insert(&key, &(fd_value as i32), 0).is_ok() {
+        record_tls_diagnostic(TLS_DIAG_SET_FD);
+    }
+    0
+}
+
+fn tls_io_enter(ctx: &ProbeContext, direction: u32) -> u32 {
+    record_tls_diagnostic(TLS_DIAG_IO_ENTER);
+    let handle: u64 = match ctx.arg(0) {
+        Some(value) => value,
+        None => return 0,
+    };
+    let buffer: u64 = match ctx.arg(1) {
+        Some(value) => value,
+        None => return 0,
+    };
+    if handle == 0 || buffer == 0 {
+        record_tls_diagnostic(TLS_DIAG_NULL_OR_EMPTY);
+        return 0;
+    }
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let pending = PendingTlsIo {
+        handle,
+        buffer_ptr: buffer,
+        direction,
+        reserved: 0,
+    };
+    let _ = PENDING_TLS_IO.insert(&pid_tgid, &pending, 0);
+    0
+}
+
+fn tls_io_exit(ctx: &RetProbeContext, direction: u32) -> u32 {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let pending = match unsafe { PENDING_TLS_IO.get(&pid_tgid) } {
+        Some(value) => *value,
+        None => return 0,
+    };
+    PENDING_TLS_IO.remove(&pid_tgid).ok();
+    if pending.direction != direction {
+        return 0;
+    }
+    record_tls_diagnostic(TLS_DIAG_IO_EXIT);
+
+    let retval: i64 = ctx.ret();
+    if retval <= 0 {
+        return 0;
+    }
+    match emit_tls_data(
+        ctx,
+        pending.handle,
+        direction,
+        pending.buffer_ptr as *const u8,
+        retval as u64,
+    ) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+fn tls_connection_for_handle(handle: u64) -> Option<PendingConnect> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let tgid = (pid_tgid >> 32) as u32;
+    let handle_key = TlsHandleKey {
+        tgid,
+        reserved: 0,
+        handle,
+    };
+    let fd = match unsafe { TLS_HANDLE_FDS.get(&handle_key) } {
+        Some(value) => *value,
+        None => {
+            record_tls_diagnostic(TLS_DIAG_FD_UNRESOLVED);
+            return None;
+        }
+    };
+    let key = ConnectionKey { tgid, fd };
+    let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
+        Some(value) => *value,
+        None => {
+            record_tls_diagnostic(TLS_DIAG_CONNECTION_MISS);
+            return None;
+        }
+    };
+    if connection.protocol != IPPROTO_TCP {
+        record_tls_diagnostic(TLS_DIAG_NON_TCP_CONNECTION);
+        return None;
+    }
+    let remote_port = u16::from_be(connection.remote_port_be);
+    if unsafe { TLS_CAPTURE_PORTS.get(&remote_port) }.is_none() {
+        record_tls_diagnostic(TLS_DIAG_PORT_FILTERED);
+        return None;
+    }
+    Some(connection)
+}
+
+#[inline(always)]
+fn emit_tls_data(
+    ctx: &RetProbeContext,
+    handle: u64,
+    direction: u32,
+    buffer: *const u8,
+    len: u64,
+) -> Result<u32, i64> {
+    let connection = match tls_connection_for_handle(handle) {
+        Some(value) => value,
+        None => return Ok(0),
+    };
+
+    let event = tls_data_event_scratch()?;
+    event.pid = connection.pid;
+    event.uid = connection.uid;
+    event.cgroup_id = current_cgroup_id();
+    event.fd = connection.fd;
+    event.direction = direction;
+    event.family = connection.family;
+    event.remote_port_be = connection.remote_port_be;
+    event.local_port_be = connection.local_port_be;
+    event.remote_addr_v4 = connection.remote_addr_v4;
+    event.local_addr_v4 = connection.local_addr_v4;
+    event.remote_addr_v6 = connection.remote_addr_v6;
+    event.local_addr_v6 = connection.local_addr_v6;
+    event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
+    event.payload_total_len = if len > u32::MAX as u64 {
+        u32::MAX
+    } else {
+        len as u32
+    };
+    event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
+
+    let limit = tls_capture_limit();
+    let captured_total = if len > limit as u64 {
+        limit
+    } else {
+        len as u32
+    };
+    event.payload_captured_len = captured_total;
+
+    let mut emitted = false;
+    let mut segment = 0;
+    while segment < PROTOCOL_MAX_CAPTURE_SEGMENTS {
+        let offset = (segment * PROTOCOL_DATA_BYTES) as u32;
+        if offset >= captured_total {
+            break;
+        }
+        let remaining = (captured_total - offset) as usize;
+        let chunk_len = if remaining > PROTOCOL_DATA_BYTES {
+            PROTOCOL_DATA_BYTES
+        } else {
+            remaining
+        };
+        let copied = unsafe {
+            bpf_probe_read_user_buf(buffer.add(offset as usize), &mut event.payload[..chunk_len])
+        };
+        if copied.is_err() {
+            break;
+        }
+        event.payload_offset = offset;
+        event.payload_len = chunk_len as u32;
+        record_tls_diagnostic(TLS_DIAG_OUTPUT_ATTEMPT);
+        TLS_DATA_EVENTS.output(ctx, &*event, 0);
+        emitted = true;
+        segment += 1;
+    }
+    if !emitted {
+        record_tls_diagnostic(TLS_DIAG_COPY_EMPTY);
+    }
+    Ok(0)
+}
+
+fn tls_data_event_scratch() -> Result<&'static mut RawProtocolDataEvent, i64> {
+    let ptr = TLS_DATA_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+    let event = unsafe { &mut *ptr };
+    event.pid = 0;
+    event.uid = 0;
+    event.cgroup_id = 0;
+    event.fd = -1;
+    event.direction = 0;
+    event.family = 0;
+    event.remote_port_be = 0;
+    event.local_port_be = 0;
+    event.remote_addr_v4 = 0;
+    event.local_addr_v4 = 0;
+    event.remote_addr_v6 = [0; 16];
+    event.local_addr_v6 = [0; 16];
+    event.timestamp_unix_nanos = 0;
+    event.payload_len = 0;
+    event.payload_total_len = 0;
+    event.payload_offset = 0;
+    event.payload_captured_len = 0;
+    event.command = [0; 16];
+    event.payload = [0; PROTOCOL_DATA_BYTES];
+    Ok(event)
 }
 
 fn try_tracepoint_connect_enter(ctx: TracePointContext) -> Result<u32, i64> {

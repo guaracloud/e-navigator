@@ -11,7 +11,7 @@ use e_navigator_runner::ModuleRegistry;
 use e_navigator_sinks::{JsonStdoutSink, OtlpHttpSink, PrometheusHttpSink};
 use e_navigator_sources_ebpf_aya::{
     AyaCpuProfileSource, AyaDnsSource, AyaExecSource, AyaHttpSource, AyaNetworkSource,
-    AyaProtocolSource,
+    AyaProtocolSource, AyaTlsSource,
 };
 use e_navigator_sources_host::{HostResourceConfig, HostResourceSource};
 
@@ -74,6 +74,14 @@ pub(crate) fn build_registry(
             host.clone(),
             config.attribution.procfs_root.clone(),
             config.protocol_source.clone(),
+        )));
+    }
+
+    if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.aya_tls") {
+        registry = registry.with_source(Box::new(AyaTlsSource::new(
+            host.clone(),
+            config.attribution.procfs_root.clone(),
+            config.tls_source.clone(),
         )));
     }
 
