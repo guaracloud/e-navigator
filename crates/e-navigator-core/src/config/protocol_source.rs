@@ -22,6 +22,11 @@ pub struct ProtocolSourceConfig {
     pub redis_ports: Vec<u16>,
     #[serde(default = "default_protocol_source_max_buffered_bytes_per_connection")]
     pub max_buffered_bytes_per_connection: usize,
+    /// Bytes captured per read/write syscall on tracked connections. Payloads
+    /// longer than this remain accounted as uncaptured gaps by the stream
+    /// reassembler.
+    #[serde(default = "default_protocol_source_capture_bytes_per_syscall")]
+    pub capture_bytes_per_syscall: usize,
     #[serde(default = "default_protocol_source_max_tracked_connections")]
     pub max_tracked_connections: usize,
     #[serde(default = "default_protocol_source_max_attributes")]
@@ -40,6 +45,7 @@ impl Default for ProtocolSourceConfig {
             redis_ports: default_protocol_source_redis_ports(),
             max_buffered_bytes_per_connection:
                 default_protocol_source_max_buffered_bytes_per_connection(),
+            capture_bytes_per_syscall: default_protocol_source_capture_bytes_per_syscall(),
             max_tracked_connections: default_protocol_source_max_tracked_connections(),
             max_attributes: default_protocol_source_max_attributes(),
         }
@@ -50,6 +56,11 @@ impl ProtocolSourceConfig {
     /// Matches the eBPF `PROTOCOL_CAPTURE_PORTS` map capacity.
     pub const MAX_TOTAL_PORTS: usize = 64;
     pub const MAX_BUFFERED_BYTES_LIMIT: usize = 64 * 1024;
+    /// Matches the eBPF segment size; smaller windows gain nothing.
+    pub const MIN_CAPTURE_BYTES_PER_SYSCALL: usize = 256;
+    /// Matches the eBPF per-syscall segment emission bound (16 segments of
+    /// 256 bytes).
+    pub const MAX_CAPTURE_BYTES_PER_SYSCALL: usize = 4096;
     pub const MAX_TRACKED_CONNECTIONS_LIMIT: usize = 65_536;
     pub const MAX_ATTRIBUTES_LIMIT: usize = 32;
 
@@ -103,6 +114,18 @@ impl ProtocolSourceConfig {
                 format!(
                     "protocol_source.max_buffered_bytes_per_connection must be between 1 and {}",
                     Self::MAX_BUFFERED_BYTES_LIMIT
+                ),
+            ));
+        }
+        if !(Self::MIN_CAPTURE_BYTES_PER_SYSCALL..=Self::MAX_CAPTURE_BYTES_PER_SYSCALL)
+            .contains(&self.capture_bytes_per_syscall)
+        {
+            return Err(ConfigError::invalid_value(
+                "protocol_source.capture_bytes_per_syscall",
+                format!(
+                    "protocol_source.capture_bytes_per_syscall must be between {} and {}",
+                    Self::MIN_CAPTURE_BYTES_PER_SYSCALL,
+                    Self::MAX_CAPTURE_BYTES_PER_SYSCALL
                 ),
             ));
         }
@@ -167,6 +190,10 @@ fn default_protocol_source_redis_ports() -> Vec<u16> {
 
 fn default_protocol_source_max_buffered_bytes_per_connection() -> usize {
     8 * 1024
+}
+
+fn default_protocol_source_capture_bytes_per_syscall() -> usize {
+    1024
 }
 
 fn default_protocol_source_max_tracked_connections() -> usize {

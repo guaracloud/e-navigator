@@ -2556,6 +2556,7 @@ fn protocol_source_defaults_are_bounded() {
         config.protocol_source.max_buffered_bytes_per_connection,
         8 * 1024
     );
+    assert_eq!(config.protocol_source.capture_bytes_per_syscall, 1024);
     assert_eq!(config.protocol_source.max_tracked_connections, 2048);
     assert_eq!(config.protocol_source.max_attributes, 8);
     assert!(config.validate().is_ok());
@@ -2613,6 +2614,28 @@ fn protocol_source_limits_are_validated() {
             ..RuntimeConfig::default()
         },
         "protocol_source.max_buffered_bytes_per_connection must be between 1 and 65536",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            protocol_source: ProtocolSourceConfig {
+                capture_bytes_per_syscall: 255,
+                ..ProtocolSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "protocol_source.capture_bytes_per_syscall must be between 256 and 4096",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            protocol_source: ProtocolSourceConfig {
+                capture_bytes_per_syscall: 4097,
+                ..ProtocolSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "protocol_source.capture_bytes_per_syscall must be between 256 and 4096",
     );
 
     assert_invalid(
