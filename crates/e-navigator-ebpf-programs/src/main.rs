@@ -61,6 +61,10 @@ const PROTOCOL_DIAG_WRITEV_ENTER: u32 = 9;
 const PROTOCOL_DIAG_SENDMSG_ENTER: u32 = 10;
 const PROTOCOL_DIAGNOSTIC_COUNTERS_LEN: u32 = 11;
 const PROTOCOL_TOTAL_LEN_IOVECS: usize = 8;
+const PROTOCOL_MAX_CAPTURE_SEGMENTS: usize = 16;
+const PROTOCOL_MIN_CAPTURE_BYTES: u32 = PROTOCOL_DATA_BYTES as u32;
+const PROTOCOL_MAX_CAPTURE_BYTES: u32 =
+    (PROTOCOL_DATA_BYTES * PROTOCOL_MAX_CAPTURE_SEGMENTS) as u32;
 const NETWORK_EVENT_OPEN: u32 = 1;
 const NETWORK_EVENT_CLOSE: u32 = 2;
 const NETWORK_EVENT_FAILURE: u32 = 3;
@@ -214,6 +218,8 @@ pub struct RawProtocolDataEvent {
     pub timestamp_unix_nanos: u64,
     pub payload_len: u32,
     pub payload_total_len: u32,
+    pub payload_offset: u32,
+    pub payload_captured_len: u32,
     pub command: [u8; 16],
     pub payload: [u8; PROTOCOL_DATA_BYTES],
 }
@@ -327,6 +333,9 @@ static PROTOCOL_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
 
 #[map]
 static PROTOCOL_CAPTURE_PORTS: HashMap<u16, u32> = HashMap::with_max_entries(64, 0);
+
+#[map]
+static PROTOCOL_CAPTURE_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
 
 #[map]
 static PENDING_PROTOCOL_READS: HashMap<u64, PendingProtocolRead> =
@@ -1769,20 +1778,16 @@ fn emit_protocol_iovec_event(
         .map_err(|err| err as i64)?;
     let first_len = unsafe { bpf_probe_read_user::<u64>(iov.add(8).cast::<u64>()) }
         .map_err(|err| err as i64)?;
-    if !first_buffer.is_null() && first_len > 0 {
-        copy_protocol_payload(first_buffer, first_len, event)?;
-    }
     event.payload_total_len = if total_len > u32::MAX as u64 {
         u32::MAX
     } else {
         total_len as u32
     };
-    if event.payload_len == 0 {
+    if first_buffer.is_null() || first_len == 0 {
         record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
         return Ok(0);
     }
-    record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
-    PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
+    output_protocol_payload_segments(ctx, event, first_buffer, first_len);
     Ok(0)
 }
 
@@ -1893,34 +1898,71 @@ fn emit_protocol_data_event(
         len as u32
     };
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
-    copy_protocol_payload(buffer, len, event)?;
-    if event.payload_len == 0 {
+    if buffer.is_null() || len == 0 {
         record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
         return Ok(0);
     }
-    record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
-    PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
+    output_protocol_payload_segments(ctx, event, buffer, len);
     Ok(0)
 }
 
-fn copy_protocol_payload(
+#[inline(always)]
+fn protocol_capture_limit() -> u32 {
+    let configured = PROTOCOL_CAPTURE_LIMIT
+        .get(0)
+        .copied()
+        .unwrap_or(PROTOCOL_MIN_CAPTURE_BYTES);
+    configured.clamp(PROTOCOL_MIN_CAPTURE_BYTES, PROTOCOL_MAX_CAPTURE_BYTES)
+}
+
+/// Emits the leading `min(len, capture limit)` bytes of `buffer` as one or
+/// more contiguous segment events sharing the metadata already staged in
+/// `event`. A failed user read stops the loop early; the missing tail stays
+/// accounted because every emitted segment carries `payload_captured_len`
+/// and `payload_total_len`, which userspace turns into an explicit gap.
+fn output_protocol_payload_segments(
+    ctx: &TracePointContext,
+    event: &mut RawProtocolDataEvent,
     buffer: *const u8,
     len: u64,
-    event: &mut RawProtocolDataEvent,
-) -> Result<(), i64> {
-    let capped_len = if len > PROTOCOL_DATA_BYTES as u64 {
-        PROTOCOL_DATA_BYTES
+) {
+    let limit = protocol_capture_limit();
+    let captured_total = if len > limit as u64 {
+        limit
     } else {
-        len as usize
+        len as u32
     };
-    if capped_len == 0 {
-        return Ok(());
-    }
+    event.payload_captured_len = captured_total;
 
-    unsafe { bpf_probe_read_user_buf(buffer, &mut event.payload[..capped_len]) }
-        .map_err(|err| err as i64)?;
-    event.payload_len = capped_len as u32;
-    Ok(())
+    let mut emitted = false;
+    let mut segment = 0;
+    while segment < PROTOCOL_MAX_CAPTURE_SEGMENTS {
+        let offset = (segment * PROTOCOL_DATA_BYTES) as u32;
+        if offset >= captured_total {
+            break;
+        }
+        let remaining = (captured_total - offset) as usize;
+        let chunk_len = if remaining > PROTOCOL_DATA_BYTES {
+            PROTOCOL_DATA_BYTES
+        } else {
+            remaining
+        };
+        let copied = unsafe {
+            bpf_probe_read_user_buf(buffer.add(offset as usize), &mut event.payload[..chunk_len])
+        };
+        if copied.is_err() {
+            break;
+        }
+        event.payload_offset = offset;
+        event.payload_len = chunk_len as u32;
+        record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
+        PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
+        emitted = true;
+        segment += 1;
+    }
+    if !emitted {
+        record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
+    }
 }
 
 fn protocol_data_event_scratch() -> Result<&'static mut RawProtocolDataEvent, i64> {
@@ -1941,6 +1983,8 @@ fn protocol_data_event_scratch() -> Result<&'static mut RawProtocolDataEvent, i6
     event.timestamp_unix_nanos = 0;
     event.payload_len = 0;
     event.payload_total_len = 0;
+    event.payload_offset = 0;
+    event.payload_captured_len = 0;
     event.command = [0; 16];
     event.payload = [0; PROTOCOL_DATA_BYTES];
     Ok(event)

@@ -27,6 +27,9 @@ use e_navigator_signals::{
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_PROTOCOL_DATA_BYTES: usize = 256;
+/// Matches the eBPF per-syscall capture bound (16 segments of 256 bytes).
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_PROTOCOL_MAX_CAPTURE_BYTES: u32 = 16 * RAW_PROTOCOL_DATA_BYTES as u32;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_PROTOCOL_DIRECTION_READ: u32 = 1;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -85,6 +88,8 @@ pub(crate) struct RawProtocolDataEvent {
     pub timestamp_unix_nanos: u64,
     pub payload_len: u32,
     pub payload_total_len: u32,
+    pub payload_offset: u32,
+    pub payload_captured_len: u32,
     pub command: [u8; 16],
     pub payload: [u8; RAW_PROTOCOL_DATA_BYTES],
 }
@@ -102,6 +107,8 @@ pub struct RawProtocolInvalidSampleMetadata {
     local_port_be: u16,
     payload_len: u32,
     payload_total_len: u32,
+    payload_offset: u32,
+    payload_captured_len: u32,
     command: [u8; 16],
 }
 
@@ -119,6 +126,8 @@ impl RawProtocolInvalidSampleMetadata {
             local_port_be: raw.local_port_be,
             payload_len: raw.payload_len,
             payload_total_len: raw.payload_total_len,
+            payload_offset: raw.payload_offset,
+            payload_captured_len: raw.payload_captured_len,
             command: raw.command,
         }
     }
@@ -217,6 +226,7 @@ pub(crate) struct ProtocolRegistryCounters {
     pub unmatched_overflow: u64,
     pub unmatched_expired: u64,
     pub unmatched_evicted: u64,
+    pub segment_gaps: u64,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -273,12 +283,25 @@ struct Http2ConnectionState {
     streams: std::collections::BTreeMap<u32, InFlightRequest>,
 }
 
+/// Splicing position inside a multi-segment syscall capture whose final
+/// segment has not arrived yet.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SegmentProgress {
+    timestamp_unix_nanos: u64,
+    next_offset: u32,
+    captured_len: u32,
+    total_len: u32,
+}
+
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug)]
 struct ConnectionStream {
     protocol: StreamProtocol,
     request_decoder: ProtocolStreamDecoder,
     response_decoder: ProtocolStreamDecoder,
+    request_segments: Option<SegmentProgress>,
+    response_segments: Option<SegmentProgress>,
     in_flight: std::collections::VecDeque<InFlightRequest>,
     http2: Option<Http2ConnectionState>,
     context: ObservationContext,
@@ -350,7 +373,10 @@ impl ProtocolStreamRegistry {
         let raw =
             unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawProtocolDataEvent>()) };
         if raw.payload_len as usize > RAW_PROTOCOL_DATA_BYTES
-            || raw.payload_len > raw.payload_total_len
+            || raw.payload_captured_len > RAW_PROTOCOL_MAX_CAPTURE_BYTES
+            || u64::from(raw.payload_offset) + u64::from(raw.payload_len)
+                > u64::from(raw.payload_captured_len)
+            || raw.payload_captured_len > raw.payload_total_len
         {
             return Err(RawProtocolDecodeError::InvalidPayloadLength {
                 sample: RawProtocolInvalidSampleMetadata::from_raw(&raw),
@@ -399,6 +425,8 @@ impl ProtocolStreamRegistry {
                     StreamDirection::Response,
                     limits,
                 ),
+                request_segments: None,
+                response_segments: None,
                 in_flight: std::collections::VecDeque::new(),
                 http2: (protocol == StreamProtocol::Http2).then(|| Http2ConnectionState {
                     request_hpack: HpackDecoder::new(),
@@ -413,12 +441,19 @@ impl ProtocolStreamRegistry {
         let payload = &raw.payload[..raw.payload_len as usize];
         let mut frames = std::mem::take(&mut self.frames);
         frames.clear();
-        let decoder = if raw.direction == RAW_PROTOCOL_DIRECTION_WRITE {
-            &mut stream.request_decoder
+        let (decoder, pending_segments) = if raw.direction == RAW_PROTOCOL_DIRECTION_WRITE {
+            (&mut stream.request_decoder, &mut stream.request_segments)
         } else {
-            &mut stream.response_decoder
+            (&mut stream.response_decoder, &mut stream.response_segments)
         };
-        decoder.push_chunk(payload, u64::from(raw.payload_total_len), &mut frames);
+        feed_segment(
+            decoder,
+            pending_segments,
+            &raw,
+            payload,
+            &mut self.counters,
+            &mut frames,
+        );
 
         if stream.protocol == StreamProtocol::Http2 {
             handle_http2_frames(
@@ -501,6 +536,63 @@ impl ProtocolStreamRegistry {
             }
         }
     }
+}
+
+/// Feeds one captured segment into the stream decoder, splicing contiguous
+/// segments of a multi-segment syscall and converting every lost or
+/// mis-ordered segment into an explicit uncaptured gap. Non-adjacent bytes
+/// are never spliced together.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn feed_segment(
+    decoder: &mut ProtocolStreamDecoder,
+    pending: &mut Option<SegmentProgress>,
+    raw: &RawProtocolDataEvent,
+    payload: &[u8],
+    counters: &mut ProtocolRegistryCounters,
+    frames: &mut Vec<StreamFrame>,
+) {
+    let continues = pending.is_some_and(|progress| {
+        raw.timestamp_unix_nanos == progress.timestamp_unix_nanos
+            && raw.payload_offset == progress.next_offset
+            && raw.payload_captured_len == progress.captured_len
+            && raw.payload_total_len == progress.total_len
+    });
+    if !continues {
+        if let Some(progress) = pending.take() {
+            // The rest of the previous syscall's segments never arrived.
+            counters.segment_gaps += 1;
+            decoder.push_chunk(
+                &[],
+                u64::from(progress.total_len.saturating_sub(progress.next_offset)),
+                frames,
+            );
+        }
+        if raw.payload_offset > 0 {
+            // Segments before this one were lost.
+            counters.segment_gaps += 1;
+            decoder.push_chunk(&[], u64::from(raw.payload_offset), frames);
+        }
+    }
+
+    let segment_end = raw.payload_offset + raw.payload_len;
+    let is_final = segment_end >= raw.payload_captured_len;
+    let chunk_total_len = if is_final {
+        // The final segment carries the uncaptured syscall tail as its gap.
+        payload.len() as u64
+            + u64::from(
+                raw.payload_total_len
+                    .saturating_sub(raw.payload_captured_len),
+            )
+    } else {
+        payload.len() as u64
+    };
+    decoder.push_chunk(payload, chunk_total_len, frames);
+    *pending = (!is_final).then_some(SegmentProgress {
+        timestamp_unix_nanos: raw.timestamp_unix_nanos,
+        next_offset: segment_end,
+        captured_len: raw.payload_captured_len,
+        total_len: raw.payload_total_len,
+    });
 }
 
 /// Processes reassembled request frames: parsed requests join the bounded
@@ -1218,7 +1310,7 @@ mod platform {
     use aya::{
         Ebpf, include_bytes_aligned,
         maps::{
-            HashMap as AyaHashMap, MapData, PerCpuArray,
+            Array as AyaArray, HashMap as AyaHashMap, MapData, PerCpuArray,
             perf::{PerfEvent, PerfEventArray},
         },
         programs::TracePoint,
@@ -1278,6 +1370,7 @@ mod platform {
             .map_err(module_error)?;
 
             populate_capture_ports(&mut ebpf, &self.config)?;
+            populate_capture_limit(&mut ebpf, &self.config)?;
 
             attach_tracepoint(
                 &mut ebpf,
@@ -1496,6 +1589,23 @@ mod platform {
         Ok(())
     }
 
+    fn populate_capture_limit(ebpf: &mut Ebpf, config: &ProtocolSourceConfig) -> CoreResult<()> {
+        let map =
+            ebpf.map_mut("PROTOCOL_CAPTURE_LIMIT")
+                .ok_or_else(|| CoreError::ModuleFailed {
+                    module: "source.aya_protocol".to_string(),
+                    message: "missing PROTOCOL_CAPTURE_LIMIT map".to_string(),
+                })?;
+        let mut limit: AyaArray<&mut MapData, u32> =
+            AyaArray::try_from(map).map_err(module_error)?;
+        let capture_bytes = config.capture_bytes_per_syscall.clamp(
+            ProtocolSourceConfig::MIN_CAPTURE_BYTES_PER_SYSCALL,
+            ProtocolSourceConfig::MAX_CAPTURE_BYTES_PER_SYSCALL,
+        ) as u32;
+        limit.set(0, capture_bytes, 0).map_err(module_error)?;
+        Ok(())
+    }
+
     fn log_signal_diagnostic(
         diagnostics: &SourceDiagnostics,
         signal: &SignalEnvelope,
@@ -1564,6 +1674,8 @@ mod platform {
             local_port = ?sample.map(|sample| u16::from_be(sample.local_port_be)),
             payload_len = ?sample.map(|sample| sample.payload_len),
             payload_total_len = ?sample.map(|sample| sample.payload_total_len),
+            payload_offset = ?sample.map(|sample| sample.payload_offset),
+            payload_captured_len = ?sample.map(|sample| sample.payload_captured_len),
             "source diagnostic raw event invalid"
         );
         DiagnosticSampleDecision::Matched
@@ -1805,6 +1917,8 @@ mod tests {
             timestamp_unix_nanos: 1_000,
             payload_len: payload.len() as u32,
             payload_total_len: total_len,
+            payload_offset: 0,
+            payload_captured_len: payload.len() as u32,
             command: fixed_command("client"),
             payload: [0; RAW_PROTOCOL_DATA_BYTES],
         };
@@ -2008,6 +2122,127 @@ mod tests {
         let err = registry
             .handle_event(raw_as_bytes(&event), 5_000, &mut signals)
             .expect_err("oversized payload length is rejected");
+        assert_eq!(err.reason_name(), "invalid_payload_length");
+    }
+
+    /// Splits one syscall payload into eBPF-shaped segment events.
+    fn segmented_events(remote_port: u16, payload: &[u8]) -> Vec<RawProtocolDataEvent> {
+        payload
+            .chunks(RAW_PROTOCOL_DATA_BYTES)
+            .enumerate()
+            .map(|(index, chunk)| {
+                let mut event = raw_event(remote_port, chunk, payload.len() as u32);
+                event.payload_offset = (index * RAW_PROTOCOL_DATA_BYTES) as u32;
+                event.payload_captured_len = payload.len() as u32;
+                event
+            })
+            .collect()
+    }
+
+    #[test]
+    fn multi_segment_syscall_reassembles_complete_frame() {
+        let mut registry = registry();
+        let value = "x".repeat(560);
+        let mut command = format!(
+            "*3\r\n$3\r\nSET\r\n$10\r\nsecret-key\r\n${}\r\n",
+            value.len()
+        )
+        .into_bytes();
+        command.extend_from_slice(value.as_bytes());
+        command.extend_from_slice(b"\r\n");
+        assert!(command.len() > 2 * RAW_PROTOCOL_DATA_BYTES);
+
+        for event in segmented_events(6379, &command) {
+            assert!(handle_at(&mut registry, &event, 5_000).is_empty());
+        }
+
+        let response = response_event(6379, b"+OK\r\n");
+        let signals = handle_at(&mut registry, &response, 6_000);
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method.as_deref(), Some("SET"));
+        assert_eq!(observation.confidence, TraceConfidence::High);
+        assert_eq!(registry.counters().segment_gaps, 0);
+        assert_eq!(registry.counters().truncated_frames, 0);
+
+        let serialized = serde_json::to_string(&signals[0]).expect("signal serializes");
+        assert!(!serialized.contains("xxxx"));
+        assert!(!serialized.contains("secret-key"));
+    }
+
+    #[test]
+    fn lost_final_segment_becomes_accounted_gap() {
+        let mut registry = registry();
+        let value = "x".repeat(560);
+        let mut command = format!(
+            "*3\r\n$3\r\nSET\r\n$10\r\nsecret-key\r\n${}\r\n",
+            value.len()
+        )
+        .into_bytes();
+        command.extend_from_slice(value.as_bytes());
+        command.extend_from_slice(b"\r\n");
+
+        let segments = segmented_events(6379, &command);
+        assert!(segments.len() >= 2);
+        // Only the first segment arrives; the rest are lost.
+        assert!(handle_at(&mut registry, &segments[0], 5_000).is_empty());
+
+        // The next syscall flushes the missing tail as a gap; its own
+        // command still parses cleanly at the next frame boundary.
+        let ping = raw_event(6379, b"*1\r\n$4\r\nPING\r\n", 14);
+        assert!(handle_at(&mut registry, &ping, 5_100).is_empty());
+        assert_eq!(registry.counters().segment_gaps, 1);
+        assert_eq!(registry.counters().truncated_frames, 1);
+
+        let response = response_event(6379, b"+PONG\r\n+PONG\r\n");
+        let signals = handle_at(&mut registry, &response, 6_000);
+        assert_eq!(signals.len(), 2);
+        assert_eq!(observation(&signals[1]).method.as_deref(), Some("PING"));
+    }
+
+    #[test]
+    fn lost_leading_segments_become_accounted_gap() {
+        let mut registry = registry();
+        // A mid-syscall segment arrives with no preceding offset-0 segment.
+        // Its bytes cannot start a valid frame, so the decoder resyncs.
+        let mut orphan = raw_event(6379, &[b'*'; 200], 456);
+        orphan.payload_offset = 256;
+        orphan.payload_captured_len = 456;
+        assert!(handle_at(&mut registry, &orphan, 5_000).is_empty());
+        assert_eq!(registry.counters().segment_gaps, 1);
+
+        // The stream recovers at the next clean frame boundary.
+        let ping = raw_event(6379, b"*1\r\n$4\r\nPING\r\n", 14);
+        assert!(handle_at(&mut registry, &ping, 5_100).is_empty());
+        let response = response_event(6379, b"+PONG\r\n");
+        let signals = handle_at(&mut registry, &response, 6_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("PING"));
+    }
+
+    #[test]
+    fn segment_exceeding_captured_len_is_rejected() {
+        let mut registry = registry();
+        let payload = b"PING\r\n";
+        let mut event = raw_event(6379, payload, payload.len() as u32);
+        event.payload_offset = 8;
+        let mut signals = Vec::new();
+        let err = registry
+            .handle_event(raw_as_bytes(&event), 5_000, &mut signals)
+            .expect_err("segment past captured length is rejected");
+        assert_eq!(err.reason_name(), "invalid_payload_length");
+    }
+
+    #[test]
+    fn captured_len_exceeding_total_len_is_rejected() {
+        let mut registry = registry();
+        let payload = b"PING\r\n";
+        let mut event = raw_event(6379, payload, payload.len() as u32);
+        event.payload_captured_len = event.payload_total_len + 1;
+        let mut signals = Vec::new();
+        let err = registry
+            .handle_event(raw_as_bytes(&event), 5_000, &mut signals)
+            .expect_err("captured length past total length is rejected");
         assert_eq!(err.reason_name(), "invalid_payload_length");
     }
 
