@@ -5,6 +5,9 @@ use super::{ConfigError, ConfigResult};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProtocolSourceConfig {
+    /// Cleartext HTTP/1 ports; empty disables HTTP/1 stream capture.
+    #[serde(default)]
+    pub http1_ports: Vec<u16>,
     /// Cleartext HTTP/2 (h2c/gRPC) ports; empty disables HTTP/2 capture.
     #[serde(default)]
     pub http2_ports: Vec<u16>,
@@ -36,6 +39,7 @@ pub struct ProtocolSourceConfig {
 impl Default for ProtocolSourceConfig {
     fn default() -> Self {
         Self {
+            http1_ports: Vec::new(),
             http2_ports: Vec::new(),
             kafka_ports: default_protocol_source_kafka_ports(),
             mongodb_ports: default_protocol_source_mongodb_ports(),
@@ -66,6 +70,7 @@ impl ProtocolSourceConfig {
 
     pub fn port_protocols(&self) -> impl Iterator<Item = (&'static str, &[u16])> {
         [
+            ("http1", self.http1_ports.as_slice()),
             ("http2", self.http2_ports.as_slice()),
             ("kafka", self.kafka_ports.as_slice()),
             ("mongodb", self.mongodb_ports.as_slice()),
@@ -153,6 +158,7 @@ impl ProtocolSourceConfig {
 
 fn port_field(protocol: &str) -> &'static str {
     match protocol {
+        "http1" => "protocol_source.http1_ports",
         "http2" => "protocol_source.http2_ports",
         "kafka" => "protocol_source.kafka_ports",
         "mongodb" => "protocol_source.mongodb_ports",

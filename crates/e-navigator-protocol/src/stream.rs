@@ -13,6 +13,7 @@ const MAX_REDIS_BOUNDARY_ITEMS: usize = 1024;
 /// Application protocol carried by a captured request stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamProtocol {
+    Http1,
     Http2,
     Kafka,
     Mongodb,
@@ -312,6 +313,12 @@ pub fn frame_boundary(
         return FrameBoundary::NeedMoreBytes;
     }
     match (protocol, direction) {
+        (StreamProtocol::Http1, StreamDirection::Request) => {
+            http1_boundary(bytes, max_frame_bytes, true)
+        }
+        (StreamProtocol::Http1, StreamDirection::Response) => {
+            http1_boundary(bytes, max_frame_bytes, false)
+        }
         (StreamProtocol::Http2, StreamDirection::Request) => {
             http2_boundary(bytes, max_frame_bytes, true)
         }
@@ -342,6 +349,287 @@ fn checked_frame(total_len: usize, max_frame_bytes: usize) -> FrameBoundary {
 
 const HTTP2_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const HTTP2_FRAME_HEADER_BYTES: usize = 9;
+const HTTP1_MAX_CHUNK_SIZE_DIGITS: usize = 16;
+
+/// Message body length semantics derived from an HTTP/1 header block.
+enum Http1BodyLength {
+    /// No body follows the header block.
+    None,
+    /// A `Content-Length` body of exactly this many bytes.
+    Fixed(usize),
+    /// A `Transfer-Encoding: chunked` body.
+    Chunked,
+    /// A response body delimited only by connection close; its end cannot be
+    /// found from buffered bytes alone.
+    CloseDelimited,
+}
+
+/// Determines where an HTTP/1 message starting at `bytes[0]` ends. Requests
+/// and responses are message-framed by the header block plus a body sized by
+/// `Content-Length`, `Transfer-Encoding: chunked`, or (for some responses)
+/// connection close.
+fn http1_boundary(bytes: &[u8], max_frame_bytes: usize, is_request: bool) -> FrameBoundary {
+    let scan_cap = bytes.len().min(max_frame_bytes);
+    let Some(header_end) = find_double_crlf(&bytes[..scan_cap]) else {
+        // No complete header block yet; give up once the cap is reached.
+        if bytes.len() >= max_frame_bytes {
+            return FrameBoundary::Invalid;
+        }
+        return FrameBoundary::NeedMoreBytes;
+    };
+    let head_len = header_end + 4;
+    let header_block = &bytes[..header_end];
+    if !http1_head_is_valid(header_block, is_request) {
+        return FrameBoundary::Invalid;
+    }
+
+    match http1_body_length(header_block, is_request) {
+        Http1BodyLength::None => checked_frame(head_len, max_frame_bytes),
+        Http1BodyLength::Fixed(body_len) => match head_len.checked_add(body_len) {
+            Some(total_len) => checked_frame(total_len, max_frame_bytes),
+            None => FrameBoundary::Invalid,
+        },
+        Http1BodyLength::Chunked => {
+            match chunked_body_length(&bytes[head_len..], max_frame_bytes.saturating_sub(head_len))
+            {
+                ChunkedScan::Complete(body_len) => {
+                    checked_frame(head_len + body_len, max_frame_bytes)
+                }
+                ChunkedScan::NeedMoreBytes => {
+                    if bytes.len() >= max_frame_bytes {
+                        FrameBoundary::Invalid
+                    } else {
+                        FrameBoundary::NeedMoreBytes
+                    }
+                }
+                ChunkedScan::Invalid => FrameBoundary::Invalid,
+            }
+        }
+        // A close-delimited response body has no in-band terminator, so the
+        // header block is framed on its own; trailing body bytes resync at the
+        // next recognizable message start rather than being mis-attributed.
+        Http1BodyLength::CloseDelimited => checked_frame(head_len, max_frame_bytes),
+    }
+}
+
+/// Validates the first line so a non-HTTP/1 stream desyncs instead of being
+/// mis-framed.
+fn http1_head_is_valid(header_block: &[u8], is_request: bool) -> bool {
+    let first_line = match header_block.iter().position(|byte| *byte == b'\r') {
+        Some(index) => &header_block[..index],
+        None => header_block,
+    };
+    if is_request {
+        // METHOD SP request-target SP HTTP/1.x
+        let mut parts = first_line.split(|byte| *byte == b' ');
+        let Some(method) = parts.next() else {
+            return false;
+        };
+        if method.is_empty() || !method.iter().all(|byte| byte.is_ascii_uppercase()) {
+            return false;
+        }
+        if parts.next().is_none() {
+            return false;
+        }
+        match parts.next() {
+            Some(version) => version.starts_with(b"HTTP/1."),
+            None => false,
+        }
+    } else {
+        first_line.starts_with(b"HTTP/1.")
+    }
+}
+
+/// Reads the body-length semantics from an HTTP/1 header block. Chunked takes
+/// precedence over `Content-Length` per RFC 9112.
+fn http1_body_length(header_block: &[u8], is_request: bool) -> Http1BodyLength {
+    let mut content_length = None;
+    let mut chunked = false;
+    let mut status_code = None;
+
+    let mut first = true;
+    for line in header_block.split(|byte| *byte == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if first {
+            first = false;
+            if !is_request {
+                status_code = http1_status_code(line);
+            }
+            continue;
+        }
+        let Some(colon) = line.iter().position(|byte| *byte == b':') else {
+            continue;
+        };
+        let (name, value) = line.split_at(colon);
+        let value = &value[1..];
+        if header_name_eq(name, b"content-length") {
+            if let Some(parsed) = parse_ascii_usize(trim_ascii(value)) {
+                content_length = Some(parsed);
+            }
+        } else if header_name_eq(name, b"transfer-encoding")
+            && contains_token_ignore_ascii_case(value, b"chunked")
+        {
+            chunked = true;
+        }
+    }
+
+    if chunked {
+        return Http1BodyLength::Chunked;
+    }
+    if let Some(length) = content_length {
+        return Http1BodyLength::Fixed(length);
+    }
+    if is_request {
+        // A request without framing headers has no body.
+        return Http1BodyLength::None;
+    }
+    // Responses to 1xx/204/304 never have a body.
+    match status_code {
+        Some(code) if (100..200).contains(&code) || code == 204 || code == 304 => {
+            Http1BodyLength::None
+        }
+        _ => Http1BodyLength::CloseDelimited,
+    }
+}
+
+fn http1_status_code(status_line: &[u8]) -> Option<u16> {
+    let mut parts = status_line.split(|byte| *byte == b' ');
+    let _version = parts.next()?;
+    let code = parts.next()?;
+    parse_ascii_usize(code).and_then(|value| u16::try_from(value).ok())
+}
+
+enum ChunkedScan {
+    Complete(usize),
+    NeedMoreBytes,
+    Invalid,
+}
+
+/// Walks a `Transfer-Encoding: chunked` body, returning the total byte length
+/// through the terminating zero-length chunk. Bounded by `max_body_bytes`.
+fn chunked_body_length(bytes: &[u8], max_body_bytes: usize) -> ChunkedScan {
+    let mut cursor = 0;
+    loop {
+        if cursor > max_body_bytes {
+            return ChunkedScan::Invalid;
+        }
+        let remaining = &bytes[cursor.min(bytes.len())..];
+        let Some(line_len) = find_crlf(remaining) else {
+            if cursor >= max_body_bytes {
+                return ChunkedScan::Invalid;
+            }
+            return ChunkedScan::NeedMoreBytes;
+        };
+        // The chunk size is hex, optionally followed by ";extensions".
+        let size_token = {
+            let line = &remaining[..line_len];
+            let end = line
+                .iter()
+                .position(|byte| *byte == b';')
+                .unwrap_or(line.len());
+            &line[..end]
+        };
+        if size_token.is_empty() || size_token.len() > HTTP1_MAX_CHUNK_SIZE_DIGITS {
+            return ChunkedScan::Invalid;
+        }
+        let Some(chunk_size) = parse_ascii_hex(size_token) else {
+            return ChunkedScan::Invalid;
+        };
+        // Advance past "size\r\n".
+        let Some(after_size) = cursor
+            .checked_add(line_len)
+            .and_then(|value| value.checked_add(2))
+        else {
+            return ChunkedScan::Invalid;
+        };
+        if chunk_size == 0 {
+            // Terminating chunk; consume the trailing CRLF (trailers not
+            // supported, only the bare terminator).
+            let Some(end) = after_size.checked_add(2) else {
+                return ChunkedScan::Invalid;
+            };
+            if end > max_body_bytes {
+                return ChunkedScan::Invalid;
+            }
+            if end > bytes.len() {
+                return ChunkedScan::NeedMoreBytes;
+            }
+            return ChunkedScan::Complete(end);
+        }
+        // Advance past the chunk data and its trailing CRLF.
+        let Some(next) = after_size
+            .checked_add(chunk_size)
+            .and_then(|value| value.checked_add(2))
+        else {
+            return ChunkedScan::Invalid;
+        };
+        if next > max_body_bytes {
+            return ChunkedScan::Invalid;
+        }
+        if next > bytes.len() {
+            return ChunkedScan::NeedMoreBytes;
+        }
+        cursor = next;
+    }
+}
+
+fn find_double_crlf(bytes: &[u8]) -> Option<usize> {
+    bytes.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn header_name_eq(name: &[u8], expected: &[u8]) -> bool {
+    trim_ascii(name).eq_ignore_ascii_case(expected)
+}
+
+fn contains_token_ignore_ascii_case(value: &[u8], token: &[u8]) -> bool {
+    if token.is_empty() || value.len() < token.len() {
+        return false;
+    }
+    value
+        .windows(token.len())
+        .any(|window| window.eq_ignore_ascii_case(token))
+}
+
+fn trim_ascii(bytes: &[u8]) -> &[u8] {
+    let start = bytes
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())
+        .map(|index| index + 1)
+        .unwrap_or(start);
+    &bytes[start..end]
+}
+
+fn parse_ascii_usize(bytes: &[u8]) -> Option<usize> {
+    if bytes.is_empty() || bytes.len() > MAX_FRAME_LENGTH_DIGITS {
+        return None;
+    }
+    let mut value: usize = 0;
+    for byte in bytes {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        value = value.checked_mul(10)?.checked_add((byte - b'0') as usize)?;
+    }
+    Some(value)
+}
+
+fn parse_ascii_hex(bytes: &[u8]) -> Option<usize> {
+    let mut value: usize = 0;
+    for byte in bytes {
+        let digit = match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            b'A'..=b'F' => byte - b'A' + 10,
+            _ => return None,
+        };
+        value = value.checked_mul(16)?.checked_add(digit as usize)?;
+    }
+    Some(value)
+}
 
 fn http2_boundary(bytes: &[u8], max_frame_bytes: usize, allow_preface: bool) -> FrameBoundary {
     if allow_preface && bytes[0] == b'P' {
@@ -1076,6 +1364,141 @@ mod tests {
     }
 
     #[test]
+    fn http1_request_boundary_frames_by_content_length() {
+        let frame = b"POST /submit HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello";
+        assert_eq!(
+            request_frame_boundary(StreamProtocol::Http1, frame, 4096),
+            FrameBoundary::Frame {
+                total_len: frame.len()
+            },
+        );
+        // Once the header block is complete the total length is known even
+        // before the body arrives; the decoder buffers until it is present.
+        assert_eq!(
+            request_frame_boundary(StreamProtocol::Http1, &frame[..frame.len() - 1], 4096),
+            FrameBoundary::Frame {
+                total_len: frame.len()
+            },
+        );
+        // A partial header block still needs more bytes.
+        assert_eq!(
+            request_frame_boundary(
+                StreamProtocol::Http1,
+                b"POST /submit HTTP/1.1\r\nCont",
+                4096
+            ),
+            FrameBoundary::NeedMoreBytes,
+        );
+    }
+
+    #[test]
+    fn http1_get_request_has_no_body() {
+        let frame = b"GET /index.html HTTP/1.1\r\nHost: example.test\r\n\r\n";
+        assert_eq!(
+            request_frame_boundary(StreamProtocol::Http1, frame, 4096),
+            FrameBoundary::Frame {
+                total_len: frame.len()
+            },
+        );
+        // Partial header block waits for the terminator.
+        assert_eq!(
+            request_frame_boundary(StreamProtocol::Http1, b"GET / HTTP/1.1\r\nHost: x", 4096),
+            FrameBoundary::NeedMoreBytes,
+        );
+    }
+
+    #[test]
+    fn http1_rejects_non_http_start() {
+        assert_eq!(
+            request_frame_boundary(StreamProtocol::Http1, b"\x00\x01\x02\x03\r\n\r\n", 4096),
+            FrameBoundary::Invalid,
+        );
+        assert_eq!(
+            frame_boundary(
+                StreamProtocol::Http1,
+                StreamDirection::Response,
+                b"garbage line here\r\n\r\n",
+                4096,
+            ),
+            FrameBoundary::Invalid,
+        );
+    }
+
+    #[test]
+    fn http1_response_boundary_frames_chunked_body() {
+        let frame =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
+        assert_eq!(
+            frame_boundary(
+                StreamProtocol::Http1,
+                StreamDirection::Response,
+                frame,
+                4096
+            ),
+            FrameBoundary::Frame {
+                total_len: frame.len()
+            },
+        );
+        // Without the terminating zero chunk the scan needs more bytes.
+        let partial = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n";
+        assert_eq!(
+            frame_boundary(
+                StreamProtocol::Http1,
+                StreamDirection::Response,
+                partial,
+                4096
+            ),
+            FrameBoundary::NeedMoreBytes,
+        );
+    }
+
+    #[test]
+    fn http1_response_without_body_headers_is_framed() {
+        let frame = b"HTTP/1.1 204 No Content\r\nServer: x\r\n\r\n";
+        assert_eq!(
+            frame_boundary(
+                StreamProtocol::Http1,
+                StreamDirection::Response,
+                frame,
+                4096
+            ),
+            FrameBoundary::Frame {
+                total_len: frame.len()
+            },
+        );
+    }
+
+    #[test]
+    fn http1_response_close_delimited_frames_headers_only() {
+        // No Content-Length or chunked on a 200 response: only the header block
+        // is framed, and the body bytes fall to resync.
+        let frame = b"HTTP/1.1 200 OK\r\nServer: x\r\n\r\nbodybytes";
+        let head_len = frame.len() - b"bodybytes".len();
+        assert_eq!(
+            frame_boundary(
+                StreamProtocol::Http1,
+                StreamDirection::Response,
+                frame,
+                4096
+            ),
+            FrameBoundary::Frame {
+                total_len: head_len
+            },
+        );
+    }
+
+    #[test]
+    fn http1_decoder_reassembles_pipelined_requests() {
+        let mut decoder = decoder(StreamProtocol::Http1);
+        let mut chunk = b"GET /a HTTP/1.1\r\nHost: x\r\n\r\n".to_vec();
+        chunk.extend_from_slice(b"POST /b HTTP/1.1\r\nContent-Length: 3\r\n\r\nabc");
+        let frames = push(&mut decoder, &chunk);
+        assert_eq!(frames.len(), 2);
+        assert_eq!(decoder.stats().complete_frames, 2);
+        assert_eq!(decoder.buffered_bytes(), 0);
+    }
+
+    #[test]
     fn http2_boundary_handles_preface_and_frames() {
         let preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
         assert_eq!(
@@ -1231,6 +1654,7 @@ mod tests {
     #[test]
     fn boundary_never_panics_on_arbitrary_bytes() {
         let protocols = [
+            StreamProtocol::Http1,
             StreamProtocol::Http2,
             StreamProtocol::Kafka,
             StreamProtocol::Mongodb,

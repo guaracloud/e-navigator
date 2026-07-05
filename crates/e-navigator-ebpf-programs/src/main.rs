@@ -258,6 +258,10 @@ pub struct TlsHandleKey {
 pub struct PendingTlsIo {
     pub handle: u64,
     pub buffer_ptr: u64,
+    /// For the OpenSSL `_ex` variants, the userspace `size_t*` out-parameter
+    /// receiving the processed byte count; zero for the classic variants and
+    /// GnuTLS, where the byte count is the return value.
+    pub count_ptr: u64,
     pub direction: u32,
     pub reserved: u32,
 }
@@ -920,6 +924,30 @@ pub fn uretprobe_ssl_read_exit(ctx: RetProbeContext) -> u32 {
     tls_io_exit(&ctx, NETWORK_IO_READ)
 }
 
+// OpenSSL 3: int SSL_write_ex(SSL *ssl, const void *buf, size_t num,
+// size_t *written). The processed length is returned via `written`, not the
+// int return value (1 on success).
+#[uprobe]
+pub fn uprobe_ssl_write_ex_enter(ctx: ProbeContext) -> u32 {
+    tls_io_enter_ex(&ctx, NETWORK_IO_WRITE)
+}
+
+#[uretprobe]
+pub fn uretprobe_ssl_write_ex_exit(ctx: RetProbeContext) -> u32 {
+    tls_io_exit(&ctx, NETWORK_IO_WRITE)
+}
+
+// OpenSSL 3: int SSL_read_ex(SSL *ssl, void *buf, size_t num, size_t *readbytes).
+#[uprobe]
+pub fn uprobe_ssl_read_ex_enter(ctx: ProbeContext) -> u32 {
+    tls_io_enter_ex(&ctx, NETWORK_IO_READ)
+}
+
+#[uretprobe]
+pub fn uretprobe_ssl_read_ex_exit(ctx: RetProbeContext) -> u32 {
+    tls_io_exit(&ctx, NETWORK_IO_READ)
+}
+
 // OpenSSL/BoringSSL: int SSL_set_fd(SSL *ssl, int fd).
 #[uprobe]
 pub fn uprobe_ssl_set_fd(ctx: ProbeContext) -> u32 {
@@ -1242,15 +1270,42 @@ fn tls_io_enter(ctx: &ProbeContext, direction: u32) -> u32 {
         record_tls_diagnostic(TLS_DIAG_NULL_OR_EMPTY);
         return 0;
     }
+    stash_tls_io(handle, buffer, 0, direction);
+    0
+}
+
+/// Entry handler for the OpenSSL `_ex` variants, whose fourth argument is the
+/// `size_t*` receiving the processed byte count.
+fn tls_io_enter_ex(ctx: &ProbeContext, direction: u32) -> u32 {
+    record_tls_diagnostic(TLS_DIAG_IO_ENTER);
+    let handle: u64 = match ctx.arg(0) {
+        Some(value) => value,
+        None => return 0,
+    };
+    let buffer: u64 = match ctx.arg(1) {
+        Some(value) => value,
+        None => return 0,
+    };
+    let count_ptr: u64 = ctx.arg(3).unwrap_or(0);
+    if handle == 0 || buffer == 0 {
+        record_tls_diagnostic(TLS_DIAG_NULL_OR_EMPTY);
+        return 0;
+    }
+    stash_tls_io(handle, buffer, count_ptr, direction);
+    0
+}
+
+#[inline(always)]
+fn stash_tls_io(handle: u64, buffer: u64, count_ptr: u64, direction: u32) {
     let pid_tgid = bpf_get_current_pid_tgid();
     let pending = PendingTlsIo {
         handle,
         buffer_ptr: buffer,
+        count_ptr,
         direction,
         reserved: 0,
     };
     let _ = PENDING_TLS_IO.insert(&pid_tgid, &pending, 0);
-    0
 }
 
 fn tls_io_exit(ctx: &RetProbeContext, direction: u32) -> u32 {
@@ -1266,7 +1321,23 @@ fn tls_io_exit(ctx: &RetProbeContext, direction: u32) -> u32 {
     record_tls_diagnostic(TLS_DIAG_IO_EXIT);
 
     let retval: i64 = ctx.ret();
-    if retval <= 0 {
+    // Classic variants return the byte count; `_ex` variants return 1 on
+    // success and report the count through the stashed `size_t*`.
+    let length = if pending.count_ptr != 0 {
+        if retval != 1 {
+            return 0;
+        }
+        match unsafe { bpf_probe_read_user::<u64>(pending.count_ptr as *const u64) } {
+            Ok(value) => value,
+            Err(_) => return 0,
+        }
+    } else {
+        if retval <= 0 {
+            return 0;
+        }
+        retval as u64
+    };
+    if length == 0 {
         return 0;
     }
     match emit_tls_data(
@@ -1274,7 +1345,7 @@ fn tls_io_exit(ctx: &RetProbeContext, direction: u32) -> u32 {
         pending.handle,
         direction,
         pending.buffer_ptr as *const u8,
-        retval as u64,
+        length,
     ) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,

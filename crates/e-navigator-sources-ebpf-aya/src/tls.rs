@@ -23,6 +23,7 @@ pub(crate) fn stream_protocol_config(
     config: &e_navigator_core::TlsSourceConfig,
 ) -> e_navigator_core::ProtocolSourceConfig {
     e_navigator_core::ProtocolSourceConfig {
+        http1_ports: config.http1_ports.clone(),
         http2_ports: config.http2_ports.clone(),
         kafka_ports: config.kafka_ports.clone(),
         mongodb_ports: config.mongodb_ports.clone(),
@@ -38,11 +39,12 @@ pub(crate) fn stream_protocol_config(
 }
 
 /// The remote ports whose decrypted plaintext is framed by the stream
-/// registry (everything except HTTP/1).
+/// registry (all configured TLS protocol ports, HTTP/1 included).
 #[cfg(any(target_os = "linux", test))]
 pub(crate) fn stream_capture_ports(config: &e_navigator_core::TlsSourceConfig) -> Vec<u16> {
     let mut ports = Vec::new();
     for list in [
+        &config.http1_ports,
         &config.http2_ports,
         &config.kafka_ports,
         &config.mongodb_ports,
@@ -113,6 +115,25 @@ mod platform {
         UprobeBinding {
             program: "uretprobe_ssl_read_exit",
             symbol: "SSL_read",
+        },
+        // OpenSSL 3 length-in-out-parameter variants (used by, for example,
+        // CPython's _ssl). Absent on older OpenSSL and BoringSSL, which are
+        // then accounted by the attach count.
+        UprobeBinding {
+            program: "uprobe_ssl_write_ex_enter",
+            symbol: "SSL_write_ex",
+        },
+        UprobeBinding {
+            program: "uretprobe_ssl_write_ex_exit",
+            symbol: "SSL_write_ex",
+        },
+        UprobeBinding {
+            program: "uprobe_ssl_read_ex_enter",
+            symbol: "SSL_read_ex",
+        },
+        UprobeBinding {
+            program: "uretprobe_ssl_read_ex_exit",
+            symbol: "SSL_read_ex",
         },
     ];
 
@@ -234,15 +255,6 @@ mod platform {
                 gnutls_probes_attached = gnutls_attached,
                 "attached TLS uprobes"
             );
-            if !self.config.http1_ports.is_empty() {
-                warn!(
-                    source = "source.aya_tls",
-                    http1_ports = ?self.config.http1_ports,
-                    "HTTP/1-over-TLS framing is not yet implemented; these ports \
-                     are not captured in this build"
-                );
-            }
-
             let mut perf_array = PerfEventArray::try_from(
                 ebpf.take_map("TLS_DATA_EVENTS")
                     .ok_or_else(|| module_message("missing TLS_DATA_EVENTS map"))?,
@@ -598,28 +610,31 @@ mod tests {
     use e_navigator_core::TlsSourceConfig;
 
     #[test]
-    fn stream_capture_ports_excludes_http1_and_dedupes() {
+    fn stream_capture_ports_includes_http1_and_dedupes() {
         let config = TlsSourceConfig {
-            http1_ports: vec![443],
+            http1_ports: vec![443, 443],
             http2_ports: vec![8443],
             redis_ports: vec![6380],
             ..TlsSourceConfig::default()
         };
         let ports = stream_capture_ports(&config);
+        assert!(ports.contains(&443));
         assert!(ports.contains(&8443));
         assert!(ports.contains(&6380));
-        assert!(!ports.contains(&443));
+        assert_eq!(ports.iter().filter(|port| **port == 443).count(), 1);
     }
 
     #[test]
     fn stream_protocol_config_maps_tls_ports() {
         let config = TlsSourceConfig {
+            http1_ports: vec![443],
             http2_ports: vec![8443],
             postgresql_ports: vec![5433],
             max_attributes: 5,
             ..TlsSourceConfig::default()
         };
         let protocol = stream_protocol_config(&config);
+        assert_eq!(protocol.http1_ports, vec![443]);
         assert_eq!(protocol.http2_ports, vec![8443]);
         assert_eq!(protocol.postgresql_ports, vec![5433]);
         assert_eq!(protocol.max_attributes, 5);

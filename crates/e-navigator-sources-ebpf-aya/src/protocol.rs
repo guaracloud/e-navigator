@@ -5,6 +5,7 @@ use e_navigator_core::ProtocolSourceConfig;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
+    http::{parse_http_request, parse_http_response},
     http2::{
         HTTP2_FLAG_END_STREAM, HTTP2_FRAME_TYPE_HEADERS, HpackDecoder, parse_http2_frame_header,
         parse_http2_request_headers_frame, parse_http2_response_headers_frame,
@@ -181,6 +182,7 @@ impl ProtocolPortMap {
     pub(crate) fn from_config(config: &ProtocolSourceConfig) -> Self {
         let mut entries = Vec::new();
         let protocols = [
+            (StreamProtocol::Http1, &config.http1_ports),
             (StreamProtocol::Http2, &config.http2_ports),
             (StreamProtocol::Kafka, &config.kafka_ports),
             (StreamProtocol::Mongodb, &config.mongodb_ports),
@@ -701,9 +703,12 @@ fn response_action(protocol: StreamProtocol, frame: &[u8]) -> ResponseAction {
     match protocol {
         // HTTP/2 uses stream-id matching, never the FIFO queue.
         StreamProtocol::Http2 => ResponseAction::Ignore,
-        StreamProtocol::Kafka | StreamProtocol::Mongodb | StreamProtocol::Redis => {
-            ResponseAction::PopOne
-        }
+        // HTTP/1 is strict request/response over one connection; each framed
+        // response completes exactly the oldest in-flight request.
+        StreamProtocol::Http1
+        | StreamProtocol::Kafka
+        | StreamProtocol::Mongodb
+        | StreamProtocol::Redis => ResponseAction::PopOne,
         // MySQL response packets to one command increment the sequence id;
         // only the first packet (sequence 1) marks the response start.
         StreamProtocol::Mysql => {
@@ -1033,6 +1038,7 @@ fn placeholder_request(protocol: StreamProtocol, warning: &str) -> ParsedRequest
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn protocol_kind(protocol: StreamProtocol) -> ProtocolKind {
     match protocol {
+        StreamProtocol::Http1 => ProtocolKind::Http,
         StreamProtocol::Http2 => ProtocolKind::Http,
         StreamProtocol::Kafka => ProtocolKind::Kafka,
         StreamProtocol::Mongodb => ProtocolKind::Mongodb,
@@ -1123,6 +1129,14 @@ fn parse_request_frame(
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedRequestFrame, &'static str> {
     match protocol {
+        StreamProtocol::Http1 => parse_http_request(frame, config)
+            .map(|parsed| ParsedRequestFrame {
+                protocol: parsed.protocol,
+                operation: parsed.method,
+                warning: parsed.warning,
+                attributes: parsed.attributes,
+            })
+            .map_err(|_| "http1_request"),
         StreamProtocol::Http2 => Err("http2_handled_separately"),
         StreamProtocol::Kafka => parse_kafka_request(frame, config)
             .map(|parsed| ParsedRequestFrame {
@@ -1193,6 +1207,13 @@ fn parse_response_frame(
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedResponseFrame, &'static str> {
     match protocol {
+        StreamProtocol::Http1 => parse_http_response(frame, config)
+            .map(|parsed| ParsedResponseFrame {
+                status_code: Some(parsed.status_code.to_string()),
+                error_type: None,
+                attributes: parsed.attributes,
+            })
+            .map_err(|_| "http1_response"),
         StreamProtocol::Http2 => Err("http2_handled_separately"),
         StreamProtocol::Kafka => {
             parse_kafka_response_for_api_key(kafka_api_key, kafka_api_version, frame, config)
@@ -2430,6 +2451,45 @@ mod tests {
                 .iter()
                 .any(|attribute| attribute.key == "rpc.grpc.status_code" && attribute.value == "0"),
         );
+    }
+
+    #[test]
+    fn http1_request_matches_response_with_status() {
+        let config = ProtocolSourceConfig {
+            http1_ports: vec![8443],
+            ..ProtocolSourceConfig::default()
+        };
+        let mut registry = ProtocolStreamRegistry::new(
+            None,
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
+        );
+
+        let request = b"GET /orders/42 HTTP/1.1\r\nHost: api.test\r\n\r\n";
+        let event = raw_event(8443, request, request.len() as u32);
+        assert!(handle_at(&mut registry, &event, 5_000).is_empty());
+
+        let response = response_event(
+            8443,
+            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
+        );
+        let signals = handle_at(&mut registry, &response, 6_000);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.protocol, ProtocolKind::Http);
+        assert_eq!(observation.method.as_deref(), Some("GET"));
+        assert_eq!(observation.duration_nanos, Some(1_000));
+        assert!(
+            observation
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "http.response.status_code"
+                    && attribute.value == "503"),
+        );
+        // The request target path must not leak as a high-cardinality value.
+        let serialized = serde_json::to_string(&signals[0]).expect("signal serializes");
+        assert!(serialized.contains("url.path"));
     }
 
     #[test]
