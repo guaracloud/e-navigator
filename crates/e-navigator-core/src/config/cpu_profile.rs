@@ -13,6 +13,11 @@ pub struct CpuProfileSourceConfig {
     pub sample_frequency_hz: u32,
     #[serde(default = "default_cpu_profile_max_active_targets")]
     pub max_active_targets: usize,
+    /// Deepest stack captured per sample, both in-kernel (frame budget
+    /// passed to bpf_get_stack) and during normalization. User stacks are
+    /// additionally bounded by the kernel `kernel.perf_event_max_stack`
+    /// sysctl (127 by default). Stacks that fill the budget are flagged and
+    /// counted, never silently truncated.
     #[serde(default = "default_cpu_profile_max_frames_per_sample")]
     pub max_frames_per_sample: usize,
     #[serde(default = "default_cpu_profile_max_samples_per_batch")]
@@ -74,7 +79,7 @@ impl CpuProfileSourceConfig {
     pub const STATIC_MODULE_NAME: &'static str = "source.aya_cpu_profile";
     pub const MAX_SAMPLE_FREQUENCY_HZ: u32 = 999;
     pub const MAX_ACTIVE_TARGETS_LIMIT: usize = 4096;
-    pub const MAX_FRAMES_PER_SAMPLE_LIMIT: usize = 256;
+    pub const MAX_FRAMES_PER_SAMPLE_LIMIT: usize = 128;
     pub const MAX_SAMPLES_PER_BATCH_LIMIT: usize = 1024;
     pub const MAX_SYMBOL_BYTES_LIMIT: usize = 1024;
     pub const MAX_MODULE_BYTES_LIMIT: usize = 1024;

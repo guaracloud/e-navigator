@@ -79,7 +79,9 @@ const NETWORK_IO_WRITE: u32 = 2;
 const NEG_EINPROGRESS: i64 = -115;
 const EXEC_EVENT_SOURCE_SYSCALL_ENTER: u32 = 1;
 const EXEC_EVENT_SOURCE_SCHED_EXEC: u32 = 2;
-const CPU_PROFILE_MAX_FRAMES: usize = 32;
+const CPU_PROFILE_MAX_FRAMES: usize = 128;
+const CPU_PROFILE_MIN_FRAMES: u32 = 1;
+const CPU_PROFILE_FLAG_TRUNCATED: u32 = 1;
 const TLS_DIAG_IO_ENTER: u32 = 0;
 const TLS_DIAG_IO_EXIT: u32 = 1;
 const TLS_DIAG_FD_UNRESOLVED: u32 = 2;
@@ -170,6 +172,7 @@ pub struct RawCpuProfileEvent {
     pub timestamp_unix_nanos: u64,
     pub command: [u8; 16],
     pub frame_count: u32,
+    pub flags: u32,
     pub instruction_pointers: [u64; CPU_PROFILE_MAX_FRAMES],
 }
 
@@ -387,6 +390,9 @@ static NETWORK_EVENT_SCRATCH: PerCpuArray<RawNetworkEvent> = PerCpuArray::with_m
 #[map]
 static CPU_PROFILE_EVENT_SCRATCH: PerCpuArray<RawCpuProfileEvent> =
     PerCpuArray::with_max_entries(1, 0);
+
+#[map]
+static CPU_PROFILE_FRAME_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
 
 #[map]
 static DNS_EVENT_SCRATCH: PerCpuArray<RawDnsEvent> = PerCpuArray::with_max_entries(1, 0);
@@ -1200,22 +1206,39 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
     event.timestamp_unix_nanos = 0;
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     event.frame_count = 0;
+    event.flags = 0;
     event.instruction_pointers = [0; CPU_PROFILE_MAX_FRAMES];
+    let frame_limit = cpu_profile_frame_limit();
     let stack_bytes = unsafe {
         bpf_get_stack(
             ctx.as_ptr(),
             event.instruction_pointers.as_mut_ptr().cast(),
-            (CPU_PROFILE_MAX_FRAMES * core::mem::size_of::<u64>()) as u32,
+            frame_limit * core::mem::size_of::<u64>() as u32,
             u64::from(BPF_F_USER_STACK),
         )
     };
     if stack_bytes > 0 {
-        event.frame_count = ((stack_bytes as usize) / core::mem::size_of::<u64>())
+        let captured = ((stack_bytes as usize) / core::mem::size_of::<u64>())
             .min(CPU_PROFILE_MAX_FRAMES) as u32;
+        event.frame_count = captured;
+        // A full buffer means the stack may continue past the configured
+        // depth; flag it so userspace can account the truncation.
+        if captured >= frame_limit {
+            event.flags |= CPU_PROFILE_FLAG_TRUNCATED;
+        }
     }
 
     CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
     Ok(0)
+}
+
+#[inline(always)]
+fn cpu_profile_frame_limit() -> u32 {
+    let configured = CPU_PROFILE_FRAME_LIMIT
+        .get(0)
+        .copied()
+        .unwrap_or(CPU_PROFILE_MAX_FRAMES as u32);
+    configured.clamp(CPU_PROFILE_MIN_FRAMES, CPU_PROFILE_MAX_FRAMES as u32)
 }
 
 #[inline(always)]

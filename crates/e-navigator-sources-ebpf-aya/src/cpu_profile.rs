@@ -13,7 +13,12 @@ use e_navigator_signals::{
 };
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-pub(crate) const RAW_CPU_PROFILE_MAX_FRAMES: usize = 32;
+pub(crate) const RAW_CPU_PROFILE_MAX_FRAMES: usize = 128;
+
+/// The in-kernel capture buffer was filled to the configured frame limit,
+/// so the sampled stack may continue past the deepest captured frame.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_CPU_PROFILE_FLAG_TRUNCATED: u32 = 1;
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[repr(C)]
@@ -27,7 +32,19 @@ pub(crate) struct RawCpuProfileEvent {
     pub timestamp_unix_nanos: u64,
     pub command: [u8; 16],
     pub frame_count: u32,
+    pub flags: u32,
     pub instruction_pointers: [u64; RAW_CPU_PROFILE_MAX_FRAMES],
+}
+
+/// A decoded CPU profile sample plus capture-side accounting that the
+/// signal envelope alone does not expose to the reader loop.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) struct DecodedCpuProfileSample {
+    pub signal: SignalEnvelope,
+    /// True when the kernel filled the configured frame budget and the
+    /// stack may be deeper than what was captured.
+    pub capture_truncated: bool,
 }
 
 /// Resolves a captured instruction pointer for a pid into a stack frame.
@@ -158,7 +175,7 @@ fn raw_cpu_profile_to_signal(
     host: Option<String>,
     config: &CpuProfileSourceConfig,
     resolver: &mut impl FrameResolver,
-) -> Option<SignalEnvelope> {
+) -> Option<DecodedCpuProfileSample> {
     raw_cpu_profile_to_signal_with_clock(bytes, host, config, now_unix_nanos(), resolver)
 }
 
@@ -169,7 +186,7 @@ fn raw_cpu_profile_to_signal_with_clock(
     config: &CpuProfileSourceConfig,
     observed_unix_nanos: u64,
     resolver: &mut impl FrameResolver,
-) -> Option<SignalEnvelope> {
+) -> Option<DecodedCpuProfileSample> {
     if bytes.len() < core::mem::size_of::<RawCpuProfileEvent>() {
         return None;
     }
@@ -178,6 +195,7 @@ fn raw_cpu_profile_to_signal_with_clock(
     if raw.sample_count == 0 {
         return None;
     }
+    let capture_truncated = raw.flags & RAW_CPU_PROFILE_FLAG_TRUNCATED != 0;
     let frame_count = (raw.frame_count as usize).min(RAW_CPU_PROFILE_MAX_FRAMES);
     let stack_frames = raw
         .instruction_pointers
@@ -212,16 +230,25 @@ fn raw_cpu_profile_to_signal_with_clock(
         kubernetes: None,
         thread_id: (raw.tid != 0).then_some(u64::from(raw.tid)),
         thread_name: None,
-        attributes: vec![
-            ProfilingAttribute {
-                key: "profiling.sample.frequency_hz".to_string(),
-                value: config.sample_frequency_hz.to_string(),
-            },
-            ProfilingAttribute {
-                key: "profiling.source".to_string(),
-                value: "aya_perf_event".to_string(),
-            },
-        ],
+        attributes: {
+            let mut attributes = vec![
+                ProfilingAttribute {
+                    key: "profiling.sample.frequency_hz".to_string(),
+                    value: config.sample_frequency_hz.to_string(),
+                },
+                ProfilingAttribute {
+                    key: "profiling.source".to_string(),
+                    value: "aya_perf_event".to_string(),
+                },
+            ];
+            if capture_truncated {
+                attributes.push(ProfilingAttribute {
+                    key: "profiling.stack.capture_truncated".to_string(),
+                    value: "true".to_string(),
+                });
+            }
+            attributes
+        },
     };
     let limits = NormalizationLimits {
         max_frames_per_stack: config.max_frames_per_sample,
@@ -231,14 +258,22 @@ fn raw_cpu_profile_to_signal_with_clock(
         max_samples_per_window: config.max_samples_per_batch as u64,
         ..NormalizationLimits::default()
     };
-    sample.normalize(&limits).ok().map(|sample| {
-        SignalEnvelope::profile_sample_observation("source.aya_cpu_profile", host, sample)
-    })
+    sample
+        .normalize(&limits)
+        .ok()
+        .map(|sample| DecodedCpuProfileSample {
+            signal: SignalEnvelope::profile_sample_observation(
+                "source.aya_cpu_profile",
+                host,
+                sample,
+            ),
+            capture_truncated,
+        })
 }
 
 #[cfg(feature = "fuzzing")]
 pub fn fuzz_decode_raw_cpu_profile_event(bytes: &[u8]) -> bool {
-    const MAX_FUZZ_BYTES: usize = 1024;
+    const MAX_FUZZ_BYTES: usize = 2048;
 
     let bytes = &bytes[..bytes.len().min(MAX_FUZZ_BYTES)];
     let config = CpuProfileSourceConfig {
@@ -274,6 +309,7 @@ fn decode_cpu_profile_batch(
                 observed_unix_nanos,
                 &mut RawAddressResolver,
             )
+            .map(|decoded| decoded.signal)
         })
         .collect()
 }
@@ -288,6 +324,20 @@ fn send_with_backpressure(
         CpuProfileBackpressure::DropNewest => tx.try_send(signal).is_ok(),
         CpuProfileBackpressure::StopSource => tx.try_send(signal).is_ok(),
     }
+}
+
+/// Sizes each per-CPU perf ring to hold roughly 250ms of samples (2.5x the
+/// 100ms reader poll interval) including perf record framing, rounded up to
+/// a power of two as the perf mmap API requires, bounded to keep per-CPU
+/// memory predictable. Overflow past this budget is dropped by the kernel
+/// and accounted as lost perf events.
+#[cfg(any(target_os = "linux", test))]
+fn cpu_profile_perf_pages(sample_frequency_hz: u32, event_bytes: usize) -> usize {
+    const PERF_RECORD_OVERHEAD_BYTES: usize = 64;
+    const PAGE_BYTES: usize = 4096;
+    let samples_per_window = (sample_frequency_hz.max(1) as usize).div_ceil(4);
+    let bytes = samples_per_window * (event_bytes + PERF_RECORD_OVERHEAD_BYTES);
+    bytes.div_ceil(PAGE_BYTES).next_power_of_two().clamp(4, 64)
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -311,6 +361,7 @@ fn sample_period_nanos(sample_frequency_hz: u32) -> u64 {
 pub(crate) struct CpuProfileDropCounters {
     lost_perf_events: std::sync::atomic::AtomicU64,
     backpressure_dropped: std::sync::atomic::AtomicU64,
+    truncated_stacks: std::sync::atomic::AtomicU64,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -325,13 +376,21 @@ impl CpuProfileDropCounters {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Atomically reads and resets both counters, returning
-    /// (lost_perf_events, backpressure_dropped) since the last drain.
-    pub(crate) fn drain(&self) -> (u64, u64) {
+    pub(crate) fn record_truncated_stack(&self) {
+        self.truncated_stacks
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Atomically reads and resets all counters, returning
+    /// (lost_perf_events, backpressure_dropped, truncated_stacks) since the
+    /// last drain.
+    pub(crate) fn drain(&self) -> (u64, u64, u64) {
         (
             self.lost_perf_events
                 .swap(0, std::sync::atomic::Ordering::Relaxed),
             self.backpressure_dropped
+                .swap(0, std::sync::atomic::Ordering::Relaxed),
+            self.truncated_stacks
                 .swap(0, std::sync::atomic::Ordering::Relaxed),
         )
     }
@@ -372,6 +431,49 @@ pub(crate) fn source_drop_warning(
                 ProfilingAttribute {
                     key: "profiling.dropped.backpressure".to_string(),
                     value: backpressure_dropped.to_string(),
+                },
+            ],
+        },
+    )
+}
+
+/// Builds a bounded profiling warning reporting that captured stacks hit
+/// the configured in-kernel frame limit and may be deeper than captured.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn stack_truncation_warning(
+    host: Option<String>,
+    truncated_stacks: u64,
+    frame_limit: usize,
+    timestamp_unix_nanos: u64,
+) -> SignalEnvelope {
+    use e_navigator_signals::{
+        ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind,
+        ProfilingWarningObservation,
+    };
+    SignalEnvelope::profiling_warning_observation(
+        "source.aya_cpu_profile",
+        host,
+        ProfilingWarningObservation {
+            warning_type: "stack_depth_capped".to_string(),
+            message: "captured cpu stacks reached the configured frame limit and may be deeper"
+                .to_string(),
+            timestamp_unix_nanos,
+            source_signal_kind: "profile_sample_observation".to_string(),
+            source_module: "source.aya_cpu_profile".to_string(),
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::High,
+            process: None,
+            container: None,
+            kubernetes: None,
+            attributes: vec![
+                ProfilingAttribute {
+                    key: "profiling.stack.truncated_samples".to_string(),
+                    value: truncated_stacks.to_string(),
+                },
+                ProfilingAttribute {
+                    key: "profiling.stack.frame_limit".to_string(),
+                    value: frame_limit.to_string(),
                 },
             ],
         },
@@ -440,12 +542,18 @@ fn bytes_to_string(bytes: &[u8]) -> String {
 
 #[cfg(target_os = "linux")]
 mod platform {
-    use super::{bounded_cpu_targets, raw_cpu_profile_to_signal, send_with_backpressure};
+    use super::{
+        bounded_cpu_targets, cpu_profile_perf_pages, raw_cpu_profile_to_signal,
+        send_with_backpressure,
+    };
     use crate::perf_sample::perf_sample_bytes;
     use async_trait::async_trait;
     use aya::{
         Ebpf, include_bytes_aligned,
-        maps::perf::{PerfEvent as PerfBufferEvent, PerfEventArray},
+        maps::{
+            Array as AyaArray, MapData,
+            perf::{PerfEvent as PerfBufferEvent, PerfEventArray},
+        },
         programs::perf_event::{
             PerfEvent, PerfEventConfig, PerfEventScope, SamplePolicy, SoftwareEvent,
         },
@@ -500,6 +608,7 @@ mod platform {
                 "/e-navigator-ebpf-programs"
             )))
             .map_err(module_error)?;
+            populate_frame_limit(&mut ebpf, &self.config)?;
 
             let program: &mut PerfEvent = ebpf
                 .program_mut("sample_cpu_profile")
@@ -550,8 +659,14 @@ mod platform {
                 })?)
                 .map_err(module_error)?;
 
+            let perf_pages = cpu_profile_perf_pages(
+                self.config.sample_frequency_hz,
+                core::mem::size_of::<super::RawCpuProfileEvent>(),
+            );
             for cpu_id in active_cpus {
-                let mut buffer = perf_array.open(cpu_id, None).map_err(module_error)?;
+                let mut buffer = perf_array
+                    .open(cpu_id, Some(perf_pages))
+                    .map_err(module_error)?;
                 let cpu_tx = tx.clone();
                 let host = self.host.clone();
                 let config = self.config.clone();
@@ -578,7 +693,7 @@ mod platform {
                             match event {
                                 PerfBufferEvent::Sample { head, tail } => {
                                     let bytes = perf_sample_bytes(head, tail);
-                                    let signal = if symbolize {
+                                    let decoded = if symbolize {
                                         raw_cpu_profile_to_signal(
                                             bytes.as_ref(),
                                             host.clone(),
@@ -593,9 +708,13 @@ mod platform {
                                             &mut super::RawAddressResolver,
                                         )
                                     };
-                                    let Some(signal) = signal else {
+                                    let Some(decoded) = decoded else {
                                         return;
                                     };
+                                    if decoded.capture_truncated {
+                                        drop_counters.record_truncated_stack();
+                                    }
+                                    let signal = decoded.signal;
                                     accepted += 1;
                                     if !send_with_backpressure(&cpu_tx, signal, backpressure) {
                                         if matches!(
@@ -632,21 +751,32 @@ mod platform {
                 let emitter_counters = drop_counters.clone();
                 let emitter_tx = tx.clone();
                 let emitter_host = self.host.clone();
+                let frame_limit = self.config.max_frames_per_sample;
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     while !emitter_shutdown.is_stopped() {
                         std::thread::sleep(std::time::Duration::from_secs(10));
-                        let (lost, dropped) = emitter_counters.drain();
-                        if lost == 0 && dropped == 0 {
-                            continue;
+                        let (lost, dropped, truncated) = emitter_counters.drain();
+                        if lost > 0 || dropped > 0 {
+                            let warning = super::source_drop_warning(
+                                emitter_host.clone(),
+                                lost,
+                                dropped,
+                                super::now_unix_nanos(),
+                            );
+                            if emitter_tx.blocking_send(warning).is_err() {
+                                return ReaderExit::Stopped;
+                            }
                         }
-                        let warning = super::source_drop_warning(
-                            emitter_host.clone(),
-                            lost,
-                            dropped,
-                            super::now_unix_nanos(),
-                        );
-                        if emitter_tx.blocking_send(warning).is_err() {
-                            return ReaderExit::Stopped;
+                        if truncated > 0 {
+                            let warning = super::stack_truncation_warning(
+                                emitter_host.clone(),
+                                truncated,
+                                frame_limit,
+                                super::now_unix_nanos(),
+                            );
+                            if emitter_tx.blocking_send(warning).is_err() {
+                                return ReaderExit::Stopped;
+                            }
                         }
                     }
                     ReaderExit::Stopped
@@ -717,6 +847,22 @@ mod platform {
             });
         }
 
+        Ok(())
+    }
+
+    fn populate_frame_limit(ebpf: &mut Ebpf, config: &CpuProfileSourceConfig) -> CoreResult<()> {
+        let map =
+            ebpf.map_mut("CPU_PROFILE_FRAME_LIMIT")
+                .ok_or_else(|| CoreError::ModuleFailed {
+                    module: "source.aya_cpu_profile".to_string(),
+                    message: "missing CPU_PROFILE_FRAME_LIMIT map".to_string(),
+                })?;
+        let mut limit: AyaArray<&mut MapData, u32> =
+            AyaArray::try_from(map).map_err(module_error)?;
+        let frames = config
+            .max_frames_per_sample
+            .clamp(1, super::RAW_CPU_PROFILE_MAX_FRAMES) as u32;
+        limit.set(0, frames, 0).map_err(module_error)?;
         Ok(())
     }
 
@@ -808,6 +954,7 @@ mod tests {
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
             frame_count: 2,
+            flags: 0,
             instruction_pointers: padded_pointers(&[0xabc, 0xdef, 0, 0]),
         };
 
@@ -818,7 +965,8 @@ mod tests {
             10_000,
             &mut RawAddressResolver,
         )
-        .expect("raw profile event decodes");
+        .expect("raw profile event decodes")
+        .signal;
 
         assert_eq!(signal.source, "source.aya_cpu_profile");
         assert_eq!(signal.kind(), "profile_sample_observation");
@@ -863,6 +1011,7 @@ mod tests {
             timestamp_unix_nanos: 0,
             command: fixed_command("api"),
             frame_count: 0,
+            flags: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
         };
 
@@ -873,7 +1022,8 @@ mod tests {
             10_000,
             &mut RawAddressResolver,
         )
-        .expect("raw profile event decodes");
+        .expect("raw profile event decodes")
+        .signal;
         let SignalPayload::ProfileSampleObservation(sample) = signal.payload else {
             panic!("expected profile sample");
         };
@@ -894,6 +1044,7 @@ mod tests {
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
             frame_count: RAW_CPU_PROFILE_MAX_FRAMES as u32,
+            flags: 0,
             instruction_pointers: padded_pointers(&[0x1, 0x2, 0x3, 0x4]),
         };
         let config = CpuProfileSourceConfig {
@@ -908,7 +1059,8 @@ mod tests {
             10_000,
             &mut RawAddressResolver,
         )
-        .expect("raw profile event decodes");
+        .expect("raw profile event decodes")
+        .signal;
         let SignalPayload::ProfileSampleObservation(sample) = signal.payload else {
             panic!("expected profile sample");
         };
@@ -976,6 +1128,7 @@ mod tests {
             timestamp_unix_nanos: 1_000,
             command: fixed_command("app"),
             frame_count: 1,
+            flags: 0,
             instruction_pointers: {
                 let mut pointers = [0_u64; RAW_CPU_PROFILE_MAX_FRAMES];
                 pointers[0] = 0x55f000000500;
@@ -989,7 +1142,8 @@ mod tests {
             10_000,
             &mut FixedMapResolver,
         )
-        .expect("symbolized sample decodes");
+        .expect("symbolized sample decodes")
+        .signal;
         let SignalPayload::ProfileSampleObservation(sample) = signal.payload else {
             panic!("expected profile sample");
         };
@@ -1021,9 +1175,11 @@ mod tests {
         counters.record_lost_perf_events(3);
         counters.record_lost_perf_events(2);
         counters.record_backpressure_drop();
-        assert_eq!(counters.drain(), (5, 1));
-        // Draining resets both counters.
-        assert_eq!(counters.drain(), (0, 0));
+        counters.record_truncated_stack();
+        counters.record_truncated_stack();
+        assert_eq!(counters.drain(), (5, 1, 2));
+        // Draining resets all counters.
+        assert_eq!(counters.drain(), (0, 0, 0));
     }
 
     #[test]
@@ -1067,6 +1223,7 @@ mod tests {
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
             frame_count: 1,
+            flags: 0,
             instruction_pointers: padded_pointers(&[0xabc, 0, 0, 0]),
         };
 
@@ -1093,6 +1250,7 @@ mod tests {
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
             frame_count: 2,
+            flags: 0,
             instruction_pointers: padded_pointers(&[0xabc, 0xdef, 0, 0]),
         };
 
@@ -1103,7 +1261,8 @@ mod tests {
             10_000,
             &mut RawAddressResolver,
         )
-        .expect("first sample decodes");
+        .expect("first sample decodes")
+        .signal;
         let second = raw_cpu_profile_to_signal_with_clock(
             raw_as_bytes(&raw),
             Some("node-a".to_string()),
@@ -1111,7 +1270,8 @@ mod tests {
             10_000,
             &mut RawAddressResolver,
         )
-        .expect("second sample decodes");
+        .expect("second sample decodes")
+        .signal;
 
         assert_eq!(first, second);
     }
@@ -1127,6 +1287,7 @@ mod tests {
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
             frame_count: 0,
+            flags: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
         };
         let config = CpuProfileSourceConfig {
@@ -1154,6 +1315,7 @@ mod tests {
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
             frame_count: 0,
+            flags: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
         };
         let signal = raw_cpu_profile_to_signal_with_clock(
@@ -1163,7 +1325,8 @@ mod tests {
             10_000,
             &mut RawAddressResolver,
         )
-        .expect("raw profile event decodes");
+        .expect("raw profile event decodes")
+        .signal;
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
         assert!(send_with_backpressure(
@@ -1191,6 +1354,7 @@ mod tests {
             timestamp_unix_nanos: 1_000,
             command: fixed_command("api"),
             frame_count: 0,
+            flags: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
         };
         let signal = raw_cpu_profile_to_signal_with_clock(
@@ -1200,7 +1364,8 @@ mod tests {
             10_000,
             &mut RawAddressResolver,
         )
-        .expect("raw profile event decodes");
+        .expect("raw profile event decodes")
+        .signal;
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
         assert!(send_with_backpressure(
@@ -1218,6 +1383,106 @@ mod tests {
     }
 
     #[test]
+    fn capture_truncated_flag_sets_attribute_and_accounting() {
+        let raw = RawCpuProfileEvent {
+            pid: 42,
+            tid: 43,
+            uid: 1000,
+            cgroup_id: 0,
+            sample_count: 1,
+            timestamp_unix_nanos: 1_000,
+            command: fixed_command("api"),
+            frame_count: 4,
+            flags: RAW_CPU_PROFILE_FLAG_TRUNCATED,
+            instruction_pointers: padded_pointers(&[0x1, 0x2, 0x3, 0x4]),
+        };
+
+        let decoded = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &source_config(),
+            10_000,
+            &mut RawAddressResolver,
+        )
+        .expect("raw profile event decodes");
+        assert!(decoded.capture_truncated);
+        let SignalPayload::ProfileSampleObservation(sample) = decoded.signal.payload else {
+            panic!("expected profile sample");
+        };
+        assert!(sample.attributes.iter().any(|attribute| attribute.key
+            == "profiling.stack.capture_truncated"
+            && attribute.value == "true"));
+    }
+
+    #[test]
+    fn untruncated_capture_carries_no_truncation_attribute() {
+        let raw = RawCpuProfileEvent {
+            pid: 42,
+            tid: 43,
+            uid: 1000,
+            cgroup_id: 0,
+            sample_count: 1,
+            timestamp_unix_nanos: 1_000,
+            command: fixed_command("api"),
+            frame_count: 2,
+            flags: 0,
+            instruction_pointers: padded_pointers(&[0x1, 0x2]),
+        };
+
+        let decoded = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &source_config(),
+            10_000,
+            &mut RawAddressResolver,
+        )
+        .expect("raw profile event decodes");
+        assert!(!decoded.capture_truncated);
+        let SignalPayload::ProfileSampleObservation(sample) = decoded.signal.payload else {
+            panic!("expected profile sample");
+        };
+        assert!(
+            !sample
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "profiling.stack.capture_truncated")
+        );
+    }
+
+    #[test]
+    fn stack_truncation_warning_reports_count_and_limit() {
+        let signal = stack_truncation_warning(Some("node-a".to_string()), 9, 64, 12_000);
+        let SignalPayload::ProfilingWarningObservation(warning) = signal.payload else {
+            panic!("expected profiling warning");
+        };
+        assert_eq!(warning.warning_type, "stack_depth_capped");
+        assert_eq!(warning.source_module, "source.aya_cpu_profile");
+        assert!(warning.attributes.iter().any(|attribute| attribute.key
+            == "profiling.stack.truncated_samples"
+            && attribute.value == "9"));
+        assert!(
+            warning
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "profiling.stack.frame_limit"
+                    && attribute.value == "64")
+        );
+    }
+
+    #[test]
+    fn perf_page_budget_scales_with_frequency_and_stays_bounded() {
+        let event_bytes = core::mem::size_of::<RawCpuProfileEvent>();
+        // Low frequencies keep a small floor.
+        assert_eq!(cpu_profile_perf_pages(1, event_bytes), 4);
+        // The default 49hz fits ~250ms of 1088-byte samples.
+        let default_pages = cpu_profile_perf_pages(49, event_bytes);
+        assert!(default_pages.is_power_of_two());
+        assert!((4..=64).contains(&default_pages));
+        // Extreme frequencies clamp instead of growing unbounded.
+        assert_eq!(cpu_profile_perf_pages(999, event_bytes), 64);
+    }
+
+    #[test]
     fn cpu_reader_targets_are_bounded_by_active_target_limit() {
         assert_eq!(bounded_cpu_targets(&[0, 1, 2, 3], 2), vec![0, 1]);
         assert_eq!(bounded_cpu_targets(&[0, 1], 4), vec![0, 1]);
@@ -1225,7 +1490,7 @@ mod tests {
 
     #[test]
     fn raw_cpu_profile_event_layout_size_matches_ebpf_abi() {
-        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 320);
+        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 1088);
     }
 
     fn padded_pointers(values: &[u64]) -> [u64; RAW_CPU_PROFILE_MAX_FRAMES] {

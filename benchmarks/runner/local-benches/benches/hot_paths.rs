@@ -47,7 +47,9 @@ use tokio::{runtime::Runtime, sync::mpsc};
 fn bench_raw_aya_decoders(c: &mut Criterion) {
     let exec_bytes = vec![0x42; 4096];
     let network_bytes = vec![0x11; 1024];
-    let cpu_profile_bytes = vec![0x7f; 1024];
+    // Full-size 128-frame RawCpuProfileEvent (1088 bytes) so the decode
+    // bench exercises the deep-stack path, not the short-read early exit.
+    let cpu_profile_bytes = vec![0x7f; 1088];
 
     c.bench_function("aya_decode/exec_fuzz_harness", |b| {
         b.iter(|| fuzz_decode_raw_exec_event(black_box(&exec_bytes)))
