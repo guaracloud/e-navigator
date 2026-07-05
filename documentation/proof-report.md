@@ -255,6 +255,20 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   proof only; GnuTLS probes are implemented and verifier-loaded but were not
   exercised by a GnuTLS workload, and HTTP/1-over-TLS framing is not yet
   implemented.
+- Live HTTP/1-over-TLS capture on the local OrbStack Docker VM (2026-07-05):
+  with `source.aya_tls` and `tls_source.http1_ports = [443]`, the agent
+  attached nine OpenSSL uprobes (classic `SSL_read`/`SSL_write` plus the
+  OpenSSL 3 `SSL_read_ex`/`SSL_write_ex` variants) to `libssl.so.3`, and a
+  Python HTTPS client (whose `ssl` module uses OpenSSL) issued three GET
+  requests to an nginx TLS server. Each produced one HTTP
+  `protocol_request_observation` with `http.request.method=GET`, the request
+  `url.path`, and a matched `http.response.status_code=200`, with real
+  durations and `python3` client attribution; the `hello-from-nginx` response
+  body did not appear in any exported signal. All fourteen `source.aya_tls`
+  uprobe programs verifier-loaded, and the classic `SSL_read`/`SSL_write`
+  Redis-over-TLS path still captured SET/GET/PING on the same binary. This is
+  library-boundary interception, not on-the-wire decryption, and local smoke
+  proof only.
 - Live multi-segment protocol payload capture on the local OrbStack Docker
   VM (2026-07-05): with the default 1 KiB `capture_bytes_per_syscall`
   window, a privileged run against a throwaway Redis container captured a
