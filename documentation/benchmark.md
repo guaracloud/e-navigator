@@ -106,6 +106,14 @@ cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
   matched pair on a persistent registry: request raw-event decode, reassembly,
   parse, in-flight queue push, response raw-event decode, response parse, and
   matched observation emission including a procfs-miss container lookup.
+  Re-measured after the multi-segment capture change (2026-07-05) at
+  1.7190-1.7476 us; Criterion reported the change within its noise threshold,
+  so single-segment matching cost is unregressed.
+- `protocol_stream/segmented_syscall_splice`: 1.9247-1.9417 us (2026-07-05) for
+  a three-segment 600-byte Redis SET spliced through the segment cursor,
+  reassembled, parsed, and matched against its response on a persistent
+  registry, including a procfs-miss container lookup. The extra two segments
+  add roughly 0.2 us over the single-segment matched pair.
 
 Focused protocol error trace formatter smoke from this development host:
 

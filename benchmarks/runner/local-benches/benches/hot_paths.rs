@@ -347,27 +347,63 @@ fn bench_protocol_stream(c: &mut Criterion) {
             black_box(signals.len())
         })
     });
+
+    c.bench_function("protocol_stream/segmented_syscall_splice", |b| {
+        use e_navigator_core::ProtocolSourceConfig;
+        use e_navigator_sources_ebpf_aya::protocol::ProtocolStreamRegistry;
+
+        let mut registry = ProtocolStreamRegistry::new(
+            None,
+            std::path::PathBuf::from("__bench_no_procfs__"),
+            &ProtocolSourceConfig::default(),
+        );
+        let segments = raw_protocol_segmented_event_fixtures();
+        let response = raw_protocol_response_event_fixture();
+        let mut signals = Vec::new();
+        b.iter(|| {
+            signals.clear();
+            for segment in &segments {
+                assert!(
+                    registry
+                        .handle_event(black_box(segment), 5_000, &mut signals)
+                        .is_ok()
+                );
+            }
+            assert!(
+                registry
+                    .handle_event(black_box(&response), 6_000, &mut signals)
+                    .is_ok()
+            );
+            black_box(signals.len())
+        })
+    });
 }
 
 /// Byte-encodes the read-direction response ("+OK\r\n") for the fixture
 /// connection used by `raw_protocol_data_event_fixture`.
 fn raw_protocol_response_event_fixture() -> Vec<u8> {
-    let mut bytes = raw_protocol_data_event_fixture();
+    let mut bytes = raw_protocol_event_fixture_bytes(b"+OK\r\n", 0, 5, 5);
     bytes[20..24].copy_from_slice(&1_u32.to_ne_bytes());
-    let payload = b"+OK\r\n";
-    bytes[80..84].copy_from_slice(&(payload.len() as u32).to_ne_bytes());
-    bytes[84..88].copy_from_slice(&(payload.len() as u32).to_ne_bytes());
-    for byte in bytes[104..360].iter_mut() {
-        *byte = 0;
-    }
-    bytes[104..104 + payload.len()].copy_from_slice(payload);
     bytes
 }
 
 /// Byte-encodes a valid `RawProtocolDataEvent` (write-direction Redis GET on
 /// port 6379) matching the eBPF struct layout.
 fn raw_protocol_data_event_fixture() -> Vec<u8> {
-    let mut bytes = vec![0_u8; 360];
+    let payload = b"*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n";
+    raw_protocol_event_fixture_bytes(payload, 0, payload.len() as u32, payload.len() as u32)
+}
+
+/// Byte-encodes one segment of a `RawProtocolDataEvent` syscall capture
+/// matching the eBPF struct layout (368 bytes; payload window at 112..368).
+fn raw_protocol_event_fixture_bytes(
+    segment: &[u8],
+    payload_offset: u32,
+    captured_len: u32,
+    total_len: u32,
+) -> Vec<u8> {
+    assert!(segment.len() <= 256);
+    let mut bytes = vec![0_u8; 368];
     bytes[0..4].copy_from_slice(&4242_u32.to_ne_bytes());
     bytes[4..8].copy_from_slice(&1000_u32.to_ne_bytes());
     bytes[8..16].copy_from_slice(&77_u64.to_ne_bytes());
@@ -378,12 +414,35 @@ fn raw_protocol_data_event_fixture() -> Vec<u8> {
     bytes[30..32].copy_from_slice(&43210_u16.to_be_bytes());
     bytes[32..36].copy_from_slice(&u32::from_ne_bytes([10, 0, 0, 5]).to_ne_bytes());
     bytes[72..80].copy_from_slice(&1_000_u64.to_ne_bytes());
-    let payload = b"*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n";
-    bytes[80..84].copy_from_slice(&(payload.len() as u32).to_ne_bytes());
-    bytes[84..88].copy_from_slice(&(payload.len() as u32).to_ne_bytes());
-    bytes[88..94].copy_from_slice(b"client");
-    bytes[104..104 + payload.len()].copy_from_slice(payload);
+    bytes[80..84].copy_from_slice(&(segment.len() as u32).to_ne_bytes());
+    bytes[84..88].copy_from_slice(&total_len.to_ne_bytes());
+    bytes[88..92].copy_from_slice(&payload_offset.to_ne_bytes());
+    bytes[92..96].copy_from_slice(&captured_len.to_ne_bytes());
+    bytes[96..102].copy_from_slice(b"client");
+    bytes[112..112 + segment.len()].copy_from_slice(segment);
     bytes
+}
+
+/// Byte-encodes a three-segment Redis SET syscall (600-byte command) as the
+/// eBPF segment events the userspace splicer consumes.
+fn raw_protocol_segmented_event_fixtures() -> Vec<Vec<u8>> {
+    let value = "x".repeat(560);
+    let mut command =
+        format!("*3\r\n$3\r\nSET\r\n$8\r\nbenchkey\r\n${}\r\n", value.len()).into_bytes();
+    command.extend_from_slice(value.as_bytes());
+    command.extend_from_slice(b"\r\n");
+    command
+        .chunks(256)
+        .enumerate()
+        .map(|(index, chunk)| {
+            raw_protocol_event_fixture_bytes(
+                chunk,
+                (index * 256) as u32,
+                command.len() as u32,
+                command.len() as u32,
+            )
+        })
+        .collect()
 }
 
 fn bench_processors(c: &mut Criterion) {

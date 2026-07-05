@@ -229,7 +229,9 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   responses carrying `http.response.status_code=200`, and real durations,
   through the writev capture path. Local smoke proof only; TLS, gRPC live
   traffic, CONTINUATION reassembly, and HEADERS frames larger than the
-  256-byte capture bound remain unproven or out of scope.
+  capture window remain unproven or out of scope (this run predates the
+  configurable multi-segment window and ran under the then-fixed 256-byte
+  bound).
 - Live `source.aya_protocol` request/response matching on the same local
   OrbStack Docker setup (2026-07-04): with read-direction capture and the
   in-flight matcher enabled, all 10 captured Redis observations carried
@@ -238,6 +240,18 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   bytes. Local smoke proof only; latency/error matching for Kafka,
   PostgreSQL, MySQL, and MongoDB is implemented and unit-tested but not yet
   runtime-proven.
+- Live multi-segment protocol payload capture on the local OrbStack Docker
+  VM (2026-07-05): with the default 1 KiB `capture_bytes_per_syscall`
+  window, a privileged run against a throwaway Redis container captured a
+  600-byte `SET` as three spliced 256-byte segments and emitted one
+  complete high-confidence observation (`db.operation=SET`,
+  `db.redis.argument.count=2`, matched `OK` response), while a 3000-byte
+  `SET` exceeding the window degraded to an accounted truncated-frame
+  observation (low confidence, still response-matched) instead of being
+  silently mis-parsed; `GET` and `PING` on the same connection stayed
+  high-confidence, and no payload value bytes appeared in any exported
+  signal. All eBPF programs verifier-loaded on the OrbStack kernel after
+  the segment-loop change. Local smoke proof only.
 
 ## Partial Or Not Yet Proven
 
