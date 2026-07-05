@@ -7,7 +7,7 @@ use super::{
     DnsMetricsConfig, DnsSourceConfig, HttpSourceConfig, ModuleConfig, NetworkMetricsConfig,
     OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig, ProtocolSourceConfig,
     RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig, RuntimeSecurityConfig,
-    TraceCorrelationConfig,
+    TlsSourceConfig, TraceCorrelationConfig,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +37,8 @@ pub struct RuntimeConfig {
     pub http_source: HttpSourceConfig,
     #[serde(default)]
     pub protocol_source: ProtocolSourceConfig,
+    #[serde(default)]
+    pub tls_source: TlsSourceConfig,
     #[serde(default)]
     pub cpu_profile_source: CpuProfileSourceConfig,
     #[serde(default)]
@@ -72,6 +74,7 @@ impl Default for RuntimeConfig {
             dns_source: DnsSourceConfig::default(),
             http_source: HttpSourceConfig::default(),
             protocol_source: ProtocolSourceConfig::default(),
+            tls_source: TlsSourceConfig::default(),
             cpu_profile_source: CpuProfileSourceConfig::default(),
             resource_metrics: ResourceMetricsConfig::default(),
             network_metrics: NetworkMetricsConfig::default(),
@@ -188,6 +191,7 @@ impl RuntimeConfig {
         self.dns_source.validate()?;
         self.http_source.validate()?;
         self.protocol_source.validate()?;
+        self.tls_source.validate()?;
         self.cpu_profile_source.validate(self)?;
         self.resource_metrics.validate()?;
         self.network_metrics.validate()?;

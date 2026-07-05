@@ -16,6 +16,7 @@ mod request_correlation;
 mod resource_metrics;
 mod resource_source;
 mod runtime;
+mod tls_source;
 mod trace_correlation;
 
 pub use argv::ArgvCaptureConfig;
@@ -38,6 +39,7 @@ pub use request_correlation::RequestCorrelationConfig;
 pub use resource_metrics::ResourceMetricsConfig;
 pub use resource_source::ResourceSourceConfig;
 pub use runtime::RuntimeConfig;
+pub use tls_source::TlsSourceConfig;
 pub use trace_correlation::TraceCorrelationConfig;
 
 #[cfg(test)]

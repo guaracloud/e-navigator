@@ -12,8 +12,8 @@ pub use config::{
     HttpSourceConfig, KNOWN_MODULES, KnownModule, KubernetesAttributionConfig, ModuleConfig,
     NetworkEndpointConfig, NetworkMetricsConfig, OtlpHttpConfig, ProfilingConfig,
     PrometheusHttpConfig, ProtocolSourceConfig, RequestCorrelationConfig, ResourceMetricsConfig,
-    ResourceSourceConfig, RuntimeConfig, RuntimeSecurityConfig, TraceCorrelationConfig,
-    is_known_module_name, known_module_names,
+    ResourceSourceConfig, RuntimeConfig, RuntimeSecurityConfig, TlsSourceConfig,
+    TraceCorrelationConfig, is_known_module_name, known_module_names,
 };
 pub use error::{CoreError, CoreResult};
 pub use module::{ModuleKind, ModuleMetadata};

@@ -2660,3 +2660,106 @@ fn protocol_source_limits_are_validated() {
         "protocol_source.max_attributes must be between 1 and 32",
     );
 }
+
+#[test]
+fn tls_source_defaults_are_opt_in_and_bounded() {
+    let config = RuntimeConfig::default();
+
+    assert!(!config.module_enabled("source.aya_tls"));
+    assert!(config.tls_source.http1_ports.is_empty());
+    assert!(config.tls_source.http2_ports.is_empty());
+    assert!(config.tls_source.redis_ports.is_empty());
+    assert!(!config.tls_source.has_capture_ports());
+    assert_eq!(config.tls_source.capture_bytes_per_call, 1024);
+    assert_eq!(config.tls_source.max_tracked_connections, 2048);
+    assert_eq!(
+        config.tls_source.max_buffered_bytes_per_connection,
+        8 * 1024
+    );
+    assert_eq!(config.tls_source.max_attributes, 8);
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn tls_source_rejects_duplicate_and_zero_ports() {
+    assert_invalid(
+        RuntimeConfig {
+            tls_source: TlsSourceConfig {
+                http1_ports: vec![443],
+                http2_ports: vec![443],
+                ..TlsSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "port 443 is assigned to both http1 and http2; each port must map to exactly one protocol",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            tls_source: TlsSourceConfig {
+                redis_ports: vec![0],
+                ..TlsSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "tls_source.redis_ports must not contain port 0",
+    );
+}
+
+#[test]
+fn tls_source_limits_are_validated() {
+    assert_invalid(
+        RuntimeConfig {
+            tls_source: TlsSourceConfig {
+                capture_bytes_per_call: 255,
+                ..TlsSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "tls_source.capture_bytes_per_call must be between 256 and 4096",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            tls_source: TlsSourceConfig {
+                capture_bytes_per_call: 4097,
+                ..TlsSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "tls_source.capture_bytes_per_call must be between 256 and 4096",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            tls_source: TlsSourceConfig {
+                max_buffered_bytes_per_connection: 0,
+                ..TlsSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "tls_source.max_buffered_bytes_per_connection must be between 1 and 65536",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            tls_source: TlsSourceConfig {
+                max_tracked_connections: TlsSourceConfig::MAX_TRACKED_CONNECTIONS_LIMIT + 1,
+                ..TlsSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "tls_source.max_tracked_connections must be between 1 and 65536",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            tls_source: TlsSourceConfig {
+                max_attributes: 0,
+                ..TlsSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "tls_source.max_attributes must be between 1 and 32",
+    );
+}
