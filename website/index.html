@@ -52,7 +52,7 @@
           <a href="#proof">Proof</a>
           <a href="#benchmark">Benchmarks</a>
           <a href="#install">Install</a>
-          <a href="https://github.com/e-navigator/e-navigator">GitHub</a>
+          <a href="https://github.com/guaracloud/e-navigator">GitHub</a>
         </div>
       </nav>
     </header>
@@ -96,10 +96,13 @@
           <p class="eyebrow">Capabilities</p>
           <h2 id="capabilities-title">Runtime signals without application SDKs.</h2>
           <p>
-            The current foundation turns process, network, DNS, HTTP, Kafka,
-            MongoDB, MySQL, NATS, PostgreSQL, and Redis parsers, resource, trace,
-            profile, and security observations into bounded native E-Navigator
-            signals.
+            The current foundation captures process, network, DNS, and HTTP/1
+            and HTTP/2 traffic at runtime, reassembles and matches Kafka,
+            MongoDB, MySQL, NATS, PostgreSQL, Redis, and gRPC requests to their
+            responses for real latency and status, accounts for TCP
+            retransmits, resets, and state transitions, samples and symbolizes
+            CPU profiles, and turns resource, trace, and security observations
+            into bounded native E-Navigator signals.
           </p>
         </div>
         <div class="capability-grid">
@@ -115,8 +118,8 @@
           </article>
           <article class="capability">
             <span class="capability-kicker">Export</span>
-            <h3>JSON, Prometheus, OTLP</h3>
-            <p>JSON stdout is the default. Prometheus and OTLP are opt-in, bounded, and family-selectable.</p>
+            <h3>JSON, Prometheus, OTLP, pprof</h3>
+            <p>JSON stdout is the default. Prometheus, OTLP, and a local pprof profile endpoint are opt-in, bounded, and family-selectable.</p>
           </article>
           <article class="capability capability-wide">
             <span class="capability-kicker">Boundaries</span>
@@ -151,8 +154,8 @@
           </article>
         </div>
         <div class="link-row">
-          <a class="button button-secondary" href="https://github.com/e-navigator/e-navigator/blob/main/documentation/proof-report.md">Open proof report</a>
-          <a class="text-link" href="https://github.com/e-navigator/e-navigator/blob/main/documentation/boundaries.md">Read boundaries</a>
+          <a class="button button-secondary" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/proof-report.md">Open proof report</a>
+          <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/boundaries.md">Read boundaries</a>
         </div>
       </section>
 
@@ -180,7 +183,7 @@
             <span class="metric-label">curated proof report for current claims</span>
           </article>
         </div>
-        <a class="text-link" href="https://github.com/e-navigator/e-navigator/blob/main/documentation/benchmark.md">Read benchmark methodology</a>
+        <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/benchmark.md">Read benchmark methodology</a>
       </section>
 
       <section id="install" class="section install" aria-labelledby="install-title">
@@ -232,11 +235,11 @@ jq -r '.images[0].reference' e-navigator-release/release-manifest.json</code></p
           <h2 id="docs-title">A clean evidence base for the follow-on paper.</h2>
         </div>
         <div class="doc-links" aria-label="Documentation links">
-          <a href="https://github.com/e-navigator/e-navigator/blob/main/documentation/capabilities.md">Capabilities</a>
-          <a href="https://github.com/e-navigator/e-navigator/blob/main/documentation/boundaries.md">Boundaries</a>
-          <a href="https://github.com/e-navigator/e-navigator/blob/main/documentation/proof-report.md">Proof report</a>
-          <a href="https://github.com/e-navigator/e-navigator/blob/main/documentation/benchmark.md">Benchmarks</a>
-          <a href="https://github.com/e-navigator/e-navigator/blob/main/documentation/release-verification.md">Release verification</a>
+          <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/capabilities.md">Capabilities</a>
+          <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/boundaries.md">Boundaries</a>
+          <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/proof-report.md">Proof report</a>
+          <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/benchmark.md">Benchmarks</a>
+          <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/release-verification.md">Release verification</a>
         </div>
       </section>
     </main>
@@ -247,11 +250,11 @@ jq -r '.images[0].reference' e-navigator-release/release-manifest.json</code></p
         <p>Apache-2.0 licensed Rust and eBPF runtime signal plane.</p>
       </div>
       <nav aria-label="Footer links">
-        <a href="https://github.com/e-navigator/e-navigator">GitHub</a>
-        <a href="https://github.com/e-navigator/e-navigator/blob/main/README.md">README</a>
-        <a href="https://github.com/e-navigator/e-navigator/blob/main/documentation/helm.md">Helm</a>
-        <a href="https://github.com/e-navigator/e-navigator/blob/main/documentation/proof-report.md">Proof</a>
-        <a href="https://github.com/e-navigator/e-navigator/blob/main/documentation/benchmark.md">Benchmarks</a>
+        <a href="https://github.com/guaracloud/e-navigator">GitHub</a>
+        <a href="https://github.com/guaracloud/e-navigator/blob/main/README.md">README</a>
+        <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/helm.md">Helm</a>
+        <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/proof-report.md">Proof</a>
+        <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/benchmark.md">Benchmarks</a>
       </nav>
     </footer>
     <script src="./script.js" defer></script>
