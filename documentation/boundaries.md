@@ -32,14 +32,18 @@ E-Navigator does not currently claim:
   `/debug/pprof/profile` serving endpoint is implemented);
 - complete production HTTP/gRPC protocol coverage (bounded HTTP/1 and
   HTTP/2/HPACK request capture with request/response matching is implemented
-  and locally proven for Redis and HTTP/2; TLS and CONTINUATION reassembly
-  are not covered);
+  and locally proven for Redis and HTTP/2; HTTP/2 CONTINUATION reassembly is
+  not covered);
 - live Kafka protocol capture proof (capture, reassembly, and request/response
   matching are implemented and unit-tested; only Redis and HTTP/2 are live
   proven);
 - live NATS, MongoDB, MySQL, or PostgreSQL protocol capture proof (implemented
   and unit-tested, not yet runtime-proven);
-- TLS payload inspection;
+- on-the-wire TLS decryption (TLS plaintext capture is implemented as
+  library-boundary interception via `source.aya_tls` uprobes on OpenSSL/
+  BoringSSL and GnuTLS, live-proven for OpenSSL Redis over TLS; GnuTLS is
+  implemented and verifier-loaded but not yet live-proven, and HTTP/1-over-TLS
+  framing plus Go `crypto/tls` are not yet implemented);
 - full per-connection TCP state-machine tracking or packet accounting (TCP
   retransmit, reset, and state-transition observation and counting are
   implemented, with resets and state transitions locally proven);

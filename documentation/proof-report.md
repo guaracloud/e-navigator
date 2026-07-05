@@ -240,6 +240,21 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   bytes. Local smoke proof only; latency/error matching for Kafka,
   PostgreSQL, MySQL, and MongoDB is implemented and unit-tested but not yet
   runtime-proven.
+- Live TLS plaintext capture via OpenSSL uprobes on the local OrbStack Docker
+  VM (2026-07-05): with `source.aya_tls` and `tls_source.redis_ports = [6390]`,
+  a privileged agent attached five OpenSSL uprobes (`SSL_set_fd`, `SSL_read`,
+  `SSL_write`) to `libssl.so.3` discovered from process maps, and a `redis-cli
+  --tls` (RESP3) client against a TLS-only `redis-server` (`--tls-port 6390`,
+  self-signed cert) produced eight `protocol_request_observation` records
+  (SET x2, GET, PING, HELLO x4) with matched responses (`OK`/`PONG`), real
+  durations, and `redis-cli` client attribution. A 600-byte value was
+  reassembled across capture segments, and neither the key bytes nor the
+  600-byte value appeared in any exported signal. All ten `source.aya_tls`
+  uprobe programs verifier-loaded on the OrbStack kernel. This is
+  library-boundary interception, not on-the-wire decryption, and local smoke
+  proof only; GnuTLS probes are implemented and verifier-loaded but were not
+  exercised by a GnuTLS workload, and HTTP/1-over-TLS framing is not yet
+  implemented.
 - Live multi-segment protocol payload capture on the local OrbStack Docker
   VM (2026-07-05): with the default 1 KiB `capture_bytes_per_syscall`
   window, a privileged run against a throwaway Redis container captured a

@@ -99,7 +99,9 @@
             The current foundation captures process, network, DNS, and HTTP/1
             and HTTP/2 traffic at runtime, reassembles and matches Kafka,
             MongoDB, MySQL, NATS, PostgreSQL, Redis, and gRPC requests to their
-            responses for real latency and status, accounts for TCP
+            responses for real latency and status, reads TLS plaintext at the
+            userspace library boundary through OpenSSL and GnuTLS uprobes
+            (interception, not on-the-wire decryption), accounts for TCP
             retransmits, resets, and state transitions, samples and symbolizes
             CPU profiles, and turns resource, trace, and security observations
             into bounded native E-Navigator signals.
