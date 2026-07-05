@@ -143,6 +143,10 @@ mod platform {
             symbol: "gnutls_transport_set_ptr",
         },
         UprobeBinding {
+            program: "uprobe_gnutls_transport_set_int2",
+            symbol: "gnutls_transport_set_int2",
+        },
+        UprobeBinding {
             program: "uprobe_gnutls_record_send_enter",
             symbol: "gnutls_record_send",
         },

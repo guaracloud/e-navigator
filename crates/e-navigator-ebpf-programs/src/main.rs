@@ -984,6 +984,14 @@ pub fn uprobe_gnutls_transport_set_ptr(ctx: ProbeContext) -> u32 {
     tls_set_handle_fd(&ctx, 1)
 }
 
+// GnuTLS: void gnutls_transport_set_int2(gnutls_session_t s, int recv, int send).
+// gnutls_transport_set_int(s, fd) expands to this with recv == send == fd,
+// so hooking it covers the common integer-fd setup path.
+#[uprobe]
+pub fn uprobe_gnutls_transport_set_int2(ctx: ProbeContext) -> u32 {
+    tls_set_handle_fd(&ctx, 1)
+}
+
 fn try_tracepoint_execve(ctx: TracePointContext) -> Result<u32, i64> {
     try_tracepoint_exec_common(ctx, 16, 24)
 }
