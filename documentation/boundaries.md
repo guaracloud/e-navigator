@@ -41,10 +41,10 @@ E-Navigator does not currently claim:
   and unit-tested, not yet runtime-proven);
 - on-the-wire TLS decryption (TLS plaintext capture is implemented as
   library-boundary interception via `source.aya_tls` uprobes on OpenSSL/
-  BoringSSL — including the OpenSSL 3 `_ex` variants — and GnuTLS, live-proven
-  for OpenSSL Redis over TLS and HTTP/1 over TLS; GnuTLS is implemented and
-  verifier-loaded but not yet live-proven, and Go `crypto/tls` is not yet
-  implemented);
+  BoringSSL — including the OpenSSL 3 `_ex` variants — and GnuTLS, with
+  libraries rescanned every 15s so late-starting workloads are attached;
+  live-proven for OpenSSL Redis over TLS, OpenSSL HTTP/1 over TLS, and GnuTLS
+  HTTP/1 over TLS; Go `crypto/tls` is not yet implemented);
 - full per-connection TCP state-machine tracking or packet accounting (TCP
   retransmit, reset, and state-transition observation and counting are
   implemented, with resets and state transitions locally proven);

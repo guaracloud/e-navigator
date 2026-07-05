@@ -269,6 +269,19 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   Redis-over-TLS path still captured SET/GET/PING on the same binary. This is
   library-boundary interception, not on-the-wire decryption, and local smoke
   proof only.
+- Live GnuTLS-over-TLS capture and dynamic library rescan on the local
+  OrbStack Docker VM (2026-07-05): with `source.aya_tls` and
+  `tls_source.http1_ports = [443]`, a `gnutls-cli` client (linked against
+  `libgnutls`, using `gnutls_transport_set_int2` for its socket fd and
+  `gnutls_record_send`/`gnutls_record_recv` for I/O) issued three HTTPS GET
+  requests to an nginx TLS server; each produced one HTTP observation with
+  `http.request.method=GET`, `url.path`, and matched
+  `http.response.status_code=200`, attributed to the `gnutls-cli` process
+  (six GnuTLS uprobes attached). Separately, an agent started with no TLS
+  library mapped attached nine OpenSSL uprobes on its next 15s rescan after
+  nginx started, then captured a subsequently launched Python HTTPS client's
+  requests, confirming libraries mapped after startup are not missed. Local
+  smoke proof only, library-boundary interception, not decryption.
 - Live multi-segment protocol payload capture on the local OrbStack Docker
   VM (2026-07-05): with the default 1 KiB `capture_bytes_per_syscall`
   window, a privileged run against a throwaway Redis container captured a
