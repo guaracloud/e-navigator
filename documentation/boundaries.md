@@ -48,13 +48,23 @@ E-Navigator does not currently claim:
 - full per-connection TCP state-machine tracking or packet accounting (TCP
   retransmit, reset, and state-transition observation and counting are
   implemented, with resets and state transitions locally proven);
-- stack unwinding beyond frame pointers (CPU profile stacks use frame-pointer
-  unwinding at a configurable depth of up to 128 frames, and user stacks are
-  additionally bounded by the kernel `kernel.perf_event_max_stack` sysctl,
-  127 by default; frame-pointer-omitted binaries and interpreter/JIT runtimes
-  yield short or opaque native stacks until DWARF/CFI and interpreter
-  unwinding land — stacks that fill the configured budget are flagged and
-  counted, never silently truncated);
+- universal stack unwinding (CPU profiles unwind natively via in-kernel
+  DWARF/CFI rules parsed from `.eh_frame` for registered processes, with
+  frame-pointer unwinding as the fallback, up to 128 configurable frames and
+  the kernel `kernel.perf_event_max_stack` sysctl bound of 127 for the
+  frame-pointer path; DWARF-expression CFI rules are not evaluated — they
+  stop the unwind with accounting — coverage is bounded by row/module/process
+  budgets with counters, terminal frames in modules that do not CFI-mark
+  their outermost function classify conservatively as `no_mapping`, and
+  stacks that fill the configured budget are flagged and counted, never
+  silently truncated);
+- interpreter unwinding beyond CPython 3.12 (the interpreter walk targets
+  CPython 3.12 struct offsets measured from its headers; other versions are
+  counted as unsupported, JIT runtimes are not decoded, thread matching uses
+  `native_thread_id` and therefore degrades with accounting when the
+  interpreter runs in a different pid namespace than the agent's procfs
+  view, and only co_qualname/co_name, co_filename, and co_firstlineno are
+  ever read from interpreter memory);
 - cross-pid-namespace symbolization beyond verified pids (pids are translated
   in-kernel into the symbolization procfs namespace where the kernel allows;
   untranslatable pids are symbolized only after a thread-comm identity check

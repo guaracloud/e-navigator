@@ -313,6 +313,28 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   perf-event program verifier-loaded on the OrbStack kernel after both
   changes. Local smoke proof only.
 
+- Live in-kernel DWARF/CFI stack unwinding on the local OrbStack Docker VM
+  (2026-07-06): with `.eh_frame` unwind tables built and registered for
+  running processes, a `-fomit-frame-pointer` deep-recursion binary whose
+  frame-pointer stacks capped at 3 frames produced 2925 of 2925
+  DWARF-unwound samples with the exact expected 64-frame chain
+  (`spin_leaf`, 61x `deep_recurse`, `main`, libc start), each carrying
+  `profiling.stack.unwind=dwarf` and an explicit stop reason; startup
+  samples before the first table refresh fell back to frame-pointer
+  unwinding with accounting. The chunked tail-called unwinder and both
+  CPython programs verifier-loaded on the OrbStack kernel. Local smoke
+  proof only.
+- Live CPython 3.12 interpreter unwinding on the local OrbStack Docker VM
+  (2026-07-06): against `python:3.12-bookworm` running a five-level nested
+  busy loop, 3916 of 3941 interpreter samples carried the complete logical
+  stack (`leaf_busy`, `level_c`, `level_b`, `level_a`, `main`,
+  `<module>`) resolved to real function names, the real script path, and
+  correct first-line numbers via bounded `/proc/<pid>/mem` reads, with
+  `profiling.stack.py_stop=complete` and native frames following; the
+  remainder predate the first registration pass. No interpreter memory
+  beyond code-object name/filename/line fields was read or exported.
+  Local smoke proof only.
+
 ## Partial Or Not Yet Proven
 
 These areas remain explicitly partial:
