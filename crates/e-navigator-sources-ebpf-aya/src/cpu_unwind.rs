@@ -175,6 +175,7 @@ pub(crate) struct UnwindRefreshStats {
     pub mappings_skipped_per_process_limit: usize,
     pub python_registered: usize,
     pub python_unsupported_version: usize,
+    pub modules_skipped_size: usize,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -220,7 +221,11 @@ impl UnwindTableManager {
         Self {
             procfs_root,
             max_processes,
-            max_module_bytes: 512 * 1024 * 1024,
+            // Whole-image parses dominate refresh memory; images past
+            // this bound (typically large static Go binaries, which keep
+            // frame pointers and unwind fine without tables) fall back
+            // to frame-pointer unwinding, counted below.
+            max_module_bytes: 64 * 1024 * 1024,
             row_cursor: 0,
             next_module_id: 0,
             modules: std::collections::BTreeMap::new(),
@@ -413,6 +418,7 @@ impl UnwindTableManager {
             .join(path.trim_start_matches('/'));
         let metadata = std::fs::metadata(&file_path).ok()?;
         if metadata.len() > self.max_module_bytes {
+            stats.modules_skipped_size += 1;
             return None;
         }
         let key = module_key(&metadata);

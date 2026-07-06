@@ -164,7 +164,10 @@ pub(crate) struct ProcfsSymbolizer {
     max_cached_pids: usize,
     max_cached_modules: usize,
     maps: std::collections::BTreeMap<u32, ProcessModuleMap>,
-    symbols: std::collections::BTreeMap<String, Option<ElfSymbolTable>>,
+    /// Module path -> parsed ELF symbol table, shared across every
+    /// per-CPU reader thread: symbol tables of large modules dominate
+    /// symbolizer memory and must not be duplicated per thread.
+    symbols: std::sync::Arc<std::sync::Mutex<SharedSymbolTables>>,
     /// Cached thread comms for untranslated pids, keyed by (pid, tid);
     /// `None` records an unreadable thread. Bounded like the other caches;
     /// like them it can go stale on pid reuse, which at worst withholds or
@@ -176,18 +179,37 @@ pub(crate) struct ProcfsSymbolizer {
     python_frames: std::collections::BTreeMap<(u32, u64), Option<RawProfileFrame>>,
 }
 
+/// Bounded module-path -> symbol-table cache shared by reader threads.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Default)]
+pub(crate) struct SharedSymbolTables {
+    tables: std::collections::BTreeMap<String, Option<std::sync::Arc<ElfSymbolTable>>>,
+}
+
 #[cfg(any(target_os = "linux", test))]
 impl ProcfsSymbolizer {
-    const MAX_MODULE_IMAGE_BYTES: u64 = 512 * 1024 * 1024;
+    const MAX_MODULE_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 
     pub(crate) fn new(procfs_root: std::path::PathBuf, resolve_symbols: bool) -> Self {
+        Self::with_shared_symbols(
+            procfs_root,
+            resolve_symbols,
+            std::sync::Arc::new(std::sync::Mutex::new(SharedSymbolTables::default())),
+        )
+    }
+
+    pub(crate) fn with_shared_symbols(
+        procfs_root: std::path::PathBuf,
+        resolve_symbols: bool,
+        symbols: std::sync::Arc<std::sync::Mutex<SharedSymbolTables>>,
+    ) -> Self {
         Self {
             procfs_root,
             resolve_symbols,
             max_cached_pids: 1024,
             max_cached_modules: 512,
             maps: std::collections::BTreeMap::new(),
-            symbols: std::collections::BTreeMap::new(),
+            symbols,
             thread_comms: std::collections::BTreeMap::new(),
             python_frames: std::collections::BTreeMap::new(),
         }
@@ -213,20 +235,25 @@ impl ProcfsSymbolizer {
         if !self.resolve_symbols {
             return None;
         }
-        if !self.symbols.contains_key(module) {
-            if self.symbols.len() >= self.max_cached_modules
-                && let Some(oldest) = self.symbols.keys().next().cloned()
-            {
-                self.symbols.remove(&oldest);
+        let table = {
+            let mut shared = match self.symbols.lock() {
+                Ok(shared) => shared,
+                Err(_) => return None,
+            };
+            if !shared.tables.contains_key(module) {
+                if shared.tables.len() >= self.max_cached_modules
+                    && let Some(oldest) = shared.tables.keys().next().cloned()
+                {
+                    shared.tables.remove(&oldest);
+                }
+                // Parsing under the lock trades brief reader stalls for
+                // never parsing (and holding) a large table per thread.
+                let table = self.load_symbol_table(module).map(std::sync::Arc::new);
+                shared.tables.insert(module.to_string(), table);
             }
-            let table = self.load_symbol_table(module);
-            self.symbols.insert(module.to_string(), table);
-        }
-        self.symbols
-            .get(module)
-            .and_then(|table| table.as_ref())
-            .and_then(|table| table.resolve(offset))
-            .map(ToString::to_string)
+            shared.tables.get(module).and_then(Clone::clone)
+        };
+        table.and_then(|table| table.resolve(offset).map(ToString::to_string))
     }
 
     fn thread_comm(&mut self, pid: u32, tid: u32) -> Option<&str> {
@@ -1087,6 +1114,8 @@ mod platform {
                 self.config.sample_frequency_hz,
                 core::mem::size_of::<super::RawCpuProfileEvent>(),
             );
+            let shared_symbols =
+                std::sync::Arc::new(std::sync::Mutex::new(super::SharedSymbolTables::default()));
             for cpu_id in active_cpus {
                 let mut buffer = perf_array
                     .open(cpu_id, Some(perf_pages))
@@ -1097,9 +1126,10 @@ mod platform {
                 let backpressure = config.backpressure;
                 let reader_shutdown = shutdown.clone();
                 let drop_counters = drop_counters.clone();
-                let mut resolver = super::ProcfsSymbolizer::new(
+                let mut resolver = super::ProcfsSymbolizer::with_shared_symbols(
                     self.procfs_root.clone(),
                     config.resolve_symbol_names,
+                    shared_symbols.clone(),
                 );
                 let symbolize = config.symbolize;
 
