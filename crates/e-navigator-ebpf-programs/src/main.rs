@@ -1385,12 +1385,14 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
     event.py_frames = [0; PY_MAX_FRAMES];
     let frame_limit = cpu_profile_frame_limit();
 
-    // DWARF path: only for pids userspace registered unwind tables for,
-    // and only when the pid is valid in that same namespace. On any
-    // setup failure control falls through to the frame-pointer path.
-    if event.flags & CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED == 0
-        && unsafe { UNWIND_PROC_MAPPINGS.get(&event.pid) }.is_some()
-    {
+    // DWARF path: only for pids userspace registered unwind tables
+    // for. Untranslated pids (processes in child pid namespaces, e.g.
+    // pods under a host-procfs agent) still match here when their
+    // root-namespace pid is the one userspace registered; userspace
+    // additionally identity-verifies those pids before symbolizing.
+    // On any setup failure control falls through to the frame-pointer
+    // path.
+    if unsafe { UNWIND_PROC_MAPPINGS.get(&event.pid) }.is_some() {
         start_dwarf_unwind(&ctx, event, frame_limit);
         event.flags &= !CPU_PROFILE_FLAG_DWARF;
     }
@@ -1423,9 +1425,7 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
 /// call means it failed; the event is emitted without python frames.
 #[inline(always)]
 fn emit_cpu_profile_event(ctx: &PerfEventContext, event: &mut RawCpuProfileEvent) {
-    if event.flags & CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED == 0
-        && unsafe { PY_PROC_INFO.get(&event.pid) }.is_some()
-    {
+    if unsafe { PY_PROC_INFO.get(&event.pid) }.is_some() {
         unsafe {
             CPU_PROFILE_PROGS.tail_call(ctx, 1);
         }
