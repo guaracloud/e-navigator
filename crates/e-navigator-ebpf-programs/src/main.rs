@@ -98,7 +98,11 @@ const UNWIND_STOP_BAD_FRAME: u32 = 5;
 const UNWIND_STOP_DEPTH: u32 = 6;
 const UNWIND_STOP_TAIL_LIMIT: u32 = 7;
 
-const UNWIND_MAX_MAPPINGS: usize = 24;
+// Power of two so an index mask (`& UNWIND_MAPPING_INDEX_MASK`) proves
+// the array access in-bounds to the older kernel verifiers (6.6) that
+// cannot track the loop-counter/count interaction otherwise.
+const UNWIND_MAX_MAPPINGS: usize = 32;
+const UNWIND_MAPPING_INDEX_MASK: usize = UNWIND_MAX_MAPPINGS - 1;
 const UNWIND_ROW_POOL: u32 = 262_144;
 const UNWIND_ROW_SEARCH_STEPS: u32 = 20;
 const UNWIND_FRAMES_PER_ROUND: u32 = 16;
@@ -183,6 +187,12 @@ const PY_STOP_TRUNCATED: u32 = 4;
 #[derive(Clone, Copy)]
 pub struct PyProcInfo {
     pub runtime_addr: u64,
+    /// Device and inode of the process's pid namespace. CPython stores
+    /// each thread's `native_thread_id` as the tid in the process's own
+    /// namespace, so the thread match must translate the sampled tid
+    /// into that namespace rather than compare host-namespace tids.
+    pub pid_ns_dev: u64,
+    pub pid_ns_ino: u64,
     pub interpreters_head: u16,
     pub threads_head: u16,
     pub tstate_next: u16,
@@ -1460,6 +1470,30 @@ fn try_cpu_profile_py_find(ctx: PerfEventContext) -> Result<u32, i64> {
         return Ok(0);
     };
 
+    // CPython records each thread's id in the process's own pid
+    // namespace; translate the sampled thread into that namespace so
+    // the match works for containerized interpreters. Falls back to the
+    // (already namespace-translated) event tid if the helper is
+    // unavailable.
+    let match_tid = if info.pid_ns_ino != 0 {
+        let mut nsinfo = bpf_pidns_info { pid: 0, tgid: 0 };
+        let rc = unsafe {
+            bpf_get_ns_current_pid_tgid(
+                info.pid_ns_dev,
+                info.pid_ns_ino,
+                &mut nsinfo,
+                core::mem::size_of::<bpf_pidns_info>() as u32,
+            )
+        };
+        if rc == 0 {
+            u64::from(nsinfo.pid)
+        } else {
+            u64::from(event.tid)
+        }
+    } else {
+        u64::from(event.tid)
+    };
+
     let mut stop = PY_STOP_NO_THREAD;
     let mut found: u64 = 0;
     'search: {
@@ -1501,7 +1535,7 @@ fn try_cpu_profile_py_find(ctx: PerfEventContext) -> Result<u32, i64> {
                 stop = PY_STOP_READ_FAULT;
                 break 'search;
             };
-            if native_id == u64::from(event.tid) {
+            if native_id == match_tid {
                 found = candidate;
                 break;
             }
@@ -1862,9 +1896,15 @@ fn find_unwind_mapping(mappings: &UnwindProcMappings, pc: u64) -> Option<UnwindM
         if index >= count {
             break;
         }
-        let entry = mappings.entries[index];
+        // Bounds-checked slice access: the older kernel verifier (6.6)
+        // rejects the running-pointer form LLVM produces from direct
+        // indexing, so re-derive each entry from the base with an
+        // explicit `get` the verifier can follow.
+        let Some(entry) = mappings.entries.get(index & UNWIND_MAPPING_INDEX_MASK) else {
+            break;
+        };
         if pc >= entry.start && pc < entry.end {
-            return Some(entry);
+            return Some(*entry);
         }
     }
     None

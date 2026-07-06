@@ -17,8 +17,10 @@ use e_navigator_profiling::unwind::{
 /// Mirrors the eBPF row pool size; the manager never allocates past it.
 #[cfg(any(target_os = "linux", test))]
 pub(crate) const UNWIND_ROW_POOL: u32 = 262_144;
+// Must stay a power of two and match the eBPF side; the in-kernel
+// mapping lookup masks the index with `UNWIND_MAX_MAPPINGS - 1`.
 #[cfg(any(target_os = "linux", test))]
-pub(crate) const UNWIND_MAX_MAPPINGS: usize = 24;
+pub(crate) const UNWIND_MAX_MAPPINGS: usize = 32;
 #[cfg(any(target_os = "linux", test))]
 pub(crate) const UNWIND_MAX_MODULES: usize = 512;
 
@@ -101,6 +103,8 @@ mod pod {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PyProcInfoAbi {
     pub runtime_addr: u64,
+    pub pid_ns_dev: u64,
+    pub pid_ns_ino: u64,
     pub interpreters_head: u16,
     pub threads_head: u16,
     pub tstate_next: u16,
@@ -118,9 +122,15 @@ pub(crate) struct PyProcInfoAbi {
 /// build; python:3.12-bookworm). Non-standard builds that shift these
 /// offsets fail the in-kernel walk with explicit py_stop accounting.
 #[cfg(any(target_os = "linux", test))]
-pub(crate) fn py312_proc_info(runtime_addr: u64) -> PyProcInfoAbi {
+pub(crate) fn py312_proc_info(
+    runtime_addr: u64,
+    pid_ns_dev: u64,
+    pid_ns_ino: u64,
+) -> PyProcInfoAbi {
     PyProcInfoAbi {
         runtime_addr,
+        pid_ns_dev,
+        pid_ns_ino,
         interpreters_head: 40,
         threads_head: 72,
         tstate_next: 8,
@@ -147,6 +157,53 @@ pub(crate) mod py312 {
     pub(crate) const UNICODE_DATA: u64 = 40;
     pub(crate) const UNICODE_LENGTH: u64 = 16;
     pub(crate) const UNICODE_STATE: u64 = 32;
+}
+
+/// Bounded, thread-safe set of pids the sampler has recently observed
+/// on-CPU. Reader threads record every sampled pid; the unwind manager
+/// snapshots it each refresh to prioritize building tables for the
+/// processes actually being profiled.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug)]
+pub(crate) struct HotPidTracker {
+    inner: std::sync::Mutex<std::collections::BTreeSet<u32>>,
+    capacity: usize,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl HotPidTracker {
+    pub(crate) fn new(capacity: usize) -> Self {
+        Self {
+            inner: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+            capacity: capacity.max(1),
+        }
+    }
+
+    /// Records a sampled pid. Bounded: once full, new pids are dropped
+    /// until the manager prunes exited processes, so a burst of
+    /// short-lived pids cannot grow this without limit.
+    pub(crate) fn record(&self, pid: u32) {
+        if pid == 0 {
+            return;
+        }
+        if let Ok(mut set) = self.inner.lock()
+            && (set.len() < self.capacity || set.contains(&pid))
+        {
+            set.insert(pid);
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> std::collections::BTreeSet<u32> {
+        self.inner.lock().map(|set| set.clone()).unwrap_or_default()
+    }
+
+    /// Drops pids that no longer exist so the bounded set tracks live,
+    /// recently-sampled processes rather than accumulating dead ones.
+    pub(crate) fn retain_alive(&self, alive: &std::collections::BTreeSet<u32>) {
+        if let Ok(mut set) = self.inner.lock() {
+            set.retain(|pid| alive.contains(pid));
+        }
+    }
 }
 
 /// Destination for unwind-table writes; the platform implementation
@@ -178,10 +235,23 @@ pub(crate) struct UnwindRefreshStats {
     pub modules_skipped_size: usize,
 }
 
+/// Per-module handle returned to the process-mapping builder.
 #[cfg(any(target_os = "linux", test))]
 #[derive(Debug, Clone, Copy)]
 struct ModuleRecord {
     module_id: u32,
+    segments: [LoadSegment; 4],
+    segment_count: usize,
+}
+
+/// A module's parsed unwind rows, kept in userspace so files are read
+/// and parsed at most once ever while row-pool positions are
+/// reassigned every refresh.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug)]
+struct ParsedModule {
+    module_id: u32,
+    rows: Vec<UnwindRowAbi>,
     segments: [LoadSegment; 4],
     segment_count: usize,
 }
@@ -193,11 +263,19 @@ pub(crate) struct UnwindTableManager {
     procfs_root: std::path::PathBuf,
     max_processes: usize,
     max_module_bytes: u64,
+    row_pool: u32,
     row_cursor: u32,
     next_module_id: u32,
-    /// (st_dev, st_ino) -> loaded module record; `None` records a module
-    /// without a usable table so it is not re-parsed every pass.
-    modules: std::collections::BTreeMap<(u64, u64), Option<ModuleRecord>>,
+    /// (st_dev, st_ino) -> parsed module rows; `None` records a file
+    /// that has no usable table so it is not re-parsed every pass.
+    parsed: std::collections::BTreeMap<(u64, u64), Option<ParsedModule>>,
+    /// (st_dev, st_ino) -> row-pool position assigned in the current
+    /// refresh, cleared at the start of each pass so hot processes win
+    /// the pool afresh every time.
+    assigned: std::collections::BTreeMap<(u64, u64), u32>,
+    /// (st_dev, st_ino) -> row-pool position last written to the eBPF
+    /// map, so unchanged module placements skip the row rewrite.
+    last_written: std::collections::BTreeMap<(u64, u64), u32>,
     /// (st_dev, st_ino) -> `_PyRuntime` link-time address and load
     /// segments of a CPython 3.12 module; `None` records absence.
     python_runtimes: std::collections::BTreeMap<(u64, u64), Option<PyRuntimeRecord>>,
@@ -226,22 +304,47 @@ impl UnwindTableManager {
             // frame pointers and unwind fine without tables) fall back
             // to frame-pointer unwinding, counted below.
             max_module_bytes: 64 * 1024 * 1024,
+            row_pool: UNWIND_ROW_POOL,
             row_cursor: 0,
             next_module_id: 0,
-            modules: std::collections::BTreeMap::new(),
+            parsed: std::collections::BTreeMap::new(),
+            assigned: std::collections::BTreeMap::new(),
+            last_written: std::collections::BTreeMap::new(),
             python_runtimes: std::collections::BTreeMap::new(),
             registered_pids: std::collections::BTreeSet::new(),
             registered_py_pids: std::collections::BTreeSet::new(),
         }
     }
 
+    #[cfg(test)]
+    fn set_row_pool_for_test(&mut self, rows: u32) {
+        self.row_pool = rows;
+    }
+
     /// Scans the procfs view, loads unwind tables for new modules, and
     /// (re)registers per-process mappings. Removes processes that have
     /// exited since the previous pass.
-    pub(crate) fn refresh(&mut self, sink: &mut impl UnwindMapSink) -> UnwindRefreshStats {
+    ///
+    /// `hot_pids` are processes the sampler has actually observed
+    /// on-CPU; they are registered first so the finite in-kernel row
+    /// pool covers the workloads being profiled rather than being
+    /// exhausted by idle system processes with large libraries. Exited
+    /// pids are pruned from the tracker each pass.
+    pub(crate) fn refresh(
+        &mut self,
+        sink: &mut impl UnwindMapSink,
+        hot_pids: &HotPidTracker,
+    ) -> UnwindRefreshStats {
         let mut stats = UnwindRefreshStats::default();
         let mut seen_pids = std::collections::BTreeSet::new();
         let mut seen_py_pids = std::collections::BTreeSet::new();
+
+        // Re-allocate the finite row pool from scratch each pass so the
+        // processes prioritized this refresh (hot pids first) claim it
+        // before idle system processes, rather than being locked out by
+        // whoever filled it on an earlier pass.
+        self.row_cursor = 0;
+        self.assigned.clear();
 
         let Ok(entries) = std::fs::read_dir(&self.procfs_root) else {
             return stats;
@@ -250,7 +353,12 @@ impl UnwindTableManager {
             .filter_map(|entry| entry.ok())
             .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
             .collect();
-        pids.sort_unstable();
+        let alive: std::collections::BTreeSet<u32> = pids.iter().copied().collect();
+        hot_pids.retain_alive(&alive);
+        let hot = hot_pids.snapshot();
+        // Sampled processes first (in pid order), then everything else;
+        // within each group pid order keeps the pass deterministic.
+        pids.sort_unstable_by_key(|pid| (!hot.contains(pid), *pid));
         if pids.len() > self.max_processes {
             stats.processes_skipped_limit = pids.len() - self.max_processes;
             pids.truncate(self.max_processes);
@@ -294,6 +402,19 @@ impl UnwindTableManager {
         let maps_path = self.procfs_root.join(pid.to_string()).join("maps");
         let contents = std::fs::read_to_string(&maps_path).ok()?;
         let module_map = ProcessModuleMap::parse_maps(&contents);
+        // The process's pid namespace, so the in-kernel walker can match
+        // CPython's namespace-local thread ids.
+        let (pid_ns_dev, pid_ns_ino) = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(
+                self.procfs_root
+                    .join(pid.to_string())
+                    .join("ns")
+                    .join("pid"),
+            )
+            .map(|metadata| (metadata.dev(), metadata.ino()))
+            .unwrap_or((0, 0))
+        };
         for mapping in module_map.mappings() {
             let Some(minor) = python_minor_version(&mapping.path) else {
                 continue;
@@ -348,7 +469,11 @@ impl UnwindTableManager {
             ) else {
                 continue;
             };
-            return Some(py312_proc_info(record.runtime_vaddr.wrapping_add(bias)));
+            return Some(py312_proc_info(
+                record.runtime_vaddr.wrapping_add(bias),
+                pid_ns_dev,
+                pid_ns_ino,
+            ));
         }
         None
     }
@@ -402,8 +527,12 @@ impl UnwindTableManager {
         Some(result)
     }
 
-    /// Loads (or reuses) the unwind table for a module file, reading it
-    /// through the process's root so mount namespaces resolve.
+    /// Parses (once ever) the unwind table for a module file, then
+    /// assigns it a row-pool position for this refresh. Reading is
+    /// through the process's root so mount namespaces resolve; row
+    /// positions are reassigned each pass, so a module claims pool space
+    /// only if it fits behind the higher-priority processes already
+    /// placed this refresh.
     fn module_record(
         &mut self,
         pid: u32,
@@ -422,22 +551,71 @@ impl UnwindTableManager {
             return None;
         }
         let key = module_key(&metadata);
-        if let Some(record) = self.modules.get(&key) {
-            return *record;
-        }
 
-        let record = self.load_module(&file_path, sink, stats);
-        self.modules.insert(key, record);
-        record
+        if !self.parsed.contains_key(&key) {
+            let parsed = self.parse_module(&file_path, stats);
+            self.parsed.insert(key, parsed);
+        }
+        // Scalars copied out so the immutable borrow of `parsed` ends
+        // before the mutable row-pool bookkeeping below.
+        let (module_id, row_len, segments, segment_count) = {
+            let parsed = self.parsed.get(&key).and_then(Option::as_ref)?;
+            (
+                parsed.module_id,
+                parsed.rows.len() as u32,
+                parsed.segments,
+                parsed.segment_count,
+            )
+        };
+
+        // Already placed this refresh (another process maps the same
+        // file): reuse its position.
+        if self.assigned.contains_key(&key) {
+            return Some(ModuleRecord {
+                module_id,
+                segments,
+                segment_count,
+            });
+        }
+        if self.row_cursor.saturating_add(row_len) > self.row_pool {
+            stats.modules_skipped_row_budget += 1;
+            return None;
+        }
+        let row_start = self.row_cursor;
+        // Rows only need rewriting when this module moved since the last
+        // pass; content is stable per inode.
+        if self.last_written.get(&key) != Some(&row_start) {
+            let ok = {
+                let rows = &self.parsed.get(&key).and_then(Option::as_ref)?.rows;
+                sink.write_rows(row_start, rows)
+            };
+            if !ok {
+                return None;
+            }
+            self.last_written.insert(key, row_start);
+        }
+        if !sink.write_module(module_id, UnwindModuleSpan { row_start, row_len }) {
+            return None;
+        }
+        self.row_cursor += row_len;
+        self.assigned.insert(key, row_start);
+        stats.modules_loaded += 1;
+        Some(ModuleRecord {
+            module_id,
+            segments,
+            segment_count,
+        })
     }
 
-    fn load_module(
+    /// Reads and parses a module's `.eh_frame` into row-ABI form,
+    /// assigning it a stable module id. Files with no usable table are
+    /// recorded as `None` so they are not re-read every pass.
+    fn parse_module(
         &mut self,
         file_path: &std::path::Path,
-        sink: &mut impl UnwindMapSink,
         stats: &mut UnwindRefreshStats,
-    ) -> Option<ModuleRecord> {
-        if self.modules.len() >= UNWIND_MAX_MODULES {
+    ) -> Option<ParsedModule> {
+        if self.parsed.len() >= UNWIND_MAX_MODULES {
             stats.modules_skipped_module_budget += 1;
             return None;
         }
@@ -455,24 +633,9 @@ impl UnwindTableManager {
             stats.modules_without_tables += 1;
             return None;
         }
-
         let rows: Vec<UnwindRowAbi> = table.rows().iter().map(row_to_abi).collect();
-        let row_len = rows.len() as u32;
-        if self.row_cursor.saturating_add(row_len) > UNWIND_ROW_POOL {
-            stats.modules_skipped_row_budget += 1;
-            return None;
-        }
-        let row_start = self.row_cursor;
-        if !sink.write_rows(row_start, &rows) {
-            return None;
-        }
         let module_id = self.next_module_id;
-        if !sink.write_module(module_id, UnwindModuleSpan { row_start, row_len }) {
-            return None;
-        }
-        self.row_cursor += row_len;
         self.next_module_id += 1;
-        stats.modules_loaded += 1;
 
         let mut fixed_segments = [LoadSegment {
             vaddr: 0,
@@ -481,8 +644,9 @@ impl UnwindTableManager {
         }; Self::MAX_SEGMENTS_PER_MODULE];
         let segment_count = segments.len().min(Self::MAX_SEGMENTS_PER_MODULE);
         fixed_segments[..segment_count].copy_from_slice(&segments[..segment_count]);
-        Some(ModuleRecord {
+        Some(ParsedModule {
             module_id,
+            rows,
             segments: fixed_segments,
             segment_count,
         })

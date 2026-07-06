@@ -147,7 +147,7 @@ fn refresh_registers_process_with_rows_and_bias() {
     let mut manager = UnwindTableManager::new(root.clone(), 16);
     let mut sink = MemorySink::default();
 
-    let stats = manager.refresh(&mut sink);
+    let stats = manager.refresh(&mut sink, &HotPidTracker::new(64));
     assert_eq!(stats.processes_registered, 1);
     assert_eq!(stats.modules_loaded, 1);
     assert_eq!(stats.modules_without_tables, 0);
@@ -205,7 +205,7 @@ fn module_tables_are_shared_across_processes() {
 
     let mut manager = UnwindTableManager::new(root.clone(), 16);
     let mut sink = MemorySink::default();
-    let stats = manager.refresh(&mut sink);
+    let stats = manager.refresh(&mut sink, &HotPidTracker::new(64));
 
     assert_eq!(stats.processes_registered, 2);
     // Hard-linked file: same inode, parsed and written once.
@@ -220,11 +220,11 @@ fn exited_processes_are_removed_on_next_refresh() {
     let root = fake_procfs("exit", 300, 0x1000_0000);
     let mut manager = UnwindTableManager::new(root.clone(), 16);
     let mut sink = MemorySink::default();
-    let stats = manager.refresh(&mut sink);
+    let stats = manager.refresh(&mut sink, &HotPidTracker::new(64));
     assert_eq!(stats.processes_registered, 1);
 
     std::fs::remove_dir_all(root.join("300")).expect("simulate exit");
-    let stats = manager.refresh(&mut sink);
+    let stats = manager.refresh(&mut sink, &HotPidTracker::new(64));
     assert_eq!(stats.processes_registered, 0);
     assert_eq!(sink.removed, vec![300]);
 
@@ -240,8 +240,64 @@ fn process_limit_is_bounded_and_counted() {
 
     let mut manager = UnwindTableManager::new(root.clone(), 1);
     let mut sink = MemorySink::default();
-    let stats = manager.refresh(&mut sink);
+    let stats = manager.refresh(&mut sink, &HotPidTracker::new(64));
     assert_eq!(stats.processes_skipped_limit, 1);
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn hot_tracker_is_bounded_and_prunes_dead_pids() {
+    let tracker = HotPidTracker::new(2);
+    tracker.record(0); // ignored
+    tracker.record(10);
+    tracker.record(20);
+    tracker.record(30); // dropped: at capacity
+    assert_eq!(tracker.snapshot(), [10, 20].into_iter().collect());
+    // Re-recording an already-tracked pid stays allowed at capacity.
+    tracker.record(10);
+    assert_eq!(tracker.snapshot(), [10, 20].into_iter().collect());
+    // Pruning drops pids no longer alive.
+    tracker.retain_alive(&[20].into_iter().collect());
+    assert_eq!(tracker.snapshot(), [20].into_iter().collect());
+}
+
+#[test]
+fn hot_pids_register_before_cold_ones_under_row_budget() {
+    // Two processes, each with its own module; a cold low pid and a hot
+    // high pid. With a row pool that fits only one module, the sampled
+    // (hot) process must win regardless of pid order.
+    let root = fake_procfs("hot", 100, 0x1000_0000);
+    let pid_dir = root.join("900");
+    let bin_dir = pid_dir.join("root").join("usr").join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("hot pid dir");
+    // Distinct module file (distinct inode) so it consumes its own rows.
+    std::fs::write(bin_dir.join("app"), synthetic_module()).expect("write module");
+    std::fs::write(
+        pid_dir.join("maps"),
+        "20000000-20100000 r-xp 00000000 fd:00 100 /usr/bin/app\n",
+    )
+    .expect("write maps");
+
+    let mut manager = UnwindTableManager::new(root.clone(), 16);
+    // Shrink the row pool to a single module's worth of rows.
+    let module_rows = {
+        let table = ElfUnwindTable::parse(&synthetic_module());
+        table.len() as u32
+    };
+    manager.set_row_pool_for_test(module_rows);
+
+    let hot = HotPidTracker::new(64);
+    hot.record(900); // the high pid is the sampled one
+    let mut sink = MemorySink::default();
+    let stats = manager.refresh(&mut sink, &hot);
+
+    // The hot high pid registered; the cold low pid was skipped for row
+    // budget even though its pid sorts first.
+    assert!(sink.processes.contains_key(&900));
+    assert!(!sink.processes.contains_key(&100));
+    assert_eq!(stats.processes_registered, 1);
+    assert!(stats.modules_skipped_row_budget >= 1);
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -313,8 +369,10 @@ fn python_minor_version_parses_interpreter_paths() {
 #[test]
 fn py312_offsets_match_measured_values() {
     // Ground truth measured with offsetof() against CPython 3.12.13.
-    let info = py312_proc_info(0x1000);
+    let info = py312_proc_info(0x1000, 0x42, 0xabc);
     assert_eq!(info.runtime_addr, 0x1000);
+    assert_eq!(info.pid_ns_dev, 0x42);
+    assert_eq!(info.pid_ns_ino, 0xabc);
     assert_eq!(info.interpreters_head, 40);
     assert_eq!(info.threads_head, 72);
     assert_eq!(info.tstate_native_thread_id, 144);
@@ -334,7 +392,7 @@ fn unsupported_python_versions_are_counted_not_registered() {
 
     let mut manager = UnwindTableManager::new(root.clone(), 16);
     let mut sink = MemorySink::default();
-    let stats = manager.refresh(&mut sink);
+    let stats = manager.refresh(&mut sink, &HotPidTracker::new(64));
     assert_eq!(stats.python_registered, 0);
     assert_eq!(stats.python_unsupported_version, 1);
     assert!(sink.python.is_empty());

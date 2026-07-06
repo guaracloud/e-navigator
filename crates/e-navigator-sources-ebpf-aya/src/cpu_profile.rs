@@ -100,6 +100,9 @@ fn py_stop_reason(py_stop: u32) -> Option<(&'static str, bool)> {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) struct DecodedCpuProfileSample {
     pub signal: SignalEnvelope,
+    /// Sampled process id in the symbolization pid namespace; used to
+    /// prioritize unwind-table building for on-CPU processes.
+    pub pid: u32,
     /// True when the kernel filled the configured frame budget and the
     /// stack may be deeper than what was captured.
     pub capture_truncated: bool,
@@ -568,6 +571,7 @@ fn raw_cpu_profile_to_signal_with_clock(
                 host,
                 sample,
             ),
+            pid: raw.pid,
             capture_truncated,
             pid_unverified,
             dwarf_incomplete: unwind_stop_reason(raw.flags)
@@ -1116,6 +1120,11 @@ mod platform {
             );
             let shared_symbols =
                 std::sync::Arc::new(std::sync::Mutex::new(super::SharedSymbolTables::default()));
+            // Tracks pids the sampler observes on-CPU so the unwind
+            // manager prioritizes their tables over idle system
+            // processes; sized generously above any realistic on-CPU
+            // working set on one node.
+            let hot_pids = std::sync::Arc::new(crate::cpu_unwind::HotPidTracker::new(4096));
             for cpu_id in active_cpus {
                 let mut buffer = perf_array
                     .open(cpu_id, Some(perf_pages))
@@ -1132,6 +1141,7 @@ mod platform {
                     shared_symbols.clone(),
                 );
                 let symbolize = config.symbolize;
+                let reader_hot_pids = hot_pids.clone();
 
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     while !reader_shutdown.is_stopped() {
@@ -1165,6 +1175,7 @@ mod platform {
                                     let Some(decoded) = decoded else {
                                         return;
                                     };
+                                    reader_hot_pids.record(decoded.pid);
                                     if decoded.capture_truncated {
                                         drop_counters.record_truncated_stack();
                                     }
@@ -1216,11 +1227,12 @@ mod platform {
                     self.procfs_root.clone(),
                     self.config.max_unwind_processes,
                 );
+                let refresher_hot_pids = hot_pids.clone();
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     // Populate immediately, then re-scan on the same
                     // cadence as the TLS library rescan.
                     loop {
-                        let stats = manager.refresh(&mut sink);
+                        let stats = manager.refresh(&mut sink, &refresher_hot_pids);
                         debug!(?stats, "dwarf unwind table refresh");
                         if stats.processes_skipped_limit > 0
                             || stats.modules_skipped_row_budget > 0
