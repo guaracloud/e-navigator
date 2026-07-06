@@ -335,6 +335,20 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   beyond code-object name/filename/line fields was read or exported.
   Local smoke proof only.
 
+- Local OrbStack Kubernetes DaemonSet smoke (2026-07-06): a privileged
+  hostPID DaemonSet built from the current binary rolled out on the local
+  OrbStack k3s cluster in a throwaway namespace alongside a resource-limited
+  CPython 3.12 busy pod. All CPU-profile eBPF programs (sampler, chunked
+  DWARF unwinder, CPython find/walk) verifier-loaded in-cluster and ~5,000
+  profile samples exported. Pod processes were captured with honest
+  accounting - `profiling.stack.unwind=fp` plus
+  `profiling.stack.pid_ns=unverified` - because OrbStack nests the
+  Kubernetes node's pid namespace under a hidden VM namespace the agent
+  cannot resolve; same-namespace processes DWARF-unwound. Namespace,
+  workload, DaemonSet, and image were removed afterward. This is a rollout
+  and accounting smoke only; symbolized pod stacks require a standard
+  (non-nested) node namespace layout and remain unproven on Kubernetes.
+
 ## Partial Or Not Yet Proven
 
 These areas remain explicitly partial:
