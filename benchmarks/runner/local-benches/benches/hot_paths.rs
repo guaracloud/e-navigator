@@ -1131,8 +1131,95 @@ fn window(start_unix_nanos: u64, end_unix_nanos: u64) -> MetricAggregationWindow
     }
 }
 
+fn bench_unwind_table(c: &mut Criterion) {
+    use e_navigator_profiling::unwind::{EM_X86_64, ElfUnwindTable};
+
+    // Synthetic ELF64 with one CIE and many small FDEs, mirroring the
+    // shape of real .eh_frame data (prologue rows per function).
+    fn build_image(fde_count: usize) -> Vec<u8> {
+        const EH_VADDR: u64 = 0x10_000;
+        fn entry(content: &[u8]) -> Vec<u8> {
+            let mut bytes = (content.len() as u32).to_le_bytes().to_vec();
+            bytes.extend_from_slice(content);
+            bytes
+        }
+        let mut eh = {
+            let mut content = 0u32.to_le_bytes().to_vec();
+            content.push(1);
+            content.extend_from_slice(b"zR\0");
+            content.push(0x01);
+            content.push(0x78);
+            content.push(16);
+            content.push(0x01);
+            content.push(0x1b);
+            content.extend_from_slice(&[0x0c, 0x07, 0x08, 0x90, 0x01]);
+            entry(&content)
+        };
+        for index in 0..fde_count {
+            let pc_begin = 0x40_000u64 + (index as u64) * 0x80;
+            let content_start = eh.len() + 4;
+            let pc_field_vaddr = EH_VADDR + content_start as u64 + 4;
+            let pc_delta = (pc_begin as i64 - pc_field_vaddr as i64) as i32;
+            let mut content = (content_start as u32).to_le_bytes().to_vec();
+            content.extend_from_slice(&pc_delta.to_le_bytes());
+            content.extend_from_slice(&0x40i32.to_le_bytes());
+            content.push(0x00);
+            content.extend_from_slice(&[0x41, 0x0e, 0x10, 0x86, 0x02, 0x43, 0x0d, 0x06]);
+            eh.extend_from_slice(&entry(&content));
+        }
+        let mut image = vec![0u8; 64];
+        image[0..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
+        image[4] = 2;
+        image[5] = 1;
+        image[18..20].copy_from_slice(&EM_X86_64.to_le_bytes());
+        let eh_offset = image.len() as u64;
+        image.extend_from_slice(&eh);
+        let shstrtab = b"\0.eh_frame\0.shstrtab\0";
+        let shstrtab_offset = image.len() as u64;
+        image.extend_from_slice(shstrtab);
+        let shoff = image.len() as u64;
+        let mut sections = vec![0u8; 64];
+        let mut eh_section = vec![0u8; 64];
+        eh_section[0..4].copy_from_slice(&1u32.to_le_bytes());
+        eh_section[4..8].copy_from_slice(&1u32.to_le_bytes());
+        eh_section[16..24].copy_from_slice(&EH_VADDR.to_le_bytes());
+        eh_section[24..32].copy_from_slice(&eh_offset.to_le_bytes());
+        eh_section[32..40].copy_from_slice(&(eh.len() as u64).to_le_bytes());
+        sections.extend_from_slice(&eh_section);
+        let mut str_section = vec![0u8; 64];
+        str_section[0..4].copy_from_slice(&11u32.to_le_bytes());
+        str_section[4..8].copy_from_slice(&3u32.to_le_bytes());
+        str_section[24..32].copy_from_slice(&shstrtab_offset.to_le_bytes());
+        str_section[32..40].copy_from_slice(&(shstrtab.len() as u64).to_le_bytes());
+        sections.extend_from_slice(&str_section);
+        image.extend_from_slice(&sections);
+        image[40..48].copy_from_slice(&shoff.to_le_bytes());
+        image[58..60].copy_from_slice(&64u16.to_le_bytes());
+        image[60..62].copy_from_slice(&3u16.to_le_bytes());
+        image[62..64].copy_from_slice(&2u16.to_le_bytes());
+        image
+    }
+
+    let image = build_image(4096);
+    c.bench_function("unwind/table_build_4096_fdes", |b| {
+        b.iter(|| ElfUnwindTable::parse(black_box(&image)))
+    });
+
+    let table = ElfUnwindTable::parse(&image);
+    assert!(!table.is_empty());
+    let pcs: Vec<u64> = (0..4096u64).map(|i| 0x40_000 + i * 0x80 + 5).collect();
+    let mut cursor = 0usize;
+    c.bench_function("unwind/row_lookup", |b| {
+        b.iter(|| {
+            cursor = (cursor + 1) % pcs.len();
+            black_box(table.lookup(black_box(pcs[cursor])))
+        })
+    });
+}
+
 criterion_group!(
     benches,
+    bench_unwind_table,
     bench_raw_aya_decoders,
     bench_host_parsers,
     bench_protocol_and_profiles,

@@ -145,3 +145,9 @@ name = "raw_cpu_profile_event_decode"
 path = "fuzz_targets/raw_cpu_profile_event_decode.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "elf_unwind_table"
+path = "fuzz_targets/elf_unwind_table.rs"
+test = false
+doc = false
