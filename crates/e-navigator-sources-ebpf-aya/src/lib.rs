@@ -2,6 +2,8 @@
 
 pub mod cpu_profile;
 #[cfg(any(target_os = "linux", test))]
+mod cpu_unwind;
+#[cfg(any(target_os = "linux", test))]
 mod diagnostics;
 pub mod dns;
 pub mod exec;

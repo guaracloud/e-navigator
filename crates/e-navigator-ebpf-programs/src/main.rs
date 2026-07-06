@@ -9,10 +9,13 @@ use aya_ebpf::{
         bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_get_stack,
         bpf_ktime_get_ns, bpf_probe_read_user, bpf_probe_read_user_buf,
         bpf_probe_read_user_str_bytes,
-        generated::{bpf_get_current_cgroup_id, bpf_get_ns_current_pid_tgid},
+        generated::{
+            bpf_get_current_cgroup_id, bpf_get_current_task_btf, bpf_get_ns_current_pid_tgid,
+            bpf_probe_read_kernel, bpf_task_pt_regs,
+        },
     },
     macros::{map, perf_event, tracepoint, uprobe, uretprobe},
-    maps::{Array, HashMap, PerCpuArray, PerfEventArray},
+    maps::{Array, HashMap, PerCpuArray, PerfEventArray, ProgramArray},
     programs::{PerfEventContext, ProbeContext, RetProbeContext, TracePointContext},
 };
 
@@ -84,6 +87,81 @@ const CPU_PROFILE_MAX_FRAMES: usize = 128;
 const CPU_PROFILE_MIN_FRAMES: u32 = 1;
 const CPU_PROFILE_FLAG_TRUNCATED: u32 = 1;
 const CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED: u32 = 2;
+const CPU_PROFILE_FLAG_DWARF: u32 = 4;
+// DWARF unwind stop reason, stored in flags bits 8..16.
+const UNWIND_STOP_SHIFT: u32 = 8;
+const UNWIND_STOP_COMPLETE: u32 = 1;
+const UNWIND_STOP_NO_MAPPING: u32 = 2;
+const UNWIND_STOP_NO_RULE: u32 = 3;
+const UNWIND_STOP_READ_FAULT: u32 = 4;
+const UNWIND_STOP_BAD_FRAME: u32 = 5;
+const UNWIND_STOP_DEPTH: u32 = 6;
+const UNWIND_STOP_TAIL_LIMIT: u32 = 7;
+
+const UNWIND_MAX_MAPPINGS: usize = 24;
+const UNWIND_ROW_POOL: u32 = 262_144;
+const UNWIND_ROW_SEARCH_STEPS: u32 = 20;
+const UNWIND_FRAMES_PER_ROUND: u32 = 16;
+const UNWIND_MAX_ROUNDS: u32 = 8;
+
+// Row rule kinds shared with the userspace loader.
+const UNWIND_CFA_SP: u8 = 1;
+const UNWIND_CFA_FP: u8 = 2;
+const UNWIND_RA_CFA_OFFSET: u8 = 0;
+const UNWIND_RA_LINK_REGISTER: u8 = 1;
+const UNWIND_RA_UNDEFINED: u8 = 2;
+const UNWIND_FP_CFA_OFFSET: u8 = 1;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UnwindRowAbi {
+    pub pc: u64,
+    pub cfa_kind: u8,
+    pub ra_kind: u8,
+    pub fp_kind: u8,
+    pub _pad: u8,
+    pub cfa_off: i32,
+    pub ra_off: i32,
+    pub fp_off: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UnwindMapping {
+    pub start: u64,
+    pub end: u64,
+    pub bias: u64,
+    pub module_id: u32,
+    pub _pad: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UnwindProcMappings {
+    pub count: u32,
+    pub _pad: u32,
+    pub entries: [UnwindMapping; UNWIND_MAX_MAPPINGS],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UnwindModuleSpan {
+    pub row_start: u32,
+    pub row_len: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UnwindState {
+    pub pc: u64,
+    pub sp: u64,
+    pub fp: u64,
+    pub lr: u64,
+    pub depth: u32,
+    pub rounds: u32,
+    pub frame_limit: u32,
+    pub _pad: u32,
+}
 const TLS_DIAG_IO_ENTER: u32 = 0;
 const TLS_DIAG_IO_EXIT: u32 = 1;
 const TLS_DIAG_FD_UNRESOLVED: u32 = 2;
@@ -400,6 +478,26 @@ static CPU_PROFILE_FRAME_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
 /// procfs view userspace symbolizes from; zero inode disables translation.
 #[map]
 static CPU_PROFILE_PIDNS: Array<u64> = Array::with_max_entries(2, 0);
+
+/// Flat pool of DWARF unwind rows shared by every module table.
+#[map]
+static UNWIND_ROWS: Array<UnwindRowAbi> = Array::with_max_entries(UNWIND_ROW_POOL, 0);
+
+/// module id -> span of that module's rows inside UNWIND_ROWS.
+#[map]
+static UNWIND_MODULES: HashMap<u32, UnwindModuleSpan> = HashMap::with_max_entries(512, 0);
+
+/// pid (in the symbolization namespace) -> executable mappings with
+/// precomputed load bias and module ids.
+#[map]
+static UNWIND_PROC_MAPPINGS: HashMap<u32, UnwindProcMappings> = HashMap::with_max_entries(1024, 0);
+
+/// Tail-call target (index 0: cpu_profile_unwind) for chunked unwinding.
+#[map]
+static CPU_PROFILE_PROGS: ProgramArray = ProgramArray::with_max_entries(1, 0);
+
+#[map]
+static CPU_PROFILE_UNWIND_STATE: PerCpuArray<UnwindState> = PerCpuArray::with_max_entries(1, 0);
 
 #[map]
 static DNS_EVENT_SCRATCH: PerCpuArray<RawDnsEvent> = PerCpuArray::with_max_entries(1, 0);
@@ -1240,6 +1338,17 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
     }
     event.instruction_pointers = [0; CPU_PROFILE_MAX_FRAMES];
     let frame_limit = cpu_profile_frame_limit();
+
+    // DWARF path: only for pids userspace registered unwind tables for,
+    // and only when the pid is valid in that same namespace. On any
+    // setup failure control falls through to the frame-pointer path.
+    if event.flags & CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED == 0
+        && unsafe { UNWIND_PROC_MAPPINGS.get(&event.pid) }.is_some()
+    {
+        start_dwarf_unwind(&ctx, event, frame_limit);
+        event.flags &= !CPU_PROFILE_FLAG_DWARF;
+    }
+
     let stack_bytes = unsafe {
         bpf_get_stack(
             ctx.as_ptr(),
@@ -1261,6 +1370,275 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
 
     CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
     Ok(0)
+}
+
+/// Loads the sampled thread's user registers and tail-calls into the
+/// chunked DWARF unwinder. Returns only when the tail call fails.
+#[inline(always)]
+fn start_dwarf_unwind(ctx: &PerfEventContext, event: &mut RawCpuProfileEvent, frame_limit: u32) {
+    let Some(state_ptr) = CPU_PROFILE_UNWIND_STATE.get_ptr_mut(0) else {
+        return;
+    };
+    let state = unsafe { &mut *state_ptr };
+    let task = unsafe { bpf_get_current_task_btf() };
+    if task.is_null() {
+        return;
+    }
+    let regs = unsafe { bpf_task_pt_regs(task) };
+    if regs == 0 {
+        return;
+    }
+    let regs = regs as usize;
+    // Offsets into the saved user register frame.
+    #[cfg(bpf_target_arch = "aarch64")]
+    let (pc_off, sp_off, fp_off, lr_off) = (256usize, 248usize, 232usize, 240usize);
+    #[cfg(bpf_target_arch = "x86_64")]
+    let (pc_off, sp_off, fp_off, lr_off) = (128usize, 152usize, 32usize, 128usize);
+    #[cfg(not(any(bpf_target_arch = "aarch64", bpf_target_arch = "x86_64")))]
+    {
+        let _ = (ctx, event, frame_limit, regs);
+        return;
+    }
+
+    let Some(pc) = read_kernel_u64(regs + pc_off) else {
+        return;
+    };
+    let Some(sp) = read_kernel_u64(regs + sp_off) else {
+        return;
+    };
+    let Some(fp) = read_kernel_u64(regs + fp_off) else {
+        return;
+    };
+    let Some(lr) = read_kernel_u64(regs + lr_off) else {
+        return;
+    };
+    if pc == 0 || sp == 0 {
+        return;
+    }
+    state.pc = pc;
+    state.sp = sp;
+    state.fp = fp;
+    state.lr = lr;
+    state.depth = 0;
+    state.rounds = 0;
+    state.frame_limit = frame_limit.min(CPU_PROFILE_MAX_FRAMES as u32);
+    event.flags |= CPU_PROFILE_FLAG_DWARF;
+    unsafe {
+        CPU_PROFILE_PROGS.tail_call(ctx, 0);
+    }
+}
+
+#[inline(always)]
+fn read_kernel_u64(address: usize) -> Option<u64> {
+    let mut value: u64 = 0;
+    let rc = unsafe {
+        bpf_probe_read_kernel(
+            core::ptr::from_mut(&mut value).cast(),
+            core::mem::size_of::<u64>() as u32,
+            address as *const core::ffi::c_void,
+        )
+    };
+    (rc == 0).then_some(value)
+}
+
+#[perf_event]
+pub fn cpu_profile_unwind(ctx: PerfEventContext) -> u32 {
+    match try_cpu_profile_unwind(ctx) {
+        Ok(code) => code,
+        Err(code) => code as u32,
+    }
+}
+
+/// One chunk of DWARF unwinding: up to UNWIND_FRAMES_PER_ROUND frames,
+/// then a self tail call for the next chunk. Every exit path emits the
+/// event with an explicit stop reason - degradation is accounted, never
+/// silent.
+fn try_cpu_profile_unwind(ctx: PerfEventContext) -> Result<u32, i64> {
+    let event = unsafe {
+        let ptr = CPU_PROFILE_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+        &mut *ptr
+    };
+    let state = unsafe {
+        let ptr = CPU_PROFILE_UNWIND_STATE.get_ptr_mut(0).ok_or(1_i64)?;
+        &mut *ptr
+    };
+    let Some(mappings) = (unsafe { UNWIND_PROC_MAPPINGS.get(&event.pid) }) else {
+        return finish_unwind(&ctx, event, state, UNWIND_STOP_NO_MAPPING);
+    };
+
+    let mut stop = 0u32;
+    for _ in 0..UNWIND_FRAMES_PER_ROUND {
+        if state.depth >= state.frame_limit {
+            stop = UNWIND_STOP_DEPTH;
+            break;
+        }
+        // Record the current frame.
+        let index = (state.depth as usize).min(CPU_PROFILE_MAX_FRAMES - 1);
+        event.instruction_pointers[index] = state.pc;
+        state.depth += 1;
+
+        // For frames past the sampled leaf the recorded address is a
+        // return address: look up the call site inside the caller.
+        let lookup_pc = if state.depth == 1 {
+            state.pc
+        } else {
+            state.pc.wrapping_sub(1)
+        };
+
+        let Some(mapping) = find_unwind_mapping(mappings, lookup_pc) else {
+            stop = UNWIND_STOP_NO_MAPPING;
+            break;
+        };
+        let pc_vaddr = lookup_pc.wrapping_sub(mapping.bias);
+        let Some(row) = find_unwind_row(mapping.module_id, pc_vaddr) else {
+            stop = UNWIND_STOP_NO_RULE;
+            break;
+        };
+
+        // Canonical frame address.
+        let base = match row.cfa_kind {
+            UNWIND_CFA_SP => state.sp,
+            UNWIND_CFA_FP => state.fp,
+            _ => {
+                stop = UNWIND_STOP_NO_RULE;
+                break;
+            }
+        };
+        let cfa = base.wrapping_add(row.cfa_off as i64 as u64);
+        // The CFA must sit at or above the current stack pointer and
+        // within a sane single-frame distance of it.
+        if cfa < state.sp || cfa.wrapping_sub(state.sp) > (1 << 20) {
+            stop = UNWIND_STOP_BAD_FRAME;
+            break;
+        }
+
+        // Caller return address.
+        let next_pc = match row.ra_kind {
+            UNWIND_RA_CFA_OFFSET => {
+                let address = cfa.wrapping_add(row.ra_off as i64 as u64);
+                match read_user_u64(address) {
+                    Some(value) => value,
+                    None => {
+                        stop = UNWIND_STOP_READ_FAULT;
+                        break;
+                    }
+                }
+            }
+            UNWIND_RA_LINK_REGISTER if state.depth == 1 => state.lr,
+            UNWIND_RA_UNDEFINED => {
+                stop = UNWIND_STOP_COMPLETE;
+                break;
+            }
+            _ => {
+                stop = UNWIND_STOP_NO_RULE;
+                break;
+            }
+        };
+        if next_pc == 0 {
+            stop = UNWIND_STOP_COMPLETE;
+            break;
+        }
+
+        // Caller frame pointer, when this range saved it.
+        if row.fp_kind == UNWIND_FP_CFA_OFFSET {
+            let address = cfa.wrapping_add(row.fp_off as i64 as u64);
+            match read_user_u64(address) {
+                Some(value) => state.fp = value,
+                None => {
+                    stop = UNWIND_STOP_READ_FAULT;
+                    break;
+                }
+            }
+        }
+
+        state.pc = next_pc;
+        state.sp = cfa;
+    }
+
+    if stop != 0 {
+        return finish_unwind(&ctx, event, state, stop);
+    }
+    if state.depth >= state.frame_limit {
+        return finish_unwind(&ctx, event, state, UNWIND_STOP_DEPTH);
+    }
+    state.rounds += 1;
+    if state.rounds >= UNWIND_MAX_ROUNDS {
+        return finish_unwind(&ctx, event, state, UNWIND_STOP_TAIL_LIMIT);
+    }
+    unsafe {
+        CPU_PROFILE_PROGS.tail_call(&ctx, 0);
+    }
+    // The tail call failed; account it instead of dropping the sample.
+    finish_unwind(&ctx, event, state, UNWIND_STOP_TAIL_LIMIT)
+}
+
+#[inline(always)]
+fn finish_unwind(
+    ctx: &PerfEventContext,
+    event: &mut RawCpuProfileEvent,
+    state: &mut UnwindState,
+    stop: u32,
+) -> Result<u32, i64> {
+    event.frame_count = state.depth.min(CPU_PROFILE_MAX_FRAMES as u32);
+    event.flags |= stop << UNWIND_STOP_SHIFT;
+    if stop == UNWIND_STOP_DEPTH {
+        event.flags |= CPU_PROFILE_FLAG_TRUNCATED;
+    }
+    CPU_PROFILE_EVENTS.output(ctx, &*event, 0);
+    Ok(0)
+}
+
+#[inline(always)]
+fn find_unwind_mapping(mappings: &UnwindProcMappings, pc: u64) -> Option<UnwindMapping> {
+    let count = (mappings.count as usize).min(UNWIND_MAX_MAPPINGS);
+    for index in 0..UNWIND_MAX_MAPPINGS {
+        if index >= count {
+            break;
+        }
+        let entry = mappings.entries[index];
+        if pc >= entry.start && pc < entry.end {
+            return Some(entry);
+        }
+    }
+    None
+}
+
+#[inline(always)]
+fn find_unwind_row(module_id: u32, pc_vaddr: u64) -> Option<UnwindRowAbi> {
+    let span = unsafe { UNWIND_MODULES.get(&module_id) }?;
+    let row_len = span.row_len;
+    if row_len == 0 || span.row_start >= UNWIND_ROW_POOL {
+        return None;
+    }
+    let mut low = span.row_start;
+    let mut high = span.row_start.saturating_add(row_len).min(UNWIND_ROW_POOL);
+    // First row must already be at or below the target pc.
+    let first = UNWIND_ROWS.get(low)?;
+    if first.pc > pc_vaddr {
+        return None;
+    }
+    for _ in 0..UNWIND_ROW_SEARCH_STEPS {
+        if low + 1 >= high {
+            break;
+        }
+        let mid = low + (high - low) / 2;
+        let Some(row) = UNWIND_ROWS.get(mid) else {
+            break;
+        };
+        if row.pc <= pc_vaddr {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    let row = UNWIND_ROWS.get(low)?;
+    // Kind 0 for the CFA marks an Invalid gap terminator row.
+    (row.cfa_kind == UNWIND_CFA_SP || row.cfa_kind == UNWIND_CFA_FP).then_some(*row)
+}
+
+#[inline(always)]
+fn read_user_u64(address: u64) -> Option<u64> {
+    unsafe { bpf_probe_read_user::<u64>(address as *const u64).ok() }
 }
 
 #[inline(always)]

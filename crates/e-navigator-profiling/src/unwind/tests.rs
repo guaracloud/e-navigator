@@ -254,6 +254,22 @@ fn multiple_fdes_stay_sorted_and_isolated() {
 }
 
 #[test]
+fn adjacent_fdes_keep_the_second_fdes_entry_row() {
+    // FDE1 ends exactly where FDE2 begins; the gap terminator must not
+    // shadow FDE2's entry rules.
+    let mut eh = x86_64_cie(&[0x0c, 0x07, 0x08, 0x90, 0x01]);
+    push_fde(&mut eh, FUNC, 0x10, &[]);
+    push_fde(&mut eh, FUNC + 0x10, 0x10, &[0x41, 0x0e, 0x20]);
+    let table = ElfUnwindTable::parse(&build_elf(&eh, EM_X86_64));
+
+    let row = table.lookup(FUNC + 0x10).expect("second fde entry row");
+    assert_eq!(row.cfa, CfaRule::SpOffset(8));
+    let row = table.lookup(FUNC + 0x11).expect("second fde body row");
+    assert_eq!(row.cfa, CfaRule::SpOffset(32));
+    assert!(table.lookup(FUNC + 0x20).is_none());
+}
+
+#[test]
 fn malformed_images_yield_empty_tables_without_panicking() {
     assert!(ElfUnwindTable::parse(&[]).is_empty());
     assert!(ElfUnwindTable::parse(&[0x7f, b'E', b'L', b'F']).is_empty());

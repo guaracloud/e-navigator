@@ -307,7 +307,10 @@ fn parse_eh_frame_table(image: &[u8]) -> Option<ElfUnwindTable> {
     if rows.is_empty() {
         return None;
     }
-    rows.sort_by_key(|row| row.pc);
+    // Adjacent FDEs place a gap terminator at exactly the next FDE's
+    // first pc; sort real rows ahead of terminators so dedup keeps the
+    // real rule for that address.
+    rows.sort_by_key(|row| (row.pc, row.cfa == CfaRule::Invalid));
     rows.dedup_by_key(|row| row.pc);
     Some(ElfUnwindTable {
         rows,

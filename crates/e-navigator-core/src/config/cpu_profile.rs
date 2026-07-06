@@ -38,6 +38,15 @@ pub struct CpuProfileSourceConfig {
     /// export only module-relative offsets for offline symbolization.
     #[serde(default = "default_cpu_profile_resolve_symbol_names")]
     pub resolve_symbol_names: bool,
+    /// Build `.eh_frame` unwind tables for running processes and unwind
+    /// their stacks in-kernel via DWARF/CFI rules; processes without
+    /// tables keep frame-pointer unwinding, with per-sample accounting
+    /// of which path produced the stack.
+    #[serde(default = "default_cpu_profile_dwarf_unwind")]
+    pub dwarf_unwind: bool,
+    /// Most processes registered for DWARF unwinding per refresh pass.
+    #[serde(default = "default_cpu_profile_max_unwind_processes")]
+    pub max_unwind_processes: usize,
 }
 
 fn default_cpu_profile_symbolize() -> bool {
@@ -46,6 +55,14 @@ fn default_cpu_profile_symbolize() -> bool {
 
 fn default_cpu_profile_resolve_symbol_names() -> bool {
     true
+}
+
+fn default_cpu_profile_dwarf_unwind() -> bool {
+    true
+}
+
+fn default_cpu_profile_max_unwind_processes() -> usize {
+    256
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +88,8 @@ impl Default for CpuProfileSourceConfig {
             backpressure: CpuProfileBackpressure::default(),
             symbolize: default_cpu_profile_symbolize(),
             resolve_symbol_names: default_cpu_profile_resolve_symbol_names(),
+            dwarf_unwind: default_cpu_profile_dwarf_unwind(),
+            max_unwind_processes: default_cpu_profile_max_unwind_processes(),
         }
     }
 }
@@ -84,6 +103,7 @@ impl CpuProfileSourceConfig {
     pub const MAX_SYMBOL_BYTES_LIMIT: usize = 1024;
     pub const MAX_MODULE_BYTES_LIMIT: usize = 1024;
     pub const MAX_FILE_BYTES_LIMIT: usize = 1024;
+    pub const MAX_UNWIND_PROCESSES_LIMIT: usize = 1024;
 
     pub(super) fn validate(&self, runtime: &RuntimeConfig) -> ConfigResult<()> {
         if self.module_name != Self::STATIC_MODULE_NAME {
@@ -152,6 +172,15 @@ impl CpuProfileSourceConfig {
                 format!(
                     "cpu_profile_source.max_module_bytes must be between 1 and {}",
                     Self::MAX_MODULE_BYTES_LIMIT
+                ),
+            ));
+        }
+        if !(1..=Self::MAX_UNWIND_PROCESSES_LIMIT).contains(&self.max_unwind_processes) {
+            return Err(ConfigError::invalid_value(
+                "cpu_profile_source.max_unwind_processes",
+                format!(
+                    "cpu_profile_source.max_unwind_processes must be between 1 and {}",
+                    Self::MAX_UNWIND_PROCESSES_LIMIT
                 ),
             ));
         }

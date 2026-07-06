@@ -27,6 +27,37 @@ pub(crate) const RAW_CPU_PROFILE_FLAG_TRUNCATED: u32 = 1;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED: u32 = 2;
 
+/// The stack was produced by the in-kernel DWARF/CFI unwinder rather
+/// than frame-pointer walking; bits 8..16 of `flags` carry the stop
+/// reason.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_CPU_PROFILE_FLAG_DWARF: u32 = 4;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_UNWIND_STOP_SHIFT: u32 = 8;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_UNWIND_STOP_MASK: u32 = 0xff;
+
+/// Human-readable DWARF stop reason for the sample attribute; reasons
+/// other than `complete` and `depth` mean the tail of the stack was
+/// lost and are additionally counted into a periodic warning.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn unwind_stop_reason(flags: u32) -> Option<(&'static str, bool)> {
+    if flags & RAW_CPU_PROFILE_FLAG_DWARF == 0 {
+        return None;
+    }
+    let (name, incomplete) = match (flags >> RAW_UNWIND_STOP_SHIFT) & RAW_UNWIND_STOP_MASK {
+        1 => ("complete", false),
+        2 => ("no_mapping", true),
+        3 => ("no_rule", true),
+        4 => ("read_fault", true),
+        5 => ("bad_frame", true),
+        6 => ("depth", false),
+        7 => ("tail_limit", true),
+        _ => ("unknown", true),
+    };
+    Some((name, incomplete))
+}
+
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -55,6 +86,9 @@ pub(crate) struct DecodedCpuProfileSample {
     /// True when the sample's untranslated pid failed procfs identity
     /// verification and frames were left as raw addresses.
     pub pid_unverified: bool,
+    /// True when a DWARF unwind stopped before the outermost frame for
+    /// a reason other than the configured depth budget.
+    pub dwarf_incomplete: bool,
 }
 
 /// Resolves a captured instruction pointer for a pid into a stack frame.
@@ -259,11 +293,17 @@ fn raw_cpu_profile_to_signal_with_clock(
         .copied()
         .take(frame_count)
         .filter(|ip| *ip != 0)
-        .map(|ip| {
+        .enumerate()
+        .map(|(index, ip)| {
+            // Frames past the sampled leaf hold return addresses, which
+            // point one instruction past the call; resolve the call site
+            // so functions ending flush against a neighbor do not get
+            // the neighbor's name.
+            let resolve_ip = if index == 0 { ip } else { ip.wrapping_sub(1) };
             if pid_unverified {
-                RawAddressResolver.resolve(raw.pid, ip)
+                RawAddressResolver.resolve(raw.pid, resolve_ip)
             } else {
-                resolver.resolve(raw.pid, ip)
+                resolver.resolve(raw.pid, resolve_ip)
             }
         })
         .collect::<Vec<_>>();
@@ -315,6 +355,20 @@ fn raw_cpu_profile_to_signal_with_clock(
                     value: "unverified".to_string(),
                 });
             }
+            attributes.push(ProfilingAttribute {
+                key: "profiling.stack.unwind".to_string(),
+                value: if raw.flags & RAW_CPU_PROFILE_FLAG_DWARF != 0 {
+                    "dwarf".to_string()
+                } else {
+                    "fp".to_string()
+                },
+            });
+            if let Some((reason, _)) = unwind_stop_reason(raw.flags) {
+                attributes.push(ProfilingAttribute {
+                    key: "profiling.stack.dwarf_stop".to_string(),
+                    value: reason.to_string(),
+                });
+            }
             attributes
         },
     };
@@ -337,6 +391,8 @@ fn raw_cpu_profile_to_signal_with_clock(
             ),
             capture_truncated,
             pid_unverified,
+            dwarf_incomplete: unwind_stop_reason(raw.flags)
+                .is_some_and(|(_, incomplete)| incomplete),
         })
 }
 
@@ -432,6 +488,7 @@ pub(crate) struct CpuProfileDropCounters {
     backpressure_dropped: std::sync::atomic::AtomicU64,
     truncated_stacks: std::sync::atomic::AtomicU64,
     pid_unverified_samples: std::sync::atomic::AtomicU64,
+    dwarf_incomplete_samples: std::sync::atomic::AtomicU64,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -456,10 +513,16 @@ impl CpuProfileDropCounters {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
+    pub(crate) fn record_dwarf_incomplete_sample(&self) {
+        self.dwarf_incomplete_samples
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Atomically reads and resets all counters, returning
     /// (lost_perf_events, backpressure_dropped, truncated_stacks,
-    /// pid_unverified_samples) since the last drain.
-    pub(crate) fn drain(&self) -> (u64, u64, u64, u64) {
+    /// pid_unverified_samples, dwarf_incomplete_samples) since the last
+    /// drain.
+    pub(crate) fn drain(&self) -> (u64, u64, u64, u64, u64) {
         (
             self.lost_perf_events
                 .swap(0, std::sync::atomic::Ordering::Relaxed),
@@ -468,6 +531,8 @@ impl CpuProfileDropCounters {
             self.truncated_stacks
                 .swap(0, std::sync::atomic::Ordering::Relaxed),
             self.pid_unverified_samples
+                .swap(0, std::sync::atomic::Ordering::Relaxed),
+            self.dwarf_incomplete_samples
                 .swap(0, std::sync::atomic::Ordering::Relaxed),
         )
     }
@@ -547,6 +612,43 @@ pub(crate) fn pid_unverified_warning(
             attributes: vec![ProfilingAttribute {
                 key: "profiling.stack.pid_unverified_samples".to_string(),
                 value: foreign_samples.to_string(),
+            }],
+        },
+    )
+}
+
+/// Builds a bounded profiling warning reporting DWARF unwinds that
+/// stopped before the outermost frame (missing rules, unreadable stack
+/// memory, or implausible frames), losing the tail of those stacks.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn dwarf_incomplete_warning(
+    host: Option<String>,
+    incomplete_samples: u64,
+    timestamp_unix_nanos: u64,
+) -> SignalEnvelope {
+    use e_navigator_signals::{
+        ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind,
+        ProfilingWarningObservation,
+    };
+    SignalEnvelope::profiling_warning_observation(
+        "source.aya_cpu_profile",
+        host,
+        ProfilingWarningObservation {
+            warning_type: "dwarf_unwind_incomplete".to_string(),
+            message: "dwarf unwinds stopped before a provably outermost frame; stack tails may be missing"
+                .to_string(),
+            timestamp_unix_nanos,
+            source_signal_kind: "profile_sample_observation".to_string(),
+            source_module: "source.aya_cpu_profile".to_string(),
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::High,
+            process: None,
+            container: None,
+            kubernetes: None,
+            attributes: vec![ProfilingAttribute {
+                key: "profiling.stack.dwarf_incomplete_samples".to_string(),
+                value: incomplete_samples.to_string(),
             }],
         },
     )
@@ -661,12 +763,15 @@ mod platform {
         bounded_cpu_targets, cpu_profile_perf_pages, raw_cpu_profile_to_signal,
         send_with_backpressure,
     };
+    use crate::cpu_unwind::{
+        UnwindMapSink, UnwindModuleSpan, UnwindProcMappings, UnwindRowAbi, UnwindTableManager,
+    };
     use crate::perf_sample::perf_sample_bytes;
     use async_trait::async_trait;
     use aya::{
         Ebpf, include_bytes_aligned,
         maps::{
-            Array as AyaArray, MapData,
+            Array as AyaArray, HashMap as AyaHashMap, MapData, ProgramArray as AyaProgramArray,
             perf::{PerfEvent as PerfBufferEvent, PerfEventArray},
         },
         programs::perf_event::{
@@ -725,6 +830,9 @@ mod platform {
             .map_err(module_error)?;
             populate_frame_limit(&mut ebpf, &self.config)?;
             populate_pid_namespace(&mut ebpf, &self.procfs_root);
+            if self.config.dwarf_unwind {
+                setup_dwarf_unwinder(&mut ebpf)?;
+            }
 
             let program: &mut PerfEvent = ebpf
                 .program_mut("sample_cpu_profile")
@@ -833,6 +941,9 @@ mod platform {
                                     if decoded.pid_unverified {
                                         drop_counters.record_pid_unverified_sample();
                                     }
+                                    if decoded.dwarf_incomplete {
+                                        drop_counters.record_dwarf_incomplete_sample();
+                                    }
                                     let signal = decoded.signal;
                                     accepted += 1;
                                     if !send_with_backpressure(&cpu_tx, signal, backpressure) {
@@ -865,6 +976,41 @@ mod platform {
                 }));
             }
 
+            if self.config.dwarf_unwind {
+                let refresher_shutdown = shutdown.clone();
+                let mut sink = EbpfUnwindSink::take_from(&mut ebpf)?;
+                let mut manager = UnwindTableManager::new(
+                    self.procfs_root.clone(),
+                    self.config.max_unwind_processes,
+                );
+                reader_handles.push(tokio::task::spawn_blocking(move || {
+                    // Populate immediately, then re-scan on the same
+                    // cadence as the TLS library rescan.
+                    loop {
+                        let stats = manager.refresh(&mut sink);
+                        debug!(?stats, "dwarf unwind table refresh");
+                        if stats.processes_skipped_limit > 0
+                            || stats.modules_skipped_row_budget > 0
+                            || stats.modules_skipped_module_budget > 0
+                        {
+                            warn!(
+                                skipped_processes = stats.processes_skipped_limit,
+                                skipped_modules_rows = stats.modules_skipped_row_budget,
+                                skipped_modules_budget = stats.modules_skipped_module_budget,
+                                "dwarf unwind coverage is capped; uncovered processes fall \
+                                 back to frame-pointer unwinding"
+                            );
+                        }
+                        for _ in 0..150 {
+                            if refresher_shutdown.is_stopped() {
+                                return ReaderExit::Stopped;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        }
+                    }
+                }));
+            }
+
             {
                 let emitter_shutdown = shutdown.clone();
                 let emitter_counters = drop_counters.clone();
@@ -874,7 +1020,8 @@ mod platform {
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     while !emitter_shutdown.is_stopped() {
                         std::thread::sleep(std::time::Duration::from_secs(10));
-                        let (lost, dropped, truncated, foreign) = emitter_counters.drain();
+                        let (lost, dropped, truncated, foreign, dwarf_incomplete) =
+                            emitter_counters.drain();
                         if lost > 0 || dropped > 0 {
                             let warning = super::source_drop_warning(
                                 emitter_host.clone(),
@@ -901,6 +1048,16 @@ mod platform {
                             let warning = super::pid_unverified_warning(
                                 emitter_host.clone(),
                                 foreign,
+                                super::now_unix_nanos(),
+                            );
+                            if emitter_tx.blocking_send(warning).is_err() {
+                                return ReaderExit::Stopped;
+                            }
+                        }
+                        if dwarf_incomplete > 0 {
+                            let warning = super::dwarf_incomplete_warning(
+                                emitter_host.clone(),
+                                dwarf_incomplete,
                                 super::now_unix_nanos(),
                             );
                             if emitter_tx.blocking_send(warning).is_err() {
@@ -993,6 +1150,84 @@ mod platform {
             .clamp(1, super::RAW_CPU_PROFILE_MAX_FRAMES) as u32;
         limit.set(0, frames, 0).map_err(module_error)?;
         Ok(())
+    }
+
+    /// Loads the tail-called DWARF unwind program and registers it in
+    /// the program array the sampler jumps through.
+    fn setup_dwarf_unwinder(ebpf: &mut Ebpf) -> CoreResult<()> {
+        let program: &mut PerfEvent = ebpf
+            .program_mut("cpu_profile_unwind")
+            .ok_or_else(|| CoreError::ModuleFailed {
+                module: "source.aya_cpu_profile".to_string(),
+                message: "missing cpu_profile_unwind program".to_string(),
+            })?
+            .try_into()
+            .map_err(module_error)?;
+        program.load().map_err(module_error)?;
+        let program_fd = program
+            .fd()
+            .map_err(module_error)?
+            .try_clone()
+            .map_err(module_error)?;
+        let map = ebpf
+            .map_mut("CPU_PROFILE_PROGS")
+            .ok_or_else(|| CoreError::ModuleFailed {
+                module: "source.aya_cpu_profile".to_string(),
+                message: "missing CPU_PROFILE_PROGS map".to_string(),
+            })?;
+        let mut programs: AyaProgramArray<&mut MapData> =
+            AyaProgramArray::try_from(map).map_err(module_error)?;
+        programs.set(0, &program_fd, 0).map_err(module_error)?;
+        Ok(())
+    }
+
+    /// eBPF-map-backed sink for the unwind table manager.
+    struct EbpfUnwindSink {
+        rows: AyaArray<aya::maps::MapData, UnwindRowAbi>,
+        modules: AyaHashMap<aya::maps::MapData, u32, UnwindModuleSpan>,
+        processes: AyaHashMap<aya::maps::MapData, u32, UnwindProcMappings>,
+    }
+
+    impl EbpfUnwindSink {
+        fn take_from(ebpf: &mut Ebpf) -> CoreResult<Self> {
+            let take = |ebpf: &mut Ebpf, name: &str| {
+                ebpf.take_map(name).ok_or_else(|| CoreError::ModuleFailed {
+                    module: "source.aya_cpu_profile".to_string(),
+                    message: format!("missing {name} map"),
+                })
+            };
+            Ok(Self {
+                rows: AyaArray::try_from(take(ebpf, "UNWIND_ROWS")?).map_err(module_error)?,
+                modules: AyaHashMap::try_from(take(ebpf, "UNWIND_MODULES")?)
+                    .map_err(module_error)?,
+                processes: AyaHashMap::try_from(take(ebpf, "UNWIND_PROC_MAPPINGS")?)
+                    .map_err(module_error)?,
+            })
+        }
+    }
+
+    impl UnwindMapSink for EbpfUnwindSink {
+        fn write_rows(&mut self, row_start: u32, rows: &[UnwindRowAbi]) -> bool {
+            for (index, row) in rows.iter().enumerate() {
+                let position = row_start.saturating_add(index as u32);
+                if self.rows.set(position, row, 0).is_err() {
+                    return false;
+                }
+            }
+            true
+        }
+
+        fn write_module(&mut self, module_id: u32, span: UnwindModuleSpan) -> bool {
+            self.modules.insert(module_id, span, 0).is_ok()
+        }
+
+        fn write_process(&mut self, pid: u32, mappings: &UnwindProcMappings) -> bool {
+            self.processes.insert(pid, mappings, 0).is_ok()
+        }
+
+        fn remove_process(&mut self, pid: u32) {
+            let _ = self.processes.remove(&pid);
+        }
     }
 
     /// Points the in-kernel pid translation at the pid namespace of the
@@ -1343,9 +1578,10 @@ mod tests {
         counters.record_truncated_stack();
         counters.record_truncated_stack();
         counters.record_pid_unverified_sample();
-        assert_eq!(counters.drain(), (5, 1, 2, 1));
+        counters.record_dwarf_incomplete_sample();
+        assert_eq!(counters.drain(), (5, 1, 2, 1, 1));
         // Draining resets all counters.
-        assert_eq!(counters.drain(), (0, 0, 0, 0));
+        assert_eq!(counters.drain(), (0, 0, 0, 0, 0));
     }
 
     #[test]
@@ -1774,6 +2010,141 @@ mod tests {
         assert!(warning.attributes.iter().any(|attribute| attribute.key
             == "profiling.stack.pid_unverified_samples"
             && attribute.value == "5"));
+    }
+
+    #[test]
+    fn return_address_frames_resolve_the_call_site() {
+        struct RecordingResolver {
+            requested: Vec<u64>,
+        }
+        impl FrameResolver for RecordingResolver {
+            fn resolve(&mut self, _pid: u32, ip: u64) -> RawProfileFrame {
+                self.requested.push(ip);
+                RawAddressResolver.resolve(0, ip)
+            }
+        }
+
+        let raw = RawCpuProfileEvent {
+            pid: 42,
+            tid: 43,
+            uid: 1000,
+            cgroup_id: 0,
+            sample_count: 1,
+            timestamp_unix_nanos: 1_000,
+            command: fixed_command("api"),
+            frame_count: 3,
+            flags: 0,
+            instruction_pointers: padded_pointers(&[0x1000, 0x2000, 0x3000]),
+        };
+        let mut resolver = RecordingResolver {
+            requested: Vec::new(),
+        };
+        raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &source_config(),
+            10_000,
+            &mut resolver,
+        )
+        .expect("raw profile event decodes");
+
+        // Leaf frame resolves as sampled; return addresses resolve one
+        // byte back into the call instruction.
+        assert_eq!(resolver.requested, vec![0x1000, 0x1fff, 0x2fff]);
+    }
+
+    #[test]
+    fn unwind_mode_and_stop_reason_are_attributed() {
+        let mut raw = RawCpuProfileEvent {
+            pid: 42,
+            tid: 43,
+            uid: 1000,
+            cgroup_id: 0,
+            sample_count: 1,
+            timestamp_unix_nanos: 1_000,
+            command: fixed_command("api"),
+            frame_count: 1,
+            flags: 0,
+            instruction_pointers: padded_pointers(&[0xabc]),
+        };
+
+        // Frame-pointer sample: fp mode, no dwarf stop attribute.
+        let decoded = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &source_config(),
+            10_000,
+            &mut RawAddressResolver,
+        )
+        .expect("fp sample decodes");
+        assert!(!decoded.dwarf_incomplete);
+        let SignalPayload::ProfileSampleObservation(sample) = decoded.signal.payload else {
+            panic!("expected profile sample");
+        };
+        assert!(
+            sample
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "profiling.stack.unwind"
+                    && attribute.value == "fp")
+        );
+        assert!(
+            !sample
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "profiling.stack.dwarf_stop")
+        );
+
+        // Complete DWARF unwind: dwarf mode, complete stop, not counted.
+        raw.flags = RAW_CPU_PROFILE_FLAG_DWARF | (1 << RAW_UNWIND_STOP_SHIFT);
+        let decoded = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &source_config(),
+            10_000,
+            &mut RawAddressResolver,
+        )
+        .expect("dwarf sample decodes");
+        assert!(!decoded.dwarf_incomplete);
+        let SignalPayload::ProfileSampleObservation(sample) = decoded.signal.payload else {
+            panic!("expected profile sample");
+        };
+        assert!(sample.attributes.iter().any(|attribute| attribute.key
+            == "profiling.stack.unwind"
+            && attribute.value == "dwarf"));
+        assert!(sample.attributes.iter().any(|attribute| {
+            attribute.key == "profiling.stack.dwarf_stop" && attribute.value == "complete"
+        }));
+
+        // A missing rule loses the stack tail and is counted.
+        raw.flags = RAW_CPU_PROFILE_FLAG_DWARF | (3 << RAW_UNWIND_STOP_SHIFT);
+        let decoded = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &source_config(),
+            10_000,
+            &mut RawAddressResolver,
+        )
+        .expect("incomplete dwarf sample decodes");
+        assert!(decoded.dwarf_incomplete);
+        let SignalPayload::ProfileSampleObservation(sample) = decoded.signal.payload else {
+            panic!("expected profile sample");
+        };
+        assert!(sample.attributes.iter().any(|attribute| {
+            attribute.key == "profiling.stack.dwarf_stop" && attribute.value == "no_rule"
+        }));
+    }
+
+    #[test]
+    fn dwarf_incomplete_warning_reports_count() {
+        let signal = dwarf_incomplete_warning(Some("node-a".to_string()), 6, 12_000);
+        let SignalPayload::ProfilingWarningObservation(warning) = signal.payload else {
+            panic!("expected profiling warning");
+        };
+        assert_eq!(warning.warning_type, "dwarf_unwind_incomplete");
+        assert!(warning.attributes.iter().any(|attribute| attribute.key
+            == "profiling.stack.dwarf_incomplete_samples"
+            && attribute.value == "6"));
     }
 
     #[test]
