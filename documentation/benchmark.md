@@ -225,3 +225,61 @@ fixtures and compile-time benchmark health only. They do not prove:
 - real host procfs/sysfs/cgroup accuracy;
 - production OTLP, Prometheus, pprof, trace, profile, or storage behavior;
 - reduced overhead, reduced privilege, or all-node capture symmetry.
+
+## Local Overhead Baseline (OrbStack, 2026-07-06)
+
+A controlled A/B overhead measurement recorded on the local OrbStack Linux VM
+(kernel `7.0.11-orbstack`, aarch64, 15 CPUs visible, Apple-Silicon host).
+Workloads and the release-built agent ran in the same VM under privileged
+Docker containers with the host pid namespace. This is a **local baseline,
+not production proof**: the VM shares hardware with the host OS, containers
+share the VM, and run counts are small (3 per arm). Numbers are medians of
+3 runs; raw outputs are recorded below.
+
+### Saturated Redis request capture (`source.aya_protocol`)
+
+Workload: `redis-benchmark -n 200000 -c 50 -d 64 -t set,get` against a local
+`redis-server 8.4.0` (no persistence). Three arms, run back-to-back in one
+container session:
+
+| Arm | SET rps | GET rps | SET p50/p95/p99 ms | GET p50/p95/p99 ms |
+| --- | --- | --- | --- | --- |
+| Baseline (no agent) | 386,100 | 386,100 | 0.079 / 0.127 / 0.143 | 0.079 / 0.127 / 0.151 |
+| Agent on, watching a different port | 314,961 (-18%) | 316,456 (-18%) | 0.095-0.103 / 0.159 / 0.191 | 0.095 / 0.159 / 0.183 |
+| Agent capturing the benchmarked port | 220,995 (-43%) | 217,155 (-44%) | 0.111 / 0.255 / 0.343 | 0.119 / 0.263 / 0.359 |
+
+Agent userspace cost during full capture: ~0.52 CPU cores and 28 MB RSS
+(313 ticks over 6 s at 100 Hz). Watching a non-matching port cost ~0 agent
+userspace CPU and 22 MB RSS; its 18% throughput hit is in-kernel tracepoint
+overhead on every read/write syscall at ~770k syscalls/second.
+
+What this proves: the worst realistic case - request capture of a workload
+saturating a loopback socket at ~386k requests/second with an observation
+emitted per request. What it does not prove: overhead at production request
+rates (orders of magnitude lower per node), wire-network workloads, or
+non-loopback latency profiles; at lower rates both the per-event userspace
+cost and the per-syscall in-kernel cost scale down proportionally.
+
+### CPU profiling with DWARF + CPython unwinding (`source.aya_cpu_profile`)
+
+Workload: CPython 3.12 nested-function busy loop reporting iterations per
+fixed 15 s window; agent sampling at 99 Hz with DWARF unwind tables and the
+CPython walker active (first refresh completed before measurement).
+
+| Arm | Iterations / 15 s (3 runs) | Mean |
+| --- | --- | --- |
+| Baseline (no agent) | 37,651 / 37,434 / 37,825 | 37,637 |
+| Agent profiling at 99 Hz | 37,694 / 37,651 / 37,580 | 37,642 |
+
+Workload delta is within run-to-run noise (<0.5%). Agent cost: ~3.1% of one
+CPU core (139 ticks over 45 s) and 60 MB RSS with unwind tables and shared
+symbol caches for the busy host loaded (before the shared symbol cache this
+was 412 MB; the fix is recorded in the capability history).
+
+What this proves: sampling profiling with in-kernel DWARF and interpreter
+unwinding is workload-neutral at 99 Hz on this host and the agent's own
+footprint is bounded. What it does not prove: behavior at higher sampling
+frequencies, wider process fleets than this VM ran (~250 registered
+processes), or production node shapes.
+
+Raw run logs for both A/Bs are retained in the session records for this date.
