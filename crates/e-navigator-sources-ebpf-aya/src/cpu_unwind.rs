@@ -91,6 +91,62 @@ mod pod {
     unsafe impl aya::Pod for super::UnwindRowAbi {}
     unsafe impl aya::Pod for super::UnwindProcMappings {}
     unsafe impl aya::Pod for super::UnwindModuleSpan {}
+    unsafe impl aya::Pod for super::PyProcInfoAbi {}
+}
+
+/// CPython walk parameters shipped to the eBPF program. Offsets are
+/// version-specific; see [`py312_proc_info`] for their provenance.
+#[cfg(any(target_os = "linux", test))]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PyProcInfoAbi {
+    pub runtime_addr: u64,
+    pub interpreters_head: u16,
+    pub threads_head: u16,
+    pub tstate_next: u16,
+    pub tstate_native_thread_id: u16,
+    pub tstate_cframe: u16,
+    pub cframe_current_frame: u16,
+    pub iframe_code: u16,
+    pub iframe_previous: u16,
+    pub iframe_owner: u16,
+    pub _pad: [u16; 3],
+}
+
+/// Kernel-side CPython 3.12 struct offsets, measured with offsetof()
+/// against CPython 3.12.13 headers (Py_BUILD_CORE, 64-bit, non-debug
+/// build; python:3.12-bookworm). Non-standard builds that shift these
+/// offsets fail the in-kernel walk with explicit py_stop accounting.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn py312_proc_info(runtime_addr: u64) -> PyProcInfoAbi {
+    PyProcInfoAbi {
+        runtime_addr,
+        interpreters_head: 40,
+        threads_head: 72,
+        tstate_next: 8,
+        tstate_native_thread_id: 144,
+        tstate_cframe: 56,
+        cframe_current_frame: 0,
+        iframe_code: 0,
+        iframe_previous: 8,
+        iframe_owner: 70,
+        _pad: [0; 3],
+    }
+}
+
+/// Userspace-side CPython 3.12 code-object and unicode offsets, same
+/// provenance as [`py312_proc_info`].
+#[cfg(any(target_os = "linux", test))]
+pub(crate) mod py312 {
+    pub(crate) const CODE_FILENAME: u64 = 112;
+    pub(crate) const CODE_NAME: u64 = 120;
+    pub(crate) const CODE_QUALNAME: u64 = 128;
+    pub(crate) const CODE_FIRSTLINENO: u64 = 68;
+    /// Compact-ASCII string payload starts after the PyASCIIObject
+    /// header; `state` bit 5 = compact, bit 6 = ascii, bits 2..5 kind.
+    pub(crate) const UNICODE_DATA: u64 = 40;
+    pub(crate) const UNICODE_LENGTH: u64 = 16;
+    pub(crate) const UNICODE_STATE: u64 = 32;
 }
 
 /// Destination for unwind-table writes; the platform implementation
@@ -101,6 +157,8 @@ pub(crate) trait UnwindMapSink {
     fn write_module(&mut self, module_id: u32, span: UnwindModuleSpan) -> bool;
     fn write_process(&mut self, pid: u32, mappings: &UnwindProcMappings) -> bool;
     fn remove_process(&mut self, pid: u32);
+    fn write_python_process(&mut self, pid: u32, info: &PyProcInfoAbi) -> bool;
+    fn remove_python_process(&mut self, pid: u32);
 }
 
 /// Degradation accounting for one refresh pass.
@@ -115,6 +173,8 @@ pub(crate) struct UnwindRefreshStats {
     pub modules_skipped_module_budget: usize,
     pub tables_truncated: usize,
     pub mappings_skipped_per_process_limit: usize,
+    pub python_registered: usize,
+    pub python_unsupported_version: usize,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -137,7 +197,19 @@ pub(crate) struct UnwindTableManager {
     /// (st_dev, st_ino) -> loaded module record; `None` records a module
     /// without a usable table so it is not re-parsed every pass.
     modules: std::collections::BTreeMap<(u64, u64), Option<ModuleRecord>>,
+    /// (st_dev, st_ino) -> `_PyRuntime` link-time address and load
+    /// segments of a CPython 3.12 module; `None` records absence.
+    python_runtimes: std::collections::BTreeMap<(u64, u64), Option<PyRuntimeRecord>>,
     registered_pids: std::collections::BTreeSet<u32>,
+    registered_py_pids: std::collections::BTreeSet<u32>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy)]
+struct PyRuntimeRecord {
+    runtime_vaddr: u64,
+    segments: [LoadSegment; 4],
+    segment_count: usize,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -152,7 +224,9 @@ impl UnwindTableManager {
             row_cursor: 0,
             next_module_id: 0,
             modules: std::collections::BTreeMap::new(),
+            python_runtimes: std::collections::BTreeMap::new(),
             registered_pids: std::collections::BTreeSet::new(),
+            registered_py_pids: std::collections::BTreeSet::new(),
         }
     }
 
@@ -162,6 +236,7 @@ impl UnwindTableManager {
     pub(crate) fn refresh(&mut self, sink: &mut impl UnwindMapSink) -> UnwindRefreshStats {
         let mut stats = UnwindRefreshStats::default();
         let mut seen_pids = std::collections::BTreeSet::new();
+        let mut seen_py_pids = std::collections::BTreeSet::new();
 
         let Ok(entries) = std::fs::read_dir(&self.procfs_root) else {
             return stats;
@@ -184,13 +259,93 @@ impl UnwindTableManager {
                 seen_pids.insert(pid);
                 stats.processes_registered += 1;
             }
+            if let Some(info) = self.python_proc_info(pid, &mut stats)
+                && sink.write_python_process(pid, &info)
+            {
+                seen_py_pids.insert(pid);
+                stats.python_registered += 1;
+            }
         }
 
         for stale in self.registered_pids.difference(&seen_pids) {
             sink.remove_process(*stale);
         }
+        for stale in self.registered_py_pids.difference(&seen_py_pids) {
+            sink.remove_python_process(*stale);
+        }
         self.registered_pids = seen_pids;
+        self.registered_py_pids = seen_py_pids;
         stats
+    }
+
+    /// Detects a CPython 3.12 interpreter mapping and resolves the
+    /// runtime address of `_PyRuntime` for the in-kernel frame walk.
+    /// Other CPython versions are counted, not silently skipped.
+    fn python_proc_info(
+        &mut self,
+        pid: u32,
+        stats: &mut UnwindRefreshStats,
+    ) -> Option<PyProcInfoAbi> {
+        let maps_path = self.procfs_root.join(pid.to_string()).join("maps");
+        let contents = std::fs::read_to_string(&maps_path).ok()?;
+        let module_map = ProcessModuleMap::parse_maps(&contents);
+        for mapping in module_map.mappings() {
+            let Some(minor) = python_minor_version(&mapping.path) else {
+                continue;
+            };
+            if minor != 12 {
+                stats.python_unsupported_version += 1;
+                return None;
+            }
+            let file_path = self
+                .procfs_root
+                .join(pid.to_string())
+                .join("root")
+                .join(mapping.path.trim_start_matches('/'));
+            let metadata = std::fs::metadata(&file_path).ok()?;
+            if metadata.len() > self.max_module_bytes {
+                return None;
+            }
+            let key = module_key(&metadata);
+            let record = self.python_runtimes.entry(key).or_insert_with(|| {
+                std::fs::read(&file_path).ok().and_then(|image| {
+                    let runtime_vaddr = e_navigator_profiling::symbolize::find_elf_symbol_address(
+                        &image,
+                        "_PyRuntime",
+                    )?;
+                    let segments = parse_load_segments(&image);
+                    if segments.is_empty() {
+                        return None;
+                    }
+                    let mut fixed = [LoadSegment {
+                        vaddr: 0,
+                        file_offset: 0,
+                        file_size: 0,
+                    }; Self::MAX_SEGMENTS_PER_MODULE];
+                    let count = segments.len().min(Self::MAX_SEGMENTS_PER_MODULE);
+                    fixed[..count].copy_from_slice(&segments[..count]);
+                    Some(PyRuntimeRecord {
+                        runtime_vaddr,
+                        segments: fixed,
+                        segment_count: count,
+                    })
+                })
+            });
+            // The interpreter binary may not carry _PyRuntime (shared
+            // libpython builds); keep scanning the remaining mappings.
+            let Some(record) = *record else {
+                continue;
+            };
+            let Some(bias) = compute_load_bias(
+                mapping.start,
+                mapping.file_offset,
+                &record.segments[..record.segment_count],
+            ) else {
+                continue;
+            };
+            return Some(py312_proc_info(record.runtime_vaddr.wrapping_add(bias)));
+        }
+        None
     }
 
     fn build_process_mappings(
@@ -393,3 +548,15 @@ fn row_to_abi(row: &e_navigator_profiling::unwind::UnwindRow) -> UnwindRowAbi {
 
 #[cfg(test)]
 mod tests;
+
+/// Extracts the CPython minor version from an interpreter or
+/// libpython mapping path ("python3.12", "libpython3.12.so.1.0").
+#[cfg(any(target_os = "linux", test))]
+fn python_minor_version(path: &str) -> Option<u32> {
+    let index = path.rfind("python3.")?;
+    let digits: String = path[index + "python3.".len()..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok()
+}

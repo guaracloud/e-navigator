@@ -150,6 +150,86 @@ impl ElfSymbolTable {
     }
 }
 
+/// Finds the link-time virtual address of a named symbol in an ELF64
+/// image, searching `.symtab` and `.dynsym` for any symbol type.
+/// Returns `None` on malformed input; never panics.
+pub fn find_elf_symbol_address(image: &[u8], name: &str) -> Option<u64> {
+    if image.len() < 64 || image[..4] != ELF_MAGIC || image[4] != ELFCLASS64 {
+        return None;
+    }
+    let little_endian = image[5] == 1;
+    let read_u16 = |offset: usize| -> Option<u16> {
+        let bytes = image.get(offset..offset.checked_add(2)?)?;
+        let array = [bytes[0], bytes[1]];
+        Some(if little_endian {
+            u16::from_le_bytes(array)
+        } else {
+            u16::from_be_bytes(array)
+        })
+    };
+    let read_u32 = |offset: usize| -> Option<u32> {
+        let bytes = image.get(offset..offset.checked_add(4)?)?;
+        let array = [bytes[0], bytes[1], bytes[2], bytes[3]];
+        Some(if little_endian {
+            u32::from_le_bytes(array)
+        } else {
+            u32::from_be_bytes(array)
+        })
+    };
+    let read_u64 = |offset: usize| -> Option<u64> {
+        let bytes = image.get(offset..offset.checked_add(8)?)?;
+        let mut array = [0u8; 8];
+        array.copy_from_slice(bytes);
+        Some(if little_endian {
+            u64::from_le_bytes(array)
+        } else {
+            u64::from_be_bytes(array)
+        })
+    };
+
+    let section_header_offset = read_u64(40)? as usize;
+    let section_entry_size = usize::from(read_u16(58)?);
+    let section_count = usize::from(read_u16(60)?);
+    if section_entry_size < 64 || section_count == 0 || section_count > 65_000 {
+        return None;
+    }
+    for index in 0..section_count {
+        let header = section_header_offset.checked_add(index.checked_mul(section_entry_size)?)?;
+        let section_type = read_u32(header + 4)?;
+        if section_type != SHT_SYMTAB && section_type != SHT_DYNSYM {
+            continue;
+        }
+        let table_offset = read_u64(header + 24)? as usize;
+        let table_size = read_u64(header + 32)? as usize;
+        let string_section_index = read_u32(header + 40)? as usize;
+        let entry_size = read_u64(header + 56)? as usize;
+        if entry_size < 24 || table_size == 0 {
+            continue;
+        }
+        let string_header = section_header_offset
+            .checked_add(string_section_index.checked_mul(section_entry_size)?)?;
+        let string_offset = read_u64(string_header + 24)? as usize;
+        let string_size = read_u64(string_header + 32)? as usize;
+        let Some(string_table) = image.get(string_offset..string_offset.checked_add(string_size)?)
+        else {
+            continue;
+        };
+        let symbol_count = (table_size / entry_size).min(1_000_000);
+        for symbol_index in 0..symbol_count {
+            let symbol = table_offset.checked_add(symbol_index.checked_mul(entry_size)?)?;
+            let name_offset = read_u32(symbol)? as usize;
+            let value = read_u64(symbol + 8)?;
+            if value == 0 {
+                continue;
+            }
+            if read_c_string(string_table, name_offset) == Some(name) {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
 const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 const ELFCLASS64: u8 = 2;
 const SHT_SYMTAB: u32 = 2;

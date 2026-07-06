@@ -15,6 +15,9 @@ use e_navigator_signals::{
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_CPU_PROFILE_MAX_FRAMES: usize = 128;
 
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_PY_MAX_FRAMES: usize = 64;
+
 /// The in-kernel capture buffer was filled to the configured frame limit,
 /// so the sampled stack may continue past the deepest captured frame.
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -72,6 +75,23 @@ pub(crate) struct RawCpuProfileEvent {
     pub frame_count: u32,
     pub flags: u32,
     pub instruction_pointers: [u64; RAW_CPU_PROFILE_MAX_FRAMES],
+    pub py_frame_count: u32,
+    pub py_stop: u32,
+    pub py_frames: [u64; RAW_PY_MAX_FRAMES],
+}
+
+/// Human-readable CPython walk stop reason; reasons other than
+/// `complete` mean interpreter frames may be missing and are counted.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn py_stop_reason(py_stop: u32) -> Option<(&'static str, bool)> {
+    match py_stop {
+        0 => None,
+        1 => Some(("complete", false)),
+        2 => Some(("no_thread", true)),
+        3 => Some(("read_fault", true)),
+        4 => Some(("truncated", true)),
+        _ => Some(("unknown", true)),
+    }
 }
 
 /// A decoded CPU profile sample plus capture-side accounting that the
@@ -89,6 +109,8 @@ pub(crate) struct DecodedCpuProfileSample {
     /// True when a DWARF unwind stopped before the outermost frame for
     /// a reason other than the configured depth budget.
     pub dwarf_incomplete: bool,
+    /// True when the CPython frame walk stopped before the root frame.
+    pub py_incomplete: bool,
 }
 
 /// Resolves a captured instruction pointer for a pid into a stack frame.
@@ -101,6 +123,13 @@ pub(crate) trait FrameResolver {
     /// consult procfs have nothing to mis-attribute and accept every pid.
     fn verify_thread(&mut self, _pid: u32, _tid: u32, _command: &str) -> bool {
         true
+    }
+
+    /// Resolves a CPython code-object pointer to a function/file/line
+    /// frame by reading the process's memory. Resolvers without that
+    /// access return `None` and the frame keeps a raw pointer label.
+    fn resolve_python_frame(&mut self, _pid: u32, _code_ptr: u64) -> Option<RawProfileFrame> {
+        None
     }
 }
 
@@ -141,6 +170,10 @@ pub(crate) struct ProcfsSymbolizer {
     /// like them it can go stale on pid reuse, which at worst withholds or
     /// restores symbolization for later samples of a reused pid.
     thread_comms: std::collections::BTreeMap<(u32, u32), Option<String>>,
+    /// Cached CPython code-object resolutions keyed by (pid, code ptr).
+    /// Stale entries after code unloading or pid reuse only mislabel
+    /// python frames of that reused id until eviction.
+    python_frames: std::collections::BTreeMap<(u32, u64), Option<RawProfileFrame>>,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -156,6 +189,7 @@ impl ProcfsSymbolizer {
             maps: std::collections::BTreeMap::new(),
             symbols: std::collections::BTreeMap::new(),
             thread_comms: std::collections::BTreeMap::new(),
+            python_frames: std::collections::BTreeMap::new(),
         }
     }
 
@@ -218,6 +252,66 @@ impl ProcfsSymbolizer {
             .and_then(|comm| comm.as_deref())
     }
 
+    /// Reads a bounded compact-ASCII CPython unicode object.
+    fn read_python_string(mem: &std::fs::File, address: u64) -> Option<String> {
+        use crate::cpu_unwind::py312;
+        use std::os::unix::fs::FileExt;
+
+        const MAX_PY_STRING_BYTES: u64 = 256;
+        let mut word = [0u8; 8];
+        mem.read_exact_at(&mut word, address.checked_add(py312::UNICODE_LENGTH)?)
+            .ok()?;
+        let length = u64::from_le_bytes(word).min(MAX_PY_STRING_BYTES);
+        let mut state = [0u8; 4];
+        mem.read_exact_at(&mut state, address.checked_add(py312::UNICODE_STATE)?)
+            .ok()?;
+        let state = u32::from_le_bytes(state);
+        let kind = (state >> 2) & 0x7;
+        let compact = state & (1 << 5) != 0;
+        let ascii = state & (1 << 6) != 0;
+        if !compact || !ascii || kind != 1 || length == 0 {
+            return None;
+        }
+        let mut bytes = vec![0u8; length as usize];
+        mem.read_exact_at(&mut bytes, address.checked_add(py312::UNICODE_DATA)?)
+            .ok()?;
+        let text = String::from_utf8(bytes).ok()?;
+        text.chars().all(|c| !c.is_control()).then_some(text)
+    }
+
+    fn load_python_frame(&self, pid: u32, code_ptr: u64) -> Option<RawProfileFrame> {
+        use crate::cpu_unwind::py312;
+        use std::os::unix::fs::FileExt;
+
+        let mem = std::fs::File::open(self.procfs_root.join(pid.to_string()).join("mem")).ok()?;
+        let read_ptr = |offset: u64| -> Option<u64> {
+            let mut word = [0u8; 8];
+            mem.read_exact_at(&mut word, code_ptr.checked_add(offset)?)
+                .ok()?;
+            Some(u64::from_le_bytes(word))
+        };
+        let qualname_ptr = read_ptr(py312::CODE_QUALNAME)?;
+        let symbol = Self::read_python_string(&mem, qualname_ptr).or_else(|| {
+            let name_ptr = read_ptr(py312::CODE_NAME)?;
+            Self::read_python_string(&mem, name_ptr)
+        })?;
+        let file = read_ptr(py312::CODE_FILENAME)
+            .and_then(|filename_ptr| Self::read_python_string(&mem, filename_ptr));
+        let line = {
+            let mut word = [0u8; 4];
+            mem.read_exact_at(&mut word, code_ptr.checked_add(py312::CODE_FIRSTLINENO)?)
+                .ok()
+                .and_then(|()| u32::try_from(i32::from_le_bytes(word)).ok())
+        };
+        Some(RawProfileFrame {
+            symbol: Some(symbol),
+            module: Some("<python>".to_string()),
+            file,
+            line,
+            module_offset: None,
+        })
+    }
+
     fn load_symbol_table(&self, module: &str) -> Option<ElfSymbolTable> {
         let metadata = std::fs::metadata(module).ok()?;
         if metadata.len() > Self::MAX_MODULE_IMAGE_BYTES {
@@ -249,6 +343,20 @@ impl FrameResolver for ProcfsSymbolizer {
 
     fn verify_thread(&mut self, pid: u32, tid: u32, command: &str) -> bool {
         self.thread_comm(pid, tid) == Some(command)
+    }
+
+    fn resolve_python_frame(&mut self, pid: u32, code_ptr: u64) -> Option<RawProfileFrame> {
+        let key = (pid, code_ptr);
+        if !self.python_frames.contains_key(&key) {
+            if self.python_frames.len() >= 4096
+                && let Some(&oldest) = self.python_frames.keys().next()
+            {
+                self.python_frames.remove(&oldest);
+            }
+            let frame = self.load_python_frame(pid, code_ptr);
+            self.python_frames.insert(key, frame);
+        }
+        self.python_frames.get(&key)?.clone()
     }
 }
 
@@ -307,6 +415,38 @@ fn raw_cpu_profile_to_signal_with_clock(
             }
         })
         .collect::<Vec<_>>();
+    // Interpreter frames resolve leaf-first ahead of the native stack;
+    // unverified pids keep raw pointers rather than reading an
+    // unrelated process's memory.
+    let py_slots = (raw.py_frame_count as usize).min(RAW_PY_MAX_FRAMES);
+    let py_incomplete = py_stop_reason(raw.py_stop).is_some_and(|(_, incomplete)| incomplete);
+    let mut py_count = 0usize;
+    let stack_frames = if py_slots > 0 {
+        let mut merged = Vec::with_capacity(py_slots + stack_frames.len());
+        for &code_ptr in raw.py_frames.iter().take(py_slots) {
+            // Zero slots are interpreter shim frames skipped in-kernel.
+            if code_ptr == 0 {
+                continue;
+            }
+            py_count += 1;
+            let resolved = if pid_unverified {
+                None
+            } else {
+                resolver.resolve_python_frame(raw.pid, code_ptr)
+            };
+            merged.push(resolved.unwrap_or_else(|| RawProfileFrame {
+                symbol: Some(format!("py:{code_ptr:#x}")),
+                module: Some("<python>".to_string()),
+                file: None,
+                line: None,
+                module_offset: None,
+            }));
+        }
+        merged.extend(stack_frames);
+        merged
+    } else {
+        stack_frames
+    };
     let timestamp_unix_nanos = if raw.timestamp_unix_nanos == 0 {
         observed_unix_nanos
     } else {
@@ -369,6 +509,18 @@ fn raw_cpu_profile_to_signal_with_clock(
                     value: reason.to_string(),
                 });
             }
+            if py_count > 0 {
+                attributes.push(ProfilingAttribute {
+                    key: "profiling.stack.py_frames".to_string(),
+                    value: py_count.to_string(),
+                });
+            }
+            if let Some((reason, _)) = py_stop_reason(raw.py_stop) {
+                attributes.push(ProfilingAttribute {
+                    key: "profiling.stack.py_stop".to_string(),
+                    value: reason.to_string(),
+                });
+            }
             attributes
         },
     };
@@ -393,6 +545,7 @@ fn raw_cpu_profile_to_signal_with_clock(
             pid_unverified,
             dwarf_incomplete: unwind_stop_reason(raw.flags)
                 .is_some_and(|(_, incomplete)| incomplete),
+            py_incomplete,
         })
 }
 
@@ -489,6 +642,7 @@ pub(crate) struct CpuProfileDropCounters {
     truncated_stacks: std::sync::atomic::AtomicU64,
     pid_unverified_samples: std::sync::atomic::AtomicU64,
     dwarf_incomplete_samples: std::sync::atomic::AtomicU64,
+    py_incomplete_samples: std::sync::atomic::AtomicU64,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -518,11 +672,16 @@ impl CpuProfileDropCounters {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
+    pub(crate) fn record_py_incomplete_sample(&self) {
+        self.py_incomplete_samples
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Atomically reads and resets all counters, returning
     /// (lost_perf_events, backpressure_dropped, truncated_stacks,
-    /// pid_unverified_samples, dwarf_incomplete_samples) since the last
-    /// drain.
-    pub(crate) fn drain(&self) -> (u64, u64, u64, u64, u64) {
+    /// pid_unverified_samples, dwarf_incomplete_samples,
+    /// py_incomplete_samples) since the last drain.
+    pub(crate) fn drain(&self) -> (u64, u64, u64, u64, u64, u64) {
         (
             self.lost_perf_events
                 .swap(0, std::sync::atomic::Ordering::Relaxed),
@@ -533,6 +692,8 @@ impl CpuProfileDropCounters {
             self.pid_unverified_samples
                 .swap(0, std::sync::atomic::Ordering::Relaxed),
             self.dwarf_incomplete_samples
+                .swap(0, std::sync::atomic::Ordering::Relaxed),
+            self.py_incomplete_samples
                 .swap(0, std::sync::atomic::Ordering::Relaxed),
         )
     }
@@ -654,6 +815,44 @@ pub(crate) fn dwarf_incomplete_warning(
     )
 }
 
+/// Builds a bounded profiling warning reporting CPython frame walks
+/// that stopped before the root frame; interpreter frames may be
+/// missing from those samples.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn py_incomplete_warning(
+    host: Option<String>,
+    incomplete_samples: u64,
+    timestamp_unix_nanos: u64,
+) -> SignalEnvelope {
+    use e_navigator_signals::{
+        ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind,
+        ProfilingWarningObservation,
+    };
+    SignalEnvelope::profiling_warning_observation(
+        "source.aya_cpu_profile",
+        host,
+        ProfilingWarningObservation {
+            warning_type: "py_unwind_incomplete".to_string(),
+            message: "cpython frame walks stopped before the root frame; interpreter \
+                      frames may be missing"
+                .to_string(),
+            timestamp_unix_nanos,
+            source_signal_kind: "profile_sample_observation".to_string(),
+            source_module: "source.aya_cpu_profile".to_string(),
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::High,
+            process: None,
+            container: None,
+            kubernetes: None,
+            attributes: vec![ProfilingAttribute {
+                key: "profiling.stack.py_incomplete_samples".to_string(),
+                value: incomplete_samples.to_string(),
+            }],
+        },
+    )
+}
+
 /// Builds a bounded profiling warning reporting that captured stacks hit
 /// the configured in-kernel frame limit and may be deeper than captured.
 #[cfg(any(target_os = "linux", test))]
@@ -764,7 +963,8 @@ mod platform {
         send_with_backpressure,
     };
     use crate::cpu_unwind::{
-        UnwindMapSink, UnwindModuleSpan, UnwindProcMappings, UnwindRowAbi, UnwindTableManager,
+        PyProcInfoAbi, UnwindMapSink, UnwindModuleSpan, UnwindProcMappings, UnwindRowAbi,
+        UnwindTableManager,
     };
     use crate::perf_sample::perf_sample_bytes;
     use async_trait::async_trait;
@@ -944,6 +1144,9 @@ mod platform {
                                     if decoded.dwarf_incomplete {
                                         drop_counters.record_dwarf_incomplete_sample();
                                     }
+                                    if decoded.py_incomplete {
+                                        drop_counters.record_py_incomplete_sample();
+                                    }
                                     let signal = decoded.signal;
                                     accepted += 1;
                                     if !send_with_backpressure(&cpu_tx, signal, backpressure) {
@@ -1020,7 +1223,7 @@ mod platform {
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     while !emitter_shutdown.is_stopped() {
                         std::thread::sleep(std::time::Duration::from_secs(10));
-                        let (lost, dropped, truncated, foreign, dwarf_incomplete) =
+                        let (lost, dropped, truncated, foreign, dwarf_incomplete, py_incomplete) =
                             emitter_counters.drain();
                         if lost > 0 || dropped > 0 {
                             let warning = super::source_drop_warning(
@@ -1058,6 +1261,16 @@ mod platform {
                             let warning = super::dwarf_incomplete_warning(
                                 emitter_host.clone(),
                                 dwarf_incomplete,
+                                super::now_unix_nanos(),
+                            );
+                            if emitter_tx.blocking_send(warning).is_err() {
+                                return ReaderExit::Stopped;
+                            }
+                        }
+                        if py_incomplete > 0 {
+                            let warning = super::py_incomplete_warning(
+                                emitter_host.clone(),
+                                py_incomplete,
                                 super::now_unix_nanos(),
                             );
                             if emitter_tx.blocking_send(warning).is_err() {
@@ -1178,6 +1391,31 @@ mod platform {
         let mut programs: AyaProgramArray<&mut MapData> =
             AyaProgramArray::try_from(map).map_err(module_error)?;
         programs.set(0, &program_fd, 0).map_err(module_error)?;
+        for (index, name) in [(1u32, "cpu_profile_py_find"), (2u32, "cpu_profile_py_walk")] {
+            let py_program: &mut PerfEvent = ebpf
+                .program_mut(name)
+                .ok_or_else(|| CoreError::ModuleFailed {
+                    module: "source.aya_cpu_profile".to_string(),
+                    message: format!("missing {name} program"),
+                })?
+                .try_into()
+                .map_err(module_error)?;
+            py_program.load().map_err(module_error)?;
+            let py_fd = py_program
+                .fd()
+                .map_err(module_error)?
+                .try_clone()
+                .map_err(module_error)?;
+            let map = ebpf
+                .map_mut("CPU_PROFILE_PROGS")
+                .ok_or_else(|| CoreError::ModuleFailed {
+                    module: "source.aya_cpu_profile".to_string(),
+                    message: "missing CPU_PROFILE_PROGS map".to_string(),
+                })?;
+            let mut programs: AyaProgramArray<&mut MapData> =
+                AyaProgramArray::try_from(map).map_err(module_error)?;
+            programs.set(index, &py_fd, 0).map_err(module_error)?;
+        }
         Ok(())
     }
 
@@ -1186,6 +1424,7 @@ mod platform {
         rows: AyaArray<aya::maps::MapData, UnwindRowAbi>,
         modules: AyaHashMap<aya::maps::MapData, u32, UnwindModuleSpan>,
         processes: AyaHashMap<aya::maps::MapData, u32, UnwindProcMappings>,
+        python: AyaHashMap<aya::maps::MapData, u32, PyProcInfoAbi>,
     }
 
     impl EbpfUnwindSink {
@@ -1202,6 +1441,7 @@ mod platform {
                     .map_err(module_error)?,
                 processes: AyaHashMap::try_from(take(ebpf, "UNWIND_PROC_MAPPINGS")?)
                     .map_err(module_error)?,
+                python: AyaHashMap::try_from(take(ebpf, "PY_PROC_INFO")?).map_err(module_error)?,
             })
         }
     }
@@ -1227,6 +1467,14 @@ mod platform {
 
         fn remove_process(&mut self, pid: u32) {
             let _ = self.processes.remove(&pid);
+        }
+
+        fn write_python_process(&mut self, pid: u32, info: &PyProcInfoAbi) -> bool {
+            self.python.insert(pid, info, 0).is_ok()
+        }
+
+        fn remove_python_process(&mut self, pid: u32) {
+            let _ = self.python.remove(&pid);
         }
     }
 
@@ -1356,6 +1604,9 @@ mod tests {
             frame_count: 2,
             flags: 0,
             instruction_pointers: padded_pointers(&[0xabc, 0xdef, 0, 0]),
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
         let signal = raw_cpu_profile_to_signal_with_clock(
@@ -1413,6 +1664,9 @@ mod tests {
             frame_count: 0,
             flags: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
         let signal = raw_cpu_profile_to_signal_with_clock(
@@ -1446,6 +1700,9 @@ mod tests {
             frame_count: RAW_CPU_PROFILE_MAX_FRAMES as u32,
             flags: 0,
             instruction_pointers: padded_pointers(&[0x1, 0x2, 0x3, 0x4]),
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
         let config = CpuProfileSourceConfig {
             max_frames_per_sample: 2,
@@ -1534,6 +1791,9 @@ mod tests {
                 pointers[0] = 0x55f000000500;
                 pointers
             },
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
         let signal = raw_cpu_profile_to_signal_with_clock(
             raw_as_bytes(&raw),
@@ -1579,9 +1839,10 @@ mod tests {
         counters.record_truncated_stack();
         counters.record_pid_unverified_sample();
         counters.record_dwarf_incomplete_sample();
-        assert_eq!(counters.drain(), (5, 1, 2, 1, 1));
+        counters.record_py_incomplete_sample();
+        assert_eq!(counters.drain(), (5, 1, 2, 1, 1, 1));
         // Draining resets all counters.
-        assert_eq!(counters.drain(), (0, 0, 0, 0, 0));
+        assert_eq!(counters.drain(), (0, 0, 0, 0, 0, 0));
     }
 
     #[test]
@@ -1627,6 +1888,9 @@ mod tests {
             frame_count: 1,
             flags: 0,
             instruction_pointers: padded_pointers(&[0xabc, 0, 0, 0]),
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
         assert!(
@@ -1654,6 +1918,9 @@ mod tests {
             frame_count: 2,
             flags: 0,
             instruction_pointers: padded_pointers(&[0xabc, 0xdef, 0, 0]),
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
         let first = raw_cpu_profile_to_signal_with_clock(
@@ -1691,6 +1958,9 @@ mod tests {
             frame_count: 0,
             flags: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
         let config = CpuProfileSourceConfig {
             max_samples_per_batch: 2,
@@ -1719,6 +1989,9 @@ mod tests {
             frame_count: 0,
             flags: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
         let signal = raw_cpu_profile_to_signal_with_clock(
             raw_as_bytes(&raw),
@@ -1758,6 +2031,9 @@ mod tests {
             frame_count: 0,
             flags: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
         let signal = raw_cpu_profile_to_signal_with_clock(
             raw_as_bytes(&raw),
@@ -1797,6 +2073,9 @@ mod tests {
             frame_count: 4,
             flags: RAW_CPU_PROFILE_FLAG_TRUNCATED,
             instruction_pointers: padded_pointers(&[0x1, 0x2, 0x3, 0x4]),
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
         let decoded = raw_cpu_profile_to_signal_with_clock(
@@ -1829,6 +2108,9 @@ mod tests {
             frame_count: 2,
             flags: 0,
             instruction_pointers: padded_pointers(&[0x1, 0x2]),
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
         let decoded = raw_cpu_profile_to_signal_with_clock(
@@ -1917,6 +2199,9 @@ mod tests {
             frame_count: 1,
             flags: RAW_CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED,
             instruction_pointers: padded_pointers(&[0xabc]),
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
         let decoded = raw_cpu_profile_to_signal_with_clock(
@@ -1958,6 +2243,9 @@ mod tests {
             frame_count: 1,
             flags: RAW_CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED,
             instruction_pointers: padded_pointers(&[0xabc]),
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
         let decoded = raw_cpu_profile_to_signal_with_clock(
@@ -2035,6 +2323,9 @@ mod tests {
             frame_count: 3,
             flags: 0,
             instruction_pointers: padded_pointers(&[0x1000, 0x2000, 0x3000]),
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
         let mut resolver = RecordingResolver {
             requested: Vec::new(),
@@ -2066,6 +2357,9 @@ mod tests {
             frame_count: 1,
             flags: 0,
             instruction_pointers: padded_pointers(&[0xabc]),
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
         // Frame-pointer sample: fp mode, no dwarf stop attribute.
@@ -2136,6 +2430,179 @@ mod tests {
     }
 
     #[test]
+    fn python_frames_merge_leaf_first_with_attributes() {
+        struct PyResolver;
+        impl FrameResolver for PyResolver {
+            fn resolve(&mut self, _pid: u32, ip: u64) -> RawProfileFrame {
+                RawAddressResolver.resolve(0, ip)
+            }
+
+            fn resolve_python_frame(
+                &mut self,
+                _pid: u32,
+                code_ptr: u64,
+            ) -> Option<RawProfileFrame> {
+                (code_ptr == 0x5000).then(|| RawProfileFrame {
+                    symbol: Some("my_module.busy".to_string()),
+                    module: Some("<python>".to_string()),
+                    file: Some("/app/busy.py".to_string()),
+                    line: Some(17),
+                    module_offset: None,
+                })
+            }
+        }
+
+        let mut raw = RawCpuProfileEvent {
+            pid: 42,
+            tid: 43,
+            uid: 1000,
+            cgroup_id: 0,
+            sample_count: 1,
+            timestamp_unix_nanos: 1_000,
+            command: fixed_command("python3"),
+            frame_count: 1,
+            flags: 0,
+            instruction_pointers: padded_pointers(&[0xabc]),
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
+        };
+        raw.py_frame_count = 2;
+        raw.py_stop = 1; // complete
+        raw.py_frames[0] = 0x5000;
+        raw.py_frames[1] = 0x6000; // unresolvable -> raw pointer label
+
+        let decoded = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &source_config(),
+            10_000,
+            &mut PyResolver,
+        )
+        .expect("python sample decodes");
+        assert!(!decoded.py_incomplete);
+        let SignalPayload::ProfileSampleObservation(sample) = decoded.signal.payload else {
+            panic!("expected profile sample");
+        };
+        // Python frames lead, leaf first; the native frame follows.
+        assert_eq!(sample.stack_frames.len(), 3);
+        assert_eq!(
+            sample.stack_frames[0].symbol.as_deref(),
+            Some("my_module.busy")
+        );
+        assert_eq!(sample.stack_frames[0].file.as_deref(), Some("/app/busy.py"));
+        assert_eq!(sample.stack_frames[0].line, Some(17));
+        assert_eq!(sample.stack_frames[1].symbol.as_deref(), Some("py:0x6000"));
+        assert_eq!(
+            sample.stack_frames[2].symbol.as_deref(),
+            Some("ip:0000000000000abc")
+        );
+        assert!(sample.attributes.iter().any(|attribute| attribute.key
+            == "profiling.stack.py_frames"
+            && attribute.value == "2"));
+        assert!(
+            sample
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "profiling.stack.py_stop"
+                    && attribute.value == "complete")
+        );
+
+        // A read-faulted walk is flagged incomplete.
+        raw.py_stop = 3;
+        let decoded = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &source_config(),
+            10_000,
+            &mut PyResolver,
+        )
+        .expect("incomplete python sample decodes");
+        assert!(decoded.py_incomplete);
+    }
+
+    #[test]
+    fn procfs_symbolizer_resolves_python_code_objects() {
+        use crate::cpu_unwind::py312;
+        use std::io::{Seek, SeekFrom, Write};
+
+        let dir = std::env::temp_dir().join(format!("e-nav-pymem-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let pid_dir = dir.join("888");
+        std::fs::create_dir_all(&pid_dir).expect("pid dir");
+        let mut mem = std::fs::File::create(pid_dir.join("mem")).expect("mem file");
+
+        let code_ptr: u64 = 0x1000;
+        let qualname_ptr: u64 = 0x2000;
+        let filename_ptr: u64 = 0x3000;
+        let write_at = |mem: &mut std::fs::File, offset: u64, bytes: &[u8]| {
+            mem.seek(SeekFrom::Start(offset)).expect("seek");
+            mem.write_all(bytes).expect("write");
+        };
+        write_at(
+            &mut mem,
+            code_ptr + py312::CODE_QUALNAME,
+            &qualname_ptr.to_le_bytes(),
+        );
+        write_at(
+            &mut mem,
+            code_ptr + py312::CODE_FILENAME,
+            &filename_ptr.to_le_bytes(),
+        );
+        write_at(
+            &mut mem,
+            code_ptr + py312::CODE_FIRSTLINENO,
+            &41i32.to_le_bytes(),
+        );
+        // Compact ASCII unicode objects: kind=1 (bits 2..5), compact
+        // (bit 5), ascii (bit 6).
+        let state: u32 = (1 << 2) | (1 << 5) | (1 << 6);
+        for (ptr, text) in [
+            (qualname_ptr, "pkg.mod.busy"),
+            (filename_ptr, "/app/mod.py"),
+        ] {
+            write_at(
+                &mut mem,
+                ptr + py312::UNICODE_LENGTH,
+                &(text.len() as u64).to_le_bytes(),
+            );
+            write_at(&mut mem, ptr + py312::UNICODE_STATE, &state.to_le_bytes());
+            write_at(&mut mem, ptr + py312::UNICODE_DATA, text.as_bytes());
+        }
+        // Sensitive-looking adjacent memory that must never be exported.
+        write_at(&mut mem, code_ptr + 0x200, b"password=hunter2");
+        drop(mem);
+
+        let mut symbolizer = ProcfsSymbolizer::new(dir.clone(), true);
+        let frame = symbolizer
+            .resolve_python_frame(888, code_ptr)
+            .expect("python frame resolves");
+        assert_eq!(frame.symbol.as_deref(), Some("pkg.mod.busy"));
+        assert_eq!(frame.file.as_deref(), Some("/app/mod.py"));
+        assert_eq!(frame.line, Some(41));
+        assert_eq!(frame.module.as_deref(), Some("<python>"));
+        let serialized = format!("{frame:?}");
+        assert!(!serialized.contains("hunter2"));
+
+        // Unreadable pointers resolve to None (cached), not garbage.
+        assert!(symbolizer.resolve_python_frame(888, 0x9_0000).is_none());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn py_incomplete_warning_reports_count() {
+        let signal = py_incomplete_warning(Some("node-a".to_string()), 4, 12_000);
+        let SignalPayload::ProfilingWarningObservation(warning) = signal.payload else {
+            panic!("expected profiling warning");
+        };
+        assert_eq!(warning.warning_type, "py_unwind_incomplete");
+        assert!(warning.attributes.iter().any(|attribute| attribute.key
+            == "profiling.stack.py_incomplete_samples"
+            && attribute.value == "4"));
+    }
+
+    #[test]
     fn dwarf_incomplete_warning_reports_count() {
         let signal = dwarf_incomplete_warning(Some("node-a".to_string()), 6, 12_000);
         let SignalPayload::ProfilingWarningObservation(warning) = signal.payload else {
@@ -2155,7 +2622,7 @@ mod tests {
 
     #[test]
     fn raw_cpu_profile_event_layout_size_matches_ebpf_abi() {
-        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 1088);
+        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 1608);
     }
 
     fn padded_pointers(values: &[u64]) -> [u64; RAW_CPU_PROFILE_MAX_FRAMES] {

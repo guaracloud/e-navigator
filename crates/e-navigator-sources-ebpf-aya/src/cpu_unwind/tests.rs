@@ -7,6 +7,8 @@ struct MemorySink {
     modules: std::collections::BTreeMap<u32, UnwindModuleSpan>,
     processes: std::collections::BTreeMap<u32, (u32, Vec<UnwindMapping>)>,
     removed: Vec<u32>,
+    python: std::collections::BTreeMap<u32, PyProcInfoAbi>,
+    python_removed: Vec<u32>,
 }
 
 impl UnwindMapSink for MemorySink {
@@ -28,6 +30,15 @@ impl UnwindMapSink for MemorySink {
 
     fn remove_process(&mut self, pid: u32) {
         self.removed.push(pid);
+    }
+
+    fn write_python_process(&mut self, pid: u32, info: &PyProcInfoAbi) -> bool {
+        self.python.insert(pid, *info);
+        true
+    }
+
+    fn remove_python_process(&mut self, pid: u32) {
+        self.python_removed.push(pid);
     }
 }
 
@@ -286,4 +297,47 @@ fn row_conversion_covers_every_rule_kind() {
     assert_eq!(abi.cfa_kind, UNWIND_CFA_INVALID);
     assert_eq!(abi.ra_kind, UNWIND_RA_UNSUPPORTED);
     assert_eq!(abi.fp_kind, UNWIND_FP_PRESERVED);
+}
+
+#[test]
+fn python_minor_version_parses_interpreter_paths() {
+    assert_eq!(python_minor_version("/usr/local/bin/python3.12"), Some(12));
+    assert_eq!(
+        python_minor_version("/usr/lib/aarch64-linux-gnu/libpython3.11.so.1.0"),
+        Some(11)
+    );
+    assert_eq!(python_minor_version("/usr/bin/app"), None);
+    assert_eq!(python_minor_version("/opt/python3."), None);
+}
+
+#[test]
+fn py312_offsets_match_measured_values() {
+    // Ground truth measured with offsetof() against CPython 3.12.13.
+    let info = py312_proc_info(0x1000);
+    assert_eq!(info.runtime_addr, 0x1000);
+    assert_eq!(info.interpreters_head, 40);
+    assert_eq!(info.threads_head, 72);
+    assert_eq!(info.tstate_native_thread_id, 144);
+    assert_eq!(info.tstate_cframe, 56);
+    assert_eq!(info.iframe_owner, 70);
+}
+
+#[test]
+fn unsupported_python_versions_are_counted_not_registered() {
+    let root = fake_procfs("py311", 700, 0x1000_0000);
+    // Pretend the process maps a python3.11 interpreter.
+    std::fs::write(
+        root.join("700").join("maps"),
+        "10000000-10100000 r-xp 00000000 fd:00 100 /usr/local/bin/python3.11\n",
+    )
+    .expect("write maps");
+
+    let mut manager = UnwindTableManager::new(root.clone(), 16);
+    let mut sink = MemorySink::default();
+    let stats = manager.refresh(&mut sink);
+    assert_eq!(stats.python_registered, 0);
+    assert_eq!(stats.python_unsupported_version, 1);
+    assert!(sink.python.is_empty());
+
+    std::fs::remove_dir_all(&root).ok();
 }

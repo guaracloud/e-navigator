@@ -161,6 +161,38 @@ pub struct UnwindState {
     pub rounds: u32,
     pub frame_limit: u32,
     pub _pad: u32,
+    pub py_tstate: u64,
+    pub py_frame: u64,
+    pub py_rounds: u32,
+    pub _pad2: u32,
+}
+
+const PY_MAX_FRAMES: usize = 64;
+const PY_FRAMES_PER_ROUND: u32 = 16;
+const PY_MAX_ROUNDS: u32 = 4;
+const PY_MAX_THREAD_VISITS: u32 = 64;
+const PY_MAX_INTERPRETERS: u32 = 4;
+const PY_STOP_COMPLETE: u32 = 1;
+const PY_STOP_NO_THREAD: u32 = 2;
+const PY_STOP_READ_FAULT: u32 = 3;
+const PY_STOP_TRUNCATED: u32 = 4;
+
+/// Per-process CPython walk parameters: the biased `_PyRuntime` address
+/// plus version-specific struct offsets supplied by userspace.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PyProcInfo {
+    pub runtime_addr: u64,
+    pub interpreters_head: u16,
+    pub threads_head: u16,
+    pub tstate_next: u16,
+    pub tstate_native_thread_id: u16,
+    pub tstate_cframe: u16,
+    pub cframe_current_frame: u16,
+    pub iframe_code: u16,
+    pub iframe_previous: u16,
+    pub iframe_owner: u16,
+    pub _pad: [u16; 3],
 }
 const TLS_DIAG_IO_ENTER: u32 = 0;
 const TLS_DIAG_IO_EXIT: u32 = 1;
@@ -254,6 +286,11 @@ pub struct RawCpuProfileEvent {
     pub frame_count: u32,
     pub flags: u32,
     pub instruction_pointers: [u64; CPU_PROFILE_MAX_FRAMES],
+    pub py_frame_count: u32,
+    pub py_stop: u32,
+    /// CPython code-object pointers, leaf first; userspace resolves
+    /// them to function/file/line through the process's memory.
+    pub py_frames: [u64; PY_MAX_FRAMES],
 }
 
 #[repr(C)]
@@ -492,9 +529,15 @@ static UNWIND_MODULES: HashMap<u32, UnwindModuleSpan> = HashMap::with_max_entrie
 #[map]
 static UNWIND_PROC_MAPPINGS: HashMap<u32, UnwindProcMappings> = HashMap::with_max_entries(1024, 0);
 
-/// Tail-call target (index 0: cpu_profile_unwind) for chunked unwinding.
+/// Tail-call targets: index 0 = cpu_profile_unwind (chunked DWARF),
+/// index 1 = cpu_profile_py_find (CPython thread-state search),
+/// index 2 = cpu_profile_py_walk (CPython frame walk).
 #[map]
-static CPU_PROFILE_PROGS: ProgramArray = ProgramArray::with_max_entries(1, 0);
+static CPU_PROFILE_PROGS: ProgramArray = ProgramArray::with_max_entries(3, 0);
+
+/// pid (in the symbolization namespace) -> CPython walk parameters.
+#[map]
+static PY_PROC_INFO: HashMap<u32, PyProcInfo> = HashMap::with_max_entries(1024, 0);
 
 #[map]
 static CPU_PROFILE_UNWIND_STATE: PerCpuArray<UnwindState> = PerCpuArray::with_max_entries(1, 0);
@@ -1337,6 +1380,9 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
         }
     }
     event.instruction_pointers = [0; CPU_PROFILE_MAX_FRAMES];
+    event.py_frame_count = 0;
+    event.py_stop = 0;
+    event.py_frames = [0; PY_MAX_FRAMES];
     let frame_limit = cpu_profile_frame_limit();
 
     // DWARF path: only for pids userspace registered unwind tables for,
@@ -1368,6 +1414,227 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
         }
     }
 
+    emit_cpu_profile_event(&ctx, event);
+    Ok(0)
+}
+
+/// Emits the staged sample, first diverting through the CPython frame
+/// walker for registered interpreter processes. Returning from the tail
+/// call means it failed; the event is emitted without python frames.
+#[inline(always)]
+fn emit_cpu_profile_event(ctx: &PerfEventContext, event: &mut RawCpuProfileEvent) {
+    if event.flags & CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED == 0
+        && unsafe { PY_PROC_INFO.get(&event.pid) }.is_some()
+    {
+        unsafe {
+            CPU_PROFILE_PROGS.tail_call(ctx, 1);
+        }
+    }
+    CPU_PROFILE_EVENTS.output(ctx, &*event, 0);
+}
+
+#[perf_event]
+pub fn cpu_profile_py_find(ctx: PerfEventContext) -> u32 {
+    match try_cpu_profile_py_find(ctx) {
+        Ok(code) => code,
+        Err(code) => code as u32,
+    }
+}
+
+/// Locates the sampled thread's CPython thread state by walking
+/// `_PyRuntime` -> interpreters -> thread lists (flattened to one
+/// bounded loop) and matching on the native thread id, then tail-calls
+/// the frame walker. Every failure emits the event with an explicit
+/// `py_stop` - never a dropped sample.
+fn try_cpu_profile_py_find(ctx: PerfEventContext) -> Result<u32, i64> {
+    let event = unsafe {
+        let ptr = CPU_PROFILE_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+        &mut *ptr
+    };
+    let state = unsafe {
+        let ptr = CPU_PROFILE_UNWIND_STATE.get_ptr_mut(0).ok_or(1_i64)?;
+        &mut *ptr
+    };
+    let Some(info) = (unsafe { PY_PROC_INFO.get(&event.pid) }) else {
+        CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+        return Ok(0);
+    };
+
+    let mut stop = PY_STOP_NO_THREAD;
+    let mut found: u64 = 0;
+    'search: {
+        let Some(mut interpreter) = read_user_u64(
+            info.runtime_addr
+                .wrapping_add(u64::from(info.interpreters_head)),
+        ) else {
+            stop = PY_STOP_READ_FAULT;
+            break 'search;
+        };
+        let mut candidate: u64 = 0;
+        let mut interpreters_left = PY_MAX_INTERPRETERS;
+        for _ in 0..PY_MAX_THREAD_VISITS {
+            if candidate == 0 {
+                if interpreter == 0 || interpreters_left == 0 {
+                    break;
+                }
+                interpreters_left -= 1;
+                let Some(head) =
+                    read_user_u64(interpreter.wrapping_add(u64::from(info.threads_head)))
+                else {
+                    stop = PY_STOP_READ_FAULT;
+                    break 'search;
+                };
+                // PyInterpreterState.next is the first field.
+                let Some(next_interpreter) = read_user_u64(interpreter) else {
+                    stop = PY_STOP_READ_FAULT;
+                    break 'search;
+                };
+                interpreter = next_interpreter;
+                candidate = head;
+                if candidate == 0 {
+                    continue;
+                }
+            }
+            let Some(native_id) =
+                read_user_u64(candidate.wrapping_add(u64::from(info.tstate_native_thread_id)))
+            else {
+                stop = PY_STOP_READ_FAULT;
+                break 'search;
+            };
+            if native_id == u64::from(event.tid) {
+                found = candidate;
+                break;
+            }
+            let Some(next) = read_user_u64(candidate.wrapping_add(u64::from(info.tstate_next)))
+            else {
+                stop = PY_STOP_READ_FAULT;
+                break 'search;
+            };
+            candidate = next;
+        }
+    }
+
+    if found == 0 {
+        event.py_stop = stop;
+        CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+        return Ok(0);
+    }
+    state.py_tstate = found;
+
+    // Resolve the innermost interpreter frame up front so the walker
+    // rounds only chain frame-to-frame.
+    let Some(info) = (unsafe { PY_PROC_INFO.get(&event.pid) }) else {
+        CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+        return Ok(0);
+    };
+    let Some(cframe) = read_user_u64(found.wrapping_add(u64::from(info.tstate_cframe))) else {
+        event.py_stop = PY_STOP_READ_FAULT;
+        CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+        return Ok(0);
+    };
+    let frame = if cframe == 0 {
+        0
+    } else {
+        match read_user_u64(cframe.wrapping_add(u64::from(info.cframe_current_frame))) {
+            Some(frame) => frame,
+            None => {
+                event.py_stop = PY_STOP_READ_FAULT;
+                CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+                return Ok(0);
+            }
+        }
+    };
+    if frame == 0 {
+        event.py_stop = PY_STOP_COMPLETE;
+        CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+        return Ok(0);
+    }
+    state.py_frame = frame;
+    state.py_rounds = 0;
+    unsafe {
+        CPU_PROFILE_PROGS.tail_call(&ctx, 2);
+    }
+    // Tail call failed; emit without python frames, accounted.
+    event.py_stop = PY_STOP_READ_FAULT;
+    CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+    Ok(0)
+}
+
+#[perf_event]
+pub fn cpu_profile_py_walk(ctx: PerfEventContext) -> u32 {
+    match try_cpu_profile_py_walk(ctx) {
+        Ok(code) => code,
+        Err(code) => code as u32,
+    }
+}
+
+/// Walks the located thread state's `_PyInterpreterFrame` chain,
+/// recording code-object pointers leaf first for userspace resolution.
+/// Chunked: PY_FRAMES_PER_ROUND frames per round, self tail calls up
+/// to PY_MAX_ROUNDS; shim frames are recorded as zero pointers and
+/// dropped in userspace so each round's loop stays verifier-friendly.
+fn try_cpu_profile_py_walk(ctx: PerfEventContext) -> Result<u32, i64> {
+    let event = unsafe {
+        let ptr = CPU_PROFILE_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+        &mut *ptr
+    };
+    let state = unsafe {
+        let ptr = CPU_PROFILE_UNWIND_STATE.get_ptr_mut(0).ok_or(1_i64)?;
+        &mut *ptr
+    };
+    let Some(info) = (unsafe { PY_PROC_INFO.get(&event.pid) }) else {
+        CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+        return Ok(0);
+    };
+    let info = *info;
+
+    let mut frame = state.py_frame;
+    let mut stop = 0u32;
+    for _ in 0..PY_FRAMES_PER_ROUND {
+        if frame == 0 {
+            stop = PY_STOP_COMPLETE;
+            break;
+        }
+        if event.py_frame_count >= PY_MAX_FRAMES as u32 {
+            stop = PY_STOP_TRUNCATED;
+            break;
+        }
+        let Some(code) = read_user_u64(frame.wrapping_add(u64::from(info.iframe_code))) else {
+            stop = PY_STOP_READ_FAULT;
+            break;
+        };
+        // Shim frames threaded by the C stack (owner == 3) are stored
+        // as zero and skipped during userspace resolution.
+        let Some(owner) = read_user_u8(frame.wrapping_add(u64::from(info.iframe_owner))) else {
+            stop = PY_STOP_READ_FAULT;
+            break;
+        };
+        let index = (event.py_frame_count as usize).min(PY_MAX_FRAMES - 1);
+        event.py_frames[index] = if owner == 3 { 0 } else { code };
+        event.py_frame_count += 1;
+        let Some(previous) = read_user_u64(frame.wrapping_add(u64::from(info.iframe_previous)))
+        else {
+            stop = PY_STOP_READ_FAULT;
+            break;
+        };
+        frame = previous;
+    }
+
+    if stop == 0 {
+        if frame == 0 {
+            stop = PY_STOP_COMPLETE;
+        } else {
+            state.py_frame = frame;
+            state.py_rounds += 1;
+            if state.py_rounds < PY_MAX_ROUNDS {
+                unsafe {
+                    CPU_PROFILE_PROGS.tail_call(&ctx, 2);
+                }
+            }
+            stop = PY_STOP_TRUNCATED;
+        }
+    }
+    event.py_stop = stop;
     CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
     Ok(0)
 }
@@ -1584,7 +1851,7 @@ fn finish_unwind(
     if stop == UNWIND_STOP_DEPTH {
         event.flags |= CPU_PROFILE_FLAG_TRUNCATED;
     }
-    CPU_PROFILE_EVENTS.output(ctx, &*event, 0);
+    emit_cpu_profile_event(ctx, event);
     Ok(0)
 }
 
@@ -1639,6 +1906,11 @@ fn find_unwind_row(module_id: u32, pc_vaddr: u64) -> Option<UnwindRowAbi> {
 #[inline(always)]
 fn read_user_u64(address: u64) -> Option<u64> {
     unsafe { bpf_probe_read_user::<u64>(address as *const u64).ok() }
+}
+
+#[inline(always)]
+fn read_user_u8(address: u64) -> Option<u8> {
+    unsafe { bpf_probe_read_user::<u8>(address as *const u8).ok() }
 }
 
 #[inline(always)]
