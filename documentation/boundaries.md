@@ -48,6 +48,18 @@ E-Navigator does not currently claim:
 - full per-connection TCP state-machine tracking or packet accounting (TCP
   retransmit, reset, and state-transition observation and counting are
   implemented, with resets and state transitions locally proven);
+- stack unwinding beyond frame pointers (CPU profile stacks use frame-pointer
+  unwinding at a configurable depth of up to 128 frames, and user stacks are
+  additionally bounded by the kernel `kernel.perf_event_max_stack` sysctl,
+  127 by default; frame-pointer-omitted binaries and interpreter/JIT runtimes
+  yield short or opaque native stacks until DWARF/CFI and interpreter
+  unwinding land — stacks that fill the configured budget are flagged and
+  counted, never silently truncated);
+- cross-pid-namespace symbolization beyond verified pids (pids are translated
+  in-kernel into the symbolization procfs namespace where the kernel allows;
+  untranslatable pids are symbolized only after a thread-comm identity check
+  and otherwise carry raw addresses with accounting — an unrelated process
+  sharing pid, tid, and thread comm would evade this check);
 - lossless DNS or HTTP capture across every node and workload shape;
 - live native `network.flow.bytes` export from traffic after the native metric
   migration, including flow-attribution warning proof;

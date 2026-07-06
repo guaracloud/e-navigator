@@ -212,9 +212,10 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   Prometheus sink `/debug/pprof/profile` endpoint served a ~30 KB pprof
   protobuf carrying module mappings and location addresses. Frames requiring
   DWARF unwinding (interpreted/JIT stacks) and idle `swapper` samples
-  correctly fall back to raw `ip:` addresses. Local smoke proof only; the
-  32-frame kernel cap, DWARF unwinding, and Kubernetes-node symbolization
-  remain out of scope or unproven.
+  correctly fall back to raw `ip:` addresses. Local smoke proof only;
+  DWARF unwinding and Kubernetes-node symbolization remain unproven (the
+  32-frame kernel cap this run operated under was lifted to a configurable
+  depth on 2026-07-05; see the configurable-depth entry below).
 - Live inbound (server-side) HTTP capture on the local OrbStack Docker VM
   (2026-07-04): with `http_source.inbound_enabled`, five curl requests
   against a local Python HTTP server produced exactly five
@@ -294,6 +295,23 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   high-confidence, and no payload value bytes appeared in any exported
   signal. All eBPF programs verifier-loaded on the OrbStack kernel after
   the segment-loop change. Local smoke proof only.
+- Live configurable-depth CPU profile capture on the local OrbStack Docker
+  VM (2026-07-05): with `max_frames_per_sample = 100`, a privileged run
+  sampling an 80-deep recursive C spinner (built `-O0
+  -fno-omit-frame-pointer`) captured 1176 samples all exceeding the old
+  32-frame cap, the deepest at 85 fully symbolized frames (`spin_leaf`,
+  80x `deep_recurse`, `__libc_start_main`, `_start`); rerun with
+  `max_frames_per_sample = 16`, every spinner sample was capped at exactly
+  16 frames, carried the `profiling.stack.capture_truncated` attribute,
+  and a `stack_depth_capped` warning reported the truncated count and
+  frame limit. The same run proved in-kernel pid-namespace translation:
+  sampled pids matched the procfs pids of the agent's namespace (they had
+  not, pre-fix, under OrbStack's nested pid namespaces), and samples from
+  the VM's parent namespace were refused symbolization with
+  `profiling.stack.pid_ns=unverified` plus a `pid_unverified_samples`
+  warning instead of being mis-attributed to same-numbered processes. The
+  perf-event program verifier-loaded on the OrbStack kernel after both
+  changes. Local smoke proof only.
 
 ## Partial Or Not Yet Proven
 
