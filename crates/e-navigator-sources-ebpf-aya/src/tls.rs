@@ -246,8 +246,8 @@ mod platform {
 
             load_uprobe_programs(&mut ebpf, OPENSSL_BINDINGS);
             load_uprobe_programs(&mut ebpf, GNUTLS_BINDINGS);
-            let mut attached_openssl: BTreeSet<PathBuf> = BTreeSet::new();
-            let mut attached_gnutls: BTreeSet<PathBuf> = BTreeSet::new();
+            let mut attached_openssl: BTreeSet<(u64, u64)> = BTreeSet::new();
+            let mut attached_gnutls: BTreeSet<(u64, u64)> = BTreeSet::new();
             let libraries = discover_tls_libraries(&self.procfs_root);
             let openssl_attached = attach_uprobe_libraries(
                 &mut ebpf,
@@ -408,16 +408,21 @@ mod platform {
     /// The OpenSSL/BoringSSL and GnuTLS shared objects mapped into any process.
     #[derive(Debug, Default)]
     struct DiscoveredTlsLibraries {
-        openssl: Vec<PathBuf>,
-        gnutls: Vec<PathBuf>,
+        openssl: Vec<((u64, u64), PathBuf)>,
+        gnutls: Vec<((u64, u64), PathBuf)>,
     }
 
-    /// Scans `/proc/<pid>/maps` for mapped TLS shared objects, returning the
-    /// unique absolute paths so each distinct library version is probed.
+    /// Scans `/proc/<pid>/maps` for mapped TLS shared objects. Library
+    /// paths are resolved through `<procfs>/<pid>/root/<path>` so files in
+    /// other mount namespaces (container workloads) are attachable, and
+    /// deduplicated by (device, inode) so each distinct library file is
+    /// probed exactly once no matter how many processes map it.
     fn discover_tls_libraries(procfs_root: &Path) -> DiscoveredTlsLibraries {
         const MAX_SCANNED_PROCESSES: usize = 4096;
-        let mut openssl = BTreeSet::new();
-        let mut gnutls = BTreeSet::new();
+        let mut openssl: std::collections::BTreeMap<(u64, u64), PathBuf> =
+            std::collections::BTreeMap::new();
+        let mut gnutls: std::collections::BTreeMap<(u64, u64), PathBuf> =
+            std::collections::BTreeMap::new();
 
         let Ok(entries) = std::fs::read_dir(procfs_root) else {
             return DiscoveredTlsLibraries::default();
@@ -444,20 +449,31 @@ mod platform {
                     continue;
                 };
                 let path = format!("/{path}");
-                if let Some(basename) = Path::new(&path).file_name().and_then(|name| name.to_str())
-                {
-                    if basename.starts_with("libssl.so") {
-                        openssl.insert(PathBuf::from(&path));
-                    } else if basename.starts_with("libgnutls.so") {
-                        gnutls.insert(PathBuf::from(&path));
-                    }
-                }
+                let Some(basename) = Path::new(&path).file_name().and_then(|name| name.to_str())
+                else {
+                    continue;
+                };
+                let target = if basename.starts_with("libssl.so") {
+                    &mut openssl
+                } else if basename.starts_with("libgnutls.so") {
+                    &mut gnutls
+                } else {
+                    continue;
+                };
+                let resolved = entry.path().join("root").join(path.trim_start_matches('/'));
+                let Ok(metadata) = std::fs::metadata(&resolved) else {
+                    continue;
+                };
+                use std::os::linux::fs::MetadataExt;
+                target
+                    .entry((metadata.st_dev(), metadata.st_ino()))
+                    .or_insert(resolved);
             }
         }
 
         DiscoveredTlsLibraries {
-            openssl: openssl.into_iter().collect(),
-            gnutls: gnutls.into_iter().collect(),
+            openssl: openssl.into_iter().map(|(key, path)| (key, path)).collect(),
+            gnutls: gnutls.into_iter().map(|(key, path)| (key, path)).collect(),
         }
     }
 
@@ -491,12 +507,12 @@ mod platform {
     fn attach_uprobe_libraries(
         ebpf: &mut Ebpf,
         bindings: &[UprobeBinding],
-        libraries: &[PathBuf],
-        attached_paths: &mut BTreeSet<PathBuf>,
+        libraries: &[((u64, u64), PathBuf)],
+        attached_identities: &mut BTreeSet<(u64, u64)>,
     ) -> usize {
         let mut attached = 0;
-        for library in libraries {
-            if !attached_paths.insert(library.clone()) {
+        for (identity, library) in libraries {
+            if !attached_identities.insert(*identity) {
                 continue;
             }
             for binding in bindings {
