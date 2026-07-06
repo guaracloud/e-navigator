@@ -44,7 +44,8 @@ E-Navigator does not currently claim:
   BoringSSL — including the OpenSSL 3 `_ex` variants — and GnuTLS, with
   libraries rescanned every 15s so late-starting workloads are attached;
   live-proven for OpenSSL Redis over TLS, OpenSSL HTTP/1 over TLS, and GnuTLS
-  HTTP/1 over TLS; Go `crypto/tls` is not yet implemented);
+  HTTP/1 over TLS, including cross-mount-namespace library attach proven on
+  the homelab; Go `crypto/tls` is not yet implemented);
 - full per-connection TCP state-machine tracking or packet accounting (TCP
   retransmit, reset, and state-transition observation and counting are
   implemented, with resets and state transitions locally proven);
@@ -62,9 +63,17 @@ E-Navigator does not currently claim:
   CPython 3.12 struct offsets measured from its headers; other versions are
   counted as unsupported, JIT runtimes are not decoded, thread matching uses
   `native_thread_id` and therefore degrades with accounting when the
-  interpreter runs in a different pid namespace than the agent's procfs
-  view, and only co_qualname/co_name, co_filename, and co_firstlineno are
-  ever read from interpreter memory);
+  interpreter runs in a pid namespace whose CPython thread ids the agent
+  cannot translate, and only co_qualname/co_name, co_filename, and
+  co_firstlineno are ever read from interpreter memory; the interpreter's
+  own pid namespace is translated when the kernel allows, which is the
+  containerized-workload case proven on the homelab);
+- native DWARF coverage of every process on a heavily loaded node (the
+  in-kernel unwind-table row pool is finite; the agent prioritizes
+  processes it observes on-CPU and re-allocates the pool each refresh, but
+  on nodes running many processes with large system libraries some
+  modules are skipped with row-budget accounting and fall back to
+  frame-pointer unwinding);
 - cross-pid-namespace symbolization beyond verified pids (pids are translated
   in-kernel into the symbolization procfs namespace where the kernel allows;
   untranslatable pids are symbolized only after a thread-comm identity check

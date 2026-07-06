@@ -163,6 +163,39 @@ or chart rendering:
 
 Guarded Linux/Kubernetes runs have recorded these slices:
 
+- Homelab Kubernetes live proof (2026-07-06, homelab k3s v1.30, kernel 6.6,
+  x86_64, single `e-navigator` namespace on the `homelab-02` node). A
+  privileged hostPID DaemonSet built from the current binary was rolled out
+  alongside resource-limited Redis, PostgreSQL, MongoDB, NATS, Kafka
+  (KRaft), gRPC (grpcbin), and TLS-nginx workloads with per-protocol client
+  loops, and separately a CPython 3.12 and a frame-pointer-omitted C
+  workload for profiling. Recorded, then cleaned up:
+  - `source.aya_protocol` captured Redis, PostgreSQL, MongoDB, NATS, gRPC,
+    and Kafka requests with request/response matching and semantic
+    attributes (`db.operation=SET`, `db.system=postgresql`, `rpc.system=grpc`,
+    `messaging.system=kafka` with error code, etc.); no raw payloads.
+  - `source.aya_tls` captured HTTPS requests through libssl uprobes across
+    the pod's mount namespace (the cross-namespace library-resolution fix)
+    with matched 200 responses.
+  - `source.aya_cpu_profile` native DWARF/CFI unwinding verifier-loaded and
+    ran on the 6.6 kernel, producing symbolized stacks for node processes;
+    CPython 3.12 interpreter unwinding produced complete
+    function/file/line stacks for the containerized python workload
+    (`leaf_busy` -> `level_c` -> `level_b` -> `level_a` -> `main` ->
+    `<module>`) via the pid-namespace thread-translation fix.
+  - Container and Kubernetes attribution attached to captured records
+    (container id plus pod context with the DaemonSet's `NODE_NAME` and a
+    pod-read ClusterRole), and the Prometheus sink served attributed
+    `network_*` metric families in-cluster.
+  Recorded honestly as homelab live proof, not production proof. Not cleanly
+  verified on the homelab this session: native DWARF unwinding of pod
+  process stacks specifically — the in-kernel unwind-table row pool is
+  capacity-bounded on a node running several hundred processes with large
+  system libraries, and while demand-driven prioritization and per-refresh
+  pool re-allocation are implemented and DWARF-proven on OrbStack, full pod
+  native-DWARF coverage under that load was not confirmed. TCP retransmit
+  induction and live Prometheus scrape wiring beyond the served endpoint
+  also remain out of this run.
 - E-Navigator DaemonSet readiness on the homelab benchmark namespace for
   selected images and configurations.
 - Live `source.aya_exec` and `source.aya_network` records from Kubernetes nodes.
