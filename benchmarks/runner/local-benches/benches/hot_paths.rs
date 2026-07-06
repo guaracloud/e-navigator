@@ -34,6 +34,7 @@ use e_navigator_sinks::{
     format_otel_trace_record, format_pprof_profile, format_profile_record,
 };
 use e_navigator_sources_ebpf_aya::{
+    bench_inline_sample, bench_perf_sample_into_owned,
     cpu_profile::fuzz_decode_raw_cpu_profile_event, exec::fuzz_decode_raw_exec_event,
     network::fuzz_decode_raw_network_event, protocol::fuzz_decode_raw_protocol_data_event,
 };
@@ -43,6 +44,20 @@ use e_navigator_sources_host::{
 use serde::Serialize;
 use std::{cell::Cell, collections::BTreeMap};
 use tokio::{runtime::Runtime, sync::mpsc};
+
+fn bench_reader_sample_handoff(c: &mut Criterion) {
+    // A contiguous 368-byte RawProtocolDataEvent perf sample (tail empty),
+    // the common case. The old path allocated a Vec per event (per-CPU
+    // reader threads → global-allocator contention); the inline path
+    // copies into a fixed stack buffer with no heap allocation.
+    let head = vec![0x7f_u8; 368];
+    c.bench_function("reader_handoff/vec_into_owned", |b| {
+        b.iter(|| bench_perf_sample_into_owned(black_box(&head), black_box(&[])))
+    });
+    c.bench_function("reader_handoff/inline_sample", |b| {
+        b.iter(|| bench_inline_sample(black_box(&head), black_box(&[])))
+    });
+}
 
 fn bench_raw_aya_decoders(c: &mut Criterion) {
     let exec_bytes = vec![0x42; 4096];
@@ -1220,6 +1235,7 @@ fn bench_unwind_table(c: &mut Criterion) {
 
 criterion_group!(
     benches,
+    bench_reader_sample_handoff,
     bench_unwind_table,
     bench_raw_aya_decoders,
     bench_host_parsers,

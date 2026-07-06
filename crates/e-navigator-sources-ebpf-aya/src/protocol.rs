@@ -1325,7 +1325,7 @@ fn now_unix_nanos() -> u64 {
 #[cfg(target_os = "linux")]
 mod platform {
     use crate::diagnostics::{DiagnosticSampleDecision, SourceDiagnostics};
-    use crate::perf_sample::perf_sample_bytes;
+    use crate::perf_sample::InlineSample;
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
@@ -1487,7 +1487,7 @@ mod platform {
             // Reassembly is stateful per connection while perf samples arrive
             // per CPU, so all readers feed a single decoder task.
             let (sample_tx, mut sample_rx) =
-                mpsc::channel::<Vec<u8>>(super::RAW_SAMPLE_CHANNEL_CAPACITY);
+                mpsc::channel::<InlineSample>(super::RAW_SAMPLE_CHANNEL_CAPACITY);
 
             let cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
             for cpu_id in cpus {
@@ -1509,8 +1509,15 @@ mod platform {
 
                             match event {
                                 PerfEvent::Sample { head, tail } => {
-                                    let bytes = perf_sample_bytes(head, tail).into_owned();
-                                    if sample_tx.blocking_send(bytes).is_err() {
+                                    // Copy into a fixed inline buffer so the
+                                    // hand-off to the decoder needs no
+                                    // per-event heap allocation. Oversized
+                                    // samples are dropped with accounting.
+                                    let Some(sample) = InlineSample::from_perf(head, tail) else {
+                                        telemetry.record_lost_perf_events(1);
+                                        return;
+                                    };
+                                    if sample_tx.blocking_send(sample).is_err() {
                                         closed = true;
                                     }
                                 }
@@ -1547,13 +1554,17 @@ mod platform {
                 );
                 let mut signals = Vec::new();
 
-                while let Some(bytes) = sample_rx.blocking_recv() {
+                while let Some(sample) = sample_rx.blocking_recv() {
                     if decoder_shutdown.is_stopped() {
                         return;
                     }
 
                     signals.clear();
-                    match registry.handle_event(&bytes, super::now_unix_nanos(), &mut signals) {
+                    match registry.handle_event(
+                        sample.as_bytes(),
+                        super::now_unix_nanos(),
+                        &mut signals,
+                    ) {
                         Ok(()) => {
                             decoder_telemetry.record_decoded_sample();
                             for signal in signals.drain(..) {
