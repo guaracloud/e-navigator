@@ -604,6 +604,30 @@ static PENDING_TLS_IO: HashMap<u64, PendingTlsIo> = HashMap::with_max_entries(81
 static TLS_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
     PerCpuArray::with_max_entries(TLS_DIAGNOSTIC_COUNTERS_LEN, 0);
 
+// Capture-filter control word held in CAPTURE_FILTER_CONTROL[0]. Userspace
+// keeps this in lock-step with the `[capture_filter]` config; the kernel never
+// sees a namespace or label, only cgroup ids and this posture byte.
+// `0` disables the filter; `1` enables it with unknown cgroups captured; any
+// other enabled value (userspace writes `2`) enables it with unknown cgroups
+// dropped.
+const CAPTURE_FILTER_DISABLED: u32 = 0;
+const CAPTURE_FILTER_UNKNOWN_CAPTURE: u32 = 1;
+
+/// Single-slot control word: disabled, or enabled with the posture applied to
+/// cgroups that are absent from `CGROUP_CAPTURE_FILTER`.
+#[map]
+static CAPTURE_FILTER_CONTROL: Array<u32> = Array::with_max_entries(1, 0);
+
+/// Per-cgroup capture verdict populated by userspace: `1` capture, `0` drop.
+/// Capacity mirrors `e_navigator_core::capture_filter::CAPTURE_FILTER_MAP_CAPACITY`.
+#[map]
+static CGROUP_CAPTURE_FILTER: HashMap<u64, u8> = HashMap::with_max_entries(8192, 0);
+
+/// Count of handler invocations suppressed by the capture filter, summed
+/// across CPUs by userspace for the filter diagnostic (drop-with-accounting).
+#[map]
+static CAPTURE_FILTER_DROPPED: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
+
 #[tracepoint]
 pub fn tracepoint_execve(ctx: TracePointContext) -> u32 {
     match try_tracepoint_execve(ctx) {
@@ -1182,6 +1206,10 @@ fn try_tracepoint_exec_common(
     event.event_source = EXEC_EVENT_SOURCE_SYSCALL_ENTER;
     event.event_monotonic_nanos = unsafe { bpf_ktime_get_ns() };
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     event.executable = [0; EXECUTABLE_LEN];
     event.arguments = [[0; ARG_LEN]; MAX_ARGS];
@@ -1206,6 +1234,10 @@ fn try_tracepoint_process_exec(ctx: TracePointContext) -> Result<u32, i64> {
     event.event_source = EXEC_EVENT_SOURCE_SCHED_EXEC;
     event.event_monotonic_nanos = unsafe { bpf_ktime_get_ns() };
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     event.executable = [0; EXECUTABLE_LEN];
     event.arguments = [[0; ARG_LEN]; MAX_ARGS];
@@ -1225,6 +1257,10 @@ fn try_tracepoint_process_exit(ctx: TracePointContext) -> Result<u32, i64> {
     event.pid = (pid_tgid >> 32) as u32;
     event.uid = uid_gid as u32;
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
 
     EXIT_EVENTS.output(&ctx, &*event, 0);
@@ -1360,6 +1396,10 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
     event.tid = pid_tgid as u32;
     event.uid = uid_gid as u32;
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.sample_count = 1;
     event.timestamp_unix_nanos = 0;
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
@@ -2156,6 +2196,10 @@ fn emit_tls_data(
     event.pid = connection.pid;
     event.uid = connection.uid;
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.fd = connection.fd;
     event.direction = direction;
     event.family = connection.family;
@@ -2243,6 +2287,15 @@ fn try_tracepoint_connect_enter(ctx: TracePointContext) -> Result<u32, i64> {
 }
 
 fn track_connect_enter(ctx: &TracePointContext) -> Result<u32, i64> {
+    // Filter at connection establishment: a denied workload's connection is
+    // never tracked, so every downstream protocol/tls/http/dns read and write
+    // for it early-exits on the ACTIVE_CONNECTIONS miss. This is the overhead
+    // lever, not just scope control.
+    let cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     let pid_tgid = bpf_get_current_pid_tgid();
     let uid_gid = bpf_get_current_uid_gid();
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
@@ -2253,7 +2306,7 @@ fn track_connect_enter(ctx: &TracePointContext) -> Result<u32, i64> {
     let mut pending = PendingConnect {
         pid: (pid_tgid >> 32) as u32,
         uid: uid_gid as u32,
-        cgroup_id: current_cgroup_id(),
+        cgroup_id,
         fd,
         family: family as u32,
         role: CONNECTION_ROLE_CLIENT,
@@ -2550,6 +2603,10 @@ fn emit_http_request_event(
     event.pid = connection.pid;
     event.uid = connection.uid;
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.fd = fd;
     event.family = connection.family;
     event.remote_port_be = connection.remote_port_be;
@@ -2589,6 +2646,10 @@ fn emit_http_request_event_without_connection(
     event.pid = (pid_tgid >> 32) as u32;
     event.uid = uid_gid as u32;
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.fd = fd;
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
@@ -2637,6 +2698,10 @@ fn emit_http_request_iovecs_event(
     event.pid = connection.pid;
     event.uid = connection.uid;
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.fd = fd;
     event.family = connection.family;
     event.remote_port_be = connection.remote_port_be;
@@ -2672,6 +2737,10 @@ fn emit_http_request_iovecs_event_without_connection(
     event.pid = (pid_tgid >> 32) as u32;
     event.uid = uid_gid as u32;
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.fd = fd;
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
@@ -2714,11 +2783,19 @@ fn try_tracepoint_http_accept_exit(ctx: &TracePointContext) -> Result<u32, i64> 
         return Ok(0);
     }
 
+    // Filter server-accepted connections at establishment (overhead lever,
+    // mirrors track_connect_enter for the client side).
+    let cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
+
     let uid_gid = bpf_get_current_uid_gid();
     let mut pending = PendingConnect {
         pid: (pid_tgid >> 32) as u32,
         uid: uid_gid as u32,
-        cgroup_id: current_cgroup_id(),
+        cgroup_id,
         fd: retval as i32,
         family: 0,
         role: CONNECTION_ROLE_SERVER,
@@ -2824,6 +2901,10 @@ fn try_tracepoint_http_read_exit(ctx: &TracePointContext) -> Result<u32, i64> {
     event.pid = connection.pid;
     event.uid = connection.uid;
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.fd = pending.fd;
     event.family = connection.family;
     event.role = CONNECTION_ROLE_SERVER;
@@ -2914,6 +2995,10 @@ fn emit_protocol_iovec_event(
     event.pid = connection.pid;
     event.uid = connection.uid;
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.fd = fd;
     event.direction = NETWORK_IO_WRITE;
     event.family = connection.family;
@@ -3049,6 +3134,10 @@ fn emit_protocol_data_event(
     event.pid = connection.pid;
     event.uid = connection.uid;
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.fd = fd;
     event.direction = direction;
     event.family = connection.family;
@@ -3235,6 +3324,10 @@ fn emit_dns_send_event(
     event.pid = (pid_tgid >> 32) as u32;
     event.uid = uid_gid as u32;
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.protocol = IPPROTO_UDP;
     event.server_port_be = server_port_be;
     event.server_addr_v4 = unsafe { bpf_probe_read_user::<u32>(sockaddr.add(4).cast::<u32>()) }
@@ -3267,6 +3360,10 @@ fn emit_dns_connected_send_event(
     event.pid = (pid_tgid >> 32) as u32;
     event.uid = uid_gid as u32;
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.protocol = IPPROTO_UDP;
     event.server_port_be = peer.remote_port_be;
     event.server_addr_v4 = peer.remote_addr_v4;
@@ -3386,6 +3483,10 @@ fn try_tracepoint_dns_recvfrom_exit(ctx: &TracePointContext) -> Result<u32, i64>
     event.pid = pending.pid;
     event.uid = pending.uid;
     event.cgroup_id = pending.cgroup_id;
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
     event.protocol = IPPROTO_UDP;
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.latency_nanos = event.timestamp_unix_nanos - pending.started_at_nanos;
@@ -3865,6 +3966,38 @@ fn copy_pending_to_event(pending: &PendingConnect, event: &mut RawNetworkEvent) 
 
 fn current_cgroup_id() -> u64 {
     unsafe { bpf_get_current_cgroup_id() }
+}
+
+/// Whether the workload owning `cgroup_id` should be probed.
+///
+/// One `Array` load on the disabled fast path (the common case: filter off →
+/// every workload captured, historical behaviour). When the filter is active,
+/// one additional `HashMap` lookup: an explicit per-cgroup verdict wins, and
+/// cgroups absent from the map fall to the configured unknown-cgroup posture
+/// (bootstrap window, host/non-pod processes, missing Kubernetes API).
+#[inline(always)]
+fn cgroup_capture_allowed(cgroup_id: u64) -> bool {
+    let control = CAPTURE_FILTER_CONTROL
+        .get(0)
+        .copied()
+        .unwrap_or(CAPTURE_FILTER_DISABLED);
+    if control == CAPTURE_FILTER_DISABLED {
+        return true;
+    }
+    match unsafe { CGROUP_CAPTURE_FILTER.get(&cgroup_id) } {
+        Some(verdict) => *verdict != 0,
+        None => control == CAPTURE_FILTER_UNKNOWN_CAPTURE,
+    }
+}
+
+/// Account one handler invocation suppressed by the capture filter.
+#[inline(always)]
+fn record_capture_filter_drop() {
+    if let Some(counter) = CAPTURE_FILTER_DROPPED.get_ptr_mut(0) {
+        unsafe {
+            *counter = (*counter).wrapping_add(1);
+        }
+    }
 }
 
 fn read_sockaddr_in(sockaddr: *const u8, pending: &mut PendingConnect) -> Result<(), i64> {

@@ -316,8 +316,7 @@ fn is_pod_uid_like(candidate: &str) -> bool {
     const MIN_LEN: usize = 8;
     const MAX_LEN: usize = 64;
     let len = candidate.len();
-    len >= MIN_LEN
-        && len <= MAX_LEN
+    (MIN_LEN..=MAX_LEN).contains(&len)
         && candidate
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')

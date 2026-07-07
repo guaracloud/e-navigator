@@ -16,8 +16,9 @@ use crate::config::{CaptureFilterConfig, CapturePosture};
 mod resolve;
 
 pub use resolve::{
-    CgroupObservation, FilterMapDiff, FilterMapMirror, RawNodePodIndex, RawPod,
-    build_desired_filter_map, parse_container_id_from_cgroup_path, parse_pod_uid_from_cgroup_path,
+    CAPTURE_FILTER_MAP_CAPACITY, CgroupObservation, DesiredFilterMap, FilterMapDiff,
+    FilterMapMirror, RawNodePodIndex, RawPod, build_desired_filter_map,
+    parse_container_id_from_cgroup_path, parse_pod_uid_from_cgroup_path,
 };
 
 /// Whether a workload should be probed (`Capture`) or skipped (`Drop`).
