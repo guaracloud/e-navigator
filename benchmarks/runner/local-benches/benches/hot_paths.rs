@@ -1233,8 +1233,104 @@ fn bench_unwind_table(c: &mut Criterion) {
     });
 }
 
+fn bench_capture_filter(c: &mut Criterion) {
+    use e_navigator_core::capture_filter::{
+        CgroupObservation, DesiredFilterMap, FilterMapMirror, RawNodePodIndex, RawPod,
+        build_desired_filter_map,
+    };
+    use e_navigator_core::{CaptureFilterConfig, CaptureFilterPolicy, CapturePosture};
+
+    let prod_labels: BTreeMap<String, String> = [("tier", "prod"), ("team", "payments")]
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect();
+
+    // Allowlist posture: proj-* namespaces with a prod label gate and an
+    // explicit exclude -- exercises glob + label + exclude precedence.
+    let config = CaptureFilterConfig {
+        enabled: true,
+        default_posture: CapturePosture::Deny,
+        unknown_cgroup: CapturePosture::Deny,
+        namespace_include: vec!["proj-*".to_string()],
+        namespace_exclude: vec!["proj-secret".to_string()],
+        label_include: [("tier", "prod")]
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect(),
+        ..Default::default()
+    };
+    let policy = CaptureFilterPolicy::from_config(&config);
+
+    c.bench_function("capture_filter/rule_eval_allow", |b| {
+        b.iter(|| black_box(policy.evaluate(black_box("proj-web"), black_box(&prod_labels))))
+    });
+    c.bench_function("capture_filter/rule_eval_deny", |b| {
+        b.iter(|| black_box(policy.evaluate(black_box("kube-system"), black_box(&prod_labels))))
+    });
+
+    // A realistically sized node: 150 pods, two cgroups each (pod slice +
+    // container scope).
+    let mut pods = Vec::new();
+    let mut observations = Vec::new();
+    for n in 0..150u64 {
+        let uid = format!("pod-{n:04}-abcd-ef01-2345-6789abcdef01");
+        let namespace = if n % 5 == 0 {
+            "kube-system".to_string()
+        } else {
+            format!("proj-{}", n % 7)
+        };
+        pods.push(RawPod {
+            namespace,
+            pod_uid: Some(uid.clone()),
+            container_ids: Vec::new(),
+            labels: prod_labels.clone(),
+        });
+        observations.push(CgroupObservation {
+            cgroup_id: n * 2,
+            container_id: None,
+            pod_uid: Some(uid.clone()),
+        });
+        observations.push(CgroupObservation {
+            cgroup_id: n * 2 + 1,
+            container_id: None,
+            pod_uid: Some(uid),
+        });
+    }
+    let index = RawNodePodIndex::from_pods(pods, 8192);
+
+    c.bench_function("capture_filter/desired_map_build_150pods", |b| {
+        b.iter(|| {
+            black_box(build_desired_filter_map(
+                black_box(&observations),
+                &index,
+                &policy,
+                8192,
+            ))
+        })
+    });
+
+    let desired = build_desired_filter_map(&observations, &index, &policy, 8192);
+    let mut primed = FilterMapMirror::new();
+    let initial = primed.plan(&desired);
+    for (cgroup_id, byte) in &initial.upserts {
+        primed.record_upsert(*cgroup_id, *byte);
+    }
+
+    // Steady state: no pods changed, so the diff must be empty and cheap.
+    c.bench_function("capture_filter/map_diff_steady_state", |b| {
+        b.iter(|| black_box(primed.plan(black_box(&desired))))
+    });
+
+    // Worst case: every tracked cgroup exited (full removal churn).
+    let empty = DesiredFilterMap::default();
+    c.bench_function("capture_filter/map_diff_full_churn", |b| {
+        b.iter(|| black_box(primed.plan(black_box(&empty))))
+    });
+}
+
 criterion_group!(
     benches,
+    bench_capture_filter,
     bench_reader_sample_handoff,
     bench_unwind_table,
     bench_raw_aya_decoders,
