@@ -88,10 +88,15 @@ pub(super) fn signals(
                 start_unix_nanos: started.saturating_add(duration_nanos + 10_000),
                 end_unix_nanos: Some(started.saturating_add(duration_nanos + 11_000)),
                 duration_nanos: Some(1_000),
-                trace_id: None,
-                span_id: None,
+                // The protocol_request_observation constructor strips the raw
+                // `traceparent`/`tracestate` for privacy, so a malformed
+                // trace context must be expressed as present-but-invalid
+                // trace/span identifiers (wrong hex): the request-correlation
+                // generator then emits a `malformed_trace_context` warning.
+                trace_id: Some("4bf92f3577b34da6a3ce929d0e0e473g".to_string()),
+                span_id: Some("00f067aa0ba902bg".to_string()),
                 parent_span_id: None,
-                traceparent: Some("00-bad".to_string()),
+                traceparent: None,
                 tracestate: None,
                 correlation_kind: TraceCorrelationKind::Synthetic,
                 confidence: TraceConfidence::Low,

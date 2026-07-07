@@ -233,10 +233,13 @@ mod tests {
         assert!(signals.iter().any(|signal| matches!(
             &signal.payload,
             SignalPayload::ProtocolRequestObservation(request)
+                // The constructor strips the raw traceparent/tracestate, so a
+                // malformed trace context is carried as present-but-invalid
+                // (non-hex) trace/span identifiers.
                 if request.traceparent.is_none()
                     && request.tracestate.is_none()
-                    && request.trace_id.is_none()
-                    && request.span_id.is_none()
+                    && request.trace_id.as_deref() == Some("4bf92f3577b34da6a3ce929d0e0e473g")
+                    && request.span_id.as_deref() == Some("00f067aa0ba902bg")
                     && has_attribute(
                         &request.attributes,
                         "trace.synthetic.fixture",
