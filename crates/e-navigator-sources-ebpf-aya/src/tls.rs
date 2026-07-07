@@ -484,8 +484,8 @@ mod platform {
         }
 
         DiscoveredTlsLibraries {
-            openssl: openssl.into_iter().map(|(key, path)| (key, path)).collect(),
-            gnutls: gnutls.into_iter().map(|(key, path)| (key, path)).collect(),
+            openssl: openssl.into_iter().collect(),
+            gnutls: gnutls.into_iter().collect(),
         }
     }
 

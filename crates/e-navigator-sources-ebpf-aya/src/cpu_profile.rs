@@ -193,6 +193,7 @@ pub(crate) struct SharedSymbolTables {
 impl ProcfsSymbolizer {
     const MAX_MODULE_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 
+    #[cfg(test)]
     pub(crate) fn new(procfs_root: std::path::PathBuf, resolve_symbols: bool) -> Self {
         Self::with_shared_symbols(
             procfs_root,
