@@ -471,6 +471,15 @@ mod platform {
                     message: err.to_string(),
                 })?;
 
+            if let Some(handle) =
+                crate::capture_filter::attach_capture_filter(&mut ebpf, "source.aya_exec", {
+                    let shutdown = shutdown.clone();
+                    move || shutdown.is_stopped()
+                })?
+            {
+                reader_handles.push(handle);
+            }
+
             let mut perf_array =
                 PerfEventArray::try_from(ebpf.take_map("EXEC_EVENTS").ok_or_else(|| {
                     CoreError::ModuleFailed {

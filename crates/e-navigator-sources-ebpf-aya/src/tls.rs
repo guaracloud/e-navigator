@@ -277,6 +277,15 @@ mod platform {
                 gnutls_probes_attached = gnutls_attached,
                 "attached TLS uprobes"
             );
+            if let Some(handle) =
+                crate::capture_filter::attach_capture_filter(&mut ebpf, "source.aya_tls", {
+                    let shutdown = shutdown.clone();
+                    move || shutdown.is_stopped()
+                })?
+            {
+                reader_handles.push(handle);
+            }
+
             let mut perf_array = PerfEventArray::try_from(
                 ebpf.take_map("TLS_DATA_EVENTS")
                     .ok_or_else(|| module_message("missing TLS_DATA_EVENTS map"))?,

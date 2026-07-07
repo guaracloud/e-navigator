@@ -28,6 +28,16 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    // Start the shared, node-wide capture-filter controller before any source
+    // loads its eBPF object, so the membership map is populated as sources come
+    // up. A no-op when the filter is disabled.
+    e_navigator_sources_ebpf_aya::capture_filter::init_shared(
+        &config.capture_filter,
+        &config.attribution.kubernetes,
+        config.attribution.cgroup_root.clone(),
+        registry::node_name(),
+    );
+
     let registry = registry::build_registry(&config, args.source, registry::node_name());
 
     Runner::new(config, registry)?.run().await?;

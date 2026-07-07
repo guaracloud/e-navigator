@@ -1105,6 +1105,17 @@ mod platform {
                     .map_err(module_error)?;
             }
 
+            // This source's reader handles carry a different exit type, so the
+            // applier runs detached; it terminates on shutdown via is_stopped.
+            let _capture_filter_applier = crate::capture_filter::attach_capture_filter(
+                &mut ebpf,
+                "source.aya_cpu_profile",
+                {
+                    let shutdown = shutdown.clone();
+                    move || shutdown.is_stopped()
+                },
+            )?;
+
             let mut perf_array =
                 PerfEventArray::try_from(ebpf.take_map("CPU_PROFILE_EVENTS").ok_or_else(|| {
                     CoreError::ModuleFailed {

@@ -531,6 +531,15 @@ mod platform {
                 "tcp_receive_reset",
             );
 
+            if let Some(handle) =
+                crate::capture_filter::attach_capture_filter(&mut ebpf, "source.aya_network", {
+                    let shutdown = shutdown.clone();
+                    move || shutdown.is_stopped()
+                })?
+            {
+                reader_handles.push(handle);
+            }
+
             let mut tcp_stat_array =
                 PerfEventArray::try_from(ebpf.take_map("TCP_STAT_EVENTS").ok_or_else(|| {
                     CoreError::ModuleFailed {
