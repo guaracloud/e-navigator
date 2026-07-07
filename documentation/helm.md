@@ -96,6 +96,41 @@ When Kubernetes attribution uses `NODE_NAME` for API field-selector scoping, the
 runtime node name must be a DNS subdomain; unsafe values are rejected before a
 pod-list request is built.
 
+The optional capture filter controls which workloads the eBPF sources *probe*,
+which is distinct from `[attribution.kubernetes]` selectors (those only scope
+which pods enter the enrichment cache). The capture filter evaluates against the
+raw node pod list, so it can exclude a namespace even when attribution scoping
+would have dropped it. It is disabled by default; when enabled it needs the same
+`NODE_NAME` and pod-read RBAC as Kubernetes attribution, because namespace and
+label rules depend on the node pod list:
+
+```toml
+[capture_filter]
+enabled = true
+# Verdict for a resolved pod that matches no rule, and for cgroups that cannot
+# yet be resolved to a pod (bootstrap window, host processes, API unavailable).
+default_posture = "deny"   # "allow" or "deny"
+unknown_cgroup = "deny"    # "allow" or "deny"
+# Namespaces support exact names and `*`/`?` globs. Precedence: exclude wins,
+# then the include gate, then default_posture.
+namespace_include = ["proj-*"]
+namespace_exclude = ["proj-secret"]
+# Label selectors are exact key=value (a pod must carry all label_include
+# entries; any label_exclude match denies it).
+label_include = { "tier" = "prod" }
+label_exclude = { "observability.e-navigator.dev/probe" = "false" }
+```
+
+An allowlist posture (`default_posture`/`unknown_cgroup = "deny"` with
+`namespace_include`) leaves a brief coverage gap for a newly started included
+pod; a denylist posture (`"allow"` with `namespace_exclude`) leaves a brief
+capture leak for a newly started excluded pod. Both are bounded to the few
+seconds before the controller discovers the pod's cgroup and are minimized by
+resolving the pod UID from the cgroup path. Capture-filter namespace pattern and
+label selector lists each accept at most 128 and 64 entries respectively; each
+entry must be non-empty, free of whitespace and control characters, and at most
+253 bytes.
+
 Host resource sampling validates its scan bounds before runtime:
 `resource_source.sample_interval_millis` must be greater than zero and at most
 3,600,000, `max_processes` and `max_cgroups` at most 65,536,

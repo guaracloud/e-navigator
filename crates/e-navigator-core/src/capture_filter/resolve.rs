@@ -583,4 +583,48 @@ mod tests {
         assert_eq!(diff.upserts, vec![(100, 0)]); // flipped to drop
         assert!(diff.removals.is_empty());
     }
+
+    #[test]
+    fn desired_map_carries_only_cgroup_ids_and_verdict_bytes() {
+        // Privacy invariant: namespaces and labels are matched in userspace,
+        // but only cgroup ids and a 0/1 verdict byte may cross into the kernel.
+        // Nothing the resolver hands to the eBPF map should carry a namespace
+        // or label string.
+        let config = CaptureFilterConfig {
+            enabled: true,
+            namespace_exclude: vec!["top-secret-namespace".to_string()],
+            label_exclude: [("classification".to_string(), "restricted".to_string())]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        let policy = enabled_policy(config);
+        let index = RawNodePodIndex::from_pods(
+            vec![RawPod {
+                namespace: "top-secret-namespace".to_string(),
+                pod_uid: Some(UID.to_string()),
+                container_ids: vec![CID.to_string()],
+                labels: [("classification".to_string(), "restricted".to_string())]
+                    .into_iter()
+                    .collect(),
+            }],
+            1024,
+        );
+        let observations = vec![CgroupObservation {
+            cgroup_id: 42,
+            container_id: Some(CID.to_string()),
+            pod_uid: Some(UID.to_string()),
+        }];
+        let desired = build_desired_filter_map(&observations, &index, &policy, 8192);
+
+        // The map that reaches the kernel is (u64 cgroup id -> u8 verdict) only.
+        let byte_entries: Vec<(u64, u8)> = desired.byte_entries().collect();
+        assert_eq!(byte_entries, vec![(42, 0)]);
+
+        // No representation of the desired map can leak the sensitive strings.
+        let rendered = format!("{desired:?}");
+        assert!(!rendered.contains("secret"));
+        assert!(!rendered.contains("classification"));
+        assert!(!rendered.contains("restricted"));
+    }
 }

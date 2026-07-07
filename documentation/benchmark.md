@@ -283,3 +283,26 @@ frequencies, wider process fleets than this VM ran (~250 registered
 processes), or production node shapes.
 
 Raw run logs for both A/Bs are retained in the session records for this date.
+
+### Capture filter: excluded-workload per-syscall cost (`[capture_filter]`, 2026-07-07)
+
+Workload: identical `redis-benchmark -n 50000 -c 20` against a Redis server, run
+once in a captured namespace and once in a namespace excluded by an allowlist
+capture-filter policy, on OrbStack Kubernetes v1.34 (arm64). The agent's
+`source.aya_protocol`/`source.aya_network` were active in both arms; only the
+capture filter differed.
+
+| Arm | SET rps | GET rps | p50 latency |
+| --- | --- | --- | --- |
+| Captured (included namespace) | 134,048 | 148,809 | 0.079 ms |
+| Filtered out (excluded namespace) | 190,114 | 210,970 | 0.063 ms |
+| Delta | +42% | +42% | −20% |
+
+What this proves: an excluded workload measurably reclaims per-syscall cost
+because its connections are filtered at `connect()` and never tracked, so the
+read/write capture path early-exits — the filter is an overhead lever, not only
+a scope control. What it does not prove: a production overhead number. OrbStack
+is a shared VM and this is a single-run local smoke A/B; the direction and
+rough magnitude are consistent with the ~−43% cost of capturing this workload
+recorded in the overhead baseline above, but the exact percentage is not a
+production figure.

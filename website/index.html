@@ -104,7 +104,8 @@
             (interception, not on-the-wire decryption), accounts for TCP
             retransmits, resets, and state transitions, samples and symbolizes
             CPU profiles, and turns resource, trace, and security observations
-            into bounded native E-Navigator signals.
+            into bounded native E-Navigator signals. An optional capture filter
+            scopes which workloads are probed by Kubernetes namespace and label.
           </p>
         </div>
         <div class="capability-grid">
@@ -122,6 +123,11 @@
             <span class="capability-kicker">Export</span>
             <h3>JSON, Prometheus, OTLP, pprof</h3>
             <p>JSON stdout is the default. Prometheus, OTLP, and a local pprof profile endpoint are opt-in, bounded, and family-selectable.</p>
+          </article>
+          <article class="capability">
+            <span class="capability-kicker">Scope control</span>
+            <h3>Namespace and label capture filter</h3>
+            <p>Opt-in cgroup-id filtering probes only the workloads you choose; excluded workloads pay near-zero per-syscall cost.</p>
           </article>
           <article class="capability capability-wide">
             <span class="capability-kicker">Boundaries</span>
@@ -144,7 +150,7 @@
         <div class="status-grid">
           <article class="status">
             <strong>Proven locally</strong>
-            <p>Static runtime, strict config schema validation, config selectors, envelopes, DNS configurable source limits, HTTP configurable parser limits and request/status coverage, gRPC metadata/status, profile fixture normalization filtering, Kafka request/ApiVersions-error, MongoDB command/error, MySQL command/error, NATS command/error, PostgreSQL query/error, and Redis command/error parser coverage, flow-attribution warnings, synthetic protocol request/error spans, Docker smoke, and chart rendering.</p>
+            <p>Static runtime, strict config schema validation, config selectors, envelopes, DNS configurable source limits, HTTP configurable parser limits and request/status coverage, gRPC metadata/status, profile fixture normalization filtering, Kafka request/ApiVersions-error, MongoDB command/error, MySQL command/error, NATS command/error, PostgreSQL query/error, and Redis command/error parser coverage, flow-attribution warnings, synthetic protocol request/error spans, the Kubernetes-aware capture filter (policy, resolver, map diff, cgroup-path parsing, glob and cgroup-path fuzz targets, a privacy invariant test, and rule-eval/map-diff benches), Docker smoke, and chart rendering.</p>
           </article>
           <article class="status">
             <strong>Runtime-proven slices</strong>

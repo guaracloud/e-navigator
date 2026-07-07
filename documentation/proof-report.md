@@ -44,6 +44,18 @@ or chart rendering:
 - synthetic source pipeline, including sanitized HTTP, gRPC, Kafka, MongoDB,
   MySQL, NATS, PostgreSQL, and Redis protocol request/error-span fixtures and
   flow-attribution warnings;
+- Kubernetes-aware capture filter (`[capture_filter]`): the pure policy
+  evaluator (glob namespace matching, exact label include/exclude, fixed
+  exclude-wins precedence, `default_posture`/`unknown_cgroup` postures), the raw
+  node-pod-list parser and resolver, the desired-map builder and
+  `FilterMapMirror` diff (upsert/removal/verdict-flip convergence), and the
+  systemd/cgroupfs/guaranteed-QoS cgroup-path pod-UID and container-id parsers,
+  all unit-tested with malformed/arbitrary-byte coverage; `deny_unknown_fields`
+  config validation and posture parsing; a privacy invariant test asserting only
+  cgroup ids and 0/1 verdict bytes reach the kernel-bound map (no namespace or
+  label strings); `capture_filter_glob` and `capture_filter_cgroup_path` fuzz
+  targets; and Criterion rule-eval (~9-12ns), whole-node desired-build (~11.8us
+  for 300 cgroups), and map-diff (~3.4us steady, ~555ns churn) benchmarks;
 - strict config validation with unknown-field rejection, packaged config guards,
   runtime log-level, queue/derivation, and runtime-security endpoint bounds,
   Prometheus and OTLP HTTP sink runtime-bound validation, Prometheus bind-address
@@ -162,6 +174,39 @@ or chart rendering:
 ## Runtime-Proven Slices
 
 Guarded Linux/Kubernetes runs have recorded these slices:
+
+- Capture-filter verifier-load and OrbStack live scoping proof (2026-07-07,
+  OrbStack Docker plus its in-VM Kubernetes v1.34, arm64). The cgroup capture
+  filter's in-kernel fast-path check verifier-loaded on every modified program:
+  the exec/network/dns/http/protocol sources emitted events with TLS uprobes
+  attached, and the `cpu_profile` DWARF/CPython tail-call chain sampled, all with
+  the check inlined and no verifier rejection. A privileged hostPID DaemonSet was
+  then deployed on OrbStack Kubernetes with an allowlist policy
+  (`default_posture`/`unknown_cgroup = "deny"`, `namespace_include =
+  ["proj-included"]`) and identical Redis workloads in `proj-included` and
+  `proj-excluded`. Recorded, then cleaned up:
+  - The controller logged `capture filter active control_word=2` with no
+    API-unavailable warning, confirming the raw attribution-unscoped node
+    pod-list fetch worked in-cluster.
+  - `proj-included` was captured with full attribution (exec/network/protocol
+    records carrying container id and pod context — namespace, pod name/uid,
+    container name, node, labels).
+  - `proj-excluded` produced zero filterable signals (0 exec, 0
+    network-connection open/close, 0 protocol) over the whole run; its only
+    signals were softirq `network_tcp_stat_observation` events, which the filter
+    deliberately does not cgroup-scope, and which appeared at effectively equal
+    counts in both namespaces (~4260), corroborating that they are node-scoped.
+    No bootstrap leak occurred under the allowlist posture.
+  - Drop accounting was emitted per source and climbed with excluded traffic
+    (network `dropped_total` 7404 -> 60519 over ~3 minutes; `denied=15` cgroups,
+    `live_entries=21`).
+  - Overhead A/B, identical `redis-benchmark -n 50000 -c 20`: the filtered-out
+    (excluded) workload ran at ~+42% throughput (SET 134,048 -> 190,114 rps; GET
+    148,809 -> 210,970 rps) and ~-20% p50 latency (0.079 -> 0.063 ms) versus the
+    captured workload, because its connections are filtered at `connect()` and
+    never tracked so the per-syscall read/write path early-exits. Recorded as a
+    local OrbStack smoke figure on a shared node, not a production number.
+  Cleaned up fully (test namespaces, ClusterRole/binding, and the built image).
 
 - Homelab Kubernetes live proof (2026-07-06, homelab k3s v1.30, kernel 6.6,
   x86_64, single `e-navigator` namespace on the `homelab-02` node). A

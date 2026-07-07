@@ -15,6 +15,8 @@ E-Navigator is designed to provide:
 - node-local Linux and Kubernetes runtime observations;
 - versioned signal envelopes;
 - bounded attribution to host, process, container, and Kubernetes context;
+- optional operator-controlled capture filtering that scopes which workloads
+  are probed by namespace and label rules, enforced in-kernel per cgroup id;
 - low-cardinality metrics, dependency edges, request spans, profiling windows,
   and runtime security findings;
 - JSON stdout by default;
@@ -79,6 +81,39 @@ E-Navigator does not currently claim:
   untranslatable pids are symbolized only after a thread-comm identity check
   and otherwise carry raw addresses with accounting — an unrelated process
   sharing pid, tid, and thread comm would evade this check);
+- instant capture-scope changes for newly started workloads (the optional
+  `[capture_filter]` cgroup-id capture filter cannot decide a pod that
+  userspace has not yet discovered; a new pod's cgroup id is absent from the
+  eBPF membership map until the next controller refresh — a local cgroup scan
+  every ~2s with an eager, rate-limited pod refetch — so there is a bootstrap
+  window of roughly a few seconds during which the pod follows the configured
+  `unknown_cgroup` posture: under an allowlist posture that is a brief coverage
+  gap for new included pods, and under a denylist posture a brief capture leak
+  for new excluded pods, minimized by resolving the pod UID directly from the
+  cgroup path but not eliminated);
+- cgroup-based capture filtering of softirq TCP-stat observations (the
+  `tcp_set_state`, `tcp_retransmit_skb`, and `tcp_send_reset`/`receive_reset`
+  tracepoints run in softirq/interrupt context where `bpf_get_current_cgroup_id`
+  reflects whatever task is on-CPU rather than the connection's workload; these
+  observations are therefore treated as node-scoped and are always emitted, never
+  cgroup-filtered);
+- namespace or label capture filtering without the Kubernetes API (a namespace
+  and labels are not present in the cgroup path — only the pod UID and container
+  id are — so namespace/label rules hard-depend on the node pod list; when the
+  API is unavailable the filter degrades loudly and applies the configured
+  `unknown_cgroup` posture to every workload);
+- glob or regular-expression label capture filtering (capture-filter namespace
+  patterns support `*` and `?` globbing; `label_include`/`label_exclude` are
+  exact key=value matches);
+- cgroup v1 capture filtering (the capture filter's join key is the cgroup v2
+  container cgroup inode; it assumes the unified cgroup v2 hierarchy used by
+  modern Kubernetes nodes, and host/non-pod processes — which have a cgroup but
+  no namespace — always fall to the `unknown_cgroup` posture);
+- capture filtering of a connection's network open/close lifecycle events after
+  a mid-connection verdict flip (the capture decision for connection-lifecycle
+  events is taken at connect/accept establishment; a workload whose verdict
+  changes while a connection is open still emits that connection's open/close
+  events, though its L7/payload events re-check the live per-cgroup verdict);
 - lossless DNS or HTTP capture across every node and workload shape;
 - live native `network.flow.bytes` export from traffic after the native metric
   migration, including flow-attribution warning proof;
