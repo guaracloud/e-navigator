@@ -22,6 +22,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "capture_filter_cgroup_path"
+path = "fuzz_targets/capture_filter_cgroup_path.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "http2_hpack_decoder"
 path = "fuzz_targets/http2_hpack_decoder.rs"
 test = false
