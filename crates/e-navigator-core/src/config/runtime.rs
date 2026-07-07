@@ -3,11 +3,11 @@ use std::collections::BTreeSet;
 
 use super::modules::{default_modules, is_known_module_name, known_module_names};
 use super::{
-    ArgvCaptureConfig, AttributionConfig, ConfigError, ConfigResult, CpuProfileSourceConfig,
-    DnsMetricsConfig, DnsSourceConfig, HttpSourceConfig, ModuleConfig, NetworkMetricsConfig,
-    OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig, ProtocolSourceConfig,
-    RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig, RuntimeSecurityConfig,
-    TlsSourceConfig, TraceCorrelationConfig,
+    ArgvCaptureConfig, AttributionConfig, CaptureFilterConfig, ConfigError, ConfigResult,
+    CpuProfileSourceConfig, DnsMetricsConfig, DnsSourceConfig, HttpSourceConfig, ModuleConfig,
+    NetworkMetricsConfig, OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig,
+    ProtocolSourceConfig, RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig,
+    RuntimeSecurityConfig, TlsSourceConfig, TraceCorrelationConfig,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +27,8 @@ pub struct RuntimeConfig {
     pub argv_capture: ArgvCaptureConfig,
     #[serde(default)]
     pub attribution: AttributionConfig,
+    #[serde(default)]
+    pub capture_filter: CaptureFilterConfig,
     #[serde(default)]
     pub runtime_security: RuntimeSecurityConfig,
     #[serde(default)]
@@ -69,6 +71,7 @@ impl Default for RuntimeConfig {
             modules: default_modules(),
             argv_capture: ArgvCaptureConfig::default(),
             attribution: AttributionConfig::default(),
+            capture_filter: CaptureFilterConfig::default(),
             runtime_security: RuntimeSecurityConfig::default(),
             resource_source: ResourceSourceConfig::default(),
             dns_source: DnsSourceConfig::default(),
@@ -186,6 +189,7 @@ impl RuntimeConfig {
 
         self.argv_capture.validate()?;
         self.attribution.validate()?;
+        self.capture_filter.validate()?;
         self.runtime_security.validate()?;
         self.resource_source.validate()?;
         self.dns_source.validate()?;

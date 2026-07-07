@@ -8,11 +8,18 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
+e-navigator-core = { path = "../crates/e-navigator-core" }
 e-navigator-profiling = { path = "../crates/e-navigator-profiling" }
 e-navigator-protocol = { path = "../crates/e-navigator-protocol" }
 e-navigator-sources-ebpf-aya = { path = "../crates/e-navigator-sources-ebpf-aya", features = ["fuzzing"] }
 e-navigator-sources-host = { path = "../crates/e-navigator-sources-host" }
 libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "capture_filter_glob"
+path = "fuzz_targets/capture_filter_glob.rs"
+test = false
+doc = false
 
 [[bin]]
 name = "http2_hpack_decoder"

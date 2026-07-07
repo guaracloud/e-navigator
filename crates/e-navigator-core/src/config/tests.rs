@@ -2764,3 +2764,194 @@ fn tls_source_limits_are_validated() {
         "tls_source.max_attributes must be between 1 and 32",
     );
 }
+
+#[test]
+fn capture_filter_defaults_are_valid_and_inactive() {
+    let config = RuntimeConfig::default();
+    assert!(config.validate().is_ok());
+    assert!(!config.capture_filter.enabled);
+    assert!(!config.capture_filter.is_active());
+    assert_eq!(config.capture_filter.default_posture, CapturePosture::Allow);
+    assert_eq!(config.capture_filter.unknown_cgroup, CapturePosture::Allow);
+}
+
+#[test]
+fn capture_filter_parses_postures_from_toml() {
+    let toml = r#"
+        queue_capacity = 64
+
+        [capture_filter]
+        enabled = true
+        default_posture = "deny"
+        unknown_cgroup = "deny"
+        namespace_include = ["proj-*"]
+
+        [[modules]]
+        name = "source.synthetic_exec"
+        enabled = true
+    "#;
+    let config: RuntimeConfig = toml::from_str(toml).expect("valid capture_filter toml");
+    assert!(config.capture_filter.enabled);
+    assert_eq!(config.capture_filter.default_posture, CapturePosture::Deny);
+    assert_eq!(config.capture_filter.unknown_cgroup, CapturePosture::Deny);
+    assert_eq!(
+        config.capture_filter.namespace_include,
+        vec!["proj-*".to_string()]
+    );
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn capture_filter_rejects_unknown_field() {
+    assert_toml_rejects_unknown_field(
+        r#"
+        queue_capacity = 64
+
+        [capture_filter]
+        enabled = true
+        namespace_include = ["proj-*"]
+        namesapce_exclude = ["typo"]
+
+        [[modules]]
+        name = "source.synthetic_exec"
+        enabled = true
+        "#,
+        "namesapce_exclude",
+    );
+}
+
+#[test]
+fn capture_filter_rejects_invalid_posture() {
+    let toml = r#"
+        queue_capacity = 64
+
+        [capture_filter]
+        enabled = true
+        default_posture = "maybe"
+
+        [[modules]]
+        name = "source.synthetic_exec"
+        enabled = true
+    "#;
+    let err =
+        toml::from_str::<RuntimeConfig>(toml).expect_err("invalid posture should be rejected");
+    assert!(
+        err.to_string().contains("unknown variant") || err.to_string().contains("maybe"),
+        "error {err:?} should reject the invalid posture"
+    );
+}
+
+#[test]
+fn capture_filter_validation_is_skipped_when_disabled() {
+    // A structurally odd (but non-panicking) config validates fine while
+    // disabled, because the filter is a no-op.
+    let config = RuntimeConfig {
+        capture_filter: CaptureFilterConfig {
+            enabled: false,
+            namespace_include: vec![String::new()],
+            ..CaptureFilterConfig::default()
+        },
+        ..RuntimeConfig::default()
+    };
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn capture_filter_rejects_empty_pattern() {
+    assert_invalid(
+        RuntimeConfig {
+            capture_filter: CaptureFilterConfig {
+                enabled: true,
+                namespace_include: vec![String::new()],
+                ..CaptureFilterConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "capture_filter.namespace_include entries must not be empty",
+    );
+}
+
+#[test]
+fn capture_filter_rejects_whitespace_pattern() {
+    assert_invalid(
+        RuntimeConfig {
+            capture_filter: CaptureFilterConfig {
+                enabled: true,
+                namespace_exclude: vec!["proj *".to_string()],
+                ..CaptureFilterConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "capture_filter.namespace_exclude entries must not contain whitespace",
+    );
+}
+
+#[test]
+fn capture_filter_rejects_duplicate_pattern() {
+    assert_invalid(
+        RuntimeConfig {
+            capture_filter: CaptureFilterConfig {
+                enabled: true,
+                namespace_include: vec!["proj-*".to_string(), "proj-*".to_string()],
+                ..CaptureFilterConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "capture_filter.namespace_include must not contain duplicate entry 'proj-*'",
+    );
+}
+
+#[test]
+fn capture_filter_rejects_too_many_patterns() {
+    let patterns: Vec<String> = (0..=CaptureFilterConfig::MAX_NAMESPACE_PATTERNS)
+        .map(|index| format!("ns-{index}"))
+        .collect();
+    assert_invalid(
+        RuntimeConfig {
+            capture_filter: CaptureFilterConfig {
+                enabled: true,
+                namespace_include: patterns,
+                ..CaptureFilterConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "capture_filter.namespace_include must contain at most 128 entries",
+    );
+}
+
+#[test]
+fn capture_filter_rejects_conflicting_label_include_exclude() {
+    let mut label_include = BTreeMap::new();
+    label_include.insert("tier".to_string(), "prod".to_string());
+    let mut label_exclude = BTreeMap::new();
+    label_exclude.insert("tier".to_string(), "prod".to_string());
+    assert_invalid(
+        RuntimeConfig {
+            capture_filter: CaptureFilterConfig {
+                enabled: true,
+                label_include,
+                label_exclude,
+                ..CaptureFilterConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "capture_filter label 'tier=prod' cannot be both included and excluded",
+    );
+}
+
+#[test]
+fn capture_filter_rejects_empty_label_value() {
+    let mut label_include = BTreeMap::new();
+    label_include.insert("tier".to_string(), String::new());
+    assert_invalid(
+        RuntimeConfig {
+            capture_filter: CaptureFilterConfig {
+                enabled: true,
+                label_include,
+                ..CaptureFilterConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "capture_filter.label_include value for 'tier' must not be empty",
+    );
+}

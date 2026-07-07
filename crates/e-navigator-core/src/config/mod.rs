@@ -1,5 +1,6 @@
 mod argv;
 mod attribution;
+mod capture_filter;
 mod cpu_profile;
 mod dns_metrics;
 mod dns_source;
@@ -21,6 +22,7 @@ mod trace_correlation;
 
 pub use argv::ArgvCaptureConfig;
 pub use attribution::AttributionConfig;
+pub use capture_filter::{CaptureFilterConfig, CapturePosture};
 pub use cpu_profile::{CpuProfileBackpressure, CpuProfileSourceConfig};
 pub use dns_metrics::DnsMetricsConfig;
 pub use dns_source::DnsSourceConfig;

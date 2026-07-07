@@ -156,6 +156,7 @@ dependencies = [
 name = "e-navigator-fuzz"
 version = "0.0.0"
 dependencies = [
+ "e-navigator-core",
  "e-navigator-profiling",
  "e-navigator-protocol",
  "e-navigator-sources-ebpf-aya",
