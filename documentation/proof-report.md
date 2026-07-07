@@ -207,6 +207,31 @@ Guarded Linux/Kubernetes runs have recorded these slices:
     never tracked so the per-syscall read/write path early-exits. Recorded as a
     local OrbStack smoke figure on a shared node, not a production number.
   Cleaned up fully (test namespaces, ClusterRole/binding, and the built image).
+- Capture-filter homelab live scoping proof (2026-07-07, homelab k3s v1.30,
+  kernel 6.6, x86_64, containerd runtime, workloads pinned to `homelab-02`).
+  The x86_64 CLI cross-built from the committed code was staged into the node's
+  containerd and rolled out as a privileged hostPID DaemonSet with the same
+  allowlist policy (`namespace_include = ["proj-included"]`) against identical
+  low-rate Redis workloads in throwaway `proj-included` and `proj-excluded`
+  namespaces. Recorded, then cleaned up:
+  - Included pods were captured with full attribution resolved from the
+    **systemd `kubepods.slice` cgroup driver** (`runtime=containerd`, pod UID
+    read from the `...-pod<uid>.slice` path) — the cgroup-driver path the
+    OrbStack docker runtime does not exercise. The controller applied
+    `allowed=3, denied=50` cgroups, confirming the in-cluster raw pod-list
+    fetch.
+  - `proj-excluded` produced zero filterable signals over the whole run; its
+    only signals were node-scoped softirq `network_tcp_stat_observation` events
+    at effectively equal count to the included namespace (2388 vs 2400). No
+    bootstrap leak under the allowlist posture.
+  - Per-source drop accounting climbed (exec 3649 -> 9297, network 13702,
+    protocol 5380). Both nodes stayed Ready throughout (no control-plane
+    flapping). The overhead A/B was deliberately skipped on the homelab to keep
+    load gentle; the quantified figure remains the OrbStack local smoke A/B
+    above, with the drop counter confirming the excluded path is the cheap one.
+  Recorded as homelab live proof, not production proof. Cleanup independently
+  verified: no throwaway namespaces, ClusterRole/binding, or imported images
+  remained, and the user's namespaces were untouched.
 
 - Homelab Kubernetes live proof (2026-07-06, homelab k3s v1.30, kernel 6.6,
   x86_64, single `e-navigator` namespace on the `homelab-02` node). A
