@@ -11,7 +11,9 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/e-navigator/e-navigator
+  # Publish under this repository's owner so the default GITHUB_TOKEN
+  # (packages: write) can push. Resolves to ghcr.io/guaracloud/e-navigator.
+  IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   e-navigator-image:
