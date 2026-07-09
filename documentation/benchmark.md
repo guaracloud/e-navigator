@@ -49,7 +49,9 @@ Current local benchmark targets:
 - JSON signal serialization, OpenTelemetry metric/trace/profile formatting,
   pprof profile sample protobuf rendering, Prometheus profile session/warning
   formatting, prefilled Prometheus latest-metric updates, and bounded HTTP
-  exporter queue enqueue behavior.
+  exporter queue enqueue behavior;
+- bounded signal-envelope construction and JSON stdout line serialization,
+  including the argv-redacting and non-argv borrowed paths.
 
 Benchmark setup must stay outside measured loops where the code path supports
 that. Benchmarks use fixed in-memory fixtures only. They must not read live
@@ -167,6 +169,30 @@ This timing measures fixed-fixture parsing and bounded cache construction for
 512 pods with container-ID and pod-IP indexes. It does not prove Kubernetes API
 latency, watch/list behavior, live attribution coverage, or production cluster
 overhead.
+
+Focused allocation and protocol-request hot paths measured on 2026-07-09 on an
+Apple M5 Pro (`Mac17,9`, macOS 26.5.2) with `rustc 1.96.0`:
+
+```bash
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  'protocol_stream/request_response_match|json/stdout|signal/network_open' \
+  --sample-size 100 --measurement-time 5 --warm-up-time 3
+```
+
+The baseline was detached commit `3a88b7d` with only the benchmark cases added;
+the optimized run used the same command and fixtures:
+
+| Benchmark | Baseline | Optimized | Result |
+| --- | --- | --- | --- |
+| `protocol_stream/request_response_match` | 2.3825-2.4994 us | 1.3574-1.3792 us | ~44% lower central estimate |
+| `json/stdout_network_line` | 0.99238-1.2683 us | 0.56346-0.56921 us | ~49% lower central estimate |
+| `json/stdout_exec_line` | 1.1088-1.2305 us | 1.1442-1.1739 us | intervals overlap; no change claimed |
+| `signal/network_open_envelope_sanitize` | 446.72-501.23 ns | 144.34-154.02 ns | ~68% lower central estimate |
+
+These timings cover fixed-fixture userspace construction, sanitization,
+serialization, protocol reassembly, response matching, and observation
+emission. They do not measure stdout I/O, live procfs latency, kernel capture,
+collector latency, or production throughput.
 
 ## Guarded Runtime Proof
 
