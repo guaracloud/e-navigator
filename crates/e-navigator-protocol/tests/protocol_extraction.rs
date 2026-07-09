@@ -15119,7 +15119,7 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     );
     assert_eq!(
         parse_kafka_sasl_authenticate_response(
-            &kafka_sasl_authenticate_response_frame(0, 1, 58, Some("secret auth failed"), b"auth",),
+            &kafka_sasl_authenticate_response_frame(0, 1, 58, Some("denied"), b"blob"),
             1,
             &ProtocolExtractionConfig {
                 max_header_bytes: 128,
@@ -18842,7 +18842,7 @@ fn rejects_malformed_and_unsupported_kafka_fixtures() {
     );
 
     let mut truncated_sasl_authenticate_response =
-        kafka_sasl_authenticate_response_frame(0, 1, 58, Some("auth"), b"secret-auth");
+        kafka_sasl_authenticate_response_frame(0, 1, 58, Some("denied"), b"blob");
     truncated_sasl_authenticate_response.truncate(12);
     assert_eq!(
         parse_kafka_sasl_authenticate_response(&truncated_sasl_authenticate_response, 1, &config)
