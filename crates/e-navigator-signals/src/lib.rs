@@ -9,6 +9,7 @@ pub mod network;
 pub mod profiling;
 pub mod request;
 pub mod resource;
+mod sanitize;
 pub mod trace;
 
 pub use dns::{

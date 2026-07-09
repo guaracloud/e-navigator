@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::network::sanitize_network_process_identity;
+use crate::sanitize::{sanitize_kubernetes_labels, truncate_utf8_in_place};
 use crate::{
     ContainerContext, DependencyEndpoint, KubernetesContext, NetworkProcessIdentity,
     NetworkProtocol,
@@ -116,17 +117,13 @@ pub struct TraceCorrelationWarning {
 }
 
 pub fn sanitize_trace_attributes(attributes: &mut Vec<TraceAttribute>) {
-    let sanitized = attributes
-        .drain(..)
-        .filter(|attribute| {
-            !attribute.key.is_empty()
-                && attribute.key.len() <= MAX_TRACE_ATTRIBUTE_KEY_BYTES
-                && attribute.value.len() <= MAX_TRACE_ATTRIBUTE_VALUE_BYTES
-                && !is_sensitive_trace_attribute_key(&attribute.key)
-        })
-        .take(MAX_TRACE_ATTRIBUTES)
-        .collect();
-    *attributes = sanitized;
+    attributes.retain(|attribute| {
+        !attribute.key.is_empty()
+            && attribute.key.len() <= MAX_TRACE_ATTRIBUTE_KEY_BYTES
+            && attribute.value.len() <= MAX_TRACE_ATTRIBUTE_VALUE_BYTES
+            && !is_sensitive_trace_attribute_key(&attribute.key)
+    });
+    attributes.truncate(MAX_TRACE_ATTRIBUTES);
 }
 
 pub fn is_sensitive_trace_attribute_key(key: &str) -> bool {
@@ -143,7 +140,7 @@ pub fn is_sensitive_trace_attribute_key(key: &str) -> bool {
 }
 
 pub(crate) fn sanitize_trace_string(value: &mut String) {
-    *value = truncate_utf8(value, MAX_TRACE_STRING_BYTES);
+    truncate_utf8_in_place(value, MAX_TRACE_STRING_BYTES);
 }
 
 pub(crate) fn sanitize_optional_trace_string(value: &mut Option<String>) {
@@ -154,7 +151,7 @@ pub(crate) fn sanitize_optional_trace_string(value: &mut Option<String>) {
 
 pub(crate) fn sanitize_optional_trace_identifier_string(value: &mut Option<String>) {
     if let Some(inner) = value {
-        *inner = truncate_utf8(inner, MAX_TRACE_IDENTIFIER_STRING_BYTES);
+        truncate_utf8_in_place(inner, MAX_TRACE_IDENTIFIER_STRING_BYTES);
     }
 }
 
@@ -180,18 +177,12 @@ pub(crate) fn sanitize_optional_trace_kubernetes_context(context: &mut Option<Ku
         sanitize_optional_trace_string(&mut inner.pod_uid);
         sanitize_optional_trace_string(&mut inner.container_name);
         sanitize_optional_trace_string(&mut inner.node_name);
-        inner.labels = inner
-            .labels
-            .iter()
-            .filter(|(key, _)| !key.is_empty())
-            .map(|(key, value)| {
-                (
-                    truncate_utf8(key, MAX_KUBERNETES_LABEL_KEY_BYTES),
-                    truncate_utf8(value, MAX_TRACE_STRING_BYTES),
-                )
-            })
-            .take(MAX_KUBERNETES_LABELS)
-            .collect();
+        sanitize_kubernetes_labels(
+            &mut inner.labels,
+            MAX_KUBERNETES_LABELS,
+            MAX_KUBERNETES_LABEL_KEY_BYTES,
+            MAX_TRACE_STRING_BYTES,
+        );
     }
 }
 
@@ -209,16 +200,4 @@ pub(crate) fn sanitize_trace_dependency_endpoint(endpoint: &mut DependencyEndpoi
     sanitize_optional_trace_string(&mut endpoint.domain);
     sanitize_optional_trace_kubernetes_context(&mut endpoint.workload);
     sanitize_optional_trace_container_context(&mut endpoint.container);
-}
-
-fn truncate_utf8(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_string()
 }

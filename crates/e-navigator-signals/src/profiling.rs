@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::network::sanitize_network_process_identity;
+use crate::sanitize::{sanitize_kubernetes_labels, truncate_utf8_in_place};
 use crate::{ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkProcessIdentity};
 
 const MAX_PROFILING_ATTRIBUTES: usize = 16;
@@ -131,20 +132,16 @@ pub struct ProfilingWarningObservation {
 }
 
 pub fn sanitize_profiling_attributes(attributes: &mut Vec<ProfilingAttribute>) {
-    let sanitized = attributes
-        .drain(..)
-        .filter(|attribute| {
-            !attribute.key.is_empty()
-                && !is_sensitive_profiling_attribute_key(&attribute.key)
-                && !is_reserved_profiling_attribute_key(&attribute.key)
-        })
-        .take(MAX_PROFILING_ATTRIBUTES)
-        .map(|attribute| ProfilingAttribute {
-            key: truncate_utf8(&attribute.key, MAX_PROFILING_ATTRIBUTE_KEY_BYTES),
-            value: truncate_utf8(&attribute.value, MAX_PROFILING_ATTRIBUTE_VALUE_BYTES),
-        })
-        .collect();
-    *attributes = sanitized;
+    attributes.retain(|attribute| {
+        !attribute.key.is_empty()
+            && !is_sensitive_profiling_attribute_key(&attribute.key)
+            && !is_reserved_profiling_attribute_key(&attribute.key)
+    });
+    attributes.truncate(MAX_PROFILING_ATTRIBUTES);
+    for attribute in attributes {
+        truncate_utf8_in_place(&mut attribute.key, MAX_PROFILING_ATTRIBUTE_KEY_BYTES);
+        truncate_utf8_in_place(&mut attribute.value, MAX_PROFILING_ATTRIBUTE_VALUE_BYTES);
+    }
 }
 
 pub fn sanitize_profiling_frames(frames: &mut Vec<ProfilingFrame>) {
@@ -157,7 +154,7 @@ pub fn sanitize_profiling_frames(frames: &mut Vec<ProfilingFrame>) {
 }
 
 pub(crate) fn sanitize_profiling_string(value: &mut String) {
-    *value = truncate_utf8(value, MAX_PROFILING_STRING_BYTES);
+    truncate_utf8_in_place(value, MAX_PROFILING_STRING_BYTES);
 }
 
 pub(crate) fn sanitize_optional_profiling_string(value: &mut Option<String>) {
@@ -190,18 +187,12 @@ pub(crate) fn sanitize_optional_profiling_kubernetes_context(
         sanitize_optional_profiling_string(&mut inner.pod_uid);
         sanitize_optional_profiling_string(&mut inner.container_name);
         sanitize_optional_profiling_string(&mut inner.node_name);
-        inner.labels = inner
-            .labels
-            .iter()
-            .filter(|(key, _)| !key.is_empty())
-            .map(|(key, value)| {
-                (
-                    truncate_utf8(key, MAX_KUBERNETES_LABEL_KEY_BYTES),
-                    truncate_utf8(value, MAX_PROFILING_STRING_BYTES),
-                )
-            })
-            .take(MAX_KUBERNETES_LABELS)
-            .collect();
+        sanitize_kubernetes_labels(
+            &mut inner.labels,
+            MAX_KUBERNETES_LABELS,
+            MAX_KUBERNETES_LABEL_KEY_BYTES,
+            MAX_PROFILING_STRING_BYTES,
+        );
     }
 }
 
@@ -234,20 +225,8 @@ fn is_reserved_profiling_attribute_key(key: &str) -> bool {
     )
 }
 
-fn truncate_utf8(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_string()
-}
-
 fn truncate_optional_string(value: &mut Option<String>, max_bytes: usize) {
     if let Some(inner) = value {
-        *inner = truncate_utf8(inner, max_bytes);
+        truncate_utf8_in_place(inner, max_bytes);
     }
 }

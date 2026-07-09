@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::sanitize::{sanitize_kubernetes_labels, truncate_utf8_in_place};
+
 use crate::network::sanitize_network_process_identity;
 use crate::{
     ContainerContext, KubernetesContext, NetworkAddressFamily, NetworkProcessIdentity,
@@ -96,7 +98,7 @@ pub(crate) fn sanitize_network_gauge_metric(metric: &mut NetworkGaugeMetric) {
 }
 
 fn sanitize_network_metric_string(value: &mut String) {
-    *value = truncate_utf8(value, MAX_NETWORK_METRIC_STRING_BYTES);
+    truncate_utf8_in_place(value, MAX_NETWORK_METRIC_STRING_BYTES);
 }
 
 fn sanitize_optional_network_metric_string(value: &mut Option<String>) {
@@ -125,29 +127,11 @@ fn sanitize_optional_kubernetes_context(context: &mut Option<KubernetesContext>)
         sanitize_optional_network_metric_string(&mut inner.pod_uid);
         sanitize_optional_network_metric_string(&mut inner.container_name);
         sanitize_optional_network_metric_string(&mut inner.node_name);
-        inner.labels = inner
-            .labels
-            .iter()
-            .filter(|(key, _)| !key.is_empty())
-            .map(|(key, value)| {
-                (
-                    truncate_utf8(key, MAX_KUBERNETES_LABEL_KEY_BYTES),
-                    truncate_utf8(value, MAX_NETWORK_METRIC_STRING_BYTES),
-                )
-            })
-            .take(MAX_KUBERNETES_LABELS)
-            .collect();
+        sanitize_kubernetes_labels(
+            &mut inner.labels,
+            MAX_KUBERNETES_LABELS,
+            MAX_KUBERNETES_LABEL_KEY_BYTES,
+            MAX_NETWORK_METRIC_STRING_BYTES,
+        );
     }
-}
-
-fn truncate_utf8(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_string()
 }

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::sanitize::{sanitize_kubernetes_labels, truncate_utf8_in_place};
+
 use crate::{ContainerContext, KubernetesContext, MetricAggregationWindow};
 
 const MAX_RESOURCE_METRIC_ATTRIBUTES: usize = 16;
@@ -195,18 +197,17 @@ pub struct ResourceMetricAttribute {
 }
 
 pub fn sanitize_resource_metric_attributes(attributes: &mut Vec<ResourceMetricAttribute>) {
-    let sanitized = attributes
-        .drain(..)
-        .filter(|attribute| {
-            !attribute.key.is_empty() && !is_sensitive_resource_metric_attribute_key(&attribute.key)
-        })
-        .map(|attribute| ResourceMetricAttribute {
-            key: truncate_utf8(&attribute.key, MAX_RESOURCE_METRIC_ATTRIBUTE_KEY_BYTES),
-            value: truncate_utf8(&attribute.value, MAX_RESOURCE_METRIC_ATTRIBUTE_VALUE_BYTES),
-        })
-        .take(MAX_RESOURCE_METRIC_ATTRIBUTES)
-        .collect();
-    *attributes = sanitized;
+    attributes.retain(|attribute| {
+        !attribute.key.is_empty() && !is_sensitive_resource_metric_attribute_key(&attribute.key)
+    });
+    attributes.truncate(MAX_RESOURCE_METRIC_ATTRIBUTES);
+    for attribute in attributes {
+        truncate_utf8_in_place(&mut attribute.key, MAX_RESOURCE_METRIC_ATTRIBUTE_KEY_BYTES);
+        truncate_utf8_in_place(
+            &mut attribute.value,
+            MAX_RESOURCE_METRIC_ATTRIBUTE_VALUE_BYTES,
+        );
+    }
 }
 
 fn is_sensitive_resource_metric_attribute_key(key: &str) -> bool {
@@ -363,39 +364,21 @@ fn sanitize_optional_resource_kubernetes_context(context: &mut Option<Kubernetes
         sanitize_optional_resource_signal_string(&mut inner.pod_uid);
         sanitize_optional_resource_signal_string(&mut inner.container_name);
         sanitize_optional_resource_signal_string(&mut inner.node_name);
-        inner.labels = inner
-            .labels
-            .iter()
-            .filter(|(key, _)| !key.is_empty())
-            .map(|(key, value)| {
-                (
-                    truncate_utf8(key, MAX_KUBERNETES_LABEL_KEY_BYTES),
-                    truncate_utf8(value, MAX_RESOURCE_SIGNAL_STRING_BYTES),
-                )
-            })
-            .take(MAX_KUBERNETES_LABELS)
-            .collect();
+        sanitize_kubernetes_labels(
+            &mut inner.labels,
+            MAX_KUBERNETES_LABELS,
+            MAX_KUBERNETES_LABEL_KEY_BYTES,
+            MAX_RESOURCE_SIGNAL_STRING_BYTES,
+        );
     }
 }
 
 fn sanitize_resource_signal_string(value: &mut String) {
-    *value = truncate_utf8(value, MAX_RESOURCE_SIGNAL_STRING_BYTES);
+    truncate_utf8_in_place(value, MAX_RESOURCE_SIGNAL_STRING_BYTES);
 }
 
 fn sanitize_optional_resource_signal_string(value: &mut Option<String>) {
     if let Some(inner) = value {
         sanitize_resource_signal_string(inner);
     }
-}
-
-fn truncate_utf8(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_string()
 }

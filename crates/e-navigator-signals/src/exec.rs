@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+
+use crate::sanitize::{sanitize_kubernetes_labels, truncate_utf8_in_place};
 use std::collections::BTreeMap;
 
 const MAX_EXEC_SIGNAL_STRING_BYTES: usize = 256;
@@ -159,39 +161,21 @@ fn sanitize_optional_kubernetes_context(context: &mut Option<KubernetesContext>)
         sanitize_optional_exec_signal_string(&mut inner.pod_uid);
         sanitize_optional_exec_signal_string(&mut inner.container_name);
         sanitize_optional_exec_signal_string(&mut inner.node_name);
-        inner.labels = inner
-            .labels
-            .iter()
-            .filter(|(key, _)| !key.is_empty())
-            .map(|(key, value)| {
-                (
-                    truncate_utf8(key, MAX_KUBERNETES_LABEL_KEY_BYTES),
-                    truncate_utf8(value, MAX_EXEC_SIGNAL_STRING_BYTES),
-                )
-            })
-            .take(MAX_KUBERNETES_LABELS)
-            .collect();
+        sanitize_kubernetes_labels(
+            &mut inner.labels,
+            MAX_KUBERNETES_LABELS,
+            MAX_KUBERNETES_LABEL_KEY_BYTES,
+            MAX_EXEC_SIGNAL_STRING_BYTES,
+        );
     }
 }
 
 fn sanitize_exec_signal_string(value: &mut String) {
-    *value = truncate_utf8(value, MAX_EXEC_SIGNAL_STRING_BYTES);
+    truncate_utf8_in_place(value, MAX_EXEC_SIGNAL_STRING_BYTES);
 }
 
 fn sanitize_optional_exec_signal_string(value: &mut Option<String>) {
     if let Some(inner) = value {
         sanitize_exec_signal_string(inner);
     }
-}
-
-fn truncate_utf8(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_string()
 }

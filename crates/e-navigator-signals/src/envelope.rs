@@ -1,6 +1,8 @@
 use e_navigator_core::Signal;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 
+use crate::sanitize::truncate_utf8_in_place;
+
 use crate::dns::{
     sanitize_dns_counter_metric, sanitize_dns_latency_metric, sanitize_dns_query_event,
     sanitize_dns_response_event,
@@ -1183,25 +1185,13 @@ impl SignalEnvelope {
 }
 
 fn sanitize_envelope_string(value: &mut String) {
-    *value = truncate_utf8(value, MAX_ENVELOPE_STRING_BYTES);
+    truncate_utf8_in_place(value, MAX_ENVELOPE_STRING_BYTES);
 }
 
 fn sanitize_optional_envelope_string(value: &mut Option<String>) {
     if let Some(inner) = value {
         sanitize_envelope_string(inner);
     }
-}
-
-fn truncate_utf8(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_string()
 }
 
 impl Signal for SignalEnvelope {
