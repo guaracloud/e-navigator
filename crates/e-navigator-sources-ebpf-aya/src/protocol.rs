@@ -22,8 +22,9 @@ use e_navigator_protocol::{
 };
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_signals::{
-    NetworkProcessIdentity, ProtocolCaptureRole, ProtocolKind, ProtocolRequestObservation,
-    SignalEnvelope, TraceAttribute, TraceConfidence, TraceCorrelationKind, TracePeerContext,
+    ContainerContext, NetworkProcessIdentity, ProtocolCaptureRole, ProtocolKind,
+    ProtocolRequestObservation, SignalEnvelope, TraceAttribute, TraceConfidence,
+    TraceCorrelationKind, TracePeerContext,
 };
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -240,31 +241,52 @@ struct ConnectionId {
 
 /// Connection identity fields retained for deferred emission.
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct ObservationContext {
     pid: u32,
     uid: u32,
     cgroup_id: u64,
     family: u32,
     remote_port_be: u16,
+    local_port_be: u16,
     remote_addr_v4: u32,
+    local_addr_v4: u32,
     remote_addr_v6: [u8; 16],
+    local_addr_v6: [u8; 16],
     command: [u8; 16],
+    container: Option<ContainerContext>,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 impl ObservationContext {
-    fn from_raw(raw: &RawProtocolDataEvent) -> Self {
+    fn from_raw(raw: &RawProtocolDataEvent, procfs_root: &std::path::Path) -> Self {
         Self {
             pid: raw.pid,
             uid: raw.uid,
             cgroup_id: raw.cgroup_id,
             family: raw.family,
             remote_port_be: raw.remote_port_be,
+            local_port_be: raw.local_port_be,
             remote_addr_v4: raw.remote_addr_v4,
+            local_addr_v4: raw.local_addr_v4,
             remote_addr_v6: raw.remote_addr_v6,
+            local_addr_v6: raw.local_addr_v6,
             command: raw.command,
+            container: crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid),
         }
+    }
+
+    fn matches_connection(&self, raw: &RawProtocolDataEvent) -> bool {
+        self.pid == raw.pid
+            && self.uid == raw.uid
+            && self.cgroup_id == raw.cgroup_id
+            && self.family == raw.family
+            && self.remote_port_be == raw.remote_port_be
+            && self.local_port_be == raw.local_port_be
+            && self.remote_addr_v4 == raw.remote_addr_v4
+            && self.local_addr_v4 == raw.local_addr_v4
+            && self.remote_addr_v6 == raw.remote_addr_v6
+            && self.local_addr_v6 == raw.local_addr_v6
     }
 }
 
@@ -410,6 +432,13 @@ impl ProtocolStreamRegistry {
             pid: raw.pid,
             fd: raw.fd,
         };
+        if self
+            .connections
+            .get(&connection_id)
+            .is_some_and(|stream| !stream.context.matches_connection(&raw))
+        {
+            self.evict_connection(connection_id, signals);
+        }
         self.evict_if_needed(connection_id, signals);
         let limits = self.limits;
         let stream = self
@@ -435,7 +464,7 @@ impl ProtocolStreamRegistry {
                     response_hpack: HpackDecoder::new(),
                     streams: std::collections::BTreeMap::new(),
                 }),
-                context: ObservationContext::from_raw(&raw),
+                context: ObservationContext::from_raw(&raw, &self.procfs_root),
                 last_seen_unix_nanos: observed_unix_nanos,
             });
         stream.last_seen_unix_nanos = observed_unix_nanos;
@@ -464,7 +493,6 @@ impl ProtocolStreamRegistry {
                 raw.direction == RAW_PROTOCOL_DIRECTION_WRITE,
                 &self.extraction,
                 &self.host,
-                &self.procfs_root,
                 &mut self.counters,
                 observed_unix_nanos,
                 signals,
@@ -475,7 +503,6 @@ impl ProtocolStreamRegistry {
                 &frames,
                 &self.extraction,
                 &self.host,
-                &self.procfs_root,
                 &mut self.counters,
                 observed_unix_nanos,
                 signals,
@@ -486,7 +513,6 @@ impl ProtocolStreamRegistry {
                 &frames,
                 &self.extraction,
                 &self.host,
-                &self.procfs_root,
                 &mut self.counters,
                 observed_unix_nanos,
                 signals,
@@ -508,34 +534,37 @@ impl ProtocolStreamRegistry {
             .iter()
             .min_by_key(|(_, stream)| stream.last_seen_unix_nanos)
             .map(|(id, _)| *id);
-        if let Some(id) = oldest
-            && let Some(mut stream) = self.connections.remove(&id)
-        {
-            self.counters.evicted_connections += 1;
-            if let Some(http2) = stream.http2.as_mut() {
-                while let Some((_, entry)) = http2.streams.pop_first() {
-                    self.counters.unmatched_evicted += 1;
-                    signals.push(build_observation(
-                        self.host.clone(),
-                        &self.procfs_root,
-                        &stream.context,
-                        entry.parsed,
-                        entry.started_unix_nanos,
-                        None,
-                    ));
-                }
-            }
-            for entry in stream.in_flight.drain(..) {
+        if let Some(id) = oldest {
+            self.evict_connection(id, signals);
+        }
+    }
+
+    fn evict_connection(&mut self, id: ConnectionId, signals: &mut Vec<SignalEnvelope>) {
+        let Some(mut stream) = self.connections.remove(&id) else {
+            return;
+        };
+        self.counters.evicted_connections += 1;
+        if let Some(http2) = stream.http2.as_mut() {
+            while let Some((_, entry)) = http2.streams.pop_first() {
                 self.counters.unmatched_evicted += 1;
                 signals.push(build_observation(
                     self.host.clone(),
-                    &self.procfs_root,
                     &stream.context,
                     entry.parsed,
                     entry.started_unix_nanos,
                     None,
                 ));
             }
+        }
+        for entry in stream.in_flight.drain(..) {
+            self.counters.unmatched_evicted += 1;
+            signals.push(build_observation(
+                self.host.clone(),
+                &stream.context,
+                entry.parsed,
+                entry.started_unix_nanos,
+                None,
+            ));
         }
     }
 }
@@ -607,7 +636,6 @@ fn handle_request_frames(
     frames: &[StreamFrame],
     extraction: &ProtocolExtractionConfig,
     host: &Option<String>,
-    procfs_root: &std::path::Path,
     counters: &mut ProtocolRegistryCounters,
     observed_unix_nanos: u64,
     signals: &mut Vec<SignalEnvelope>,
@@ -638,7 +666,6 @@ fn handle_request_frames(
         if stream.protocol == StreamProtocol::Nats {
             signals.push(build_observation(
                 host.clone(),
-                procfs_root,
                 &stream.context,
                 parsed,
                 observed_unix_nanos,
@@ -652,21 +679,13 @@ fn handle_request_frames(
             .and_then(kafka_request_header_prefix)
             .unwrap_or((-1, -1));
 
-        expire_in_flight(
-            stream,
-            host,
-            procfs_root,
-            counters,
-            observed_unix_nanos,
-            signals,
-        );
+        expire_in_flight(stream, host, counters, observed_unix_nanos, signals);
         if stream.in_flight.len() >= MAX_IN_FLIGHT_REQUESTS
             && let Some(entry) = stream.in_flight.pop_front()
         {
             counters.unmatched_overflow += 1;
             signals.push(build_observation(
                 host.clone(),
-                procfs_root,
                 &stream.context,
                 entry.parsed,
                 entry.started_unix_nanos,
@@ -739,7 +758,6 @@ fn handle_response_frames(
     frames: &[StreamFrame],
     extraction: &ProtocolExtractionConfig,
     host: &Option<String>,
-    procfs_root: &std::path::Path,
     counters: &mut ProtocolRegistryCounters,
     observed_unix_nanos: u64,
     signals: &mut Vec<SignalEnvelope>,
@@ -812,7 +830,6 @@ fn handle_response_frames(
             }
             signals.push(build_observation(
                 host.clone(),
-                procfs_root,
                 &stream.context,
                 parsed,
                 entry.started_unix_nanos,
@@ -833,7 +850,6 @@ fn handle_http2_frames(
     is_request_direction: bool,
     extraction: &ProtocolExtractionConfig,
     host: &Option<String>,
-    procfs_root: &std::path::Path,
     counters: &mut ProtocolRegistryCounters,
     observed_unix_nanos: u64,
     signals: &mut Vec<SignalEnvelope>,
@@ -902,7 +918,6 @@ fn handle_http2_frames(
                 counters.unmatched_overflow += 1;
                 signals.push(build_observation(
                     host.clone(),
-                    procfs_root,
                     &stream.context,
                     entry.parsed,
                     entry.started_unix_nanos,
@@ -980,7 +995,6 @@ fn handle_http2_frames(
         if header.flags & HTTP2_FLAG_END_STREAM != 0 {
             signals.push(build_observation(
                 host.clone(),
-                procfs_root,
                 &stream.context,
                 entry.parsed,
                 entry.started_unix_nanos,
@@ -998,7 +1012,6 @@ fn handle_http2_frames(
 fn expire_in_flight(
     stream: &mut ConnectionStream,
     host: &Option<String>,
-    procfs_root: &std::path::Path,
     counters: &mut ProtocolRegistryCounters,
     observed_unix_nanos: u64,
     signals: &mut Vec<SignalEnvelope>,
@@ -1016,7 +1029,6 @@ fn expire_in_flight(
         counters.unmatched_expired += 1;
         signals.push(build_observation(
             host.clone(),
-            procfs_root,
             &stream.context,
             entry.parsed,
             entry.started_unix_nanos,
@@ -1063,14 +1075,13 @@ fn kafka_request_header_prefix(frame: &[u8]) -> Option<(i16, i16)> {
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn build_observation(
     host: Option<String>,
-    procfs_root: &std::path::Path,
     context: &ObservationContext,
     parsed: ParsedRequestFrame,
     start_unix_nanos: u64,
     end_unix_nanos: Option<u64>,
 ) -> SignalEnvelope {
     let peer = context_peer(context);
-    let container = crate::procfs::container_from_pid_cgroup(procfs_root, context.pid);
+    let container = context.container.clone();
     let process = NetworkProcessIdentity {
         pid: context.pid,
         ppid: None,
@@ -2046,6 +2057,70 @@ mod tests {
         let serialized = serde_json::to_string(&signals[0]).expect("signal serializes");
         assert!(!serialized.contains("secret-key"));
         assert!(!serialized.contains("hello"));
+    }
+
+    #[test]
+    fn connection_reuses_source_time_container_attribution() {
+        const CONTAINER_ID: &str =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let procfs_root = std::env::temp_dir().join(format!(
+            "e-navigator-protocol-container-cache-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&procfs_root);
+        let cgroup_path = procfs_root.join("4242/cgroup");
+        std::fs::create_dir_all(cgroup_path.parent().expect("cgroup parent"))
+            .expect("create procfs fixture");
+        std::fs::write(
+            &cgroup_path,
+            format!("0::/kubepods.slice/cri-containerd-{CONTAINER_ID}.scope\n"),
+        )
+        .expect("write cgroup fixture");
+        let mut registry = ProtocolStreamRegistry::new(
+            Some("test-host".to_string()),
+            procfs_root.clone(),
+            &ProtocolSourceConfig::default(),
+        );
+
+        let request = raw_event(6379, b"*1\r\n$4\r\nPING\r\n", 14);
+        assert!(handle_at(&mut registry, &request, 5_000).is_empty());
+        std::fs::remove_file(&cgroup_path).expect("remove cgroup fixture after connection start");
+
+        let response = response_event(6379, b"+PONG\r\n");
+        let signals = handle_at(&mut registry, &response, 6_000);
+
+        let container = observation(&signals[0])
+            .container
+            .as_ref()
+            .expect("connection keeps its source-time container");
+        assert_eq!(container.container_id, CONTAINER_ID);
+        assert_eq!(container.runtime.as_deref(), Some("containerd"));
+        std::fs::remove_dir_all(procfs_root).expect("cleanup procfs fixture");
+    }
+
+    #[test]
+    fn reused_fd_with_a_new_socket_tuple_resets_stream_state() {
+        let mut registry = registry();
+        let first = raw_event(6379, b"*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n", 22);
+        assert!(handle_at(&mut registry, &first, 5_000).is_empty());
+
+        let mut reused = raw_event(6379, b"*1\r\n$4\r\nPING\r\n", 14);
+        reused.local_port_be = 43211_u16.to_be();
+        let evicted = handle_at(&mut registry, &reused, 6_000);
+
+        assert_eq!(evicted.len(), 1);
+        assert_eq!(observation(&evicted[0]).method.as_deref(), Some("GET"));
+        assert_eq!(observation(&evicted[0]).end_unix_nanos, None);
+        assert_eq!(registry.counters().evicted_connections, 1);
+        assert_eq!(registry.counters().unmatched_evicted, 1);
+
+        let mut response = response_event(6379, b"+PONG\r\n");
+        response.local_port_be = 43211_u16.to_be();
+        let matched = handle_at(&mut registry, &response, 7_000);
+
+        assert_eq!(matched.len(), 1);
+        assert_eq!(observation(&matched[0]).method.as_deref(), Some("PING"));
+        assert_eq!(observation(&matched[0]).duration_nanos, Some(1_000));
     }
 
     #[test]
