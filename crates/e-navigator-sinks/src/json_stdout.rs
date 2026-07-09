@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Sink};
 use e_navigator_signals::{SignalEnvelope, SignalPayload};
+use std::borrow::Cow;
 use tokio::io::{self, AsyncWriteExt};
 
 #[derive(Debug, Default)]
@@ -26,23 +27,31 @@ impl Sink<SignalEnvelope> for JsonStdoutSink {
     }
 }
 
-fn serialize_signal_line(signal: &SignalEnvelope) -> CoreResult<Vec<u8>> {
+pub fn serialize_signal_line(signal: &SignalEnvelope) -> CoreResult<Vec<u8>> {
     let sanitized = sanitize_signal_for_stdout(signal);
-    let mut line = serde_json::to_vec(&sanitized).map_err(|err| module_error(err.to_string()))?;
+    let mut line =
+        serde_json::to_vec(sanitized.as_ref()).map_err(|err| module_error(err.to_string()))?;
     line.push(b'\n');
     Ok(line)
 }
 
-fn sanitize_signal_for_stdout(signal: &SignalEnvelope) -> SignalEnvelope {
+fn sanitize_signal_for_stdout(signal: &SignalEnvelope) -> Cow<'_, SignalEnvelope> {
+    if !matches!(
+        signal.payload,
+        SignalPayload::Exec(_) | SignalPayload::RuntimeSecurityFinding(_)
+    ) {
+        return Cow::Borrowed(signal);
+    }
+
     let mut sanitized = signal.clone();
     match &mut sanitized.payload {
         SignalPayload::Exec(event) => redact_argv(&mut event.arguments),
         SignalPayload::RuntimeSecurityFinding(finding) => {
             redact_argv(&mut finding.matched_process.arguments);
         }
-        _ => {}
+        _ => unreachable!("argv-bearing payload checked before cloning"),
     }
-    sanitized
+    Cow::Owned(sanitized)
 }
 
 fn redact_argv(arguments: &mut [String]) {
@@ -154,6 +163,7 @@ mod tests {
         );
 
         let line = serialize_signal_line(&signal).expect("signal serializes");
+        assert!(matches!(sanitize_signal_for_stdout(&signal), Cow::Owned(_)));
         let value: serde_json::Value =
             serde_json::from_slice(&line[..line.len() - 1]).expect("line is valid JSON");
 
@@ -279,6 +289,10 @@ mod tests {
         );
 
         let line = serialize_signal_line(&signal).expect("signal serializes");
+        assert!(matches!(
+            sanitize_signal_for_stdout(&signal),
+            Cow::Borrowed(_)
+        ));
         let value: serde_json::Value =
             serde_json::from_slice(&line[..line.len() - 1]).expect("line is valid JSON");
 

@@ -18,7 +18,7 @@ pub mod prometheus;
 pub use exporter::{
     ExporterCounters, ExporterError, HttpExporterConfig, HttpJsonExporter, HttpProtobufExporter,
 };
-pub use json_stdout::JsonStdoutSink;
+pub use json_stdout::{JsonStdoutSink, serialize_signal_line};
 pub use otel_metric::{
     OtelMetricKind, OtelMetricRecord, OtelMetricValue, format_otel_metric_record,
 };
