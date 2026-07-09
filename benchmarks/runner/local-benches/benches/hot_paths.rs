@@ -31,7 +31,7 @@ use e_navigator_signals::{
 };
 use e_navigator_sinks::{
     HttpExporterConfig, HttpJsonExporter, PrometheusHttpSink, format_otel_metric_record,
-    format_otel_trace_record, format_pprof_profile, format_profile_record,
+    format_otel_trace_record, format_pprof_profile, format_profile_record, serialize_signal_line,
 };
 use e_navigator_sources_ebpf_aya::{
     bench_inline_sample, bench_perf_sample_into_owned,
@@ -587,9 +587,35 @@ fn bench_network_flow_byte_aggregation(c: &mut Criterion) {
 
 fn bench_serialization_and_exporter(c: &mut Criterion) {
     let signal = network_open_signal(1_000);
+    let exec_signal = security_signals().remove(0);
     let runtime = Runtime::new().unwrap();
     c.bench_function("json/signal_to_vec", |b| {
         b.iter(|| serde_json::to_vec(black_box(&signal)).unwrap())
+    });
+    c.bench_function("json/stdout_network_line", |b| {
+        b.iter(|| serialize_signal_line(black_box(&signal)).unwrap())
+    });
+    c.bench_function("json/stdout_exec_line", |b| {
+        b.iter(|| serialize_signal_line(black_box(&exec_signal)).unwrap())
+    });
+
+    c.bench_function("signal/network_open_envelope_sanitize", |b| {
+        b.iter_batched(
+            || {
+                (
+                    Some("node-a".to_string()),
+                    network_open_event(black_box(1_000)),
+                )
+            },
+            |(host, event)| {
+                SignalEnvelope::network_connection_open(
+                    black_box("source.bench"),
+                    host,
+                    black_box(event),
+                )
+            },
+            BatchSize::SmallInput,
+        )
     });
 
     let network_metric = network_flow_metric_signal();
@@ -1043,20 +1069,24 @@ fn network_open_signal(timestamp: u64) -> SignalEnvelope {
     SignalEnvelope::network_connection_open(
         "source.synthetic",
         Some("node-a".to_string()),
-        NetworkConnectionOpenEvent {
-            process: process(),
-            protocol: NetworkProtocol::Tcp,
-            address_family: NetworkAddressFamily::Ipv4,
-            local_address: Some("10.42.0.10".to_string()),
-            local_port: Some(41234),
-            remote_address: "203.0.113.10".to_string(),
-            remote_port: 443,
-            fd: Some(12),
-            timestamp_unix_nanos: timestamp,
-            container: Some(container()),
-            kubernetes: Some(kubernetes("api")),
-        },
+        network_open_event(timestamp),
     )
+}
+
+fn network_open_event(timestamp: u64) -> NetworkConnectionOpenEvent {
+    NetworkConnectionOpenEvent {
+        process: process(),
+        protocol: NetworkProtocol::Tcp,
+        address_family: NetworkAddressFamily::Ipv4,
+        local_address: Some("10.42.0.10".to_string()),
+        local_port: Some(41234),
+        remote_address: "203.0.113.10".to_string(),
+        remote_port: 443,
+        fd: Some(12),
+        timestamp_unix_nanos: timestamp,
+        container: Some(container()),
+        kubernetes: Some(kubernetes("api")),
+    }
 }
 
 fn network_close_signal(timestamp: u64) -> SignalEnvelope {
