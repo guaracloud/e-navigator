@@ -74,6 +74,7 @@ jobs:
     name: Publish signed artifacts
     needs: preflight
     runs-on: ubuntu-24.04
+    timeout-minutes: 150
     environment: release
     permissions:
       contents: write
@@ -180,11 +181,9 @@ jobs:
           do
             sha256sum "$artifact" > "$artifact.sha256"
             cosign sign-blob --yes "$artifact" \
-              --output-signature "$artifact.sig" \
-              --output-certificate "$artifact.pem"
+              --bundle "$artifact.sigstore.json"
             cosign verify-blob \
-              --signature "$artifact.sig" \
-              --certificate "$artifact.pem" \
+              --bundle "$artifact.sigstore.json" \
               --certificate-identity-regexp "$CERTIFICATE_IDENTITY_REGEXP" \
               --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
               "$artifact"
@@ -271,11 +270,9 @@ jobs:
           cd dist
           sha256sum release-manifest.json > release-manifest.json.sha256
           cosign sign-blob --yes release-manifest.json \
-            --output-signature release-manifest.json.sig \
-            --output-certificate release-manifest.json.pem
+            --bundle release-manifest.json.sigstore.json
           cosign verify-blob \
-            --signature release-manifest.json.sig \
-            --certificate release-manifest.json.pem \
+            --bundle release-manifest.json.sigstore.json \
             --certificate-identity-regexp "$CERTIFICATE_IDENTITY_REGEXP" \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             release-manifest.json
@@ -300,6 +297,7 @@ jobs:
     name: Verify and publish release
     needs: [preflight, publish-and-sign]
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     permissions:
       contents: write
       packages: write
@@ -356,13 +354,11 @@ jobs:
           for sum in *.sha256; do
             sha256sum -c "$sum"
           done
-          for sig in *.sig; do
-            artifact="${sig%.sig}"
+          for bundle in *.sigstore.json; do
+            artifact="${bundle%.sigstore.json}"
             test -f "$artifact"
-            test -f "${artifact}.pem"
             cosign verify-blob \
-              --signature "$sig" \
-              --certificate "${artifact}.pem" \
+              --bundle "$bundle" \
               --certificate-identity-regexp "$CERTIFICATE_IDENTITY_REGEXP" \
               --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
               "$artifact"
