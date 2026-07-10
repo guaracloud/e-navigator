@@ -7,6 +7,7 @@ publish = false
 
 [lints.rust]
 unsafe_code = "allow"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bpf_target_arch, values("aarch64", "x86_64"))'] }
 
 [lints.clippy]
 dbg_macro = "deny"

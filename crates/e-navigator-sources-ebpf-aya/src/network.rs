@@ -364,6 +364,7 @@ fn now_unix_nanos() -> u64 {
 mod platform {
     use crate::diagnostics::{DiagnosticSampleDecision, SourceDiagnostics};
     use crate::perf_sample::perf_sample_bytes;
+    use crate::reader_shutdown::ReaderShutdown;
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
@@ -374,13 +375,7 @@ mod platform {
     };
     use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Source};
     use e_navigator_signals::{ContainerContext, KubernetesContext, SignalEnvelope, SignalPayload};
-    use std::{
-        path::PathBuf,
-        sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
-        },
-    };
+    use std::{path::PathBuf, sync::Arc};
     use tokio::{sync::mpsc, task::JoinHandle};
     use tracing::{debug, info, warn};
 
@@ -922,33 +917,6 @@ mod platform {
         program.load().map_err(module_error)?;
         program.attach(category, name).map_err(module_error)?;
         Ok(())
-    }
-
-    #[derive(Clone)]
-    struct ReaderShutdown {
-        stopped: Arc<AtomicBool>,
-    }
-
-    impl ReaderShutdown {
-        fn new() -> Self {
-            Self {
-                stopped: Arc::new(AtomicBool::new(false)),
-            }
-        }
-
-        fn stop(&self) {
-            self.stopped.store(true, Ordering::SeqCst);
-        }
-
-        fn is_stopped(&self) -> bool {
-            self.stopped.load(Ordering::SeqCst)
-        }
-    }
-
-    impl Drop for ReaderShutdown {
-        fn drop(&mut self) {
-            self.stop();
-        }
     }
 
     async fn join_reader_handles(handles: Vec<JoinHandle<()>>) -> CoreResult<()> {

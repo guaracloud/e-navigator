@@ -1,8 +1,6 @@
+#[cfg(any(target_os = "linux", test))]
 use crate::diagnostics::DiagnosticSampleDecision;
-use std::sync::{
-    Mutex,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tracing::info;
 
@@ -10,8 +8,9 @@ use tracing::info;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) struct SourceTelemetry {
     source: &'static str,
-    summary_interval: Duration,
-    last_summary: Mutex<Instant>,
+    started_at: Instant,
+    summary_interval_nanos: u64,
+    next_summary_nanos: AtomicU64,
     decoded_samples: AtomicU64,
     invalid_samples: AtomicU64,
     sent_signals: AtomicU64,
@@ -43,10 +42,14 @@ impl SourceTelemetry {
     }
 
     fn with_summary_interval(source: &'static str, summary_interval: Duration) -> Self {
+        let summary_interval_nanos = u64::try_from(summary_interval.as_nanos())
+            .unwrap_or(u64::MAX)
+            .max(1);
         Self {
             source,
-            summary_interval,
-            last_summary: Mutex::new(Instant::now()),
+            started_at: Instant::now(),
+            summary_interval_nanos,
+            next_summary_nanos: AtomicU64::new(summary_interval_nanos),
             decoded_samples: AtomicU64::new(0),
             invalid_samples: AtomicU64::new(0),
             sent_signals: AtomicU64::new(0),
@@ -78,6 +81,7 @@ impl SourceTelemetry {
         self.lost_perf_events.fetch_add(count, Ordering::Relaxed);
     }
 
+    #[cfg(any(target_os = "linux", test))]
     pub(crate) fn record_diagnostic_decision(&self, decision: DiagnosticSampleDecision) {
         match decision {
             DiagnosticSampleDecision::Matched => {
@@ -94,15 +98,10 @@ impl SourceTelemetry {
     }
 
     pub(crate) fn maybe_log_summary(&self) {
-        let Ok(mut last_summary) = self.last_summary.lock() else {
-            return;
-        };
-        let now = Instant::now();
-        if now.duration_since(*last_summary) < self.summary_interval {
+        let elapsed_nanos = u64::try_from(self.started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        if !self.try_claim_summary(elapsed_nanos) {
             return;
         }
-        *last_summary = now;
-        drop(last_summary);
 
         let snapshot = self.take_snapshot();
         if snapshot.is_empty() {
@@ -122,6 +121,26 @@ impl SourceTelemetry {
             diagnostic_exhausted = snapshot.diagnostic_exhausted,
             "source telemetry summary"
         );
+    }
+
+    fn try_claim_summary(&self, elapsed_nanos: u64) -> bool {
+        let mut next_summary_nanos = self.next_summary_nanos.load(Ordering::Relaxed);
+        loop {
+            if elapsed_nanos < next_summary_nanos {
+                return false;
+            }
+
+            let following_summary_nanos = elapsed_nanos.saturating_add(self.summary_interval_nanos);
+            match self.next_summary_nanos.compare_exchange_weak(
+                next_summary_nanos,
+                following_summary_nanos,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => next_summary_nanos = observed,
+            }
+        }
     }
 
     #[cfg(test)]
@@ -155,6 +174,27 @@ impl SourceTelemetrySnapshot {
             && self.diagnostic_filtered == 0
             && self.diagnostic_exhausted == 0
     }
+}
+
+#[cfg(feature = "fuzzing")]
+pub fn bench_source_telemetry_summary_checks(
+    worker_count: usize,
+    calls_per_worker: usize,
+) -> usize {
+    use std::sync::Arc;
+
+    let telemetry = Arc::new(SourceTelemetry::new("source.bench"));
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            let telemetry = Arc::clone(&telemetry);
+            scope.spawn(move || {
+                for _ in 0..calls_per_worker {
+                    telemetry.maybe_log_summary();
+                }
+            });
+        }
+    });
+    worker_count.saturating_mul(calls_per_worker)
 }
 
 #[cfg(test)]
@@ -191,5 +231,20 @@ mod tests {
         let empty = telemetry.snapshot_for_test();
         assert_eq!(empty.decoded_samples, 0);
         assert_eq!(empty.lost_perf_events, 0);
+    }
+
+    #[test]
+    fn summary_gate_allows_one_claim_per_interval_without_catch_up() {
+        let telemetry =
+            SourceTelemetry::with_summary_interval("source.test", Duration::from_nanos(10));
+
+        assert!(!telemetry.try_claim_summary(9));
+        assert!(telemetry.try_claim_summary(10));
+        assert!(!telemetry.try_claim_summary(19));
+        assert!(telemetry.try_claim_summary(20));
+        assert!(telemetry.try_claim_summary(50));
+        assert!(!telemetry.try_claim_summary(50));
+        assert!(!telemetry.try_claim_summary(59));
+        assert!(telemetry.try_claim_summary(60));
     }
 }

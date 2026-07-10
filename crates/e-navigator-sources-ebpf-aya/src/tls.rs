@@ -69,6 +69,7 @@ pub(crate) fn stream_capture_ports(config: &e_navigator_core::TlsSourceConfig) -
 mod platform {
     use crate::diagnostics::SourceDiagnostics;
     use crate::perf_sample::InlineSample;
+    use crate::reader_shutdown::ReaderShutdown;
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
@@ -84,10 +85,7 @@ mod platform {
     use std::{
         collections::BTreeSet,
         path::{Path, PathBuf},
-        sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
-        },
+        sync::Arc,
     };
     use tokio::{sync::mpsc, task::JoinHandle};
     use tracing::{debug, info, warn};
@@ -599,33 +597,6 @@ mod platform {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_nanos().min(u128::from(u64::MAX)) as u64)
             .unwrap_or(0)
-    }
-
-    #[derive(Clone)]
-    struct ReaderShutdown {
-        stopped: Arc<AtomicBool>,
-    }
-
-    impl ReaderShutdown {
-        fn new() -> Self {
-            Self {
-                stopped: Arc::new(AtomicBool::new(false)),
-            }
-        }
-
-        fn stop(&self) {
-            self.stopped.store(true, Ordering::SeqCst);
-        }
-
-        fn is_stopped(&self) -> bool {
-            self.stopped.load(Ordering::SeqCst)
-        }
-    }
-
-    impl Drop for ReaderShutdown {
-        fn drop(&mut self) {
-            self.stop();
-        }
     }
 
     async fn join_reader_handles(handles: Vec<JoinHandle<()>>) -> CoreResult<()> {

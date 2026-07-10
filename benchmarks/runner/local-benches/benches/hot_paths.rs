@@ -34,7 +34,7 @@ use e_navigator_sinks::{
     format_otel_trace_record, format_pprof_profile, format_profile_record, serialize_signal_line,
 };
 use e_navigator_sources_ebpf_aya::{
-    bench_inline_sample, bench_perf_sample_into_owned,
+    bench_inline_sample, bench_perf_sample_into_owned, bench_source_telemetry_summary_checks,
     cpu_profile::fuzz_decode_raw_cpu_profile_event, exec::fuzz_decode_raw_exec_event,
     network::fuzz_decode_raw_network_event, protocol::fuzz_decode_raw_protocol_data_event,
 };
@@ -56,6 +56,12 @@ fn bench_reader_sample_handoff(c: &mut Criterion) {
     });
     c.bench_function("reader_handoff/inline_sample", |b| {
         b.iter(|| bench_inline_sample(black_box(&head), black_box(&[])))
+    });
+}
+
+fn bench_source_telemetry(c: &mut Criterion) {
+    c.bench_function("source_telemetry/summary_gate_4_threads_2000_calls", |b| {
+        b.iter(|| bench_source_telemetry_summary_checks(black_box(4), black_box(2_000)))
     });
 }
 
@@ -487,6 +493,7 @@ fn bench_generators(c: &mut Criterion) {
         NetworkMetricsGenerator::with_limits(8192, 8192),
         network_signals(),
     );
+    bench_network_open_aggregation(c);
     bench_network_flow_byte_aggregation(c);
     bench_generator(
         c,
@@ -494,6 +501,7 @@ fn bench_generators(c: &mut Criterion) {
         DnsMetricsGenerator::with_limits(4096, 4096, 4096, 4096),
         dns_signals(),
     );
+    bench_dns_query_aggregation(c);
     bench_generator(
         c,
         "generator/resource_metrics",
@@ -530,6 +538,54 @@ fn bench_generators(c: &mut Criterion) {
         RuntimeSecurityGenerator::with_kubernetes_api_endpoints([("10.43.0.1".to_string(), 443)]),
         security_signals(),
     );
+}
+
+fn bench_network_open_aggregation(c: &mut Criterion) {
+    let runtime = Runtime::new().unwrap();
+    let generator = NetworkMetricsGenerator::with_limits(8192, 8192);
+    let (tx, mut rx) = mpsc::channel(1024);
+    let timestamp = Cell::new(0_u64);
+
+    c.bench_function("generator/network_open_aggregation", |b| {
+        b.iter_batched(
+            || {
+                let next = timestamp.get().wrapping_add(1);
+                timestamp.set(next);
+                network_open_signal(10_000 + next)
+            },
+            |signal| {
+                runtime
+                    .block_on(generator.observe(black_box(&signal), &tx))
+                    .unwrap();
+                while rx.try_recv().is_ok() {}
+            },
+            BatchSize::SmallInput,
+        )
+    });
+}
+
+fn bench_dns_query_aggregation(c: &mut Criterion) {
+    let runtime = Runtime::new().unwrap();
+    let generator = DnsMetricsGenerator::with_limits(4096, 4096, 4096, 4096);
+    let (tx, mut rx) = mpsc::channel(1024);
+    let timestamp = Cell::new(0_u64);
+
+    c.bench_function("generator/dns_query_aggregation", |b| {
+        b.iter_batched(
+            || {
+                let next = timestamp.get().wrapping_add(1);
+                timestamp.set(next);
+                dns_query_signal(10_000 + next)
+            },
+            |signal| {
+                runtime
+                    .block_on(generator.observe(black_box(&signal), &tx))
+                    .unwrap();
+                while rx.try_recv().is_ok() {}
+            },
+            BatchSize::SmallInput,
+        )
+    });
 }
 
 fn bench_generator<G>(
@@ -769,6 +825,24 @@ fn dns_signals() -> Vec<SignalEnvelope> {
             ]
         })
         .collect()
+}
+
+fn dns_query_signal(timestamp: u64) -> SignalEnvelope {
+    SignalEnvelope::dns_query(
+        "source.synthetic",
+        Some("node-a".to_string()),
+        DnsQueryEvent {
+            process: process(),
+            query_name: "api.e-navigator-bench.svc.cluster.local".to_string(),
+            query_type: DnsQueryType::A,
+            transport_protocol: NetworkProtocol::Udp,
+            server_address: Some("10.43.0.10".to_string()),
+            server_port: Some(53),
+            timestamp_unix_nanos: timestamp,
+            container: Some(container()),
+            kubernetes: Some(kubernetes("api")),
+        },
+    )
 }
 
 fn resource_signals() -> Vec<SignalEnvelope> {
@@ -1362,6 +1436,7 @@ criterion_group!(
     benches,
     bench_capture_filter,
     bench_reader_sample_handoff,
+    bench_source_telemetry,
     bench_unwind_table,
     bench_raw_aya_decoders,
     bench_host_parsers,

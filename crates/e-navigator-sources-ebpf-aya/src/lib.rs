@@ -18,7 +18,11 @@ pub use perf_sample::{bench_inline_sample, bench_perf_sample_into_owned};
 mod procfs;
 pub mod protocol;
 #[cfg(any(target_os = "linux", test))]
+mod reader_shutdown;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 mod source_telemetry;
+#[cfg(feature = "fuzzing")]
+pub use source_telemetry::bench_source_telemetry_summary_checks;
 pub mod tls;
 
 pub use cpu_profile::AyaCpuProfileSource;

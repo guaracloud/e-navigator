@@ -999,6 +999,7 @@ mod platform {
         UnwindTableManager,
     };
     use crate::perf_sample::perf_sample_bytes;
+    use crate::reader_shutdown::ReaderShutdown;
     use async_trait::async_trait;
     use aya::{
         Ebpf, include_bytes_aligned,
@@ -1016,10 +1017,6 @@ mod platform {
         ModuleMetadata, Source,
     };
     use e_navigator_signals::SignalEnvelope;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
     use tokio::{sync::mpsc, task::JoinHandle};
     use tracing::{debug, warn};
 
@@ -1353,33 +1350,6 @@ mod platform {
     enum ReaderExit {
         Stopped,
         BackpressureStop,
-    }
-
-    #[derive(Clone)]
-    struct ReaderShutdown {
-        stopped: Arc<AtomicBool>,
-    }
-
-    impl ReaderShutdown {
-        fn new() -> Self {
-            Self {
-                stopped: Arc::new(AtomicBool::new(false)),
-            }
-        }
-
-        fn stop(&self) {
-            self.stopped.store(true, Ordering::SeqCst);
-        }
-
-        fn is_stopped(&self) -> bool {
-            self.stopped.load(Ordering::SeqCst)
-        }
-    }
-
-    impl Drop for ReaderShutdown {
-        fn drop(&mut self) {
-            self.stop();
-        }
     }
 
     async fn join_reader_handles(handles: Vec<JoinHandle<ReaderExit>>) -> CoreResult<()> {

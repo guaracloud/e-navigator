@@ -1,11 +1,12 @@
 use async_trait::async_trait;
 use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata};
 use e_navigator_signals::{
-    MetricAggregationWindow, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
-    NetworkConnectionOpenEvent, NetworkCounterMetric, NetworkDurationMetric, NetworkFlowDirection,
-    NetworkFlowEndpoint, NetworkFlowSummaryEvent, NetworkFlowWarning, NetworkGaugeMetric,
-    NetworkProcessIdentity, NetworkProtocol, NetworkTcpResetDirection, NetworkTcpStatKind,
-    NetworkTcpStatObservation, NetworkTcpState, SignalEnvelope, SignalPayload,
+    MetricAggregationWindow, NetworkAddressFamily, NetworkConnectionCloseEvent,
+    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkCounterMetric,
+    NetworkDurationMetric, NetworkFlowDirection, NetworkFlowEndpoint, NetworkFlowSummaryEvent,
+    NetworkFlowWarning, NetworkGaugeMetric, NetworkProcessIdentity, NetworkProtocol,
+    NetworkTcpResetDirection, NetworkTcpStatKind, NetworkTcpStatObservation, NetworkTcpState,
+    SignalEnvelope, SignalPayload,
 };
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -543,8 +544,8 @@ struct CounterKey {
     metric_name: &'static str,
     workload: Option<String>,
     container: Option<String>,
-    protocol: Option<String>,
-    address_family: Option<String>,
+    protocol: Option<NetworkProtocol>,
+    address_family: Option<NetworkAddressFamily>,
     remote_address: Option<String>,
     remote_port: Option<u16>,
     errno: Option<i32>,
@@ -571,8 +572,8 @@ impl CounterKey {
                 .container
                 .as_ref()
                 .map(|container| container.container_id.clone()),
-            protocol: Some(format!("{:?}", event.protocol)),
-            address_family: Some(format!("{:?}", event.address_family)),
+            protocol: Some(event.protocol),
+            address_family: Some(event.address_family),
             remote_address: Some(event.remote_address.clone()),
             remote_port: Some(event.remote_port),
             errno: Some(event.errno),
@@ -587,8 +588,8 @@ impl CounterKey {
                 .container
                 .as_ref()
                 .map(|container| container.container_id.clone()),
-            protocol: Some(format!("{:?}", NetworkProtocol::Tcp)),
-            address_family: Some(format!("{:?}", event.address_family)),
+            protocol: Some(NetworkProtocol::Tcp),
+            address_family: Some(event.address_family),
             remote_address: event.remote_address.clone(),
             remote_port: event.remote_port,
             errno: None,
@@ -603,8 +604,8 @@ impl CounterKey {
                 .container
                 .as_ref()
                 .map(|container| container.container_id.clone()),
-            protocol: Some(format!("{:?}", event.protocol)),
-            address_family: Some(format!("{:?}", event.address_family)),
+            protocol: Some(event.protocol),
+            address_family: Some(event.address_family),
             remote_address: None,
             remote_port: None,
             errno: None,
@@ -644,8 +645,8 @@ fn metric_key(
             .container
             .as_ref()
             .map(|container| container.container_id.clone()),
-        protocol: Some(format!("{:?}", event.protocol)),
-        address_family: Some(format!("{:?}", event.address_family)),
+        protocol: Some(event.protocol),
+        address_family: Some(event.address_family),
         remote_address: include_destination.then(|| event.remote_address.clone()),
         remote_port: include_destination.then_some(event.remote_port),
         errno,
@@ -804,8 +805,8 @@ impl CounterState {
 struct DurationKey {
     workload: Option<String>,
     container: Option<String>,
-    protocol: String,
-    address_family: String,
+    protocol: NetworkProtocol,
+    address_family: NetworkAddressFamily,
     remote_address: String,
     remote_port: u16,
 }
@@ -818,8 +819,8 @@ impl DurationKey {
                 .container
                 .as_ref()
                 .map(|container| container.container_id.clone()),
-            protocol: format!("{:?}", event.protocol),
-            address_family: format!("{:?}", event.address_family),
+            protocol: event.protocol,
+            address_family: event.address_family,
             remote_address: event.remote_address.clone(),
             remote_port: event.remote_port,
         }
@@ -923,8 +924,8 @@ struct ActiveConnectionState {
 struct ActiveGaugeKey {
     workload: Option<String>,
     container: Option<String>,
-    protocol: String,
-    address_family: String,
+    protocol: NetworkProtocol,
+    address_family: NetworkAddressFamily,
     remote_address: String,
     remote_port: u16,
 }
@@ -937,8 +938,8 @@ impl ActiveGaugeKey {
                 .container
                 .as_ref()
                 .map(|container| container.container_id.clone()),
-            protocol: format!("{:?}", event.protocol),
-            address_family: format!("{:?}", event.address_family),
+            protocol: event.protocol,
+            address_family: event.address_family,
             remote_address: event.remote_address.clone(),
             remote_port: event.remote_port,
         }
@@ -1016,8 +1017,8 @@ struct EventFingerprint {
     kind: &'static str,
     pid: u32,
     fd: Option<i32>,
-    protocol: String,
-    address_family: String,
+    protocol: NetworkProtocol,
+    address_family: NetworkAddressFamily,
     local_address: Option<String>,
     local_port: Option<u16>,
     remote_address: String,
@@ -1034,8 +1035,8 @@ impl EventFingerprint {
                 kind: "open",
                 pid: event.process.pid,
                 fd: event.fd,
-                protocol: format!("{:?}", event.protocol),
-                address_family: format!("{:?}", event.address_family),
+                protocol: event.protocol,
+                address_family: event.address_family,
                 local_address: event.local_address.clone(),
                 local_port: event.local_port,
                 remote_address: event.remote_address.clone(),
@@ -1048,8 +1049,8 @@ impl EventFingerprint {
                 kind: "close",
                 pid: event.process.pid,
                 fd: event.fd,
-                protocol: format!("{:?}", event.protocol),
-                address_family: format!("{:?}", event.address_family),
+                protocol: event.protocol,
+                address_family: event.address_family,
                 local_address: event.local_address.clone(),
                 local_port: event.local_port,
                 remote_address: event.remote_address.clone(),
@@ -1062,8 +1063,8 @@ impl EventFingerprint {
                 kind: "failure",
                 pid: event.process.pid,
                 fd: event.fd,
-                protocol: format!("{:?}", event.protocol),
-                address_family: format!("{:?}", event.address_family),
+                protocol: event.protocol,
+                address_family: event.address_family,
                 local_address: None,
                 local_port: None,
                 remote_address: event.remote_address.clone(),
@@ -1807,8 +1808,8 @@ mod tests {
             kind: "open",
             pid: 42,
             fd: Some(7),
-            protocol: "Tcp".to_string(),
-            address_family: "Ipv4".to_string(),
+            protocol: NetworkProtocol::Tcp,
+            address_family: NetworkAddressFamily::Ipv4,
             local_address: Some("10.0.0.5".to_string()),
             local_port: Some(43512),
             remote_address: remote_address.to_string(),

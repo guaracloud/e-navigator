@@ -45,7 +45,11 @@ Current local benchmark targets:
 - profiling fixture normalization;
 - Kubernetes pod-list JSON parsing and bounded metadata cache construction;
 - generator hot paths for network, DNS, resource, dependency graph, trace,
-  request, profiling, runtime security, and native export;
+  request, profiling, runtime security, and native export, including unique
+  network-open and DNS-query aggregation fixtures that cannot collapse into
+  the duplicate-rejection fast path after warm-up;
+- concurrent Aya source-telemetry summary-gate checks across four reader
+  threads;
 - JSON signal serialization, OpenTelemetry metric/trace/profile formatting,
   pprof profile sample protobuf rendering, Prometheus profile session/warning
   formatting, prefilled Prometheus latest-metric updates, and bounded HTTP
@@ -193,6 +197,36 @@ These timings cover fixed-fixture userspace construction, sanitization,
 serialization, protocol reassembly, response matching, and observation
 emission. They do not measure stdout I/O, live procfs latency, kernel capture,
 collector latency, or production throughput.
+
+Focused source-telemetry and network-key A/B measured on 2026-07-09 on an
+Apple M5 Pro (`Mac17,9`, macOS 26.5.2) with `rustc 1.96.0`. Baseline and
+optimized runs used identical fixtures, 100 samples, a 5-second warm-up, and a
+10-second measurement for network aggregation; the telemetry fixture used a
+3-second warm-up and 5-second measurement:
+
+```bash
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  'generator/network_(open_aggregation|flow_byte_aggregation)$' \
+  --sample-size 100 --measurement-time 10 --warm-up-time 5
+
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  'source_telemetry/summary_gate' \
+  --sample-size 100 --measurement-time 5 --warm-up-time 3
+```
+
+| Benchmark | Baseline | Optimized | Criterion result |
+| --- | --- | --- | --- |
+| `source_telemetry/summary_gate_4_threads_2000_calls` | 578.38-585.02 us | 104.32-114.56 us | 80.1-81.3% lower, `p < 0.05` |
+| `generator/network_open_aggregation` | 5.3471-5.5013 us | 5.0204-5.1797 us | 11.1-14.3% lower, `p < 0.05` |
+| `generator/network_flow_byte_aggregation` | 10.547-12.393 us | 3.4713-3.5991 us | 69.6-75.7% lower, `p < 0.05` |
+
+The telemetry case measures 8,000 concurrent summary-gate checks per
+iteration; it does not include kernel capture. The network cases create a new
+observation timestamp per iteration and therefore exercise aggregation and
+bounded dedupe eviction rather than repeatedly returning from the duplicate
+fast path. A proposed DNS normalization refactor was reverted because an
+alternating focused A/B did not validate an improvement; no DNS performance
+claim is made.
 
 ## Guarded Runtime Proof
 

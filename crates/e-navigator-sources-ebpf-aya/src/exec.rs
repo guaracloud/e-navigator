@@ -297,6 +297,7 @@ pub fn fuzz_decode_raw_exec_event(bytes: &[u8]) -> bool {
 mod platform {
     use crate::diagnostics::{DiagnosticSampleDecision, SourceDiagnostics};
     use crate::perf_sample::perf_sample_bytes;
+    use crate::reader_shutdown::ReaderShutdown;
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
@@ -314,10 +315,7 @@ mod platform {
     };
     use std::{
         path::PathBuf,
-        sync::{
-            Arc, Mutex,
-            atomic::{AtomicBool, Ordering},
-        },
+        sync::{Arc, Mutex},
     };
     use tokio::sync::mpsc;
     use tokio::task::JoinHandle;
@@ -868,33 +866,6 @@ mod platform {
                 module: "source.aya_exec".to_string(),
                 message: err.to_string(),
             })
-    }
-
-    #[derive(Clone)]
-    struct ReaderShutdown {
-        stopped: Arc<AtomicBool>,
-    }
-
-    impl ReaderShutdown {
-        fn new() -> Self {
-            Self {
-                stopped: Arc::new(AtomicBool::new(false)),
-            }
-        }
-
-        fn stop(&self) {
-            self.stopped.store(true, Ordering::SeqCst);
-        }
-
-        fn is_stopped(&self) -> bool {
-            self.stopped.load(Ordering::SeqCst)
-        }
-    }
-
-    impl Drop for ReaderShutdown {
-        fn drop(&mut self) {
-            self.stop();
-        }
     }
 
     async fn join_reader_handles(handles: Vec<JoinHandle<()>>) -> CoreResult<()> {
