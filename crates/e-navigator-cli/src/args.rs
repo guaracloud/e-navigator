@@ -2,7 +2,7 @@ use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(name = "e-navigator")]
+#[command(name = "e-navigator", version)]
 #[command(about = "E-Navigator node agent")]
 pub(crate) struct Args {
     #[arg(long, value_enum, default_value_t = SourceMode::AyaExec)]

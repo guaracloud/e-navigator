@@ -6,8 +6,8 @@ keyless Cosign through GitHub OIDC.
 Set the release tag once:
 
 ```bash
-export VERSION=v0.1.0
-export REPO=e-navigator/e-navigator
+export VERSION=v0.1.0-rc.1
+export REPO=guaracloud/e-navigator
 ```
 
 ## Download Release Assets
@@ -37,7 +37,7 @@ for sig in *.sig; do
   cosign verify-blob "$artifact" \
     --signature "$sig" \
     --certificate "${artifact}.pem" \
-    --certificate-identity-regexp '^https://github\.com/e-navigator/e-navigator/' \
+    --certificate-identity-regexp '^https://github\.com/guaracloud/e-navigator/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' \
     --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 done
 ```
@@ -50,7 +50,7 @@ Read the exact image reference from `release-manifest.json`:
 image_ref="$(jq -r '.images[0].reference' release-manifest.json)"
 
 cosign verify "$image_ref" \
-  --certificate-identity-regexp '^https://github\.com/e-navigator/e-navigator/' \
+  --certificate-identity-regexp '^https://github\.com/guaracloud/e-navigator/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 ```
 
@@ -69,7 +69,7 @@ done
 ## Verify The Helm Chart
 
 ```bash
-helm pull oci://ghcr.io/e-navigator/charts/e-navigator --version "${VERSION#v}"
+helm pull oci://ghcr.io/guaracloud/charts/e-navigator --version "${VERSION#v}"
 sha256sum -c "e-navigator-${VERSION#v}.tgz.sha256"
 ```
 
@@ -83,7 +83,7 @@ deployments.
 cosign verify-blob release-manifest.json \
   --signature release-manifest.json.sig \
   --certificate release-manifest.json.pem \
-  --certificate-identity-regexp '^https://github\.com/e-navigator/e-navigator/' \
+  --certificate-identity-regexp '^https://github\.com/guaracloud/e-navigator/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 
 jq -e '.schema == "e-navigator.release-manifest/v1"' release-manifest.json

@@ -10,6 +10,10 @@ Run the full non-privileged gate before submitting changes:
 scripts/quality.sh
 ```
 
+Release-bound changes must also preserve the version and repository identity
+contract enforced by `python3 scripts/release.py check`. Follow
+`documentation/release-process.md`; never move or reuse a published tag.
+
 The strict gate requires `cargo-deny`, `cargo-audit`, `cargo-machete`, Docker,
 Helm, `kubeconform`, Node, and the normal Rust toolchain. On macOS with
 Homebrew, install missing local-gate CLIs with:

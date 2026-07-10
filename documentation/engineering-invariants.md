@@ -48,3 +48,14 @@ These invariants keep E-Navigator's implementation and public claims aligned.
   public reader path.
 - Public docs should state what is proven, partial, not proven, or blocked
   without exposing a chronological lab notebook.
+
+## Release Integrity
+
+- A release tag must point at the current, fully validated `main` commit.
+- Cargo packages, CLI output, chart metadata, default image tags, release
+  documentation, changelog, and the Git tag must carry one identical SemVer.
+- Workspace crates are not published to crates.io; signed OCI images and Helm
+  charts are the supported distribution surfaces.
+- Prereleases never move `latest`. Stable aliases move only after the image,
+  chart, signatures, checksums, SBOMs, and release manifest verify.
+- Published tags are immutable. Fix forward with a new patch or prerelease tag.

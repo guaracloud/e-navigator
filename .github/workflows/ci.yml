@@ -6,28 +6,40 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
+env:
+  E_NAVIGATOR_BPF_TOOLCHAIN: nightly-2026-07-01
+  HELM_VERSION: v4.2.2
+  RUST_VERSION: 1.96.0
+
 jobs:
   rust:
     name: Rust checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable 2026-07-10
         with:
           components: clippy,rustfmt
+          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
 
       - name: Install eBPF build prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y clang llvm
-          rustup toolchain install nightly --component rust-src
+          rustup toolchain install "$E_NAVIGATOR_BPF_TOOLCHAIN" --component rust-src
           cargo install bpf-linker --version 0.10.3 --locked
+
+      - name: Release contract
+        run: python3 scripts/release.py check
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -47,61 +59,76 @@ jobs:
       - name: Synthetic run
         run: cargo run --locked -p e-navigator-cli -- --source synthetic
 
+      - name: Version contract
+        run: |
+          expected="$(python3 scripts/release.py version)"
+          actual="$(cargo run --locked -q -p e-navigator-cli -- --version)"
+          test "$actual" = "e-navigator $expected"
+
   supply-chain:
     name: Supply-chain checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable 2026-07-10
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
 
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
+        run: cargo install cargo-deny --version 0.19.9 --locked
 
       - name: Cargo deny
         run: cargo deny check
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo install cargo-audit --version 0.22.2 --locked
 
       - name: Cargo audit
         run: cargo audit
 
       - name: Install cargo-machete
-        run: cargo install cargo-machete --locked
+        run: cargo install cargo-machete --version 0.9.2 --locked
 
       - name: Cargo machete
         run: cargo machete
 
   manifests:
     name: Kubernetes and Helm checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
 
       - name: Install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: "1.26.x"
+          cache: false
+          go-version: "1.26.4"
 
       - name: Install kubeconform
         run: |
           go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
+      - name: Lint GitHub Actions workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/*.yml
+
       - name: Validate Helm chart
         run: |
           helm lint charts/e-navigator
           helm template e-navigator charts/e-navigator
+          python3 scripts/release.py check
 
       - name: Validate manifests
         run: |
@@ -110,16 +137,22 @@ jobs:
 
   docker:
     name: Docker smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Build image
         run: docker build -f Containerfile -t e-navigator:local .
 
       - name: Synthetic image run
         run: docker run --rm e-navigator:local --source synthetic
+
+      - name: Versioned image run
+        run: |
+          expected="$(python3 scripts/release.py version)"
+          actual="$(docker run --rm e-navigator:local --version)"
+          test "$actual" = "e-navigator $expected"
 
       - name: Docker smoke
         run: tests/smoke_docker.sh e-navigator:local

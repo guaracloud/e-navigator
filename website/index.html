@@ -77,7 +77,7 @@
             <li>eBPF sources</li>
             <li>Versioned signals</li>
             <li>Curated proof report</li>
-            <li>Pre-release 0.1.0</li>
+            <li>Release candidate 0.1.0-rc.1</li>
           </ul>
         </div>
 
@@ -154,11 +154,11 @@
           </article>
           <article class="status">
             <strong>Runtime-proven slices</strong>
-            <p>Selected exec, network, DNS, HTTP, profile, resource, Prometheus, OTLP, and seccomp paths, plus local OrbStack live proof for outbound and inbound HTTP capture, HTTP/2 with HPACK request/response matching, Redis protocol capture with matched latency and response status, CPU profile symbolization to module and offset, a served pprof profile endpoint, TCP reset and state-transition observation, and Kubernetes-aware capture filtering proven on OrbStack (with a +42% excluded-workload throughput A/B) and on a homelab k3s/containerd node. Includes duplicate flow suppression, OTLP HTTP/gRPC and response-status request error mapping, profile attribute filtering and dropped-sample export, pprof rendering with real addresses and mappings, and warning trace-record formatting.</p>
+            <p>Selected exec, network, DNS, HTTP, profile, resource, Prometheus, OTLP, and seccomp paths, plus homelab request/response matching for Redis, PostgreSQL, MongoDB, NATS, gRPC, and Kafka. Local OrbStack proof covers outbound and inbound HTTP capture, HTTP/2 with HPACK matching, deeper Redis reassembly and TLS slices, native and CPython profile symbolization, a served pprof endpoint, TCP reset and state-transition observation, and Kubernetes-aware capture filtering. These are bounded runtime slices, not production coverage.</p>
           </article>
           <article class="status">
             <strong>Still partial</strong>
-            <p>Native flow-byte live export, symmetric all-node DNS/HTTP capture, live gRPC and Kafka/MongoDB/MySQL/NATS/PostgreSQL capture proof, TLS payload inspection, DWARF stack unwinding, live TCP retransmit induction, production backend proof, and reduced privilege.</p>
+            <p>Native flow-byte live export, symmetric all-node DNS/HTTP capture, live MySQL capture proof, broad protocol and TLS coverage, native DWARF pod-process coverage under high node load, live TCP retransmit induction, production backend proof, production soak, and reduced privilege.</p>
           </article>
         </div>
         <div class="link-row">
@@ -217,8 +217,8 @@
             </div>
             <div class="command-code">
               <button class="copy-button" type="button">Copy</button>
-              <pre><code>helm upgrade --install e-navigator oci://ghcr.io/e-navigator/charts/e-navigator \
-  --version 0.1.0 \
+              <pre><code>helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
+  --version 0.1.0-rc.1 \
   --namespace e-navigator-system \
   --create-namespace</code></pre>
             </div>
@@ -230,7 +230,7 @@
             </div>
             <div class="command-code">
               <button class="copy-button" type="button">Copy</button>
-              <pre><code>gh release download v0.1.0 --repo e-navigator/e-navigator --dir e-navigator-release
+              <pre><code>gh release download v0.1.0-rc.1 --repo guaracloud/e-navigator --dir e-navigator-release
 jq -r '.images[0].reference' e-navigator-release/release-manifest.json</code></pre>
             </div>
           </article>

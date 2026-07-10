@@ -8,7 +8,7 @@ namespace:
   labels: {}
 
 image:
-  repository: ghcr.io/e-navigator/e-navigator
+  repository: ghcr.io/guaracloud/e-navigator
   tag: ""
   digest: ""
   pullPolicy: IfNotPresent

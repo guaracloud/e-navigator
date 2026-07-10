@@ -179,7 +179,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-core"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "async-trait",
  "serde",
@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-profiling"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "e-navigator-signals",
  "serde",
@@ -210,14 +210,14 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-protocol"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "e-navigator-signals",
 ]
 
 [[package]]
 name = "e-navigator-signals"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "e-navigator-core",
  "serde",
@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-sources-ebpf-aya"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-sources-host"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "async-trait",
  "e-navigator-core",
