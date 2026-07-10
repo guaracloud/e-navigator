@@ -2,8 +2,8 @@ apiVersion: v2
 name: e-navigator
 description: Rust and eBPF signal plane for Linux and Kubernetes observability
 type: application
-version: 0.1.0-rc.1
-appVersion: "0.1.0-rc.1"
+version: 0.1.0-rc.2
+appVersion: "0.1.0-rc.2"
 keywords:
   - ebpf
   - observability

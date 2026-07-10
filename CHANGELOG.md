@@ -6,6 +6,21 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0-rc.2] - 2026-07-10
+
+### Fixed
+
+- Emit and verify Cosign v3 Sigstore bundles for every signed release blob
+  instead of relying on the removed split signature/certificate outputs.
+- Bound the artifact-publication and post-publication verification jobs with
+  explicit timeouts so an unhealthy release terminates with a clear failure.
+
+### Release integrity
+
+- Preserve the immutable `v0.1.0-rc.1` tag and its versioned OCI artifacts
+  after downstream blob signing failed, then fix forward with this candidate
+  instead of moving or overwriting the published version.
+
 ## [0.1.0-rc.1] - 2026-07-10
 
 ### Added
@@ -66,5 +81,6 @@ All notable changes to E-Navigator are documented here. The format follows
   reduced-privilege operation, and universal protocol/profile coverage remain
   explicit non-claims documented in `documentation/boundaries.md`.
 
-[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.1...HEAD
-[0.1.0-rc.1]: https://github.com/guaracloud/e-navigator/releases/tag/v0.1.0-rc.1
+[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.2...HEAD
+[0.1.0-rc.2]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.1...v0.1.0-rc.2
+[0.1.0-rc.1]: https://github.com/guaracloud/e-navigator/tree/v0.1.0-rc.1

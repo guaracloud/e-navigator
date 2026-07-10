@@ -80,7 +80,8 @@ Each release contains:
 - a `linux/amd64` and `linux/arm64` OCI image index;
 - an OCI Helm chart;
 - image, chart, and source SPDX JSON SBOMs;
-- SHA-256 files, Cosign signatures, and signing certificates;
+- SHA-256 files and Sigstore bundles containing the Cosign signature,
+  certificate, and transparency-log verification material;
 - `release-manifest.json` with the commit, image digest, chart digest, aliases,
   and provenance method.
 

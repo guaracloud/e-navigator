@@ -6,7 +6,7 @@ keyless Cosign through GitHub OIDC.
 Set the release tag once:
 
 ```bash
-export VERSION=v0.1.0-rc.1
+export VERSION=v0.1.0-rc.2
 export REPO=guaracloud/e-navigator
 ```
 
@@ -32,15 +32,17 @@ installed.
 ## Verify Blob Signatures
 
 ```bash
-for sig in *.sig; do
-  artifact="${sig%.sig}"
+for bundle in *.sigstore.json; do
+  artifact="${bundle%.sigstore.json}"
   cosign verify-blob "$artifact" \
-    --signature "$sig" \
-    --certificate "${artifact}.pem" \
+    --bundle "$bundle" \
     --certificate-identity-regexp '^https://github\.com/guaracloud/e-navigator/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' \
     --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 done
 ```
+
+Each Sigstore bundle contains the signature, Fulcio certificate, and
+transparency-log verification material for its matching artifact.
 
 ## Verify The Container Image
 
@@ -81,8 +83,7 @@ deployments.
 
 ```bash
 cosign verify-blob release-manifest.json \
-  --signature release-manifest.json.sig \
-  --certificate release-manifest.json.pem \
+  --bundle release-manifest.json.sigstore.json \
   --certificate-identity-regexp '^https://github\.com/guaracloud/e-navigator/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 

@@ -39,6 +39,9 @@ RELEASE_WORKFLOW_EXPECTATIONS = (
     "environment: release",
     "platforms: linux/amd64,linux/arm64",
     "cosign sign --yes",
+    '--bundle "$artifact.sigstore.json"',
+    "--bundle release-manifest.json.sigstore.json",
+    "for bundle in *.sigstore.json",
     'helm push "$chart" "$CHART_REPOSITORY"',
     "draft: true",
     "release-manifest.json",
@@ -240,6 +243,11 @@ def check(version: str | None) -> None:
     for needle in RELEASE_WORKFLOW_EXPECTATIONS:
         if needle not in release_workflow:
             errors.append(f"release workflow is missing {needle!r}")
+    for removed_flag in ("--output-signature", "--output-certificate"):
+        if removed_flag in release_workflow:
+            errors.append(
+                f"release workflow uses removed Cosign v3 flag {removed_flag!r}"
+            )
     if not (ROOT / ".github/workflows/publish-image-aliases.yml").is_file():
         errors.append("missing image alias repair workflow")
 
