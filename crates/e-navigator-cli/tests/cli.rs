@@ -2,6 +2,24 @@ use std::collections::BTreeSet;
 use std::process::Command;
 
 #[test]
+fn version_flag_reports_workspace_version() {
+    let output = Command::new(env!("CARGO_BIN_EXE_e-navigator"))
+        .arg("--version")
+        .output()
+        .expect("run e-navigator version");
+
+    assert!(
+        output.status.success(),
+        "version failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("version output is utf8"),
+        format!("e-navigator {}\n", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
 fn validate_config_with_default_config_exits_without_running_source() {
     let output = Command::new(env!("CARGO_BIN_EXE_e-navigator"))
         .arg("--source")

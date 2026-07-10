@@ -2,9 +2,9 @@
 
 A Rust and eBPF signal plane for Linux and Kubernetes runtime observability.
 
-**Status:** pre-release `0.1.0`. E-Navigator has a statically registered
+**Status:** release candidate `0.1.0-rc.1`. E-Navigator has a statically registered
 `Source -> Processor -> Generator -> Sink` pipeline, versioned signal envelopes,
-JSON stdout output, Kubernetes DaemonSet packaging, signed release artifacts,
+JSON stdout output, Kubernetes DaemonSet packaging, signed release automation,
 and guarded proof for selected Linux/Kubernetes runtime paths. It is not yet a
 full observability backend, profile store, trace store, UI, or production
 collector replacement.
@@ -84,8 +84,8 @@ helm template e-navigator charts/e-navigator
 Install the published OCI chart:
 
 ```bash
-helm upgrade --install e-navigator oci://ghcr.io/e-navigator/charts/e-navigator \
-  --version 0.1.0 \
+helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
+  --version 0.1.0-rc.1 \
   --namespace e-navigator-system \
   --create-namespace
 ```
@@ -138,13 +138,10 @@ Important current non-claims:
 - no production backend compatibility claim;
 - no reduced-overhead or reduced-privilege claim;
 - no symmetric all-node DNS/HTTP capture claim;
-- no live Kafka protocol capture or request/response matching claim;
-- no live NATS protocol capture or request/response matching claim;
-- no live MongoDB protocol capture or request/response matching claim;
 - no live MySQL protocol capture or request/response matching claim;
-- no live PostgreSQL protocol capture or request/response matching claim;
-- no Kubernetes or production Redis protocol-capture claim; the current live
-  proof is local OrbStack smoke coverage only;
+- no broad or production protocol-capture claim; selected homelab proof covers
+  Redis, PostgreSQL, MongoDB, NATS, gRPC, and Kafka request/response matching,
+  while local OrbStack proof covers deeper Redis reassembly and TLS slices;
 - live native `network.flow.bytes` export still needs a positive rerun after
   the native metric migration.
 
@@ -183,8 +180,9 @@ E_NAVIGATOR_SKIP_SUPPLY_CHAIN=1 scripts/quality.sh
 E_NAVIGATOR_SKIP_DOCKER=1 E_NAVIGATOR_SKIP_KUBERNETES=1 scripts/quality.sh
 ```
 
-Aya/eBPF development requires a capable Linux environment plus the nightly Rust
-toolchain with `rust-src`, `bpf-linker`, `clang`, `llvm`, and `bpftool`.
+Aya/eBPF development requires a capable Linux environment plus the pinned
+`nightly-2026-07-01` Rust toolchain with `rust-src`, `bpf-linker`, `clang`,
+`llvm`, and `bpftool`.
 
 ## Documentation
 
@@ -194,8 +192,11 @@ toolchain with `rust-src`, `bpf-linker`, `clang`, `llvm`, and `bpftool`.
 - [Benchmarks](documentation/benchmark.md)
 - [Helm install](documentation/helm.md)
 - [Release verification](documentation/release-verification.md)
+- [Release process](documentation/release-process.md)
 - [Engineering invariants](documentation/engineering-invariants.md)
 - [Module authoring](documentation/module-authoring.md)
+- [Changelog](CHANGELOG.md)
+- [Security policy](SECURITY.md)
 
 ## License
 

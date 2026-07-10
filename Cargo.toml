@@ -33,8 +33,11 @@ exclude = ["fuzz"]
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-version = "0.1.0"
-repository = "https://github.com/e-navigator/e-navigator"
+version = "0.1.0-rc.1"
+rust-version = "1.96"
+repository = "https://github.com/guaracloud/e-navigator"
+homepage = "https://github.com/guaracloud/e-navigator"
+publish = false
 
 [workspace.dependencies]
 anyhow = "1"

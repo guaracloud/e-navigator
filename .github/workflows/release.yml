@@ -3,54 +3,122 @@ name: release
 on:
   push:
     tags:
-      - "v*"
+      - "v*.*.*"
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/e-navigator/e-navigator
-  CHART_REPOSITORY: oci://ghcr.io/e-navigator/charts
+  BUILDX_VERSION: v0.33.0
+  BUILDKIT_IMAGE: docker.io/moby/buildkit@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
+  IMAGE: ghcr.io/${{ github.repository }}
+  CHART_REPOSITORY: oci://ghcr.io/${{ github.repository_owner }}/charts
+  COSIGN_VERSION: v3.0.6
+  HELM_VERSION: v4.2.2
+  QEMU_IMAGE: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+  SYFT_VERSION: v1.46.0
+  CERTIFICATE_IDENTITY_REGEXP: '^https://github\.com/guaracloud/e-navigator/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
 
 jobs:
+  preflight:
+    name: Release contract
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.version.outputs.commit }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag and main ancestry
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]
+          test "$(git cat-file -t "refs/tags/$TAG")" = tag
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          tag_commit="$(git rev-list -n 1 "$TAG")"
+          main_commit="$(git rev-parse origin/main)"
+          test "$tag_commit" = "$main_commit"
+          version="${TAG#v}"
+          if [[ "$version" == *-* ]]; then
+            is_prerelease=true
+          else
+            is_prerelease=false
+          fi
+          echo "commit=$tag_commit" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install Helm
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4.3.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Verify release contract
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 scripts/release.py check "$VERSION"
+
   publish-and-sign:
-    runs-on: ubuntu-latest
+    name: Publish signed artifacts
+    needs: preflight
+    runs-on: ubuntu-24.04
     environment: release
     permissions:
       contents: write
       id-token: write
       packages: write
     outputs:
-      image_digest: ${{ steps.image.outputs.digest }}
       chart_digest: ${{ steps.chart_push.outputs.digest }}
+      image_digest: ${{ steps.image.outputs.digest }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
 
-      - name: Install release tooling
-        run: |
-          set -euo pipefail
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+      - name: Install Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          syft-version: ${{ env.SYFT_VERSION }}
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: ${{ env.COSIGN_VERSION }}
 
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        with:
+          image: ${{ env.QEMU_IMAGE }}
+          platforms: arm64
+
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
 
       - name: Build and push image
         id: image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.18.0
         with:
           context: .
           file: Containerfile
@@ -58,34 +126,42 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE }}:${{ github.ref_name }}
-            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ needs.preflight.outputs.version }}
           provenance: true
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Sign release image and export image SBOM
+      - name: Sign image and export SBOMs
         env:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          SYFT: ${{ steps.syft.outputs.cmd }}
         run: |
           set -euo pipefail
           mkdir -p dist
           cosign sign --yes "${IMAGE}@${IMAGE_DIGEST}"
-          syft "${IMAGE}@${IMAGE_DIGEST}" -o spdx-json=dist/e-navigator-image.spdx.json
-          syft dir:. -o spdx-json=dist/e-navigator-source.spdx.json
+          "$SYFT" "${IMAGE}@${IMAGE_DIGEST}" -o spdx-json=dist/e-navigator-image.spdx.json
+          "$SYFT" dir:. -o spdx-json=dist/e-navigator-source.spdx.json
 
       - name: Package and publish Helm chart
         id: chart_push
         env:
-          VERSION: ${{ github.ref_name }}
+          SYFT: ${{ steps.syft.outputs.cmd }}
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           set -euo pipefail
-          chart_version="${VERSION#v}"
-          helm package charts/e-navigator --version "$chart_version" --app-version "$chart_version" --destination dist
-          chart="$(ls dist/e-navigator-*.tgz)"
-          syft "$chart" -o spdx-json=dist/e-navigator-chart.spdx.json
-          helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin <<< "${{ secrets.GITHUB_TOKEN }}"
-          helm push "$chart" "$CHART_REPOSITORY" 2>&1 | tee /tmp/e-navigator-helm-push.txt
+          helm package charts/e-navigator \
+            --version "$VERSION" \
+            --app-version "$VERSION" \
+            --destination dist
+          chart="$(find dist -maxdepth 1 -name "e-navigator-${VERSION}.tgz" -print -quit)"
+          test -n "$chart"
+          "$SYFT" "$chart" -o spdx-json=dist/e-navigator-chart.spdx.json
+          helm registry login ghcr.io \
+            --username "${{ github.actor }}" \
+            --password-stdin <<< "${{ secrets.GITHUB_TOKEN }}"
+          helm push "$chart" "$CHART_REPOSITORY" 2>&1 |
+            tee /tmp/e-navigator-helm-push.txt
           digest="$(awk '/^Digest:/ {print $2; exit}' /tmp/e-navigator-helm-push.txt)"
           test -n "$digest"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
@@ -107,20 +183,24 @@ jobs:
             cosign verify-blob \
               --signature "$artifact.sig" \
               --certificate "$artifact.pem" \
-              --certificate-identity-regexp '^https://github\.com/e-navigator/e-navigator/' \
+              --certificate-identity-regexp "$CERTIFICATE_IDENTITY_REGEXP" \
               --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
               "$artifact"
           done
 
       - name: Generate release manifest
         env:
-          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
           CHART_DIGEST: ${{ steps.chart_push.outputs.digest }}
+          COMMIT: ${{ needs.preflight.outputs.commit }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          IS_PRERELEASE: ${{ needs.preflight.outputs.is_prerelease }}
           TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, os
+          import json
+          import os
 
           artifacts = []
           for name in sorted(os.listdir("dist")):
@@ -130,34 +210,58 @@ jobs:
               if os.path.isfile(path):
                   artifacts.append({"name": name, "size": os.path.getsize(path)})
 
+          aliases = [
+              f'{os.environ["IMAGE"]}:{os.environ["TAG"]}',
+              f'{os.environ["IMAGE"]}:{os.environ["VERSION"]}',
+          ]
+          if os.environ["IS_PRERELEASE"] == "false":
+              aliases.append(f'{os.environ["IMAGE"]}:latest')
+
           manifest = {
               "schema": "e-navigator.release-manifest/v1",
               "tag": os.environ["TAG"],
-              "repository": "e-navigator/e-navigator",
+              "version": os.environ["VERSION"],
+              "commit": os.environ["COMMIT"],
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "channel": (
+                  "prerelease"
+                  if os.environ["IS_PRERELEASE"] == "true"
+                  else "stable"
+              ),
               "artifacts": artifacts,
               "images": [
                   {
                       "name": os.environ["IMAGE"],
                       "reference": f'{os.environ["IMAGE"]}@{os.environ["IMAGE_DIGEST"]}',
                       "digest": os.environ["IMAGE_DIGEST"],
+                      "aliases": aliases,
+                      "platforms": ["linux/amd64", "linux/arm64"],
                   }
               ],
               "helm_chart": {
                   "name": "e-navigator",
                   "repository": os.environ["CHART_REPOSITORY"],
                   "reference": f'{os.environ["CHART_REPOSITORY"]}/e-navigator',
+                  "version": os.environ["VERSION"],
                   "digest": os.environ["CHART_DIGEST"],
               },
               "provenance": {
-                  "signing": "keyless cosign via GitHub OIDC",
+                  "container": "BuildKit provenance and SBOM attestations",
+                  "signing": "keyless Cosign via GitHub OIDC",
                   "sbom": "SPDX JSON",
               },
           }
-          with open("dist/release-manifest.json", "w", encoding="utf-8") as f:
-              json.dump(manifest, f, indent=2, sort_keys=True)
-              f.write("\n")
+          with open("dist/release-manifest.json", "w", encoding="utf-8") as stream:
+              json.dump(manifest, stream, indent=2, sort_keys=True)
+              stream.write("\n")
           PY
-          jq -e '.schema == "e-navigator.release-manifest/v1"' dist/release-manifest.json >/dev/null
+          jq -e \
+            --arg tag "$TAG" \
+            --arg commit "$COMMIT" \
+            '.schema == "e-navigator.release-manifest/v1" and
+             .tag == $tag and .commit == $commit and
+             .images[0].platforms == ["linux/amd64", "linux/arm64"]' \
+            dist/release-manifest.json >/dev/null
 
       - name: Sign release manifest
         run: |
@@ -170,33 +274,67 @@ jobs:
           cosign verify-blob \
             --signature release-manifest.json.sig \
             --certificate release-manifest.json.pem \
-            --certificate-identity-regexp '^https://github\.com/e-navigator/e-navigator/' \
+            --certificate-identity-regexp "$CERTIFICATE_IDENTITY_REGEXP" \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             release-manifest.json
 
-      - name: Attach artifacts to release
-        uses: softprops/action-gh-release@e7a8f85e1c67a31e6ed99a94b41bd0b71bbee6b8
+      - name: Generate release notes
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: python3 scripts/release.py notes "$VERSION" --output /tmp/release-notes.md
+
+      - name: Create draft release and attach artifacts
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
+          body_path: /tmp/release-notes.md
+          draft: true
+          fail_on_unmatched_files: true
           files: dist/*
+          make_latest: false
+          name: E-Navigator ${{ github.ref_name }}
+          prerelease: ${{ needs.preflight.outputs.is_prerelease == 'true' }}
 
   post-release-verify:
-    needs: publish-and-sign
-    runs-on: ubuntu-latest
+    name: Verify and publish release
+    needs: [preflight, publish-and-sign]
+    runs-on: ubuntu-24.04
     permissions:
-      contents: read
-      id-token: write
-      packages: read
+      contents: write
+      packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: ${{ env.COSIGN_VERSION }}
 
-      - name: Install SBOM verifier
-        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+      - name: Install Helm
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4.3.1
+        with:
+          version: ${{ env.HELM_VERSION }}
 
-      - name: Download release assets
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        with:
+          image: ${{ env.QEMU_IMAGE }}
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+
+      - name: Download draft release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
@@ -205,9 +343,11 @@ jobs:
           mkdir -p verify
           gh release download "$TAG" --dir verify --clobber
 
-      - name: Verify checksums, signatures, image, and SBOM JSON
+      - name: Verify checksums, signatures, image, and SBOMs
         env:
           IMAGE_DIGEST: ${{ needs.publish-and-sign.outputs.image_digest }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           set -euo pipefail
           cd verify
@@ -216,17 +356,101 @@ jobs:
           done
           for sig in *.sig; do
             artifact="${sig%.sig}"
+            test -f "$artifact"
+            test -f "${artifact}.pem"
             cosign verify-blob \
               --signature "$sig" \
               --certificate "${artifact}.pem" \
-              --certificate-identity-regexp '^https://github\.com/e-navigator/e-navigator/' \
+              --certificate-identity-regexp "$CERTIFICATE_IDENTITY_REGEXP" \
               --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
               "$artifact"
           done
           for sbom in *.spdx.json; do
-            jq -e '.spdxVersion and .packages' "$sbom" >/dev/null
+            jq -e '.spdxVersion and (.packages | type == "array")' "$sbom" >/dev/null
           done
+          jq -e \
+            --arg tag "$TAG" \
+            --arg commit "${{ needs.preflight.outputs.commit }}" \
+            --arg image_digest "$IMAGE_DIGEST" \
+            --arg chart_digest "${{ needs.publish-and-sign.outputs.chart_digest }}" \
+            '.tag == $tag and .commit == $commit and
+             .images[0].digest == $image_digest and
+             .helm_chart.digest == $chart_digest' \
+            release-manifest.json >/dev/null
           cosign verify \
-            --certificate-identity-regexp '^https://github\.com/e-navigator/e-navigator/' \
+            --certificate-identity-regexp "$CERTIFICATE_IDENTITY_REGEXP" \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             "${IMAGE}@${IMAGE_DIGEST}"
+
+      - name: Verify image platforms, aliases, and runtime
+        env:
+          IMAGE_DIGEST: ${{ needs.publish-and-sign.outputs.image_digest }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "${IMAGE}@${IMAGE_DIGEST}" --raw |
+            jq -e '
+              [.manifests[].platform | "\(.os)/\(.architecture)"] as $platforms |
+              ($platforms | index("linux/amd64")) != null and
+              ($platforms | index("linux/arm64")) != null
+            ' >/dev/null
+          for alias in "$TAG" "$VERSION"; do
+            alias_digest="$(docker buildx imagetools inspect \
+              "${IMAGE}:${alias}" --format '{{.Manifest.Digest}}')"
+            test "$alias_digest" = "$IMAGE_DIGEST"
+          done
+          for platform in linux/amd64 linux/arm64; do
+            version_output="$(docker run --rm --platform "$platform" \
+              "${IMAGE}@${IMAGE_DIGEST}" --version)"
+            test "$version_output" = "e-navigator $VERSION"
+            docker run --rm --platform "$platform" \
+              "${IMAGE}@${IMAGE_DIGEST}" --source synthetic >/tmp/synthetic.jsonl
+            test -s /tmp/synthetic.jsonl
+          done
+
+      - name: Verify published Helm chart
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p verify-oci
+          helm registry login ghcr.io \
+            --username "${{ github.actor }}" \
+            --password-stdin <<< "$GH_TOKEN"
+          helm pull "${CHART_REPOSITORY}/e-navigator" \
+            --version "$VERSION" \
+            --destination verify-oci
+          cmp \
+            "verify/e-navigator-${VERSION}.tgz" \
+            "verify-oci/e-navigator-${VERSION}.tgz"
+
+      - name: Promote stable alias
+        if: needs.preflight.outputs.is_prerelease == 'false'
+        env:
+          IMAGE_DIGEST: ${{ needs.publish-and-sign.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag "${IMAGE}:latest" \
+            "${IMAGE}@${IMAGE_DIGEST}"
+          latest_digest="$(docker buildx imagetools inspect \
+            "${IMAGE}:latest" --format '{{.Manifest.Digest}}')"
+          test "$latest_digest" = "$IMAGE_DIGEST"
+
+      - name: Publish verified GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IS_PRERELEASE: ${{ needs.preflight.outputs.is_prerelease }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$IS_PRERELEASE" = false ]; then
+            gh release edit "$TAG" --draft=false --latest
+          else
+            gh release edit "$TAG" --draft=false
+          fi
+          test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = false
+          test "$(gh release view "$TAG" --json isPrerelease --jq .isPrerelease)" = \
+            "$IS_PRERELEASE"
