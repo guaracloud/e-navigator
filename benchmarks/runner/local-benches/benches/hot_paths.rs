@@ -301,6 +301,7 @@ fn bench_protocol_stream(c: &mut Criterion) {
     };
 
     let redis_pipeline = b"*1\r\n$4\r\nPING\r\n*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n".to_vec();
+    let redis_pipeline_64 = b"*1\r\n$4\r\nPING\r\n".repeat(64);
     let mut kafka_frame = 27_i32.to_be_bytes().to_vec();
     kafka_frame.extend_from_slice(&[0, 3, 0, 9, 0, 0, 0, 42, 0, 12]);
     kafka_frame.extend_from_slice(b"bench-clienttopic");
@@ -317,6 +318,24 @@ fn bench_protocol_stream(c: &mut Criterion) {
             decoder.push_chunk(
                 black_box(&redis_pipeline),
                 redis_pipeline.len() as u64,
+                &mut frames,
+            );
+            black_box(frames.len())
+        })
+    });
+
+    c.bench_function("protocol_stream/redis_pipeline_64_push_chunk", |b| {
+        let mut decoder = ProtocolStreamDecoder::new(
+            StreamProtocol::Redis,
+            StreamDirection::Request,
+            StreamDecodeLimits::default(),
+        );
+        let mut frames = Vec::with_capacity(64);
+        b.iter(|| {
+            frames.clear();
+            decoder.push_chunk(
+                black_box(&redis_pipeline_64),
+                redis_pipeline_64.len() as u64,
                 &mut frames,
             );
             black_box(frames.len())

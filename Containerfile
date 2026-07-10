@@ -7,6 +7,10 @@ RUN apt-get update \
 RUN rustup toolchain install nightly --component rust-src \
     && cargo install bpf-linker --version 0.10.3 --locked
 
+# Keep the host build on the compiler shipped by the builder image instead of
+# letting rust-toolchain.toml update the moving `stable` channel during builds.
+ENV RUSTUP_TOOLCHAIN=${RUST_VERSION}
+
 WORKDIR /workspace
 COPY . .
 

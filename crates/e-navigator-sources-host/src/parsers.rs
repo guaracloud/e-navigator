@@ -17,7 +17,7 @@ pub fn parse_cpu_stat(
 
     for line in contents.lines() {
         if let Some(rest) = line.strip_prefix("cpu ") {
-            cpu_fields = Some(rest.split_whitespace().collect::<Vec<_>>());
+            cpu_fields = Some(rest);
         } else if let Some(value) = line.strip_prefix("procs_running ") {
             runnable_tasks = parse_u64(value).ok();
         } else if let Some(value) = line.strip_prefix("procs_blocked ") {
@@ -25,10 +25,25 @@ pub fn parse_cpu_stat(
         }
     }
 
-    let fields = cpu_fields.ok_or_else(|| "missing aggregate cpu line".to_string())?;
-    if fields.len() < 8 {
-        return Err("aggregate cpu line has too few fields".to_string());
-    }
+    let mut fields = cpu_fields
+        .ok_or_else(|| "missing aggregate cpu line".to_string())?
+        .split_whitespace();
+    let mut next_field = || {
+        fields
+            .next()
+            .ok_or_else(|| "aggregate cpu line has too few fields".to_string())
+    };
+    let fields = [
+        next_field()?,
+        next_field()?,
+        next_field()?,
+        next_field()?,
+        next_field()?,
+        next_field()?,
+        next_field()?,
+        next_field()?,
+    ];
+    let user_ticks = parse_u64(fields[0])?.saturating_add(parse_u64(fields[1])?);
 
     Ok(NodeCpuObservation {
         metric_name: "system.cpu.time".to_string(),
@@ -38,10 +53,7 @@ pub fn parse_cpu_stat(
             start_unix_nanos,
             end_unix_nanos,
         },
-        user_nanos: ticks_to_nanos(
-            parse_u64(fields[0])? + parse_u64(fields[1])?,
-            clock_ticks_per_second,
-        ),
+        user_nanos: ticks_to_nanos(user_ticks, clock_ticks_per_second),
         system_nanos: ticks_to_nanos(parse_u64(fields[2])?, clock_ticks_per_second),
         idle_nanos: ticks_to_nanos(parse_u64(fields[3])?, clock_ticks_per_second),
         iowait_nanos: ticks_to_nanos(parse_u64(fields[4])?, clock_ticks_per_second),
@@ -56,11 +68,20 @@ pub fn parse_loadavg(
     start_unix_nanos: u64,
     end_unix_nanos: u64,
 ) -> Result<NodeLoadObservation, String> {
-    let fields = contents.split_whitespace().collect::<Vec<_>>();
-    if fields.len() < 4 {
-        return Err("loadavg has too few fields".to_string());
-    }
-    let (runnable_tasks, total_tasks) = fields[3]
+    let mut fields = contents.split_whitespace();
+    let load1 = fields
+        .next()
+        .ok_or_else(|| "loadavg has too few fields".to_string())?;
+    let load5 = fields
+        .next()
+        .ok_or_else(|| "loadavg has too few fields".to_string())?;
+    let load15 = fields
+        .next()
+        .ok_or_else(|| "loadavg has too few fields".to_string())?;
+    let tasks = fields
+        .next()
+        .ok_or_else(|| "loadavg has too few fields".to_string())?;
+    let (runnable_tasks, total_tasks) = tasks
         .split_once('/')
         .map(|(running, total)| (parse_u64(running).ok(), parse_u64(total).ok()))
         .unwrap_or((None, None));
@@ -73,9 +94,9 @@ pub fn parse_loadavg(
             start_unix_nanos,
             end_unix_nanos,
         },
-        load1: parse_f64(fields[0])?,
-        load5: parse_f64(fields[1])?,
-        load15: parse_f64(fields[2])?,
+        load1: parse_f64(load1)?,
+        load5: parse_f64(load5)?,
+        load15: parse_f64(load15)?,
         runnable_tasks,
         total_tasks,
     })
@@ -111,14 +132,22 @@ pub fn parse_diskstats(
 ) -> Result<Vec<NodeDiskIoObservation>, String> {
     let mut observations = Vec::new();
     for line in contents.lines() {
-        let fields = line.split_whitespace().collect::<Vec<_>>();
-        if fields.len() < 10 {
+        let mut fields = line.split_whitespace();
+        let Some(device) = fields.nth(2) else {
             continue;
-        }
-        let reads_completed = parse_u64(fields[3])?;
-        let sectors_read = parse_u64(fields[5])?;
-        let writes_completed = parse_u64(fields[7])?;
-        let sectors_written = parse_u64(fields[9])?;
+        };
+        let Some(reads_completed) = fields.next() else {
+            continue;
+        };
+        let Some(sectors_read) = fields.nth(1) else {
+            continue;
+        };
+        let Some(writes_completed) = fields.nth(1) else {
+            continue;
+        };
+        let Some(sectors_written) = fields.nth(1) else {
+            continue;
+        };
         observations.push(NodeDiskIoObservation {
             metric_name: "system.disk.io".to_string(),
             unit: "By".to_string(),
@@ -127,11 +156,11 @@ pub fn parse_diskstats(
                 start_unix_nanos,
                 end_unix_nanos,
             },
-            device: fields[2].to_string(),
-            reads_completed,
-            writes_completed,
-            read_bytes: sectors_read.saturating_mul(DISK_SECTOR_BYTES),
-            written_bytes: sectors_written.saturating_mul(DISK_SECTOR_BYTES),
+            device: device.to_string(),
+            reads_completed: parse_u64(reads_completed)?,
+            writes_completed: parse_u64(writes_completed)?,
+            read_bytes: parse_u64(sectors_read)?.saturating_mul(DISK_SECTOR_BYTES),
+            written_bytes: parse_u64(sectors_written)?.saturating_mul(DISK_SECTOR_BYTES),
         });
     }
     Ok(observations)
@@ -159,10 +188,28 @@ pub fn parse_process_stat(
         .get(close + ')'.len_utf8()..)
         .and_then(|rest| rest.strip_prefix(' '))
         .ok_or_else(|| "process stat missing fields".to_string())?;
-    let fields = rest.split_whitespace().collect::<Vec<_>>();
-    if fields.len() < 22 {
+    let mut fields = rest.split_whitespace();
+    let Some(_state) = fields.next() else {
         return Err("process stat has too few fields".to_string());
-    }
+    };
+    let Some(ppid) = fields.next() else {
+        return Err("process stat has too few fields".to_string());
+    };
+    let Some(utime) = fields.nth(9) else {
+        return Err("process stat has too few fields".to_string());
+    };
+    let Some(stime) = fields.next() else {
+        return Err("process stat has too few fields".to_string());
+    };
+    let Some(threads) = fields.nth(4) else {
+        return Err("process stat has too few fields".to_string());
+    };
+    let Some(vsize) = fields.nth(2) else {
+        return Err("process stat has too few fields".to_string());
+    };
+    let Some(rss_pages) = fields.next() else {
+        return Err("process stat has too few fields".to_string());
+    };
     let command = status
         .and_then(status_name)
         .or_else(|| {
@@ -173,11 +220,11 @@ pub fn parse_process_stat(
     let uid = status.and_then(status_uid);
     let threads = status
         .and_then(status_threads)
-        .or_else(|| parse_u64(fields[17]).ok());
-    let utime = parse_u64(fields[11])?;
-    let stime = parse_u64(fields[12])?;
-    let vsize = parse_u64(fields[20]).ok();
-    let rss_pages = parse_i64(fields[21]).unwrap_or(0).max(0) as u64;
+        .or_else(|| parse_u64(threads).ok());
+    let utime = parse_u64(utime)?;
+    let stime = parse_u64(stime)?;
+    let vsize = parse_u64(vsize).ok();
+    let rss_pages = parse_i64(rss_pages).unwrap_or(0).max(0) as u64;
 
     Ok(ProcessResourceObservation {
         metric_name: "process.resource".to_string(),
@@ -189,7 +236,7 @@ pub fn parse_process_stat(
         },
         process: ProcessResourceContext {
             pid,
-            ppid: parse_u64(fields[1])
+            ppid: parse_u64(ppid)
                 .ok()
                 .and_then(|value| u32::try_from(value).ok()),
             uid,
@@ -302,6 +349,14 @@ mod tests {
         assert_eq!(cpu.steal_nanos, 20_000_000);
         assert_eq!(cpu.runnable_tasks, Some(3));
         assert_eq!(cpu.blocked_tasks, Some(1));
+    }
+
+    #[test]
+    fn cpu_user_and_nice_ticks_saturate_instead_of_overflowing() {
+        let cpu = parse_cpu_stat("cpu  18446744073709551615 1 0 0 0 0 0 0\n", 1, 1_000, 2_000)
+            .expect("extreme cpu ticks parse without overflow");
+
+        assert_eq!(cpu.user_nanos, u64::MAX);
     }
 
     #[test]

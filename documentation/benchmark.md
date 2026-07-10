@@ -144,8 +144,9 @@ cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
 - `formatter/pprof_profile_sample`: 3.7686-3.7823 us.
 
 This timing measures fixed-fixture pprof protobuf rendering only. It does not
-prove a runtime pprof endpoint, backend upload, storage behavior, or live
-profiling overhead.
+measure runtime endpoint serving overhead, backend upload, storage behavior, or
+live profiling overhead; endpoint proof is recorded separately in the proof
+report.
 
 Focused network flow-byte aggregation smoke from this development host:
 
@@ -227,6 +228,38 @@ bounded dedupe eviction rather than repeatedly returning from the duplicate
 fast path. A proposed DNS normalization refactor was reverted because an
 alternating focused A/B did not validate an improvement; no DNS performance
 claim is made.
+
+Focused procfs-parser and protocol-stream A/B measured on 2026-07-09 on the
+same Apple M5 Pro development host with `rustc 1.96.0`. Both arms used 100
+samples, a 3-second warm-up, a 5-second measurement, and Criterion's saved
+baseline comparison:
+
+```bash
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  'host_parser/(cpu_stat|loadavg|diskstats|process_stat)|protocol_stream/redis_pipeline(_64)?_push_chunk' \
+  --sample-size 100 --measurement-time 5 --warm-up-time 3 \
+  --save-baseline pre-elite
+
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  'host_parser/(cpu_stat|loadavg|diskstats|process_stat)|protocol_stream/redis_pipeline(_64)?_push_chunk' \
+  --sample-size 100 --measurement-time 5 --warm-up-time 3 \
+  --baseline pre-elite
+```
+
+| Benchmark | Baseline | Optimized | Criterion result |
+| --- | --- | --- | --- |
+| `host_parser/cpu_stat` | 193.15-195.62 ns | 108.19-108.91 ns | 44.2-45.1% lower, `p < 0.05` |
+| `host_parser/loadavg` | 122.78-130.05 ns | 65.405-66.429 ns | 46.6-49.4% lower, `p < 0.05` |
+| `host_parser/diskstats` | 257.49-264.91 ns | 117.76-118.45 ns | 53.7-54.7% lower, `p < 0.05` |
+| `host_parser/process_stat` | 424.30-427.18 ns | 229.04-231.64 ns | 47.0-48.1% lower, `p < 0.05` |
+| `protocol_stream/redis_pipeline_push_chunk` | 57.310-58.757 ns | 53.587-54.009 ns | 5.2-8.2% lower, `p < 0.05` |
+| `protocol_stream/redis_pipeline_64_push_chunk` | 2.0299-2.0843 us | 1.3055-1.3127 us | 36.8-38.4% lower, `p < 0.05` |
+
+The parser cases measure fixed procfs fixtures after removing temporary token
+vectors; they do not include filesystem I/O. The stream cases measure bounded
+RESP frame extraction after changing unread-tail compaction from once per
+frame to at most once per pushed chunk; they do not measure kernel capture or
+network I/O.
 
 ## Guarded Runtime Proof
 

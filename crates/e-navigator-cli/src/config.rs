@@ -121,7 +121,7 @@ mod tests {
         .expect("configmap manifest is readable");
         assert!(manifest.contains("[cpu_profile_source]"));
         assert!(manifest.contains("name = \"source.aya_cpu_profile\""));
-        let toml = extract_embedded_configmap_toml(&manifest);
+        let toml = extract_embedded_toml(&manifest, "  e-navigator.toml: |");
         let config = toml::from_str::<RuntimeConfig>(&toml).expect("configmap toml parses");
 
         config.validate().expect("configmap config validates");
@@ -141,6 +141,32 @@ mod tests {
             config.profiling.window_nanos
                 <= e_navigator_core::ProfilingConfig::MAX_WINDOW_NANOS_LIMIT
         );
+    }
+
+    #[test]
+    fn packaged_configs_register_every_known_module_once() {
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for (path, marker) in [
+            ("charts/e-navigator/values.yaml", "  toml: |"),
+            ("deploy/kubernetes/configmap.yaml", "  e-navigator.toml: |"),
+        ] {
+            let manifest = fs::read_to_string(repo_root.join(path))
+                .unwrap_or_else(|err| panic!("{path} is readable: {err}"));
+            let embedded = extract_embedded_toml(&manifest, marker);
+            let config = toml::from_str::<RuntimeConfig>(&embedded)
+                .unwrap_or_else(|err| panic!("{path} embedded TOML parses: {err}"));
+            config
+                .validate()
+                .unwrap_or_else(|err| panic!("{path} embedded config validates: {err}"));
+
+            let actual = config
+                .modules
+                .iter()
+                .map(|module| module.name.as_str())
+                .collect::<Vec<_>>();
+            let expected = e_navigator_core::known_module_names().collect::<Vec<_>>();
+            assert_eq!(actual, expected, "{path} module registry drifted");
+        }
     }
 
     #[test]
@@ -207,11 +233,11 @@ mod tests {
             .join(name)
     }
 
-    fn extract_embedded_configmap_toml(manifest: &str) -> String {
+    fn extract_embedded_toml(manifest: &str, marker: &str) -> String {
         let mut output = String::new();
         let mut in_config = false;
         for line in manifest.lines() {
-            if line == "  e-navigator.toml: |" {
+            if line == marker {
                 in_config = true;
                 continue;
             }
@@ -223,7 +249,7 @@ mod tests {
                 output.push('\n');
             }
         }
-        assert!(!output.trim().is_empty(), "configmap toml block exists");
+        assert!(!output.trim().is_empty(), "embedded toml block exists");
         output
     }
 }

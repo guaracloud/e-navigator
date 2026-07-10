@@ -125,13 +125,16 @@ Evidence-backed today:
   flow-attribution and dropped-profile-sample warnings;
 - selected guarded homelab proof for exec, network, DNS, HTTP, profile,
   resource, Prometheus, OTLP, and seccomp paths;
+- local OrbStack proof for Redis request/response capture (plain TCP and
+  OpenSSL), multi-segment reassembly, and the Prometheus sink's
+  `/debug/pprof/profile` endpoint;
 - release artifact signing, SBOM generation, Helm packaging, and local quality
   gates.
 
 Important current non-claims:
 
 - no storage backend, UI, flamegraph view, profile store, or trace store;
-- no runtime pprof endpoint, pprof upload sink, or pprof backend proof;
+- no pprof upload sink or pprof backend compatibility proof;
 - no production backend compatibility claim;
 - no reduced-overhead or reduced-privilege claim;
 - no symmetric all-node DNS/HTTP capture claim;
@@ -140,7 +143,8 @@ Important current non-claims:
 - no live MongoDB protocol capture or request/response matching claim;
 - no live MySQL protocol capture or request/response matching claim;
 - no live PostgreSQL protocol capture or request/response matching claim;
-- no live Redis protocol capture or request/response matching claim;
+- no Kubernetes or production Redis protocol-capture claim; the current live
+  proof is local OrbStack smoke coverage only;
 - live native `network.flow.bytes` export still needs a positive rerun after
   the native metric migration.
 

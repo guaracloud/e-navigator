@@ -206,27 +206,34 @@ impl ProtocolStreamDecoder {
         dropped
     }
 
-    fn extract_frames(&mut self, mut gap: u64, frames: &mut Vec<StreamFrame>) {
+    fn extract_frames(&mut self, gap: u64, frames: &mut Vec<StreamFrame>) {
+        let mut consumed = 0;
         for _ in 0..self.limits.max_frames_per_chunk {
             match frame_boundary(
                 self.protocol,
                 self.direction,
-                &self.buffer,
+                &self.buffer[consumed..],
                 self.limits.max_frame_bytes,
             ) {
-                FrameBoundary::Frame { total_len } if total_len <= self.buffer.len() => {
-                    frames.push(StreamFrame::Complete(self.buffer[..total_len].to_vec()));
-                    self.buffer.drain(..total_len);
+                FrameBoundary::Frame { total_len } if total_len <= self.buffer.len() - consumed => {
+                    let frame_end = consumed + total_len;
+                    frames.push(StreamFrame::Complete(
+                        self.buffer[consumed..frame_end].to_vec(),
+                    ));
+                    consumed = frame_end;
                     self.stats.complete_frames += 1;
-                    if self.buffer.is_empty() && gap == 0 {
+                    if consumed == self.buffer.len() && gap == 0 {
+                        self.buffer.clear();
                         return;
                     }
                 }
                 FrameBoundary::Frame { total_len } => {
+                    self.discard_buffer_prefix(consumed);
                     self.finish_partial_frame(total_len, gap, frames);
                     return;
                 }
                 FrameBoundary::NeedMoreBytes => {
+                    self.discard_buffer_prefix(consumed);
                     self.finish_unknown_boundary(gap);
                     return;
                 }
@@ -243,11 +250,27 @@ impl ProtocolStreamDecoder {
         // remaining buffered frames simply carry over to the next chunk;
         // with one, the stream position past the buffer is unknown.
         if gap > 0 {
-            gap = 0;
-            let _ = gap;
             self.buffer.clear();
             self.resync = true;
+        } else {
+            self.discard_buffer_prefix(consumed);
         }
+    }
+
+    /// Removes frames already copied out while shifting the unread tail at
+    /// most once per pushed chunk.
+    fn discard_buffer_prefix(&mut self, consumed: usize) {
+        if consumed == 0 {
+            return;
+        }
+        debug_assert!(consumed <= self.buffer.len());
+        if consumed == self.buffer.len() {
+            self.buffer.clear();
+            return;
+        }
+        let remaining = self.buffer.len() - consumed;
+        self.buffer.copy_within(consumed.., 0);
+        self.buffer.truncate(remaining);
     }
 
     /// The buffer holds a frame prefix with a known total length that cannot
@@ -1227,6 +1250,61 @@ mod tests {
         let frames = push(&mut decoder, &chunk);
         assert_eq!(frames.len(), 2);
         assert_eq!(decoder.stats().complete_frames, 2);
+        assert_eq!(decoder.buffered_bytes(), 0);
+    }
+
+    #[test]
+    fn decoder_extracts_maximum_redis_pipeline_without_leaving_a_tail() {
+        let mut decoder = decoder(StreamProtocol::Redis);
+        let frame = b"*1\r\n$4\r\nPING\r\n";
+        let pipeline = frame.repeat(StreamDecodeLimits::default().max_frames_per_chunk);
+
+        let frames = push(&mut decoder, &pipeline);
+        let expected = StreamFrame::Complete(frame.to_vec());
+
+        assert_eq!(frames.len(), 64);
+        assert!(frames.iter().all(|decoded| decoded == &expected));
+        assert_eq!(decoder.stats().complete_frames, 64);
+        assert_eq!(decoder.buffered_bytes(), 0);
+    }
+
+    #[test]
+    fn decoder_carries_frames_past_per_chunk_budget() {
+        let limits = StreamDecodeLimits {
+            max_frames_per_chunk: 3,
+            ..StreamDecodeLimits::default()
+        };
+        let mut decoder =
+            ProtocolStreamDecoder::new(StreamProtocol::Redis, StreamDirection::Request, limits);
+        let frame = b"*1\r\n$4\r\nPING\r\n";
+        let pipeline = frame.repeat(5);
+
+        let first = push(&mut decoder, &pipeline);
+        assert_eq!(first.len(), 3);
+        assert_eq!(decoder.buffered_bytes(), frame.len() * 2);
+
+        let second = push(&mut decoder, &[]);
+        assert_eq!(second.len(), 2);
+        assert_eq!(decoder.stats().complete_frames, 5);
+        assert_eq!(decoder.buffered_bytes(), 0);
+    }
+
+    #[test]
+    fn decoder_compacts_complete_frames_before_reassembling_partial_tail() {
+        let mut decoder = decoder(StreamProtocol::Redis);
+        let complete = b"*1\r\n$4\r\nPING\r\n";
+        let tail = b"*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n";
+        let split = 11;
+        let mut first_chunk = complete.repeat(8);
+        first_chunk.extend_from_slice(&tail[..split]);
+
+        let first = push(&mut decoder, &first_chunk);
+        assert_eq!(first.len(), 8);
+        assert_eq!(decoder.buffered_bytes(), split);
+
+        let second = push(&mut decoder, &tail[split..]);
+        assert_eq!(second, vec![StreamFrame::Complete(tail.to_vec())]);
+        assert_eq!(decoder.stats().complete_frames, 9);
         assert_eq!(decoder.buffered_bytes(), 0);
     }
 

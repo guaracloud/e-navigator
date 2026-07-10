@@ -152,6 +152,14 @@ config:
     enabled = false
 
     [[modules]]
+    name = "source.aya_protocol"
+    enabled = false
+
+    [[modules]]
+    name = "source.aya_tls"
+    enabled = false
+
+    [[modules]]
     name = "source.aya_cpu_profile"
     enabled = false
 
