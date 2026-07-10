@@ -19266,7 +19266,7 @@ fn extracts_postgres_copy_messages_without_payload_values() {
 
 #[test]
 fn extracts_postgres_copy_mode_responses_without_format_values() {
-    for message_type in [b'G', b'H', b'W'] {
+    for message_type in *b"GHW" {
         let bytes = postgres_copy_mode_response_frame(message_type, &[0, 1]);
 
         let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
@@ -19550,7 +19550,7 @@ fn extracts_postgres_backend_key_data_without_key_values() {
 
 #[test]
 fn extracts_postgres_empty_success_responses_without_payload_values() {
-    for message_type in [b'1', b'2', b'3', b'I', b'n', b's'] {
+    for message_type in *b"123Ins" {
         let bytes = postgres_frame(message_type, b"");
 
         let extraction = parse_postgres_response(&bytes, &ProtocolExtractionConfig::default())
