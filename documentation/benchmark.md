@@ -261,6 +261,59 @@ RESP frame extraction after changing unread-tail compaction from once per
 frame to at most once per pushed chunk; they do not measure kernel capture or
 network I/O.
 
+Focused normalization, sanitization, and meminfo-parser A/B measured on
+2026-07-10 on the same Apple M5 Pro development host with `rustc 1.96.0`.
+Both arms used identical fixtures, 100 samples, a 2-second warm-up, a 5-second
+measurement, and Criterion saved-baseline comparisons:
+
+```bash
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  '(host_parser/meminfo$|host_parser/meminfo_realistic|profiling/fixture_normalize|profiling/owned_sample_normalize_64_frames|signal/network_open_envelope_sanitize)' \
+  --save-baseline elite2_pre --sample-size 100 --warm-up-time 2 \
+  --measurement-time 5
+
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  '(host_parser/meminfo$|host_parser/meminfo_realistic|profiling/fixture_normalize|profiling/owned_sample_normalize_64_frames|signal/network_open_envelope_sanitize)' \
+  --baseline elite2_pre --sample-size 100 --warm-up-time 2 \
+  --measurement-time 5
+
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  'generator/profiling$' --save-baseline elite2_gen_pre \
+  --sample-size 100 --warm-up-time 2 --measurement-time 5
+
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  'generator/profiling$' --baseline elite2_gen_pre \
+  --sample-size 100 --warm-up-time 2 --measurement-time 5
+
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  'signal/network_open_envelope_sanitize' \
+  --save-baseline elite2_signal_alt_pre --sample-size 100 \
+  --warm-up-time 2 --measurement-time 5
+
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  'signal/network_open_envelope_sanitize' \
+  --baseline elite2_signal_alt_pre --sample-size 100 \
+  --warm-up-time 2 --measurement-time 5
+```
+
+| Benchmark | Baseline | Optimized | Criterion result |
+| --- | --- | --- | --- |
+| `host_parser/meminfo` | 273.96-278.28 ns | 191.95-200.53 ns | 28.8-30.7% lower, `p < 0.05` |
+| `host_parser/meminfo_realistic` | 509.84-520.56 ns | 406.20-415.65 ns | 22.6-25.3% lower, `p < 0.05` |
+| `profiling/fixture_normalize` | 2.3990-2.4329 us | 2.2020-2.2279 us | 8.3-9.7% lower, `p < 0.05` |
+| `profiling/owned_sample_normalize_64_frames` | 12.571-12.872 us | 7.9298-8.0184 us | 36.4-37.6% lower, `p < 0.05` |
+| `generator/profiling` | 322.49-336.49 ns | 230.84-243.00 ns | 26.2-30.3% lower, `p < 0.05` |
+| `signal/network_open_envelope_sanitize` (immediate alternating A/B) | 175.26-184.16 ns | 165.67-200.72 ns | mean comparison 11.5-28.5% lower, `p < 0.05`; slope intervals overlap |
+
+The owned profile benchmark excludes fixture cloning from the measured routine
+and exercises 64 frames plus 16 attributes. The signal fixture includes one
+already-bounded Kubernetes label. These results support only the fixed-fixture
+userspace paths: they do not measure procfs file I/O, kernel event transport,
+live profile symbolization, or production request volume. The label sanitizer
+also had a later full-filter run in which Criterion detected no change, so its
+tree-rebuild allocation removal is retained but no stable latency percentage
+is claimed for that path.
+
 ## Guarded Runtime Proof
 
 The guarded collector writes evidence under `benchmarks/results/<timestamp>/`.

@@ -18,6 +18,17 @@ pub(crate) fn sanitize_kubernetes_labels(
     max_key_bytes: usize,
     max_value_bytes: usize,
 ) {
+    if labels.len() <= max_labels
+        && labels
+            .keys()
+            .all(|key| !key.is_empty() && key.len() <= max_key_bytes)
+    {
+        for value in labels.values_mut() {
+            truncate_utf8_in_place(value, max_value_bytes);
+        }
+        return;
+    }
+
     *labels = std::mem::take(labels)
         .into_iter()
         .filter(|(key, _)| !key.is_empty())
@@ -75,5 +86,22 @@ mod tests {
         let (key, value) = labels.first_key_value().expect("label remains");
         assert_eq!(key.as_ptr(), key_pointer);
         assert_eq!(value.as_ptr(), value_pointer);
+    }
+
+    #[test]
+    fn label_sanitization_fallback_preserves_filter_limit_and_collision_semantics() {
+        let mut labels = BTreeMap::from([
+            (String::new(), "discarded".to_string()),
+            ("aa".to_string(), "first".to_string()),
+            ("ab".to_string(), "second".to_string()),
+            ("z".to_string(), "outside-limit".to_string()),
+        ]);
+
+        sanitize_kubernetes_labels(&mut labels, 2, 1, 3);
+
+        assert_eq!(
+            labels,
+            BTreeMap::from([("a".to_string(), "sec".to_string())])
+        );
     }
 }

@@ -1,3 +1,4 @@
+use e_navigator_core::capture_filter::parse_container_id_from_cgroup_path;
 use e_navigator_signals::ContainerContext;
 use std::{
     fs::File,
@@ -9,29 +10,12 @@ pub(super) fn parse_container_from_cgroup(contents: &str) -> Option<ContainerCon
     if !has_container_cgroup_marker(contents) {
         return None;
     }
-    let container_id = find_container_id(contents)?;
+    let container_id = parse_container_id_from_cgroup_path(contents)?;
     let runtime = infer_runtime(contents);
     Some(ContainerContext {
         container_id,
         runtime,
     })
-}
-
-fn find_container_id(contents: &str) -> Option<String> {
-    let bytes = contents.as_bytes();
-    let mut index = 0;
-
-    while index + 64 <= bytes.len() {
-        if bytes[index..index + 64]
-            .iter()
-            .all(|byte| byte.is_ascii_hexdigit())
-        {
-            return Some(contents[index..index + 64].to_string());
-        }
-        index += 1;
-    }
-
-    None
 }
 
 fn has_container_cgroup_marker(contents: &str) -> bool {
@@ -129,6 +113,13 @@ mod tests {
             parse_container_from_cgroup(&format!("0::/user.slice/session-{CONTAINER_ID}.scope\n"));
 
         assert!(context.is_none());
+    }
+
+    #[test]
+    fn recognized_runtime_cgroup_paths_reject_longer_hexadecimal_ids() {
+        let contents = format!("0::/docker/f{CONTAINER_ID}.scope\n");
+
+        assert!(parse_container_from_cgroup(&contents).is_none());
     }
 
     #[test]

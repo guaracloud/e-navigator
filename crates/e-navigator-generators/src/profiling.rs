@@ -640,17 +640,20 @@ fn bounded_attributes(attributes: &[ProfilingAttribute]) -> Vec<ProfilingAttribu
 }
 
 fn is_reserved_profile_attribute_key(key: &str) -> bool {
-    matches!(
-        key.to_ascii_lowercase().as_str(),
-        "schema"
-            | "profile_id"
-            | "profile_kind"
-            | "correlation_kind"
-            | "confidence"
-            | "sample_count"
-            | "stack_id"
-            | "frame_count"
-    )
+    const RESERVED_KEYS: [&str; 8] = [
+        "schema",
+        "profile_id",
+        "profile_kind",
+        "correlation_kind",
+        "confidence",
+        "sample_count",
+        "stack_id",
+        "frame_count",
+    ];
+
+    RESERVED_KEYS
+        .iter()
+        .any(|reserved| key.eq_ignore_ascii_case(reserved))
 }
 
 fn merge_bounded_attributes(
@@ -723,6 +726,28 @@ fn module_error<T>(err: std::sync::PoisonError<T>) -> CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reserved_profile_attribute_filter_remains_ascii_case_insensitive() {
+        let attributes = vec![
+            ProfilingAttribute {
+                key: "PROFILE_ID".to_string(),
+                value: "untrusted".to_string(),
+            },
+            ProfilingAttribute {
+                key: "profile.source".to_string(),
+                value: "native".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            bounded_attributes(&attributes),
+            vec![ProfilingAttribute {
+                key: "profile.source".to_string(),
+                value: "native".to_string(),
+            }]
+        );
+    }
 
     #[test]
     fn oversized_stack_ids_are_represented_by_stable_hashes() {

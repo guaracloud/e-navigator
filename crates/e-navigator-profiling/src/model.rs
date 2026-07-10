@@ -116,7 +116,7 @@ impl RawProfileSample {
             container: self.container,
             kubernetes: self.kubernetes,
             thread_id: self.thread_id,
-            thread_name: self.thread_name.map(|name| truncate_utf8(&name, 64)),
+            thread_name: self.thread_name.map(|name| truncate_utf8_owned(name, 64)),
             attributes,
         })
     }
@@ -164,13 +164,13 @@ fn normalize_frame(frame: RawProfileFrame, limits: &NormalizationLimits) -> Prof
     ProfilingFrame {
         symbol: frame
             .symbol
-            .map(|value| truncate_utf8(&value, limits.max_symbol_bytes)),
+            .map(|value| truncate_utf8_owned(value, limits.max_symbol_bytes)),
         module: frame
             .module
-            .map(|value| truncate_utf8(&value, limits.max_module_bytes)),
+            .map(|value| truncate_utf8_owned(value, limits.max_module_bytes)),
         file: frame
             .file
-            .map(|value| truncate_utf8(&value, limits.max_file_bytes)),
+            .map(|value| truncate_utf8_owned(value, limits.max_file_bytes)),
         line: frame.line,
         module_offset: frame.module_offset,
     }
@@ -190,8 +190,8 @@ fn normalize_attributes(
                 && !is_reserved_profile_attribute_key(&attribute.key)
         })
         .map(|attribute| ProfilingAttribute {
-            key: truncate_utf8(&attribute.key, max_key_bytes),
-            value: truncate_utf8(&attribute.value, max_value_bytes),
+            key: truncate_utf8_owned(attribute.key, max_key_bytes),
+            value: truncate_utf8_owned(attribute.value, max_value_bytes),
         })
         .collect::<Vec<_>>();
     attributes.sort();
@@ -201,18 +201,21 @@ fn normalize_attributes(
 }
 
 fn is_reserved_profile_attribute_key(key: &str) -> bool {
-    matches!(
-        key.to_ascii_lowercase().as_str(),
-        "schema"
-            | "profile_id"
-            | "profile_kind"
-            | "correlation_kind"
-            | "confidence"
-            | "sample_count"
-            | "stack_id"
-            | "frame_count"
-            | "profiling.stack.truncated"
-    )
+    const RESERVED_KEYS: [&str; 9] = [
+        "schema",
+        "profile_id",
+        "profile_kind",
+        "correlation_kind",
+        "confidence",
+        "sample_count",
+        "stack_id",
+        "frame_count",
+        "profiling.stack.truncated",
+    ];
+
+    RESERVED_KEYS
+        .iter()
+        .any(|reserved| key.eq_ignore_ascii_case(reserved))
 }
 
 fn deterministic_stack_id(frames: &[ProfilingFrame]) -> String {
@@ -225,11 +228,11 @@ fn deterministic_stack_id(frames: &[ProfilingFrame]) -> String {
         hash_optional(&mut hash, frame.file.as_deref());
         hash_bytes(&mut hash, "\x1f");
         if let Some(line) = frame.line {
-            hash_bytes(&mut hash, &line.to_string());
+            hash_decimal(&mut hash, u64::from(line));
         }
         hash_bytes(&mut hash, "\x1f");
         if let Some(offset) = frame.module_offset {
-            hash_bytes(&mut hash, &offset.to_string());
+            hash_decimal(&mut hash, offset);
         }
         hash_bytes(&mut hash, "\x1e");
     }
@@ -247,20 +250,39 @@ fn hash_optional(hash: &mut u64, value: Option<&str>) {
 }
 
 fn hash_bytes(hash: &mut u64, value: &str) {
-    for byte in value.as_bytes() {
+    hash_raw_bytes(hash, value.as_bytes());
+}
+
+fn hash_decimal(hash: &mut u64, mut value: u64) {
+    let mut buffer = [0_u8; 20];
+    let mut start = buffer.len();
+    loop {
+        start -= 1;
+        buffer[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    hash_raw_bytes(hash, &buffer[start..]);
+}
+
+fn hash_raw_bytes(hash: &mut u64, value: &[u8]) {
+    for byte in value {
         *hash ^= u64::from(*byte);
         *hash = hash.wrapping_mul(0x100000001b3);
     }
 }
 
-fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+fn truncate_utf8_owned(mut value: String, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
-        return value.to_string();
+        return value;
     }
 
     let mut end = max_bytes;
     while end > 0 && !value.is_char_boundary(end) {
         end -= 1;
     }
-    value[..end].to_string()
+    value.truncate(end);
+    value
 }

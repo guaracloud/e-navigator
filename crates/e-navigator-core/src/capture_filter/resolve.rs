@@ -271,10 +271,11 @@ pub fn parse_container_id_from_cgroup_path(cgroup_path: &str) -> Option<String> 
             .iter()
             .all(|byte| byte.is_ascii_hexdigit())
         {
-            // Reject a 65th hex digit so we match the container id exactly and
-            // not a longer hash prefix.
-            let bounded = index + 64 >= bytes.len() || !bytes[index + 64].is_ascii_hexdigit();
-            if bounded {
+            // Require both boundaries so a sliding window cannot return the
+            // last 64 digits of a longer hexadecimal identifier.
+            let bounded_start = index == 0 || !bytes[index - 1].is_ascii_hexdigit();
+            let bounded_end = index + 64 >= bytes.len() || !bytes[index + 64].is_ascii_hexdigit();
+            if bounded_start && bounded_end {
                 return Some(cgroup_path[index..index + 64].to_string());
             }
         }
@@ -395,6 +396,15 @@ mod tests {
         let path = "/system.slice/sshd.service";
         assert_eq!(parse_pod_uid_from_cgroup_path(path), None);
         assert_eq!(parse_container_id_from_cgroup_path(path), None);
+    }
+
+    #[test]
+    fn longer_hexadecimal_identifiers_are_not_truncated_into_container_ids() {
+        let prefixed = format!("f{CID}");
+        let suffixed = format!("{CID}f");
+
+        assert_eq!(parse_container_id_from_cgroup_path(&prefixed), None);
+        assert_eq!(parse_container_id_from_cgroup_path(&suffixed), None);
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use e_navigator_core::capture_filter::parse_container_id_from_cgroup_path;
 use e_navigator_signals::ContainerContext;
 use std::{
     fs::File,
@@ -45,29 +46,12 @@ fn read_bounded_to_string(path: &Path, max_bytes: u64) -> io::Result<String> {
 }
 
 fn parse_container_from_cgroup(contents: &str) -> Option<ContainerContext> {
-    let container_id = find_container_id(contents)?;
+    let container_id = parse_container_id_from_cgroup_path(contents)?;
     let runtime = infer_runtime(contents);
     Some(ContainerContext {
         container_id,
         runtime,
     })
-}
-
-fn find_container_id(contents: &str) -> Option<String> {
-    let bytes = contents.as_bytes();
-    let mut index = 0;
-
-    while index + 64 <= bytes.len() {
-        if bytes[index..index + 64]
-            .iter()
-            .all(|byte| byte.is_ascii_hexdigit())
-        {
-            return Some(contents[index..index + 64].to_string());
-        }
-        index += 1;
-    }
-
-    None
 }
 
 fn infer_runtime(contents: &str) -> Option<String> {
@@ -114,6 +98,13 @@ mod tests {
         assert!(container_from_pid_cgroup(&temp, 404).is_none());
 
         let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn longer_hexadecimal_procfs_cgroup_id_is_not_attributed() {
+        let contents = format!("0::/kubepods.slice/cri-containerd-f{CONTAINER_ID}.scope\n");
+
+        assert!(parse_container_from_cgroup(&contents).is_none());
     }
 
     #[test]

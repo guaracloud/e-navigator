@@ -146,7 +146,7 @@ fn sensitive_profile_attributes_are_filtered_during_normalization() {
                 value: "secret".to_string(),
             },
             e_navigator_signals::ProfilingAttribute {
-                key: "profile_id".to_string(),
+                key: "PROFILE_ID".to_string(),
                 value: "evil".to_string(),
             },
             e_navigator_signals::ProfilingAttribute {
@@ -202,6 +202,72 @@ fn deterministic_stack_ids_are_stable_for_same_normalized_frames() {
 
     assert_eq!(first.stack_id, second.stack_id);
     assert!(first.stack_id.starts_with("stack:"));
+}
+
+#[test]
+fn deterministic_stack_id_format_is_preserved_for_numeric_frame_fields() {
+    let normalized = raw_sample(vec![RawProfileFrame {
+        symbol: Some("handler".to_string()),
+        module: Some("api".to_string()),
+        file: Some("src/main.rs".to_string()),
+        line: Some(42),
+        module_offset: Some(4_096),
+    }])
+    .normalize(&NormalizationLimits::default())
+    .expect("sample normalizes");
+
+    assert_eq!(normalized.stack_id, "stack:d8840ae285a0a549");
+}
+
+#[test]
+fn owned_profile_normalization_reuses_bounded_string_allocations() {
+    let symbol = String::from("checkout::handler");
+    let module = String::from("checkout-api");
+    let file = String::from("src/checkout.rs");
+    let thread_name = String::from("tokio-runtime-worker");
+    let attribute_key = String::from("profile.source");
+    let attribute_value = String::from("native");
+    let pointers = [
+        symbol.as_ptr(),
+        module.as_ptr(),
+        file.as_ptr(),
+        thread_name.as_ptr(),
+        attribute_key.as_ptr(),
+        attribute_value.as_ptr(),
+    ];
+
+    let mut sample = raw_sample(vec![RawProfileFrame {
+        symbol: Some(symbol),
+        module: Some(module),
+        file: Some(file),
+        line: Some(42),
+        module_offset: Some(4_096),
+    }]);
+    sample.thread_name = Some(thread_name);
+    sample.attributes = vec![ProfilingAttribute {
+        key: attribute_key,
+        value: attribute_value,
+    }];
+
+    let normalized = sample
+        .normalize(&NormalizationLimits::default())
+        .expect("sample normalizes");
+    let frame = &normalized.stack_frames[0];
+    let attribute = &normalized.attributes[0];
+
+    assert_eq!(frame.symbol.as_ref().expect("symbol").as_ptr(), pointers[0]);
+    assert_eq!(frame.module.as_ref().expect("module").as_ptr(), pointers[1]);
+    assert_eq!(frame.file.as_ref().expect("file").as_ptr(), pointers[2]);
+    assert_eq!(
+        normalized
+            .thread_name
+            .as_ref()
+            .expect("thread name")
+            .as_ptr(),
+        pointers[3]
+    );
+    assert_eq!(attribute.key.as_ptr(), pointers[4]);
+    assert_eq!(attribute.value.as_ptr(), pointers[5]);
 }
 
 #[test]

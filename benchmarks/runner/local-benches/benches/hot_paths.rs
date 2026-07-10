@@ -6,7 +6,9 @@ use e_navigator_generators::{
     TraceCorrelationGenerator,
 };
 use e_navigator_processors::container_attribution::KubernetesMetadataCache;
-use e_navigator_profiling::model::{NormalizationLimits, parse_profile_fixture};
+use e_navigator_profiling::model::{
+    NormalizationLimits, RawProfileFrame, RawProfileSample, parse_profile_fixture,
+};
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
     grpc::{parse_grpc_request_headers, parse_grpc_response_trailers},
@@ -88,6 +90,7 @@ fn bench_host_parsers(c: &mut Criterion) {
     let stat = "cpu  139755 0 33548 1852017 223 0 1417 0 0 0\nprocs_running 3\nprocs_blocked 0\n";
     let loadavg = "0.17 0.12 0.09 2/842 12345\n";
     let meminfo = "MemTotal:       32768000 kB\nMemFree:         1024000 kB\nMemAvailable:   24000000 kB\nSwapTotal:       8388608 kB\nSwapFree:        8388608 kB\n";
+    let realistic_meminfo = include_str!("../fixtures/proc_meminfo.txt");
     let diskstats = "   8       0 sda 1024 0 2048 0 512 0 4096 0 0 0 0 0 0 0 0 0 0\n";
     let process_stat = "1234 (e-navigator) S 1 1 1 0 -1 4194560 100 0 0 0 25 9 0 0 20 0 8 0 123456 268435456 4096 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0";
     let process_status = "Name:\te-navigator\nUid:\t1000\t1000\t1000\t1000\nThreads:\t8\n";
@@ -100,6 +103,9 @@ fn bench_host_parsers(c: &mut Criterion) {
     });
     c.bench_function("host_parser/meminfo", |b| {
         b.iter(|| parse_meminfo(black_box(meminfo), 1_000, 2_000).unwrap())
+    });
+    c.bench_function("host_parser/meminfo_realistic", |b| {
+        b.iter(|| parse_meminfo(black_box(realistic_meminfo), 1_000, 2_000).unwrap())
     });
     c.bench_function("host_parser/diskstats", |b| {
         b.iter(|| parse_diskstats(black_box(diskstats), 1_000, 2_000).unwrap())
@@ -225,6 +231,34 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
         "attributes": [{"key":"profile.source","value":"fixture"}]
     }"#;
     let limits = NormalizationLimits::default();
+    let owned_profile_sample = RawProfileSample {
+        timestamp_unix_nanos: 1_000,
+        profiling_kind: ProfilingKind::Cpu,
+        correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+        confidence: ProfilingConfidence::Medium,
+        sample_count: 7,
+        sampling_period_nanos: Some(20_000_000),
+        stack_frames: (0..64)
+            .map(|index| RawProfileFrame {
+                symbol: Some(format!("checkout::handler_{index}")),
+                module: Some("/opt/checkout/bin/checkout-api".to_string()),
+                file: Some(format!("src/handlers/handler_{index}.rs")),
+                line: Some(40 + index),
+                module_offset: Some(0x1_000 + u64::from(index)),
+            })
+            .collect(),
+        process: Some(process()),
+        container: Some(container()),
+        kubernetes: Some(kubernetes("api")),
+        thread_id: Some(42),
+        thread_name: Some("tokio-runtime-worker".to_string()),
+        attributes: (0..16)
+            .map(|index| ProfilingAttribute {
+                key: format!("profiling.benchmark.attribute_{index}"),
+                value: format!("benchmark-value-{index}"),
+            })
+            .collect(),
+    };
 
     c.bench_function("protocol/traceparent_parse", |b| {
         b.iter(|| parse_traceparent(black_box(traceparent)).unwrap())
@@ -292,6 +326,13 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     });
     c.bench_function("profiling/fixture_normalize", |b| {
         b.iter(|| parse_profile_fixture(black_box(profile_fixture), &limits).unwrap())
+    });
+    c.bench_function("profiling/owned_sample_normalize_64_frames", |b| {
+        b.iter_batched(
+            || owned_profile_sample.clone(),
+            |sample| sample.normalize(black_box(&limits)).unwrap(),
+            BatchSize::SmallInput,
+        )
     });
 }
 

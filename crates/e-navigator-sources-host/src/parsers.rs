@@ -107,7 +107,38 @@ pub fn parse_meminfo(
     start_unix_nanos: u64,
     end_unix_nanos: u64,
 ) -> Result<NodeMemoryObservation, String> {
-    let mem_total = meminfo_kib(contents, "MemTotal")?;
+    let mut mem_total = None;
+    let mut mem_available = None;
+    let mut mem_free = None;
+    let mut swap_total = None;
+    let mut swap_free = None;
+
+    for line in contents.lines() {
+        let Some((key, rest)) = line.split_once(':') else {
+            continue;
+        };
+        let slot = match key {
+            "MemTotal" => &mut mem_total,
+            "MemAvailable" => &mut mem_available,
+            "MemFree" => &mut mem_free,
+            "SwapTotal" => &mut swap_total,
+            "SwapFree" => &mut swap_free,
+            _ => continue,
+        };
+        if slot.is_none() {
+            *slot = Some(parse_meminfo_kib_value(rest, key));
+        }
+        if mem_total.is_some()
+            && mem_available.is_some()
+            && mem_free.is_some()
+            && swap_total.is_some()
+            && swap_free.is_some()
+        {
+            break;
+        }
+    }
+
+    let mem_total = mem_total.unwrap_or_else(|| Err("missing MemTotal".to_string()))?;
 
     Ok(NodeMemoryObservation {
         metric_name: "system.memory.usage".to_string(),
@@ -118,10 +149,10 @@ pub fn parse_meminfo(
             end_unix_nanos,
         },
         mem_total_bytes: kib_to_bytes(mem_total),
-        mem_available_bytes: meminfo_kib(contents, "MemAvailable").ok().map(kib_to_bytes),
-        mem_free_bytes: meminfo_kib(contents, "MemFree").ok().map(kib_to_bytes),
-        swap_total_bytes: meminfo_kib(contents, "SwapTotal").ok().map(kib_to_bytes),
-        swap_free_bytes: meminfo_kib(contents, "SwapFree").ok().map(kib_to_bytes),
+        mem_available_bytes: mem_available.and_then(Result::ok).map(kib_to_bytes),
+        mem_free_bytes: mem_free.and_then(Result::ok).map(kib_to_bytes),
+        swap_total_bytes: swap_total.and_then(Result::ok).map(kib_to_bytes),
+        swap_free_bytes: swap_free.and_then(Result::ok).map(kib_to_bytes),
     })
 }
 
@@ -257,20 +288,12 @@ pub fn parse_process_stat(
     })
 }
 
-fn meminfo_kib(contents: &str, key: &str) -> Result<u64, String> {
-    for line in contents.lines() {
-        if let Some(rest) = line
-            .strip_prefix(key)
-            .and_then(|rest| rest.strip_prefix(':'))
-        {
-            let value = rest
-                .split_whitespace()
-                .next()
-                .ok_or_else(|| format!("{key} missing value"))?;
-            return parse_u64(value);
-        }
-    }
-    Err(format!("missing {key}"))
+fn parse_meminfo_kib_value(rest: &str, key: &str) -> Result<u64, String> {
+    let value = rest
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| format!("{key} missing value"))?;
+    parse_u64(value)
 }
 
 fn status_name(contents: &str) -> Option<String> {
@@ -378,6 +401,23 @@ mod tests {
         assert_eq!(memory.mem_total_bytes, 8_388_608);
         assert_eq!(memory.mem_available_bytes, Some(4_194_304));
         assert_eq!(memory.swap_free_bytes, Some(524_288));
+    }
+
+    #[test]
+    fn meminfo_parser_preserves_first_value_and_optional_error_semantics() {
+        let memory = parse_meminfo(
+            "MemTotal: 8 kB\nMemTotal: 16 kB\nMemFree: invalid kB\nMemFree: 4 kB\n",
+            1_000,
+            2_000,
+        )
+        .expect("first required value is valid");
+
+        assert_eq!(memory.mem_total_bytes, 8_192);
+        assert_eq!(memory.mem_free_bytes, None);
+
+        let error = parse_meminfo("MemTotal: invalid kB\nMemTotal: 16 kB\n", 1_000, 2_000)
+            .expect_err("first required value remains authoritative");
+        assert!(error.contains("invalid digit"));
     }
 
     #[test]
