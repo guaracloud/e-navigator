@@ -54,9 +54,11 @@ jobs:
           else
             is_prerelease=false
           fi
-          echo "commit=$tag_commit" >> "$GITHUB_OUTPUT"
-          echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          {
+            echo "commit=$tag_commit"
+            echo "is_prerelease=$is_prerelease"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install Helm
         uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4.3.1
