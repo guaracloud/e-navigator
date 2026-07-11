@@ -2,7 +2,7 @@
 
 A Rust and eBPF signal plane for Linux and Kubernetes runtime observability.
 
-**Status:** release candidate `0.1.0-rc.3`. E-Navigator has a statically registered
+**Status:** public preview `0.1.0`. E-Navigator has a statically registered
 `Source -> Processor -> Generator -> Sink` pipeline, versioned signal envelopes,
 JSON stdout output, Kubernetes DaemonSet packaging, signed release automation,
 and guarded proof for selected Linux/Kubernetes runtime paths. It is not yet a
@@ -85,7 +85,7 @@ Install the published OCI chart:
 
 ```bash
 helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
-  --version 0.1.0-rc.3 \
+  --version 0.1.0 \
   --namespace e-navigator-system \
   --create-namespace
 ```

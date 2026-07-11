@@ -6,6 +6,33 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-11
+
+### Added
+
+- Publish the first E-Navigator public preview with signed multi-architecture
+  images, signed release assets and SPDX SBOMs, a public OCI Helm chart, and a
+  digest-pinned release manifest.
+
+### Validation
+
+- Independently verify all 15 `v0.1.0-rc.3` assets, five checksums, five
+  keyless Sigstore bundles, three SPDX SBOMs, both image aliases, AMD64 and
+  ARM64 child-manifest runtime paths, and a byte-identical anonymous OCI chart
+  pull before promotion.
+- Run the complete local quality gate against the stable version surfaces.
+- Do not claim a fresh Kubernetes runtime replay for this promotion: the
+  release workstation at `192.168.0.111` had no route to the homelab API at
+  `192.168.50.132:6443`, and no cluster mutation was attempted.
+
+### Release integrity
+
+- Promote the validated candidate through protected `main` and an annotated,
+  protected `v0.1.0` tag rather than moving or overwriting an existing tag.
+- Publish `latest` only after the stable workflow re-verifies checksums,
+  signatures, SBOMs, manifest metadata, image aliases, both platform runtimes,
+  and the public OCI chart.
+
 ## [0.1.0-rc.3] - 2026-07-11
 
 ### Fixed
@@ -100,7 +127,8 @@ All notable changes to E-Navigator are documented here. The format follows
   reduced-privilege operation, and universal protocol/profile coverage remain
   explicit non-claims documented in `documentation/boundaries.md`.
 
-[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.3...HEAD
+[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.3...v0.1.0
 [0.1.0-rc.3]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.2...v0.1.0-rc.3
 [0.1.0-rc.2]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.1...v0.1.0-rc.2
 [0.1.0-rc.1]: https://github.com/guaracloud/e-navigator/tree/v0.1.0-rc.1
