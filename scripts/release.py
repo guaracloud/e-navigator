@@ -42,6 +42,8 @@ RELEASE_WORKFLOW_EXPECTATIONS = (
     '--bundle "$artifact.sigstore.json"',
     "--bundle release-manifest.json.sigstore.json",
     "for bundle in *.sigstore.json",
+    'platform_digest="$(jq -er',
+    '"${IMAGE}@${platform_digest}" --version',
     'helm push "$chart" "$CHART_REPOSITORY"',
     "draft: true",
     "release-manifest.json",
