@@ -387,23 +387,32 @@ jobs:
           VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           set -euo pipefail
-          docker buildx imagetools inspect "${IMAGE}@${IMAGE_DIGEST}" --raw |
-            jq -e '
+          index_json="$(docker buildx imagetools inspect \
+            "${IMAGE}@${IMAGE_DIGEST}" --raw)"
+          jq -e '
               [.manifests[].platform | "\(.os)/\(.architecture)"] as $platforms |
               ($platforms | index("linux/amd64")) != null and
               ($platforms | index("linux/arm64")) != null
-            ' >/dev/null
+            ' <<< "$index_json" >/dev/null
           for alias in "$TAG" "$VERSION"; do
             alias_digest="$(docker buildx imagetools inspect \
               "${IMAGE}:${alias}" --format '{{.Manifest.Digest}}')"
             test "$alias_digest" = "$IMAGE_DIGEST"
           done
           for platform in linux/amd64 linux/arm64; do
+            platform_os="${platform%/*}"
+            platform_arch="${platform#*/}"
+            platform_digest="$(jq -er \
+              --arg os "$platform_os" \
+              --arg arch "$platform_arch" \
+              '.manifests[] |
+               select(.platform.os == $os and .platform.architecture == $arch) |
+               .digest' <<< "$index_json")"
             version_output="$(docker run --rm --platform "$platform" \
-              "${IMAGE}@${IMAGE_DIGEST}" --version)"
+              "${IMAGE}@${platform_digest}" --version)"
             test "$version_output" = "e-navigator $VERSION"
             docker run --rm --platform "$platform" \
-              "${IMAGE}@${IMAGE_DIGEST}" --source synthetic >/tmp/synthetic.jsonl
+              "${IMAGE}@${platform_digest}" --source synthetic >/tmp/synthetic.jsonl
             test -s /tmp/synthetic.jsonl
           done
 

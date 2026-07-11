@@ -6,6 +6,25 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0-rc.3] - 2026-07-11
+
+### Fixed
+
+- Resolve and run each Linux platform by its child manifest digest during
+  post-publication verification, avoiding Docker's local cache collision when
+  two architectures share one OCI index digest.
+
+### Validation
+
+- Prove the corrected verifier against the immutable `v0.1.0-rc.2` image:
+  both AMD64 and ARM64 child manifests report the expected CLI version and run
+  the synthetic pipeline successfully.
+
+### Release integrity
+
+- Preserve `v0.1.0-rc.2` and its signed OCI/release artifacts in draft state,
+  then fix forward with this candidate instead of overwriting its contract.
+
 ## [0.1.0-rc.2] - 2026-07-10
 
 ### Fixed
@@ -81,6 +100,7 @@ All notable changes to E-Navigator are documented here. The format follows
   reduced-privilege operation, and universal protocol/profile coverage remain
   explicit non-claims documented in `documentation/boundaries.md`.
 
-[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.2...HEAD
+[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.3...HEAD
+[0.1.0-rc.3]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.2...v0.1.0-rc.3
 [0.1.0-rc.2]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.1...v0.1.0-rc.2
 [0.1.0-rc.1]: https://github.com/guaracloud/e-navigator/tree/v0.1.0-rc.1
