@@ -77,7 +77,7 @@
             <li>eBPF sources</li>
             <li>Versioned signals</li>
             <li>Curated proof report</li>
-            <li>Public preview 0.1.0</li>
+            <li>Public preview 0.1.1</li>
           </ul>
         </div>
 
@@ -218,7 +218,7 @@
             <div class="command-code">
               <button class="copy-button" type="button">Copy</button>
               <pre><code>helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --namespace e-navigator-system \
   --create-namespace</code></pre>
             </div>
@@ -230,7 +230,7 @@
             </div>
             <div class="command-code">
               <button class="copy-button" type="button">Copy</button>
-              <pre><code>gh release download v0.1.0 --repo guaracloud/e-navigator --dir e-navigator-release
+              <pre><code>gh release download v0.1.1 --repo guaracloud/e-navigator --dir e-navigator-release
 jq -r '.images[0].reference' e-navigator-release/release-manifest.json</code></pre>
             </div>
           </article>

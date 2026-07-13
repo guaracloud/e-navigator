@@ -6,6 +6,34 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-13
+
+### Performance
+
+- Build network and DNS metric templates only when their bounded aggregation
+  maps receive a new key, avoiding repeated allocation and cloning work for
+  established series.
+- Normalize each DNS query domain once before constructing its aggregation key
+  and stored metric template.
+
+### Reliability
+
+- Return Prometheus and OTLP sink construction failures through the CLI error
+  path instead of panicking during registry startup.
+
+### Validation
+
+- Add deterministic regression tests proving existing network and DNS series
+  do not rebuild their stored templates.
+- Run the complete local quality, supply-chain, container, Helm, and Kubernetes
+  schema gates, plus focused Criterion measurements and an isolated AMD64
+  homelab Aya exec/network runtime replay.
+
+### Compatibility
+
+- Preserve the public configuration contract, signal schemas, module ordering,
+  bounded state limits, and supported deployment surfaces.
+
 ## [0.1.0] - 2026-07-11
 
 ### Added
@@ -127,7 +155,8 @@ All notable changes to E-Navigator are documented here. The format follows
   reduced-privilege operation, and universal protocol/profile coverage remain
   explicit non-claims documented in `documentation/boundaries.md`.
 
-[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/guaracloud/e-navigator/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.3...v0.1.0
 [0.1.0-rc.3]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.2...v0.1.0-rc.3
 [0.1.0-rc.2]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.1...v0.1.0-rc.2

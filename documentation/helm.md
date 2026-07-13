@@ -9,7 +9,7 @@ model.
 
 ```bash
 helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --namespace e-navigator-system \
   --create-namespace
 ```
