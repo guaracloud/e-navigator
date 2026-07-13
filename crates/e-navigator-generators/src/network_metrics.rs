@@ -117,7 +117,7 @@ impl NetworkMetricsGenerator {
         let mut metrics = Vec::new();
         if let Some(metric) = self.update_counter(
             CounterKey::connection_open(event),
-            CounterTemplate::connection_open(event),
+            || CounterTemplate::connection_open(event),
             event.timestamp_unix_nanos,
             signal.host.clone(),
         )? {
@@ -125,7 +125,7 @@ impl NetworkMetricsGenerator {
         }
         if let Some(metric) = self.update_counter(
             CounterKey::protocol_open(event),
-            CounterTemplate::protocol_open(event),
+            || CounterTemplate::protocol_open(event),
             event.timestamp_unix_nanos,
             signal.host.clone(),
         )? {
@@ -133,7 +133,7 @@ impl NetworkMetricsGenerator {
         }
         if let Some(metric) = self.update_counter(
             CounterKey::traffic_destination(event),
-            CounterTemplate::traffic_destination(event),
+            || CounterTemplate::traffic_destination(event),
             event.timestamp_unix_nanos,
             signal.host.clone(),
         )? {
@@ -174,7 +174,7 @@ impl NetworkMetricsGenerator {
         if event.kubernetes.is_some()
             && let Some(metric) = self.update_counter_by(
                 CounterKey::flow_bytes(event),
-                CounterTemplate::flow_bytes(event),
+                || CounterTemplate::flow_bytes(event),
                 event
                     .opened_at_unix_nanos
                     .unwrap_or(event.closed_at_unix_nanos),
@@ -200,7 +200,7 @@ impl NetworkMetricsGenerator {
         Ok(self
             .update_counter(
                 CounterKey::connection_failure(event),
-                CounterTemplate::connection_failure(event),
+                || CounterTemplate::connection_failure(event),
                 event.timestamp_unix_nanos,
                 signal.host.clone(),
             )?
@@ -219,7 +219,7 @@ impl NetworkMetricsGenerator {
         Ok(self
             .update_counter(
                 CounterKey::tcp_stat(metric_name, event),
-                CounterTemplate::tcp_stat(metric_name, event),
+                || CounterTemplate::tcp_stat(metric_name, event),
                 event.timestamp_unix_nanos,
                 signal.host.clone(),
             )?
@@ -227,25 +227,31 @@ impl NetworkMetricsGenerator {
             .collect())
     }
 
-    fn update_counter(
+    fn update_counter<F>(
         &self,
         key: CounterKey,
-        template: CounterTemplate,
+        template: F,
         timestamp: u64,
         host: Option<String>,
-    ) -> CoreResult<Option<SignalEnvelope>> {
+    ) -> CoreResult<Option<SignalEnvelope>>
+    where
+        F: FnOnce() -> CounterTemplate,
+    {
         self.update_counter_by(key, template, timestamp, timestamp, 1, host)
     }
 
-    fn update_counter_by(
+    fn update_counter_by<F>(
         &self,
         key: CounterKey,
-        template: CounterTemplate,
+        template: F,
         window_start: u64,
         window_end: u64,
         value: u64,
         host: Option<String>,
-    ) -> CoreResult<Option<SignalEnvelope>> {
+    ) -> CoreResult<Option<SignalEnvelope>>
+    where
+        F: FnOnce() -> CounterTemplate,
+    {
         if value == 0 {
             return Ok(None);
         }
@@ -264,7 +270,7 @@ impl NetworkMetricsGenerator {
         }
 
         let state = CounterState {
-            template,
+            template: template(),
             value,
             window: MetricAggregationWindow {
                 start_unix_nanos: window_start,
@@ -354,7 +360,7 @@ impl NetworkMetricsGenerator {
 
         self.update_active_gauge(
             gauge_key,
-            ActiveGaugeTemplate::from_open(event),
+            || ActiveGaugeTemplate::from_open(event),
             1,
             event.timestamp_unix_nanos,
             host,
@@ -377,21 +383,24 @@ impl NetworkMetricsGenerator {
 
         self.update_active_gauge(
             active_state.gauge_key,
-            ActiveGaugeTemplate::from_close(event),
+            || ActiveGaugeTemplate::from_close(event),
             -1,
             event.closed_at_unix_nanos,
             host,
         )
     }
 
-    fn update_active_gauge(
+    fn update_active_gauge<F>(
         &self,
         key: ActiveGaugeKey,
-        template: ActiveGaugeTemplate,
+        template: F,
         delta: i64,
         timestamp: u64,
         host: Option<String>,
-    ) -> CoreResult<Option<SignalEnvelope>> {
+    ) -> CoreResult<Option<SignalEnvelope>>
+    where
+        F: FnOnce() -> ActiveGaugeTemplate,
+    {
         let mut active_counts = self.active_counts()?;
         if let Some(state) = active_counts.get_mut(&key) {
             state.value = state.value.saturating_add(delta);
@@ -413,7 +422,7 @@ impl NetworkMetricsGenerator {
         }
 
         let state = ActiveGaugeState {
-            template,
+            template: template(),
             value: delta.max(0),
             window: MetricAggregationWindow {
                 start_unix_nanos: timestamp,
@@ -1154,7 +1163,7 @@ mod tests {
         NetworkDurationMetric, NetworkGaugeMetric, NetworkProcessIdentity, NetworkProtocol,
         SignalEnvelope, SignalPayload,
     };
-    use std::collections::BTreeMap;
+    use std::{cell::Cell, collections::BTreeMap};
     use tokio::sync::mpsc;
 
     use super::*;
@@ -1504,6 +1513,32 @@ mod tests {
         assert_eq!(last_open.value, 2);
         assert_eq!(last_open.window.start_unix_nanos, 100);
         assert_eq!(last_open.window.end_unix_nanos, 101);
+    }
+
+    #[test]
+    fn existing_counter_key_does_not_rebuild_its_template() {
+        let generator = NetworkMetricsGenerator::default();
+        let signal = network_open_signal("203.0.113.10", 443, 100, Some(7));
+        let SignalPayload::NetworkConnectionOpen(event) = &signal.payload else {
+            panic!("expected network open event");
+        };
+        let template_builds = Cell::new(0);
+
+        for timestamp in [100, 101] {
+            generator
+                .update_counter(
+                    CounterKey::connection_open(event),
+                    || {
+                        template_builds.set(template_builds.get() + 1);
+                        CounterTemplate::connection_open(event)
+                    },
+                    timestamp,
+                    None,
+                )
+                .expect("counter updates");
+        }
+
+        assert_eq!(template_builds.get(), 1);
     }
 
     #[tokio::test]

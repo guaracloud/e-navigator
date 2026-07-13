@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
         registry::node_name(),
     );
 
-    let registry = registry::build_registry(&config, args.source, registry::node_name());
+    let registry = registry::build_registry(&config, args.source, registry::node_name())?;
 
     Runner::new(config, registry)?.run().await?;
     Ok(())

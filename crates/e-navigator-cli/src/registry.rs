@@ -1,6 +1,6 @@
 use crate::args::SourceMode;
 use crate::synthetic::SyntheticExecSource;
-use e_navigator_core::RuntimeConfig;
+use e_navigator_core::{CoreResult, RuntimeConfig};
 use e_navigator_generators::{
     DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator, ProfilingGenerator,
     RequestCorrelationGenerator, ResourceMetricsGenerator, RuntimeSecurityGenerator,
@@ -19,7 +19,7 @@ pub(crate) fn build_registry(
     config: &RuntimeConfig,
     source: SourceMode,
     host: Option<String>,
-) -> ModuleRegistry {
+) -> CoreResult<ModuleRegistry> {
     let mut registry = ModuleRegistry::new();
 
     match source {
@@ -161,19 +161,16 @@ pub(crate) fn build_registry(
     }
 
     if config.module_enabled("sink.prometheus_http") && config.prometheus_http.enabled {
-        registry = registry.with_sink(Box::new(
-            PrometheusHttpSink::bind(config.prometheus_http.clone())
-                .expect("bind sink.prometheus_http"),
-        ));
+        registry = registry.with_sink(Box::new(PrometheusHttpSink::bind(
+            config.prometheus_http.clone(),
+        )?));
     }
 
     if config.module_enabled("sink.otlp_http") && config.otlp_http.enabled {
-        registry = registry.with_sink(Box::new(
-            OtlpHttpSink::new(config.otlp_http.clone()).expect("build sink.otlp_http"),
-        ));
+        registry = registry.with_sink(Box::new(OtlpHttpSink::new(config.otlp_http.clone())?));
     }
 
-    registry
+    Ok(registry)
 }
 
 fn host_resource_config(config: &RuntimeConfig) -> HostResourceConfig {
@@ -232,7 +229,7 @@ mod tests {
             }
         }
 
-        let registry = build_registry(&config, SourceMode::Synthetic, Some("node-a".to_string()));
+        let registry = build_test_registry(&config, SourceMode::Synthetic);
 
         assert_eq!(registry.sources().len(), 1);
         assert_eq!(registry.processors().len(), 0);
@@ -255,7 +252,7 @@ mod tests {
         );
 
         set_module_enabled(&mut config, "generator.trace_correlation", false);
-        let registry = build_registry(&config, SourceMode::Synthetic, Some("node-a".to_string()));
+        let registry = build_test_registry(&config, SourceMode::Synthetic);
         let names = generator_names(&registry);
         assert_eq!(
             names,
@@ -274,7 +271,7 @@ mod tests {
     #[test]
     fn aya_exec_source_mode_keeps_current_real_source_bundle() {
         let config = RuntimeConfig::default();
-        let registry = build_registry(&config, SourceMode::AyaExec, Some("node-a".to_string()));
+        let registry = build_test_registry(&config, SourceMode::AyaExec);
 
         assert_eq!(
             source_names(&registry),
@@ -291,7 +288,7 @@ mod tests {
         let mut config = RuntimeConfig::default();
         set_module_enabled(&mut config, "source.aya_dns", true);
 
-        let registry = build_registry(&config, SourceMode::AyaExec, Some("node-a".to_string()));
+        let registry = build_test_registry(&config, SourceMode::AyaExec);
 
         assert_eq!(
             source_names(&registry),
@@ -309,7 +306,7 @@ mod tests {
         let mut config = RuntimeConfig::default();
         set_module_enabled(&mut config, "source.aya_http", true);
 
-        let registry = build_registry(&config, SourceMode::AyaExec, Some("node-a".to_string()));
+        let registry = build_test_registry(&config, SourceMode::AyaExec);
 
         assert_eq!(
             source_names(&registry),
@@ -332,20 +329,12 @@ mod tests {
         set_module_enabled(&mut config, "source.synthetic_exec", false);
         set_module_enabled(&mut config, "source.aya_cpu_profile", true);
 
-        let registry = build_registry(
-            &config,
-            SourceMode::AyaCpuProfile,
-            Some("node-a".to_string()),
-        );
+        let registry = build_test_registry(&config, SourceMode::AyaCpuProfile);
 
         assert_eq!(source_names(&registry), vec!["source.aya_cpu_profile"]);
 
         set_module_enabled(&mut config, "source.aya_cpu_profile", false);
-        let registry = build_registry(
-            &config,
-            SourceMode::AyaCpuProfile,
-            Some("node-a".to_string()),
-        );
+        let registry = build_test_registry(&config, SourceMode::AyaCpuProfile);
 
         assert!(source_names(&registry).is_empty());
     }
@@ -356,7 +345,7 @@ mod tests {
         config.cpu_profile_source.enabled = true;
         set_module_enabled(&mut config, "source.aya_cpu_profile", true);
 
-        let registry = build_registry(&config, SourceMode::Synthetic, Some("node-a".to_string()));
+        let registry = build_test_registry(&config, SourceMode::Synthetic);
 
         assert_eq!(source_names(&registry), vec!["source.synthetic_exec"]);
     }
@@ -364,7 +353,7 @@ mod tests {
     #[test]
     fn registry_registers_only_json_stdout_as_concrete_sink() {
         let config = RuntimeConfig::default();
-        let registry = build_registry(&config, SourceMode::Synthetic, Some("node-a".to_string()));
+        let registry = build_test_registry(&config, SourceMode::Synthetic);
 
         assert_eq!(sink_names(&registry), vec!["sink.json_stdout"]);
     }
@@ -377,12 +366,27 @@ mod tests {
         config.prometheus_http.bind_address = "127.0.0.1".to_string();
         config.prometheus_http.port = 0;
 
-        let registry = build_registry(&config, SourceMode::Synthetic, Some("node-a".to_string()));
+        let registry = build_test_registry(&config, SourceMode::Synthetic);
 
         assert_eq!(
             sink_names(&registry),
             vec!["sink.json_stdout", "sink.prometheus_http"]
         );
+    }
+
+    #[test]
+    fn prometheus_bind_failure_is_returned_instead_of_panicking() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve local port");
+        let mut config = RuntimeConfig::default();
+        set_module_enabled(&mut config, "sink.prometheus_http", true);
+        config.prometheus_http.enabled = true;
+        config.prometheus_http.bind_address = "127.0.0.1".to_string();
+        config.prometheus_http.port = listener.local_addr().expect("local address").port();
+
+        let err = build_registry(&config, SourceMode::Synthetic, Some("node-a".to_string()))
+            .expect_err("occupied Prometheus port must fail registry construction");
+
+        assert!(err.to_string().contains("sink.prometheus_http"));
     }
 
     #[test]
@@ -392,7 +396,7 @@ mod tests {
         config.otlp_http.enabled = true;
         config.otlp_http.endpoint = "http://127.0.0.1:4318/v1/metrics".to_string();
 
-        let registry = build_registry(&config, SourceMode::Synthetic, Some("node-a".to_string()));
+        let registry = build_test_registry(&config, SourceMode::Synthetic);
 
         assert_eq!(
             sink_names(&registry),
@@ -453,6 +457,10 @@ mod tests {
             panic!("missing module {name}");
         };
         module.enabled = enabled;
+    }
+
+    fn build_test_registry(config: &RuntimeConfig, source: SourceMode) -> ModuleRegistry {
+        build_registry(config, source, Some("node-a".to_string())).expect("registry builds")
     }
 
     fn source_names(registry: &ModuleRegistry) -> Vec<&'static str> {

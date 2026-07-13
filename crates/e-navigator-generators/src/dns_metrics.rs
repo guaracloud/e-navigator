@@ -120,10 +120,11 @@ impl DnsMetricsGenerator {
         signal: &SignalEnvelope,
         event: &DnsQueryEvent,
     ) -> CoreResult<Vec<SignalEnvelope>> {
+        let domain = self.domain_label(&event.query_name)?;
         Ok(self
             .update_counter(
-                CounterKey::query(event, self.domain_label(&event.query_name)?),
-                CounterTemplate::query(event, self.domain_label(&event.query_name)?),
+                CounterKey::query(event, domain.clone()),
+                move || CounterTemplate::query(event, domain),
                 event.timestamp_unix_nanos,
                 signal.host.clone(),
             )?
@@ -140,7 +141,7 @@ impl DnsMetricsGenerator {
         let mut outputs = Vec::new();
         if let Some(counter) = self.update_counter(
             CounterKey::response_code(event, domain.clone()),
-            CounterTemplate::response_code(event, domain.clone()),
+            || CounterTemplate::response_code(event, domain.clone()),
             event.timestamp_unix_nanos,
             signal.host.clone(),
         )? {
@@ -177,13 +178,16 @@ impl DnsMetricsGenerator {
         Ok(Some(domain))
     }
 
-    fn update_counter(
+    fn update_counter<F>(
         &self,
         key: CounterKey,
-        template: CounterTemplate,
+        template: F,
         timestamp: u64,
         host: Option<String>,
-    ) -> CoreResult<Option<SignalEnvelope>> {
+    ) -> CoreResult<Option<SignalEnvelope>>
+    where
+        F: FnOnce() -> CounterTemplate,
+    {
         let mut counters = self.counters()?;
         if let Some(state) = counters.get_mut(&key) {
             state.value = state.value.saturating_add(1);
@@ -193,7 +197,7 @@ impl DnsMetricsGenerator {
         }
 
         let state = CounterState {
-            template,
+            template: template(),
             value: 1,
             window: MetricAggregationWindow {
                 start_unix_nanos: timestamp,
@@ -700,7 +704,7 @@ mod tests {
         DnsQueryType, DnsResponseCode, DnsResponseEvent, KubernetesContext, NetworkProcessIdentity,
         NetworkProtocol, SignalEnvelope, SignalPayload,
     };
-    use std::collections::BTreeMap;
+    use std::{cell::Cell, collections::BTreeMap};
     use tokio::sync::mpsc;
 
     use super::*;
@@ -719,6 +723,33 @@ mod tests {
         assert_eq!(metric.query_type, Some(DnsQueryType::A));
         assert_eq!(metric.container, Some(container_context()));
         assert_eq!(metric.kubernetes, Some(kubernetes_context()));
+    }
+
+    #[test]
+    fn existing_dns_counter_key_does_not_rebuild_its_template() {
+        let generator = DnsMetricsGenerator::default();
+        let signal = dns_query_signal("api.example.com", DnsQueryType::A, 100);
+        let SignalPayload::DnsQuery(event) = &signal.payload else {
+            panic!("expected DNS query event");
+        };
+        let template_builds = Cell::new(0);
+
+        for timestamp in [100, 101] {
+            let domain = Some("api.example.com".to_string());
+            generator
+                .update_counter(
+                    CounterKey::query(event, domain.clone()),
+                    || {
+                        template_builds.set(template_builds.get() + 1);
+                        CounterTemplate::query(event, domain)
+                    },
+                    timestamp,
+                    None,
+                )
+                .expect("counter updates");
+        }
+
+        assert_eq!(template_builds.get(), 1);
     }
 
     #[tokio::test]
