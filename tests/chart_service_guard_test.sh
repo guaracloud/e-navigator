@@ -89,3 +89,21 @@ render_chart prometheus_monitor \
   --set serviceMonitor.enabled=true
 expect_kind "$tmp_dir/prometheus_monitor.yaml" Service
 expect_kind "$tmp_dir/prometheus_monitor.yaml" ServiceMonitor
+
+render_chart guara_production \
+  --values charts/e-navigator/values-guara-production.yaml \
+  --set image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+expect_kind "$tmp_dir/guara_production.yaml" Service
+expect_kind "$tmp_dir/guara_production.yaml" ServiceMonitor
+for expected in \
+  'namespace: guara-observability' \
+  'hostPID: true' \
+  'key: guara.cloud/role' \
+  'operator: NotIn' \
+  'startupProbe:' \
+  'readinessProbe:'; do
+  if ! grep -Fq "$expected" "$tmp_dir/guara_production.yaml"; then
+    printf 'expected Guara production render to include: %s\n' "$expected" >&2
+    exit 1
+  fi
+done

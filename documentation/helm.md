@@ -254,6 +254,37 @@ rerunning `tests/smoke_pyroscope_otlp.sh`. Native cumulative profile-session
 signals are intentionally not sent to this endpoint, avoiding repeat export of
 the same window.
 
+### Guara standalone replacement preset
+
+`charts/e-navigator/values-guara-production.yaml` is the opinionated Guara
+replacement overlay. It keeps the existing Alloy OTLP HTTP receiver for
+metrics and traces, sends profiles directly to the pinned Pyroscope server,
+enables all real sources in one `unified` process, profiles at 10 Hz, and
+enforces the production source policy:
+
+```text
+namespace = proj-*
+AND guara.cloud/tier IN (starter, pro, business, enterprise)
+AND guara.cloud/catalog-slug DOES NOT EXIST
+```
+
+The overlay also excludes exporter/collector processes and build-pool nodes,
+enables health probes and the Prometheus scrape surface, and uses a 150m CPU /
+384 MiB memory request with a 2 CPU / 960 MiB hard ceiling. It deliberately
+does not choose an image version. Render or install only with a digest verified
+from the release manifest:
+
+```sh
+helm template e-navigator charts/e-navigator \
+  --values charts/e-navigator/values-guara-production.yaml \
+  --set image.digest=sha256:<verified-release-digest>
+```
+
+The compatibility port lists are explicit and conservative. In particular,
+TLS application classification remains port-based: HTTP/1 uses 443 while h2
+uses 8443 in this preset. Do not claim same-port ALPN discrimination until the
+TLS source implements and validates it.
+
 If a family-specific endpoint is omitted, that enabled family uses
 `otlp_http.endpoint`. Disabled families do not require an endpoint and do not
 export requests. Every configured OTLP endpoint must be an `http://` or
