@@ -343,10 +343,26 @@ with fixed latency buckets and the bounded `signal_family` label. The histogram
 includes failed attempts and timeouts, so use it with the retry, failure, and
 drop counters when diagnosing a slow backend.
 
+The worker accepts only HTTP 200 as an OTLP acknowledgement and decodes at most
+64 KiB of the family-specific protobuf response. Populated partial-success
+responses are not retried. Their rejected-item and warning fields increment
+`e_navigator_export_rejected_items_total`,
+`e_navigator_export_partial_success_total`, and
+`e_navigator_export_partial_warning_total`. Only transport failures, timeouts,
+and HTTP 429/502/503/504 are retried; other statuses are permanent. Native
+`e_navigator_export_retryable_responses_total`,
+`e_navigator_export_permanent_responses_total`, and
+`e_navigator_export_invalid_responses_total` counters make that classification
+visible. Numeric `Retry-After` seconds are honored up to
+`retry_max_backoff_millis`.
+
 Alert at minimum on sustained increases in
 `e_navigator_export_dropped_queue_full_total`,
 `e_navigator_export_dropped_failure_total`, or
 `e_navigator_export_dropped_circuit_open_total`; on any increase in
+`e_navigator_export_rejected_items_total`,
+`e_navigator_export_permanent_responses_total`, or
+`e_navigator_export_invalid_responses_total`; on any increase in
 `e_navigator_export_invalid_trace_records_total` (a signal declared a trace or
 span ID but it failed OTLP identity validation); and when
 `e_navigator_export_queue_depth / e_navigator_export_queue_capacity` remains

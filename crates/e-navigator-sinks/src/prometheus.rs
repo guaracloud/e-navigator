@@ -1031,6 +1031,10 @@ mod tests {
         );
         assert!(metrics.contains("e_navigator_export_enqueued_total{signal_family=\"metrics\"} 1"));
         assert!(metrics.contains("e_navigator_export_retry_attempts_total"));
+        assert!(metrics.contains("e_navigator_export_partial_success_total"));
+        assert!(metrics.contains("e_navigator_export_rejected_items_total"));
+        assert!(metrics.contains("e_navigator_export_permanent_responses_total"));
+        assert!(metrics.contains("e_navigator_export_invalid_responses_total"));
     }
 
     #[tokio::test]

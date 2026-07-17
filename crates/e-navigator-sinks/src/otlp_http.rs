@@ -1,6 +1,10 @@
 use async_trait::async_trait;
 use e_navigator_core::{CoreResult, ModuleKind, ModuleMetadata, OtlpHttpConfig, Sink};
 use e_navigator_signals::{SignalEnvelope, SignalPayload};
+use opentelemetry_proto::tonic::collector::{
+    metrics::v1::ExportMetricsServiceResponse, trace::v1::ExportTraceServiceResponse,
+};
+use prost::Message;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -18,11 +22,11 @@ use tracing::warn;
 
 use crate::{
     HttpExporterConfig, HttpProtobufExporter,
-    exporter::EXPORT_REQUEST_DURATION_BUCKET_MICROS,
+    exporter::{EXPORT_REQUEST_DURATION_BUCKET_MICROS, ExportResponseAck},
     format_otel_metric_record, format_otel_profile_record, format_otel_trace_record,
     native_telemetry::{NativeTelemetryRegistry, NativeTelemetrySource},
     otlp_metric_proto::{encode_metric_export_request, metric_series_key},
-    otlp_profile_proto::encode_profile_export_request,
+    otlp_profile_proto::{decode_profile_export_response, encode_profile_export_request},
     otlp_trace_proto::{encode_trace_export_request, trace_record_has_valid_ids},
 };
 
@@ -52,6 +56,12 @@ pub struct ExportWorkerTelemetry {
     pub request_attempts: u64,
     pub request_duration_micros_sum: u64,
     pub request_duration_buckets: [u64; EXPORT_REQUEST_DURATION_BUCKET_MICROS.len()],
+    pub partial_successes: u64,
+    pub partial_warnings: u64,
+    pub rejected_items: u64,
+    pub retryable_responses: u64,
+    pub permanent_responses: u64,
+    pub invalid_responses: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -102,6 +112,12 @@ struct AtomicExportWorkerTelemetry {
     request_attempts: AtomicU64,
     request_duration_micros_sum: AtomicU64,
     request_duration_buckets: [AtomicU64; EXPORT_REQUEST_DURATION_BUCKET_MICROS.len()],
+    partial_successes: AtomicU64,
+    partial_warnings: AtomicU64,
+    rejected_items: AtomicU64,
+    retryable_responses: AtomicU64,
+    permanent_responses: AtomicU64,
+    invalid_responses: AtomicU64,
 }
 
 impl AtomicExportWorkerTelemetry {
@@ -123,6 +139,12 @@ impl AtomicExportWorkerTelemetry {
             request_duration_buckets: std::array::from_fn(|index| {
                 self.request_duration_buckets[index].load(Ordering::Relaxed)
             }),
+            partial_successes: self.partial_successes.load(Ordering::Relaxed),
+            partial_warnings: self.partial_warnings.load(Ordering::Relaxed),
+            rejected_items: self.rejected_items.load(Ordering::Relaxed),
+            retryable_responses: self.retryable_responses.load(Ordering::Relaxed),
+            permanent_responses: self.permanent_responses.load(Ordering::Relaxed),
+            invalid_responses: self.invalid_responses.load(Ordering::Relaxed),
         }
     }
 }
@@ -169,6 +191,7 @@ impl OtlpHttpSink {
             Some(build_exporter(
                 exporter_config_for(&config, required_metrics_endpoint(&config)?),
                 encode_metric_export_request,
+                decode_metric_export_response,
                 &config,
                 "metrics",
                 &telemetry_registry,
@@ -180,6 +203,7 @@ impl OtlpHttpSink {
             Some(build_exporter(
                 exporter_config_for(&config, required_profiles_endpoint(&config)?),
                 encode_profile_export_request,
+                decode_profile_export_response,
                 &config,
                 "profiles",
                 &telemetry_registry,
@@ -191,6 +215,7 @@ impl OtlpHttpSink {
             Some(build_exporter(
                 exporter_config_for(&config, required_traces_endpoint(&config)?),
                 encode_trace_export_request,
+                decode_trace_export_response,
                 &config,
                 "traces",
                 &telemetry_registry,
@@ -415,6 +440,7 @@ fn exporter_config_for(config: &OtlpHttpConfig, endpoint: &str) -> HttpExporterC
 fn build_exporter<T>(
     config: HttpExporterConfig,
     encode_batch: fn(&[T]) -> Result<Vec<u8>, crate::ExporterError>,
+    decode_response: fn(&[u8]) -> Result<ExportResponseAck, crate::ExporterError>,
     runtime_config: &OtlpHttpConfig,
     family: &'static str,
     telemetry_registry: &NativeTelemetryRegistry,
@@ -430,6 +456,7 @@ where
                     runtime_config.retry_max_backoff_millis,
                 )
                 .with_compression(runtime_config.compression)
+                .with_response_decoder(decode_response)
         })
         .map_err(|err| e_navigator_core::CoreError::ModuleFailed {
             module: "sink.otlp_http".to_string(),
@@ -441,6 +468,38 @@ where
             message: err,
         },
     )
+}
+
+fn decode_metric_export_response(body: &[u8]) -> Result<ExportResponseAck, crate::ExporterError> {
+    let response = ExportMetricsServiceResponse::decode(body)
+        .map_err(|err| crate::ExporterError::InvalidResponse(err.to_string()))?;
+    let Some(partial) = response.partial_success else {
+        return Ok(ExportResponseAck::default());
+    };
+    let rejected_items = u64::try_from(partial.rejected_data_points).map_err(|_| {
+        crate::ExporterError::InvalidResponse(
+            "rejected_data_points must not be negative".to_string(),
+        )
+    })?;
+    Ok(ExportResponseAck {
+        rejected_items,
+        warning: !partial.error_message.is_empty(),
+    })
+}
+
+fn decode_trace_export_response(body: &[u8]) -> Result<ExportResponseAck, crate::ExporterError> {
+    let response = ExportTraceServiceResponse::decode(body)
+        .map_err(|err| crate::ExporterError::InvalidResponse(err.to_string()))?;
+    let Some(partial) = response.partial_success else {
+        return Ok(ExportResponseAck::default());
+    };
+    let rejected_items = u64::try_from(partial.rejected_spans).map_err(|_| {
+        crate::ExporterError::InvalidResponse("rejected_spans must not be negative".to_string())
+    })?;
+    Ok(ExportResponseAck {
+        rejected_items,
+        warning: !partial.error_message.is_empty(),
+    })
 }
 
 impl<T> AsyncProtobufExporter<T>
@@ -746,6 +805,30 @@ fn export_worker_prometheus_lines(
             "e_navigator_export_circuit_opened_total",
             telemetry.circuit_opened,
         ),
+        metric(
+            "e_navigator_export_partial_success_total",
+            telemetry.partial_successes,
+        ),
+        metric(
+            "e_navigator_export_partial_warning_total",
+            telemetry.partial_warnings,
+        ),
+        metric(
+            "e_navigator_export_rejected_items_total",
+            telemetry.rejected_items,
+        ),
+        metric(
+            "e_navigator_export_retryable_responses_total",
+            telemetry.retryable_responses,
+        ),
+        metric(
+            "e_navigator_export_permanent_responses_total",
+            telemetry.permanent_responses,
+        ),
+        metric(
+            "e_navigator_export_invalid_responses_total",
+            telemetry.invalid_responses,
+        ),
     ];
     for (index, boundary_micros) in EXPORT_REQUEST_DURATION_BUCKET_MICROS.iter().enumerate() {
         let mut bucket_labels = labels.clone();
@@ -907,13 +990,11 @@ async fn flush_worker_batch<T>(
         return;
     }
     let counters_before = exporter.counters();
+    let queued_before = exporter.queued_len();
     match exporter.flush_once().await {
         Ok(()) => {
-            let exported = (*queued).min(tuning.batch_size);
-            telemetry
-                .exported
-                .fetch_add(exported as u64, Ordering::Relaxed);
-            *queued = queued.saturating_sub(exported);
+            let processed = queued_before.saturating_sub(exporter.queued_len());
+            *queued = queued.saturating_sub(processed);
             *consecutive_failures = 0;
         }
         Err(err) => {
@@ -942,6 +1023,12 @@ async fn flush_worker_batch<T>(
         }
     }
     let counters_after = exporter.counters();
+    telemetry.exported.fetch_add(
+        counters_after
+            .exported
+            .saturating_sub(counters_before.exported),
+        Ordering::Relaxed,
+    );
     let retry_attempts = counters_after
         .retry_attempts
         .saturating_sub(counters_before.retry_attempts);
@@ -965,6 +1052,40 @@ async fn flush_worker_batch<T>(
             bucket.saturating_sub(counters_before.request_duration_buckets[index]),
             Ordering::Relaxed,
         );
+    }
+    for (counter, after, before) in [
+        (
+            &telemetry.partial_successes,
+            counters_after.partial_successes,
+            counters_before.partial_successes,
+        ),
+        (
+            &telemetry.partial_warnings,
+            counters_after.partial_warnings,
+            counters_before.partial_warnings,
+        ),
+        (
+            &telemetry.rejected_items,
+            counters_after.rejected_items,
+            counters_before.rejected_items,
+        ),
+        (
+            &telemetry.retryable_responses,
+            counters_after.retryable_responses,
+            counters_before.retryable_responses,
+        ),
+        (
+            &telemetry.permanent_responses,
+            counters_after.permanent_responses,
+            counters_before.permanent_responses,
+        ),
+        (
+            &telemetry.invalid_responses,
+            counters_after.invalid_responses,
+            counters_before.invalid_responses,
+        ),
+    ] {
+        counter.fetch_add(after.saturating_sub(before), Ordering::Relaxed);
     }
 }
 
@@ -1307,6 +1428,135 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn otlp_http_sink_accounts_partial_success_without_retrying() {
+        use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsPartialSuccess;
+
+        let response = ExportMetricsServiceResponse {
+            partial_success: Some(ExportMetricsPartialSuccess {
+                rejected_data_points: 1,
+                error_message: "bounded test warning".to_string(),
+            }),
+        }
+        .encode_to_vec();
+        let collector =
+            FakeCollector::spawn_responses(vec![FakeResponse::protobuf(response)], Duration::ZERO)
+                .await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 2,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_metric())
+            .await
+            .expect("metric enqueues");
+        let _ = collector.next_request().await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let telemetry = sink.telemetry().metrics.expect("metric telemetry");
+        assert_eq!(telemetry.exported, 1);
+        assert_eq!(telemetry.partial_successes, 1);
+        assert_eq!(telemetry.partial_warnings, 1);
+        assert_eq!(telemetry.rejected_items, 1);
+        assert_eq!(telemetry.retry_attempts, 0);
+        assert_eq!(telemetry.dropped_export_failure, 0);
+        Sink::shutdown(&sink).await.expect("worker drains");
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_does_not_retry_permanent_or_invalid_responses() {
+        for (response, expected_permanent, expected_invalid) in [
+            (FakeResponse::status(400), 1, 0),
+            (FakeResponse::protobuf(vec![0xff]), 0, 1),
+        ] {
+            let collector = FakeCollector::spawn_responses(vec![response], Duration::ZERO).await;
+            let sink = OtlpHttpSink::new(OtlpHttpConfig {
+                enabled: true,
+                metrics_endpoint: collector.url_with_path("/v1/metrics"),
+                metrics_enabled: true,
+                traces_enabled: false,
+                profiles_enabled: false,
+                batch_size: 1,
+                queue_capacity: 2,
+                timeout_millis: 1_000,
+                max_retries: 2,
+                ..OtlpHttpConfig::default()
+            })
+            .expect("sink builds");
+
+            sink.write(&network_metric())
+                .await
+                .expect("metric enqueues");
+            let _ = collector.next_request().await;
+            tokio::time::sleep(Duration::from_millis(20)).await;
+
+            let telemetry = sink.telemetry().metrics.expect("metric telemetry");
+            assert_eq!(telemetry.request_attempts, 1);
+            assert_eq!(telemetry.retry_attempts, 0);
+            assert_eq!(telemetry.permanent_responses, expected_permanent);
+            assert_eq!(telemetry.invalid_responses, expected_invalid);
+            assert_eq!(telemetry.failed_batches, 1);
+            assert_eq!(telemetry.dropped_export_failure, 1);
+            Sink::shutdown(&sink).await.expect("worker drains");
+        }
+    }
+
+    #[test]
+    fn trace_and_profile_partial_response_decoders_are_bounded() {
+        use opentelemetry_proto::tonic::collector::trace::v1::ExportTracePartialSuccess;
+
+        let trace = ExportTraceServiceResponse {
+            partial_success: Some(ExportTracePartialSuccess {
+                rejected_spans: 2,
+                error_message: String::new(),
+            }),
+        }
+        .encode_to_vec();
+        assert_eq!(
+            decode_trace_export_response(&trace).expect("trace response decodes"),
+            ExportResponseAck {
+                rejected_items: 2,
+                warning: false,
+            }
+        );
+
+        let profile = collector_profile_proto::ExportProfilesServiceResponse {
+            partial_success: Some(collector_profile_proto::ExportProfilesPartialSuccess {
+                rejected_profiles: 3,
+                error_message: "profile warning".to_string(),
+            }),
+        }
+        .encode_to_vec();
+        assert_eq!(
+            decode_profile_export_response(&profile).expect("profile response decodes"),
+            ExportResponseAck {
+                rejected_items: 3,
+                warning: true,
+            }
+        );
+
+        let negative = ExportTraceServiceResponse {
+            partial_success: Some(ExportTracePartialSuccess {
+                rejected_spans: -1,
+                error_message: String::new(),
+            }),
+        }
+        .encode_to_vec();
+        assert!(matches!(
+            decode_trace_export_response(&negative),
+            Err(crate::ExporterError::InvalidResponse(_))
+        ));
+    }
+
+    #[tokio::test]
     async fn otlp_http_sink_suppresses_cross_batch_receiver_timestamp_collisions() {
         const BASE: u64 = 1_784_321_612_093_000_000;
         let collector = FakeCollector::spawn(vec![200, 200]).await;
@@ -1481,7 +1731,7 @@ mod tests {
 
     #[tokio::test]
     async fn otlp_http_sink_retries_failed_metric_export() {
-        let collector = FakeCollector::spawn(vec![500, 200]).await;
+        let collector = FakeCollector::spawn(vec![503, 200]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
             enabled: true,
             endpoint: collector.url(),
@@ -1509,6 +1759,13 @@ mod tests {
                 .await
                 .contains("network.connection.open.count")
         );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let telemetry = sink.telemetry().metrics.expect("metric telemetry");
+        assert_eq!(telemetry.request_attempts, 2);
+        assert_eq!(telemetry.retry_attempts, 1);
+        assert_eq!(telemetry.retryable_responses, 1);
+        assert_eq!(telemetry.permanent_responses, 0);
+        Sink::shutdown(&sink).await.expect("workers drain");
     }
 
     #[tokio::test]
@@ -3077,20 +3334,56 @@ mod tests {
         requests: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<RecordedRequest>>,
     }
 
+    #[derive(Debug)]
+    struct FakeResponse {
+        status: u16,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+    }
+
+    impl FakeResponse {
+        fn status(status: u16) -> Self {
+            Self {
+                status,
+                headers: Vec::new(),
+                body: Vec::new(),
+            }
+        }
+
+        fn protobuf(body: Vec<u8>) -> Self {
+            Self {
+                status: 200,
+                headers: vec![(
+                    "content-type".to_string(),
+                    "application/x-protobuf".to_string(),
+                )],
+                body,
+            }
+        }
+    }
+
     impl FakeCollector {
         async fn spawn(statuses: Vec<u16>) -> Self {
             Self::spawn_with_delay(statuses, Duration::ZERO).await
         }
 
         async fn spawn_with_delay(statuses: Vec<u16>, response_delay: Duration) -> Self {
+            Self::spawn_responses(
+                statuses.into_iter().map(FakeResponse::status).collect(),
+                response_delay,
+            )
+            .await
+        }
+
+        async fn spawn_responses(responses: Vec<FakeResponse>, response_delay: Duration) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0")
                 .await
                 .expect("bind fake collector");
             let address = listener.local_addr().expect("collector address");
-            let request_capacity = statuses.len().max(8);
+            let request_capacity = responses.len().max(8);
             let (tx, rx) = tokio::sync::mpsc::channel(request_capacity);
             tokio::spawn(async move {
-                for status in statuses {
+                for response in responses {
                     let (mut socket, _) = listener.accept().await.expect("accept request");
                     let mut buffer = vec![0; 8192];
                     let bytes = socket.read(&mut buffer).await.expect("read request");
@@ -3099,14 +3392,24 @@ mod tests {
                     };
                     let _ = tx.send(request).await;
                     tokio::time::sleep(response_delay).await;
-                    let status_text = if status == 200 { "OK" } else { "ERR" };
-                    let response = format!(
-                        "HTTP/1.1 {status} {status_text}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    let status_text = if response.status == 200 { "OK" } else { "ERR" };
+                    let mut response_head = format!(
+                        "HTTP/1.1 {} {status_text}\r\ncontent-length: {}\r\nconnection: close\r\n",
+                        response.status,
+                        response.body.len()
                     );
+                    for (name, value) in response.headers {
+                        response_head.push_str(&format!("{name}: {value}\r\n"));
+                    }
+                    response_head.push_str("\r\n");
                     socket
-                        .write_all(response.as_bytes())
+                        .write_all(response_head.as_bytes())
                         .await
-                        .expect("write response");
+                        .expect("write response head");
+                    socket
+                        .write_all(&response.body)
+                        .await
+                        .expect("write response body");
                 }
             });
             Self {

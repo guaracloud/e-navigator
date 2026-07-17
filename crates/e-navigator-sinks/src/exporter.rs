@@ -157,12 +157,27 @@ pub struct ExporterCounters {
     pub request_attempts: u64,
     pub request_duration_micros_sum: u64,
     pub request_duration_buckets: [u64; EXPORT_REQUEST_DURATION_BUCKET_MICROS.len()],
+    pub partial_successes: u64,
+    pub partial_warnings: u64,
+    pub rejected_items: u64,
+    pub retryable_responses: u64,
+    pub permanent_responses: u64,
+    pub invalid_responses: u64,
 }
 
 pub(crate) const EXPORT_REQUEST_DURATION_BUCKET_MICROS: [u64; 11] = [
     5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 2_500_000, 5_000_000,
     10_000_000,
 ];
+const MAX_OTLP_RESPONSE_BYTES: u64 = 64 * 1024;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ExportResponseAck {
+    pub rejected_items: u64,
+    pub warning: bool,
+}
+
+type DecodeResponse = fn(&[u8]) -> Result<ExportResponseAck, ExporterError>;
 
 #[derive(Debug)]
 pub struct HttpJsonExporter<T> {
@@ -181,6 +196,7 @@ pub struct HttpProtobufExporter<T> {
     encode_batch: fn(&[T]) -> Result<Vec<u8>, ExporterError>,
     retry_backoff: Option<RetryBackoff>,
     compression: OtlpHttpCompression,
+    decode_response: DecodeResponse,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -303,6 +319,7 @@ where
             encode_batch,
             retry_backoff: None,
             compression: OtlpHttpCompression::None,
+            decode_response: |_| Ok(ExportResponseAck::default()),
         })
     }
 
@@ -316,6 +333,11 @@ where
 
     pub fn with_compression(mut self, compression: OtlpHttpCompression) -> Self {
         self.compression = compression;
+        self
+    }
+
+    pub(crate) fn with_response_decoder(mut self, decode_response: DecodeResponse) -> Self {
+        self.decode_response = decode_response;
         self
     }
 
@@ -357,26 +379,65 @@ where
         };
 
         let mut last_error = None;
+        let mut retry_after = None;
         for attempt in 0..=self.config.max_retries {
             if attempt > 0 {
                 self.counters.retry_attempts = self.counters.retry_attempts.saturating_add(1);
-                if let Some(backoff) = self.retry_backoff {
-                    sleep(retry_delay(backoff, attempt, &self.config.endpoint)).await;
+                if let Some(delay) = retry_after.take().or_else(|| {
+                    self.retry_backoff
+                        .map(|backoff| retry_delay(backoff, attempt, &self.config.endpoint))
+                }) {
+                    sleep(delay).await;
                 }
             }
             let started = std::time::Instant::now();
             let result = self.send_body(body.clone()).await;
             self.observe_request_duration(started.elapsed());
             match result {
-                Ok(()) => {
+                Ok(ack) => {
                     for _ in 0..batch_len {
                         let _ = self.queue.pop_front();
                     }
                     self.counters.exported =
                         self.counters.exported.saturating_add(batch_len as u64);
+                    if ack.rejected_items > 0 {
+                        self.counters.partial_successes =
+                            self.counters.partial_successes.saturating_add(1);
+                        self.counters.rejected_items = self
+                            .counters
+                            .rejected_items
+                            .saturating_add(ack.rejected_items);
+                    }
+                    if ack.warning {
+                        self.counters.partial_warnings =
+                            self.counters.partial_warnings.saturating_add(1);
+                    }
                     return Ok(());
                 }
-                Err(err) => last_error = Some(err),
+                Err(err) => {
+                    match &err {
+                        ExporterError::RetryableStatus { .. } => {
+                            self.counters.retryable_responses =
+                                self.counters.retryable_responses.saturating_add(1);
+                        }
+                        ExporterError::PermanentStatus(_) => {
+                            self.counters.permanent_responses =
+                                self.counters.permanent_responses.saturating_add(1);
+                        }
+                        ExporterError::InvalidResponse(_) => {
+                            self.counters.invalid_responses =
+                                self.counters.invalid_responses.saturating_add(1);
+                        }
+                        _ => {}
+                    }
+                    if !err.is_retryable() {
+                        self.counters.failed_batches =
+                            self.counters.failed_batches.saturating_add(1);
+                        return Err(err);
+                    }
+                    retry_after = err.retry_after();
+                    last_error = Some(err);
+                }
             }
         }
 
@@ -430,7 +491,7 @@ where
         }
     }
 
-    async fn send_body(&self, body: Bytes) -> Result<(), ExporterError> {
+    async fn send_body(&self, body: Bytes) -> Result<ExportResponseAck, ExporterError> {
         let headers = header_map(&self.config.headers)?;
         let mut request = self
             .client
@@ -441,18 +502,56 @@ where
         if self.compression == OtlpHttpCompression::Gzip {
             request = request.header(CONTENT_ENCODING, "gzip");
         }
-        let response = timeout(
-            Duration::from_millis(self.config.timeout_millis),
-            request.send(),
-        )
+        timeout(Duration::from_millis(self.config.timeout_millis), async {
+            let mut response = request.send().await?;
+            let status = response.status().as_u16();
+            if status != 200 {
+                if matches!(status, 429 | 502 | 503 | 504) {
+                    return Err(ExporterError::RetryableStatus {
+                        status,
+                        retry_after_millis: retry_after_millis(
+                            response.headers(),
+                            self.retry_backoff
+                                .map_or(u64::MAX, |backoff| backoff.max_millis),
+                        ),
+                    });
+                }
+                return Err(ExporterError::PermanentStatus(status));
+            }
+            if response
+                .content_length()
+                .is_some_and(|length| length > MAX_OTLP_RESPONSE_BYTES)
+            {
+                return Err(ExporterError::InvalidResponse(format!(
+                    "response exceeds {MAX_OTLP_RESPONSE_BYTES} bytes"
+                )));
+            }
+            let mut response_body = Vec::new();
+            while let Some(chunk) = response.chunk().await? {
+                if response_body.len().saturating_add(chunk.len())
+                    > MAX_OTLP_RESPONSE_BYTES as usize
+                {
+                    return Err(ExporterError::InvalidResponse(format!(
+                        "response exceeds {MAX_OTLP_RESPONSE_BYTES} bytes"
+                    )));
+                }
+                response_body.extend_from_slice(&chunk);
+            }
+            (self.decode_response)(&response_body)
+        })
         .await
-        .map_err(|_| ExporterError::Timeout)??;
-
-        if !response.status().is_success() {
-            return Err(ExporterError::Status(response.status().as_u16()));
-        }
-        Ok(())
+        .map_err(|_| ExporterError::Timeout)?
     }
+}
+
+fn retry_after_millis(headers: &HeaderMap, max_millis: u64) -> Option<u64> {
+    let seconds = headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .parse::<u64>()
+        .ok()?;
+    Some(seconds.saturating_mul(1_000).min(max_millis))
 }
 
 fn retry_delay(backoff: RetryBackoff, attempt: usize, endpoint: &str) -> Duration {
@@ -496,10 +595,38 @@ pub enum ExporterError {
     Timeout,
     #[error("collector returned HTTP {0}")]
     Status(u16),
+    #[error("collector returned retryable OTLP HTTP {status}")]
+    RetryableStatus {
+        status: u16,
+        retry_after_millis: Option<u64>,
+    },
+    #[error("collector returned permanent OTLP HTTP {0}")]
+    PermanentStatus(u16),
+    #[error("collector returned an invalid OTLP response: {0}")]
+    InvalidResponse(String),
     #[error("request failed: {0}")]
     Request(#[from] reqwest::Error),
     #[error("export retries exhausted")]
     RetriesExhausted,
+}
+
+impl ExporterError {
+    fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Timeout | Self::Request(_) | Self::RetryableStatus { .. }
+        )
+    }
+
+    fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::RetryableStatus {
+                retry_after_millis: Some(millis),
+                ..
+            } => Some(Duration::from_millis(*millis)),
+            _ => None,
+        }
+    }
 }
 
 fn header_map(headers: &[(String, String)]) -> Result<HeaderMap, ExporterError> {
@@ -714,6 +841,25 @@ mod tests {
         .expect_err("invalid header syntax fails");
 
         assert_eq!(err.to_string(), "invalid header");
+    }
+
+    #[test]
+    fn retry_after_delta_seconds_is_bounded_by_backoff_cap() {
+        let mut headers = HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, "2".parse().expect("header"));
+        assert_eq!(retry_after_millis(&headers, 1_500), Some(1_500));
+
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            u64::MAX.to_string().parse().expect("header"),
+        );
+        assert_eq!(retry_after_millis(&headers, 5_000), Some(5_000));
+
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "not-a-delay".parse().expect("header"),
+        );
+        assert_eq!(retry_after_millis(&headers, 5_000), None);
     }
 
     #[tokio::test]
