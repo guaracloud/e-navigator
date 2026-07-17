@@ -308,7 +308,8 @@ Alert at minimum on sustained increases in
 `e_navigator_export_dropped_queue_full_total`,
 `e_navigator_export_dropped_failure_total`, or
 `e_navigator_export_dropped_circuit_open_total`; on any increase in
-`e_navigator_export_invalid_trace_records_total`; and when
+`e_navigator_export_invalid_trace_records_total` (a signal declared a trace or
+span ID but it failed OTLP identity validation); and when
 `e_navigator_export_queue_depth / e_navigator_export_queue_capacity` remains
 above 0.8 for five minutes. Retry or circuit-open counters alone are early
 degradation signals; the drop counters mean telemetry was irrecoverably lost.
