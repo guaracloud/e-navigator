@@ -43,7 +43,7 @@ pub struct OtelMetricRecord {
 }
 
 pub fn format_otel_metric_record(signal: &SignalEnvelope) -> Option<OtelMetricRecord> {
-    match &signal.payload {
+    let mut record = match &signal.payload {
         SignalPayload::NetworkCounterMetric(metric) => Some(network_counter_record(signal, metric)),
         SignalPayload::NetworkDurationMetric(metric) => {
             Some(network_duration_record(signal, metric))
@@ -56,6 +56,35 @@ pub fn format_otel_metric_record(signal: &SignalEnvelope) -> Option<OtelMetricRe
             Some(resource_counter_record(signal, metric))
         }
         _ => None,
+    }?;
+    mirror_metric_identity_attributes(&mut record);
+    Some(record)
+}
+
+fn mirror_metric_identity_attributes(record: &mut OtelMetricRecord) {
+    // Some otherwise conforming OTLP-to-Prometheus pipelines require an
+    // explicit resource-to-telemetry conversion step. Preserve the canonical
+    // resource attributes and also mirror only the bounded identity fields
+    // into the data point so independent node/workload series cannot collide
+    // when that collector option is absent.
+    const IDENTITY_KEYS: &[&str] = &[
+        "host.name",
+        "container.id",
+        "container.runtime",
+        "k8s.namespace.name",
+        "k8s.pod.name",
+        "k8s.pod.uid",
+        "k8s.container.name",
+        "k8s.node.name",
+    ];
+
+    for key in IDENTITY_KEYS {
+        if let Some(value) = record.resource.get(*key) {
+            record
+                .attributes
+                .entry((*key).to_string())
+                .or_insert_with(|| value.clone());
+        }
     }
 }
 
@@ -506,6 +535,58 @@ mod tests {
     }
 
     #[test]
+    fn mirrors_bounded_resource_identity_into_metric_attributes() {
+        let signal = SignalEnvelope::network_counter_metric(
+            "generator.network_metrics",
+            Some("node-a".to_string()),
+            NetworkCounterMetric {
+                metric_name: "network.flow.bytes".to_string(),
+                unit: "By".to_string(),
+                value: 4096,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 100,
+                    end_unix_nanos: 200,
+                },
+                process: None,
+                protocol: Some(e_navigator_signals::NetworkProtocol::Tcp),
+                address_family: Some(e_navigator_signals::NetworkAddressFamily::Ipv4),
+                local_address: None,
+                local_port: None,
+                remote_address: None,
+                remote_port: None,
+                errno: None,
+                container: Some(e_navigator_signals::ContainerContext {
+                    container_id: "container-a".to_string(),
+                    runtime: Some("containerd".to_string()),
+                }),
+                kubernetes: Some(e_navigator_signals::KubernetesContext {
+                    namespace: "proj-paid".to_string(),
+                    pod_name: "api-0".to_string(),
+                    pod_uid: Some("pod-uid-a".to_string()),
+                    container_name: Some("api".to_string()),
+                    node_name: Some("node-a".to_string()),
+                    labels: BTreeMap::new(),
+                }),
+            },
+        );
+
+        let record = format_otel_metric_record(&signal).expect("metric formats");
+
+        for key in [
+            "host.name",
+            "container.id",
+            "container.runtime",
+            "k8s.namespace.name",
+            "k8s.pod.name",
+            "k8s.pod.uid",
+            "k8s.container.name",
+            "k8s.node.name",
+        ] {
+            assert_eq!(record.attributes[key], record.resource[key]);
+        }
+    }
+
+    #[test]
     fn formats_flow_byte_metric_without_endpoint_attributes() {
         let signal = SignalEnvelope::network_counter_metric(
             "generator.network_metrics",
@@ -684,7 +765,7 @@ mod tests {
     }
 
     #[test]
-    fn bounds_resource_metric_attribute_count() {
+    fn bounds_custom_resource_metric_attributes_while_preserving_identity() {
         let attributes = (0..(MAX_METRIC_ATTRIBUTES + 4))
             .map(|index| e_navigator_signals::ResourceMetricAttribute {
                 key: format!("custom.attribute.{index}"),
@@ -715,7 +796,8 @@ mod tests {
 
         let record = format_otel_metric_record(&signal).expect("resource metric formats");
 
-        assert_eq!(record.attributes.len(), MAX_METRIC_ATTRIBUTES);
+        assert_eq!(record.attributes.len(), MAX_METRIC_ATTRIBUTES + 1);
+        assert_eq!(record.attributes["host.name"], "node-a");
         assert!(record.attributes.contains_key("custom.attribute.15"));
         assert!(!record.attributes.contains_key("custom.attribute.16"));
     }
