@@ -48,7 +48,8 @@ const HTTP_DIAG_FALLBACK_OUTPUT_ATTEMPT: u32 = 14;
 const HTTP_DIAG_ACCEPT_ACTIVE: u32 = 15;
 const HTTP_DIAG_INBOUND_READ_ENTER: u32 = 16;
 const HTTP_DIAG_INBOUND_OUTPUT_ATTEMPT: u32 = 17;
-const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 18;
+const HTTP_DIAG_SERVER_WRITE_SUPPRESSED: u32 = 18;
+const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 19;
 const CONNECTION_ROLE_CLIENT: u32 = 0;
 const CONNECTION_ROLE_SERVER: u32 = 1;
 const PROTOCOL_DATA_BYTES: usize = 256;
@@ -336,6 +337,9 @@ pub struct RawHttpRequestEvent {
     pub local_addr_v6: [u8; 16],
     pub timestamp_unix_nanos: u64,
     pub request_len: u32,
+    /// Full syscall payload length before the bounded capture prefix. A value
+    /// larger than `request_len` is an explicit reassembly gap.
+    pub request_total_len: u32,
     pub request_iovec_lens: [u16; HTTP_MAX_IOVECS],
     pub command: [u8; 16],
     pub request: [u8; HTTP_REQUEST_BYTES],
@@ -2608,6 +2612,13 @@ fn emit_http_request_event(
         record_http_diagnostic(HTTP_DIAG_NON_TCP_CONNECTION);
         return Ok(0);
     }
+    // Accepted server sockets write HTTP responses. Feeding those bytes into
+    // the request decoder produced two false invalid samples for many Python
+    // responses (header and body writes) for every real inbound request.
+    if connection.role != CONNECTION_ROLE_CLIENT {
+        record_http_diagnostic(HTTP_DIAG_SERVER_WRITE_SUPPRESSED);
+        return Ok(0);
+    }
 
     let event = http_request_event_scratch()?;
     event.pid = connection.pid;
@@ -2701,6 +2712,10 @@ fn emit_http_request_iovecs_event(
     };
     if connection.protocol != IPPROTO_TCP {
         record_http_diagnostic(HTTP_DIAG_NON_TCP_CONNECTION);
+        return Ok(0);
+    }
+    if connection.role != CONNECTION_ROLE_CLIENT {
+        record_http_diagnostic(HTTP_DIAG_SERVER_WRITE_SUPPRESSED);
         return Ok(0);
     }
 
@@ -2903,9 +2918,6 @@ fn try_tracepoint_http_read_exit(ctx: &TracePointContext) -> Result<u32, i64> {
     }
 
     let buffer = pending.buffer_ptr as *const u8;
-    if !http_buffer_starts_like_request(buffer)? {
-        return Ok(0);
-    }
 
     let event = http_request_event_scratch()?;
     event.pid = connection.pid;
@@ -3709,6 +3721,7 @@ fn http_request_event_scratch() -> Result<&'static mut RawHttpRequestEvent, i64>
     event.local_addr_v6 = [0; 16];
     event.timestamp_unix_nanos = 0;
     event.request_len = 0;
+    event.request_total_len = 0;
     event.request_iovec_lens = [0; HTTP_MAX_IOVECS];
     event.command = [0; 16];
     event.request = [0; HTTP_REQUEST_BYTES];
@@ -3726,14 +3739,28 @@ fn record_http_diagnostic(stage: u32) {
 
 fn http_buffer_starts_like_request(buffer: *const u8) -> Result<bool, i64> {
     let first = unsafe { bpf_probe_read_user::<u8>(buffer) }.map_err(|err| err as i64)?;
-    Ok(http_method_start_likely(first))
+    if !http_method_start_likely(first) {
+        return Ok(false);
+    }
+    if first != b'H' {
+        return Ok(true);
+    }
+
+    let second = unsafe { bpf_probe_read_user::<u8>(buffer.add(1)) }.map_err(|err| err as i64)?;
+    let third = unsafe { bpf_probe_read_user::<u8>(buffer.add(2)) }.map_err(|err| err as i64)?;
+    let fourth = unsafe { bpf_probe_read_user::<u8>(buffer.add(3)) }.map_err(|err| err as i64)?;
+    let fifth = unsafe { bpf_probe_read_user::<u8>(buffer.add(4)) }.map_err(|err| err as i64)?;
+    Ok(!(second == b'T' && third == b'T' && fourth == b'P' && fifth == b'/'))
 }
 
 fn http_request_event_starts_like_request(event: &RawHttpRequestEvent) -> bool {
     if event.request_len == 0 {
         return false;
     }
-    http_method_start_likely(event.request[0])
+    if !http_method_start_likely(event.request[0]) {
+        return false;
+    }
+    event.request_len < 5 || &event.request[..5] != b"HTTP/"
 }
 
 #[inline(always)]
@@ -3773,6 +3800,11 @@ fn copy_http_request(
 ) -> Result<(), i64> {
     let copied = copy_http_request_chunk(buffer, len, event, 0, HTTP_REQUEST_BYTES)?;
     event.request_len = copied as u32;
+    event.request_total_len = if len > u32::MAX as u64 {
+        u32::MAX
+    } else {
+        len as u32
+    };
     Ok(())
 }
 
@@ -3819,6 +3851,7 @@ fn copy_http_request_iovecs(
     event: &mut RawHttpRequestEvent,
 ) -> Result<(), i64> {
     let mut output_index = 0;
+    let mut total_len = 0_u64;
 
     if iov_len > 0 {
         let iov_entry = iov;
@@ -3826,6 +3859,7 @@ fn copy_http_request_iovecs(
             .map_err(|err| err as i64)?;
         let len = unsafe { bpf_probe_read_user::<u64>(iov_entry.add(8).cast::<u64>()) }
             .map_err(|err| err as i64)?;
+        total_len = total_len.saturating_add(len);
         if !buffer.is_null() && len > 0 {
             let copied = copy_http_request_iovec_slot0(buffer, len, event)?;
             event.request_iovec_lens[0] = copied as u16;
@@ -3839,6 +3873,7 @@ fn copy_http_request_iovecs(
             .map_err(|err| err as i64)?;
         let len = unsafe { bpf_probe_read_user::<u64>(iov_entry.add(8).cast::<u64>()) }
             .map_err(|err| err as i64)?;
+        total_len = total_len.saturating_add(len);
         if !buffer.is_null() && len > 0 {
             let copied = copy_http_request_iovec_slot1(buffer, len, event)?;
             event.request_iovec_lens[1] = copied as u16;
@@ -3852,6 +3887,7 @@ fn copy_http_request_iovecs(
             .map_err(|err| err as i64)?;
         let len = unsafe { bpf_probe_read_user::<u64>(iov_entry.add(8).cast::<u64>()) }
             .map_err(|err| err as i64)?;
+        total_len = total_len.saturating_add(len);
         if !buffer.is_null() && len > 0 {
             let copied = copy_http_request_iovec_slot2(buffer, len, event)?;
             event.request_iovec_lens[2] = copied as u16;
@@ -3860,6 +3896,17 @@ fn copy_http_request_iovecs(
     }
 
     event.request_len = output_index as u32;
+    // More than three iovecs means an uncaptured tail even if the first three
+    // happen to fill the capture buffer. Mark it as a gap rather than
+    // allowing userspace to splice non-adjacent bytes.
+    if iov_len > HTTP_MAX_IOVECS as u64 {
+        total_len = total_len.max(output_index as u64 + 1);
+    }
+    event.request_total_len = if total_len > u32::MAX as u64 {
+        u32::MAX
+    } else {
+        total_len as u32
+    };
     Ok(())
 }
 
