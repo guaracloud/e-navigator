@@ -3,6 +3,7 @@
 
 pub mod exporter;
 pub mod json_stdout;
+mod native_telemetry;
 pub mod otel_metric;
 pub mod otel_profile;
 pub mod otel_trace;
@@ -19,6 +20,7 @@ pub use exporter::{
     ExporterCounters, ExporterError, HttpExporterConfig, HttpJsonExporter, HttpProtobufExporter,
 };
 pub use json_stdout::{JsonStdoutSink, serialize_signal_line};
+pub use native_telemetry::NativeTelemetryRegistry;
 pub use otel_metric::{
     OtelMetricKind, OtelMetricRecord, OtelMetricValue, format_otel_metric_record,
 };

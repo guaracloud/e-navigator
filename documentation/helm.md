@@ -294,8 +294,20 @@ most 2,048 bytes.
 OTLP export never performs collector I/O on the shared signal path. Metrics,
 traces, and profiles use separate bounded workers with size-or-time batching.
 Queue overflow, invalid trace identity, exhausted export batches, and open
-circuit drops are exposed through the sink's native telemetry snapshot. A
-worker drains its accepted queue during bounded shutdown.
+circuit drops are exposed through the live Prometheus endpoint using fixed
+`e_navigator_export_*` names and the bounded `signal_family` label. These
+metrics read the worker atomics directly and therefore remain available when
+an OTLP destination is down. A worker drains its accepted queue during bounded
+shutdown.
+
+Alert at minimum on sustained increases in
+`e_navigator_export_dropped_queue_full_total`,
+`e_navigator_export_dropped_failure_total`, or
+`e_navigator_export_dropped_circuit_open_total`; on any increase in
+`e_navigator_export_invalid_trace_records_total`; and when
+`e_navigator_export_queue_depth / e_navigator_export_queue_capacity` remains
+above 0.8 for five minutes. Retry or circuit-open counters alone are early
+degradation signals; the drop counters mean telemetry was irrecoverably lost.
 
 OTLP export runtime bounds are validated before startup:
 `otlp_http.queue_capacity` must be at most 65,536, `batch_size` at most 4,096

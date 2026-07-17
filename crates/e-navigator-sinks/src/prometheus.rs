@@ -1,4 +1,5 @@
 use crate::{
+    NativeTelemetryRegistry,
     otel_metric::{OtelMetricRecord, OtelMetricValue, format_otel_metric_record},
     profile_format::format_profile_record,
 };
@@ -250,11 +251,21 @@ pub struct PrometheusHttpSink {
 
 impl PrometheusHttpSink {
     pub fn bind(config: PrometheusHttpConfig) -> CoreResult<Self> {
+        Self::bind_with_telemetry(config, NativeTelemetryRegistry::default())
+    }
+
+    pub fn bind_with_telemetry(
+        config: PrometheusHttpConfig,
+        telemetry_registry: NativeTelemetryRegistry,
+    ) -> CoreResult<Self> {
         validate_max_metric_lines(config.max_metric_lines)?;
         let bind_address = format!("{}:{}", config.bind_address, config.port);
         let listener = std::net::TcpListener::bind(&bind_address).map_err(module_error)?;
         listener.set_nonblocking(true).map_err(module_error)?;
-        let state = Arc::new(PrometheusState::new(config.max_metric_lines));
+        let state = Arc::new(PrometheusState::new(
+            config.max_metric_lines,
+            telemetry_registry,
+        ));
         if tokio::runtime::Handle::try_current().is_ok() {
             let listener = TcpListener::from_std(listener).map_err(module_error)?;
             spawn_http_server(listener, state.clone());
@@ -279,12 +290,28 @@ impl PrometheusHttpSink {
         metrics_enabled: bool,
         profiles_enabled: bool,
     ) -> CoreResult<(Self, std::net::SocketAddr)> {
+        Self::bind_for_test_with_families_and_telemetry(
+            max_metric_lines,
+            metrics_enabled,
+            profiles_enabled,
+            NativeTelemetryRegistry::default(),
+        )
+        .await
+    }
+
+    #[cfg(test)]
+    async fn bind_for_test_with_families_and_telemetry(
+        max_metric_lines: usize,
+        metrics_enabled: bool,
+        profiles_enabled: bool,
+        telemetry_registry: NativeTelemetryRegistry,
+    ) -> CoreResult<(Self, std::net::SocketAddr)> {
         validate_max_metric_lines(max_metric_lines)?;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(module_error)?;
         let address = listener.local_addr().map_err(module_error)?;
         listener.set_nonblocking(true).map_err(module_error)?;
         let listener = TcpListener::from_std(listener).map_err(module_error)?;
-        let state = Arc::new(PrometheusState::new(max_metric_lines));
+        let state = Arc::new(PrometheusState::new(max_metric_lines, telemetry_registry));
         spawn_http_server(listener, state.clone());
         Ok((
             Self {
@@ -346,15 +373,17 @@ struct PrometheusState {
     metrics: Mutex<PrometheusMetricStore>,
     profiles: Mutex<std::collections::VecDeque<SignalEnvelope>>,
     healthy: AtomicBool,
+    telemetry_registry: NativeTelemetryRegistry,
 }
 
 impl PrometheusState {
-    fn new(max_metric_lines: usize) -> Self {
+    fn new(max_metric_lines: usize, telemetry_registry: NativeTelemetryRegistry) -> Self {
         Self {
             max_metric_lines,
             metrics: Mutex::new(PrometheusMetricStore::default()),
             profiles: Mutex::new(std::collections::VecDeque::new()),
             healthy: AtomicBool::new(true),
+            telemetry_registry,
         }
     }
 
@@ -393,7 +422,9 @@ impl PrometheusState {
             .metrics
             .lock()
             .map_err(|err| module_error(err.to_string()))?;
-        Ok(render_prometheus_text(&metrics.lines()))
+        let mut lines = metrics.lines();
+        lines.extend(self.telemetry_registry.prometheus_lines());
+        Ok(render_prometheus_text(&lines))
     }
 }
 
@@ -961,6 +992,45 @@ mod tests {
         assert!(metrics.starts_with("HTTP/1.1 200 OK"));
         assert!(metrics.contains("network_flow_bytes"));
         assert!(metrics.contains("k8s_namespace_name=\"e-navigator-bench\""));
+    }
+
+    #[tokio::test]
+    async fn prometheus_http_sink_exposes_live_otlp_worker_telemetry() {
+        let telemetry_registry = NativeTelemetryRegistry::default();
+        let otlp = crate::OtlpHttpSink::new_with_telemetry(
+            e_navigator_core::OtlpHttpConfig {
+                enabled: true,
+                metrics_endpoint: "http://127.0.0.1:9/v1/metrics".to_string(),
+                metrics_enabled: true,
+                traces_enabled: false,
+                profiles_enabled: false,
+                queue_capacity: 64,
+                batch_size: 64,
+                flush_interval_millis: 60_000,
+                ..e_navigator_core::OtlpHttpConfig::default()
+            },
+            telemetry_registry.clone(),
+        )
+        .expect("OTLP worker starts");
+        let (_prometheus, address) = PrometheusHttpSink::bind_for_test_with_families_and_telemetry(
+            8,
+            true,
+            true,
+            telemetry_registry,
+        )
+        .await
+        .expect("Prometheus endpoint binds");
+
+        otlp.write(&network_counter_signal_named("network.test"))
+            .await
+            .expect("metric enters the bounded worker");
+        let metrics = http_get(address, "/metrics").await;
+
+        assert!(
+            metrics.contains("e_navigator_export_queue_capacity{signal_family=\"metrics\"} 64")
+        );
+        assert!(metrics.contains("e_navigator_export_enqueued_total{signal_family=\"metrics\"} 1"));
+        assert!(metrics.contains("e_navigator_export_retry_attempts_total"));
     }
 
     #[tokio::test]

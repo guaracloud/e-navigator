@@ -18,6 +18,7 @@ use tracing::warn;
 use crate::{
     HttpExporterConfig, HttpProtobufExporter, format_otel_metric_record,
     format_otel_profile_record, format_otel_trace_record,
+    native_telemetry::{NativeTelemetryRegistry, NativeTelemetrySource},
     otlp_metric_proto::encode_metric_export_request,
     otlp_profile_proto::encode_profile_export_request,
     otlp_trace_proto::{encode_trace_export_request, trace_record_has_valid_ids},
@@ -29,7 +30,7 @@ pub struct OtlpHttpSink {
     metric_exporter: Option<AsyncProtobufExporter<crate::OtelMetricRecord>>,
     profile_exporter: Option<AsyncProtobufExporter<crate::OtelProfileRecord>>,
     trace_exporter: Option<AsyncProtobufExporter<crate::OtelTraceRecord>>,
-    invalid_trace_records: AtomicU64,
+    invalid_trace_records: Arc<AtomicU64>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -103,13 +104,27 @@ struct AsyncProtobufExporter<T> {
 
 impl OtlpHttpSink {
     pub fn new(config: OtlpHttpConfig) -> CoreResult<Self> {
+        Self::new_with_telemetry(config, NativeTelemetryRegistry::default())
+    }
+
+    pub fn new_with_telemetry(
+        config: OtlpHttpConfig,
+        telemetry_registry: NativeTelemetryRegistry,
+    ) -> CoreResult<Self> {
         validate_worker_tuning(&config).map_err(exporter_module_error)?;
+        let invalid_trace_records = Arc::new(AtomicU64::new(0));
+        if config.traces_enabled {
+            telemetry_registry.register(Arc::new(InvalidTraceTelemetrySource {
+                invalid_trace_records: invalid_trace_records.clone(),
+            }));
+        }
         let metric_exporter = if config.metrics_enabled {
             Some(build_exporter(
                 exporter_config_for(&config, required_metrics_endpoint(&config)?),
                 encode_metric_export_request,
                 &config,
                 "metrics",
+                &telemetry_registry,
             )?)
         } else {
             None
@@ -120,6 +135,7 @@ impl OtlpHttpSink {
                 encode_profile_export_request,
                 &config,
                 "profiles",
+                &telemetry_registry,
             )?)
         } else {
             None
@@ -130,6 +146,7 @@ impl OtlpHttpSink {
                 encode_trace_export_request,
                 &config,
                 "traces",
+                &telemetry_registry,
             )?)
         } else {
             None
@@ -140,7 +157,7 @@ impl OtlpHttpSink {
             metric_exporter,
             profile_exporter,
             trace_exporter,
-            invalid_trace_records: AtomicU64::new(0),
+            invalid_trace_records,
         })
     }
 
@@ -328,6 +345,7 @@ fn build_exporter<T>(
     encode_batch: fn(&[T]) -> Result<Vec<u8>, crate::ExporterError>,
     runtime_config: &OtlpHttpConfig,
     family: &'static str,
+    telemetry_registry: &NativeTelemetryRegistry,
 ) -> CoreResult<AsyncProtobufExporter<T>>
 where
     T: Clone + Send + Sync + 'static,
@@ -343,12 +361,12 @@ where
             module: "sink.otlp_http".to_string(),
             message: err.to_string(),
         })?;
-    AsyncProtobufExporter::spawn(exporter, runtime_config, family).map_err(|err| {
-        e_navigator_core::CoreError::ModuleFailed {
+    AsyncProtobufExporter::spawn(exporter, runtime_config, family, telemetry_registry).map_err(
+        |err| e_navigator_core::CoreError::ModuleFailed {
             module: "sink.otlp_http".to_string(),
             message: err,
-        }
-    })
+        },
+    )
 }
 
 impl<T> AsyncProtobufExporter<T>
@@ -359,11 +377,17 @@ where
         exporter: HttpProtobufExporter<T>,
         config: &OtlpHttpConfig,
         family: &'static str,
+        telemetry_registry: &NativeTelemetryRegistry,
     ) -> Result<Self, String> {
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|_| "OTLP export workers require a Tokio runtime".to_string())?;
         let (sender, receiver) = mpsc::channel(config.queue_capacity);
         let telemetry = Arc::new(AtomicExportWorkerTelemetry::default());
+        telemetry_registry.register(Arc::new(ExportWorkerTelemetrySource {
+            family,
+            sender: sender.downgrade(),
+            telemetry: telemetry.clone(),
+        }));
         let worker_telemetry = telemetry.clone();
         let tuning = ExportWorkerTuning {
             batch_size: config.batch_size,
@@ -448,6 +472,96 @@ where
             }
         }
     }
+}
+
+struct ExportWorkerTelemetrySource<T> {
+    family: &'static str,
+    sender: mpsc::WeakSender<ExportCommand<T>>,
+    telemetry: Arc<AtomicExportWorkerTelemetry>,
+}
+
+struct InvalidTraceTelemetrySource {
+    invalid_trace_records: Arc<AtomicU64>,
+}
+
+impl NativeTelemetrySource for InvalidTraceTelemetrySource {
+    fn prometheus_lines(&self) -> Vec<crate::PrometheusMetricLine> {
+        vec![crate::PrometheusMetricLine {
+            name: "e_navigator_export_invalid_trace_records_total".to_string(),
+            labels: std::collections::BTreeMap::new(),
+            value: self
+                .invalid_trace_records
+                .load(Ordering::Relaxed)
+                .to_string(),
+        }]
+    }
+}
+
+impl<T> NativeTelemetrySource for ExportWorkerTelemetrySource<T>
+where
+    T: Send + Sync + 'static,
+{
+    fn prometheus_lines(&self) -> Vec<crate::PrometheusMetricLine> {
+        let mut snapshot = self.telemetry.snapshot();
+        if let Some(sender) = self.sender.upgrade() {
+            snapshot.queue_capacity = sender.max_capacity();
+            snapshot.queue_depth = snapshot.queue_capacity.saturating_sub(sender.capacity());
+        }
+        export_worker_prometheus_lines(self.family, snapshot)
+    }
+}
+
+fn export_worker_prometheus_lines(
+    family: &'static str,
+    telemetry: ExportWorkerTelemetry,
+) -> Vec<crate::PrometheusMetricLine> {
+    let labels =
+        std::collections::BTreeMap::from([("signal_family".to_string(), family.to_string())]);
+    let metric = |name: &str, value: u64| crate::PrometheusMetricLine {
+        name: name.to_string(),
+        labels: labels.clone(),
+        value: value.to_string(),
+    };
+    vec![
+        metric(
+            "e_navigator_export_queue_capacity",
+            telemetry.queue_capacity as u64,
+        ),
+        metric(
+            "e_navigator_export_queue_depth",
+            telemetry.queue_depth as u64,
+        ),
+        metric("e_navigator_export_enqueued_total", telemetry.enqueued),
+        metric("e_navigator_export_sent_total", telemetry.exported),
+        metric(
+            "e_navigator_export_dropped_queue_full_total",
+            telemetry.dropped_queue_full,
+        ),
+        metric(
+            "e_navigator_export_dropped_worker_closed_total",
+            telemetry.dropped_worker_closed,
+        ),
+        metric(
+            "e_navigator_export_dropped_failure_total",
+            telemetry.dropped_export_failure,
+        ),
+        metric(
+            "e_navigator_export_dropped_circuit_open_total",
+            telemetry.dropped_circuit_open,
+        ),
+        metric(
+            "e_navigator_export_failed_batches_total",
+            telemetry.failed_batches,
+        ),
+        metric(
+            "e_navigator_export_retry_attempts_total",
+            telemetry.retry_attempts,
+        ),
+        metric(
+            "e_navigator_export_circuit_opened_total",
+            telemetry.circuit_opened,
+        ),
+    ]
 }
 
 #[derive(Debug, Clone, Copy)]

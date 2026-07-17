@@ -8,7 +8,9 @@ use e_navigator_generators::{
 };
 use e_navigator_processors::ContainerAttributionProcessor;
 use e_navigator_runner::ModuleRegistry;
-use e_navigator_sinks::{JsonStdoutSink, OtlpHttpSink, PrometheusHttpSink};
+use e_navigator_sinks::{
+    JsonStdoutSink, NativeTelemetryRegistry, OtlpHttpSink, PrometheusHttpSink,
+};
 use e_navigator_sources_ebpf_aya::{
     AyaCpuProfileSource, AyaDnsSource, AyaExecSource, AyaHttpSource, AyaNetworkSource,
     AyaProtocolSource, AyaTlsSource,
@@ -21,6 +23,7 @@ pub(crate) fn build_registry(
     host: Option<String>,
 ) -> CoreResult<ModuleRegistry> {
     let mut registry = ModuleRegistry::new();
+    let telemetry_registry = NativeTelemetryRegistry::default();
 
     match source {
         SourceMode::Unified | SourceMode::AyaExec if config.module_enabled("source.aya_exec") => {
@@ -175,13 +178,17 @@ pub(crate) fn build_registry(
     }
 
     if config.module_enabled("sink.prometheus_http") && config.prometheus_http.enabled {
-        registry = registry.with_sink(Box::new(PrometheusHttpSink::bind(
+        registry = registry.with_sink(Box::new(PrometheusHttpSink::bind_with_telemetry(
             config.prometheus_http.clone(),
+            telemetry_registry.clone(),
         )?));
     }
 
     if config.module_enabled("sink.otlp_http") && config.otlp_http.enabled {
-        registry = registry.with_sink(Box::new(OtlpHttpSink::new(config.otlp_http.clone())?));
+        registry = registry.with_sink(Box::new(OtlpHttpSink::new_with_telemetry(
+            config.otlp_http.clone(),
+            telemetry_registry,
+        )?));
     }
 
     Ok(registry)
