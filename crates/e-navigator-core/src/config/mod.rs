@@ -17,6 +17,7 @@ mod request_correlation;
 mod resource_metrics;
 mod resource_source;
 mod runtime;
+mod source_supervisor;
 mod tls_source;
 mod trace_correlation;
 
@@ -41,6 +42,7 @@ pub use request_correlation::RequestCorrelationConfig;
 pub use resource_metrics::ResourceMetricsConfig;
 pub use resource_source::ResourceSourceConfig;
 pub use runtime::RuntimeConfig;
+pub use source_supervisor::{SourceFailurePolicy, SourceSupervisorConfig};
 pub use tls_source::TlsSourceConfig;
 pub use trace_correlation::TraceCorrelationConfig;
 

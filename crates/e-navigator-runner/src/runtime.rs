@@ -1,4 +1,6 @@
-use e_navigator_core::{ConfigError, CoreError, CoreResult, ModuleMetadata, RuntimeConfig, Signal};
+use e_navigator_core::{
+    ConfigError, CoreError, CoreResult, ModuleMetadata, RuntimeConfig, Signal, SourceFailurePolicy,
+};
 use e_navigator_signals::SignalEnvelope;
 use std::{collections::VecDeque, fmt};
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -66,6 +68,7 @@ impl Runner {
         drop(tx);
         drop(source_result_tx);
         let mut source_results_open = true;
+        let mut isolated_source_failure = None;
 
         loop {
             tokio::select! {
@@ -73,8 +76,16 @@ impl Runner {
                     match source_result {
                         Some(Ok(())) => debug!("source exited cleanly"),
                         Some(Err(err)) => {
-                            abort_sources(&source_handles);
-                            return Err(err);
+                            if self.config.source_supervisor.failure_policy
+                                == SourceFailurePolicy::FailFast
+                            {
+                                abort_sources(&source_handles);
+                                return Err(err);
+                            }
+                            warn!(error = %err, "source failed in isolation; healthy sources remain active");
+                            if isolated_source_failure.is_none() {
+                                isolated_source_failure = Some(err);
+                            }
                         }
                         None => source_results_open = false,
                     }
@@ -87,7 +98,15 @@ impl Runner {
                                 return Err(err);
                             }
                         }
-                        None => return finish_source_results(&mut source_result_rx, &mut source_results_open).await,
+                        None => {
+                            return finish_source_results(
+                                &mut source_result_rx,
+                                &mut source_results_open,
+                                self.config.source_supervisor.failure_policy,
+                                &mut isolated_source_failure,
+                            )
+                            .await;
+                        }
                     }
                 }
             }
@@ -281,16 +300,27 @@ fn push_generated(
 async fn finish_source_results(
     source_result_rx: &mut mpsc::Receiver<CoreResult<()>>,
     source_results_open: &mut bool,
+    failure_policy: SourceFailurePolicy,
+    isolated_source_failure: &mut Option<CoreError>,
 ) -> CoreResult<()> {
     while *source_results_open {
         match source_result_rx.recv().await {
             Some(Ok(())) => debug!("source exited cleanly"),
-            Some(Err(err)) => return Err(err),
+            Some(Err(err)) if failure_policy == SourceFailurePolicy::FailFast => return Err(err),
+            Some(Err(err)) => {
+                warn!(error = %err, "source failed in isolation while the pipeline drained");
+                if isolated_source_failure.is_none() {
+                    *isolated_source_failure = Some(err);
+                }
+            }
             None => *source_results_open = false,
         }
     }
 
-    Ok(())
+    match isolated_source_failure.take() {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
 }
 
 fn abort_sources(source_handles: &[JoinHandle<()>]) {
@@ -371,6 +401,20 @@ mod tests {
     }
 
     struct OneExitSignalSource;
+
+    struct DelayedSignalSource;
+
+    #[async_trait]
+    impl Source<SignalEnvelope> for DelayedSignalSource {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("source.delayed", ModuleKind::Source)
+        }
+
+        async fn run(self: Box<Self>, tx: mpsc::Sender<SignalEnvelope>) -> CoreResult<()> {
+            sleep(Duration::from_millis(25)).await;
+            Box::new(OneSignalSource).run(tx).await
+        }
+    }
 
     #[async_trait]
     impl Source<SignalEnvelope> for OneExitSignalSource {
@@ -984,6 +1028,31 @@ mod tests {
             sleep(Duration::from_millis(5)).await;
         }
         panic!("remaining source was not aborted");
+    }
+
+    #[tokio::test]
+    async fn isolated_source_failure_keeps_healthy_sources_running() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(FailingSource))
+            .with_source(Box::new(DelayedSignalSource))
+            .with_sink(Box::new(MemorySink { seen: seen.clone() }));
+        let config = RuntimeConfig {
+            source_supervisor: e_navigator_core::SourceSupervisorConfig {
+                failure_policy: SourceFailurePolicy::Isolate,
+                ..e_navigator_core::SourceSupervisorConfig::default()
+            },
+            ..RuntimeConfig::default()
+        };
+        let runner = Runner::new(config, registry).expect("runner builds");
+
+        let err = timeout(Duration::from_secs(1), runner.run())
+            .await
+            .expect("runner returns after healthy sources stop")
+            .expect_err("isolated source failure remains observable at process exit");
+
+        assert!(err.to_string().contains("source.failing"));
+        assert_eq!(seen.lock().await.len(), 1);
     }
 
     #[tokio::test]

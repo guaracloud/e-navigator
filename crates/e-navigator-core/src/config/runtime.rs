@@ -7,7 +7,7 @@ use super::{
     CpuProfileSourceConfig, DnsMetricsConfig, DnsSourceConfig, HttpSourceConfig, ModuleConfig,
     NetworkMetricsConfig, OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig,
     ProtocolSourceConfig, RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig,
-    RuntimeSecurityConfig, TlsSourceConfig, TraceCorrelationConfig,
+    RuntimeSecurityConfig, SourceSupervisorConfig, TlsSourceConfig, TraceCorrelationConfig,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,6 +21,8 @@ pub struct RuntimeConfig {
     pub max_derived_signals_per_input: usize,
     #[serde(default = "default_max_derived_signal_depth")]
     pub max_derived_signal_depth: usize,
+    #[serde(default)]
+    pub source_supervisor: SourceSupervisorConfig,
     #[serde(default = "default_modules")]
     pub modules: Vec<ModuleConfig>,
     #[serde(default)]
@@ -68,6 +70,7 @@ impl Default for RuntimeConfig {
             queue_capacity: default_queue_capacity(),
             max_derived_signals_per_input: default_max_derived_signals_per_input(),
             max_derived_signal_depth: default_max_derived_signal_depth(),
+            source_supervisor: SourceSupervisorConfig::default(),
             modules: default_modules(),
             argv_capture: ArgvCaptureConfig::default(),
             attribution: AttributionConfig::default(),
@@ -187,6 +190,7 @@ impl RuntimeConfig {
 
         self.validate_modules()?;
 
+        self.source_supervisor.validate()?;
         self.argv_capture.validate()?;
         self.attribution.validate()?;
         self.capture_filter.validate()?;

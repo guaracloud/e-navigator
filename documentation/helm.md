@@ -45,6 +45,11 @@ config:
     log_level = "info"
     queue_capacity = 8192
 
+    [source_supervisor]
+    # Keep healthy telemetry families alive when one source terminates.
+    failure_policy = "isolate"
+    shutdown_timeout_millis = 10000
+
     [argv_capture]
     enabled = false
 
@@ -58,6 +63,10 @@ Top-level runtime bounds are validated before startup:
 `queue_capacity` must be at most 65,536,
 `max_derived_signals_per_input` at most 4,096, and
 `max_derived_signal_depth` at most 64.
+`source_supervisor.failure_policy` accepts `fail_fast` or `isolate`, and
+`source_supervisor.shutdown_timeout_millis` must be greater than zero and at
+most 300,000. The chart selects `isolate`; the Rust config default remains
+`fail_fast` for backward compatibility.
 `runtime_security.kubernetes_api_endpoints` must contain at most 32 entries.
 Filesystem path settings under `attribution`, `attribution.kubernetes`, and
 `resource_source` must be at most 4,096 bytes.

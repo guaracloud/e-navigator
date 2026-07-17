@@ -2,12 +2,14 @@
 
 A Rust and eBPF signal plane for Linux and Kubernetes runtime observability.
 
-**Status:** public preview `0.1.1`. E-Navigator has a statically registered
+**Status:** development after public preview `0.1.1`. E-Navigator has a statically registered
 `Source -> Processor -> Generator -> Sink` pipeline, versioned signal envelopes,
 JSON stdout output, Kubernetes DaemonSet packaging, signed release automation,
-and guarded proof for selected Linux/Kubernetes runtime paths. It is not yet a
-full observability backend, profile store, trace store, UI, or production
-collector replacement.
+and guarded proof for selected Linux/Kubernetes runtime paths. The development
+tree now starts one unified source runtime by default, while remaining a
+collector rather than an observability backend, profile store, trace store, or
+UI. Production replacement readiness remains gated by the evidence in
+`documentation/standalone-readiness.md`.
 
 For the current truth, start here:
 
@@ -44,8 +46,9 @@ Linux / Kubernetes node
            -> sinks
 ```
 
-- **Sources** observe synthetic fixtures, host resources, Aya exec/network
-  events, opt-in DNS/HTTP paths, and opt-in CPU profiling.
+- **Sources** run together under the default unified supervisor: host resources,
+  Aya exec/network events, opt-in DNS/HTTP/protocol/TLS paths, and opt-in CPU
+  profiling. Legacy single-purpose modes remain available for diagnostics.
 - **Processors** attach host, process, container, and Kubernetes context when
   available.
 - **Generators** produce metrics, dependency edges, request spans, trace service

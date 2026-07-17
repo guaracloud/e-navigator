@@ -74,6 +74,45 @@ fn default_config_does_not_inflate_opt_in_module_claims() {
 }
 
 #[test]
+fn source_supervisor_defaults_preserve_fail_fast_api_behavior() {
+    let config = RuntimeConfig::default();
+
+    assert_eq!(
+        config.source_supervisor.failure_policy,
+        SourceFailurePolicy::FailFast
+    );
+    assert_eq!(config.source_supervisor.shutdown_timeout_millis, 10_000);
+}
+
+#[test]
+fn source_supervisor_shutdown_timeout_is_bounded() {
+    assert_invalid(
+        RuntimeConfig {
+            source_supervisor: SourceSupervisorConfig {
+                shutdown_timeout_millis: 0,
+                ..SourceSupervisorConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "source_supervisor.shutdown_timeout_millis must be greater than zero",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            source_supervisor: SourceSupervisorConfig {
+                shutdown_timeout_millis: SourceSupervisorConfig::MAX_SHUTDOWN_TIMEOUT_MILLIS + 1,
+                ..SourceSupervisorConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "source_supervisor.shutdown_timeout_millis must be less than or equal to {}",
+            SourceSupervisorConfig::MAX_SHUTDOWN_TIMEOUT_MILLIS
+        ),
+    );
+}
+
+#[test]
 fn known_modules_include_opt_in_dns_runtime_source_without_default_runtime_claim() {
     let config = RuntimeConfig::default();
 
