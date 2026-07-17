@@ -1,9 +1,9 @@
 # Helm Install
 
 E-Navigator's production packaging path is the OCI Helm chart published to GHCR.
-The chart renders a privileged Linux DaemonSet plus the ServiceAccount, pod-list
-RBAC, ConfigMap, and hostPath mounts required by the current eBPF and attribution
-model.
+The chart renders a capability-scoped Linux DaemonSet plus the ServiceAccount,
+pod list/watch RBAC, ConfigMap, and hostPath mounts required by the current eBPF
+and attribution model.
 
 ## Install From OCI
 
@@ -93,7 +93,11 @@ pod_label_selector = { "app.kubernetes.io/name" = "checkout" }
 pod_label_exclude_selector = { "observability.e-navigator.dev/exclude" = "true" }
 ```
 
-Kubernetes attribution also validates response and cache bounds before runtime:
+One node-scoped controller performs a bounded pod list, watches from its
+`resourceVersion`, and relists after the bounded watch timeout or an expired
+resource version. Capture filtering and production attribution consume that
+same snapshot; attribution does not perform a second pod API request. Kubernetes
+attribution also validates response and cache bounds before runtime:
 `attribution.kubernetes.max_response_bytes` must be at most 33,554,432,
 `max_pods` at most 65,536, `max_cache_entries` at most 262,144 across the
 combined container-ID and pod-IP metadata indexes, and `max_labels_per_pod` at
@@ -145,9 +149,9 @@ label_exists = ["observability.e-navigator.dev/include"]
 An allowlist posture (`default_posture`/`unknown_cgroup = "deny"` with
 `namespace_include`) leaves a brief coverage gap for a newly started included
 pod; a denylist posture (`"allow"` with `namespace_exclude`) leaves a brief
-capture leak for a newly started excluded pod. Both are bounded to the few
-seconds before the controller discovers the pod's cgroup and are minimized by
-resolving the pod UID from the cgroup path. Capture-filter namespace pattern and
+capture leak for a newly started excluded pod. Pod identity arrives through the
+watch; both windows are bounded mainly by the two-second local cgroup scan and
+are minimized by resolving the pod UID from the cgroup path. Capture-filter namespace pattern and
 label selector lists each accept at most 128 and 64 entries respectively; set
 selectors accept at most 64 values per key and OR selectors at most 32 groups.
 Each entry must be non-empty, free of whitespace and control characters, and at
@@ -308,6 +312,14 @@ Alert at minimum on sustained increases in
 `e_navigator_export_queue_depth / e_navigator_export_queue_capacity` remains
 above 0.8 for five minutes. Retry or circuit-open counters alone are early
 degradation signals; the drop counters mean telemetry was irrecoverably lost.
+
+For the workload controller, alert when
+`e_navigator_kubernetes_controller_ready == 0`, when
+`e_navigator_kubernetes_controller_freshness_seconds > 60`, on increases in
+`e_navigator_kubernetes_controller_relist_failures_total` or
+`e_navigator_kubernetes_controller_watch_failures_total`, and when
+`e_navigator_capture_filter_unresolved_cgroups` remains nonzero. Resource-version
+expiration alone is recoverable; pair it with readiness/freshness before paging.
 
 OTLP export runtime bounds are validated before startup:
 `otlp_http.queue_capacity` must be at most 65,536, `batch_size` at most 4,096

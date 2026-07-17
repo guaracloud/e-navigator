@@ -20,7 +20,7 @@ pub use exporter::{
     ExporterCounters, ExporterError, HttpExporterConfig, HttpJsonExporter, HttpProtobufExporter,
 };
 pub use json_stdout::{JsonStdoutSink, serialize_signal_line};
-pub use native_telemetry::NativeTelemetryRegistry;
+pub use native_telemetry::{NativeTelemetryRegistry, NativeTelemetrySource};
 pub use otel_metric::{
     OtelMetricKind, OtelMetricRecord, OtelMetricValue, format_otel_metric_record,
 };

@@ -114,7 +114,7 @@ impl OtlpHttpSink {
         validate_worker_tuning(&config).map_err(exporter_module_error)?;
         let invalid_trace_records = Arc::new(AtomicU64::new(0));
         if config.traces_enabled {
-            telemetry_registry.register(Arc::new(InvalidTraceTelemetrySource {
+            telemetry_registry.register_source(Arc::new(InvalidTraceTelemetrySource {
                 invalid_trace_records: invalid_trace_records.clone(),
             }));
         }
@@ -383,7 +383,7 @@ where
             .map_err(|_| "OTLP export workers require a Tokio runtime".to_string())?;
         let (sender, receiver) = mpsc::channel(config.queue_capacity);
         let telemetry = Arc::new(AtomicExportWorkerTelemetry::default());
-        telemetry_registry.register(Arc::new(ExportWorkerTelemetrySource {
+        telemetry_registry.register_source(Arc::new(ExportWorkerTelemetrySource {
             family,
             sender: sender.downgrade(),
             telemetry: telemetry.clone(),

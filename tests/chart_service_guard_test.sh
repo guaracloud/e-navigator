@@ -44,6 +44,10 @@ if ! grep -Fq 'checksum/config:' "$tmp_dir/default.yaml"; then
   printf 'expected rendered DaemonSet pod template to include checksum/config annotation\n' >&2
   exit 1
 fi
+if ! grep -Fq 'verbs: ["list", "watch"]' "$tmp_dir/default.yaml"; then
+  printf 'expected rendered RBAC to grant bounded pod list/watch access\n' >&2
+  exit 1
+fi
 if ! grep -Fq 'seccompProfile:' "$tmp_dir/default.yaml" || ! grep -Fq 'type: RuntimeDefault' "$tmp_dir/default.yaml"; then
   printf 'expected rendered DaemonSet container securityContext to use RuntimeDefault seccomp\n' >&2
   exit 1

@@ -85,8 +85,8 @@ E-Navigator does not currently claim:
 - instant capture-scope changes for newly started workloads (the optional
   `[capture_filter]` cgroup-id capture filter cannot decide a pod that
   userspace has not yet discovered; a new pod's cgroup id is absent from the
-  eBPF membership map until the next controller refresh — a local cgroup scan
-  every ~2s with an eager, rate-limited pod refetch — so there is a bootstrap
+  eBPF membership map until the next controller refresh — pod identity arrives
+  through a Kubernetes watch while the local cgroup tree is scanned every ~2s — so there is a bootstrap
   window of roughly a few seconds during which the pod follows the configured
   `unknown_cgroup` posture: under an allowlist posture that is a brief coverage
   gap for new included pods, and under a denylist posture a brief capture leak

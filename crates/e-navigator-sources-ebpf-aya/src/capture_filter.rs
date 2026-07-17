@@ -13,7 +13,10 @@
 //! namespace or label.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{
+    Arc, Mutex, OnceLock,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -24,13 +27,10 @@ use e_navigator_core::capture_filter::{
 use e_navigator_core::{CaptureFilterConfig, CaptureFilterPolicy, KubernetesAttributionConfig};
 use tracing::{debug, info, warn};
 
-/// Steady-state interval between full pod-list refetches.
-const FULL_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
-/// Minimum spacing between eager refetches triggered by a newly observed,
-/// still-unresolved cgroup. Bounds API load during pod churn.
-const EAGER_REFETCH_MIN_INTERVAL: Duration = Duration::from_secs(2);
 /// Cadence of the local cgroup scan (cheap, no API traffic).
 const SCAN_TICK: Duration = Duration::from_secs(2);
+const WATCH_RETRY_INITIAL_BACKOFF: Duration = Duration::from_secs(1);
+const WATCH_RETRY_MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Upper bound on cgroup filesystem entries walked per scan.
 const MAX_CGROUP_SCAN_ENTRIES: usize = 16_384;
 /// Maximum process ids inspected per container cgroup and refresh.
@@ -51,9 +51,28 @@ const MAX_POD_LIST_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_TOKEN_BYTES: u64 = 16 * 1024;
 
 /// Fetches the raw, unscoped node pod list.
+pub(crate) type RawPodPublisher = Arc<dyn Fn(&RawPodSnapshot) + Send + Sync>;
+
 #[async_trait]
 pub(crate) trait RawPodFetcher: Send + Sync + std::fmt::Debug {
-    async fn fetch(&self) -> Result<Vec<RawPod>, String>;
+    async fn list(&self) -> Result<RawPodSnapshot, String>;
+    async fn watch(
+        &self,
+        snapshot: RawPodSnapshot,
+        publisher: RawPodPublisher,
+    ) -> Result<RawPodSnapshot, PodWatchError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RawPodSnapshot {
+    resource_version: String,
+    pods: Vec<RawPod>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PodWatchError {
+    ExpiredResourceVersion,
+    Other(String),
 }
 
 /// Compute the control word for the eBPF `CAPTURE_FILTER_CONTROL` map.
@@ -83,6 +102,7 @@ struct PublishedState {
 pub(crate) struct CaptureFilterController {
     control_word: u32,
     state: Mutex<PublishedState>,
+    telemetry: WorkloadControllerTelemetry,
 }
 
 impl CaptureFilterController {
@@ -90,6 +110,7 @@ impl CaptureFilterController {
         Self {
             control_word,
             state: Mutex::new(PublishedState::default()),
+            telemetry: WorkloadControllerTelemetry::default(),
         }
     }
 
@@ -124,6 +145,18 @@ impl CaptureFilterController {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         state.pod_generation = state.pod_generation.wrapping_add(1);
         state.raw_pods = Arc::new(pods);
+        self.telemetry
+            .reconciliations
+            .fetch_add(1, Ordering::Relaxed);
+        self.telemetry
+            .pod_count
+            .store(state.raw_pods.len() as u64, Ordering::Relaxed);
+        self.telemetry.last_success_unix_seconds.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_secs()),
+            Ordering::Relaxed,
+        );
     }
 
     fn raw_pods(&self) -> (u64, Arc<Vec<RawPod>>) {
@@ -133,6 +166,58 @@ impl CaptureFilterController {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         (state.pod_generation, state.raw_pods.clone())
     }
+
+    fn telemetry(&self) -> WorkloadControllerTelemetrySnapshot {
+        WorkloadControllerTelemetrySnapshot {
+            relists: self.telemetry.relists.load(Ordering::Relaxed),
+            relist_failures: self.telemetry.relist_failures.load(Ordering::Relaxed),
+            watch_starts: self.telemetry.watch_starts.load(Ordering::Relaxed),
+            watch_failures: self.telemetry.watch_failures.load(Ordering::Relaxed),
+            expired_resource_versions: self
+                .telemetry
+                .expired_resource_versions
+                .load(Ordering::Relaxed),
+            reconciliations: self.telemetry.reconciliations.load(Ordering::Relaxed),
+            pod_count: self.telemetry.pod_count.load(Ordering::Relaxed),
+            allowed_cgroups: self.telemetry.allowed_cgroups.load(Ordering::Relaxed),
+            denied_cgroups: self.telemetry.denied_cgroups.load(Ordering::Relaxed),
+            unresolved_cgroups: self.telemetry.unresolved_cgroups.load(Ordering::Relaxed),
+            last_success_unix_seconds: self
+                .telemetry
+                .last_success_unix_seconds
+                .load(Ordering::Relaxed),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct WorkloadControllerTelemetry {
+    relists: AtomicU64,
+    relist_failures: AtomicU64,
+    watch_starts: AtomicU64,
+    watch_failures: AtomicU64,
+    expired_resource_versions: AtomicU64,
+    reconciliations: AtomicU64,
+    pod_count: AtomicU64,
+    allowed_cgroups: AtomicU64,
+    denied_cgroups: AtomicU64,
+    unresolved_cgroups: AtomicU64,
+    last_success_unix_seconds: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WorkloadControllerTelemetrySnapshot {
+    pub relists: u64,
+    pub relist_failures: u64,
+    pub watch_starts: u64,
+    pub watch_failures: u64,
+    pub expired_resource_versions: u64,
+    pub reconciliations: u64,
+    pub pod_count: u64,
+    pub allowed_cgroups: u64,
+    pub denied_cgroups: u64,
+    pub unresolved_cgroups: u64,
+    pub last_success_unix_seconds: u64,
 }
 
 /// Process-global workload controller. `None` means both capture filtering and
@@ -189,13 +274,10 @@ fn build_shared(
             }
         };
 
-    spawn_poll_loop(
-        controller.clone(),
-        policy,
-        cgroup_root,
-        procfs_root,
-        fetcher,
-    );
+    if let Some(fetcher) = fetcher {
+        spawn_watch_loop(controller.clone(), fetcher);
+    }
+    spawn_poll_loop(controller.clone(), policy, cgroup_root, procfs_root);
     info!(
         control_word = controller.control_word(),
         capture_filter_enabled = capture_filter.enabled,
@@ -218,16 +300,79 @@ pub fn shared_raw_pods() -> Option<(u64, Arc<Vec<RawPod>>)> {
     shared().map(|controller| controller.raw_pods())
 }
 
+pub fn shared_telemetry() -> Option<WorkloadControllerTelemetrySnapshot> {
+    shared().map(|controller| controller.telemetry())
+}
+
 fn spawn_poll_loop(
     controller: Arc<CaptureFilterController>,
     policy: CaptureFilterPolicy,
     cgroup_root: PathBuf,
     procfs_root: PathBuf,
-    fetcher: Option<Arc<dyn RawPodFetcher>>,
 ) {
     tokio::spawn(async move {
-        run_poll_loop(controller, policy, cgroup_root, procfs_root, fetcher).await;
+        run_poll_loop(controller, policy, cgroup_root, procfs_root).await;
     });
+}
+
+fn spawn_watch_loop(controller: Arc<CaptureFilterController>, fetcher: Arc<dyn RawPodFetcher>) {
+    tokio::spawn(async move {
+        run_watch_loop(controller, fetcher).await;
+    });
+}
+
+async fn run_watch_loop(controller: Arc<CaptureFilterController>, fetcher: Arc<dyn RawPodFetcher>) {
+    let mut backoff = WATCH_RETRY_INITIAL_BACKOFF;
+    loop {
+        controller.telemetry.relists.fetch_add(1, Ordering::Relaxed);
+        let snapshot = match fetcher.list().await {
+            Ok(snapshot) => snapshot,
+            Err(err) => {
+                controller
+                    .telemetry
+                    .relist_failures
+                    .fetch_add(1, Ordering::Relaxed);
+                warn!(error = %err, ?backoff, "Kubernetes pod relist failed");
+                tokio::time::sleep(backoff).await;
+                backoff = backoff.saturating_mul(2).min(WATCH_RETRY_MAX_BACKOFF);
+                continue;
+            }
+        };
+        controller.publish_raw_pods(snapshot.pods.clone());
+        backoff = WATCH_RETRY_INITIAL_BACKOFF;
+
+        controller
+            .telemetry
+            .watch_starts
+            .fetch_add(1, Ordering::Relaxed);
+        let publishing_controller = Arc::clone(&controller);
+        let publisher: RawPodPublisher = Arc::new(move |snapshot| {
+            publishing_controller.publish_raw_pods(snapshot.pods.clone());
+        });
+        match fetcher.watch(snapshot, publisher).await {
+            Ok(snapshot) => {
+                controller.publish_raw_pods(snapshot.pods);
+                // The bounded watch timeout is also the reconciliation
+                // boundary: relist before starting the next watch.
+            }
+            Err(PodWatchError::ExpiredResourceVersion) => {
+                controller
+                    .telemetry
+                    .expired_resource_versions
+                    .fetch_add(1, Ordering::Relaxed);
+                warn!("Kubernetes pod watch resource version expired; relisting");
+            }
+            Err(PodWatchError::Other(err)) => {
+                controller
+                    .telemetry
+                    .watch_failures
+                    .fetch_add(1, Ordering::Relaxed);
+                warn!(error = %err, ?backoff, "Kubernetes pod watch failed; relisting");
+                tokio::time::sleep(backoff).await;
+                backoff = backoff.saturating_mul(2).min(WATCH_RETRY_MAX_BACKOFF);
+            }
+        }
+    }
 }
 
 async fn run_poll_loop(
@@ -235,43 +380,32 @@ async fn run_poll_loop(
     policy: CaptureFilterPolicy,
     cgroup_root: PathBuf,
     procfs_root: PathBuf,
-    fetcher: Option<Arc<dyn RawPodFetcher>>,
 ) {
     let mut index = RawNodePodIndex::default();
-    let mut have_index = false;
-    // Force an immediate fetch on the first iteration.
-    let mut since_full = FULL_REFRESH_INTERVAL;
-    let mut since_fetch = EAGER_REFETCH_MIN_INTERVAL;
+    let mut pod_generation = 0_u64;
 
     loop {
         let observations = scan_cgroups(&cgroup_root, &procfs_root).await;
-
-        let full_due = since_full >= FULL_REFRESH_INTERVAL;
-        let eager_due = since_fetch >= EAGER_REFETCH_MIN_INTERVAL
-            && has_unresolved(&observations, &index, have_index);
-        if let Some(fetcher) = fetcher.as_ref()
-            && (full_due || eager_due || !have_index)
-        {
-            match fetcher.fetch().await {
-                Ok(pods) => {
-                    controller.publish_raw_pods(pods.clone());
-                    index = RawNodePodIndex::from_pods(pods, CAPTURE_FILTER_MAP_CAPACITY);
-                    have_index = true;
-                    since_fetch = Duration::ZERO;
-                    if full_due {
-                        since_full = Duration::ZERO;
-                    }
-                }
-                Err(err) => {
-                    warn!(error = %err, "capture filter node pod-list fetch failed; reusing last known pods");
-                    // Avoid hammering a failing API before the eager window.
-                    since_fetch = Duration::ZERO;
-                }
-            }
+        let (next_generation, pods) = controller.raw_pods();
+        if next_generation != pod_generation {
+            index = RawNodePodIndex::from_pods(pods.iter().cloned(), CAPTURE_FILTER_MAP_CAPACITY);
+            pod_generation = next_generation;
         }
 
         let desired =
             build_desired_filter_map(&observations, &index, &policy, CAPTURE_FILTER_MAP_CAPACITY);
+        controller
+            .telemetry
+            .allowed_cgroups
+            .store(desired.allowed_count() as u64, Ordering::Relaxed);
+        controller
+            .telemetry
+            .denied_cgroups
+            .store(desired.denied_count() as u64, Ordering::Relaxed);
+        controller.telemetry.unresolved_cgroups.store(
+            observations.len().saturating_sub(desired.len()) as u64,
+            Ordering::Relaxed,
+        );
         debug!(
             cgroups = observations.len(),
             pods = index.pod_count(),
@@ -282,35 +416,8 @@ async fn run_poll_loop(
         controller.publish(desired);
 
         tokio::time::sleep(SCAN_TICK).await;
-        since_full = since_full.saturating_add(SCAN_TICK);
-        since_fetch = since_fetch.saturating_add(SCAN_TICK);
     }
 }
-
-/// Whether any observed cgroup resolves to no pod in the current index — a
-/// signal that a new pod may have appeared and an eager refetch is warranted.
-fn has_unresolved(
-    observations: &[CgroupObservation],
-    index: &RawNodePodIndex,
-    have_index: bool,
-) -> bool {
-    if !have_index {
-        return true;
-    }
-    observations.iter().any(|observation| {
-        build_desired_filter_map(std::slice::from_ref(observation), index, &ALWAYS_CAPTURE, 1)
-            .is_empty()
-            && (observation.pod_uid.is_some() || observation.container_id.is_some())
-    })
-}
-
-/// A permissive policy used only to test resolvability in [`has_unresolved`].
-static ALWAYS_CAPTURE: std::sync::LazyLock<CaptureFilterPolicy> = std::sync::LazyLock::new(|| {
-    CaptureFilterPolicy::from_config(&CaptureFilterConfig {
-        enabled: true,
-        ..CaptureFilterConfig::default()
-    })
-});
 
 /// Walk the cgroup filesystem and derive an observation per container cgroup.
 /// Runs on a blocking thread; returns an empty list on any failure.
@@ -409,7 +516,7 @@ fn normalized_cgroup_path(path: &Path) -> String {
 
 mod in_cluster;
 #[cfg(test)]
-use in_cluster::parse_raw_pods;
+use in_cluster::{apply_watch_line, parse_raw_pod_snapshot, parse_raw_pods};
 
 #[cfg(target_os = "linux")]
 mod apply;
