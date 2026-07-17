@@ -305,6 +305,12 @@ most 2,048 bytes.
 
 OTLP export never performs collector I/O on the shared signal path. Metrics,
 traces, and profiles use separate bounded workers with size-or-time batching.
+Metric sums are cumulative, and repeated cumulative updates for the same
+resource/data-point identity are coalesced to the latest window within each
+export batch. The Guara preset uses a 4,096-record batch so its measured event
+rate reaches the one-second flush boundary before the size boundary; this
+prevents sub-millisecond cumulative updates from colliding after Prometheus
+timestamp conversion while retaining a bounded 8,192-record queue.
 Queue overflow, invalid trace identity, exhausted export batches, and open
 circuit drops are exposed through the live Prometheus endpoint using fixed
 `e_navigator_export_*` names and the bounded `signal_family` label. These
