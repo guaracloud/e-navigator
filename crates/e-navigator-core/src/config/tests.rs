@@ -2923,7 +2923,7 @@ fn capture_filter_parses_set_existence_or_and_identity_rules() {
         unknown_cgroup = "deny"
         namespace_include = ["proj-*"]
         label_not_exists = ["guara.cloud/catalog-slug"]
-        label_in = { tier = ["starter", "pro", "business", "enterprise"] }
+        label_in = { "guara.cloud/tier" = ["starter", "pro", "business", "enterprise"] }
         process_exclude = ["*exporter", "otelcol*"]
         container_exclude = ["istio-proxy"]
 
@@ -2941,7 +2941,7 @@ fn capture_filter_parses_set_existence_or_and_identity_rules() {
     let config: RuntimeConfig = toml::from_str(toml).expect("valid extended selector toml");
 
     assert_eq!(
-        config.capture_filter.label_in.get("tier"),
+        config.capture_filter.label_in.get("guara.cloud/tier"),
         Some(&vec![
             "starter".to_string(),
             "pro".to_string(),

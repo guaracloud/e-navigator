@@ -484,7 +484,7 @@ mod tests {
             unknown_cgroup: CapturePosture::Deny,
             namespace_include: vec!["proj-*".to_string()],
             label_in: BTreeMap::from([(
-                "tier".to_string(),
+                "guara.cloud/tier".to_string(),
                 vec![
                     "starter".to_string(),
                     "pro".to_string(),
@@ -498,22 +498,31 @@ mod tests {
         let policy = policy(config);
 
         assert_eq!(
-            policy.evaluate("proj-checkout", &labels(&[("tier", "business")])),
+            policy.evaluate(
+                "proj-checkout",
+                &labels(&[("guara.cloud/tier", "business")])
+            ),
             CaptureDecision::Capture
         );
         assert_eq!(
-            policy.evaluate("proj-checkout", &labels(&[("tier", "free")])),
+            policy.evaluate("proj-checkout", &labels(&[("guara.cloud/tier", "free")])),
             CaptureDecision::Drop
         );
         assert_eq!(
             policy.evaluate(
                 "proj-checkout",
-                &labels(&[("tier", "pro"), ("guara.cloud/catalog-slug", "checkout")])
+                &labels(&[
+                    ("guara.cloud/tier", "pro"),
+                    ("guara.cloud/catalog-slug", "checkout")
+                ])
             ),
             CaptureDecision::Drop
         );
         assert_eq!(
-            policy.evaluate("kube-system", &labels(&[("tier", "enterprise")])),
+            policy.evaluate(
+                "kube-system",
+                &labels(&[("guara.cloud/tier", "enterprise")])
+            ),
             CaptureDecision::Drop
         );
     }
