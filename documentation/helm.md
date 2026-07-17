@@ -126,7 +126,7 @@ namespace_include = ["proj-*"]
 namespace_exclude = ["proj-secret"]
 # Equality, inequality, existence/non-existence, and set membership compose
 # with AND at the top level. This is the Guara paid-tier policy:
-label_in = { "tier" = ["starter", "pro", "business", "enterprise"] }
+label_in = { "guara.cloud/tier" = ["starter", "pro", "business", "enterprise"] }
 label_not_exists = ["guara.cloud/catalog-slug"]
 label_exclude = { "observability.e-navigator.dev/probe" = "false" }
 # Identity exclusions apply when that identity is known at the decision point.
