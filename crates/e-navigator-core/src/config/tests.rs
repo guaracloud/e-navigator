@@ -882,6 +882,31 @@ fn otlp_http_sink_accepts_family_specific_and_fallback_endpoints() {
 }
 
 #[test]
+fn otlp_http_compression_deserializes_and_defaults_to_none() {
+    let gzip: RuntimeConfig = toml::from_str(
+        r#"
+        [otlp_http]
+        compression = "gzip"
+        "#,
+    )
+    .expect("gzip compression parses");
+    assert_eq!(gzip.otlp_http.compression, OtlpHttpCompression::Gzip);
+    assert_eq!(
+        RuntimeConfig::default().otlp_http.compression,
+        OtlpHttpCompression::None
+    );
+
+    let err = toml::from_str::<RuntimeConfig>(
+        r#"
+        [otlp_http]
+        compression = "zstd"
+        "#,
+    )
+    .expect_err("unsupported compression is rejected");
+    assert!(err.to_string().contains("unknown variant `zstd`"));
+}
+
+#[test]
 fn module_enabled_reports_enabled_disabled_and_missing_modules() {
     let config = RuntimeConfig::default();
 

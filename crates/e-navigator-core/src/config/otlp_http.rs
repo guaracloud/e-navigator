@@ -31,6 +31,8 @@ pub struct OtlpHttpConfig {
     pub timeout_millis: u64,
     #[serde(default = "default_max_retries")]
     pub max_retries: usize,
+    #[serde(default)]
+    pub compression: OtlpHttpCompression,
     #[serde(default = "default_retry_initial_backoff_millis")]
     pub retry_initial_backoff_millis: u64,
     #[serde(default = "default_retry_max_backoff_millis")]
@@ -61,6 +63,7 @@ impl Default for OtlpHttpConfig {
             flush_interval_millis: default_flush_interval_millis(),
             timeout_millis: default_timeout_millis(),
             max_retries: default_max_retries(),
+            compression: OtlpHttpCompression::default(),
             retry_initial_backoff_millis: default_retry_initial_backoff_millis(),
             retry_max_backoff_millis: default_retry_max_backoff_millis(),
             circuit_breaker_failure_threshold: default_circuit_breaker_failure_threshold(),
@@ -69,6 +72,14 @@ impl Default for OtlpHttpConfig {
             tls_insecure_skip_verify: false,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OtlpHttpCompression {
+    #[default]
+    None,
+    Gzip,
 }
 
 impl OtlpHttpConfig {

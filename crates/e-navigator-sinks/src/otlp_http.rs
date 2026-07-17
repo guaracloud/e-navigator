@@ -17,8 +17,9 @@ use tokio::{
 use tracing::warn;
 
 use crate::{
-    HttpExporterConfig, HttpProtobufExporter, format_otel_metric_record,
-    format_otel_profile_record, format_otel_trace_record,
+    HttpExporterConfig, HttpProtobufExporter,
+    exporter::EXPORT_REQUEST_DURATION_BUCKET_MICROS,
+    format_otel_metric_record, format_otel_profile_record, format_otel_trace_record,
     native_telemetry::{NativeTelemetryRegistry, NativeTelemetrySource},
     otlp_metric_proto::{encode_metric_export_request, metric_series_key},
     otlp_profile_proto::encode_profile_export_request,
@@ -48,6 +49,9 @@ pub struct ExportWorkerTelemetry {
     pub failed_batches: u64,
     pub retry_attempts: u64,
     pub circuit_opened: u64,
+    pub request_attempts: u64,
+    pub request_duration_micros_sum: u64,
+    pub request_duration_buckets: [u64; EXPORT_REQUEST_DURATION_BUCKET_MICROS.len()],
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -95,6 +99,9 @@ struct AtomicExportWorkerTelemetry {
     failed_batches: AtomicU64,
     retry_attempts: AtomicU64,
     circuit_opened: AtomicU64,
+    request_attempts: AtomicU64,
+    request_duration_micros_sum: AtomicU64,
+    request_duration_buckets: [AtomicU64; EXPORT_REQUEST_DURATION_BUCKET_MICROS.len()],
 }
 
 impl AtomicExportWorkerTelemetry {
@@ -111,6 +118,11 @@ impl AtomicExportWorkerTelemetry {
             failed_batches: self.failed_batches.load(Ordering::Relaxed),
             retry_attempts: self.retry_attempts.load(Ordering::Relaxed),
             circuit_opened: self.circuit_opened.load(Ordering::Relaxed),
+            request_attempts: self.request_attempts.load(Ordering::Relaxed),
+            request_duration_micros_sum: self.request_duration_micros_sum.load(Ordering::Relaxed),
+            request_duration_buckets: std::array::from_fn(|index| {
+                self.request_duration_buckets[index].load(Ordering::Relaxed)
+            }),
         }
     }
 }
@@ -412,10 +424,12 @@ where
 {
     let exporter = HttpProtobufExporter::new(config, encode_batch)
         .map(|exporter| {
-            exporter.with_retry_backoff(
-                runtime_config.retry_initial_backoff_millis,
-                runtime_config.retry_max_backoff_millis,
-            )
+            exporter
+                .with_retry_backoff(
+                    runtime_config.retry_initial_backoff_millis,
+                    runtime_config.retry_max_backoff_millis,
+                )
+                .with_compression(runtime_config.compression)
         })
         .map_err(|err| e_navigator_core::CoreError::ModuleFailed {
             module: "sink.otlp_http".to_string(),
@@ -693,7 +707,7 @@ fn export_worker_prometheus_lines(
         labels: labels.clone(),
         value: value.to_string(),
     };
-    vec![
+    let mut lines = vec![
         metric(
             "e_navigator_export_queue_capacity",
             telemetry.queue_capacity as u64,
@@ -732,7 +746,40 @@ fn export_worker_prometheus_lines(
             "e_navigator_export_circuit_opened_total",
             telemetry.circuit_opened,
         ),
-    ]
+    ];
+    for (index, boundary_micros) in EXPORT_REQUEST_DURATION_BUCKET_MICROS.iter().enumerate() {
+        let mut bucket_labels = labels.clone();
+        bucket_labels.insert(
+            "le".to_string(),
+            format!("{}", *boundary_micros as f64 / 1_000_000.0),
+        );
+        lines.push(crate::PrometheusMetricLine {
+            name: "e_navigator_export_request_duration_seconds_bucket".to_string(),
+            labels: bucket_labels,
+            value: telemetry.request_duration_buckets[index].to_string(),
+        });
+    }
+    let mut infinity_labels = labels.clone();
+    infinity_labels.insert("le".to_string(), "+Inf".to_string());
+    lines.push(crate::PrometheusMetricLine {
+        name: "e_navigator_export_request_duration_seconds_bucket".to_string(),
+        labels: infinity_labels,
+        value: telemetry.request_attempts.to_string(),
+    });
+    lines.push(crate::PrometheusMetricLine {
+        name: "e_navigator_export_request_duration_seconds_sum".to_string(),
+        labels: labels.clone(),
+        value: format!(
+            "{}",
+            telemetry.request_duration_micros_sum as f64 / 1_000_000.0
+        ),
+    });
+    lines.push(crate::PrometheusMetricLine {
+        name: "e_navigator_export_request_duration_seconds_count".to_string(),
+        labels,
+        value: telemetry.request_attempts.to_string(),
+    });
+    lines
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -894,13 +941,31 @@ async fn flush_worker_batch<T>(
             }
         }
     }
-    let retry_attempts = exporter
-        .counters()
+    let counters_after = exporter.counters();
+    let retry_attempts = counters_after
         .retry_attempts
         .saturating_sub(counters_before.retry_attempts);
     telemetry
         .retry_attempts
         .fetch_add(retry_attempts, Ordering::Relaxed);
+    telemetry.request_attempts.fetch_add(
+        counters_after
+            .request_attempts
+            .saturating_sub(counters_before.request_attempts),
+        Ordering::Relaxed,
+    );
+    telemetry.request_duration_micros_sum.fetch_add(
+        counters_after
+            .request_duration_micros_sum
+            .saturating_sub(counters_before.request_duration_micros_sum),
+        Ordering::Relaxed,
+    );
+    for (index, bucket) in counters_after.request_duration_buckets.iter().enumerate() {
+        telemetry.request_duration_buckets[index].fetch_add(
+            bucket.saturating_sub(counters_before.request_duration_buckets[index]),
+            Ordering::Relaxed,
+        );
+    }
 }
 
 fn exporter_module_error(message: impl Into<String>) -> e_navigator_core::CoreError {
@@ -1162,6 +1227,82 @@ mod tests {
         let resource = resource_metrics.resource.as_ref().expect("resource");
         assert!(resource.attributes.iter().any(|attribute| {
             attribute.key == "host.name" && format!("{:?}", attribute.value).contains("node-a")
+        }));
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_gzips_protobuf_and_records_request_latency() {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+
+        let collector = FakeCollector::spawn(vec![200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            compression: e_navigator_core::OtlpHttpCompression::Gzip,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_metric())
+            .await
+            .expect("metric export enqueues");
+        let request = collector.next_request().await;
+        assert!(request.contains("content-encoding: gzip"));
+
+        let mut decoded_body = Vec::new();
+        GzDecoder::new(request.body())
+            .read_to_end(&mut decoded_body)
+            .expect("gzip payload decodes");
+        let decoded = ExportMetricsServiceRequest::decode(decoded_body.as_slice())
+            .expect("decompressed OTLP request decodes");
+        assert_eq!(decoded.resource_metrics.len(), 1);
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let telemetry = sink.telemetry().metrics.expect("metric exporter telemetry");
+        assert_eq!(telemetry.request_attempts, 1);
+        assert_eq!(telemetry.request_duration_buckets.last().copied(), Some(1));
+        Sink::shutdown(&sink).await.expect("worker drains");
+    }
+
+    #[test]
+    fn export_worker_prometheus_metrics_include_latency_histogram() {
+        let mut telemetry = ExportWorkerTelemetry {
+            request_attempts: 2,
+            request_duration_micros_sum: 12_500,
+            ..ExportWorkerTelemetry::default()
+        };
+        telemetry.request_duration_buckets[0] = 1;
+        telemetry.request_duration_buckets[1] = 1;
+        telemetry.request_duration_buckets[2] = 2;
+        for bucket in &mut telemetry.request_duration_buckets[3..] {
+            *bucket = 2;
+        }
+
+        let lines = export_worker_prometheus_lines("metrics", telemetry);
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_export_request_duration_seconds_bucket"
+                && line.labels.get("signal_family").map(String::as_str) == Some("metrics")
+                && line.labels.get("le").map(String::as_str) == Some("0.005")
+                && line.value == "1"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_export_request_duration_seconds_bucket"
+                && line.labels.get("le").map(String::as_str) == Some("+Inf")
+                && line.value == "2"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_export_request_duration_seconds_sum" && line.value == "0.0125"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_export_request_duration_seconds_count" && line.value == "2"
         }));
     }
 

@@ -20,6 +20,10 @@ the configured consecutive-failure threshold, shed new work without blocking,
 and drain within a bounded shutdown deadline. No destination request runs on
 the shared signal path.
 
+OTLP protobuf bodies may be gzip-compressed on Tokio's blocking pool before
+network I/O. Every request attempt, including failures and timeouts, updates a
+fixed-bucket native Prometheus latency histogram per signal family.
+
 The workers register their existing atomic counters in a process-local native
 telemetry registry. The Prometheus endpoint samples the registry at scrape
 time and exposes fixed `e_navigator_export_*` metric names with one bounded
@@ -35,5 +39,6 @@ OTLP path, so a destination failure cannot suppress its own loss counters.
 - The live native exporter telemetry surface is currently Prometheus. Native
   OTLP self-metric export remains future work because it needs a separate
   feedback-safe path.
-- Compression and request-latency histograms remain explicit follow-up work;
-  they are not implied by this decision.
+- Compression consumes bounded blocking-pool CPU and can increase latency for
+  very small batches; operators can select `none` when that tradeoff is not
+  beneficial.
