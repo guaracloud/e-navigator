@@ -33,4 +33,8 @@ pub trait Sink<S: Signal>: Send + Sync + 'static {
     fn metadata(&self) -> ModuleMetadata;
 
     async fn write(&self, signal: &S) -> CoreResult<()>;
+
+    async fn shutdown(&self) -> CoreResult<()> {
+        Ok(())
+    }
 }

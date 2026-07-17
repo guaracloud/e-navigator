@@ -1,7 +1,19 @@
 use async_trait::async_trait;
 use e_navigator_core::{CoreResult, ModuleKind, ModuleMetadata, OtlpHttpConfig, Sink};
 use e_navigator_signals::SignalEnvelope;
-use tokio::sync::Mutex;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::Duration,
+};
+use tokio::{
+    sync::{Mutex, mpsc},
+    task::JoinHandle,
+    time::{Instant, sleep_until, timeout},
+};
+use tracing::warn;
 
 use crate::{
     HttpExporterConfig, HttpProtobufExporter, format_otel_metric_record,
@@ -14,34 +26,111 @@ use crate::{
 #[derive(Debug)]
 pub struct OtlpHttpSink {
     config: OtlpHttpConfig,
-    metric_exporter: Option<Mutex<HttpProtobufExporter<crate::OtelMetricRecord>>>,
-    profile_exporter: Option<Mutex<HttpProtobufExporter<crate::OtelProfileRecord>>>,
-    trace_exporter: Option<Mutex<HttpProtobufExporter<crate::OtelTraceRecord>>>,
+    metric_exporter: Option<AsyncProtobufExporter<crate::OtelMetricRecord>>,
+    profile_exporter: Option<AsyncProtobufExporter<crate::OtelProfileRecord>>,
+    trace_exporter: Option<AsyncProtobufExporter<crate::OtelTraceRecord>>,
+    invalid_trace_records: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExportWorkerTelemetry {
+    pub queue_capacity: usize,
+    pub queue_depth: usize,
+    pub enqueued: u64,
+    pub exported: u64,
+    pub dropped_queue_full: u64,
+    pub dropped_worker_closed: u64,
+    pub dropped_export_failure: u64,
+    pub dropped_circuit_open: u64,
+    pub failed_batches: u64,
+    pub retry_attempts: u64,
+    pub circuit_opened: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OtlpHttpTelemetry {
+    pub metrics: Option<ExportWorkerTelemetry>,
+    pub traces: Option<ExportWorkerTelemetry>,
+    pub profiles: Option<ExportWorkerTelemetry>,
+    pub invalid_trace_records: u64,
+}
+
+#[derive(Debug, Default)]
+struct AtomicExportWorkerTelemetry {
+    enqueued: AtomicU64,
+    exported: AtomicU64,
+    dropped_queue_full: AtomicU64,
+    dropped_worker_closed: AtomicU64,
+    dropped_export_failure: AtomicU64,
+    dropped_circuit_open: AtomicU64,
+    failed_batches: AtomicU64,
+    retry_attempts: AtomicU64,
+    circuit_opened: AtomicU64,
+}
+
+impl AtomicExportWorkerTelemetry {
+    fn snapshot(&self) -> ExportWorkerTelemetry {
+        ExportWorkerTelemetry {
+            queue_capacity: 0,
+            queue_depth: 0,
+            enqueued: self.enqueued.load(Ordering::Relaxed),
+            exported: self.exported.load(Ordering::Relaxed),
+            dropped_queue_full: self.dropped_queue_full.load(Ordering::Relaxed),
+            dropped_worker_closed: self.dropped_worker_closed.load(Ordering::Relaxed),
+            dropped_export_failure: self.dropped_export_failure.load(Ordering::Relaxed),
+            dropped_circuit_open: self.dropped_circuit_open.load(Ordering::Relaxed),
+            failed_batches: self.failed_batches.load(Ordering::Relaxed),
+            retry_attempts: self.retry_attempts.load(Ordering::Relaxed),
+            circuit_opened: self.circuit_opened.load(Ordering::Relaxed),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum ExportCommand<T> {
+    Record(T),
+    Shutdown,
+}
+
+#[derive(Debug)]
+struct AsyncProtobufExporter<T> {
+    sender: mpsc::Sender<ExportCommand<T>>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+    telemetry: Arc<AtomicExportWorkerTelemetry>,
+    accepting: AtomicBool,
+    shutdown_timeout: Duration,
 }
 
 impl OtlpHttpSink {
     pub fn new(config: OtlpHttpConfig) -> CoreResult<Self> {
+        validate_worker_tuning(&config).map_err(exporter_module_error)?;
         let metric_exporter = if config.metrics_enabled {
-            Some(Mutex::new(build_exporter(
+            Some(build_exporter(
                 exporter_config_for(&config, required_metrics_endpoint(&config)?),
                 encode_metric_export_request,
-            )?))
+                &config,
+                "metrics",
+            )?)
         } else {
             None
         };
         let profile_exporter = if config.profiles_enabled {
-            Some(Mutex::new(build_exporter(
+            Some(build_exporter(
                 exporter_config_for(&config, required_profiles_endpoint(&config)?),
                 encode_profile_export_request,
-            )?))
+                &config,
+                "profiles",
+            )?)
         } else {
             None
         };
         let trace_exporter = if config.traces_enabled {
-            Some(Mutex::new(build_exporter(
+            Some(build_exporter(
                 exporter_config_for(&config, required_traces_endpoint(&config)?),
                 encode_trace_export_request,
-            )?))
+                &config,
+                "traces",
+            )?)
         } else {
             None
         };
@@ -51,8 +140,82 @@ impl OtlpHttpSink {
             metric_exporter,
             profile_exporter,
             trace_exporter,
+            invalid_trace_records: AtomicU64::new(0),
         })
     }
+
+    pub fn telemetry(&self) -> OtlpHttpTelemetry {
+        OtlpHttpTelemetry {
+            metrics: self
+                .metric_exporter
+                .as_ref()
+                .map(AsyncProtobufExporter::telemetry),
+            traces: self
+                .trace_exporter
+                .as_ref()
+                .map(AsyncProtobufExporter::telemetry),
+            profiles: self
+                .profile_exporter
+                .as_ref()
+                .map(AsyncProtobufExporter::telemetry),
+            invalid_trace_records: self.invalid_trace_records.load(Ordering::Relaxed),
+        }
+    }
+}
+
+fn validate_worker_tuning(config: &OtlpHttpConfig) -> Result<(), String> {
+    for (name, value, maximum) in [
+        (
+            "flush_interval_millis",
+            config.flush_interval_millis,
+            OtlpHttpConfig::MAX_FLUSH_INTERVAL_MILLIS_LIMIT,
+        ),
+        (
+            "retry_initial_backoff_millis",
+            config.retry_initial_backoff_millis,
+            OtlpHttpConfig::MAX_RETRY_BACKOFF_MILLIS_LIMIT,
+        ),
+        (
+            "retry_max_backoff_millis",
+            config.retry_max_backoff_millis,
+            OtlpHttpConfig::MAX_RETRY_BACKOFF_MILLIS_LIMIT,
+        ),
+        (
+            "circuit_breaker_cooldown_millis",
+            config.circuit_breaker_cooldown_millis,
+            OtlpHttpConfig::MAX_CIRCUIT_BREAKER_COOLDOWN_MILLIS_LIMIT,
+        ),
+        (
+            "shutdown_timeout_millis",
+            config.shutdown_timeout_millis,
+            OtlpHttpConfig::MAX_SHUTDOWN_TIMEOUT_MILLIS_LIMIT,
+        ),
+    ] {
+        if value == 0 {
+            return Err(format!("{name} must be greater than zero"));
+        }
+        if value > maximum {
+            return Err(format!("{name} must be less than or equal to {maximum}"));
+        }
+    }
+    if config.retry_initial_backoff_millis > config.retry_max_backoff_millis {
+        return Err(
+            "retry_initial_backoff_millis must be less than or equal to retry_max_backoff_millis"
+                .to_string(),
+        );
+    }
+    if config.circuit_breaker_failure_threshold == 0 {
+        return Err("circuit_breaker_failure_threshold must be greater than zero".to_string());
+    }
+    if config.circuit_breaker_failure_threshold
+        > OtlpHttpConfig::MAX_CIRCUIT_BREAKER_FAILURE_THRESHOLD_LIMIT
+    {
+        return Err(format!(
+            "circuit_breaker_failure_threshold must be less than or equal to {}",
+            OtlpHttpConfig::MAX_CIRCUIT_BREAKER_FAILURE_THRESHOLD_LIMIT
+        ));
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -67,48 +230,50 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
             && let Some(exporter) = &self.trace_exporter
         {
             if !trace_record_has_valid_ids(&record) {
+                self.invalid_trace_records.fetch_add(1, Ordering::Relaxed);
                 return Ok(());
             }
 
-            let mut exporter = exporter.lock().await;
             exporter.enqueue(record);
-            return exporter.flush_once().await.map_err(|err| {
-                e_navigator_core::CoreError::ModuleFailed {
-                    module: "sink.otlp_http".to_string(),
-                    message: err.to_string(),
-                }
-            });
+            return Ok(());
         }
 
         if self.config.metrics_enabled
             && let Some(record) = format_otel_metric_record(signal)
             && let Some(exporter) = &self.metric_exporter
         {
-            let mut exporter = exporter.lock().await;
             exporter.enqueue(record);
-            return exporter.flush_once().await.map_err(|err| {
-                e_navigator_core::CoreError::ModuleFailed {
-                    module: "sink.otlp_http".to_string(),
-                    message: err.to_string(),
-                }
-            });
+            return Ok(());
         }
 
         if self.config.profiles_enabled
             && let Some(record) = format_otel_profile_record(signal)
             && let Some(exporter) = &self.profile_exporter
         {
-            let mut exporter = exporter.lock().await;
             exporter.enqueue(record);
-            return exporter.flush_once().await.map_err(|err| {
-                e_navigator_core::CoreError::ModuleFailed {
-                    module: "sink.otlp_http".to_string(),
-                    message: err.to_string(),
-                }
-            });
+            return Ok(());
         }
 
         Ok(())
+    }
+
+    async fn shutdown(&self) -> CoreResult<()> {
+        let (metrics, traces, profiles) = tokio::join!(
+            shutdown_exporter(self.metric_exporter.as_ref()),
+            shutdown_exporter(self.trace_exporter.as_ref()),
+            shutdown_exporter(self.profile_exporter.as_ref()),
+        );
+        metrics.and(traces).and(profiles)
+    }
+}
+
+async fn shutdown_exporter<T>(exporter: Option<&AsyncProtobufExporter<T>>) -> CoreResult<()>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    match exporter {
+        Some(exporter) => exporter.shutdown().await,
+        None => Ok(()),
     }
 }
 
@@ -160,16 +325,303 @@ fn exporter_config_for(config: &OtlpHttpConfig, endpoint: &str) -> HttpExporterC
 fn build_exporter<T>(
     config: HttpExporterConfig,
     encode_batch: fn(&[T]) -> Result<Vec<u8>, crate::ExporterError>,
-) -> CoreResult<HttpProtobufExporter<T>>
+    runtime_config: &OtlpHttpConfig,
+    family: &'static str,
+) -> CoreResult<AsyncProtobufExporter<T>>
 where
-    T: Clone,
+    T: Clone + Send + Sync + 'static,
 {
-    HttpProtobufExporter::new(config, encode_batch).map_err(|err| {
-        e_navigator_core::CoreError::ModuleFailed {
+    let exporter = HttpProtobufExporter::new(config, encode_batch)
+        .map(|exporter| {
+            exporter.with_retry_backoff(
+                runtime_config.retry_initial_backoff_millis,
+                runtime_config.retry_max_backoff_millis,
+            )
+        })
+        .map_err(|err| e_navigator_core::CoreError::ModuleFailed {
             module: "sink.otlp_http".to_string(),
             message: err.to_string(),
+        })?;
+    AsyncProtobufExporter::spawn(exporter, runtime_config, family).map_err(|err| {
+        e_navigator_core::CoreError::ModuleFailed {
+            module: "sink.otlp_http".to_string(),
+            message: err,
         }
     })
+}
+
+impl<T> AsyncProtobufExporter<T>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    fn spawn(
+        exporter: HttpProtobufExporter<T>,
+        config: &OtlpHttpConfig,
+        family: &'static str,
+    ) -> Result<Self, String> {
+        let runtime = tokio::runtime::Handle::try_current()
+            .map_err(|_| "OTLP export workers require a Tokio runtime".to_string())?;
+        let (sender, receiver) = mpsc::channel(config.queue_capacity);
+        let telemetry = Arc::new(AtomicExportWorkerTelemetry::default());
+        let worker_telemetry = telemetry.clone();
+        let tuning = ExportWorkerTuning {
+            batch_size: config.batch_size,
+            flush_interval: Duration::from_millis(config.flush_interval_millis),
+            circuit_breaker_failure_threshold: config.circuit_breaker_failure_threshold,
+            circuit_breaker_cooldown: Duration::from_millis(config.circuit_breaker_cooldown_millis),
+        };
+        let worker = runtime.spawn(run_export_worker(
+            receiver,
+            exporter,
+            worker_telemetry,
+            tuning,
+            family,
+        ));
+        Ok(Self {
+            sender,
+            worker: Mutex::new(Some(worker)),
+            telemetry,
+            accepting: AtomicBool::new(true),
+            shutdown_timeout: Duration::from_millis(config.shutdown_timeout_millis),
+        })
+    }
+
+    fn enqueue(&self, record: T) {
+        if !self.accepting.load(Ordering::Acquire) {
+            self.telemetry
+                .dropped_worker_closed
+                .fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        match self.sender.try_send(ExportCommand::Record(record)) {
+            Ok(()) => {
+                self.telemetry.enqueued.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.telemetry
+                    .dropped_queue_full
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.telemetry
+                    .dropped_worker_closed
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn telemetry(&self) -> ExportWorkerTelemetry {
+        let mut snapshot = self.telemetry.snapshot();
+        snapshot.queue_capacity = self.sender.max_capacity();
+        snapshot.queue_depth = snapshot
+            .queue_capacity
+            .saturating_sub(self.sender.capacity());
+        snapshot
+    }
+
+    async fn shutdown(&self) -> CoreResult<()> {
+        if !self.accepting.swap(false, Ordering::AcqRel) {
+            return Ok(());
+        }
+        timeout(
+            self.shutdown_timeout,
+            self.sender.send(ExportCommand::Shutdown),
+        )
+        .await
+        .map_err(|_| exporter_module_error("timed out requesting OTLP worker shutdown"))?
+        .map_err(|_| exporter_module_error("OTLP worker closed before shutdown request"))?;
+
+        let Some(mut worker) = self.worker.lock().await.take() else {
+            return Ok(());
+        };
+        match timeout(self.shutdown_timeout, &mut worker).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => Err(exporter_module_error(format!(
+                "OTLP export worker join failed: {err}"
+            ))),
+            Err(_) => {
+                worker.abort();
+                Err(exporter_module_error(
+                    "timed out draining OTLP export worker",
+                ))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ExportWorkerTuning {
+    batch_size: usize,
+    flush_interval: Duration,
+    circuit_breaker_failure_threshold: usize,
+    circuit_breaker_cooldown: Duration,
+}
+
+async fn run_export_worker<T>(
+    mut receiver: mpsc::Receiver<ExportCommand<T>>,
+    mut exporter: HttpProtobufExporter<T>,
+    telemetry: Arc<AtomicExportWorkerTelemetry>,
+    tuning: ExportWorkerTuning,
+    family: &'static str,
+) where
+    T: Clone + Send + Sync + 'static,
+{
+    let mut queued = 0_usize;
+    let mut flush_deadline = None;
+    let mut consecutive_failures = 0_usize;
+    let mut circuit_open_until = None;
+
+    loop {
+        let command = match flush_deadline {
+            Some(deadline) => {
+                tokio::select! {
+                    command = receiver.recv() => command,
+                    () = sleep_until(deadline) => {
+                        flush_worker_batch(
+                            &mut exporter,
+                            &telemetry,
+                            &tuning,
+                            family,
+                            &mut queued,
+                            &mut consecutive_failures,
+                            &mut circuit_open_until,
+                        ).await;
+                        flush_deadline = None;
+                        continue;
+                    }
+                }
+            }
+            None => receiver.recv().await,
+        };
+
+        match command {
+            Some(ExportCommand::Record(record)) => {
+                if circuit_open_until.is_some_and(|until| until > Instant::now()) {
+                    telemetry
+                        .dropped_circuit_open
+                        .fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
+                if circuit_open_until.take().is_some() {
+                    consecutive_failures = 0;
+                }
+                exporter.enqueue(record);
+                queued = queued.saturating_add(1);
+                if queued == 1 {
+                    flush_deadline = Some(Instant::now() + tuning.flush_interval);
+                }
+                if queued >= tuning.batch_size {
+                    flush_worker_batch(
+                        &mut exporter,
+                        &telemetry,
+                        &tuning,
+                        family,
+                        &mut queued,
+                        &mut consecutive_failures,
+                        &mut circuit_open_until,
+                    )
+                    .await;
+                    flush_deadline = None;
+                }
+            }
+            Some(ExportCommand::Shutdown) | None => {
+                while let Ok(ExportCommand::Record(record)) = receiver.try_recv() {
+                    exporter.enqueue(record);
+                    queued = queued.saturating_add(1);
+                    if queued >= tuning.batch_size {
+                        flush_worker_batch(
+                            &mut exporter,
+                            &telemetry,
+                            &tuning,
+                            family,
+                            &mut queued,
+                            &mut consecutive_failures,
+                            &mut circuit_open_until,
+                        )
+                        .await;
+                    }
+                }
+                if queued > 0 {
+                    flush_worker_batch(
+                        &mut exporter,
+                        &telemetry,
+                        &tuning,
+                        family,
+                        &mut queued,
+                        &mut consecutive_failures,
+                        &mut circuit_open_until,
+                    )
+                    .await;
+                }
+                return;
+            }
+        }
+    }
+}
+
+async fn flush_worker_batch<T>(
+    exporter: &mut HttpProtobufExporter<T>,
+    telemetry: &AtomicExportWorkerTelemetry,
+    tuning: &ExportWorkerTuning,
+    family: &'static str,
+    queued: &mut usize,
+    consecutive_failures: &mut usize,
+    circuit_open_until: &mut Option<Instant>,
+) where
+    T: Clone + Sync,
+{
+    if *queued == 0 {
+        return;
+    }
+    let counters_before = exporter.counters();
+    match exporter.flush_once().await {
+        Ok(()) => {
+            let exported = (*queued).min(tuning.batch_size);
+            telemetry
+                .exported
+                .fetch_add(exported as u64, Ordering::Relaxed);
+            *queued = queued.saturating_sub(exported);
+            *consecutive_failures = 0;
+        }
+        Err(err) => {
+            telemetry.failed_batches.fetch_add(1, Ordering::Relaxed);
+            let dropped = exporter.discard_next_batch();
+            telemetry
+                .dropped_export_failure
+                .fetch_add(dropped as u64, Ordering::Relaxed);
+            *queued = queued.saturating_sub(dropped);
+            *consecutive_failures = consecutive_failures.saturating_add(1);
+            warn!(
+                signal_family = family,
+                dropped,
+                error = %err,
+                "OTLP export batch failed after retries; dropping bounded batch"
+            );
+            if *consecutive_failures >= tuning.circuit_breaker_failure_threshold {
+                *circuit_open_until = Some(Instant::now() + tuning.circuit_breaker_cooldown);
+                telemetry.circuit_opened.fetch_add(1, Ordering::Relaxed);
+                warn!(
+                    signal_family = family,
+                    cooldown_millis = tuning.circuit_breaker_cooldown.as_millis(),
+                    "OTLP export circuit opened"
+                );
+            }
+        }
+    }
+    let retry_attempts = exporter
+        .counters()
+        .retry_attempts
+        .saturating_sub(counters_before.retry_attempts);
+    telemetry
+        .retry_attempts
+        .fetch_add(retry_attempts, Ordering::Relaxed);
+}
+
+fn exporter_module_error(message: impl Into<String>) -> e_navigator_core::CoreError {
+    e_navigator_core::CoreError::ModuleFailed {
+        module: "sink.otlp_http".to_string(),
+        message: message.into(),
+    }
 }
 
 #[cfg(test)]
@@ -317,6 +769,35 @@ mod tests {
                     ..OtlpHttpConfig::default()
                 },
                 "max_retries must be less than or equal to 16",
+            ),
+            (
+                OtlpHttpConfig {
+                    flush_interval_millis: 0,
+                    ..OtlpHttpConfig::default()
+                },
+                "flush_interval_millis must be greater than zero",
+            ),
+            (
+                OtlpHttpConfig {
+                    retry_initial_backoff_millis: 2,
+                    retry_max_backoff_millis: 1,
+                    ..OtlpHttpConfig::default()
+                },
+                "retry_initial_backoff_millis must be less than or equal to retry_max_backoff_millis",
+            ),
+            (
+                OtlpHttpConfig {
+                    circuit_breaker_failure_threshold: 0,
+                    ..OtlpHttpConfig::default()
+                },
+                "circuit_breaker_failure_threshold must be greater than zero",
+            ),
+            (
+                OtlpHttpConfig {
+                    shutdown_timeout_millis: 0,
+                    ..OtlpHttpConfig::default()
+                },
+                "shutdown_timeout_millis must be greater than zero",
             ),
         ] {
             let err = OtlpHttpSink::new(config).expect_err("invalid runtime bound fails");
@@ -498,6 +979,191 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn otlp_http_sink_write_does_not_wait_for_slow_collector() {
+        let collector =
+            FakeCollector::spawn_with_delay(vec![200], Duration::from_millis(250)).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        let started = Instant::now();
+        sink.write(&network_metric())
+            .await
+            .expect("enqueue succeeds");
+        assert!(started.elapsed() < Duration::from_millis(100));
+
+        let _ = collector.next_request().await;
+        Sink::shutdown(&sink).await.expect("worker drains");
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_flushes_partial_batch_on_interval() {
+        let collector = FakeCollector::spawn(vec![200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 4,
+            queue_capacity: 4,
+            flush_interval_millis: 20,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_metric())
+            .await
+            .expect("enqueue succeeds");
+        timeout(Duration::from_secs(1), collector.next_request())
+            .await
+            .expect("partial batch flushes on interval");
+        Sink::shutdown(&sink).await.expect("worker drains");
+        assert_eq!(
+            sink.telemetry().metrics.expect("metrics worker").exported,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_counts_bounded_queue_overflow() {
+        let collector =
+            FakeCollector::spawn_with_delay(vec![200, 200, 200], Duration::from_millis(100)).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_metric()).await.expect("first enqueue");
+        let _ = collector.next_request().await;
+        for _ in 0..3 {
+            sink.write(&network_metric())
+                .await
+                .expect("bounded enqueue");
+        }
+
+        assert_eq!(
+            sink.telemetry()
+                .metrics
+                .expect("metrics worker")
+                .dropped_queue_full,
+            1
+        );
+        Sink::shutdown(&sink).await.expect("worker drains");
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_opens_circuit_and_counts_drops() {
+        let collector = FakeCollector::spawn(vec![500]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            circuit_breaker_failure_threshold: 1,
+            circuit_breaker_cooldown_millis: 1_000,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_metric()).await.expect("first enqueue");
+        let _ = collector.next_request().await;
+        timeout(Duration::from_secs(1), async {
+            while sink
+                .telemetry()
+                .metrics
+                .expect("metrics worker")
+                .circuit_opened
+                == 0
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("circuit opens");
+        sink.write(&network_metric()).await.expect("second enqueue");
+        timeout(Duration::from_secs(1), async {
+            while sink
+                .telemetry()
+                .metrics
+                .expect("metrics worker")
+                .dropped_circuit_open
+                == 0
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("open circuit counts a drop");
+
+        let telemetry = sink.telemetry().metrics.expect("metrics worker");
+        assert_eq!(telemetry.failed_batches, 1);
+        assert_eq!(telemetry.dropped_export_failure, 1);
+        assert_eq!(telemetry.dropped_circuit_open, 1);
+        Sink::shutdown(&sink).await.expect("worker drains");
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_shutdown_drains_partial_batch() {
+        let collector = FakeCollector::spawn(vec![200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 4,
+            queue_capacity: 4,
+            flush_interval_millis: 60_000,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_metric())
+            .await
+            .expect("enqueue succeeds");
+        Sink::shutdown(&sink).await.expect("shutdown drains");
+        assert!(
+            collector
+                .next_request()
+                .await
+                .contains("network.connection.open.count")
+        );
+        assert_eq!(
+            sink.telemetry().metrics.expect("metrics worker").exported,
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn otlp_http_sink_respects_disabled_signal_families() {
         let collector = FakeCollector::spawn(vec![]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
@@ -637,6 +1303,7 @@ mod tests {
             .expect("profiling warning without ids is ignored");
 
         assert!(collector.try_next_request().is_none());
+        assert_eq!(sink.telemetry().invalid_trace_records, 1);
     }
 
     #[tokio::test]
@@ -661,6 +1328,7 @@ mod tests {
             .expect("network flow warning without ids is ignored");
 
         assert!(collector.try_next_request().is_none());
+        assert_eq!(sink.telemetry().invalid_trace_records, 1);
     }
 
     #[tokio::test]
@@ -1870,6 +2538,10 @@ mod tests {
 
     impl FakeCollector {
         async fn spawn(statuses: Vec<u16>) -> Self {
+            Self::spawn_with_delay(statuses, Duration::ZERO).await
+        }
+
+        async fn spawn_with_delay(statuses: Vec<u16>, response_delay: Duration) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0")
                 .await
                 .expect("bind fake collector");
@@ -1884,6 +2556,7 @@ mod tests {
                         raw: buffer[..bytes].to_vec(),
                     };
                     let _ = tx.send(request).await;
+                    tokio::time::sleep(response_delay).await;
                     let status_text = if status == 200 { "OK" } else { "ERR" };
                     let response = format!(
                         "HTTP/1.1 {status} {status_text}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"

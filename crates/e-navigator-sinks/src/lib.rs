@@ -26,7 +26,7 @@ pub use otel_profile::{OtelProfileFrame, OtelProfileRecord, format_otel_profile_
 pub use otel_trace::{
     OtelSpanStatus, OtelTraceRecord, OtelTraceRecordKind, format_otel_trace_record,
 };
-pub use otlp_http::OtlpHttpSink;
+pub use otlp_http::{ExportWorkerTelemetry, OtlpHttpSink, OtlpHttpTelemetry};
 pub use pprof_profile::{format_pprof_profile, format_pprof_profile_batch};
 pub use profile_format::{
     E_NAVIGATOR_CPU_PROFILE_METRIC_NAME, ProfileRecord, format_profile_record,

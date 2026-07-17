@@ -162,6 +162,16 @@ real HTTP surface is configured, for example when `sink.prometheus_http` and
 enabled = true
 metrics_enabled = true
 profiles_enabled = true
+queue_capacity = 1024
+batch_size = 64
+flush_interval_millis = 1000
+timeout_millis = 3000
+max_retries = 2
+retry_initial_backoff_millis = 100
+retry_max_backoff_millis = 5000
+circuit_breaker_failure_threshold = 5
+circuit_breaker_cooldown_millis = 30000
+shutdown_timeout_millis = 10000
 ```
 
 ```yaml
@@ -204,9 +214,19 @@ export requests. Every configured OTLP endpoint must be an `http://` or
 `https://` URL with a host, without whitespace or control characters, and at
 most 2,048 bytes.
 
+OTLP export never performs collector I/O on the shared signal path. Metrics,
+traces, and profiles use separate bounded workers with size-or-time batching.
+Queue overflow, invalid trace identity, exhausted export batches, and open
+circuit drops are exposed through the sink's native telemetry snapshot. A
+worker drains its accepted queue during bounded shutdown.
+
 OTLP export runtime bounds are validated before startup:
-`otlp_http.queue_capacity` must be at most 65,536, `batch_size` at most 4,096,
-`timeout_millis` at most 300,000, and `max_retries` at most 16.
+`otlp_http.queue_capacity` must be at most 65,536, `batch_size` at most 4,096
+and no larger than the queue, `flush_interval_millis` at most 60,000,
+`timeout_millis` at most 300,000, and `max_retries` at most 16. Retry backoff,
+circuit cooldown, and shutdown timeouts are positive and capped at 300,000
+milliseconds; initial retry backoff cannot exceed its maximum. The circuit
+failure threshold is positive and at most 1,024.
 
 ## Raw Manifest Fallback
 

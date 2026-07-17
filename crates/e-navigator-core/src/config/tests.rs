@@ -419,8 +419,14 @@ fn otlp_http_sink_defaults_are_bounded_and_disabled() {
     assert!(config.otlp_http.profiles_enabled);
     assert_eq!(config.otlp_http.queue_capacity, 1024);
     assert_eq!(config.otlp_http.batch_size, 64);
+    assert_eq!(config.otlp_http.flush_interval_millis, 1000);
     assert_eq!(config.otlp_http.timeout_millis, 3000);
     assert_eq!(config.otlp_http.max_retries, 2);
+    assert_eq!(config.otlp_http.retry_initial_backoff_millis, 100);
+    assert_eq!(config.otlp_http.retry_max_backoff_millis, 5000);
+    assert_eq!(config.otlp_http.circuit_breaker_failure_threshold, 5);
+    assert_eq!(config.otlp_http.circuit_breaker_cooldown_millis, 30_000);
+    assert_eq!(config.otlp_http.shutdown_timeout_millis, 10_000);
 }
 
 #[test]
@@ -507,6 +513,65 @@ fn otlp_http_sink_config_is_validated_when_enabled() {
             OtlpHttpConfig::MAX_QUEUE_CAPACITY_LIMIT
         ),
     );
+
+    for (otlp_http, expected) in [
+        (
+            OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318".to_string(),
+                flush_interval_millis: 0,
+                ..OtlpHttpConfig::default()
+            },
+            "otlp_http.flush_interval_millis must be greater than zero when sink.otlp_http is enabled",
+        ),
+        (
+            OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318".to_string(),
+                retry_initial_backoff_millis: 6_000,
+                retry_max_backoff_millis: 5_000,
+                ..OtlpHttpConfig::default()
+            },
+            "otlp_http.retry_initial_backoff_millis must be less than or equal to otlp_http.retry_max_backoff_millis",
+        ),
+        (
+            OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318".to_string(),
+                circuit_breaker_failure_threshold: 0,
+                ..OtlpHttpConfig::default()
+            },
+            "otlp_http.circuit_breaker_failure_threshold must be greater than zero when sink.otlp_http is enabled",
+        ),
+        (
+            OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318".to_string(),
+                shutdown_timeout_millis: 0,
+                ..OtlpHttpConfig::default()
+            },
+            "otlp_http.shutdown_timeout_millis must be greater than zero when sink.otlp_http is enabled",
+        ),
+        (
+            OtlpHttpConfig {
+                enabled: true,
+                endpoint: "http://127.0.0.1:4318".to_string(),
+                queue_capacity: 4,
+                batch_size: 5,
+                ..OtlpHttpConfig::default()
+            },
+            "otlp_http.batch_size must be less than or equal to otlp_http.queue_capacity",
+        ),
+    ] {
+        assert_invalid(
+            RuntimeConfig {
+                modules: enabled_modules(),
+                otlp_http,
+                ..RuntimeConfig::default()
+            },
+            expected,
+        );
+    }
 
     assert_invalid(
         RuntimeConfig {
