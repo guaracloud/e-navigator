@@ -37,6 +37,10 @@ pub(crate) const RAW_PROTOCOL_DIRECTION_READ: u32 = 1;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_PROTOCOL_DIRECTION_WRITE: u32 = 2;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_PROTOCOL_ROLE_CLIENT: u32 = 0;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_PROTOCOL_ROLE_SERVER: u32 = 1;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_PROTOCOL_AF_INET: u32 = 2;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_PROTOCOL_AF_INET6: u32 = 10;
@@ -80,6 +84,7 @@ pub(crate) struct RawProtocolDataEvent {
     pub cgroup_id: u64,
     pub fd: i32,
     pub direction: u32,
+    pub role: u32,
     pub family: u32,
     pub remote_port_be: u16,
     pub local_port_be: u16,
@@ -104,6 +109,7 @@ pub struct RawProtocolInvalidSampleMetadata {
     cgroup_id: u64,
     fd: i32,
     direction: u32,
+    role: u32,
     family: u32,
     remote_port_be: u16,
     local_port_be: u16,
@@ -123,6 +129,7 @@ impl RawProtocolInvalidSampleMetadata {
             cgroup_id: raw.cgroup_id,
             fd: raw.fd,
             direction: raw.direction,
+            role: raw.role,
             family: raw.family,
             remote_port_be: raw.remote_port_be,
             local_port_be: raw.local_port_be,
@@ -145,6 +152,9 @@ pub enum RawProtocolDecodeError {
     InvalidDirection {
         sample: RawProtocolInvalidSampleMetadata,
     },
+    InvalidRole {
+        sample: RawProtocolInvalidSampleMetadata,
+    },
     UnmappedPort {
         sample: RawProtocolInvalidSampleMetadata,
     },
@@ -157,6 +167,7 @@ impl RawProtocolDecodeError {
             Self::RawSampleTooShort => "raw_sample_too_short",
             Self::InvalidPayloadLength { .. } => "invalid_payload_length",
             Self::InvalidDirection { .. } => "invalid_direction",
+            Self::InvalidRole { .. } => "invalid_role",
             Self::UnmappedPort { .. } => "unmapped_port",
         }
     }
@@ -166,6 +177,7 @@ impl RawProtocolDecodeError {
             Self::RawSampleTooShort => None,
             Self::InvalidPayloadLength { sample } => Some(sample),
             Self::InvalidDirection { sample } => Some(sample),
+            Self::InvalidRole { sample } => Some(sample),
             Self::UnmappedPort { sample } => Some(sample),
         }
     }
@@ -246,6 +258,7 @@ struct ObservationContext {
     pid: u32,
     uid: u32,
     cgroup_id: u64,
+    role: u32,
     family: u32,
     remote_port_be: u16,
     local_port_be: u16,
@@ -264,6 +277,7 @@ impl ObservationContext {
             pid: raw.pid,
             uid: raw.uid,
             cgroup_id: raw.cgroup_id,
+            role: raw.role,
             family: raw.family,
             remote_port_be: raw.remote_port_be,
             local_port_be: raw.local_port_be,
@@ -280,6 +294,7 @@ impl ObservationContext {
         self.pid == raw.pid
             && self.uid == raw.uid
             && self.cgroup_id == raw.cgroup_id
+            && self.role == raw.role
             && self.family == raw.family
             && self.remote_port_be == raw.remote_port_be
             && self.local_port_be == raw.local_port_be
@@ -414,8 +429,18 @@ impl ProtocolStreamRegistry {
             });
         }
 
-        let remote_port = u16::from_be(raw.remote_port_be);
-        let Some(protocol) = self.ports.lookup(remote_port) else {
+        if raw.role != RAW_PROTOCOL_ROLE_CLIENT && raw.role != RAW_PROTOCOL_ROLE_SERVER {
+            return Err(RawProtocolDecodeError::InvalidRole {
+                sample: RawProtocolInvalidSampleMetadata::from_raw(&raw),
+            });
+        }
+
+        let capture_port = if raw.role == RAW_PROTOCOL_ROLE_SERVER {
+            u16::from_be(raw.local_port_be)
+        } else {
+            u16::from_be(raw.remote_port_be)
+        };
+        let Some(protocol) = self.ports.lookup(capture_port) else {
             return Err(RawProtocolDecodeError::UnmappedPort {
                 sample: RawProtocolInvalidSampleMetadata::from_raw(&raw),
             });
@@ -423,7 +448,12 @@ impl ProtocolStreamRegistry {
 
         // NATS commands are fire-and-forget; server-to-client traffic is
         // asynchronous message delivery, not per-request responses.
-        if raw.direction == RAW_PROTOCOL_DIRECTION_READ && protocol == StreamProtocol::Nats {
+        let is_request_direction = (raw.role == RAW_PROTOCOL_ROLE_CLIENT
+            && raw.direction == RAW_PROTOCOL_DIRECTION_WRITE)
+            || (raw.role == RAW_PROTOCOL_ROLE_SERVER
+                && raw.direction == RAW_PROTOCOL_DIRECTION_READ);
+
+        if !is_request_direction && protocol == StreamProtocol::Nats {
             self.counters.ignored_read_events += 1;
             return Ok(());
         }
@@ -472,7 +502,7 @@ impl ProtocolStreamRegistry {
         let payload = &raw.payload[..raw.payload_len as usize];
         let mut frames = std::mem::take(&mut self.frames);
         frames.clear();
-        let (decoder, pending_segments) = if raw.direction == RAW_PROTOCOL_DIRECTION_WRITE {
+        let (decoder, pending_segments) = if is_request_direction {
             (&mut stream.request_decoder, &mut stream.request_segments)
         } else {
             (&mut stream.response_decoder, &mut stream.response_segments)
@@ -490,14 +520,14 @@ impl ProtocolStreamRegistry {
             handle_http2_frames(
                 stream,
                 &frames,
-                raw.direction == RAW_PROTOCOL_DIRECTION_WRITE,
+                is_request_direction,
                 &self.extraction,
                 &self.host,
                 &mut self.counters,
                 observed_unix_nanos,
                 signals,
             );
-        } else if raw.direction == RAW_PROTOCOL_DIRECTION_WRITE {
+        } else if is_request_direction {
             handle_request_frames(
                 stream,
                 &frames,
@@ -885,6 +915,8 @@ fn handle_http2_frames(
                 ParsedRequestFrame {
                     protocol: ProtocolKind::Http,
                     operation: None,
+                    trace_id: None,
+                    span_id: None,
                     warning: Some("truncated_request_frame".to_string()),
                     attributes: Vec::new(),
                 }
@@ -898,6 +930,14 @@ fn handle_http2_frames(
                     Ok(parsed) => ParsedRequestFrame {
                         protocol: parsed.protocol,
                         operation: parsed.method,
+                        trace_id: parsed
+                            .trace_context
+                            .as_ref()
+                            .map(|context| context.trace_id.clone()),
+                        span_id: parsed
+                            .trace_context
+                            .as_ref()
+                            .map(|context| context.span_id.clone()),
                         warning: parsed.warning,
                         attributes: parsed.attributes,
                     },
@@ -906,6 +946,8 @@ fn handle_http2_frames(
                         ParsedRequestFrame {
                             protocol: ProtocolKind::Http,
                             operation: None,
+                            trace_id: None,
+                            span_id: None,
                             warning: Some("unparsed_request_frame".to_string()),
                             attributes: Vec::new(),
                         }
@@ -1042,6 +1084,8 @@ fn placeholder_request(protocol: StreamProtocol, warning: &str) -> ParsedRequest
     ParsedRequestFrame {
         protocol: protocol_kind(protocol),
         operation: None,
+        trace_id: None,
+        span_id: None,
         warning: Some(warning.to_string()),
         attributes: Vec::new(),
     }
@@ -1096,13 +1140,17 @@ fn build_observation(
         host,
         ProtocolRequestObservation {
             protocol: parsed.protocol,
-            role: Some(ProtocolCaptureRole::Client),
+            role: Some(if context.role == RAW_PROTOCOL_ROLE_SERVER {
+                ProtocolCaptureRole::Server
+            } else {
+                ProtocolCaptureRole::Client
+            }),
             start_unix_nanos,
             end_unix_nanos,
             duration_nanos: end_unix_nanos
                 .map(|end_nanos| end_nanos.saturating_sub(start_unix_nanos)),
-            trace_id: None,
-            span_id: None,
+            trace_id: parsed.trace_id,
+            span_id: parsed.span_id,
             parent_span_id: None,
             traceparent: None,
             tracestate: None,
@@ -1129,6 +1177,8 @@ fn build_observation(
 pub(crate) struct ParsedRequestFrame {
     protocol: ProtocolKind,
     operation: Option<String>,
+    trace_id: Option<String>,
+    span_id: Option<String>,
     warning: Option<String>,
     attributes: Vec<TraceAttribute>,
 }
@@ -1144,6 +1194,14 @@ fn parse_request_frame(
             .map(|parsed| ParsedRequestFrame {
                 protocol: parsed.protocol,
                 operation: parsed.method,
+                trace_id: parsed
+                    .trace_context
+                    .as_ref()
+                    .map(|context| context.trace_id.clone()),
+                span_id: parsed
+                    .trace_context
+                    .as_ref()
+                    .map(|context| context.span_id.clone()),
                 warning: parsed.warning,
                 attributes: parsed.attributes,
             })
@@ -1153,6 +1211,8 @@ fn parse_request_frame(
             .map(|parsed| ParsedRequestFrame {
                 protocol: parsed.protocol,
                 operation: parsed.operation,
+                trace_id: None,
+                span_id: None,
                 warning: parsed.warning,
                 attributes: parsed.attributes,
             })
@@ -1161,6 +1221,8 @@ fn parse_request_frame(
             .map(|parsed| ParsedRequestFrame {
                 protocol: parsed.protocol,
                 operation: parsed.operation,
+                trace_id: None,
+                span_id: None,
                 warning: parsed.warning,
                 attributes: parsed.attributes,
             })
@@ -1169,6 +1231,8 @@ fn parse_request_frame(
             .map(|parsed| ParsedRequestFrame {
                 protocol: parsed.protocol,
                 operation: parsed.operation,
+                trace_id: None,
+                span_id: None,
                 warning: parsed.warning,
                 attributes: parsed.attributes,
             })
@@ -1177,6 +1241,8 @@ fn parse_request_frame(
             .map(|parsed| ParsedRequestFrame {
                 protocol: parsed.protocol,
                 operation: parsed.operation,
+                trace_id: None,
+                span_id: None,
                 warning: parsed.warning,
                 attributes: parsed.attributes,
             })
@@ -1185,6 +1251,8 @@ fn parse_request_frame(
             .map(|parsed| ParsedRequestFrame {
                 protocol: parsed.protocol,
                 operation: parsed.operation,
+                trace_id: None,
+                span_id: None,
                 warning: parsed.warning,
                 attributes: parsed.attributes,
             })
@@ -1193,6 +1261,8 @@ fn parse_request_frame(
             .map(|parsed| ParsedRequestFrame {
                 protocol: parsed.protocol,
                 operation: parsed.command,
+                trace_id: None,
+                span_id: None,
                 warning: parsed.warning,
                 attributes: parsed.attributes,
             })
@@ -1928,6 +1998,7 @@ mod tests {
             cgroup_id: 77,
             fd: 9,
             direction: RAW_PROTOCOL_DIRECTION_WRITE,
+            role: RAW_PROTOCOL_ROLE_CLIENT,
             family: RAW_PROTOCOL_AF_INET,
             remote_port_be: remote_port.to_be(),
             local_port_be: 43210_u16.to_be(),
@@ -2554,6 +2625,100 @@ mod tests {
         // The request target path must not leak as a high-cardinality value.
         let serialized = serde_json::to_string(&signals[0]).expect("signal serializes");
         assert!(serialized.contains("url.path"));
+    }
+
+    #[test]
+    fn server_role_uses_local_port_and_read_as_request_direction() {
+        let config = ProtocolSourceConfig {
+            http1_ports: vec![8443],
+            ..ProtocolSourceConfig::default()
+        };
+        let mut registry = ProtocolStreamRegistry::new(
+            None,
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
+        );
+
+        let request = b"GET /inbound HTTP/1.1\r\nHost: api.test\r\n\r\n";
+        let mut event = raw_event(51_000, request, request.len() as u32);
+        event.local_port_be = 8443_u16.to_be();
+        event.role = RAW_PROTOCOL_ROLE_SERVER;
+        event.direction = RAW_PROTOCOL_DIRECTION_READ;
+        assert!(handle_at(&mut registry, &event, 5_000).is_empty());
+
+        let response = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+        let mut event = raw_event(51_000, response, response.len() as u32);
+        event.local_port_be = 8443_u16.to_be();
+        event.role = RAW_PROTOCOL_ROLE_SERVER;
+        event.direction = RAW_PROTOCOL_DIRECTION_WRITE;
+        let signals = handle_at(&mut registry, &event, 6_000);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.role, Some(ProtocolCaptureRole::Server));
+        assert_eq!(observation.method.as_deref(), Some("GET"));
+        assert_eq!(observation.duration_nanos, Some(1_000));
+    }
+
+    #[test]
+    fn server_grpc_capture_preserves_hpack_trace_context() {
+        let config = ProtocolSourceConfig {
+            http2_ports: vec![50051],
+            ..ProtocolSourceConfig::default()
+        };
+        let mut registry = ProtocolStreamRegistry::new(
+            None,
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
+        );
+
+        let mut block = vec![0x83]; // :method POST
+        append_hpack_literal(&mut block, ":path", "/pkg.Svc/Call");
+        append_hpack_literal(&mut block, "content-type", "application/grpc");
+        append_hpack_literal(
+            &mut block,
+            "traceparent",
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        );
+        append_hpack_literal(&mut block, "tracestate", "vendor=opaque");
+        let mut request_payload = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_vec();
+        request_payload.extend_from_slice(&http2_frame(1, 0x4, 1, &block));
+        let mut request = raw_event(51_000, &request_payload, request_payload.len() as u32);
+        request.local_port_be = 50051_u16.to_be();
+        request.role = RAW_PROTOCOL_ROLE_SERVER;
+        request.direction = RAW_PROTOCOL_DIRECTION_READ;
+        assert!(handle_at(&mut registry, &request, 5_000).is_empty());
+
+        let response_payload = http2_frame(1, 0x4 | 0x1, 1, &[0x88]);
+        let mut response = raw_event(51_000, &response_payload, response_payload.len() as u32);
+        response.local_port_be = 50051_u16.to_be();
+        response.role = RAW_PROTOCOL_ROLE_SERVER;
+        response.direction = RAW_PROTOCOL_DIRECTION_WRITE;
+        let signals = handle_at(&mut registry, &response, 6_000);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.protocol, ProtocolKind::Grpc);
+        assert_eq!(observation.role, Some(ProtocolCaptureRole::Server));
+        assert_eq!(
+            observation.trace_id.as_deref(),
+            Some("4bf92f3577b34da6a3ce929d0e0e4736")
+        );
+        assert_eq!(observation.span_id.as_deref(), Some("00f067aa0ba902b7"));
+        assert!(observation.attributes.iter().any(|attribute| {
+            attribute.key == "e.navigator.trace.tracestate"
+                && attribute.value == "validated_discarded"
+        }));
+    }
+
+    fn append_hpack_literal(block: &mut Vec<u8>, name: &str, value: &str) {
+        assert!(name.len() < 127);
+        assert!(value.len() < 127);
+        block.push(0x00);
+        block.push(name.len() as u8);
+        block.extend_from_slice(name.as_bytes());
+        block.push(value.len() as u8);
+        block.extend_from_slice(value.as_bytes());
     }
 
     #[test]
