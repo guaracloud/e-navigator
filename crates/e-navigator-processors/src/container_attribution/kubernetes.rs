@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use e_navigator_core::{KubernetesAttributionConfig, capture_filter::RawPod};
+use e_navigator_core::{
+    KubernetesAttributionConfig,
+    capture_filter::{RawEndpointSlice, RawPod, RawService},
+};
 use e_navigator_signals::KubernetesContext;
 use serde::Deserialize;
 use std::{
@@ -87,6 +90,20 @@ impl KubernetesAttribution {
             .lock()
             .ok()
             .and_then(|cache| cache.get_by_pod_ip(pod_ip))
+    }
+
+    pub(super) fn owner_for_context(&self, context: &KubernetesContext) -> Option<WorkloadOwner> {
+        self.cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get_owner_for_context(context))
+    }
+
+    pub(super) fn owner_for_address(&self, address: &str) -> Option<WorkloadOwner> {
+        self.cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get_owner_for_address(address))
     }
 
     fn cached_context(&self, container_id: &str) -> Option<KubernetesContext> {
@@ -278,6 +295,14 @@ impl KubernetesMetadataProvider for InClusterKubernetesMetadataProvider {
 pub struct KubernetesMetadataCache {
     by_container_id: BTreeMap<String, KubernetesContext>,
     by_pod_ip: BTreeMap<String, KubernetesContext>,
+    owners_by_pod: BTreeMap<String, WorkloadOwner>,
+    owners_by_address: BTreeMap<String, WorkloadOwner>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct WorkloadOwner {
+    pub(super) name: String,
+    pub(super) owner_type: String,
 }
 
 impl KubernetesMetadataCache {
@@ -285,6 +310,8 @@ impl KubernetesMetadataCache {
         Self {
             by_container_id: contexts.into_iter().collect(),
             by_pod_ip: BTreeMap::new(),
+            owners_by_pod: BTreeMap::new(),
+            owners_by_address: BTreeMap::new(),
         }
     }
 
@@ -295,14 +322,27 @@ impl KubernetesMetadataCache {
         Self {
             by_container_id: contexts.into_iter().collect(),
             by_pod_ip: pod_ips.into_iter().collect(),
+            owners_by_pod: BTreeMap::new(),
+            owners_by_address: BTreeMap::new(),
         }
     }
 
-    /// Build the scoped attribution indexes from the shared node-pod
+    /// Build the scoped attribution indexes from the shared workload
     /// controller snapshot without performing Kubernetes API I/O.
     pub fn from_raw_pods(pods: &[RawPod], config: &KubernetesAttributionConfig) -> Self {
+        Self::from_raw_resources(pods, &[], &[], config)
+    }
+
+    pub fn from_raw_resources(
+        pods: &[RawPod],
+        services: &[RawService],
+        endpoint_slices: &[RawEndpointSlice],
+        config: &KubernetesAttributionConfig,
+    ) -> Self {
         let mut by_container_id = BTreeMap::new();
         let mut by_pod_ip = BTreeMap::new();
+        let mut owners_by_pod = BTreeMap::new();
+        let mut owners_by_address = BTreeMap::new();
         let mut selected_pods = 0_usize;
 
         for pod in pods {
@@ -319,6 +359,12 @@ impl KubernetesMetadataCache {
             }
             selected_pods = selected_pods.saturating_add(1);
             let labels = bounded_labels(pod.labels.clone(), config);
+            let owner = raw_pod_owner(pod);
+            if topology_cache_entry_count(&owners_by_pod, &owners_by_address)
+                < config.max_cache_entries
+            {
+                owners_by_pod.insert(raw_pod_key(pod), owner.clone());
+            }
             for container_id in &pod.container_ids {
                 if cache_entry_count(&by_container_id, &by_pod_ip) >= config.max_cache_entries {
                     warn!(
@@ -328,6 +374,8 @@ impl KubernetesMetadataCache {
                     return Self {
                         by_container_id,
                         by_pod_ip,
+                        owners_by_pod,
+                        owners_by_address,
                     };
                 }
                 let context = KubernetesContext {
@@ -344,6 +392,58 @@ impl KubernetesMetadataCache {
                     && cache_entry_count(&by_container_id, &by_pod_ip) < config.max_cache_entries
                 {
                     by_pod_ip.insert(pod_ip.clone(), context);
+                    if topology_cache_entry_count(&owners_by_pod, &owners_by_address)
+                        < config.max_cache_entries
+                    {
+                        owners_by_address.insert(pod_ip.clone(), owner.clone());
+                    }
+                }
+            }
+        }
+
+        let service_owners = services
+            .iter()
+            .filter(|service| namespace_matches_scope(&service.namespace, config))
+            .map(|service| {
+                (
+                    format!("{}/{}", service.namespace, service.service_name),
+                    WorkloadOwner {
+                        name: format!("{}/{}", service.namespace, service.service_name),
+                        owner_type: "service".to_string(),
+                    },
+                    service,
+                )
+            })
+            .collect::<Vec<_>>();
+        for (_, owner, service) in &service_owners {
+            for cluster_ip in &service.cluster_ips {
+                if !by_pod_ip.contains_key(cluster_ip)
+                    && topology_cache_entry_count(&owners_by_pod, &owners_by_address)
+                        < config.max_cache_entries
+                {
+                    owners_by_address
+                        .entry(cluster_ip.clone())
+                        .or_insert_with(|| owner.clone());
+                }
+            }
+        }
+        let owners_by_service = service_owners
+            .into_iter()
+            .map(|(key, owner, _)| (key, owner))
+            .collect::<BTreeMap<_, _>>();
+        for slice in endpoint_slices {
+            let service_key = format!("{}/{}", slice.namespace, slice.service_name);
+            let Some(owner) = owners_by_service.get(&service_key) else {
+                continue;
+            };
+            for address in &slice.addresses {
+                if !by_pod_ip.contains_key(address)
+                    && topology_cache_entry_count(&owners_by_pod, &owners_by_address)
+                        < config.max_cache_entries
+                {
+                    owners_by_address
+                        .entry(address.clone())
+                        .or_insert_with(|| owner.clone());
                 }
             }
         }
@@ -351,6 +451,8 @@ impl KubernetesMetadataCache {
         Self {
             by_container_id,
             by_pod_ip,
+            owners_by_pod,
+            owners_by_address,
         }
     }
 
@@ -358,6 +460,8 @@ impl KubernetesMetadataCache {
         self.by_container_id
             .len()
             .saturating_add(self.by_pod_ip.len())
+            .saturating_add(self.owners_by_pod.len())
+            .saturating_add(self.owners_by_address.len())
     }
 
     pub(super) fn contains_container(&self, container_id: &str) -> bool {
@@ -370,6 +474,17 @@ impl KubernetesMetadataCache {
 
     pub(super) fn get_by_pod_ip(&self, pod_ip: &str) -> Option<KubernetesContext> {
         self.by_pod_ip.get(pod_ip).cloned()
+    }
+
+    pub(super) fn get_owner_for_context(
+        &self,
+        context: &KubernetesContext,
+    ) -> Option<WorkloadOwner> {
+        self.owners_by_pod.get(&context_key(context)).cloned()
+    }
+
+    pub(super) fn get_owner_for_address(&self, address: &str) -> Option<WorkloadOwner> {
+        self.owners_by_address.get(address).cloned()
     }
 
     pub(super) async fn from_in_cluster(
@@ -443,6 +558,8 @@ impl KubernetesMetadataCache {
                         return Self {
                             by_container_id,
                             by_pod_ip,
+                            owners_by_pod: BTreeMap::new(),
+                            owners_by_address: BTreeMap::new(),
                         };
                     }
                     if let Some(container_id) = container.container_id {
@@ -473,8 +590,50 @@ impl KubernetesMetadataCache {
         Self {
             by_container_id,
             by_pod_ip,
+            owners_by_pod: BTreeMap::new(),
+            owners_by_address: BTreeMap::new(),
         }
     }
+}
+
+fn raw_pod_key(pod: &RawPod) -> String {
+    format!(
+        "{}/{}",
+        pod.namespace,
+        pod.pod_uid.as_deref().unwrap_or(&pod.pod_name)
+    )
+}
+
+fn context_key(context: &KubernetesContext) -> String {
+    format!(
+        "{}/{}",
+        context.namespace,
+        context.pod_uid.as_deref().unwrap_or(&context.pod_name)
+    )
+}
+
+fn raw_pod_owner(pod: &RawPod) -> WorkloadOwner {
+    let name = pod
+        .workload_name
+        .as_deref()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&pod.pod_name);
+    WorkloadOwner {
+        name: format!("{}/{name}", pod.namespace),
+        owner_type: pod
+            .workload_type
+            .clone()
+            .filter(|owner_type| !owner_type.is_empty())
+            .unwrap_or_else(|| "pod".to_string()),
+    }
+}
+
+fn namespace_matches_scope(namespace: &str, config: &KubernetesAttributionConfig) -> bool {
+    matches_string_selector(
+        namespace,
+        &config.namespace_allowlist,
+        &config.namespace_denylist,
+    )
 }
 
 fn cache_entry_count(
@@ -482,6 +641,13 @@ fn cache_entry_count(
     by_pod_ip: &BTreeMap<String, KubernetesContext>,
 ) -> usize {
     by_container_id.len().saturating_add(by_pod_ip.len())
+}
+
+fn topology_cache_entry_count(
+    owners_by_pod: &BTreeMap<String, WorkloadOwner>,
+    owners_by_address: &BTreeMap<String, WorkloadOwner>,
+) -> usize {
+    owners_by_pod.len().saturating_add(owners_by_address.len())
 }
 
 fn pod_matches_scope(
@@ -740,6 +906,8 @@ mod tests {
             pod_uid: Some("pod-uid-1".to_string()),
             node_name: Some("homelab-01".to_string()),
             pod_ip: Some("10.42.0.10".to_string()),
+            workload_name: Some("payments-api".to_string()),
+            workload_type: Some("deployment".to_string()),
             container_ids: vec![container_id.to_string()],
             container_names: BTreeMap::from([(container_id.to_string(), "api".to_string())]),
             labels: BTreeMap::from([
@@ -764,6 +932,96 @@ mod tests {
             Some("pro")
         );
         assert!(!by_container.labels.contains_key("unsafe label"));
+    }
+
+    #[test]
+    fn shared_resources_resolve_cross_node_workloads_services_and_slice_backends() {
+        let container_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let pods = vec![RawPod {
+            namespace: "proj-orders".to_string(),
+            pod_name: "orders-7d9f8d6c5b-abcd".to_string(),
+            pod_uid: Some("orders-pod-uid".to_string()),
+            node_name: Some("homelab-02".to_string()),
+            pod_ip: Some("10.42.1.20".to_string()),
+            workload_name: Some("orders".to_string()),
+            workload_type: Some("deployment".to_string()),
+            container_ids: vec![container_id.to_string()],
+            container_names: BTreeMap::from([(container_id.to_string(), "api".to_string())]),
+            labels: BTreeMap::new(),
+        }];
+        let services = vec![RawService {
+            namespace: "proj-orders".to_string(),
+            service_name: "orders".to_string(),
+            service_uid: Some("orders-service-uid".to_string()),
+            cluster_ips: vec!["10.43.0.9".to_string()],
+        }];
+        let endpoint_slices = vec![RawEndpointSlice {
+            namespace: "proj-orders".to_string(),
+            service_name: "orders".to_string(),
+            addresses: vec!["10.42.1.20".to_string(), "192.0.2.20".to_string()],
+        }];
+
+        let cache = KubernetesMetadataCache::from_raw_resources(
+            &pods,
+            &services,
+            &endpoint_slices,
+            &KubernetesAttributionConfig::default(),
+        );
+        let remote_pod = cache
+            .get_by_pod_ip("10.42.1.20")
+            .expect("cross-node pod IP");
+        assert_eq!(remote_pod.node_name.as_deref(), Some("homelab-02"));
+        assert_eq!(
+            cache.get_owner_for_context(&remote_pod),
+            Some(WorkloadOwner {
+                name: "proj-orders/orders".to_string(),
+                owner_type: "deployment".to_string(),
+            })
+        );
+        let service_owner = WorkloadOwner {
+            name: "proj-orders/orders".to_string(),
+            owner_type: "service".to_string(),
+        };
+        assert_eq!(
+            cache.get_owner_for_address("10.43.0.9"),
+            Some(service_owner.clone())
+        );
+        assert_eq!(
+            cache.get_owner_for_address("192.0.2.20"),
+            Some(service_owner)
+        );
+        assert_eq!(
+            cache
+                .get_owner_for_address("10.42.1.20")
+                .expect("pod owner wins")
+                .owner_type,
+            "deployment"
+        );
+    }
+
+    #[test]
+    fn topology_owner_indexes_respect_the_configured_cache_bound() {
+        let services = vec![RawService {
+            namespace: "proj".to_string(),
+            service_name: "bounded".to_string(),
+            service_uid: None,
+            cluster_ips: vec![
+                "10.43.0.1".to_string(),
+                "10.43.0.2".to_string(),
+                "10.43.0.3".to_string(),
+            ],
+        }];
+        let config = KubernetesAttributionConfig {
+            max_cache_entries: 2,
+            ..KubernetesAttributionConfig::default()
+        };
+
+        let cache = KubernetesMetadataCache::from_raw_resources(&[], &services, &[], &config);
+
+        assert_eq!(cache.len(), 2);
+        assert!(cache.get_owner_for_address("10.43.0.1").is_some());
+        assert!(cache.get_owner_for_address("10.43.0.2").is_some());
+        assert!(cache.get_owner_for_address("10.43.0.3").is_none());
     }
 
     #[test]

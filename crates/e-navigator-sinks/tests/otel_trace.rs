@@ -175,6 +175,13 @@ fn formats_service_interaction_without_inventing_trace_ids() {
     assert_eq!(record.attributes["net.transport"], "tcp");
     assert_eq!(record.attributes["server.address"], "203.0.113.10");
     assert_eq!(record.attributes["server.port"], 443);
+    assert_eq!(record.attributes["client.k8s.workload.name"], "default/api");
+    assert_eq!(record.attributes["client.k8s.workload.type"], "deployment");
+    assert_eq!(
+        record.attributes["server.k8s.workload.name"],
+        "default/payments"
+    );
+    assert_eq!(record.attributes["server.k8s.workload.type"], "service");
 }
 
 #[test]
@@ -263,6 +270,8 @@ fn formats_service_path_and_warning_trace_foundation_records() {
             path_key: "trace-path:0123456789abcdef".to_string(),
             source: source_endpoint(),
             destination: DependencyEndpoint {
+                owner_name: None,
+                owner_type: None,
                 workload: None,
                 container: None,
                 address: None,
@@ -1583,6 +1592,8 @@ fn ignores_non_trace_signals() {
 
 fn source_endpoint() -> DependencyEndpoint {
     DependencyEndpoint {
+        owner_name: Some("default/api".to_string()),
+        owner_type: Some("deployment".to_string()),
         workload: Some(kubernetes_context()),
         container: Some(container_context()),
         address: Some("10.0.0.5".to_string()),
@@ -1593,6 +1604,8 @@ fn source_endpoint() -> DependencyEndpoint {
 
 fn destination_endpoint() -> DependencyEndpoint {
     DependencyEndpoint {
+        owner_name: Some("default/payments".to_string()),
+        owner_type: Some("service".to_string()),
         workload: None,
         container: None,
         address: Some("203.0.113.10".to_string()),

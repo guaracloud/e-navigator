@@ -468,6 +468,8 @@ fn dependency_edge_signal_with_workload(
         Some("node-a".to_string()),
         DependencyEdgeEvent {
             source: DependencyEndpoint {
+                owner_name: None,
+                owner_type: None,
                 workload: Some(workload),
                 container: Some(container_context()),
                 address: None,
@@ -475,6 +477,8 @@ fn dependency_edge_signal_with_workload(
                 domain: None,
             },
             destination: DependencyEndpoint {
+                owner_name: None,
+                owner_type: None,
                 workload: None,
                 container: None,
                 address: Some(address.to_string()),

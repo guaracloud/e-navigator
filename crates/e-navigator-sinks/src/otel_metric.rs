@@ -860,6 +860,8 @@ mod tests {
             None,
             e_navigator_signals::DependencyEdgeEvent {
                 source: e_navigator_signals::DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: None,
@@ -867,6 +869,8 @@ mod tests {
                     domain: None,
                 },
                 destination: e_navigator_signals::DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: None,

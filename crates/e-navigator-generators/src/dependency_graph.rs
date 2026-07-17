@@ -204,6 +204,8 @@ fn observation(
     };
     let edge = EdgeTemplate {
         source: DependencyEndpoint {
+            owner_name: None,
+            owner_type: None,
             workload: kubernetes,
             container,
             address: None,
@@ -211,6 +213,8 @@ fn observation(
             domain: None,
         },
         destination: DependencyEndpoint {
+            owner_name: None,
+            owner_type: None,
             workload: None,
             container: None,
             address: Some(remote_address),
@@ -268,6 +272,8 @@ mod tests {
         assert_eq!(
             edge.source,
             DependencyEndpoint {
+                owner_name: None,
+                owner_type: None,
                 workload: Some(kubernetes_context()),
                 container: Some(container_context()),
                 address: None,
@@ -278,6 +284,8 @@ mod tests {
         assert_eq!(
             edge.destination,
             DependencyEndpoint {
+                owner_name: None,
+                owner_type: None,
                 workload: None,
                 container: None,
                 address: Some("203.0.113.10".to_string()),

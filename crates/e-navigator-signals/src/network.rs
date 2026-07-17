@@ -147,6 +147,10 @@ pub enum NetworkAddressFamily {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DependencyEndpoint {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_type: Option<String>,
     pub workload: Option<KubernetesContext>,
     pub container: Option<ContainerContext>,
     pub address: Option<String>,
@@ -325,6 +329,8 @@ fn sanitize_network_flow_endpoint(endpoint: &mut NetworkFlowEndpoint) {
 }
 
 fn sanitize_dependency_endpoint(endpoint: &mut DependencyEndpoint) {
+    sanitize_optional_network_signal_string(&mut endpoint.owner_name);
+    sanitize_optional_network_signal_string(&mut endpoint.owner_type);
     sanitize_optional_network_signal_string(&mut endpoint.address);
     sanitize_optional_network_signal_string(&mut endpoint.domain);
     sanitize_optional_container_context(&mut endpoint.container);

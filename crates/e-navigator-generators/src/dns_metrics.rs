@@ -273,6 +273,8 @@ impl DnsMetricsGenerator {
 
         let state = EdgeState {
             source: DependencyEndpoint {
+                owner_name: None,
+                owner_type: None,
                 workload: event.kubernetes.clone(),
                 container: event.container.clone(),
                 address: None,
@@ -280,6 +282,8 @@ impl DnsMetricsGenerator {
                 domain: None,
             },
             destination: DependencyEndpoint {
+                owner_name: None,
+                owner_type: None,
                 workload: None,
                 container: None,
                 address: None,
