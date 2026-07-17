@@ -166,6 +166,8 @@ fn controller_publish_increments_generation() {
 
 #[test]
 fn scan_cgroups_reads_bounded_process_names_from_host_procfs() {
+    use std::os::unix::fs::symlink;
+
     let fixture =
         std::env::temp_dir().join(format!("e-nav-cf-process-scan-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&fixture);
@@ -177,6 +179,11 @@ fn scan_cgroups_reads_bounded_process_names_from_host_procfs() {
     std::fs::write(leaf.join("cgroup.procs"), "123\nnot-a-pid\n").expect("fixture cgroup.procs");
     std::fs::write(procfs_root.join("123").join("comm"), "postgres-exporter\n")
         .expect("fixture comm");
+    symlink(
+        "/usr/local/bin/redis_exporter",
+        procfs_root.join("123").join("exe"),
+    )
+    .expect("fixture exe symlink");
 
     let observations = scan_cgroups_blocking(&cgroup_root, &procfs_root);
     let container = observations
@@ -184,6 +191,13 @@ fn scan_cgroups_reads_bounded_process_names_from_host_procfs() {
         .find(|observation| observation.container_id.as_deref() == Some(CID))
         .expect("container observation");
 
-    assert_eq!(container.process_names, vec!["postgres-exporter"]);
+    assert_eq!(
+        container.process_names,
+        vec![
+            "redis_exporter",
+            "/usr/local/bin/redis_exporter",
+            "postgres-exporter"
+        ]
+    );
     std::fs::remove_dir_all(&fixture).expect("cleanup");
 }
