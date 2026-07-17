@@ -258,6 +258,14 @@ rerunning `tests/smoke_pyroscope_otlp.sh`. Native cumulative profile-session
 signals are intentionally not sent to this endpoint, avoiding repeat export of
 the same window.
 
+Metric host, container, and Kubernetes identity remains encoded as canonical
+OTLP resource attributes and is also mirrored into each data point. The mirror
+keeps independent DaemonSet nodes and workloads distinct when an
+OTLP-to-Prometheus collector does not enable resource-to-telemetry conversion;
+without it, otherwise identical metric attributes can collide during remote
+write. Treat the mirrored keys as bounded identity, not arbitrary label
+promotion.
+
 ### Guara standalone replacement preset
 
 `charts/e-navigator/values-guara-production.yaml` is the opinionated Guara
