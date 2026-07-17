@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "run_id": "019f7101",
+  "decision": "no-go",
+  "proof_level": "homelab",
+  "started_at_utc": "2026-07-17T20:07:12Z",
+  "ended_at_utc": "2026-07-17T21:09:01Z",
+  "repository": {
+    "branch": "codex/standalone-observability-agent",
+    "origin_main": "39bf46ac4d0ac3be9d25b1a373d74b70bf4c8da0",
+    "runtime_source_commit": "b95df9cbba74d1cf7acd2971e17087661bea78b4",
+    "implementation_head": "12dfc005316ee7fd0d5856d307dc7aeac021e8d2"
+  },
+  "cluster": {
+    "context": "homelab",
+    "server": "https://192.168.50.132:6443",
+    "kubernetes": "v1.30.4+k3s1",
+    "nodes": ["homelab-01", "homelab-02"],
+    "architecture": "linux/amd64",
+    "kernel": "6.6.68",
+    "runtime": "containerd 1.7.20-k3s1"
+  },
+  "deployment": {
+    "namespace": "e-nav-standalone-019f7101",
+    "helm_release": "e-nav-019f7101",
+    "helm_revision": 6,
+    "image_tag": "e-navigator:standalone-019f7101-r6-amd64",
+    "image_manifest_sha256": "d219618553db30389d5c23b08e9fd0750056969533a6e866e823f1f1ff07eaa5",
+    "image_config_sha256": "d34b52abdc84c87fd1a87c9412e12c1ad4a7df25a9aa7dabc17910a6c2ff0078",
+    "chart_package_sha256": "bc38aa27b1d648eb86f0f716c6d28f2fbd80aa6b630cbb72452c1fcb348a3a6b",
+    "chart_tree_sha256": "74329aaaca27685589b92941b2d37d7786ad8c6d9930274c7ef9f008728af67a",
+    "config_sha256": "0b618bd6b812b1a61fba100fe75f49056de792502a155dfec5d560ab742a4780"
+  },
+  "backends": {
+    "metrics": "existing Alloy OTLP receiver to Prometheus",
+    "traces": "existing Alloy OTLP receiver to Tempo",
+    "profiles": "direct E-Navigator OTLP Profiles to disposable Pyroscope 1.20.3"
+  },
+  "cleanup": {
+    "helm_release_removed": true,
+    "namespaces_removed": true,
+    "cluster_rbac_removed": true,
+    "node_images_removed": true,
+    "local_run_images_removed": true,
+    "unrelated_resources_modified": false
+  },
+  "artifacts": ["manifest.json", "report.md", "SHA256SUMS"]
+}
