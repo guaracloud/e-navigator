@@ -1288,13 +1288,17 @@ fn tcp_stat_event_scratch() -> Result<&'static mut RawTcpStatEvent, i64> {
     Ok(event)
 }
 
-fn tcp_stat_common(event: &mut RawTcpStatEvent) -> Result<(), i64> {
+fn tcp_stat_common(event: &mut RawTcpStatEvent) -> Result<bool, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     event.pid = (pid_tgid >> 32) as u32;
     event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(false);
+    }
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
-    Ok(())
+    Ok(true)
 }
 
 // sock:inet_sock_set_state field offsets (stable): oldstate@16, newstate@20,
@@ -1307,7 +1311,9 @@ fn try_tracepoint_tcp_set_state(ctx: &TracePointContext) -> Result<u32, i64> {
     }
     let family = unsafe { ctx.read_at::<u16>(28) }.map_err(|err| err as i64)?;
     let event = tcp_stat_event_scratch()?;
-    tcp_stat_common(event)?;
+    if !tcp_stat_common(event)? {
+        return Ok(0);
+    }
     event.kind = TCP_STAT_KIND_STATE;
     event.family = family as u32;
     event.old_state = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
@@ -1324,7 +1330,9 @@ fn try_tracepoint_tcp_set_state(ctx: &TracePointContext) -> Result<u32, i64> {
 fn try_tracepoint_tcp_retransmit(ctx: &TracePointContext) -> Result<u32, i64> {
     let family = unsafe { ctx.read_at::<u16>(32) }.map_err(|err| err as i64)?;
     let event = tcp_stat_event_scratch()?;
-    tcp_stat_common(event)?;
+    if !tcp_stat_common(event)? {
+        return Ok(0);
+    }
     event.kind = TCP_STAT_KIND_RETRANSMIT;
     event.family = family as u32;
     event.local_port = unsafe { ctx.read_at::<u16>(28) }.map_err(|err| err as i64)?;
@@ -1343,7 +1351,9 @@ fn try_tracepoint_tcp_reset(ctx: &TracePointContext, direction: u32) -> Result<u
         return Ok(0);
     }
     let event = tcp_stat_event_scratch()?;
-    tcp_stat_common(event)?;
+    if !tcp_stat_common(event)? {
+        return Ok(0);
+    }
     event.kind = TCP_STAT_KIND_RESET;
     event.family = family as u32;
     event.reset_direction = direction;
