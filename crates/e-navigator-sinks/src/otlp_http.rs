@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use e_navigator_core::{CoreResult, ModuleKind, ModuleMetadata, OtlpHttpConfig, Sink};
 use e_navigator_signals::{SignalEnvelope, SignalPayload};
 use std::{
+    collections::BTreeMap,
     sync::{
-        Arc,
+        Arc, Mutex as StdMutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
@@ -19,7 +20,7 @@ use crate::{
     HttpExporterConfig, HttpProtobufExporter, format_otel_metric_record,
     format_otel_profile_record, format_otel_trace_record,
     native_telemetry::{NativeTelemetryRegistry, NativeTelemetrySource},
-    otlp_metric_proto::encode_metric_export_request,
+    otlp_metric_proto::{encode_metric_export_request, metric_series_key},
     otlp_profile_proto::encode_profile_export_request,
     otlp_trace_proto::{encode_trace_export_request, trace_record_has_valid_ids},
 };
@@ -31,6 +32,7 @@ pub struct OtlpHttpSink {
     profile_exporter: Option<AsyncProtobufExporter<crate::OtelProfileRecord>>,
     trace_exporter: Option<AsyncProtobufExporter<crate::OtelTraceRecord>>,
     invalid_trace_records: Arc<AtomicU64>,
+    metric_timestamp_guard: Option<Arc<MetricTimestampGuard>>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -54,6 +56,32 @@ pub struct OtlpHttpTelemetry {
     pub traces: Option<ExportWorkerTelemetry>,
     pub profiles: Option<ExportWorkerTelemetry>,
     pub invalid_trace_records: u64,
+    pub metric_timestamps: Option<MetricTimestampTelemetry>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MetricTimestampTelemetry {
+    pub tracked_series: usize,
+    pub same_millisecond_suppressed: u64,
+    pub out_of_order_dropped: u64,
+    pub series_evicted: u64,
+}
+
+const MAX_METRIC_TIMESTAMP_SERIES: usize = 65_536;
+const METRIC_TIMESTAMP_STALE_NANOS: u64 = 10 * 60 * 1_000_000_000;
+
+#[derive(Debug, Clone, Copy)]
+struct MetricSeriesTimestamp {
+    receiver_timestamp_millis: u64,
+    last_seen_unix_nanos: u64,
+}
+
+#[derive(Debug)]
+struct MetricTimestampGuard {
+    series: StdMutex<BTreeMap<String, MetricSeriesTimestamp>>,
+    same_millisecond_suppressed: AtomicU64,
+    out_of_order_dropped: AtomicU64,
+    series_evicted: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -118,6 +146,13 @@ impl OtlpHttpSink {
                 invalid_trace_records: invalid_trace_records.clone(),
             }));
         }
+        let metric_timestamp_guard = if config.metrics_enabled {
+            let guard = Arc::new(MetricTimestampGuard::default());
+            telemetry_registry.register_source(guard.clone());
+            Some(guard)
+        } else {
+            None
+        };
         let metric_exporter = if config.metrics_enabled {
             Some(build_exporter(
                 exporter_config_for(&config, required_metrics_endpoint(&config)?),
@@ -158,6 +193,7 @@ impl OtlpHttpSink {
             profile_exporter,
             trace_exporter,
             invalid_trace_records,
+            metric_timestamp_guard,
         })
     }
 
@@ -176,6 +212,10 @@ impl OtlpHttpSink {
                 .as_ref()
                 .map(AsyncProtobufExporter::telemetry),
             invalid_trace_records: self.invalid_trace_records.load(Ordering::Relaxed),
+            metric_timestamps: self
+                .metric_timestamp_guard
+                .as_ref()
+                .map(|guard| guard.telemetry()),
         }
     }
 }
@@ -261,7 +301,11 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
             && let Some(record) = format_otel_metric_record(signal)
             && let Some(exporter) = &self.metric_exporter
         {
-            exporter.enqueue(record);
+            if let Some(guard) = &self.metric_timestamp_guard {
+                guard.enqueue(record, exporter)?;
+            } else {
+                exporter.enqueue(record);
+            }
             return Ok(());
         }
 
@@ -427,26 +471,29 @@ where
         })
     }
 
-    fn enqueue(&self, record: T) {
+    fn enqueue(&self, record: T) -> bool {
         if !self.accepting.load(Ordering::Acquire) {
             self.telemetry
                 .dropped_worker_closed
                 .fetch_add(1, Ordering::Relaxed);
-            return;
+            return false;
         }
         match self.sender.try_send(ExportCommand::Record(record)) {
             Ok(()) => {
                 self.telemetry.enqueued.fetch_add(1, Ordering::Relaxed);
+                true
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.telemetry
                     .dropped_queue_full
                     .fetch_add(1, Ordering::Relaxed);
+                false
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 self.telemetry
                     .dropped_worker_closed
                     .fetch_add(1, Ordering::Relaxed);
+                false
             }
         }
     }
@@ -498,6 +545,114 @@ struct ExportWorkerTelemetrySource<T> {
 
 struct InvalidTraceTelemetrySource {
     invalid_trace_records: Arc<AtomicU64>,
+}
+
+impl Default for MetricTimestampGuard {
+    fn default() -> Self {
+        Self {
+            series: StdMutex::new(BTreeMap::new()),
+            same_millisecond_suppressed: AtomicU64::new(0),
+            out_of_order_dropped: AtomicU64::new(0),
+            series_evicted: AtomicU64::new(0),
+        }
+    }
+}
+
+impl MetricTimestampGuard {
+    fn enqueue(
+        &self,
+        record: crate::OtelMetricRecord,
+        exporter: &AsyncProtobufExporter<crate::OtelMetricRecord>,
+    ) -> CoreResult<()> {
+        let key =
+            metric_series_key(&record).map_err(|err| exporter_module_error(err.to_string()))?;
+        let observed_unix_nanos = record.window.end_unix_nanos;
+        let receiver_timestamp_millis = observed_unix_nanos / 1_000_000;
+        let mut series = self
+            .series
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let expired = series.len();
+        series.retain(|_, state| {
+            observed_unix_nanos.saturating_sub(state.last_seen_unix_nanos)
+                <= METRIC_TIMESTAMP_STALE_NANOS
+        });
+        let expired = expired.saturating_sub(series.len());
+        if expired > 0 {
+            self.series_evicted
+                .fetch_add(expired as u64, Ordering::Relaxed);
+        }
+
+        if let Some(previous) = series.get(&key) {
+            if receiver_timestamp_millis < previous.receiver_timestamp_millis {
+                self.out_of_order_dropped.fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
+            if receiver_timestamp_millis == previous.receiver_timestamp_millis {
+                self.same_millisecond_suppressed
+                    .fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
+        } else if series.len() >= MAX_METRIC_TIMESTAMP_SERIES
+            && let Some(oldest_key) = series
+                .iter()
+                .min_by_key(|(_, state)| state.last_seen_unix_nanos)
+                .map(|(key, _)| key.clone())
+        {
+            series.remove(&oldest_key);
+            self.series_evicted.fetch_add(1, Ordering::Relaxed);
+        }
+
+        if exporter.enqueue(record) {
+            series.insert(
+                key,
+                MetricSeriesTimestamp {
+                    receiver_timestamp_millis,
+                    last_seen_unix_nanos: observed_unix_nanos,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn telemetry(&self) -> MetricTimestampTelemetry {
+        MetricTimestampTelemetry {
+            tracked_series: self.series.lock().map_or(0, |series| series.len()),
+            same_millisecond_suppressed: self.same_millisecond_suppressed.load(Ordering::Relaxed),
+            out_of_order_dropped: self.out_of_order_dropped.load(Ordering::Relaxed),
+            series_evicted: self.series_evicted.load(Ordering::Relaxed),
+        }
+    }
+}
+
+impl NativeTelemetrySource for MetricTimestampGuard {
+    fn prometheus_lines(&self) -> Vec<crate::PrometheusMetricLine> {
+        let telemetry = self.telemetry();
+        let metric = |name: &str, value: u64| crate::PrometheusMetricLine {
+            name: name.to_string(),
+            labels: BTreeMap::new(),
+            value: value.to_string(),
+        };
+        vec![
+            metric(
+                "e_navigator_export_metric_timestamp_series",
+                telemetry.tracked_series as u64,
+            ),
+            metric(
+                "e_navigator_export_metric_same_millisecond_suppressed_total",
+                telemetry.same_millisecond_suppressed,
+            ),
+            metric(
+                "e_navigator_export_metric_out_of_order_dropped_total",
+                telemetry.out_of_order_dropped,
+            ),
+            metric(
+                "e_navigator_export_metric_timestamp_series_evicted_total",
+                telemetry.series_evicted,
+            ),
+        ]
+    }
 }
 
 impl NativeTelemetrySource for InvalidTraceTelemetrySource {
@@ -1011,6 +1166,111 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn otlp_http_sink_suppresses_cross_batch_receiver_timestamp_collisions() {
+        const BASE: u64 = 1_784_321_612_093_000_000;
+        let collector = FakeCollector::spawn(vec![200, 200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 8,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_metric_at(333, BASE))
+            .await
+            .expect("first cumulative point enqueues");
+        let first = collector.next_request().await;
+        assert_eq!(metric_point(&first), (333, BASE));
+
+        sink.write(&network_metric_at(557, BASE + 500_000))
+            .await
+            .expect("same-millisecond point is intentionally suppressed");
+        sink.write(&network_metric_at(100, BASE - 1_000_000))
+            .await
+            .expect("out-of-order point is intentionally dropped");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(collector.try_next_request().is_none());
+
+        sink.write(&network_metric_at(558, BASE + 1_000_000))
+            .await
+            .expect("next receiver timestamp enqueues");
+        let next = collector.next_request().await;
+        assert_eq!(metric_point(&next), (558, BASE + 1_000_000));
+
+        let telemetry = sink
+            .telemetry()
+            .metric_timestamps
+            .expect("metric timestamp guard");
+        assert_eq!(telemetry.same_millisecond_suppressed, 1);
+        assert_eq!(telemetry.out_of_order_dropped, 1);
+        assert_eq!(telemetry.tracked_series, 1);
+        Sink::shutdown(&sink).await.expect("worker drains");
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_sustains_high_rate_without_duplicate_receiver_timestamps() {
+        const BASE: u64 = 1_784_321_612_093_000_000;
+        const MILLISECONDS: u64 = 100;
+        const POINTS_PER_MILLISECOND: u64 = 20;
+        let collector = FakeCollector::spawn(vec![200; MILLISECONDS as usize]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 4_096,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        for offset in 0..(MILLISECONDS * POINTS_PER_MILLISECOND) {
+            let millisecond = offset / POINTS_PER_MILLISECOND;
+            let within_millisecond = offset % POINTS_PER_MILLISECOND;
+            let timestamp = BASE + millisecond * 1_000_000 + within_millisecond * 10_000;
+            sink.write(&network_metric_at(offset + 1, timestamp))
+                .await
+                .expect("bounded high-rate write succeeds");
+        }
+
+        let telemetry = sink
+            .telemetry()
+            .metric_timestamps
+            .expect("metric timestamp guard");
+        assert_eq!(
+            telemetry.same_millisecond_suppressed,
+            MILLISECONDS * (POINTS_PER_MILLISECOND - 1)
+        );
+        assert_eq!(telemetry.out_of_order_dropped, 0);
+
+        let mut previous_timestamp = None;
+        let mut previous_value = None;
+        for _ in 0..MILLISECONDS {
+            let request = collector.next_request().await;
+            let (value, timestamp) = metric_point(&request);
+            if let Some(previous) = previous_timestamp {
+                assert!(timestamp > previous, "receiver timestamps must be unique");
+            }
+            if let Some(previous) = previous_value {
+                assert!(value > previous, "cumulative values must remain monotonic");
+            }
+            previous_timestamp = Some(timestamp);
+            previous_value = Some(value);
+        }
+        Sink::shutdown(&sink).await.expect("worker drains");
+    }
+
+    #[tokio::test]
     async fn otlp_http_sink_exports_native_flow_byte_metric_as_otlp_protobuf() {
         let collector = FakeCollector::spawn(vec![200]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
@@ -1189,8 +1449,8 @@ mod tests {
 
         sink.write(&network_metric()).await.expect("first enqueue");
         let _ = collector.next_request().await;
-        for _ in 0..3 {
-            sink.write(&network_metric())
+        for index in 0..3 {
+            sink.write(&network_metric_at(index + 2, (index + 1) * 1_000_000))
                 .await
                 .expect("bounded enqueue");
         }
@@ -1239,7 +1499,9 @@ mod tests {
         })
         .await
         .expect("circuit opens");
-        sink.write(&network_metric()).await.expect("second enqueue");
+        sink.write(&network_metric_at(2, 1_000_000))
+            .await
+            .expect("second enqueue");
         timeout(Duration::from_secs(1), async {
             while sink
                 .telemetry()
@@ -2080,16 +2342,20 @@ mod tests {
     }
 
     fn network_metric() -> SignalEnvelope {
+        network_metric_at(1, 200)
+    }
+
+    fn network_metric_at(value: u64, end_unix_nanos: u64) -> SignalEnvelope {
         SignalEnvelope::network_counter_metric(
             "generator.network_metrics",
             Some("node-a".to_string()),
             NetworkCounterMetric {
                 metric_name: "network.connection.open.count".to_string(),
                 unit: "{connection}".to_string(),
-                value: 1,
+                value,
                 window: MetricAggregationWindow {
                     start_unix_nanos: 100,
-                    end_unix_nanos: 200,
+                    end_unix_nanos,
                 },
                 process: None,
                 protocol: Some(NetworkProtocol::Tcp),
@@ -2103,6 +2369,23 @@ mod tests {
                 kubernetes: None,
             },
         )
+    }
+
+    fn metric_point(request: &RecordedRequest) -> (u64, u64) {
+        let decoded = ExportMetricsServiceRequest::decode(request.body())
+            .expect("OTLP metrics request decodes");
+        let metric = decoded.resource_metrics[0].scope_metrics[0]
+            .metrics
+            .first()
+            .expect("metric is present");
+        let Some(Data::Sum(sum)) = metric.data.as_ref() else {
+            panic!("metric is exported as OTLP Sum");
+        };
+        let point = sum.data_points.first().expect("sum data point");
+        let Some(number_data_point::Value::AsInt(value)) = point.value else {
+            panic!("cumulative value is encoded as an integer");
+        };
+        (value as u64, point.time_unix_nano)
     }
 
     fn flow_byte_metric() -> SignalEnvelope {
@@ -2663,7 +2946,8 @@ mod tests {
                 .await
                 .expect("bind fake collector");
             let address = listener.local_addr().expect("collector address");
-            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            let request_capacity = statuses.len().max(8);
+            let (tx, rx) = tokio::sync::mpsc::channel(request_capacity);
             tokio::spawn(async move {
                 for status in statuses {
                     let (mut socket, _) = listener.accept().await.expect("accept request");

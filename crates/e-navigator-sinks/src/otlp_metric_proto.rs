@@ -31,14 +31,7 @@ fn coalesce_metric_series(
 ) -> Result<Vec<OtelMetricRecord>, ExporterError> {
     let mut latest = BTreeMap::new();
     for record in records {
-        let key = serde_json::to_string(&(
-            &record.name,
-            &record.unit,
-            &record.kind,
-            &record.resource,
-            &record.attributes,
-        ))
-        .map_err(|err| ExporterError::Encode(err.to_string()))?;
+        let key = metric_series_key(record)?;
         match latest.entry(key) {
             std::collections::btree_map::Entry::Vacant(entry) => {
                 entry.insert(record.clone());
@@ -51,6 +44,21 @@ fn coalesce_metric_series(
         }
     }
     Ok(latest.into_values().collect())
+}
+
+pub(crate) fn metric_series_key(record: &OtelMetricRecord) -> Result<String, ExporterError> {
+    // Prometheus identifies a series by its translated name and labels. Keep
+    // the OTLP resource in the key as well: identity attributes are mirrored
+    // into the data point today, while receivers may also promote resources.
+    // Metric kind is deliberately excluded because changing it does not create
+    // a distinct Prometheus series.
+    serde_json::to_string(&(
+        &record.name,
+        &record.unit,
+        &record.resource,
+        &record.attributes,
+    ))
+    .map_err(|err| ExporterError::Encode(err.to_string()))
 }
 
 fn resource_metrics_from_record(record: &OtelMetricRecord) -> ResourceMetrics {
