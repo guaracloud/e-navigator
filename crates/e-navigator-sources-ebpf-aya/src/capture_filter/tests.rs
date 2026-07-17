@@ -101,6 +101,125 @@ fn parse_raw_pods_tolerates_empty_list() {
 }
 
 #[test]
+fn pod_snapshot_preserves_list_resource_version() {
+    let snapshot = parse_raw_pod_snapshot(
+        r#"{
+          "metadata": {"resourceVersion": "41"},
+          "items": []
+        }"#,
+        16,
+        16,
+    )
+    .expect("valid snapshot");
+
+    assert_eq!(snapshot.resource_version, "41");
+    assert!(snapshot.pods.is_empty());
+}
+
+#[test]
+fn watch_events_reconcile_add_bookmark_and_delete() {
+    let mut pods = BTreeMap::new();
+    let mut resource_version = "41".to_string();
+    let added = format!(
+        r#"{{
+          "type": "ADDED",
+          "object": {{
+            "metadata": {{
+              "namespace": "proj-payments",
+              "name": "payments-api",
+              "uid": "{UID}",
+              "resourceVersion": "42",
+              "labels": {{"guara.cloud/tier": "pro"}}
+            }},
+            "spec": {{"nodeName": "node-a"}},
+            "status": {{
+              "podIP": "10.42.0.10",
+              "containerStatuses": [{{
+                "name": "api",
+                "containerID": "containerd://{CID}"
+              }}]
+            }}
+          }}
+        }}"#
+    );
+    apply_watch_line(added.as_bytes(), &mut pods, &mut resource_version, 16, 16)
+        .expect("add event");
+    assert_eq!(resource_version, "42");
+    assert_eq!(
+        pods.get(UID).and_then(|pod| pod.pod_ip.as_deref()),
+        Some("10.42.0.10")
+    );
+
+    apply_watch_line(
+        br#"{"type":"BOOKMARK","object":{"metadata":{"resourceVersion":"43"}}}"#,
+        &mut pods,
+        &mut resource_version,
+        16,
+        16,
+    )
+    .expect("bookmark");
+    assert_eq!(resource_version, "43");
+
+    let deleted = format!(
+        r#"{{"type":"DELETED","object":{{"metadata":{{"namespace":"proj-payments","name":"payments-api","uid":"{UID}","resourceVersion":"44"}}}}}}"#
+    );
+    apply_watch_line(deleted.as_bytes(), &mut pods, &mut resource_version, 16, 16)
+        .expect("delete event");
+    assert_eq!(resource_version, "44");
+    assert!(pods.is_empty());
+}
+
+#[test]
+fn watch_expiration_requests_a_relist() {
+    let mut pods = BTreeMap::new();
+    let mut resource_version = "41".to_string();
+    let err = apply_watch_line(
+        br#"{"type":"ERROR","object":{"code":410,"reason":"Expired","message":"too old"}}"#,
+        &mut pods,
+        &mut resource_version,
+        16,
+        16,
+    )
+    .expect_err("expired watch fails");
+
+    assert_eq!(err, PodWatchError::ExpiredResourceVersion);
+}
+
+#[test]
+fn complete_watch_event_is_published_without_waiting_for_watch_end() {
+    use std::sync::Mutex;
+
+    let published = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&published);
+    let publisher: RawPodPublisher = Arc::new(move |snapshot| {
+        captured
+            .lock()
+            .expect("publication lock")
+            .push(snapshot.clone());
+    });
+    let mut pods = BTreeMap::new();
+    let mut resource_version = "41".to_string();
+    let added = format!(
+        r#"{{"type":"ADDED","object":{{"metadata":{{"namespace":"proj-payments","name":"payments-api","uid":"{UID}","resourceVersion":"42"}}}}}}"#
+    );
+
+    in_cluster::apply_and_publish_watch_line(
+        added.as_bytes(),
+        &mut pods,
+        &mut resource_version,
+        16,
+        16,
+        &publisher,
+    )
+    .expect("event publication");
+
+    let published = published.lock().expect("publication lock");
+    assert_eq!(published.len(), 1);
+    assert_eq!(published[0].resource_version, "42");
+    assert_eq!(published[0].pods[0].pod_uid.as_deref(), Some(UID));
+}
+
+#[test]
 fn scan_cgroups_discovers_pod_and_container_tokens() {
     let root = std::env::temp_dir().join(format!("e-nav-cf-scan-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
@@ -134,41 +253,6 @@ fn scan_cgroups_discovers_pod_and_container_tokens() {
 }
 
 #[test]
-fn has_unresolved_is_true_without_index_and_false_when_resolved() {
-    let observation = CgroupObservation {
-        cgroup_id: 1,
-        container_id: Some(CID.to_string()),
-        pod_uid: Some(UID.to_string()),
-        process_names: Vec::new(),
-    };
-    // No index yet -> eager fetch warranted.
-    assert!(has_unresolved(
-        std::slice::from_ref(&observation),
-        &RawNodePodIndex::default(),
-        false
-    ));
-
-    let index = RawNodePodIndex::from_pods(
-        vec![RawPod {
-            namespace: "payments".to_string(),
-            pod_name: "payments-api".to_string(),
-            pod_uid: Some(UID.to_string()),
-            node_name: Some("node-a".to_string()),
-            pod_ip: Some("10.42.0.10".to_string()),
-            container_ids: vec![CID.to_string()],
-            container_names: BTreeMap::new(),
-            labels: BTreeMap::new(),
-        }],
-        1024,
-    );
-    assert!(!has_unresolved(
-        std::slice::from_ref(&observation),
-        &index,
-        true
-    ));
-}
-
-#[test]
 fn controller_publish_increments_generation() {
     let controller = CaptureFilterController::new(CONTROL_UNKNOWN_DROP);
     let (generation0, _) = controller.current();
@@ -197,6 +281,10 @@ fn controller_publishes_raw_pods_for_shared_attribution() {
     assert_eq!(generation, 1);
     assert_eq!(pods.len(), 1);
     assert_eq!(pods[0].pod_ip.as_deref(), Some("10.42.0.10"));
+    let telemetry = controller.telemetry();
+    assert_eq!(telemetry.reconciliations, 1);
+    assert_eq!(telemetry.pod_count, 1);
+    assert!(telemetry.last_success_unix_seconds > 0);
 }
 
 #[test]

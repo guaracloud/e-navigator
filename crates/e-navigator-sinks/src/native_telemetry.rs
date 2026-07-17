@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::prometheus::PrometheusMetricLine;
 
-pub(crate) trait NativeTelemetrySource: Send + Sync {
+#[doc(hidden)]
+pub trait NativeTelemetrySource: Send + Sync {
     fn prometheus_lines(&self) -> Vec<PrometheusMetricLine>;
 }
 
@@ -30,7 +31,8 @@ impl fmt::Debug for NativeTelemetryRegistry {
 }
 
 impl NativeTelemetryRegistry {
-    pub(crate) fn register(&self, source: Arc<dyn NativeTelemetrySource>) {
+    #[doc(hidden)]
+    pub fn register_source(&self, source: Arc<dyn NativeTelemetrySource>) {
         if let Ok(mut sources) = self.sources.lock() {
             sources.push(source);
         }

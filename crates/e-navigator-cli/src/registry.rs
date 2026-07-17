@@ -12,7 +12,8 @@ use e_navigator_processors::{
 };
 use e_navigator_runner::ModuleRegistry;
 use e_navigator_sinks::{
-    JsonStdoutSink, NativeTelemetryRegistry, OtlpHttpSink, PrometheusHttpSink,
+    JsonStdoutSink, NativeTelemetryRegistry, NativeTelemetrySource, OtlpHttpSink,
+    PrometheusHttpSink, PrometheusMetricLine,
 };
 use e_navigator_sources_ebpf_aya::{
     AyaCpuProfileSource, AyaDnsSource, AyaExecSource, AyaHttpSource, AyaNetworkSource,
@@ -27,6 +28,7 @@ pub(crate) fn build_registry(
 ) -> CoreResult<ModuleRegistry> {
     let mut registry = ModuleRegistry::new();
     let telemetry_registry = NativeTelemetryRegistry::default();
+    telemetry_registry.register_source(std::sync::Arc::new(WorkloadControllerTelemetrySource));
 
     match source {
         SourceMode::Unified | SourceMode::AyaExec if config.module_enabled("source.aya_exec") => {
@@ -203,6 +205,76 @@ pub(crate) fn build_registry(
 #[derive(Debug)]
 struct SharedKubernetesMetadataProvider;
 
+#[derive(Debug)]
+struct WorkloadControllerTelemetrySource;
+
+impl NativeTelemetrySource for WorkloadControllerTelemetrySource {
+    fn prometheus_lines(&self) -> Vec<PrometheusMetricLine> {
+        let snapshot =
+            e_navigator_sources_ebpf_aya::capture_filter::shared_telemetry().unwrap_or_default();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs());
+        let freshness = if snapshot.last_success_unix_seconds == 0 {
+            0
+        } else {
+            now.saturating_sub(snapshot.last_success_unix_seconds)
+        };
+        let metric = |name: &str, value: u64| PrometheusMetricLine {
+            name: name.to_string(),
+            labels: std::collections::BTreeMap::new(),
+            value: value.to_string(),
+        };
+        vec![
+            metric(
+                "e_navigator_kubernetes_controller_ready",
+                u64::from(snapshot.last_success_unix_seconds > 0),
+            ),
+            metric(
+                "e_navigator_kubernetes_controller_freshness_seconds",
+                freshness,
+            ),
+            metric("e_navigator_kubernetes_controller_pods", snapshot.pod_count),
+            metric(
+                "e_navigator_kubernetes_controller_relists_total",
+                snapshot.relists,
+            ),
+            metric(
+                "e_navigator_kubernetes_controller_relist_failures_total",
+                snapshot.relist_failures,
+            ),
+            metric(
+                "e_navigator_kubernetes_controller_watch_starts_total",
+                snapshot.watch_starts,
+            ),
+            metric(
+                "e_navigator_kubernetes_controller_watch_failures_total",
+                snapshot.watch_failures,
+            ),
+            metric(
+                "e_navigator_kubernetes_controller_expired_resource_versions_total",
+                snapshot.expired_resource_versions,
+            ),
+            metric(
+                "e_navigator_kubernetes_controller_reconciliations_total",
+                snapshot.reconciliations,
+            ),
+            metric(
+                "e_navigator_capture_filter_allowed_cgroups",
+                snapshot.allowed_cgroups,
+            ),
+            metric(
+                "e_navigator_capture_filter_denied_cgroups",
+                snapshot.denied_cgroups,
+            ),
+            metric(
+                "e_navigator_capture_filter_unresolved_cgroups",
+                snapshot.unresolved_cgroups,
+            ),
+        ]
+    }
+}
+
 #[async_trait]
 impl KubernetesMetadataProvider for SharedKubernetesMetadataProvider {
     async fn refresh(
@@ -311,6 +383,20 @@ mod tests {
                 "generator.runtime_security",
             ]
         );
+    }
+
+    #[test]
+    fn workload_controller_telemetry_uses_fixed_native_metric_names() {
+        let lines = WorkloadControllerTelemetrySource.prometheus_lines();
+        let names = lines
+            .iter()
+            .map(|line| line.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"e_navigator_kubernetes_controller_ready"));
+        assert!(names.contains(&"e_navigator_kubernetes_controller_freshness_seconds"));
+        assert!(names.contains(&"e_navigator_capture_filter_unresolved_cgroups"));
+        assert!(lines.iter().all(|line| line.labels.is_empty()));
     }
 
     #[test]

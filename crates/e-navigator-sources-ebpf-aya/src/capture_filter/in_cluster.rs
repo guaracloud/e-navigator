@@ -14,7 +14,16 @@ use e_navigator_core::KubernetesAttributionConfig;
 use e_navigator_core::capture_filter::RawPod;
 use serde::Deserialize;
 
-use super::{MAX_LABELS_PER_POD, MAX_POD_LIST_RESPONSE_BYTES, MAX_TOKEN_BYTES, RawPodFetcher};
+use super::{
+    MAX_LABELS_PER_POD, MAX_POD_LIST_RESPONSE_BYTES, MAX_TOKEN_BYTES, PodWatchError, RawPodFetcher,
+    RawPodPublisher, RawPodSnapshot,
+};
+
+const WATCH_TIMEOUT_SECONDS: &str = "300";
+const WATCH_REQUEST_TIMEOUT: Duration = Duration::from_secs(310);
+const API_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+const LIST_REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_RESOURCE_VERSION_BYTES: usize = 128;
 
 /// Reqwest-backed fetcher for the node-scoped, attribution-unscoped pod list.
 #[derive(Debug)]
@@ -48,7 +57,7 @@ impl InClusterRawFetcher {
         let cert = reqwest::Certificate::from_pem(&ca).map_err(|err| err.to_string())?;
         let client = reqwest::Client::builder()
             .add_root_certificate(cert)
-            .timeout(Duration::from_secs(3))
+            .connect_timeout(API_CONNECT_TIMEOUT)
             .build()
             .map_err(|err| err.to_string())?;
         let url = format!("https://{host}:{port}/api/v1/pods?fieldSelector=spec.nodeName%3D{node}");
@@ -65,65 +74,285 @@ impl InClusterRawFetcher {
 
 #[async_trait]
 impl RawPodFetcher for InClusterRawFetcher {
-    async fn fetch(&self) -> Result<Vec<RawPod>, String> {
+    async fn list(&self) -> Result<RawPodSnapshot, String> {
         let response = self
             .client
             .get(&self.url)
             .bearer_auth(self.token.trim())
+            .timeout(LIST_REQUEST_TIMEOUT)
             .send()
             .await
             .map_err(|err| err.to_string())?
             .error_for_status()
             .map_err(|err| err.to_string())?;
         let body = read_response_body(response, self.max_response_bytes).await?;
-        parse_raw_pods(&body, self.max_pods, MAX_LABELS_PER_POD)
+        parse_raw_pod_snapshot(&body, self.max_pods, MAX_LABELS_PER_POD)
+    }
+
+    async fn watch(
+        &self,
+        snapshot: RawPodSnapshot,
+        publisher: RawPodPublisher,
+    ) -> Result<RawPodSnapshot, PodWatchError> {
+        validate_resource_version(&snapshot.resource_version).map_err(PodWatchError::Other)?;
+        let mut url =
+            reqwest::Url::parse(&self.url).map_err(|err| PodWatchError::Other(err.to_string()))?;
+        url.query_pairs_mut()
+            .append_pair("watch", "true")
+            .append_pair("allowWatchBookmarks", "true")
+            .append_pair("timeoutSeconds", WATCH_TIMEOUT_SECONDS)
+            .append_pair("resourceVersion", &snapshot.resource_version);
+        let response = self
+            .client
+            .get(url)
+            .bearer_auth(self.token.trim())
+            .timeout(WATCH_REQUEST_TIMEOUT)
+            .send()
+            .await
+            .map_err(|err| PodWatchError::Other(err.to_string()))?;
+        if response.status() == reqwest::StatusCode::GONE {
+            return Err(PodWatchError::ExpiredResourceVersion);
+        }
+        let response = response
+            .error_for_status()
+            .map_err(|err| PodWatchError::Other(err.to_string()))?;
+        read_watch_response(
+            response,
+            snapshot,
+            self.max_response_bytes,
+            self.max_pods,
+            MAX_LABELS_PER_POD,
+            publisher,
+        )
+        .await
     }
 }
 
 /// Parse a Kubernetes `PodList` JSON body into raw pods, bounded by `max_pods`
 /// and `max_labels`. No attribution scoping is applied.
+#[cfg(test)]
 pub(crate) fn parse_raw_pods(
     body: &str,
     max_pods: usize,
     max_labels: usize,
 ) -> Result<Vec<RawPod>, String> {
+    Ok(parse_raw_pod_snapshot(body, max_pods, max_labels)?.pods)
+}
+
+pub(super) fn parse_raw_pod_snapshot(
+    body: &str,
+    max_pods: usize,
+    max_labels: usize,
+) -> Result<RawPodSnapshot, String> {
     let pod_list: PodList = serde_json::from_str(body).map_err(|err| err.to_string())?;
     let mut pods = Vec::new();
     for pod in pod_list.items.into_iter().take(max_pods) {
-        let namespace = pod.metadata.namespace.unwrap_or_default();
-        let pod_name = pod.metadata.name.unwrap_or_default();
-        let labels = bounded_labels(pod.metadata.labels.unwrap_or_default(), max_labels);
-        let node_name = pod.spec.and_then(|spec| spec.node_name);
-        let mut container_ids = Vec::new();
-        let mut container_names = BTreeMap::new();
-        let mut pod_ip = None;
-        if let Some(status) = pod.status {
-            pod_ip = status.pod_ip;
-            for container in status.container_statuses.unwrap_or_default() {
-                let Some(container_id) = container
-                    .container_id
-                    .and_then(|raw| bare_container_id(&raw))
-                else {
-                    continue;
-                };
-                if let Some(name) = container.name {
-                    container_names.insert(container_id.clone(), name);
-                }
-                container_ids.push(container_id);
+        pods.push(raw_pod_from_pod(pod, max_labels).2);
+    }
+    Ok(RawPodSnapshot {
+        resource_version: pod_list.metadata.resource_version.unwrap_or_default(),
+        pods,
+    })
+}
+
+fn raw_pod_from_pod(pod: Pod, max_labels: usize) -> (String, Option<String>, RawPod) {
+    let namespace = pod.metadata.namespace.unwrap_or_default();
+    let pod_name = pod.metadata.name.unwrap_or_default();
+    let pod_uid = pod.metadata.uid;
+    let resource_version = pod.metadata.resource_version;
+    let key = pod_uid
+        .clone()
+        .unwrap_or_else(|| format!("{namespace}/{pod_name}"));
+    let labels = bounded_labels(pod.metadata.labels.unwrap_or_default(), max_labels);
+    let node_name = pod.spec.and_then(|spec| spec.node_name);
+    let mut container_ids = Vec::new();
+    let mut container_names = BTreeMap::new();
+    let mut pod_ip = None;
+    if let Some(status) = pod.status {
+        pod_ip = status.pod_ip;
+        for container in status.container_statuses.unwrap_or_default() {
+            let Some(container_id) = container
+                .container_id
+                .and_then(|raw| bare_container_id(&raw))
+            else {
+                continue;
+            };
+            if let Some(name) = container.name {
+                container_names.insert(container_id.clone(), name);
             }
+            container_ids.push(container_id);
         }
-        pods.push(RawPod {
+    }
+    (
+        key,
+        resource_version,
+        RawPod {
             namespace,
             pod_name,
-            pod_uid: pod.metadata.uid,
+            pod_uid,
             node_name,
             pod_ip,
             container_ids,
             container_names,
             labels,
-        });
+        },
+    )
+}
+
+async fn read_watch_response(
+    mut response: reqwest::Response,
+    snapshot: RawPodSnapshot,
+    max_line_bytes: u64,
+    max_pods: usize,
+    max_labels: usize,
+    publisher: RawPodPublisher,
+) -> Result<RawPodSnapshot, PodWatchError> {
+    let mut pods = snapshot
+        .pods
+        .into_iter()
+        .map(|pod| (raw_pod_key(&pod), pod))
+        .collect::<BTreeMap<_, _>>();
+    let mut resource_version = snapshot.resource_version;
+    let mut pending = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|err| PodWatchError::Other(err.to_string()))?
+    {
+        pending.extend_from_slice(&chunk);
+        while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
+            let line = pending.drain(..=newline).collect::<Vec<_>>();
+            apply_and_publish_watch_line(
+                trim_watch_line(&line),
+                &mut pods,
+                &mut resource_version,
+                max_pods,
+                max_labels,
+                &publisher,
+            )?;
+        }
+        if pending.len() as u64 > max_line_bytes {
+            return Err(PodWatchError::Other(
+                "Kubernetes watch event exceeds the configured response bound".to_string(),
+            ));
+        }
     }
-    Ok(pods)
+    if !pending.is_empty() {
+        apply_and_publish_watch_line(
+            trim_watch_line(&pending),
+            &mut pods,
+            &mut resource_version,
+            max_pods,
+            max_labels,
+            &publisher,
+        )?;
+    }
+    Ok(RawPodSnapshot {
+        resource_version,
+        pods: pods.into_values().collect(),
+    })
+}
+
+pub(super) fn apply_and_publish_watch_line(
+    line: &[u8],
+    pods: &mut BTreeMap<String, RawPod>,
+    resource_version: &mut String,
+    max_pods: usize,
+    max_labels: usize,
+    publisher: &RawPodPublisher,
+) -> Result<(), PodWatchError> {
+    if line.is_empty() {
+        return Ok(());
+    }
+    apply_watch_line(line, pods, resource_version, max_pods, max_labels)?;
+    publisher(&RawPodSnapshot {
+        resource_version: resource_version.to_string(),
+        pods: pods.values().cloned().collect(),
+    });
+    Ok(())
+}
+
+pub(super) fn apply_watch_line(
+    line: &[u8],
+    pods: &mut BTreeMap<String, RawPod>,
+    resource_version: &mut String,
+    max_pods: usize,
+    max_labels: usize,
+) -> Result<(), PodWatchError> {
+    if line.is_empty() {
+        return Ok(());
+    }
+    let event: WatchEvent =
+        serde_json::from_slice(line).map_err(|err| PodWatchError::Other(err.to_string()))?;
+    match event.event_type.as_str() {
+        "ADDED" | "MODIFIED" => {
+            let pod: Pod = serde_json::from_value(event.object)
+                .map_err(|err| PodWatchError::Other(err.to_string()))?;
+            let (key, version, pod) = raw_pod_from_pod(pod, max_labels);
+            if pods.contains_key(&key) || pods.len() < max_pods {
+                pods.insert(key, pod);
+            }
+            if let Some(version) = version {
+                *resource_version = version;
+            }
+        }
+        "DELETED" => {
+            let pod: Pod = serde_json::from_value(event.object)
+                .map_err(|err| PodWatchError::Other(err.to_string()))?;
+            let (key, version, _) = raw_pod_from_pod(pod, max_labels);
+            pods.remove(&key);
+            if let Some(version) = version {
+                *resource_version = version;
+            }
+        }
+        "BOOKMARK" => {
+            let bookmark: Bookmark = serde_json::from_value(event.object)
+                .map_err(|err| PodWatchError::Other(err.to_string()))?;
+            if let Some(version) = bookmark.metadata.resource_version {
+                *resource_version = version;
+            }
+        }
+        "ERROR" => {
+            let status: WatchStatus = serde_json::from_value(event.object)
+                .map_err(|err| PodWatchError::Other(err.to_string()))?;
+            if status.code == Some(410) || status.reason.as_deref() == Some("Expired") {
+                return Err(PodWatchError::ExpiredResourceVersion);
+            }
+            return Err(PodWatchError::Other(status.message.unwrap_or_else(|| {
+                "Kubernetes pod watch returned an error".to_string()
+            })));
+        }
+        other => {
+            return Err(PodWatchError::Other(format!(
+                "unsupported Kubernetes pod watch event type '{other}'"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn trim_watch_line(line: &[u8]) -> &[u8] {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    line.strip_suffix(b"\r").unwrap_or(line)
+}
+
+fn raw_pod_key(pod: &RawPod) -> String {
+    pod.pod_uid
+        .clone()
+        .unwrap_or_else(|| format!("{}/{}", pod.namespace, pod.pod_name))
+}
+
+fn validate_resource_version(resource_version: &str) -> Result<(), String> {
+    if resource_version.is_empty() || resource_version.len() > MAX_RESOURCE_VERSION_BYTES {
+        return Err("Kubernetes resourceVersion is empty or exceeds 128 bytes".to_string());
+    }
+    if !resource_version
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err("Kubernetes resourceVersion contains invalid characters".to_string());
+    }
+    Ok(())
 }
 
 /// Strip the `runtime://` scheme from a Kubernetes container id, yielding the
@@ -182,7 +411,15 @@ async fn read_response_body(
 #[derive(Debug, Deserialize)]
 struct PodList {
     #[serde(default)]
+    metadata: ListMetadata,
+    #[serde(default)]
     items: Vec<Pod>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListMetadata {
+    resource_version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,6 +434,8 @@ struct PodMetadata {
     namespace: Option<String>,
     name: Option<String>,
     uid: Option<String>,
+    #[serde(rename = "resourceVersion")]
+    resource_version: Option<String>,
     labels: Option<BTreeMap<String, String>>,
 }
 
@@ -219,4 +458,23 @@ struct ContainerStatus {
     name: Option<String>,
     #[serde(rename = "containerID")]
     container_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WatchEvent {
+    #[serde(rename = "type")]
+    event_type: String,
+    object: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct Bookmark {
+    metadata: ListMetadata,
+}
+
+#[derive(Debug, Deserialize)]
+struct WatchStatus {
+    code: Option<u16>,
+    reason: Option<String>,
+    message: Option<String>,
 }
