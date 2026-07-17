@@ -10,7 +10,7 @@ use e_navigator_generators::{
 use e_navigator_processors::{
     ContainerAttributionProcessor, KubernetesMetadataCache, KubernetesMetadataProvider,
 };
-use e_navigator_runner::ModuleRegistry;
+use e_navigator_runner::{ModuleRegistry, SourceHealthRegistry};
 use e_navigator_sinks::{
     JsonStdoutSink, NativeTelemetryRegistry, NativeTelemetrySource, OtlpHttpSink,
     PrometheusHttpSink, PrometheusMetricLine,
@@ -29,6 +29,9 @@ pub(crate) fn build_registry(
     let mut registry = ModuleRegistry::new();
     let telemetry_registry = NativeTelemetryRegistry::default();
     telemetry_registry.register_source(std::sync::Arc::new(WorkloadControllerTelemetrySource));
+    telemetry_registry.register_source(std::sync::Arc::new(SourceSupervisorTelemetrySource {
+        registry: registry.source_health_registry(),
+    }));
 
     match source {
         SourceMode::Unified | SourceMode::AyaExec if config.module_enabled("source.aya_exec") => {
@@ -207,6 +210,42 @@ struct SharedKubernetesMetadataProvider;
 
 #[derive(Debug)]
 struct WorkloadControllerTelemetrySource;
+
+#[derive(Debug)]
+struct SourceSupervisorTelemetrySource {
+    registry: SourceHealthRegistry,
+}
+
+impl NativeTelemetrySource for SourceSupervisorTelemetrySource {
+    fn prometheus_lines(&self) -> Vec<PrometheusMetricLine> {
+        self.registry
+            .snapshots()
+            .into_iter()
+            .flat_map(|snapshot| {
+                let labels = std::collections::BTreeMap::from([(
+                    "source".to_string(),
+                    snapshot.source.to_string(),
+                )]);
+                let metric = |name: &str, value: u64| PrometheusMetricLine {
+                    name: name.to_string(),
+                    labels: labels.clone(),
+                    value: value.to_string(),
+                };
+                [
+                    metric("e_navigator_source_configured", 1),
+                    metric("e_navigator_source_running", u64::from(snapshot.running)),
+                    metric("e_navigator_source_starts_total", snapshot.starts),
+                    metric("e_navigator_source_clean_exits_total", snapshot.clean_exits),
+                    metric("e_navigator_source_failures_total", snapshot.failures),
+                    metric(
+                        "e_navigator_source_last_transition_timestamp_seconds",
+                        snapshot.last_transition_unix_seconds,
+                    ),
+                ]
+            })
+            .collect()
+    }
+}
 
 impl NativeTelemetrySource for WorkloadControllerTelemetrySource {
     fn prometheus_lines(&self) -> Vec<PrometheusMetricLine> {
@@ -397,6 +436,29 @@ mod tests {
         assert!(names.contains(&"e_navigator_kubernetes_controller_freshness_seconds"));
         assert!(names.contains(&"e_navigator_capture_filter_unresolved_cgroups"));
         assert!(lines.iter().all(|line| line.labels.is_empty()));
+    }
+
+    #[test]
+    fn source_supervisor_telemetry_is_bounded_by_registered_sources() {
+        let config = RuntimeConfig::default();
+        let registry = build_test_registry(&config, SourceMode::Synthetic);
+        let lines = SourceSupervisorTelemetrySource {
+            registry: registry.source_health_registry(),
+        }
+        .prometheus_lines();
+
+        assert_eq!(lines.len(), 6);
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.labels.get("source").map(String::as_str)
+                    == Some("source.synthetic_exec"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.name == "e_navigator_source_running" && line.value == "0")
+        );
     }
 
     #[test]

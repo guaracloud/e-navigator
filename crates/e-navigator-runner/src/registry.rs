@@ -2,12 +2,15 @@ use e_navigator_core::{Generator, Processor, Sink, Source};
 use e_navigator_signals::SignalEnvelope;
 use std::fmt;
 
+use crate::SourceHealthRegistry;
+
 #[derive(Default)]
 pub struct ModuleRegistry {
     sources: Vec<Box<dyn Source<SignalEnvelope>>>,
     processors: Vec<Box<dyn Processor<SignalEnvelope>>>,
     generators: Vec<Box<dyn Generator<SignalEnvelope>>>,
     sinks: Vec<Box<dyn Sink<SignalEnvelope>>>,
+    source_health: SourceHealthRegistry,
 }
 
 impl fmt::Debug for ModuleRegistry {
@@ -28,6 +31,7 @@ impl ModuleRegistry {
     }
 
     pub fn with_source(mut self, source: Box<dyn Source<SignalEnvelope>>) -> Self {
+        self.source_health.register(source.metadata().name);
         self.sources.push(source);
         self
     }
@@ -61,6 +65,10 @@ impl ModuleRegistry {
 
     pub fn sinks(&self) -> &[Box<dyn Sink<SignalEnvelope>>] {
         &self.sinks
+    }
+
+    pub fn source_health_registry(&self) -> SourceHealthRegistry {
+        self.source_health.clone()
     }
 
     pub(crate) fn drain_sources(
