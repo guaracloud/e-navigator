@@ -2,7 +2,7 @@ use e_navigator_signals::{ProtocolKind, TraceAttribute};
 
 use crate::{
     ProtocolExtractionConfig,
-    trace_context::{TraceContext, parse_traceparent},
+    trace_context::{TraceContext, parse_traceparent, validate_tracestate},
 };
 
 const MAX_GRPC_SERVICE_ATTRIBUTE_BYTES: usize = 128;
@@ -70,8 +70,10 @@ pub fn parse_grpc_request_headers(
                 content_type = bounded_content_type(value)
             }
             "traceparent" => traceparent = Some(value.to_string()),
-            "tracestate" if value.len() <= config.max_tracestate_bytes => {
-                tracestate = Some(value.to_string());
+            "tracestate" => {
+                tracestate = validate_tracestate(value, config.max_tracestate_bytes)
+                    .is_ok()
+                    .then(|| value.to_string());
             }
             _ => {}
         }
@@ -103,6 +105,14 @@ pub fn parse_grpc_request_headers(
         "rpc.system",
         Some("grpc"),
     );
+    if tracestate.is_some() {
+        push_attribute(
+            &mut attributes,
+            config.max_attributes,
+            "e.navigator.trace.tracestate",
+            Some("validated_discarded"),
+        );
+    }
     push_attribute(
         &mut attributes,
         config.max_attributes,

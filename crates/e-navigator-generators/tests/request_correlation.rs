@@ -2,9 +2,9 @@ use e_navigator_core::Generator;
 use e_navigator_generators::RequestCorrelationGenerator;
 use e_navigator_signals::{
     ContainerContext, KubernetesContext, NetworkAddressFamily, NetworkConnectionCloseEvent,
-    NetworkProcessIdentity, NetworkProtocol, ProtocolKind, ProtocolRequestObservation,
-    RequestCorrelationWarning, SignalEnvelope, SignalPayload, TraceAttribute, TraceConfidence,
-    TraceCorrelationKind, TracePeerContext,
+    NetworkProcessIdentity, NetworkProtocol, ProtocolCaptureRole, ProtocolKind,
+    ProtocolRequestObservation, RequestCorrelationWarning, SignalEnvelope, SignalPayload,
+    TraceAttribute, TraceConfidence, TraceCorrelationKind, TracePeerContext,
 };
 use std::collections::BTreeMap;
 use tokio::sync::mpsc;
@@ -38,6 +38,65 @@ async fn observed_trace_context_protocol_request_generates_request_span() {
     assert_eq!(span.container, Some(container()));
     assert_eq!(span.kubernetes, Some(kubernetes()));
     assert_eq!(span.peer, Some(peer()));
+}
+
+#[tokio::test]
+async fn server_capture_creates_child_span_of_wire_remote_parent() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.role = Some(ProtocolCaptureRole::Server);
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(
+        span.trace_id.as_deref(),
+        Some("4bf92f3577b34da6a3ce929d0e0e4736")
+    );
+    assert_eq!(span.parent_span_id.as_deref(), Some("00f067aa0ba902b7"));
+    assert_ne!(span.span_id.as_deref(), Some("00f067aa0ba902b7"));
+    assert!(valid_generated_ids(
+        span.trace_id.as_deref(),
+        span.span_id.as_deref()
+    ));
+    assert!(has_attribute(
+        &span.attributes,
+        "e.navigator.protocol.capture.role",
+        "server"
+    ));
+    assert!(has_attribute(
+        &span.attributes,
+        "e.navigator.trace.context.role",
+        "remote_parent"
+    ));
+}
+
+#[tokio::test]
+async fn client_capture_preserves_propagating_span_identity() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.role = Some(ProtocolCaptureRole::Client);
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(span.span_id.as_deref(), Some("00f067aa0ba902b7"));
+    assert_eq!(span.parent_span_id, None);
+    assert!(has_attribute(
+        &span.attributes,
+        "e.navigator.protocol.capture.role",
+        "client"
+    ));
 }
 
 #[tokio::test]

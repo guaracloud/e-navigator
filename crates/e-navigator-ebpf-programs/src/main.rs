@@ -353,6 +353,7 @@ pub struct RawProtocolDataEvent {
     pub cgroup_id: u64,
     pub fd: i32,
     pub direction: u32,
+    pub role: u32,
     pub family: u32,
     pub remote_port_be: u16,
     pub local_port_be: u16,
@@ -2185,8 +2186,12 @@ fn tls_connection_for_handle(handle: u64) -> Option<PendingConnect> {
         record_tls_diagnostic(TLS_DIAG_NON_TCP_CONNECTION);
         return None;
     }
-    let remote_port = u16::from_be(connection.remote_port_be);
-    if unsafe { TLS_CAPTURE_PORTS.get(&remote_port) }.is_none() {
+    let capture_port = if connection.role == CONNECTION_ROLE_SERVER {
+        u16::from_be(connection.local_port_be)
+    } else {
+        u16::from_be(connection.remote_port_be)
+    };
+    if unsafe { TLS_CAPTURE_PORTS.get(&capture_port) }.is_none() {
         record_tls_diagnostic(TLS_DIAG_PORT_FILTERED);
         return None;
     }
@@ -2216,6 +2221,7 @@ fn emit_tls_data(
     }
     event.fd = connection.fd;
     event.direction = direction;
+    event.role = connection.role;
     event.family = connection.family;
     event.remote_port_be = connection.remote_port_be;
     event.local_port_be = connection.local_port_be;
@@ -2279,6 +2285,7 @@ fn tls_data_event_scratch() -> Result<&'static mut RawProtocolDataEvent, i64> {
     event.cgroup_id = 0;
     event.fd = -1;
     event.direction = 0;
+    event.role = CONNECTION_ROLE_CLIENT;
     event.family = 0;
     event.remote_port_be = 0;
     event.local_port_be = 0;
@@ -3135,8 +3142,12 @@ fn protocol_capture_connection(fd: i32) -> Option<PendingConnect> {
         record_protocol_diagnostic(PROTOCOL_DIAG_NON_TCP_CONNECTION);
         return None;
     }
-    let remote_port = u16::from_be(connection.remote_port_be);
-    if unsafe { PROTOCOL_CAPTURE_PORTS.get(&remote_port) }.is_none() {
+    let capture_port = if connection.role == CONNECTION_ROLE_SERVER {
+        u16::from_be(connection.local_port_be)
+    } else {
+        u16::from_be(connection.remote_port_be)
+    };
+    if unsafe { PROTOCOL_CAPTURE_PORTS.get(&capture_port) }.is_none() {
         record_protocol_diagnostic(PROTOCOL_DIAG_PORT_FILTERED);
         return None;
     }
@@ -3162,6 +3173,7 @@ fn emit_protocol_data_event(
     }
     event.fd = fd;
     event.direction = direction;
+    event.role = connection.role;
     event.family = connection.family;
     event.remote_port_be = connection.remote_port_be;
     event.local_port_be = connection.local_port_be;
@@ -3251,6 +3263,7 @@ fn protocol_data_event_scratch() -> Result<&'static mut RawProtocolDataEvent, i6
     event.cgroup_id = 0;
     event.fd = -1;
     event.direction = 0;
+    event.role = CONNECTION_ROLE_CLIENT;
     event.family = 0;
     event.remote_port_be = 0;
     event.local_port_be = 0;

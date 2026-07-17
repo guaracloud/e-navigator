@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata, Signal};
 use e_navigator_protocol::trace_context::parse_traceparent;
 use e_navigator_signals::{
-    ProtocolKind, ProtocolRequestObservation, RequestCorrelationWarning, RequestSpanObservation,
-    SignalEnvelope, SignalPayload, TraceAttribute, TraceConfidence, TraceCorrelationKind,
+    ProtocolCaptureRole, ProtocolKind, ProtocolRequestObservation, RequestCorrelationWarning,
+    RequestSpanObservation, SignalEnvelope, SignalPayload, TraceAttribute, TraceConfidence,
+    TraceCorrelationKind,
 };
 use std::{
     collections::{BTreeSet, VecDeque},
@@ -102,6 +103,16 @@ impl RequestCorrelationGenerator {
             trace_context.generated = true;
         }
 
+        let mut parent_span_id = request.parent_span_id.clone();
+        if request.role == Some(ProtocolCaptureRole::Server)
+            && !trace_context.generated
+            && let Some(remote_parent_span_id) = trace_context.span_id.clone()
+        {
+            let (_, server_span_id) = generated_trace_identity(request);
+            trace_context.span_id = Some(server_span_id);
+            parent_span_id = Some(remote_parent_span_id);
+        }
+
         let has_trace_context = trace_context.trace_id.is_some();
         let correlation_kind = if request.correlation_kind == TraceCorrelationKind::Synthetic {
             TraceCorrelationKind::Synthetic
@@ -122,6 +133,27 @@ impl RequestCorrelationGenerator {
             };
 
         let mut attributes = bounded_attributes(&request.attributes);
+        if let Some(role) = request.role {
+            insert_provenance_attribute(
+                &mut attributes,
+                "e.navigator.protocol.capture.role",
+                match role {
+                    ProtocolCaptureRole::Client => "client",
+                    ProtocolCaptureRole::Server => "server",
+                    _ => "unknown",
+                },
+            );
+        }
+        if request.role == Some(ProtocolCaptureRole::Server)
+            && parent_span_id.is_some()
+            && !trace_context.generated
+        {
+            insert_provenance_attribute(
+                &mut attributes,
+                "e.navigator.trace.context.role",
+                "remote_parent",
+            );
+        }
         if trace_context.generated {
             insert_provenance_attribute(
                 &mut attributes,
@@ -138,7 +170,7 @@ impl RequestCorrelationGenerator {
                 protocol: request.protocol,
                 trace_id: trace_context.trace_id,
                 span_id: trace_context.span_id,
-                parent_span_id: request.parent_span_id.clone(),
+                parent_span_id,
                 start_unix_nanos: request.start_unix_nanos,
                 end_unix_nanos: request.end_unix_nanos,
                 duration_nanos: request.duration_nanos,
@@ -382,8 +414,9 @@ fn generated_trace_identity(request: &ProtocolRequestObservation) -> (String, St
         .unwrap_or_default();
     let target_hash = request_target_fingerprint(&request.attributes).unwrap_or_default();
     let material = format!(
-        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}",
+        "{:?}|{:?}|{}|{}|{}|{}|{}|{}|{}|{}",
         request.protocol,
+        request.role,
         request.start_unix_nanos,
         request.end_unix_nanos.unwrap_or_default(),
         pid,

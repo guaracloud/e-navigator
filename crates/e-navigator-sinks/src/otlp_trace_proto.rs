@@ -75,7 +75,7 @@ fn span_from_record(record: &OtelTraceRecord) -> Option<Span> {
         parent_span_id,
         flags: 0,
         name: record.name.clone(),
-        kind: span_kind(&record.kind) as i32,
+        kind: span_kind(record) as i32,
         start_time_unix_nano: record.start_unix_nanos,
         end_time_unix_nano: record.end_unix_nanos.unwrap_or(record.start_unix_nanos),
         attributes: key_values(&record.attributes),
@@ -97,8 +97,17 @@ fn status_from_record(status: &OtelSpanStatus) -> Status {
     }
 }
 
-fn span_kind(kind: &OtelTraceRecordKind) -> span::SpanKind {
-    match kind {
+fn span_kind(record: &OtelTraceRecord) -> span::SpanKind {
+    match &record.kind {
+        OtelTraceRecordKind::RequestSpan
+            if record
+                .attributes
+                .get("e.navigator.protocol.capture.role")
+                .and_then(serde_json::Value::as_str)
+                == Some("client") =>
+        {
+            span::SpanKind::Client
+        }
         OtelTraceRecordKind::RequestSpan => span::SpanKind::Server,
         OtelTraceRecordKind::ServiceInteraction => span::SpanKind::Client,
         OtelTraceRecordKind::Span
@@ -166,6 +175,19 @@ mod tests {
         let span = &request.resource_spans[0].scope_spans[0].spans[0];
 
         assert!(span.parent_span_id.is_empty());
+    }
+
+    #[test]
+    fn request_capture_role_selects_client_or_server_span_kind() {
+        let server = trace_record();
+        assert_eq!(span_kind(&server), span::SpanKind::Server);
+
+        let mut client = trace_record();
+        client.attributes.insert(
+            "e.navigator.protocol.capture.role".to_string(),
+            serde_json::json!("client"),
+        );
+        assert_eq!(span_kind(&client), span::SpanKind::Client);
     }
 
     fn trace_record() -> OtelTraceRecord {

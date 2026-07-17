@@ -2,7 +2,7 @@ use e_navigator_signals::{ProtocolKind, TraceAttribute};
 
 use crate::{
     ProtocolExtractionConfig,
-    trace_context::{TraceContext, parse_traceparent},
+    trace_context::{TraceContext, parse_traceparent, validate_tracestate},
 };
 
 const MAX_HTTP_TARGET_PATH_ATTRIBUTE_BYTES: usize = 256;
@@ -67,10 +67,10 @@ pub fn parse_http_request(
         let value = value.trim();
         if key.eq_ignore_ascii_case("traceparent") {
             traceparent = Some(value.to_string());
-        } else if key.eq_ignore_ascii_case("tracestate")
-            && value.len() <= config.max_tracestate_bytes
-        {
-            tracestate = Some(value.to_string());
+        } else if key.eq_ignore_ascii_case("tracestate") {
+            tracestate = validate_tracestate(value, config.max_tracestate_bytes)
+                .is_ok()
+                .then(|| value.to_string());
         } else if is_request_id_header(key) {
             request_id = bounded_request_id(value);
         } else if key.eq_ignore_ascii_case("host") {
@@ -93,6 +93,14 @@ pub fn parse_http_request(
         "http.request.method",
         request_line.method.as_deref(),
     );
+    if tracestate.is_some() {
+        push_attribute(
+            &mut attributes,
+            config.max_attributes,
+            "e.navigator.trace.tracestate",
+            Some("validated_discarded"),
+        );
+    }
     push_attribute(
         &mut attributes,
         config.max_attributes,

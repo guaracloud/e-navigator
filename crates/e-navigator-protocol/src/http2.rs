@@ -11,7 +11,10 @@ use std::collections::VecDeque;
 
 use e_navigator_signals::{ProtocolKind, TraceAttribute};
 
-use crate::ProtocolExtractionConfig;
+use crate::{
+    ProtocolExtractionConfig,
+    trace_context::{TraceContext, parse_traceparent, validate_tracestate},
+};
 
 pub const HTTP2_CONNECTION_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 pub const HTTP2_FRAME_HEADER_BYTES: usize = 9;
@@ -75,6 +78,7 @@ pub struct ParsedHttp2Request {
     pub protocol: ProtocolKind,
     pub stream_id: u32,
     pub method: Option<String>,
+    pub trace_context: Option<TraceContext>,
     pub warning: Option<String>,
     pub attributes: Vec<TraceAttribute>,
 }
@@ -385,7 +389,7 @@ pub fn parse_http2_request_headers_frame(
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedHttp2Request, Http2Extraction> {
     let block = headers_frame_block(header, payload)?;
-    let warning = (header.flags & HTTP2_FLAG_END_HEADERS == 0)
+    let mut warning = (header.flags & HTTP2_FLAG_END_HEADERS == 0)
         .then(|| "continuation_headers_not_reassembled".to_string());
     let headers = decoder.decode_header_block(block)?;
 
@@ -393,12 +397,18 @@ pub fn parse_http2_request_headers_frame(
     let mut path: Option<&str> = None;
     let mut authority: Option<&str> = None;
     let mut grpc = false;
+    let mut traceparent: Option<&str> = None;
+    let mut tracestate_valid = false;
     for (name, value) in &headers {
         match name.as_str() {
             ":method" => method = Some(value.clone()),
             ":path" => path = Some(value.as_str()),
             ":authority" => authority = Some(value.as_str()),
             "content-type" => grpc = value.starts_with("application/grpc"),
+            "traceparent" => traceparent = Some(value.as_str()),
+            "tracestate" => {
+                tracestate_valid = validate_tracestate(value, config.max_tracestate_bytes).is_ok();
+            }
             _ => {}
         }
     }
@@ -449,6 +459,22 @@ pub fn parse_http2_request_headers_frame(
         "server.address",
         server_address.as_deref(),
     );
+    if tracestate_valid {
+        push_attribute(
+            &mut attributes,
+            config.max_attributes,
+            "e.navigator.trace.tracestate",
+            Some("validated_discarded"),
+        );
+    }
+
+    let trace_context = traceparent.and_then(|value| match parse_traceparent(value) {
+        Ok(context) => Some(context),
+        Err(_) => {
+            warning = Some("malformed_trace_context".to_string());
+            None
+        }
+    });
     push_attribute(
         &mut attributes,
         config.max_attributes,
@@ -464,6 +490,7 @@ pub fn parse_http2_request_headers_frame(
         },
         stream_id: header.stream_id,
         method,
+        trace_context,
         warning,
         attributes,
     })
