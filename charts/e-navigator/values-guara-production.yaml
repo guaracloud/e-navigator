@@ -157,7 +157,7 @@ config:
     traces_enabled = true
     profiles_enabled = true
     queue_capacity = 8192
-    batch_size = 128
+    batch_size = 4096
     flush_interval_millis = 1000
     timeout_millis = 3000
     max_retries = 3

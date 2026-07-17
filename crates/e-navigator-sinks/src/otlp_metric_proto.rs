@@ -11,10 +11,12 @@ use opentelemetry_proto::tonic::{
     resource::v1::Resource,
 };
 use prost::Message;
+use std::collections::BTreeMap;
 
 pub(crate) fn encode_metric_export_request(
     records: &[OtelMetricRecord],
 ) -> Result<Vec<u8>, ExporterError> {
+    let records = coalesce_metric_series(records)?;
     let resource_metrics = records.iter().map(resource_metrics_from_record).collect();
     let request = ExportMetricsServiceRequest { resource_metrics };
     let mut bytes = Vec::with_capacity(request.encoded_len());
@@ -22,6 +24,33 @@ pub(crate) fn encode_metric_export_request(
         .encode(&mut bytes)
         .map_err(|err| ExporterError::Encode(err.to_string()))?;
     Ok(bytes)
+}
+
+fn coalesce_metric_series(
+    records: &[OtelMetricRecord],
+) -> Result<Vec<OtelMetricRecord>, ExporterError> {
+    let mut latest = BTreeMap::new();
+    for record in records {
+        let key = serde_json::to_string(&(
+            &record.name,
+            &record.unit,
+            &record.kind,
+            &record.resource,
+            &record.attributes,
+        ))
+        .map_err(|err| ExporterError::Encode(err.to_string()))?;
+        match latest.entry(key) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(record.clone());
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                if record.window.end_unix_nanos >= entry.get().window.end_unix_nanos {
+                    entry.insert(record.clone());
+                }
+            }
+        }
+    }
+    Ok(latest.into_values().collect())
 }
 
 fn resource_metrics_from_record(record: &OtelMetricRecord) -> ResourceMetrics {
@@ -62,7 +91,7 @@ fn metric_data(record: &OtelMetricRecord) -> metric::Data {
         }),
         (OtelMetricKind::Sum, value) => metric::Data::Sum(Sum {
             data_points: vec![number_point(record, value)],
-            aggregation_temporality: AggregationTemporality::Delta as i32,
+            aggregation_temporality: AggregationTemporality::Cumulative as i32,
             is_monotonic: true,
         }),
         (
@@ -119,6 +148,63 @@ fn number_value(value: &OtelMetricValue) -> number_data_point::Value {
         OtelMetricValue::I64(value) => number_data_point::Value::AsInt(*value),
         OtelMetricValue::Summary { sum_nanos, .. } => {
             number_data_point::Value::AsDouble(*sum_nanos as f64)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use e_navigator_signals::MetricAggregationWindow;
+
+    use super::*;
+
+    #[test]
+    fn coalesces_cumulative_series_to_latest_window() {
+        let first = metric_record("node-a", 1, 100);
+        let latest = metric_record("node-a", 2, 200);
+
+        let records = coalesce_metric_series(&[first, latest.clone()]).expect("coalesces");
+
+        assert_eq!(records, vec![latest]);
+    }
+
+    #[test]
+    fn preserves_independent_resource_series() {
+        let first = metric_record("node-a", 1, 100);
+        let second = metric_record("node-b", 1, 100);
+
+        let records = coalesce_metric_series(&[first, second]).expect("coalesces");
+
+        assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn encodes_counter_records_as_cumulative_sums() {
+        let record = metric_record("node-a", 2, 200);
+
+        let metric::Data::Sum(sum) = metric_data(&record) else {
+            panic!("counter must encode as sum");
+        };
+
+        assert_eq!(
+            sum.aggregation_temporality,
+            AggregationTemporality::Cumulative as i32
+        );
+        assert!(sum.is_monotonic);
+    }
+
+    fn metric_record(host: &str, value: u64, timestamp: u64) -> OtelMetricRecord {
+        OtelMetricRecord {
+            name: "network.connection.open.count".to_string(),
+            unit: "{connection}".to_string(),
+            kind: OtelMetricKind::Sum,
+            value: OtelMetricValue::U64(value),
+            window: MetricAggregationWindow {
+                start_unix_nanos: 100,
+                end_unix_nanos: timestamp,
+            },
+            resource: BTreeMap::from([("host.name".to_string(), serde_json::json!(host))]),
+            attributes: BTreeMap::from([("net.transport".to_string(), serde_json::json!("tcp"))]),
         }
     }
 }
