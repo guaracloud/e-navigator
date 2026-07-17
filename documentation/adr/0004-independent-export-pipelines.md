@@ -24,6 +24,13 @@ OTLP protobuf bodies may be gzip-compressed on Tokio's blocking pool before
 network I/O. Every request attempt, including failures and timeouts, updates a
 fixed-bucket native Prometheus latency histogram per signal family.
 
+Workers decode the bounded OTLP response for their signal family. A populated
+partial-success response is never retried; rejected items and warning responses
+have separate counters. Only transport failures, timeouts, and OTLP's explicit
+HTTP `429`, `502`, `503`, and `504` statuses are retried. Other HTTP statuses
+are permanent failures, and `Retry-After` delta seconds are honored within the
+configured maximum backoff. Response bodies are capped at 64 KiB.
+
 The workers register their existing atomic counters in a process-local native
 telemetry registry. The Prometheus endpoint samples the registry at scrape
 time and exposes fixed `e_navigator_export_*` metric names with one bounded
@@ -36,6 +43,9 @@ OTLP path, so a destination failure cannot suppress its own loss counters.
 - Queue memory is bounded by the per-family configured capacity.
 - Accepted data can still be lost after bounded retries; every loss mode has a
   dedicated counter.
+- `sent_total` counts input records removed after a valid HTTP 200
+  acknowledgement; backend-rejected spans, points, or profiles are reported
+  separately because one encoded metric record can be coalesced with another.
 - The live native exporter telemetry surface is currently Prometheus. Native
   OTLP self-metric export remains future work because it needs a separate
   feedback-safe path.

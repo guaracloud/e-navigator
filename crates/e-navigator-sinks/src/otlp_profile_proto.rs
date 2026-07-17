@@ -1,7 +1,11 @@
-use crate::{ExporterError, OtelProfileRecord, otlp_common::key_values, otlp_common::to_any_value};
+use crate::{
+    ExporterError, OtelProfileRecord, exporter::ExportResponseAck, otlp_common::key_values,
+    otlp_common::to_any_value,
+};
 use collector_profile_proto::{
-    ExportProfilesServiceRequest, Function, KeyValueAndUnit, Line, Link, Location, Mapping,
-    Profile, ProfilesDictionary, ResourceProfiles, Sample, ScopeProfiles, Stack, ValueType,
+    ExportProfilesServiceRequest, ExportProfilesServiceResponse, Function, KeyValueAndUnit, Line,
+    Link, Location, Mapping, Profile, ProfilesDictionary, ResourceProfiles, Sample, ScopeProfiles,
+    Stack, ValueType,
 };
 use opentelemetry_proto::tonic::{common::v1::InstrumentationScope, resource::v1::Resource};
 use prost::Message;
@@ -27,6 +31,23 @@ pub(crate) fn encode_profile_export_request(
         .encode(&mut bytes)
         .map_err(|err| ExporterError::Encode(err.to_string()))?;
     Ok(bytes)
+}
+
+pub(crate) fn decode_profile_export_response(
+    body: &[u8],
+) -> Result<ExportResponseAck, ExporterError> {
+    let response = ExportProfilesServiceResponse::decode(body)
+        .map_err(|err| ExporterError::InvalidResponse(err.to_string()))?;
+    let Some(partial) = response.partial_success else {
+        return Ok(ExportResponseAck::default());
+    };
+    let rejected_items = u64::try_from(partial.rejected_profiles).map_err(|_| {
+        ExporterError::InvalidResponse("rejected_profiles must not be negative".to_string())
+    })?;
+    Ok(ExportResponseAck {
+        rejected_items,
+        warning: !partial.error_message.is_empty(),
+    })
 }
 
 fn resource_profiles_from_record(
@@ -282,6 +303,20 @@ pub(crate) mod collector_profile_proto {
         pub(crate) resource_profiles: Vec<ResourceProfiles>,
         #[prost(message, optional, tag = "2")]
         pub(crate) dictionary: Option<ProfilesDictionary>,
+    }
+
+    #[derive(Clone, PartialEq, Eq, Message)]
+    pub(crate) struct ExportProfilesServiceResponse {
+        #[prost(message, optional, tag = "1")]
+        pub(crate) partial_success: Option<ExportProfilesPartialSuccess>,
+    }
+
+    #[derive(Clone, PartialEq, Eq, Message)]
+    pub(crate) struct ExportProfilesPartialSuccess {
+        #[prost(int64, tag = "1")]
+        pub(crate) rejected_profiles: i64,
+        #[prost(string, tag = "2")]
+        pub(crate) error_message: String,
     }
 
     #[derive(Clone, PartialEq, Message)]
