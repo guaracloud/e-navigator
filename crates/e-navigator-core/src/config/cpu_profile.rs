@@ -34,7 +34,8 @@ pub struct CpuProfileSourceConfig {
     /// best-effort local ELF symbol names) from procfs.
     #[serde(default = "default_cpu_profile_symbolize")]
     pub symbolize: bool,
-    /// Read local ELF symbol tables for function-name resolution. Disable to
+    /// Read local ELF symbol tables and bounded target-namespace
+    /// `/tmp/perf-<pid>.map` files for function-name resolution. Disable to
     /// export only module-relative offsets for offline symbolization.
     #[serde(default = "default_cpu_profile_resolve_symbol_names")]
     pub resolve_symbol_names: bool,
