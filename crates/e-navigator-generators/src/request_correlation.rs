@@ -24,6 +24,7 @@ const MAX_FINGERPRINT_VALUE_BYTES: usize = 64;
 pub struct RequestCorrelationGenerator {
     max_seen_requests: usize,
     max_warnings: usize,
+    generate_trace_ids: bool,
     seen_requests: Mutex<BoundedFingerprints<RequestFingerprint>>,
     seen_warnings: Mutex<BoundedFingerprints<WarningFingerprint>>,
 }
@@ -36,9 +37,18 @@ impl Default for RequestCorrelationGenerator {
 
 impl RequestCorrelationGenerator {
     pub fn with_limits(max_seen_requests: usize, max_warnings: usize) -> Self {
+        Self::with_options(max_seen_requests, max_warnings, true)
+    }
+
+    pub fn with_options(
+        max_seen_requests: usize,
+        max_warnings: usize,
+        generate_trace_ids: bool,
+    ) -> Self {
         Self {
             max_seen_requests,
             max_warnings,
+            generate_trace_ids,
             seen_requests: Mutex::new(BoundedFingerprints::default()),
             seen_warnings: Mutex::new(BoundedFingerprints::default()),
         }
@@ -79,17 +89,28 @@ impl RequestCorrelationGenerator {
         signal: &SignalEnvelope,
         request: &ProtocolRequestObservation,
     ) -> CoreResult<Vec<SignalEnvelope>> {
-        let trace_context = trace_context(request);
+        let mut trace_context = trace_context(request);
         let fingerprint = RequestFingerprint::from_request(request, &trace_context);
         if !self.mark_request_seen(fingerprint)? {
             return Ok(Vec::new());
+        }
+
+        if self.generate_trace_ids && trace_context.trace_id.is_none() {
+            let (trace_id, span_id) = generated_trace_identity(request);
+            trace_context.trace_id = Some(trace_id);
+            trace_context.span_id = Some(span_id);
+            trace_context.generated = true;
         }
 
         let has_trace_context = trace_context.trace_id.is_some();
         let correlation_kind = if request.correlation_kind == TraceCorrelationKind::Synthetic {
             TraceCorrelationKind::Synthetic
         } else if has_trace_context {
-            TraceCorrelationKind::ObservedTraceContext
+            if trace_context.generated {
+                TraceCorrelationKind::GeneratedTraceContext
+            } else {
+                TraceCorrelationKind::ObservedTraceContext
+            }
         } else {
             request.correlation_kind
         };
@@ -99,6 +120,15 @@ impl RequestCorrelationGenerator {
             } else {
                 request.confidence
             };
+
+        let mut attributes = bounded_attributes(&request.attributes);
+        if trace_context.generated {
+            insert_provenance_attribute(
+                &mut attributes,
+                "e.navigator.trace.identity.source",
+                "generated",
+            );
+        }
 
         let mut outputs = vec![SignalEnvelope::request_span_observation(
             "generator.request_correlation",
@@ -124,7 +154,7 @@ impl RequestCorrelationGenerator {
                 container: request.container.clone(),
                 kubernetes: request.kubernetes.clone(),
                 peer: request.peer.clone(),
-                attributes: bounded_attributes(&request.attributes),
+                attributes,
             },
         )];
 
@@ -286,6 +316,7 @@ struct RequestTraceContext {
     trace_id: Option<String>,
     span_id: Option<String>,
     warning_type: Option<&'static str>,
+    generated: bool,
 }
 
 fn trace_context(request: &ProtocolRequestObservation) -> RequestTraceContext {
@@ -295,6 +326,7 @@ fn trace_context(request: &ProtocolRequestObservation) -> RequestTraceContext {
                 trace_id: Some(trace_id.clone()),
                 span_id: Some(span_id.clone()),
                 warning_type: None,
+                generated: false,
             };
         }
         if request.traceparent.is_none() {
@@ -302,6 +334,7 @@ fn trace_context(request: &ProtocolRequestObservation) -> RequestTraceContext {
                 trace_id: None,
                 span_id: None,
                 warning_type: Some("malformed_trace_context"),
+                generated: false,
             };
         }
     }
@@ -312,11 +345,13 @@ fn trace_context(request: &ProtocolRequestObservation) -> RequestTraceContext {
                 trace_id: Some(context.trace_id),
                 span_id: Some(context.span_id),
                 warning_type: None,
+                generated: false,
             },
             Err(_) => RequestTraceContext {
                 trace_id: None,
                 span_id: None,
                 warning_type: Some("malformed_trace_context"),
+                generated: false,
             },
         };
     }
@@ -325,7 +360,65 @@ fn trace_context(request: &ProtocolRequestObservation) -> RequestTraceContext {
         trace_id: None,
         span_id: None,
         warning_type: Some("missing_trace_context"),
+        generated: false,
     }
+}
+
+fn generated_trace_identity(request: &ProtocolRequestObservation) -> (String, String) {
+    let pid = request
+        .process
+        .as_ref()
+        .map(|process| process.pid)
+        .unwrap_or_default();
+    let cgroup_id = request
+        .process
+        .as_ref()
+        .and_then(|process| process.cgroup_id)
+        .unwrap_or_default();
+    let method_hash = request
+        .method
+        .as_deref()
+        .map(|method| stable_hash64(method.as_bytes()))
+        .unwrap_or_default();
+    let target_hash = request_target_fingerprint(&request.attributes).unwrap_or_default();
+    let material = format!(
+        "{:?}|{}|{}|{}|{}|{}|{}|{}|{}",
+        request.protocol,
+        request.start_unix_nanos,
+        request.end_unix_nanos.unwrap_or_default(),
+        pid,
+        cgroup_id,
+        method_hash,
+        target_hash,
+        request.status_code.unwrap_or_default(),
+        peer_key(request),
+    );
+    let first = nonzero_hash(stable_hash64_with_seed(
+        material.as_bytes(),
+        0x9e37_79b9_7f4a_7c15,
+    ));
+    let second = nonzero_hash(stable_hash64_with_seed(
+        material.as_bytes(),
+        0xd1b5_4a32_d192_ed03,
+    ));
+    let span = nonzero_hash(stable_hash64_with_seed(
+        material.as_bytes(),
+        0x94d0_49bb_1331_11eb,
+    ));
+    (format!("{first:016x}{second:016x}"), format!("{span:016x}"))
+}
+
+fn stable_hash64_with_seed(bytes: &[u8], seed: u64) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ seed;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn nonzero_hash(hash: u64) -> u64 {
+    if hash == 0 { 1 } else { hash }
 }
 
 fn request_span_name(protocol: ProtocolKind) -> &'static str {
@@ -364,6 +457,25 @@ fn bounded_attributes(attributes: &[TraceAttribute]) -> Vec<TraceAttribute> {
         }
     }
     bounded
+}
+
+fn insert_provenance_attribute(attributes: &mut Vec<TraceAttribute>, key: &str, value: &str) {
+    if attributes.iter().any(|attribute| attribute.key == key) {
+        return;
+    }
+    if attributes.len() >= MAX_REQUEST_ATTRIBUTES
+        && let Some(index) = attributes
+            .iter()
+            .rposition(|attribute| !is_request_error_attribute(&attribute.key))
+    {
+        attributes.remove(index);
+    }
+    if attributes.len() < MAX_REQUEST_ATTRIBUTES {
+        attributes.push(TraceAttribute {
+            key: key.to_string(),
+            value: value.to_string(),
+        });
+    }
 }
 
 fn is_request_error_attribute(key: &str) -> bool {

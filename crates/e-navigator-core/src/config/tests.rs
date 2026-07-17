@@ -2145,9 +2145,15 @@ fn trace_correlation_limits_are_validated() {
 
 #[test]
 fn request_correlation_limits_are_validated() {
+    assert!(
+        RuntimeConfig::default()
+            .request_correlation
+            .generate_trace_ids
+    );
     assert_invalid(
         RuntimeConfig {
             request_correlation: RequestCorrelationConfig {
+                generate_trace_ids: true,
                 max_seen_requests: 0,
                 max_warnings: 128,
             },
@@ -2162,6 +2168,7 @@ fn request_correlation_limits_are_validated() {
     assert_invalid(
         RuntimeConfig {
             request_correlation: RequestCorrelationConfig {
+                generate_trace_ids: true,
                 max_seen_requests: 128,
                 max_warnings: RequestCorrelationConfig::MAX_WARNINGS_LIMIT + 1,
             },
