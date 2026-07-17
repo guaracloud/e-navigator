@@ -2906,6 +2906,47 @@ fn capture_filter_parses_postures_from_toml() {
 }
 
 #[test]
+fn capture_filter_parses_set_existence_or_and_identity_rules() {
+    let toml = r#"
+        queue_capacity = 64
+
+        [capture_filter]
+        enabled = true
+        default_posture = "deny"
+        unknown_cgroup = "deny"
+        namespace_include = ["proj-*"]
+        label_not_exists = ["guara.cloud/catalog-slug"]
+        label_in = { tier = ["starter", "pro", "business", "enterprise"] }
+        process_exclude = ["*exporter", "otelcol*"]
+        container_exclude = ["istio-proxy"]
+
+        [[capture_filter.any_of]]
+        label_equal = { team = "payments" }
+
+        [[capture_filter.any_of]]
+        label_exists = ["observability.e-navigator.dev/include"]
+
+        [[modules]]
+        name = "source.synthetic_exec"
+        enabled = true
+    "#;
+
+    let config: RuntimeConfig = toml::from_str(toml).expect("valid extended selector toml");
+
+    assert_eq!(
+        config.capture_filter.label_in.get("tier"),
+        Some(&vec![
+            "starter".to_string(),
+            "pro".to_string(),
+            "business".to_string(),
+            "enterprise".to_string(),
+        ])
+    );
+    assert_eq!(config.capture_filter.any_of.len(), 2);
+    assert!(config.validate().is_ok());
+}
+
+#[test]
 fn capture_filter_rejects_unknown_field() {
     assert_toml_rejects_unknown_field(
         r#"
@@ -3057,5 +3098,47 @@ fn capture_filter_rejects_empty_label_value() {
             ..RuntimeConfig::default()
         },
         "capture_filter.label_include value for 'tier' must not be empty",
+    );
+}
+
+#[test]
+fn capture_filter_rejects_empty_set_and_or_group() {
+    assert_invalid(
+        RuntimeConfig {
+            capture_filter: CaptureFilterConfig {
+                enabled: true,
+                label_in: BTreeMap::from([("tier".to_string(), Vec::new())]),
+                ..CaptureFilterConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "capture_filter.label_in values for 'tier' must not be empty",
+    );
+    assert_invalid(
+        RuntimeConfig {
+            capture_filter: CaptureFilterConfig {
+                enabled: true,
+                any_of: vec![WorkloadSelectorConfig::default()],
+                ..CaptureFilterConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "capture_filter.any_of groups must not be empty",
+    );
+}
+
+#[test]
+fn capture_filter_rejects_conflicting_exists_rules() {
+    assert_invalid(
+        RuntimeConfig {
+            capture_filter: CaptureFilterConfig {
+                enabled: true,
+                label_exists: vec!["tier".to_string()],
+                label_not_exists: vec!["tier".to_string()],
+                ..CaptureFilterConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "capture_filter label 'tier' cannot both exist and not exist",
     );
 }

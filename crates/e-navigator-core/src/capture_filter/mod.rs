@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::config::{CaptureFilterConfig, CapturePosture};
+use crate::config::{CaptureFilterConfig, CapturePosture, WorkloadSelectorConfig};
 
 mod resolve;
 
@@ -60,6 +60,45 @@ enum NamespacePattern {
     Glob(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkloadSelector {
+    namespaces: Vec<NamespacePattern>,
+    label_equal: BTreeMap<String, String>,
+    label_not_equal: BTreeMap<String, String>,
+    label_exists: Vec<String>,
+    label_not_exists: Vec<String>,
+    label_in: BTreeMap<String, Vec<String>>,
+    label_not_in: BTreeMap<String, Vec<String>>,
+}
+
+impl WorkloadSelector {
+    fn from_config(config: &WorkloadSelectorConfig) -> Self {
+        Self {
+            namespaces: compile_patterns(&config.namespaces),
+            label_equal: config.label_equal.clone(),
+            label_not_equal: config.label_not_equal.clone(),
+            label_exists: config.label_exists.clone(),
+            label_not_exists: config.label_not_exists.clone(),
+            label_in: config.label_in.clone(),
+            label_not_in: config.label_not_in.clone(),
+        }
+    }
+
+    fn matches(&self, namespace: &str, labels: &BTreeMap<String, String>) -> bool {
+        (self.namespaces.is_empty()
+            || self
+                .namespaces
+                .iter()
+                .any(|pattern| pattern.matches(namespace)))
+            && labels_match_all(&self.label_equal, labels)
+            && labels_match_none(&self.label_not_equal, labels)
+            && labels_exist(&self.label_exists, labels)
+            && labels_do_not_exist(&self.label_not_exists, labels)
+            && labels_in_sets(&self.label_in, labels)
+            && labels_not_in_sets(&self.label_not_in, labels)
+    }
+}
+
 impl NamespacePattern {
     fn compile(pattern: &str) -> Self {
         if pattern.contains(['*', '?']) {
@@ -87,6 +126,15 @@ pub struct CaptureFilterPolicy {
     namespace_exclude: Vec<NamespacePattern>,
     label_include: BTreeMap<String, String>,
     label_exclude: BTreeMap<String, String>,
+    label_not_equal: BTreeMap<String, String>,
+    label_exists: Vec<String>,
+    label_not_exists: Vec<String>,
+    label_in: BTreeMap<String, Vec<String>>,
+    label_not_in: BTreeMap<String, Vec<String>>,
+    any_of: Vec<WorkloadSelector>,
+    exclude_any: Vec<WorkloadSelector>,
+    process_exclude: Vec<NamespacePattern>,
+    container_exclude: Vec<NamespacePattern>,
 }
 
 impl CaptureFilterPolicy {
@@ -99,6 +147,23 @@ impl CaptureFilterPolicy {
             namespace_exclude: compile_patterns(&config.namespace_exclude),
             label_include: config.label_include.clone(),
             label_exclude: config.label_exclude.clone(),
+            label_not_equal: config.label_not_equal.clone(),
+            label_exists: config.label_exists.clone(),
+            label_not_exists: config.label_not_exists.clone(),
+            label_in: config.label_in.clone(),
+            label_not_in: config.label_not_in.clone(),
+            any_of: config
+                .any_of
+                .iter()
+                .map(WorkloadSelector::from_config)
+                .collect(),
+            exclude_any: config
+                .exclude_any
+                .iter()
+                .map(WorkloadSelector::from_config)
+                .collect(),
+            process_exclude: compile_patterns(&config.process_exclude),
+            container_exclude: compile_patterns(&config.container_exclude),
         }
     }
 
@@ -117,6 +182,17 @@ impl CaptureFilterPolicy {
     /// precedence: exclude wins, then the include gate, then the default
     /// posture.
     pub fn evaluate(&self, namespace: &str, labels: &BTreeMap<String, String>) -> CaptureDecision {
+        self.evaluate_workload(namespace, labels, None, None)
+    }
+
+    /// Evaluate a workload with optional process and container identity.
+    pub fn evaluate_workload(
+        &self,
+        namespace: &str,
+        labels: &BTreeMap<String, String>,
+        process_name: Option<&str>,
+        container_name: Option<&str>,
+    ) -> CaptureDecision {
         // 1. Exclude wins.
         if self
             .namespace_exclude
@@ -128,17 +204,52 @@ impl CaptureFilterPolicy {
         if labels_match_any(&self.label_exclude, labels) {
             return CaptureDecision::Drop;
         }
+        if self
+            .exclude_any
+            .iter()
+            .any(|selector| selector.matches(namespace, labels))
+        {
+            return CaptureDecision::Drop;
+        }
+        if process_name.is_some_and(|name| {
+            self.process_exclude
+                .iter()
+                .any(|pattern| pattern.matches(name))
+        }) || container_name.is_some_and(|name| {
+            self.container_exclude
+                .iter()
+                .any(|pattern| pattern.matches(name))
+        }) {
+            return CaptureDecision::Drop;
+        }
 
         // 2. Include gate.
-        let has_include = !self.namespace_include.is_empty() || !self.label_include.is_empty();
+        let has_include = !self.namespace_include.is_empty()
+            || !self.label_include.is_empty()
+            || !self.label_not_equal.is_empty()
+            || !self.label_exists.is_empty()
+            || !self.label_not_exists.is_empty()
+            || !self.label_in.is_empty()
+            || !self.label_not_in.is_empty()
+            || !self.any_of.is_empty();
         if has_include {
             let namespace_ok = self.namespace_include.is_empty()
                 || self
                     .namespace_include
                     .iter()
                     .any(|pattern| pattern.matches(namespace));
-            let labels_ok = labels_match_all(&self.label_include, labels);
-            return if namespace_ok && labels_ok {
+            let labels_ok = labels_match_all(&self.label_include, labels)
+                && labels_match_none(&self.label_not_equal, labels)
+                && labels_exist(&self.label_exists, labels)
+                && labels_do_not_exist(&self.label_not_exists, labels)
+                && labels_in_sets(&self.label_in, labels)
+                && labels_not_in_sets(&self.label_not_in, labels);
+            let any_of_ok = self.any_of.is_empty()
+                || self
+                    .any_of
+                    .iter()
+                    .any(|selector| selector.matches(namespace, labels));
+            return if namespace_ok && labels_ok && any_of_ok {
                 CaptureDecision::Capture
             } else {
                 CaptureDecision::Drop
@@ -177,6 +288,42 @@ fn labels_match_any(
     selector
         .iter()
         .any(|(key, value)| labels.get(key).is_some_and(|actual| actual == value))
+}
+
+fn labels_match_none(
+    selector: &BTreeMap<String, String>,
+    labels: &BTreeMap<String, String>,
+) -> bool {
+    selector
+        .iter()
+        .all(|(key, value)| labels.get(key).is_none_or(|actual| actual != value))
+}
+
+fn labels_exist(keys: &[String], labels: &BTreeMap<String, String>) -> bool {
+    keys.iter().all(|key| labels.contains_key(key))
+}
+
+fn labels_do_not_exist(keys: &[String], labels: &BTreeMap<String, String>) -> bool {
+    keys.iter().all(|key| !labels.contains_key(key))
+}
+
+fn labels_in_sets(sets: &BTreeMap<String, Vec<String>>, labels: &BTreeMap<String, String>) -> bool {
+    sets.iter().all(|(key, allowed)| {
+        labels
+            .get(key)
+            .is_some_and(|actual| allowed.iter().any(|value| value == actual))
+    })
+}
+
+fn labels_not_in_sets(
+    sets: &BTreeMap<String, Vec<String>>,
+    labels: &BTreeMap<String, String>,
+) -> bool {
+    sets.iter().all(|(key, denied)| {
+        labels
+            .get(key)
+            .is_none_or(|actual| denied.iter().all(|value| value != actual))
+    })
 }
 
 /// Bytewise glob match supporting `*` (any run, including empty) and `?`
@@ -220,7 +367,7 @@ pub fn glob_match(pattern: &str, value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::CaptureFilterConfig;
+    use crate::config::{CaptureFilterConfig, WorkloadSelectorConfig};
 
     fn labels(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs
@@ -325,6 +472,129 @@ mod tests {
         );
         assert_eq!(
             policy.evaluate("proj-secret", &BTreeMap::new()),
+            CaptureDecision::Drop
+        );
+    }
+
+    #[test]
+    fn paid_tier_without_catalog_slug_policy_is_expressible() {
+        let config = CaptureFilterConfig {
+            enabled: true,
+            default_posture: CapturePosture::Deny,
+            unknown_cgroup: CapturePosture::Deny,
+            namespace_include: vec!["proj-*".to_string()],
+            label_in: BTreeMap::from([(
+                "tier".to_string(),
+                vec![
+                    "starter".to_string(),
+                    "pro".to_string(),
+                    "business".to_string(),
+                    "enterprise".to_string(),
+                ],
+            )]),
+            label_not_exists: vec!["guara.cloud/catalog-slug".to_string()],
+            ..Default::default()
+        };
+        let policy = policy(config);
+
+        assert_eq!(
+            policy.evaluate("proj-checkout", &labels(&[("tier", "business")])),
+            CaptureDecision::Capture
+        );
+        assert_eq!(
+            policy.evaluate("proj-checkout", &labels(&[("tier", "free")])),
+            CaptureDecision::Drop
+        );
+        assert_eq!(
+            policy.evaluate(
+                "proj-checkout",
+                &labels(&[("tier", "pro"), ("guara.cloud/catalog-slug", "checkout")])
+            ),
+            CaptureDecision::Drop
+        );
+        assert_eq!(
+            policy.evaluate("kube-system", &labels(&[("tier", "enterprise")])),
+            CaptureDecision::Drop
+        );
+    }
+
+    #[test]
+    fn selector_or_groups_match_complete_alternatives() {
+        let config = CaptureFilterConfig {
+            enabled: true,
+            any_of: vec![
+                WorkloadSelectorConfig {
+                    label_equal: BTreeMap::from([("team".to_string(), "payments".to_string())]),
+                    ..Default::default()
+                },
+                WorkloadSelectorConfig {
+                    label_exists: vec!["observability.e-navigator.dev/include".to_string()],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let policy = policy(config);
+
+        assert_eq!(
+            policy.evaluate("default", &labels(&[("team", "payments")])),
+            CaptureDecision::Capture
+        );
+        assert_eq!(
+            policy.evaluate(
+                "default",
+                &labels(&[("observability.e-navigator.dev/include", "true")])
+            ),
+            CaptureDecision::Capture
+        );
+        assert_eq!(
+            policy.evaluate("default", &labels(&[("team", "platform")])),
+            CaptureDecision::Drop
+        );
+    }
+
+    #[test]
+    fn process_and_container_exclusions_win_when_identity_is_known() {
+        let config = CaptureFilterConfig {
+            enabled: true,
+            process_exclude: vec!["*exporter".to_string(), "otelcol*".to_string()],
+            container_exclude: vec!["istio-proxy".to_string()],
+            ..Default::default()
+        };
+        let policy = policy(config);
+
+        assert_eq!(
+            policy.evaluate_workload("default", &BTreeMap::new(), Some("node_exporter"), None),
+            CaptureDecision::Drop
+        );
+        assert_eq!(
+            policy.evaluate_workload("default", &BTreeMap::new(), None, Some("istio-proxy")),
+            CaptureDecision::Drop
+        );
+        assert_eq!(
+            policy.evaluate_workload("default", &BTreeMap::new(), Some("checkout"), Some("app")),
+            CaptureDecision::Capture
+        );
+    }
+
+    #[test]
+    fn exclude_or_group_wins_over_matching_include_rules() {
+        let config = CaptureFilterConfig {
+            enabled: true,
+            namespace_include: vec!["proj-*".to_string()],
+            exclude_any: vec![WorkloadSelectorConfig {
+                label_in: BTreeMap::from([(
+                    "observability".to_string(),
+                    vec!["disabled".to_string(), "external".to_string()],
+                )]),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let policy = policy(config);
+
+        assert_eq!(
+            policy.evaluate("proj-checkout", &labels(&[("observability", "disabled")])),
             CaptureDecision::Drop
         );
     }
