@@ -6,6 +6,10 @@ metadata:
   labels:
     {{- include "e-navigator.labels" . | nindent 4 }}
 spec:
+  updateStrategy:
+    {{- toYaml .Values.updateStrategy | nindent 4 }}
+  minReadySeconds: {{ .Values.minReadySeconds }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
   selector:
     matchLabels:
       {{- include "e-navigator.selectorLabels" . | nindent 6 }}
@@ -28,6 +32,9 @@ spec:
       hostNetwork: {{ .Values.hostNetwork }}
       dnsPolicy: {{ .Values.dnsPolicy }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -46,6 +53,12 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             {{- toYaml .Values.args | nindent 12 }}
+          {{- if or .Values.prometheusHttp.enabled .Values.health.enabled }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          {{- end }}
           env:
             - name: RUST_LOG
               value: {{ .Values.logLevel | quote }}
@@ -62,6 +75,29 @@ spec:
           {{- end }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- if .Values.health.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.health.startupPath }}
+              port: http
+            periodSeconds: {{ .Values.health.startupPeriodSeconds }}
+            failureThreshold: {{ .Values.health.startupFailureThreshold }}
+            timeoutSeconds: {{ .Values.health.timeoutSeconds }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.health.livenessPath }}
+              port: http
+            periodSeconds: {{ .Values.health.livenessPeriodSeconds }}
+            failureThreshold: {{ .Values.health.livenessFailureThreshold }}
+            timeoutSeconds: {{ .Values.health.timeoutSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.health.readinessPath }}
+              port: http
+            periodSeconds: {{ .Values.health.readinessPeriodSeconds }}
+            failureThreshold: {{ .Values.health.readinessFailureThreshold }}
+            timeoutSeconds: {{ .Values.health.timeoutSeconds }}
+          {{- end }}
           volumeMounts:
             - name: config
               mountPath: /etc/e-navigator

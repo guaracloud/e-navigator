@@ -179,18 +179,11 @@ real HTTP surface is configured, for example when `sink.prometheus_http` and
 ```toml
 [prometheus_http]
 enabled = true
+bind_address = "0.0.0.0"
+port = 9090
+max_metric_lines = 4096
 metrics_enabled = true
 profiles_enabled = true
-queue_capacity = 1024
-batch_size = 64
-flush_interval_millis = 1000
-timeout_millis = 3000
-max_retries = 2
-retry_initial_backoff_millis = 100
-retry_max_backoff_millis = 5000
-circuit_breaker_failure_threshold = 5
-circuit_breaker_cooldown_millis = 30000
-shutdown_timeout_millis = 10000
 ```
 
 ```yaml
@@ -204,6 +197,20 @@ serviceMonitor:
 
 `serviceMonitor.enabled=true` renders a `ServiceMonitor` only with both
 `service.enabled=true` and `prometheusHttp.enabled=true`.
+
+Set `health.enabled=true` only with the same real Prometheus HTTP surface. It
+adds startup, liveness, and readiness probes against `/healthz` and `/readyz`;
+it does not create a second health server. The default chart keeps both the
+port and probes disabled so a custom config cannot be marked unhealthy merely
+because it does not register `sink.prometheus_http`.
+
+The chart's operational defaults reserve `150m` CPU and `384Mi` memory, cap the
+container at `2` CPUs and `960Mi`, roll at most `10%` of nodes at once, require
+10 ready seconds, retain five DaemonSet revisions, and allow 30 seconds for
+termination. Linux sources listen for both SIGINT and SIGTERM, stop their perf
+readers, and then let bounded sink shutdown drain already accepted export
+batches. Override these values only with workload measurements from the target
+cluster.
 
 Prometheus latest-metric storage is also validated before startup:
 `prometheus_http.max_metric_lines` must be at most 262,144, and

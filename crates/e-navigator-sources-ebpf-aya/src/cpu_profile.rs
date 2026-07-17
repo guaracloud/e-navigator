@@ -1337,7 +1337,7 @@ mod platform {
             tokio::pin!(reader_results);
             tokio::select! {
                 result = &mut reader_results => result,
-                signal = tokio::signal::ctrl_c() => {
+                signal = crate::shutdown::signal() => {
                     signal.map_err(module_error)?;
                     shutdown.stop();
                     reader_results.await

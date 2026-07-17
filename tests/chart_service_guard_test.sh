@@ -48,17 +48,34 @@ if ! grep -Fq 'seccompProfile:' "$tmp_dir/default.yaml" || ! grep -Fq 'type: Run
   printf 'expected rendered DaemonSet container securityContext to use RuntimeDefault seccomp\n' >&2
   exit 1
 fi
+for expected in 'updateStrategy:' 'maxUnavailable: 10%' 'requests:' 'cpu: 150m' 'memory: 384Mi' 'terminationGracePeriodSeconds: 30'; do
+  if ! grep -Fq "$expected" "$tmp_dir/default.yaml"; then
+    printf 'expected rendered DaemonSet to include production default: %s\n' "$expected" >&2
+    exit 1
+  fi
+done
 
 render_chart service_only --set service.enabled=true
 expect_no_kind "$tmp_dir/service_only.yaml" Service
 expect_no_kind "$tmp_dir/service_only.yaml" ServiceMonitor
 
+if helm template e-navigator charts/e-navigator --set health.enabled=true >"$tmp_dir/invalid_health.yaml" 2>/dev/null; then
+  printf 'expected health probes without prometheusHttp.enabled to fail schema validation\n' >&2
+  exit 1
+fi
+
 render_chart health_service \
   --set service.enabled=true \
-  --set health.enabled=true \
-  --set serviceMonitor.enabled=true
+  --set prometheusHttp.enabled=true \
+  --set health.enabled=true
 expect_kind "$tmp_dir/health_service.yaml" Service
 expect_no_kind "$tmp_dir/health_service.yaml" ServiceMonitor
+for probe in startupProbe livenessProbe readinessProbe; do
+  if ! grep -Fq "${probe}:" "$tmp_dir/health_service.yaml"; then
+    printf 'expected health-enabled DaemonSet to include %s\n' "$probe" >&2
+    exit 1
+  fi
+done
 
 render_chart prometheus_service \
   --set service.enabled=true \
