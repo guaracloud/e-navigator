@@ -599,8 +599,12 @@ impl CounterKey {
                 .map(|container| container.container_id.clone()),
             protocol: Some(NetworkProtocol::Tcp),
             address_family: Some(event.address_family),
-            remote_address: event.remote_address.clone(),
-            remote_port: event.remote_port,
+            // TCP stat observations cover both client and server sockets. On
+            // server sockets the remote port is normally an ephemeral client
+            // port, so retaining either endpoint would make this cumulative
+            // state grow once per connection.
+            remote_address: None,
+            remote_port: None,
             errno: None,
         }
     }
@@ -719,13 +723,13 @@ impl CounterTemplate {
         Self {
             metric_name,
             unit,
-            process: event.process.clone(),
+            process: None,
             protocol: Some(NetworkProtocol::Tcp),
             address_family: Some(event.address_family),
-            local_address: event.local_address.clone(),
-            local_port: event.local_port,
-            remote_address: event.remote_address.clone(),
-            remote_port: event.remote_port,
+            local_address: None,
+            local_port: None,
+            remote_address: None,
+            remote_port: None,
             errno: None,
             container: event.container.clone(),
             kubernetes: event.kubernetes.clone(),
@@ -1245,9 +1249,40 @@ mod tests {
         .await;
         let counter = counter_metric(&second, "network.tcp.retransmits");
         assert_eq!(counter.value, 2);
-        assert_eq!(counter.remote_port, Some(443));
+        assert_eq!(counter.remote_port, None);
         assert_eq!(counter.window.start_unix_nanos, 100);
         assert_eq!(counter.window.end_unix_nanos, 200);
+    }
+
+    #[tokio::test]
+    async fn tcp_stats_aggregate_across_ephemeral_peer_endpoints() {
+        let generator = NetworkMetricsGenerator::default();
+
+        let first = tcp_stat_signal(
+            NetworkTcpStatKind::StateTransition,
+            Some(NetworkTcpState::Established),
+            None,
+            43_512,
+            100,
+        );
+        let second = tcp_stat_signal(
+            NetworkTcpStatKind::StateTransition,
+            Some(NetworkTcpState::Established),
+            None,
+            43_513,
+            200,
+        );
+
+        observe(&generator, &first).await;
+        let outputs = observe(&generator, &second).await;
+        let counter = counter_metric(&outputs, "network.tcp.transitions.established");
+
+        assert_eq!(counter.value, 2);
+        assert!(counter.process.is_none());
+        assert!(counter.local_address.is_none());
+        assert!(counter.local_port.is_none());
+        assert!(counter.remote_address.is_none());
+        assert!(counter.remote_port.is_none());
     }
 
     #[tokio::test]
