@@ -1,6 +1,8 @@
 #[cfg(any(target_os = "linux", test))]
 use crate::diagnostics::DiagnosticSampleDecision;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tracing::info;
 
@@ -11,6 +13,13 @@ pub(crate) struct SourceTelemetry {
     started_at: Instant,
     summary_interval_nanos: u64,
     next_summary_nanos: AtomicU64,
+    counters: Arc<SourceCounters>,
+    last_summary: Mutex<SourceTelemetrySnapshot>,
+}
+
+#[derive(Debug, Default)]
+struct SourceCounters {
+    initialized: AtomicU64,
     decoded_samples: AtomicU64,
     invalid_samples: AtomicU64,
     sent_signals: AtomicU64,
@@ -22,16 +31,21 @@ pub(crate) struct SourceTelemetry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SourceTelemetrySnapshot {
-    pub(crate) decoded_samples: u64,
-    pub(crate) invalid_samples: u64,
-    pub(crate) sent_signals: u64,
-    pub(crate) send_failures: u64,
-    pub(crate) lost_perf_events: u64,
-    pub(crate) diagnostic_matches: u64,
-    pub(crate) diagnostic_filtered: u64,
-    pub(crate) diagnostic_exhausted: u64,
+pub struct SourceTelemetrySnapshot {
+    pub source: &'static str,
+    pub initialized: bool,
+    pub decoded_samples: u64,
+    pub invalid_samples: u64,
+    pub sent_signals: u64,
+    pub send_failures: u64,
+    pub lost_perf_events: u64,
+    pub diagnostic_matches: u64,
+    pub diagnostic_filtered: u64,
+    pub diagnostic_exhausted: u64,
 }
+
+static SOURCE_COUNTERS: OnceLock<Mutex<BTreeMap<&'static str, Arc<SourceCounters>>>> =
+    OnceLock::new();
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 impl SourceTelemetry {
@@ -45,53 +59,69 @@ impl SourceTelemetry {
         let summary_interval_nanos = u64::try_from(summary_interval.as_nanos())
             .unwrap_or(u64::MAX)
             .max(1);
+        let counters = Arc::new(SourceCounters::default());
+        SOURCE_COUNTERS
+            .get_or_init(|| Mutex::new(BTreeMap::new()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(source, counters.clone());
         Self {
             source,
             started_at: Instant::now(),
             summary_interval_nanos,
             next_summary_nanos: AtomicU64::new(summary_interval_nanos),
-            decoded_samples: AtomicU64::new(0),
-            invalid_samples: AtomicU64::new(0),
-            sent_signals: AtomicU64::new(0),
-            send_failures: AtomicU64::new(0),
-            lost_perf_events: AtomicU64::new(0),
-            diagnostic_matches: AtomicU64::new(0),
-            diagnostic_filtered: AtomicU64::new(0),
-            diagnostic_exhausted: AtomicU64::new(0),
+            counters,
+            last_summary: Mutex::new(SourceTelemetrySnapshot::empty(source)),
         }
     }
 
+    pub(crate) fn mark_initialized(&self) {
+        self.counters.initialized.store(1, Ordering::Relaxed);
+    }
+
     pub(crate) fn record_decoded_sample(&self) {
-        self.decoded_samples.fetch_add(1, Ordering::Relaxed);
+        self.counters
+            .decoded_samples
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub(crate) fn record_invalid_sample(&self) {
-        self.invalid_samples.fetch_add(1, Ordering::Relaxed);
+        self.counters
+            .invalid_samples
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub(crate) fn record_sent_signal(&self) {
-        self.sent_signals.fetch_add(1, Ordering::Relaxed);
+        self.counters.sent_signals.fetch_add(1, Ordering::Relaxed);
     }
 
     pub(crate) fn record_send_failure(&self) {
-        self.send_failures.fetch_add(1, Ordering::Relaxed);
+        self.counters.send_failures.fetch_add(1, Ordering::Relaxed);
     }
 
     pub(crate) fn record_lost_perf_events(&self, count: u64) {
-        self.lost_perf_events.fetch_add(count, Ordering::Relaxed);
+        self.counters
+            .lost_perf_events
+            .fetch_add(count, Ordering::Relaxed);
     }
 
     #[cfg(any(target_os = "linux", test))]
     pub(crate) fn record_diagnostic_decision(&self, decision: DiagnosticSampleDecision) {
         match decision {
             DiagnosticSampleDecision::Matched => {
-                self.diagnostic_matches.fetch_add(1, Ordering::Relaxed);
+                self.counters
+                    .diagnostic_matches
+                    .fetch_add(1, Ordering::Relaxed);
             }
             DiagnosticSampleDecision::Filtered => {
-                self.diagnostic_filtered.fetch_add(1, Ordering::Relaxed);
+                self.counters
+                    .diagnostic_filtered
+                    .fetch_add(1, Ordering::Relaxed);
             }
             DiagnosticSampleDecision::Exhausted => {
-                self.diagnostic_exhausted.fetch_add(1, Ordering::Relaxed);
+                self.counters
+                    .diagnostic_exhausted
+                    .fetch_add(1, Ordering::Relaxed);
             }
             DiagnosticSampleDecision::Disabled => {}
         }
@@ -103,7 +133,7 @@ impl SourceTelemetry {
             return;
         }
 
-        let snapshot = self.take_snapshot();
+        let snapshot = self.take_summary_delta();
         if snapshot.is_empty() {
             return;
         }
@@ -111,6 +141,7 @@ impl SourceTelemetry {
         info!(
             target: "e_navigator_sources_ebpf_aya::source_telemetry",
             source = self.source,
+            initialized = snapshot.initialized,
             decoded_samples = snapshot.decoded_samples,
             invalid_samples = snapshot.invalid_samples,
             sent_signals = snapshot.sent_signals,
@@ -145,25 +176,98 @@ impl SourceTelemetry {
 
     #[cfg(test)]
     pub(crate) fn snapshot_for_test(&self) -> SourceTelemetrySnapshot {
-        self.take_snapshot()
+        self.snapshot()
     }
 
-    fn take_snapshot(&self) -> SourceTelemetrySnapshot {
-        SourceTelemetrySnapshot {
-            decoded_samples: self.decoded_samples.swap(0, Ordering::Relaxed),
-            invalid_samples: self.invalid_samples.swap(0, Ordering::Relaxed),
-            sent_signals: self.sent_signals.swap(0, Ordering::Relaxed),
-            send_failures: self.send_failures.swap(0, Ordering::Relaxed),
-            lost_perf_events: self.lost_perf_events.swap(0, Ordering::Relaxed),
-            diagnostic_matches: self.diagnostic_matches.swap(0, Ordering::Relaxed),
-            diagnostic_filtered: self.diagnostic_filtered.swap(0, Ordering::Relaxed),
-            diagnostic_exhausted: self.diagnostic_exhausted.swap(0, Ordering::Relaxed),
-        }
+    fn snapshot(&self) -> SourceTelemetrySnapshot {
+        snapshot_counters(self.source, &self.counters)
+    }
+
+    fn take_summary_delta(&self) -> SourceTelemetrySnapshot {
+        let current = self.snapshot();
+        let mut last = self
+            .last_summary
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let delta = current.delta_since(*last);
+        *last = current;
+        delta
     }
 }
 
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+/// Cumulative source telemetry for source instances created in this process.
+pub fn source_telemetry_snapshots() -> Vec<SourceTelemetrySnapshot> {
+    SOURCE_COUNTERS.get().map_or_else(Vec::new, |registry| {
+        registry.lock().map_or_else(
+            |_| Vec::new(),
+            |counters| {
+                counters
+                    .iter()
+                    .map(|(source, counters)| snapshot_counters(source, counters))
+                    .collect()
+            },
+        )
+    })
+}
+
+fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceTelemetrySnapshot {
+    SourceTelemetrySnapshot {
+        source,
+        initialized: counters.initialized.load(Ordering::Relaxed) != 0,
+        decoded_samples: counters.decoded_samples.load(Ordering::Relaxed),
+        invalid_samples: counters.invalid_samples.load(Ordering::Relaxed),
+        sent_signals: counters.sent_signals.load(Ordering::Relaxed),
+        send_failures: counters.send_failures.load(Ordering::Relaxed),
+        lost_perf_events: counters.lost_perf_events.load(Ordering::Relaxed),
+        diagnostic_matches: counters.diagnostic_matches.load(Ordering::Relaxed),
+        diagnostic_filtered: counters.diagnostic_filtered.load(Ordering::Relaxed),
+        diagnostic_exhausted: counters.diagnostic_exhausted.load(Ordering::Relaxed),
+    }
+}
+
 impl SourceTelemetrySnapshot {
+    const fn empty(source: &'static str) -> Self {
+        Self {
+            source,
+            initialized: false,
+            decoded_samples: 0,
+            invalid_samples: 0,
+            sent_signals: 0,
+            send_failures: 0,
+            lost_perf_events: 0,
+            diagnostic_matches: 0,
+            diagnostic_filtered: 0,
+            diagnostic_exhausted: 0,
+        }
+    }
+
+    fn delta_since(self, previous: Self) -> Self {
+        Self {
+            source: self.source,
+            initialized: self.initialized,
+            decoded_samples: self
+                .decoded_samples
+                .saturating_sub(previous.decoded_samples),
+            invalid_samples: self
+                .invalid_samples
+                .saturating_sub(previous.invalid_samples),
+            sent_signals: self.sent_signals.saturating_sub(previous.sent_signals),
+            send_failures: self.send_failures.saturating_sub(previous.send_failures),
+            lost_perf_events: self
+                .lost_perf_events
+                .saturating_sub(previous.lost_perf_events),
+            diagnostic_matches: self
+                .diagnostic_matches
+                .saturating_sub(previous.diagnostic_matches),
+            diagnostic_filtered: self
+                .diagnostic_filtered
+                .saturating_sub(previous.diagnostic_filtered),
+            diagnostic_exhausted: self
+                .diagnostic_exhausted
+                .saturating_sub(previous.diagnostic_exhausted),
+        }
+    }
+
     fn is_empty(&self) -> bool {
         self.decoded_samples == 0
             && self.invalid_samples == 0
@@ -199,15 +303,18 @@ pub fn bench_source_telemetry_summary_checks(
 
 #[cfg(test)]
 mod tests {
-    use super::SourceTelemetry;
+    use super::{SourceTelemetry, source_telemetry_snapshots};
     use crate::diagnostics::DiagnosticSampleDecision;
     use std::time::Duration;
 
     #[test]
-    fn source_telemetry_records_and_resets_delta_counters() {
-        let telemetry =
-            SourceTelemetry::with_summary_interval("source.test", Duration::from_secs(10));
+    fn source_telemetry_is_cumulative_while_log_summaries_are_deltas() {
+        let telemetry = SourceTelemetry::with_summary_interval(
+            "source.test.cumulative",
+            Duration::from_secs(10),
+        );
 
+        telemetry.mark_initialized();
         telemetry.record_decoded_sample();
         telemetry.record_invalid_sample();
         telemetry.record_sent_signal();
@@ -219,6 +326,7 @@ mod tests {
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Disabled);
 
         let snapshot = telemetry.snapshot_for_test();
+        assert!(snapshot.initialized);
         assert_eq!(snapshot.decoded_samples, 1);
         assert_eq!(snapshot.invalid_samples, 1);
         assert_eq!(snapshot.sent_signals, 1);
@@ -228,15 +336,28 @@ mod tests {
         assert_eq!(snapshot.diagnostic_filtered, 1);
         assert_eq!(snapshot.diagnostic_exhausted, 1);
 
-        let empty = telemetry.snapshot_for_test();
-        assert_eq!(empty.decoded_samples, 0);
-        assert_eq!(empty.lost_perf_events, 0);
+        let first_delta = telemetry.take_summary_delta();
+        assert_eq!(first_delta.decoded_samples, 1);
+        assert_eq!(first_delta.lost_perf_events, 3);
+        let empty_delta = telemetry.take_summary_delta();
+        assert_eq!(empty_delta.decoded_samples, 0);
+        assert_eq!(empty_delta.lost_perf_events, 0);
+
+        let cumulative = telemetry.snapshot_for_test();
+        assert_eq!(cumulative.decoded_samples, 1);
+        assert_eq!(cumulative.lost_perf_events, 3);
+        let registered = source_telemetry_snapshots()
+            .into_iter()
+            .find(|snapshot| snapshot.source == "source.test.cumulative")
+            .expect("registered cumulative counters");
+        assert!(registered.initialized);
+        assert_eq!(registered.sent_signals, 1);
     }
 
     #[test]
     fn summary_gate_allows_one_claim_per_interval_without_catch_up() {
         let telemetry =
-            SourceTelemetry::with_summary_interval("source.test", Duration::from_nanos(10));
+            SourceTelemetry::with_summary_interval("source.test.gate", Duration::from_nanos(10));
 
         assert!(!telemetry.try_claim_summary(9));
         assert!(telemetry.try_claim_summary(10));

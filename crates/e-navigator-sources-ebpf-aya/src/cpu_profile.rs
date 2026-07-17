@@ -1000,6 +1000,7 @@ mod platform {
     };
     use crate::perf_sample::perf_sample_bytes;
     use crate::reader_shutdown::ReaderShutdown;
+    use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
         Ebpf, include_bytes_aligned,
@@ -1051,6 +1052,7 @@ mod platform {
             bump_memlock_rlimit();
             let shutdown = ReaderShutdown::new();
             let mut reader_handles = Vec::new();
+            let telemetry = SourceTelemetry::new("source.aya_cpu_profile");
             let drop_counters = std::sync::Arc::new(super::CpuProfileDropCounters::default());
             let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
                 env!("OUT_DIR"),
@@ -1332,6 +1334,7 @@ mod platform {
                     ReaderExit::Stopped
                 }));
             }
+            telemetry.mark_initialized();
             debug!("aya cpu profile source attached");
             let reader_results = join_reader_handles(reader_handles);
             tokio::pin!(reader_results);

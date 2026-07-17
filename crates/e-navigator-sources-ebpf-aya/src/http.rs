@@ -693,6 +693,7 @@ mod platform {
                     "source diagnostics enabled"
                 );
             }
+            telemetry.mark_initialized();
             debug!("aya http source attached");
             crate::shutdown::signal().await.map_err(module_error)?;
             shutdown.stop();

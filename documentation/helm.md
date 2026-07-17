@@ -330,6 +330,16 @@ termination they must not be interpreted as source failures. Running state is
 supervisor lifecycle evidence, not proof that every optional kernel or TLS
 attachment succeeded.
 
+For Linux Aya sources, a running source should reach
+`e_navigator_ebpf_source_initialized{source="..."} == 1` after its base eBPF
+load, program attachment, perf-buffer setup, and reader startup path completes.
+Alert on any increase in `e_navigator_ebpf_source_send_failures_total` or
+`e_navigator_ebpf_source_lost_perf_events_total`, and investigate sustained
+growth in `e_navigator_ebpf_source_invalid_samples_total`. These counters are
+cumulative; the periodic structured log retains delta semantics. Initialization
+does not prove that every optional TLS library symbol or language-runtime
+unwinder attached, so those coverage gaps require their own metrics and proof.
+
 OTLP export runtime bounds are validated before startup:
 `otlp_http.queue_capacity` must be at most 65,536, `batch_size` at most 4,096
 and no larger than the queue, `flush_interval_millis` at most 60,000,
