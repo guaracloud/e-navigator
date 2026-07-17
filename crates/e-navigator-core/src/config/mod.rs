@@ -34,7 +34,7 @@ pub use modules::{
     KNOWN_MODULES, KnownModule, ModuleConfig, is_known_module_name, known_module_names,
 };
 pub use network_metrics::{NetworkEndpointConfig, NetworkMetricsConfig, RuntimeSecurityConfig};
-pub use otlp_http::OtlpHttpConfig;
+pub use otlp_http::{OtlpHttpCompression, OtlpHttpConfig};
 pub use profiling::ProfilingConfig;
 pub use prometheus_http::PrometheusHttpConfig;
 pub use protocol_source::ProtocolSourceConfig;

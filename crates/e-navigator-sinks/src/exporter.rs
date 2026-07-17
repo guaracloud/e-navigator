@@ -1,9 +1,12 @@
+use bytes::Bytes;
+use e_navigator_core::OtlpHttpCompression;
+use flate2::{Compression, write::GzEncoder};
 use reqwest::{
     Client,
-    header::{CONTENT_TYPE, HeaderMap},
+    header::{CONTENT_ENCODING, CONTENT_TYPE, HeaderMap},
 };
 use serde::Serialize;
-use std::{collections::VecDeque, time::Duration};
+use std::{collections::VecDeque, io::Write, time::Duration};
 use thiserror::Error;
 use tokio::time::{sleep, timeout};
 
@@ -151,7 +154,15 @@ pub struct ExporterCounters {
     pub dropped_export_failure: u64,
     pub failed_batches: u64,
     pub retry_attempts: u64,
+    pub request_attempts: u64,
+    pub request_duration_micros_sum: u64,
+    pub request_duration_buckets: [u64; EXPORT_REQUEST_DURATION_BUCKET_MICROS.len()],
 }
+
+pub(crate) const EXPORT_REQUEST_DURATION_BUCKET_MICROS: [u64; 11] = [
+    5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 2_500_000, 5_000_000,
+    10_000_000,
+];
 
 #[derive(Debug)]
 pub struct HttpJsonExporter<T> {
@@ -169,6 +180,7 @@ pub struct HttpProtobufExporter<T> {
     client: Client,
     encode_batch: fn(&[T]) -> Result<Vec<u8>, ExporterError>,
     retry_backoff: Option<RetryBackoff>,
+    compression: OtlpHttpCompression,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -290,6 +302,7 @@ where
             client,
             encode_batch,
             retry_backoff: None,
+            compression: OtlpHttpCompression::None,
         })
     }
 
@@ -298,6 +311,11 @@ where
             initial_millis,
             max_millis,
         });
+        self
+    }
+
+    pub fn with_compression(mut self, compression: OtlpHttpCompression) -> Self {
+        self.compression = compression;
         self
     }
 
@@ -330,6 +348,13 @@ where
             .take(batch_len)
             .cloned()
             .collect::<Vec<_>>();
+        let body = match self.encode_body(&batch).await {
+            Ok(body) => body,
+            Err(err) => {
+                self.counters.failed_batches = self.counters.failed_batches.saturating_add(1);
+                return Err(err);
+            }
+        };
 
         let mut last_error = None;
         for attempt in 0..=self.config.max_retries {
@@ -339,7 +364,10 @@ where
                     sleep(retry_delay(backoff, attempt, &self.config.endpoint)).await;
                 }
             }
-            match self.send_batch(&batch).await {
+            let started = std::time::Instant::now();
+            let result = self.send_body(body.clone()).await;
+            self.observe_request_duration(started.elapsed());
+            match result {
                 Ok(()) => {
                     for _ in 0..batch_len {
                         let _ = self.queue.pop_front();
@@ -368,15 +396,51 @@ where
         batch_len
     }
 
-    async fn send_batch(&self, batch: &[T]) -> Result<(), ExporterError> {
-        let headers = header_map(&self.config.headers)?;
+    async fn encode_body(&self, batch: &[T]) -> Result<Bytes, ExporterError> {
         let body = (self.encode_batch)(batch)?;
-        let request = self
+        match self.compression {
+            OtlpHttpCompression::None => Ok(Bytes::from(body)),
+            OtlpHttpCompression::Gzip => tokio::task::spawn_blocking(move || {
+                let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+                encoder
+                    .write_all(&body)
+                    .map_err(ExporterError::Compression)?;
+                encoder
+                    .finish()
+                    .map(Bytes::from)
+                    .map_err(ExporterError::Compression)
+            })
+            .await
+            .map_err(|err| ExporterError::CompressionTask(err.to_string()))?,
+        }
+    }
+
+    fn observe_request_duration(&mut self, duration: Duration) {
+        let micros = u64::try_from(duration.as_micros()).unwrap_or(u64::MAX);
+        self.counters.request_attempts = self.counters.request_attempts.saturating_add(1);
+        self.counters.request_duration_micros_sum = self
+            .counters
+            .request_duration_micros_sum
+            .saturating_add(micros);
+        for (index, boundary) in EXPORT_REQUEST_DURATION_BUCKET_MICROS.iter().enumerate() {
+            if micros <= *boundary {
+                self.counters.request_duration_buckets[index] =
+                    self.counters.request_duration_buckets[index].saturating_add(1);
+            }
+        }
+    }
+
+    async fn send_body(&self, body: Bytes) -> Result<(), ExporterError> {
+        let headers = header_map(&self.config.headers)?;
+        let mut request = self
             .client
             .post(&self.config.endpoint)
             .headers(headers)
             .header(CONTENT_TYPE, "application/x-protobuf")
             .body(body);
+        if self.compression == OtlpHttpCompression::Gzip {
+            request = request.header(CONTENT_ENCODING, "gzip");
+        }
         let response = timeout(
             Duration::from_millis(self.config.timeout_millis),
             request.send(),
@@ -424,6 +488,10 @@ pub enum ExporterError {
     InvalidHeader,
     #[error("failed to encode export payload: {0}")]
     Encode(String),
+    #[error("failed to compress export payload: {0}")]
+    Compression(std::io::Error),
+    #[error("export compression task failed: {0}")]
+    CompressionTask(String),
     #[error("export request timed out")]
     Timeout,
     #[error("collector returned HTTP {0}")]
@@ -763,7 +831,8 @@ mod tests {
         assert!(matches!(err, ExporterError::Encode(_)));
         assert_eq!(exporter.queued_len(), 1);
         assert_eq!(exporter.counters().failed_batches, 1);
-        assert_eq!(exporter.counters().retry_attempts, 1);
+        assert_eq!(exporter.counters().retry_attempts, 0);
+        assert_eq!(exporter.counters().request_attempts, 0);
         assert_eq!(exporter.counters().exported, 0);
     }
 

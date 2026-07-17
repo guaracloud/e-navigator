@@ -161,6 +161,7 @@ config:
     flush_interval_millis = 1000
     timeout_millis = 3000
     max_retries = 3
+    compression = "gzip"
     retry_initial_backoff_millis = 100
     retry_max_backoff_millis = 5000
     circuit_breaker_failure_threshold = 5

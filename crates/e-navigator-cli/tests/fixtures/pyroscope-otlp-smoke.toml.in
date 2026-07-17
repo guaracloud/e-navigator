@@ -15,6 +15,7 @@ batch_size = 8
 flush_interval_millis = 50
 timeout_millis = 3000
 max_retries = 2
+compression = "gzip"
 retry_initial_backoff_millis = 50
 retry_max_backoff_millis = 500
 circuit_breaker_failure_threshold = 3

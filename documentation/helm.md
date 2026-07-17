@@ -249,6 +249,7 @@ profiles_endpoint = "http://otel-collector:4318/v1development/profiles"
 metrics_enabled = true
 traces_enabled = true
 profiles_enabled = true
+compression = "gzip"
 ```
 
 Profiles can bypass a collector and go directly to the Guara-pinned Pyroscope
@@ -261,6 +262,7 @@ profiles_endpoint = "http://pyroscope.guara-observability.svc.cluster.local:4040
 metrics_enabled = false
 traces_enabled = false
 profiles_enabled = true
+compression = "gzip"
 ```
 
 This route is pinned to Pyroscope `1.20.3` and OTLP Profiles
@@ -318,6 +320,10 @@ most 2,048 bytes.
 
 OTLP export never performs collector I/O on the shared signal path. Metrics,
 traces, and profiles use separate bounded workers with size-or-time batching.
+`compression = "gzip"` compresses the protobuf body on Tokio's blocking pool
+and sends the required `Content-Encoding: gzip`; `"none"` preserves the
+uncompressed OTLP/HTTP body. The Guara production preset enables gzip for all
+three family workers.
 Metric sums are cumulative, and repeated cumulative updates for the same
 resource/data-point identity are coalesced to the latest window within each
 export batch. The Guara preset uses a 4,096-record batch so its measured event
@@ -330,6 +336,12 @@ circuit drops are exposed through the live Prometheus endpoint using fixed
 metrics read the worker atomics directly and therefore remain available when
 an OTLP destination is down. A worker drains its accepted queue during bounded
 shutdown.
+
+Every destination attempt also updates
+`e_navigator_export_request_duration_seconds`, a native Prometheus histogram
+with fixed latency buckets and the bounded `signal_family` label. The histogram
+includes failed attempts and timeouts, so use it with the retry, failure, and
+drop counters when diagnosing a slow backend.
 
 Alert at minimum on sustained increases in
 `e_navigator_export_dropped_queue_full_total`,
