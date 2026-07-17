@@ -1445,19 +1445,25 @@ fn bench_capture_filter(c: &mut Criterion) {
         };
         pods.push(RawPod {
             namespace,
+            pod_name: format!("workload-{n}"),
             pod_uid: Some(uid.clone()),
+            node_name: Some("benchmark-node".to_string()),
+            pod_ip: None,
             container_ids: Vec::new(),
+            container_names: BTreeMap::new(),
             labels: prod_labels.clone(),
         });
         observations.push(CgroupObservation {
             cgroup_id: n * 2,
             container_id: None,
             pod_uid: Some(uid.clone()),
+            process_names: Vec::new(),
         });
         observations.push(CgroupObservation {
             cgroup_id: n * 2 + 1,
             container_id: None,
             pod_uid: Some(uid),
+            process_names: Vec::new(),
         });
     }
     let index = RawNodePodIndex::from_pods(pods, 8192);
