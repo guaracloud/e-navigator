@@ -152,11 +152,12 @@ or chart rendering:
   export suppression, bounded profiling-warning trace attributes,
   hex-shape and nonzero trace/span ID filtering,
   bounded non-empty final OTLP attribute key and string value conversion, and
-  development-status profile sample records with
-  deterministic, workload-aware IDs, bounded session IDs, bounded resource
-  attributes, bounded stack frames, final canonical-plus-user attribute caps,
-  bounded/sensitive attribute filtering, and session dropped-sample records in
-  fake-collector tests;
+  development-status OTLP Profiles `v1development` `v0.3.0` sample records
+  with deterministic workload-aware IDs, bounded resource attributes and stack
+  frames, canonical-plus-user attribute caps, bounded/sensitive filtering, and
+  explicit cumulative-session export suppression. The pinned real Pyroscope
+  `1.20.3` local smoke accepted the request and its Guara-shaped backend query
+  returned `synthetic_api::checkout_handler` and deep representative frames;
 - native profile record formatting with bounded identifiers, bounded resource
   attributes, and non-empty sensitive attribute filtering;
 - pprof-compatible profile sample protobuf rendering with bounded stack
@@ -544,10 +545,11 @@ These areas remain explicitly partial:
   live soaks are not proven.
 - **DNS capture:** selected UDP paths work, but symmetric all-node capture and
   lossless DNS coverage are not proven.
-- **CPU profiling:** selected samples and sessions plus local pprof protobuf
-  rendering are proven, but deterministic capture for every workload shape,
-  symbolization, runtime pprof upload, storage, and flamegraph rendering are not
-  proven.
+- **CPU profiling:** selected samples and sessions, local pprof rendering, and
+  direct OTLP Profiles ingest/query against a disposable Pyroscope `1.20.3`
+  container are proven. Deterministic eBPF capture and backend queryability for
+  every workload/runtime shape, production storage/retention, and homelab
+  direct-Pyroscope delivery are not proven.
 - **Exporter infrastructure:** local and namespace-local proof exists, but broad
   production backend/collector compatibility and longer live soaks are not
   proven.

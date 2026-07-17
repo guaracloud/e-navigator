@@ -434,13 +434,13 @@ fn otlp_profile_bounds_resource_values() {
         "k8s.node.name",
         "node",
         "service.name",
-        "service_name",
     ] {
         assert_eq!(
             record.resource[key].as_str().map(str::len),
             Some(MAX_VALUE_BYTES)
         );
     }
+    assert!(!record.resource.contains_key("service_name"));
 }
 
 #[test]

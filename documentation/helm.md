@@ -234,6 +234,26 @@ traces_enabled = true
 profiles_enabled = true
 ```
 
+Profiles can bypass a collector and go directly to the Guara-pinned Pyroscope
+server:
+
+```toml
+[otlp_http]
+enabled = true
+profiles_endpoint = "http://pyroscope.guara-observability.svc.cluster.local:4040/v1development/profiles"
+metrics_enabled = false
+traces_enabled = false
+profiles_enabled = true
+```
+
+This route is pinned to Pyroscope `1.20.3` and OTLP Profiles
+`v1development` module `v0.3.0`; see ADR 0003. Profile samples use the standard
+`samples/count` plus `cpu/nanoseconds` period shape that Pyroscope exposes as
+`process_cpu:cpu:nanoseconds:cpu:nanoseconds`. Upgrading either side requires
+rerunning `tests/smoke_pyroscope_otlp.sh`. Native cumulative profile-session
+signals are intentionally not sent to this endpoint, avoiding repeat export of
+the same window.
+
 If a family-specific endpoint is omitted, that enabled family uses
 `otlp_http.endpoint`. Disabled families do not require an endpoint and do not
 export requests. Every configured OTLP endpoint must be an `http://` or
