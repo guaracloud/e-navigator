@@ -30,8 +30,8 @@ config:
 
     [attribution.kubernetes]
     enabled = true
-    require_node_name = true
-    allow_cluster_wide_pod_list = false
+    require_node_name = false
+    allow_cluster_wide_pod_list = true
     token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
     ca_cert_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
     max_response_bytes = 4194304

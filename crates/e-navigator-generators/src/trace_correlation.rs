@@ -263,6 +263,8 @@ impl TraceCorrelationGenerator {
                 None,
             ),
             destination: DependencyEndpoint {
+                owner_name: None,
+                owner_type: None,
                 workload: None,
                 container: None,
                 address: None,
@@ -629,6 +631,8 @@ fn source_endpoint(
     port: Option<u16>,
 ) -> DependencyEndpoint {
     DependencyEndpoint {
+        owner_name: None,
+        owner_type: None,
         workload,
         container,
         address,
@@ -643,6 +647,8 @@ fn destination_endpoint(
     domain: Option<String>,
 ) -> DependencyEndpoint {
     DependencyEndpoint {
+        owner_name: None,
+        owner_type: None,
         workload: None,
         container: None,
         address: Some(address),

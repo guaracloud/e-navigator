@@ -327,6 +327,11 @@ impl NativeTelemetrySource for WorkloadControllerTelemetrySource {
         } else {
             now.saturating_sub(snapshot.last_success_unix_seconds)
         };
+        let resource_relist_freshness = if snapshot.last_resource_relist_unix_seconds == 0 {
+            0
+        } else {
+            now.saturating_sub(snapshot.last_resource_relist_unix_seconds)
+        };
         let metric = |name: &str, value: u64| PrometheusMetricLine {
             name: name.to_string(),
             labels: std::collections::BTreeMap::new(),
@@ -341,7 +346,19 @@ impl NativeTelemetrySource for WorkloadControllerTelemetrySource {
                 "e_navigator_kubernetes_controller_freshness_seconds",
                 freshness,
             ),
+            metric(
+                "e_navigator_kubernetes_controller_resource_relist_freshness_seconds",
+                resource_relist_freshness,
+            ),
             metric("e_navigator_kubernetes_controller_pods", snapshot.pod_count),
+            metric(
+                "e_navigator_kubernetes_controller_services",
+                snapshot.service_count,
+            ),
+            metric(
+                "e_navigator_kubernetes_controller_endpoint_slices",
+                snapshot.endpoint_slice_count,
+            ),
             metric(
                 "e_navigator_kubernetes_controller_relists_total",
                 snapshot.relists,
@@ -388,12 +405,17 @@ impl KubernetesMetadataProvider for SharedKubernetesMetadataProvider {
         &self,
         config: &e_navigator_core::KubernetesAttributionConfig,
     ) -> Result<KubernetesMetadataCache, String> {
-        let Some((_generation, pods)) =
-            e_navigator_sources_ebpf_aya::capture_filter::shared_raw_pods()
+        let Some((_generation, pods, services, endpoint_slices)) =
+            e_navigator_sources_ebpf_aya::capture_filter::shared_kubernetes_resources()
         else {
             return Err("shared Kubernetes workload controller is not initialized".to_string());
         };
-        Ok(KubernetesMetadataCache::from_raw_pods(&pods, config))
+        Ok(KubernetesMetadataCache::from_raw_resources(
+            &pods,
+            &services,
+            &endpoint_slices,
+            config,
+        ))
     }
 }
 
@@ -502,6 +524,9 @@ mod tests {
 
         assert!(names.contains(&"e_navigator_kubernetes_controller_ready"));
         assert!(names.contains(&"e_navigator_kubernetes_controller_freshness_seconds"));
+        assert!(
+            names.contains(&"e_navigator_kubernetes_controller_resource_relist_freshness_seconds")
+        );
         assert!(names.contains(&"e_navigator_capture_filter_unresolved_cgroups"));
         assert!(lines.iter().all(|line| line.labels.is_empty()));
     }

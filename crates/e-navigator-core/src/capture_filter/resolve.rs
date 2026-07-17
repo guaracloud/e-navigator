@@ -62,9 +62,31 @@ pub struct RawPod {
     pub pod_uid: Option<String>,
     pub node_name: Option<String>,
     pub pod_ip: Option<String>,
+    pub workload_name: Option<String>,
+    pub workload_type: Option<String>,
     pub container_ids: Vec<String>,
     pub container_names: BTreeMap<String, String>,
     pub labels: BTreeMap<String, String>,
+}
+
+/// A bounded Service identity published by the shared Kubernetes controller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawService {
+    pub namespace: String,
+    pub service_name: String,
+    pub service_uid: Option<String>,
+    pub cluster_ips: Vec<String>,
+}
+
+/// Ready backend addresses for one Kubernetes Service, sourced from an
+/// EndpointSlice. These are used only as a fallback when an address does not
+/// already resolve to a Pod, so topology never overwrites a stronger workload
+/// identity with a load-balancer identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawEndpointSlice {
+    pub namespace: String,
+    pub service_name: String,
+    pub addresses: Vec<String>,
 }
 
 /// Index of the raw node pod list keyed by both pod UID and container id.
@@ -360,6 +382,8 @@ mod tests {
             pod_uid: Some(uid.to_string()),
             node_name: Some("node-a".to_string()),
             pod_ip: None,
+            workload_name: Some(format!("{namespace}-workload")),
+            workload_type: Some("Deployment".to_string()),
             container_ids: cids.iter().map(|c| c.to_string()).collect(),
             container_names: BTreeMap::new(),
             labels: labels
@@ -649,6 +673,8 @@ mod tests {
                 pod_uid: Some(UID.to_string()),
                 node_name: Some("node-a".to_string()),
                 pod_ip: None,
+                workload_name: Some("secret-workload".to_string()),
+                workload_type: Some("Deployment".to_string()),
                 container_ids: vec![CID.to_string()],
                 container_names: BTreeMap::new(),
                 labels: [("classification".to_string(), "restricted".to_string())]

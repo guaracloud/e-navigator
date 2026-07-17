@@ -685,6 +685,20 @@ fn append_endpoint_attributes(
     prefix: &str,
     endpoint: &DependencyEndpoint,
 ) {
+    if let Some(owner_name) = &endpoint.owner_name {
+        insert_string_attribute(
+            attributes,
+            format!("{prefix}.k8s.workload.name"),
+            owner_name,
+        );
+    }
+    if let Some(owner_type) = &endpoint.owner_type {
+        insert_string_attribute(
+            attributes,
+            format!("{prefix}.k8s.workload.type"),
+            owner_type,
+        );
+    }
     if let Some(address) = &endpoint.address {
         insert_string_attribute(attributes, format!("{prefix}.address"), address);
     }

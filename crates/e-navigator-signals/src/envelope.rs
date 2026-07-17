@@ -1884,6 +1884,8 @@ mod tests {
             Some("node-a".to_string()),
             DependencyEdgeEvent {
                 source: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: None,
@@ -1891,6 +1893,8 @@ mod tests {
                     domain: None,
                 },
                 destination: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: Some("203.0.113.10".to_string()),
@@ -1924,6 +1928,8 @@ mod tests {
             kubernetes: None,
         };
         let dependency_endpoint = DependencyEndpoint {
+            owner_name: Some(long.clone()),
+            owner_type: Some(long.clone()),
             workload: None,
             container: None,
             address: Some(long.clone()),
@@ -1974,8 +1980,12 @@ mod tests {
             &dependency,
             &[
                 &["source", "address"],
+                &["source", "owner_name"],
+                &["source", "owner_type"],
                 &["source", "domain"],
                 &["destination", "address"],
+                &["destination", "owner_name"],
+                &["destination", "owner_type"],
                 &["destination", "domain"],
             ],
         );
@@ -2033,6 +2043,8 @@ mod tests {
             None,
             DependencyEdgeEvent {
                 source: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: Some(kubernetes.clone()),
                     container: Some(container.clone()),
                     address: Some("10.0.0.5".to_string()),
@@ -2040,6 +2052,8 @@ mod tests {
                     domain: None,
                 },
                 destination: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: Some(kubernetes),
                     container: Some(container),
                     address: Some("10.0.0.6".to_string()),
@@ -2137,6 +2151,8 @@ mod tests {
                 correlation_kind: TraceCorrelationKind::NetworkInferred,
                 confidence: TraceConfidence::Medium,
                 source: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: Some(kubernetes_context()),
                     container: Some(container_context()),
                     address: Some("10.0.0.5".to_string()),
@@ -2144,6 +2160,8 @@ mod tests {
                     domain: None,
                 },
                 destination: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: Some("203.0.113.10".to_string()),
@@ -2179,6 +2197,8 @@ mod tests {
             TraceServicePathObservation {
                 path_key: "trace-path:0123456789abcdef".to_string(),
                 source: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: Some(kubernetes_context()),
                     container: Some(container_context()),
                     address: None,
@@ -2186,6 +2206,8 @@ mod tests {
                     domain: None,
                 },
                 destination: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: Some("203.0.113.10".to_string()),
@@ -2264,6 +2286,8 @@ mod tests {
                 correlation_kind: TraceCorrelationKind::NetworkInferred,
                 confidence: TraceConfidence::Medium,
                 source: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: Some("10.0.0.5".to_string()),
@@ -2271,6 +2295,8 @@ mod tests {
                     domain: None,
                 },
                 destination: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: Some("203.0.113.10".to_string()),
@@ -2289,6 +2315,8 @@ mod tests {
             TraceServicePathObservation {
                 path_key: "trace-path:0123456789abcdef".to_string(),
                 source: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: Some("10.0.0.5".to_string()),
@@ -2296,6 +2324,8 @@ mod tests {
                     domain: None,
                 },
                 destination: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: Some("203.0.113.10".to_string()),
@@ -2355,6 +2385,8 @@ mod tests {
                 correlation_kind: TraceCorrelationKind::NetworkInferred,
                 confidence: TraceConfidence::Medium,
                 source: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: None,
@@ -2362,6 +2394,8 @@ mod tests {
                     domain: None,
                 },
                 destination: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: None,
@@ -2380,6 +2414,8 @@ mod tests {
             TraceServicePathObservation {
                 path_key: long_value.clone(),
                 source: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: None,
@@ -2387,6 +2423,8 @@ mod tests {
                     domain: None,
                 },
                 destination: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: None,
@@ -2496,6 +2534,8 @@ mod tests {
                 correlation_kind: TraceCorrelationKind::NetworkInferred,
                 confidence: TraceConfidence::Medium,
                 source: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: None,
@@ -2503,6 +2543,8 @@ mod tests {
                     domain: None,
                 },
                 destination: DependencyEndpoint {
+                    owner_name: None,
+                    owner_type: None,
                     workload: None,
                     container: None,
                     address: None,
@@ -2561,6 +2603,8 @@ mod tests {
             container: Some(container.clone()),
         };
         let endpoint = DependencyEndpoint {
+            owner_name: None,
+            owner_type: None,
             workload: Some(kubernetes.clone()),
             container: Some(container.clone()),
             address: Some(long.clone()),

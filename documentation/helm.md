@@ -93,21 +93,34 @@ pod_label_selector = { "app.kubernetes.io/name" = "checkout" }
 pod_label_exclude_selector = { "observability.e-navigator.dev/exclude" = "true" }
 ```
 
-One node-scoped controller performs a bounded pod list, watches from its
+One shared controller performs a bounded Pod list, watches from its
 `resourceVersion`, and relists after the bounded watch timeout or an expired
-resource version. Capture filtering and production attribution consume that
-same snapshot; attribution does not perform a second pod API request. Kubernetes
-attribution also validates response and cache bounds before runtime:
+resource version. The list is node-scoped by default. Set
+`require_node_name=false` and `allow_cluster_wide_pod_list=true` together when
+cross-node Pod attribution is required; local Pods are retained first if the
+Pod bound is reached. The same controller lists Services and EndpointSlices at
+each reconciliation. Capture filtering and production attribution consume that
+same snapshot; attribution does not perform a second Kubernetes API request.
+The chart RBAC therefore grants Pod and Service list/watch plus EndpointSlice
+list/watch. Kubernetes attribution also validates response and cache bounds
+before runtime:
 `attribution.kubernetes.max_response_bytes` must be at most 33,554,432,
 `max_pods` at most 65,536, `max_cache_entries` at most 262,144 across the
-combined container-ID and pod-IP metadata indexes, and `max_labels_per_pod` at
-most 128.
+combined container-ID and Pod-IP metadata indexes and separately across the
+workload-owner/address topology indexes, and `max_labels_per_pod` at most 128.
 Kubernetes selector lists and pod-label selector maps must each contain at most
 128 entries. Each selector string, key, or value must be non-empty, must not
 contain whitespace or control characters, and must be at most 253 bytes.
-When Kubernetes attribution uses `NODE_NAME` for API field-selector scoping, the
-runtime node name must be a DNS subdomain; unsafe values are rejected before a
-pod-list request is built.
+`NODE_NAME` remains required to prioritize local Pods and scope the default Pod
+list. It must be a DNS subdomain; unsafe values are rejected before a request is
+built.
+
+Pod IPs resolve to qualified stable controller owners where Kubernetes exposes
+one. Service ClusterIPs resolve to a qualified `namespace/name` owner of type
+`service`; they are not attributed to a guessed backend Pod. Ready EndpointSlice
+addresses provide a Service-owner fallback only when no Pod identity exists.
+Services and EndpointSlices refresh at the controller's bounded relist (at most
+five minutes by default), while Pod changes are watched continuously.
 
 The optional capture filter controls which workloads the eBPF sources *probe*,
 which is distinct from `[attribution.kubernetes]` selectors (those only scope

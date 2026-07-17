@@ -1449,6 +1449,8 @@ fn bench_capture_filter(c: &mut Criterion) {
             pod_uid: Some(uid.clone()),
             node_name: Some("benchmark-node".to_string()),
             pod_ip: None,
+            workload_name: Some(format!("workload-{n}")),
+            workload_type: Some("deployment".to_string()),
             container_ids: Vec::new(),
             container_names: BTreeMap::new(),
             labels: prod_labels.clone(),

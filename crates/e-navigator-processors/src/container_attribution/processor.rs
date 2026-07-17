@@ -308,9 +308,36 @@ impl ContainerAttributionProcessor {
 
     fn enrich_dependency_endpoint(&self, endpoint: &mut e_navigator_signals::DependencyEndpoint) {
         if endpoint.workload.is_none() {
-            endpoint.workload = endpoint.container.as_ref().and_then(|container| {
-                self.kubernetes_context_for_container(&container.container_id)
+            endpoint.workload = endpoint
+                .container
+                .as_ref()
+                .and_then(|container| {
+                    self.kubernetes_context_for_container(&container.container_id)
+                })
+                .or_else(|| {
+                    endpoint
+                        .address
+                        .as_deref()
+                        .and_then(|address| self.kubernetes_context_for_pod_ip(address))
+                });
+        }
+        let owner = endpoint
+            .workload
+            .as_ref()
+            .and_then(|context| self.kubernetes.owner_for_context(context))
+            .or_else(|| {
+                endpoint
+                    .address
+                    .as_deref()
+                    .and_then(|address| self.kubernetes.owner_for_address(address))
             });
+        if let Some(owner) = owner {
+            if endpoint.owner_name.is_none() {
+                endpoint.owner_name = Some(owner.name);
+            }
+            if endpoint.owner_type.is_none() {
+                endpoint.owner_type = Some(owner.owner_type);
+            }
         }
     }
 
@@ -331,6 +358,24 @@ impl ContainerAttributionProcessor {
                         .as_ref()
                         .and_then(|address| self.kubernetes_context_for_pod_ip(address))
                 });
+        }
+        let owner = endpoint
+            .kubernetes
+            .as_ref()
+            .and_then(|context| self.kubernetes.owner_for_context(context))
+            .or_else(|| {
+                endpoint
+                    .address
+                    .as_deref()
+                    .and_then(|address| self.kubernetes.owner_for_address(address))
+            });
+        if let Some(owner) = owner {
+            if endpoint.owner_name.is_none() {
+                endpoint.owner_name = Some(owner.name);
+            }
+            if endpoint.owner_type.is_none() {
+                endpoint.owner_type = Some(owner.owner_type);
+            }
         }
     }
 

@@ -3,7 +3,10 @@ use super::{
     kubernetes::KubernetesMetadataProvider, pid::is_expected_process_exit_race, *,
 };
 use async_trait::async_trait;
-use e_navigator_core::{AttributionConfig, Generator, KubernetesAttributionConfig, Processor};
+use e_navigator_core::{
+    AttributionConfig, Generator, KubernetesAttributionConfig, Processor,
+    capture_filter::{RawPod, RawService},
+};
 use e_navigator_generators::{
     DnsMetricsGenerator, NetworkMetricsGenerator, RequestCorrelationGenerator,
     ResourceMetricsGenerator, TraceCorrelationGenerator,
@@ -1026,6 +1029,138 @@ async fn network_flow_summary_enriches_destination_from_pod_ip_cache() {
 }
 
 #[tokio::test]
+async fn network_flow_summary_exports_stable_pod_and_service_owners() {
+    let container_id = "abababababababababababababababababababababababababababababababab";
+    let cache = KubernetesMetadataCache::from_raw_resources(
+        &[RawPod {
+            namespace: "proj-api".to_string(),
+            pod_name: "api-7d9f8d6c5b-abcd".to_string(),
+            pod_uid: Some("api-pod-uid".to_string()),
+            node_name: Some("node-b".to_string()),
+            pod_ip: Some("10.42.1.10".to_string()),
+            workload_name: Some("api".to_string()),
+            workload_type: Some("deployment".to_string()),
+            container_ids: vec![container_id.to_string()],
+            container_names: BTreeMap::from([(container_id.to_string(), "api".to_string())]),
+            labels: BTreeMap::new(),
+        }],
+        &[RawService {
+            namespace: "proj-data".to_string(),
+            service_name: "redis".to_string(),
+            service_uid: Some("redis-service-uid".to_string()),
+            cluster_ips: vec!["10.43.0.20".to_string()],
+        }],
+        &[],
+        &KubernetesAttributionConfig::default(),
+    );
+    let processor = ContainerAttributionProcessor::with_cache(
+        AttributionConfig {
+            kubernetes: KubernetesAttributionConfig {
+                enabled: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        cache,
+    );
+    let signal = SignalEnvelope::network_flow_summary(
+        "generator.network_metrics",
+        Some("node-a".to_string()),
+        NetworkFlowSummaryEvent {
+            source: NetworkFlowEndpoint {
+                address: Some("10.42.1.10".to_string()),
+                port: Some(43000),
+                owner_name: None,
+                owner_type: None,
+                container: Some(ContainerContext {
+                    container_id: container_id.to_string(),
+                    runtime: Some("containerd".to_string()),
+                }),
+                kubernetes: None,
+            },
+            destination: NetworkFlowEndpoint {
+                address: Some("10.43.0.20".to_string()),
+                port: Some(6379),
+                owner_name: None,
+                owner_type: None,
+                container: None,
+                kubernetes: None,
+            },
+            protocol: NetworkProtocol::Tcp,
+            address_family: NetworkAddressFamily::Ipv4,
+            bytes: 42,
+            packets: None,
+            direction: NetworkFlowDirection::Egress,
+            first_seen_unix_nanos: 1,
+            last_seen_unix_nanos: 2,
+        },
+    );
+
+    let processed = processor
+        .process(signal)
+        .await
+        .expect("processor succeeds")
+        .expect("signal retained");
+    let SignalPayload::NetworkFlowSummary(flow) = processed.payload else {
+        panic!("expected flow summary");
+    };
+    assert_eq!(flow.source.owner_name.as_deref(), Some("proj-api/api"));
+    assert_eq!(flow.source.owner_type.as_deref(), Some("deployment"));
+    assert_eq!(
+        flow.destination.owner_name.as_deref(),
+        Some("proj-data/redis")
+    );
+    assert_eq!(flow.destination.owner_type.as_deref(), Some("service"));
+    assert!(flow.destination.kubernetes.is_none());
+
+    let dependency = SignalEnvelope::dependency_edge(
+        "generator.dependency_graph",
+        Some("node-a".to_string()),
+        DependencyEdgeEvent {
+            source: DependencyEndpoint {
+                owner_name: None,
+                owner_type: None,
+                workload: None,
+                container: Some(ContainerContext {
+                    container_id: container_id.to_string(),
+                    runtime: Some("containerd".to_string()),
+                }),
+                address: Some("10.42.1.10".to_string()),
+                port: Some(43000),
+                domain: None,
+            },
+            destination: DependencyEndpoint {
+                owner_name: None,
+                owner_type: None,
+                workload: None,
+                container: None,
+                address: Some("10.43.0.20".to_string()),
+                port: Some(6379),
+                domain: None,
+            },
+            protocol: NetworkProtocol::Tcp,
+            observations: 1,
+            first_seen_unix_nanos: 1,
+            last_seen_unix_nanos: 2,
+        },
+    );
+    let processed = processor
+        .process(dependency)
+        .await
+        .expect("processor succeeds")
+        .expect("signal retained");
+    let SignalPayload::DependencyEdge(edge) = processed.payload else {
+        panic!("expected dependency edge");
+    };
+    assert_eq!(edge.source.owner_name.as_deref(), Some("proj-api/api"));
+    assert_eq!(
+        edge.destination.owner_name.as_deref(),
+        Some("proj-data/redis")
+    );
+    assert_eq!(edge.destination.owner_type.as_deref(), Some("service"));
+}
+
+#[tokio::test]
 async fn dns_metric_uses_processor_enriched_attribution() {
     let (processor, root) = processor_fixture(
         89,
@@ -1822,6 +1957,8 @@ async fn enriches_dependency_edge_endpoint_from_existing_container_context() {
         Some("homelab-01".to_string()),
         DependencyEdgeEvent {
             source: DependencyEndpoint {
+                owner_name: None,
+                owner_type: None,
                 workload: None,
                 container: Some(ContainerContext {
                     container_id: container_id.to_string(),
@@ -1832,6 +1969,8 @@ async fn enriches_dependency_edge_endpoint_from_existing_container_context() {
                 domain: None,
             },
             destination: DependencyEndpoint {
+                owner_name: None,
+                owner_type: None,
                 workload: None,
                 container: None,
                 address: Some("10.43.0.1".to_string()),

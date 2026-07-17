@@ -1,8 +1,9 @@
 //! Userspace control plane for the Kubernetes-aware capture filter.
 //!
 //! One shared [`CaptureFilterController`] (spawned once by the CLI) polls the
-//! node: it scans the cgroup filesystem for container cgroups, fetches the
-//! **raw, unscoped** node pod list from the Kubernetes API, resolves each
+//! node: it scans the cgroup filesystem for container cgroups and fetches one
+//! bounded Kubernetes workload snapshot (node-scoped by default, optionally
+//! cluster-wide with local Pods retained first). It resolves each
 //! observed cgroup to a pod, evaluates the operator's policy, and publishes a
 //! desired `{cgroup_id -> verdict}` map. Because every eBPF source loads its
 //! own program object (and therefore its own copy of the filter map), the
@@ -21,8 +22,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use e_navigator_core::capture_filter::{
-    CAPTURE_FILTER_MAP_CAPACITY, CgroupObservation, DesiredFilterMap, RawNodePodIndex, RawPod,
-    build_desired_filter_map,
+    CAPTURE_FILTER_MAP_CAPACITY, CgroupObservation, DesiredFilterMap, RawEndpointSlice,
+    RawNodePodIndex, RawPod, RawService, build_desired_filter_map,
 };
 use e_navigator_core::{CaptureFilterConfig, CaptureFilterPolicy, KubernetesAttributionConfig};
 use tracing::{debug, info, warn};
@@ -50,8 +51,14 @@ const MAX_POD_LIST_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 /// Maximum service-account token bytes read.
 const MAX_TOKEN_BYTES: u64 = 16 * 1024;
 
-/// Fetches the raw, unscoped node pod list.
+/// Fetches one bounded raw Kubernetes workload snapshot.
 pub(crate) type RawPodPublisher = Arc<dyn Fn(&RawPodSnapshot) + Send + Sync>;
+pub type SharedKubernetesResources = (
+    u64,
+    Arc<Vec<RawPod>>,
+    Arc<Vec<RawService>>,
+    Arc<Vec<RawEndpointSlice>>,
+);
 
 #[async_trait]
 pub(crate) trait RawPodFetcher: Send + Sync + std::fmt::Debug {
@@ -67,6 +74,8 @@ pub(crate) trait RawPodFetcher: Send + Sync + std::fmt::Debug {
 pub(crate) struct RawPodSnapshot {
     resource_version: String,
     pods: Vec<RawPod>,
+    services: Vec<RawService>,
+    endpoint_slices: Vec<RawEndpointSlice>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,9 +104,11 @@ struct PublishedState {
     desired: Arc<DesiredFilterMap>,
     pod_generation: u64,
     raw_pods: Arc<Vec<RawPod>>,
+    raw_services: Arc<Vec<RawService>>,
+    raw_endpoint_slices: Arc<Vec<RawEndpointSlice>>,
 }
 
-/// Shared, node-wide capture-filter controller.
+/// Shared, process-wide Kubernetes workload controller.
 #[derive(Debug)]
 pub(crate) struct CaptureFilterController {
     control_word: u32,
@@ -138,20 +149,37 @@ impl CaptureFilterController {
         state.desired = Arc::new(desired);
     }
 
-    fn publish_raw_pods(&self, pods: Vec<RawPod>) {
+    fn publish_snapshot(&self, snapshot: RawPodSnapshot) {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         state.pod_generation = state.pod_generation.wrapping_add(1);
-        state.raw_pods = Arc::new(pods);
+        state.raw_pods = Arc::new(snapshot.pods);
+        state.raw_services = Arc::new(snapshot.services);
+        state.raw_endpoint_slices = Arc::new(snapshot.endpoint_slices);
         self.telemetry
             .reconciliations
             .fetch_add(1, Ordering::Relaxed);
         self.telemetry
             .pod_count
             .store(state.raw_pods.len() as u64, Ordering::Relaxed);
+        self.telemetry
+            .service_count
+            .store(state.raw_services.len() as u64, Ordering::Relaxed);
+        self.telemetry
+            .endpoint_slice_count
+            .store(state.raw_endpoint_slices.len() as u64, Ordering::Relaxed);
         self.telemetry.last_success_unix_seconds.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_secs()),
+            Ordering::Relaxed,
+        );
+    }
+
+    fn mark_resource_relist_success(&self) {
+        self.telemetry.last_resource_relist_unix_seconds.store(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |duration| duration.as_secs()),
@@ -167,6 +195,19 @@ impl CaptureFilterController {
         (state.pod_generation, state.raw_pods.clone())
     }
 
+    fn raw_kubernetes_resources(&self) -> SharedKubernetesResources {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (
+            state.pod_generation,
+            state.raw_pods.clone(),
+            state.raw_services.clone(),
+            state.raw_endpoint_slices.clone(),
+        )
+    }
+
     fn telemetry(&self) -> WorkloadControllerTelemetrySnapshot {
         WorkloadControllerTelemetrySnapshot {
             relists: self.telemetry.relists.load(Ordering::Relaxed),
@@ -179,12 +220,18 @@ impl CaptureFilterController {
                 .load(Ordering::Relaxed),
             reconciliations: self.telemetry.reconciliations.load(Ordering::Relaxed),
             pod_count: self.telemetry.pod_count.load(Ordering::Relaxed),
+            service_count: self.telemetry.service_count.load(Ordering::Relaxed),
+            endpoint_slice_count: self.telemetry.endpoint_slice_count.load(Ordering::Relaxed),
             allowed_cgroups: self.telemetry.allowed_cgroups.load(Ordering::Relaxed),
             denied_cgroups: self.telemetry.denied_cgroups.load(Ordering::Relaxed),
             unresolved_cgroups: self.telemetry.unresolved_cgroups.load(Ordering::Relaxed),
             last_success_unix_seconds: self
                 .telemetry
                 .last_success_unix_seconds
+                .load(Ordering::Relaxed),
+            last_resource_relist_unix_seconds: self
+                .telemetry
+                .last_resource_relist_unix_seconds
                 .load(Ordering::Relaxed),
         }
     }
@@ -199,10 +246,13 @@ struct WorkloadControllerTelemetry {
     expired_resource_versions: AtomicU64,
     reconciliations: AtomicU64,
     pod_count: AtomicU64,
+    service_count: AtomicU64,
+    endpoint_slice_count: AtomicU64,
     allowed_cgroups: AtomicU64,
     denied_cgroups: AtomicU64,
     unresolved_cgroups: AtomicU64,
     last_success_unix_seconds: AtomicU64,
+    last_resource_relist_unix_seconds: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -214,10 +264,13 @@ pub struct WorkloadControllerTelemetrySnapshot {
     pub expired_resource_versions: u64,
     pub reconciliations: u64,
     pub pod_count: u64,
+    pub service_count: u64,
+    pub endpoint_slice_count: u64,
     pub allowed_cgroups: u64,
     pub denied_cgroups: u64,
     pub unresolved_cgroups: u64,
     pub last_success_unix_seconds: u64,
+    pub last_resource_relist_unix_seconds: u64,
 }
 
 /// Process-global workload controller. `None` means both capture filtering and
@@ -293,11 +346,18 @@ pub(crate) fn shared() -> Option<Arc<CaptureFilterController>> {
     SHARED.get().and_then(Clone::clone)
 }
 
-/// Latest bounded raw node-pod snapshot owned by the shared controller.
+/// Latest bounded raw Pod snapshot owned by the shared controller.
 /// Attribution consumes this instead of issuing an independent Kubernetes API
 /// request. `None` means the controller is disabled or not initialized.
 pub fn shared_raw_pods() -> Option<(u64, Arc<Vec<RawPod>>)> {
     shared().map(|controller| controller.raw_pods())
+}
+
+/// Latest bounded cluster-wide Kubernetes resource snapshot. The capture
+/// filter consumes only Pods; attribution additionally consumes Services and
+/// EndpointSlices from this same controller and API client.
+pub fn shared_kubernetes_resources() -> Option<SharedKubernetesResources> {
+    shared().map(|controller| controller.raw_kubernetes_resources())
 }
 
 pub fn shared_telemetry() -> Option<WorkloadControllerTelemetrySnapshot> {
@@ -338,7 +398,8 @@ async fn run_watch_loop(controller: Arc<CaptureFilterController>, fetcher: Arc<d
                 continue;
             }
         };
-        controller.publish_raw_pods(snapshot.pods.clone());
+        controller.mark_resource_relist_success();
+        controller.publish_snapshot(snapshot.clone());
         backoff = WATCH_RETRY_INITIAL_BACKOFF;
 
         controller
@@ -347,11 +408,11 @@ async fn run_watch_loop(controller: Arc<CaptureFilterController>, fetcher: Arc<d
             .fetch_add(1, Ordering::Relaxed);
         let publishing_controller = Arc::clone(&controller);
         let publisher: RawPodPublisher = Arc::new(move |snapshot| {
-            publishing_controller.publish_raw_pods(snapshot.pods.clone());
+            publishing_controller.publish_snapshot(snapshot.clone());
         });
         match fetcher.watch(snapshot, publisher).await {
             Ok(snapshot) => {
-                controller.publish_raw_pods(snapshot.pods);
+                controller.publish_snapshot(snapshot);
                 // The bounded watch timeout is also the reconciliation
                 // boundary: relist before starting the next watch.
             }

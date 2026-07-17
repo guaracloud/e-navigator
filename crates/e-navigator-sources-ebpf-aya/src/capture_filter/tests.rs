@@ -77,6 +77,63 @@ fn parse_raw_pods_extracts_bare_container_ids_unscoped() {
 }
 
 #[test]
+fn cluster_wide_snapshot_prioritizes_local_pods_and_derives_deployment_owner() {
+    let body = r#"{
+        "metadata": {"resourceVersion": "91"},
+        "items": [
+            {
+                "metadata": {"namespace": "a", "name": "remote", "uid": "remote"},
+                "spec": {"nodeName": "node-b"}
+            },
+            {
+                "metadata": {
+                    "namespace": "z",
+                    "name": "api-7d9f8d6c5b-abcd",
+                    "uid": "local",
+                    "labels": {"pod-template-hash": "7d9f8d6c5b"},
+                    "ownerReferences": [{
+                        "kind": "ReplicaSet",
+                        "name": "api-7d9f8d6c5b",
+                        "controller": true
+                    }]
+                },
+                "spec": {"nodeName": "node-a"}
+            }
+        ]
+    }"#;
+
+    let snapshot = in_cluster::parse_raw_pod_snapshot_for_node(body, 1, 64, Some("node-a"))
+        .expect("cluster snapshot");
+
+    assert_eq!(snapshot.pods.len(), 1);
+    assert_eq!(snapshot.pods[0].pod_uid.as_deref(), Some("local"));
+    assert_eq!(snapshot.pods[0].workload_name.as_deref(), Some("api"));
+    assert_eq!(
+        snapshot.pods[0].workload_type.as_deref(),
+        Some("deployment")
+    );
+}
+
+#[test]
+fn parses_service_cluster_ips_and_ready_endpoint_slice_addresses() {
+    let services = in_cluster::parse_raw_services(
+        r#"{"items":[{"metadata":{"namespace":"proj","name":"redis","uid":"svc-1"},"spec":{"clusterIP":"10.43.0.9","clusterIPs":["10.43.0.9"]}}]}"#,
+        16,
+    )
+    .expect("service list");
+    assert_eq!(services.len(), 1);
+    assert_eq!(services[0].cluster_ips, vec!["10.43.0.9"]);
+
+    let slices = in_cluster::parse_raw_endpoint_slices(
+        r#"{"items":[{"metadata":{"namespace":"proj","labels":{"kubernetes.io/service-name":"redis"}},"endpoints":[{"addresses":["10.42.1.20"],"conditions":{"ready":true}},{"addresses":["10.42.1.21"],"conditions":{"ready":false}}]}]}"#,
+        16,
+    )
+    .expect("endpoint slices");
+    assert_eq!(slices.len(), 1);
+    assert_eq!(slices[0].addresses, vec!["10.42.1.20"]);
+}
+
+#[test]
 fn parse_raw_pods_bounds_pods_and_labels() {
     let body = r#"{
         "items": [
@@ -209,6 +266,11 @@ fn complete_watch_event_is_published_without_waiting_for_watch_end() {
         &mut resource_version,
         16,
         16,
+        in_cluster::WatchResources {
+            preferred_node: None,
+            services: &[],
+            endpoint_slices: &[],
+        },
         &publisher,
     )
     .expect("event publication");
@@ -217,6 +279,41 @@ fn complete_watch_event_is_published_without_waiting_for_watch_end() {
     assert_eq!(published.len(), 1);
     assert_eq!(published[0].resource_version, "42");
     assert_eq!(published[0].pods[0].pod_uid.as_deref(), Some(UID));
+}
+
+#[test]
+fn local_watch_addition_evicts_remote_pod_when_cluster_bound_is_full() {
+    let remote = parse_raw_pods(
+        r#"{"items":[{"metadata":{"namespace":"proj","name":"remote","uid":"remote"},"spec":{"nodeName":"node-b"}}]}"#,
+        1,
+        16,
+    )
+    .expect("remote pod")
+    .pop()
+    .expect("one remote pod");
+    let mut pods = BTreeMap::from([("remote".to_string(), remote)]);
+    let mut resource_version = "41".to_string();
+    let publisher: RawPodPublisher = Arc::new(|_| {});
+    let local = br#"{"type":"ADDED","object":{"metadata":{"namespace":"proj","name":"local","uid":"local","resourceVersion":"42"},"spec":{"nodeName":"node-a"}}}"#;
+
+    in_cluster::apply_and_publish_watch_line(
+        local,
+        &mut pods,
+        &mut resource_version,
+        1,
+        16,
+        in_cluster::WatchResources {
+            preferred_node: Some("node-a"),
+            services: &[],
+            endpoint_slices: &[],
+        },
+        &publisher,
+    )
+    .expect("local add");
+
+    assert_eq!(pods.len(), 1);
+    assert!(pods.contains_key("local"));
+    assert!(!pods.contains_key("remote"));
 }
 
 #[test]
@@ -265,16 +362,24 @@ fn controller_publish_increments_generation() {
 #[test]
 fn controller_publishes_raw_pods_for_shared_attribution() {
     let controller = CaptureFilterController::new(CONTROL_UNKNOWN_DROP);
-    controller.publish_raw_pods(vec![RawPod {
-        namespace: "proj-payments".to_string(),
-        pod_name: "payments-api".to_string(),
-        pod_uid: Some(UID.to_string()),
-        node_name: Some("node-a".to_string()),
-        pod_ip: Some("10.42.0.10".to_string()),
-        container_ids: vec![CID.to_string()],
-        container_names: BTreeMap::from([(CID.to_string(), "api".to_string())]),
-        labels: BTreeMap::new(),
-    }]);
+    controller.mark_resource_relist_success();
+    controller.publish_snapshot(RawPodSnapshot {
+        resource_version: "1".to_string(),
+        pods: vec![RawPod {
+            namespace: "proj-payments".to_string(),
+            pod_name: "payments-api".to_string(),
+            pod_uid: Some(UID.to_string()),
+            node_name: Some("node-a".to_string()),
+            pod_ip: Some("10.42.0.10".to_string()),
+            workload_name: Some("payments-api".to_string()),
+            workload_type: Some("deployment".to_string()),
+            container_ids: vec![CID.to_string()],
+            container_names: BTreeMap::from([(CID.to_string(), "api".to_string())]),
+            labels: BTreeMap::new(),
+        }],
+        services: Vec::new(),
+        endpoint_slices: Vec::new(),
+    });
 
     let (generation, pods) = controller.raw_pods();
 
@@ -285,6 +390,7 @@ fn controller_publishes_raw_pods_for_shared_attribution() {
     assert_eq!(telemetry.reconciliations, 1);
     assert_eq!(telemetry.pod_count, 1);
     assert!(telemetry.last_success_unix_seconds > 0);
+    assert!(telemetry.last_resource_relist_unix_seconds > 0);
 }
 
 #[test]
