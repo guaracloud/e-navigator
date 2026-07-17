@@ -321,6 +321,15 @@ For the workload controller, alert when
 `e_navigator_capture_filter_unresolved_cgroups` remains nonzero. Resource-version
 expiration alone is recoverable; pair it with readiness/freshness before paging.
 
+For the source supervisor, alert when a configured
+`e_navigator_source_running{source="..."}` series remains zero while the agent
+is ready, and on increases in `e_navigator_source_failures_total`. The bounded
+`source` label comes only from statically registered modules. Clean exits are
+reported separately in `e_navigator_source_clean_exits_total`; during normal
+termination they must not be interpreted as source failures. Running state is
+supervisor lifecycle evidence, not proof that every optional kernel or TLS
+attachment succeeded.
+
 OTLP export runtime bounds are validated before startup:
 `otlp_http.queue_capacity` must be at most 65,536, `batch_size` at most 4,096
 and no larger than the queue, `flush_interval_millis` at most 60,000,

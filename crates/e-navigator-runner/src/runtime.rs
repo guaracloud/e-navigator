@@ -62,16 +62,21 @@ impl Runner {
             mpsc::channel::<CoreResult<()>>(self.registry.sources().len());
 
         let mut source_handles = Vec::new();
+        let source_health = self.registry.source_health_registry();
 
         for source in self.registry.drain_sources() {
             let source_tx = tx.clone();
             let result_tx = source_result_tx.clone();
             let metadata = source.metadata();
+            let source_name = metadata.name;
+            let source_health = source_health.clone();
             source_handles.push(tokio::spawn(async move {
+                source_health.record_start(source_name);
                 let result = source
                     .run(source_tx)
                     .await
                     .map_err(|err| with_module_context(metadata, err));
+                source_health.record_result(source_name, result.is_ok());
                 let _ = result_tx.send(result).await;
             }));
         }
@@ -1119,6 +1124,7 @@ mod tests {
             .with_source(Box::new(FailingSource))
             .with_source(Box::new(DelayedSignalSource))
             .with_sink(Box::new(MemorySink { seen: seen.clone() }));
+        let source_health = registry.source_health_registry();
         let config = RuntimeConfig {
             source_supervisor: e_navigator_core::SourceSupervisorConfig {
                 failure_policy: SourceFailurePolicy::Isolate,
@@ -1135,6 +1141,21 @@ mod tests {
 
         assert!(err.to_string().contains("source.failing"));
         assert_eq!(seen.lock().await.len(), 1);
+        let snapshots = source_health.snapshots();
+        let failing = snapshots
+            .iter()
+            .find(|snapshot| snapshot.source == "source.failing")
+            .expect("failing source health");
+        assert!(!failing.running);
+        assert_eq!(failing.starts, 1);
+        assert_eq!(failing.failures, 1);
+        let delayed = snapshots
+            .iter()
+            .find(|snapshot| snapshot.source == "source.delayed")
+            .expect("healthy source health");
+        assert!(!delayed.running);
+        assert_eq!(delayed.starts, 1);
+        assert_eq!(delayed.clean_exits, 1);
     }
 
     #[tokio::test]

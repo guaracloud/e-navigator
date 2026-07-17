@@ -38,6 +38,12 @@ production policy. A failed source remains failed until process restart unless
 a future source-specific restart policy is accepted in another ADR. The
 runner must never silently convert a source failure into a clean exit.
 
+The runner keeps these transitions in a process-local registry populated only
+from the static module registry. A feedback-safe native telemetry adapter
+exports each configured source's running state plus cumulative start,
+clean-exit, and failure totals. These lifecycle metrics do not claim that every
+optional probe attachment succeeded; attachment health remains source-specific.
+
 Expensive workload discovery and cgroup policy calculation are process-wide.
 Sources may maintain independent eBPF maps when kernel object ownership
 requires it, but they apply diffs from the same desired workload state. New
@@ -54,8 +60,8 @@ the configured policy, but it cannot stall capture or another family.
 1. Parse and validate all configuration before loading probes.
 2. Start shared controllers and health state.
 3. Register enabled static modules in documented order.
-4. Start source tasks and mark each `starting` then `running` only after its
-   attachment path succeeds.
+4. Start source tasks and mark each `running` when task execution begins;
+   source-specific telemetry separately reports attachment coverage.
 5. Process signals through processors in registration order and generators in
    registration order, preserving the bounded derived-signal budget.
 6. On source exit, record `stopped` or `failed` and apply the selected policy.
