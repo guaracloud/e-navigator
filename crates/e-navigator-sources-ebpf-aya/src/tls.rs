@@ -374,6 +374,7 @@ mod platform {
                 }
             }));
 
+            telemetry.mark_initialized();
             debug!("aya tls source attached");
             // TLS libraries mapped by processes that start after the agent are
             // picked up on this cadence, so late-starting workloads are not

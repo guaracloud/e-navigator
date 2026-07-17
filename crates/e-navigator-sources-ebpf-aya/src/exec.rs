@@ -653,6 +653,7 @@ mod platform {
                     "source diagnostics enabled"
                 );
             }
+            telemetry.mark_initialized();
             debug!("aya exec source attached");
             crate::shutdown::signal()
                 .await

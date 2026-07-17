@@ -21,10 +21,10 @@ pub mod protocol;
 mod reader_shutdown;
 #[cfg(target_os = "linux")]
 mod shutdown;
-#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 mod source_telemetry;
 #[cfg(feature = "fuzzing")]
 pub use source_telemetry::bench_source_telemetry_summary_checks;
+pub use source_telemetry::{SourceTelemetrySnapshot, source_telemetry_snapshots};
 pub mod tls;
 
 pub use cpu_profile::AyaCpuProfileSource;

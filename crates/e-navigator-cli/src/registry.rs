@@ -29,6 +29,7 @@ pub(crate) fn build_registry(
     let mut registry = ModuleRegistry::new();
     let telemetry_registry = NativeTelemetryRegistry::default();
     telemetry_registry.register_source(std::sync::Arc::new(WorkloadControllerTelemetrySource));
+    telemetry_registry.register_source(std::sync::Arc::new(AyaSourceTelemetrySource));
     telemetry_registry.register_source(std::sync::Arc::new(SourceSupervisorTelemetrySource {
         registry: registry.source_health_registry(),
     }));
@@ -210,6 +211,73 @@ struct SharedKubernetesMetadataProvider;
 
 #[derive(Debug)]
 struct WorkloadControllerTelemetrySource;
+
+#[derive(Debug)]
+struct AyaSourceTelemetrySource;
+
+impl NativeTelemetrySource for AyaSourceTelemetrySource {
+    fn prometheus_lines(&self) -> Vec<PrometheusMetricLine> {
+        aya_source_telemetry_lines(
+            e_navigator_sources_ebpf_aya::source_telemetry_snapshots().into_iter(),
+        )
+    }
+}
+
+fn aya_source_telemetry_lines(
+    snapshots: impl Iterator<Item = e_navigator_sources_ebpf_aya::SourceTelemetrySnapshot>,
+) -> Vec<PrometheusMetricLine> {
+    snapshots
+        .flat_map(|snapshot| {
+            let labels = std::collections::BTreeMap::from([(
+                "source".to_string(),
+                snapshot.source.to_string(),
+            )]);
+            let metric = |name: &str, value: u64| PrometheusMetricLine {
+                name: name.to_string(),
+                labels: labels.clone(),
+                value: value.to_string(),
+            };
+            [
+                metric(
+                    "e_navigator_ebpf_source_initialized",
+                    u64::from(snapshot.initialized),
+                ),
+                metric(
+                    "e_navigator_ebpf_source_decoded_samples_total",
+                    snapshot.decoded_samples,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_invalid_samples_total",
+                    snapshot.invalid_samples,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_sent_signals_total",
+                    snapshot.sent_signals,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_send_failures_total",
+                    snapshot.send_failures,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_lost_perf_events_total",
+                    snapshot.lost_perf_events,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_diagnostic_matches_total",
+                    snapshot.diagnostic_matches,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_diagnostic_filtered_total",
+                    snapshot.diagnostic_filtered,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_diagnostic_exhausted_total",
+                    snapshot.diagnostic_exhausted,
+                ),
+            ]
+        })
+        .collect()
+}
 
 #[derive(Debug)]
 struct SourceSupervisorTelemetrySource {
@@ -459,6 +527,38 @@ mod tests {
                 .iter()
                 .any(|line| line.name == "e_navigator_source_running" && line.value == "0")
         );
+    }
+
+    #[test]
+    fn aya_source_telemetry_uses_cumulative_fixed_metric_families() {
+        let lines = aya_source_telemetry_lines(
+            [e_navigator_sources_ebpf_aya::SourceTelemetrySnapshot {
+                source: "source.aya_exec",
+                initialized: true,
+                decoded_samples: 3,
+                invalid_samples: 1,
+                sent_signals: 2,
+                send_failures: 1,
+                lost_perf_events: 4,
+                diagnostic_matches: 1,
+                diagnostic_filtered: 1,
+                diagnostic_exhausted: 0,
+            }]
+            .into_iter(),
+        );
+
+        assert_eq!(lines.len(), 9);
+        assert!(
+            lines.iter().all(
+                |line| line.labels.get("source").map(String::as_str) == Some("source.aya_exec")
+            )
+        );
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_lost_perf_events_total" && line.value == "4"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_initialized" && line.value == "1"
+        }));
     }
 
     #[test]
