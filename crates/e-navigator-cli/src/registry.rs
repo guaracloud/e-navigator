@@ -1,12 +1,15 @@
 use crate::args::SourceMode;
 use crate::synthetic::SyntheticExecSource;
+use async_trait::async_trait;
 use e_navigator_core::{CoreResult, RuntimeConfig};
 use e_navigator_generators::{
     DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator, ProfilingGenerator,
     RequestCorrelationGenerator, ResourceMetricsGenerator, RuntimeSecurityGenerator,
     TraceCorrelationGenerator,
 };
-use e_navigator_processors::ContainerAttributionProcessor;
+use e_navigator_processors::{
+    ContainerAttributionProcessor, KubernetesMetadataCache, KubernetesMetadataProvider,
+};
 use e_navigator_runner::ModuleRegistry;
 use e_navigator_sinks::{
     JsonStdoutSink, NativeTelemetryRegistry, OtlpHttpSink, PrometheusHttpSink,
@@ -109,9 +112,12 @@ pub(crate) fn build_registry(
     }
 
     if config.module_enabled("processor.container_attribution") {
-        registry = registry.with_processor(Box::new(ContainerAttributionProcessor::new(
-            config.attribution.clone(),
-        )));
+        registry = registry.with_processor(Box::new(
+            ContainerAttributionProcessor::with_kubernetes_provider(
+                config.attribution.clone(),
+                std::sync::Arc::new(SharedKubernetesMetadataProvider),
+            ),
+        ));
     }
 
     if config.module_enabled("generator.dependency_graph") {
@@ -192,6 +198,24 @@ pub(crate) fn build_registry(
     }
 
     Ok(registry)
+}
+
+#[derive(Debug)]
+struct SharedKubernetesMetadataProvider;
+
+#[async_trait]
+impl KubernetesMetadataProvider for SharedKubernetesMetadataProvider {
+    async fn refresh(
+        &self,
+        config: &e_navigator_core::KubernetesAttributionConfig,
+    ) -> Result<KubernetesMetadataCache, String> {
+        let Some((_generation, pods)) =
+            e_navigator_sources_ebpf_aya::capture_filter::shared_raw_pods()
+        else {
+            return Err("shared Kubernetes workload controller is not initialized".to_string());
+        };
+        Ok(KubernetesMetadataCache::from_raw_pods(&pods, config))
+    }
 }
 
 fn host_resource_config(config: &RuntimeConfig) -> HostResourceConfig {

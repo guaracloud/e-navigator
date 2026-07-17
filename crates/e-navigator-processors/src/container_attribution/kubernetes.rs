@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use e_navigator_core::KubernetesAttributionConfig;
+use e_navigator_core::{KubernetesAttributionConfig, capture_filter::RawPod};
 use e_navigator_signals::KubernetesContext;
 use serde::Deserialize;
 use std::{
@@ -254,7 +254,7 @@ struct KubernetesRefreshDiagnostics {
 }
 
 #[async_trait]
-pub(super) trait KubernetesMetadataProvider: std::fmt::Debug + Send + Sync {
+pub trait KubernetesMetadataProvider: std::fmt::Debug + Send + Sync {
     async fn refresh(
         &self,
         config: &KubernetesAttributionConfig,
@@ -295,6 +295,62 @@ impl KubernetesMetadataCache {
         Self {
             by_container_id: contexts.into_iter().collect(),
             by_pod_ip: pod_ips.into_iter().collect(),
+        }
+    }
+
+    /// Build the scoped attribution indexes from the shared node-pod
+    /// controller snapshot without performing Kubernetes API I/O.
+    pub fn from_raw_pods(pods: &[RawPod], config: &KubernetesAttributionConfig) -> Self {
+        let mut by_container_id = BTreeMap::new();
+        let mut by_pod_ip = BTreeMap::new();
+        let mut selected_pods = 0_usize;
+
+        for pod in pods {
+            if !pod_matches_scope(
+                &pod.namespace,
+                pod.node_name.as_deref(),
+                &pod.labels,
+                config,
+            ) {
+                continue;
+            }
+            if selected_pods >= config.max_pods {
+                break;
+            }
+            selected_pods = selected_pods.saturating_add(1);
+            let labels = bounded_labels(pod.labels.clone(), config);
+            for container_id in &pod.container_ids {
+                if cache_entry_count(&by_container_id, &by_pod_ip) >= config.max_cache_entries {
+                    warn!(
+                        max_cache_entries = config.max_cache_entries,
+                        "shared Kubernetes metadata cache entry limit reached"
+                    );
+                    return Self {
+                        by_container_id,
+                        by_pod_ip,
+                    };
+                }
+                let context = KubernetesContext {
+                    namespace: pod.namespace.clone(),
+                    pod_name: pod.pod_name.clone(),
+                    pod_uid: pod.pod_uid.clone(),
+                    container_name: pod.container_names.get(container_id).cloned(),
+                    node_name: pod.node_name.clone(),
+                    labels: labels.clone(),
+                };
+                by_container_id.insert(container_id.clone(), context.clone());
+                if let Some(pod_ip) = pod.pod_ip.as_ref().filter(|value| !value.is_empty())
+                    && !by_pod_ip.contains_key(pod_ip)
+                    && cache_entry_count(&by_container_id, &by_pod_ip) < config.max_cache_entries
+                {
+                    by_pod_ip.insert(pod_ip.clone(), context);
+                }
+            }
+        }
+
+        Self {
+            by_container_id,
+            by_pod_ip,
         }
     }
 
@@ -607,6 +663,7 @@ struct PodSpec {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PodStatus {
+    #[serde(rename = "podIP")]
     pod_ip: Option<String>,
     container_statuses: Option<Vec<ContainerStatus>>,
 }
@@ -672,6 +729,41 @@ mod tests {
                 .map(String::as_str),
             Some("true")
         );
+    }
+
+    #[test]
+    fn builds_attribution_indexes_from_shared_raw_pods() {
+        let container_id = "9a0d7698a96cd5e394c21b2374f3424f69444db1e2bce4ade8b9671bf3feb9d4";
+        let pods = vec![RawPod {
+            namespace: "proj-payments".to_string(),
+            pod_name: "payments-api-abc".to_string(),
+            pod_uid: Some("pod-uid-1".to_string()),
+            node_name: Some("homelab-01".to_string()),
+            pod_ip: Some("10.42.0.10".to_string()),
+            container_ids: vec![container_id.to_string()],
+            container_names: BTreeMap::from([(container_id.to_string(), "api".to_string())]),
+            labels: BTreeMap::from([
+                ("guara.cloud/tier".to_string(), "pro".to_string()),
+                ("unsafe label".to_string(), "drop-me".to_string()),
+            ]),
+        }];
+
+        let cache =
+            KubernetesMetadataCache::from_raw_pods(&pods, &KubernetesAttributionConfig::default());
+        let by_container = cache.get(container_id).expect("container index");
+        let by_ip = cache.get_by_pod_ip("10.42.0.10").expect("pod IP index");
+
+        assert_eq!(by_container, by_ip);
+        assert_eq!(by_container.namespace, "proj-payments");
+        assert_eq!(by_container.container_name.as_deref(), Some("api"));
+        assert_eq!(
+            by_container
+                .labels
+                .get("guara.cloud/tier")
+                .map(String::as_str),
+            Some("pro")
+        );
+        assert!(!by_container.labels.contains_key("unsafe label"));
     }
 
     #[test]

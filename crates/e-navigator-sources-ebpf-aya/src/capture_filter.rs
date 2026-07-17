@@ -74,6 +74,8 @@ fn control_word(config: &CaptureFilterConfig) -> u32 {
 struct PublishedState {
     generation: u64,
     desired: Arc<DesiredFilterMap>,
+    pod_generation: u64,
+    raw_pods: Arc<Vec<RawPod>>,
 }
 
 /// Shared, node-wide capture-filter controller.
@@ -114,14 +116,32 @@ impl CaptureFilterController {
         state.generation = state.generation.wrapping_add(1);
         state.desired = Arc::new(desired);
     }
+
+    fn publish_raw_pods(&self, pods: Vec<RawPod>) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.pod_generation = state.pod_generation.wrapping_add(1);
+        state.raw_pods = Arc::new(pods);
+    }
+
+    fn raw_pods(&self) -> (u64, Arc<Vec<RawPod>>) {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (state.pod_generation, state.raw_pods.clone())
+    }
 }
 
-/// Process-global controller. `None` means the filter is disabled or could not
-/// be initialised; sources then leave every workload captured.
+/// Process-global workload controller. `None` means both capture filtering and
+/// Kubernetes attribution are disabled.
 static SHARED: OnceLock<Option<Arc<CaptureFilterController>>> = OnceLock::new();
 
-/// Initialise the shared controller exactly once. Safe to call when the filter
-/// is disabled (installs `None`). Spawns the background poll loop.
+/// Initialise the shared controller exactly once. It remains active when the
+/// capture filter is disabled but Kubernetes attribution is enabled, because
+/// attribution consumes the same pod snapshot.
 pub fn init_shared(
     capture_filter: &CaptureFilterConfig,
     kubernetes: &KubernetesAttributionConfig,
@@ -147,7 +167,7 @@ fn build_shared(
     procfs_root: PathBuf,
     node_name: Option<String>,
 ) -> Option<Arc<CaptureFilterController>> {
-    if !capture_filter.enabled {
+    if !capture_filter.enabled && !kubernetes.enabled {
         return None;
     }
     let policy = CaptureFilterPolicy::from_config(capture_filter);
@@ -161,9 +181,9 @@ fn build_shared(
             Err(err) => {
                 warn!(
                     error = %err,
-                    "capture filter enabled but the Kubernetes API is unavailable; \
-                     namespace/label rules cannot be resolved, applying the \
-                     unknown-cgroup posture to all workloads"
+                    "Kubernetes workload controller cannot reach the API; \
+                     attribution is stale or unavailable and capture filtering \
+                     applies the unknown-cgroup posture"
                 );
                 None
             }
@@ -178,16 +198,24 @@ fn build_shared(
     );
     info!(
         control_word = controller.control_word(),
-        "capture filter active"
+        capture_filter_enabled = capture_filter.enabled,
+        "shared Kubernetes workload controller active"
     );
     Some(controller)
 }
 
-/// The shared controller, if the filter is active. Consumed by the Linux
-/// applier.
+/// The shared controller, when workload state is required. Consumed by the
+/// Linux filter applier and attribution snapshot adapter.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn shared() -> Option<Arc<CaptureFilterController>> {
     SHARED.get().and_then(Clone::clone)
+}
+
+/// Latest bounded raw node-pod snapshot owned by the shared controller.
+/// Attribution consumes this instead of issuing an independent Kubernetes API
+/// request. `None` means the controller is disabled or not initialized.
+pub fn shared_raw_pods() -> Option<(u64, Arc<Vec<RawPod>>)> {
+    shared().map(|controller| controller.raw_pods())
 }
 
 fn spawn_poll_loop(
@@ -226,6 +254,7 @@ async fn run_poll_loop(
         {
             match fetcher.fetch().await {
                 Ok(pods) => {
+                    controller.publish_raw_pods(pods.clone());
                     index = RawNodePodIndex::from_pods(pods, CAPTURE_FILTER_MAP_CAPACITY);
                     have_index = true;
                     since_fetch = Duration::ZERO;
