@@ -35,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
         &config.capture_filter,
         &config.attribution.kubernetes,
         config.attribution.cgroup_root.clone(),
+        config.attribution.procfs_root.clone(),
         registry::node_name(),
     );
 

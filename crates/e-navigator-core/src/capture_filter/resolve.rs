@@ -29,6 +29,9 @@ pub struct CgroupObservation {
     pub cgroup_id: u64,
     pub container_id: Option<String>,
     pub pod_uid: Option<String>,
+    /// Bounded process names observed in this cgroup. Used only in userspace
+    /// while computing the verdict; names never cross into an eBPF map.
+    pub process_names: Vec<String>,
 }
 
 impl CgroupObservation {
@@ -39,6 +42,7 @@ impl CgroupObservation {
             cgroup_id,
             container_id: parse_container_id_from_cgroup_path(cgroup_path),
             pod_uid: parse_pod_uid_from_cgroup_path(cgroup_path),
+            process_names: Vec::new(),
         }
     }
 }
@@ -182,7 +186,20 @@ pub fn build_desired_filter_map(
         let Some(identity) = index.resolve(observation) else {
             continue;
         };
-        let decision = policy.evaluate(&identity.namespace, &identity.labels);
+        let mut decision = policy.evaluate(&identity.namespace, &identity.labels);
+        if decision.captures() {
+            for process_name in &observation.process_names {
+                decision = policy.evaluate_workload(
+                    &identity.namespace,
+                    &identity.labels,
+                    Some(process_name),
+                    None,
+                );
+                if !decision.captures() {
+                    break;
+                }
+            }
+        }
         desired.entries.insert(observation.cgroup_id, decision);
     }
     desired
@@ -453,11 +470,13 @@ mod tests {
                 cgroup_id: 100,
                 container_id: Some(CID.to_string()),
                 pod_uid: Some(UID.to_string()),
+                process_names: Vec::new(),
             },
             CgroupObservation {
                 cgroup_id: 200,
                 container_id: None,
                 pod_uid: Some("aaaa1111-2222-3333-4444-555566667777".to_string()),
+                process_names: Vec::new(),
             },
         ];
         let desired = build_desired_filter_map(&observations, &index, &policy, 8192);
@@ -478,6 +497,7 @@ mod tests {
             cgroup_id: 999,
             container_id: Some("deadbeef".to_string()),
             pod_uid: Some("no-such-uid-00000000".to_string()),
+            process_names: Vec::new(),
         }];
         let desired = build_desired_filter_map(&observations, &index, &policy, 8192);
         assert!(desired.is_empty());
@@ -491,6 +511,7 @@ mod tests {
             cgroup_id: 1,
             container_id: Some(CID.to_string()),
             pod_uid: Some(UID.to_string()),
+            process_names: Vec::new(),
         }];
         assert!(build_desired_filter_map(&observations, &index, &policy, 8192).is_empty());
     }
@@ -510,6 +531,7 @@ mod tests {
                 cgroup_id: n,
                 container_id: None,
                 pod_uid: Some(uid),
+                process_names: Vec::new(),
             });
         }
         let index = RawNodePodIndex::from_pods(pods, 1024);
@@ -543,11 +565,13 @@ mod tests {
                 cgroup_id: 100,
                 container_id: None,
                 pod_uid: Some(UID.to_string()),
+                process_names: Vec::new(),
             },
             CgroupObservation {
                 cgroup_id: 200,
                 container_id: None,
                 pod_uid: Some("bbbb1111-2222-3333-4444-555566667777".to_string()),
+                process_names: Vec::new(),
             },
         ];
         let desired = build_desired_filter_map(&observations, &index, &policy, 8192);
@@ -586,6 +610,7 @@ mod tests {
             cgroup_id: 100,
             container_id: None,
             pod_uid: Some(UID.to_string()),
+            process_names: Vec::new(),
         }];
         let desired = build_desired_filter_map(&observations, &index, &policy, 8192);
 
@@ -624,6 +649,7 @@ mod tests {
             cgroup_id: 42,
             container_id: Some(CID.to_string()),
             pod_uid: Some(UID.to_string()),
+            process_names: Vec::new(),
         }];
         let desired = build_desired_filter_map(&observations, &index, &policy, 8192);
 
@@ -636,5 +662,26 @@ mod tests {
         assert!(!rendered.contains("secret"));
         assert!(!rendered.contains("classification"));
         assert!(!rendered.contains("restricted"));
+    }
+
+    #[test]
+    fn process_exclusion_changes_the_source_side_cgroup_verdict() {
+        let policy = enabled_policy(CaptureFilterConfig {
+            enabled: true,
+            namespace_include: vec!["proj-*".to_string()],
+            process_exclude: vec!["*-exporter".to_string()],
+            ..Default::default()
+        });
+        let index = RawNodePodIndex::from_pods(vec![pod("proj-payments", UID, &[], &[CID])], 1024);
+        let observations = vec![CgroupObservation {
+            cgroup_id: 77,
+            container_id: Some(CID.to_string()),
+            pod_uid: Some(UID.to_string()),
+            process_names: vec!["postgres-exporter".to_string()],
+        }];
+
+        let desired = build_desired_filter_map(&observations, &index, &policy, 8192);
+
+        assert_eq!(desired.get(77), Some(CaptureDecision::Drop));
     }
 }

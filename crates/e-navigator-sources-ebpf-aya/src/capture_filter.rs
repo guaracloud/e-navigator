@@ -33,6 +33,11 @@ const EAGER_REFETCH_MIN_INTERVAL: Duration = Duration::from_secs(2);
 const SCAN_TICK: Duration = Duration::from_secs(2);
 /// Upper bound on cgroup filesystem entries walked per scan.
 const MAX_CGROUP_SCAN_ENTRIES: usize = 16_384;
+/// Maximum process ids inspected per container cgroup and refresh.
+const MAX_PROCESSES_PER_CGROUP: usize = 64;
+/// Linux task names are normally limited to 16 bytes; retain extra headroom
+/// while still bounding hostile procfs input.
+const MAX_PROCESS_NAME_BYTES: usize = 256;
 /// Cap on labels retained per pod for policy evaluation.
 const MAX_LABELS_PER_POD: usize = 64;
 /// Control-word values written into the eBPF `CAPTURE_FILTER_CONTROL` map.
@@ -121,15 +126,25 @@ pub fn init_shared(
     capture_filter: &CaptureFilterConfig,
     kubernetes: &KubernetesAttributionConfig,
     cgroup_root: PathBuf,
+    procfs_root: PathBuf,
     node_name: Option<String>,
 ) {
-    SHARED.get_or_init(|| build_shared(capture_filter, kubernetes, cgroup_root, node_name));
+    SHARED.get_or_init(|| {
+        build_shared(
+            capture_filter,
+            kubernetes,
+            cgroup_root,
+            procfs_root,
+            node_name,
+        )
+    });
 }
 
 fn build_shared(
     capture_filter: &CaptureFilterConfig,
     kubernetes: &KubernetesAttributionConfig,
     cgroup_root: PathBuf,
+    procfs_root: PathBuf,
     node_name: Option<String>,
 ) -> Option<Arc<CaptureFilterController>> {
     if !capture_filter.enabled {
@@ -154,7 +169,13 @@ fn build_shared(
             }
         };
 
-    spawn_poll_loop(controller.clone(), policy, cgroup_root, fetcher);
+    spawn_poll_loop(
+        controller.clone(),
+        policy,
+        cgroup_root,
+        procfs_root,
+        fetcher,
+    );
     info!(
         control_word = controller.control_word(),
         "capture filter active"
@@ -173,10 +194,11 @@ fn spawn_poll_loop(
     controller: Arc<CaptureFilterController>,
     policy: CaptureFilterPolicy,
     cgroup_root: PathBuf,
+    procfs_root: PathBuf,
     fetcher: Option<Arc<dyn RawPodFetcher>>,
 ) {
     tokio::spawn(async move {
-        run_poll_loop(controller, policy, cgroup_root, fetcher).await;
+        run_poll_loop(controller, policy, cgroup_root, procfs_root, fetcher).await;
     });
 }
 
@@ -184,6 +206,7 @@ async fn run_poll_loop(
     controller: Arc<CaptureFilterController>,
     policy: CaptureFilterPolicy,
     cgroup_root: PathBuf,
+    procfs_root: PathBuf,
     fetcher: Option<Arc<dyn RawPodFetcher>>,
 ) {
     let mut index = RawNodePodIndex::default();
@@ -193,7 +216,7 @@ async fn run_poll_loop(
     let mut since_fetch = EAGER_REFETCH_MIN_INTERVAL;
 
     loop {
-        let observations = scan_cgroups(&cgroup_root).await;
+        let observations = scan_cgroups(&cgroup_root, &procfs_root).await;
 
         let full_due = since_full >= FULL_REFRESH_INTERVAL;
         let eager_due = since_fetch >= EAGER_REFETCH_MIN_INTERVAL
@@ -262,14 +285,15 @@ static ALWAYS_CAPTURE: std::sync::LazyLock<CaptureFilterPolicy> = std::sync::Laz
 
 /// Walk the cgroup filesystem and derive an observation per container cgroup.
 /// Runs on a blocking thread; returns an empty list on any failure.
-async fn scan_cgroups(cgroup_root: &Path) -> Vec<CgroupObservation> {
+async fn scan_cgroups(cgroup_root: &Path, procfs_root: &Path) -> Vec<CgroupObservation> {
     let root = cgroup_root.to_path_buf();
-    tokio::task::spawn_blocking(move || scan_cgroups_blocking(&root))
+    let procfs = procfs_root.to_path_buf();
+    tokio::task::spawn_blocking(move || scan_cgroups_blocking(&root, &procfs))
         .await
         .unwrap_or_default()
 }
 
-fn scan_cgroups_blocking(root: &Path) -> Vec<CgroupObservation> {
+fn scan_cgroups_blocking(root: &Path, procfs_root: &Path) -> Vec<CgroupObservation> {
     #[cfg(unix)]
     use std::os::unix::fs::MetadataExt;
 
@@ -288,8 +312,9 @@ fn scan_cgroups_blocking(root: &Path) -> Vec<CgroupObservation> {
             && let Ok(relative) = path.strip_prefix(root)
         {
             let cgroup_path = normalized_cgroup_path(relative);
-            let observation = CgroupObservation::from_cgroup_path(metadata.ino(), &cgroup_path);
+            let mut observation = CgroupObservation::from_cgroup_path(metadata.ino(), &cgroup_path);
             if observation.container_id.is_some() || observation.pod_uid.is_some() {
+                observation.process_names = process_names_for_cgroup(&path, procfs_root);
                 observations.push(observation);
             }
         }
@@ -308,6 +333,29 @@ fn scan_cgroups_blocking(root: &Path) -> Vec<CgroupObservation> {
     }
 
     observations
+}
+
+fn process_names_for_cgroup(cgroup_path: &Path, procfs_root: &Path) -> Vec<String> {
+    let Ok(pids) = std::fs::read_to_string(cgroup_path.join("cgroup.procs")) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for pid in pids.lines().take(MAX_PROCESSES_PER_CGROUP) {
+        if pid.is_empty() || !pid.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(raw) = std::fs::read_to_string(procfs_root.join(pid).join("comm")) else {
+            continue;
+        };
+        let name = raw.trim_end_matches(['\r', '\n']);
+        if name.is_empty() || name.len() > MAX_PROCESS_NAME_BYTES {
+            continue;
+        }
+        if !names.iter().any(|existing| existing == name) {
+            names.push(name.to_string());
+        }
+    }
+    names
 }
 
 fn normalized_cgroup_path(path: &Path) -> String {
