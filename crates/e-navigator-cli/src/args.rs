@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[command(name = "e-navigator", version)]
 #[command(about = "E-Navigator node agent")]
 pub(crate) struct Args {
-    #[arg(long, value_enum, default_value_t = SourceMode::AyaExec)]
+    #[arg(long, value_enum, default_value_t = SourceMode::Unified)]
     pub(crate) source: SourceMode,
 
     #[arg(long, env = "E_NAVIGATOR_CONFIG")]
@@ -17,6 +17,7 @@ pub(crate) struct Args {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum SourceMode {
+    Unified,
     AyaExec,
     AyaCpuProfile,
     Synthetic,
@@ -27,10 +28,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_args_match_existing_cli_behavior() {
+    fn default_args_select_unified_runtime() {
         let args = Args::parse_from(["e-navigator"]);
 
-        assert_eq!(args.source, SourceMode::AyaExec);
+        assert_eq!(args.source, SourceMode::Unified);
         assert_eq!(args.config, None);
         assert!(!args.validate_config);
     }
@@ -38,6 +39,7 @@ mod tests {
     #[test]
     fn parses_every_supported_source_mode() {
         for (raw, expected) in [
+            ("unified", SourceMode::Unified),
             ("aya-exec", SourceMode::AyaExec),
             ("aya-cpu-profile", SourceMode::AyaCpuProfile),
             ("synthetic", SourceMode::Synthetic),

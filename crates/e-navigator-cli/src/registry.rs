@@ -23,21 +23,11 @@ pub(crate) fn build_registry(
     let mut registry = ModuleRegistry::new();
 
     match source {
-        SourceMode::AyaExec if config.module_enabled("source.aya_exec") => {
+        SourceMode::Unified | SourceMode::AyaExec if config.module_enabled("source.aya_exec") => {
             registry = registry.with_source(Box::new(AyaExecSource::new(
                 host.clone(),
                 config.argv_capture.clone(),
                 config.attribution.procfs_root.clone(),
-            )));
-        }
-        SourceMode::AyaCpuProfile
-            if config.cpu_profile_source.enabled
-                && config.module_enabled("source.aya_cpu_profile") =>
-        {
-            registry = registry.with_source(Box::new(AyaCpuProfileSource::new(
-                host.clone(),
-                config.attribution.procfs_root.clone(),
-                config.cpu_profile_source.clone(),
             )));
         }
         SourceMode::Synthetic if config.module_enabled("source.synthetic_exec") => {
@@ -46,14 +36,18 @@ pub(crate) fn build_registry(
         _ => {}
     }
 
-    if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.aya_network") {
+    if matches!(source, SourceMode::Unified | SourceMode::AyaExec)
+        && config.module_enabled("source.aya_network")
+    {
         registry = registry.with_source(Box::new(AyaNetworkSource::new(
             host.clone(),
             config.attribution.procfs_root.clone(),
         )));
     }
 
-    if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.aya_dns") {
+    if matches!(source, SourceMode::Unified | SourceMode::AyaExec)
+        && config.module_enabled("source.aya_dns")
+    {
         registry = registry.with_source(Box::new(AyaDnsSource::new(
             host.clone(),
             config.attribution.procfs_root.clone(),
@@ -61,7 +55,9 @@ pub(crate) fn build_registry(
         )));
     }
 
-    if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.aya_http") {
+    if matches!(source, SourceMode::Unified | SourceMode::AyaExec)
+        && config.module_enabled("source.aya_http")
+    {
         registry = registry.with_source(Box::new(AyaHttpSource::new(
             host.clone(),
             config.attribution.procfs_root.clone(),
@@ -69,7 +65,9 @@ pub(crate) fn build_registry(
         )));
     }
 
-    if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.aya_protocol") {
+    if matches!(source, SourceMode::Unified | SourceMode::AyaExec)
+        && config.module_enabled("source.aya_protocol")
+    {
         registry = registry.with_source(Box::new(AyaProtocolSource::new(
             host.clone(),
             config.attribution.procfs_root.clone(),
@@ -77,7 +75,9 @@ pub(crate) fn build_registry(
         )));
     }
 
-    if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.aya_tls") {
+    if matches!(source, SourceMode::Unified | SourceMode::AyaExec)
+        && config.module_enabled("source.aya_tls")
+    {
         registry = registry.with_source(Box::new(AyaTlsSource::new(
             host.clone(),
             config.attribution.procfs_root.clone(),
@@ -85,10 +85,23 @@ pub(crate) fn build_registry(
         )));
     }
 
-    if matches!(source, SourceMode::AyaExec) && config.module_enabled("source.host_resource") {
+    if matches!(source, SourceMode::Unified | SourceMode::AyaExec)
+        && config.module_enabled("source.host_resource")
+    {
         registry = registry.with_source(Box::new(HostResourceSource::with_host(
             host_resource_config(config),
             host.clone(),
+        )));
+    }
+
+    if matches!(source, SourceMode::Unified | SourceMode::AyaCpuProfile)
+        && config.cpu_profile_source.enabled
+        && config.module_enabled("source.aya_cpu_profile")
+    {
+        registry = registry.with_source(Box::new(AyaCpuProfileSource::new(
+            host.clone(),
+            config.attribution.procfs_root.clone(),
+            config.cpu_profile_source.clone(),
         )));
     }
 
@@ -279,6 +292,33 @@ mod tests {
                 "source.aya_exec",
                 "source.aya_network",
                 "source.host_resource"
+            ]
+        );
+    }
+
+    #[test]
+    fn unified_source_mode_registers_general_capture_and_cpu_profiling() {
+        let mut config = RuntimeConfig::default();
+        config.cpu_profile_source.enabled = true;
+        set_module_enabled(&mut config, "source.aya_dns", true);
+        set_module_enabled(&mut config, "source.aya_http", true);
+        set_module_enabled(&mut config, "source.aya_protocol", true);
+        set_module_enabled(&mut config, "source.aya_tls", true);
+        set_module_enabled(&mut config, "source.aya_cpu_profile", true);
+
+        let registry = build_test_registry(&config, SourceMode::Unified);
+
+        assert_eq!(
+            source_names(&registry),
+            vec![
+                "source.aya_exec",
+                "source.aya_network",
+                "source.aya_dns",
+                "source.aya_http",
+                "source.aya_protocol",
+                "source.aya_tls",
+                "source.host_resource",
+                "source.aya_cpu_profile",
             ]
         );
     }

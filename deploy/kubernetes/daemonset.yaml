@@ -31,7 +31,7 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - "--source"
-            - "aya-exec"
+            - "unified"
             - "--config"
             - "/etc/e-navigator/e-navigator.toml"
           env:
