@@ -227,7 +227,6 @@ fn resource_attributes(
             .cloned()
             .unwrap_or_else(|| kubernetes.pod_name.clone());
         insert_resource_string(&mut resource, "service.name", &service_name);
-        insert_resource_string(&mut resource, "service_name", &service_name);
         insert_resource_string(&mut resource, "source", "e-navigator");
     }
     resource

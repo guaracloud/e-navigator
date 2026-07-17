@@ -1,12 +1,9 @@
 use crate::{ExporterError, OtelProfileRecord, otlp_common::key_values, otlp_common::to_any_value};
 use collector_profile_proto::{
-    AttributeUnit, ExportProfilesServiceRequest, Function, Line, Link, Location, Mapping, Profile,
-    ProfilesDictionary, ResourceProfiles, Sample, ScopeProfiles, ValueType,
+    ExportProfilesServiceRequest, Function, KeyValueAndUnit, Line, Link, Location, Mapping,
+    Profile, ProfilesDictionary, ResourceProfiles, Sample, ScopeProfiles, Stack, ValueType,
 };
-use opentelemetry_proto::tonic::{
-    common::v1::{InstrumentationScope, KeyValue},
-    resource::v1::Resource,
-};
+use opentelemetry_proto::tonic::{common::v1::InstrumentationScope, resource::v1::Resource};
 use prost::Message;
 use std::collections::BTreeMap;
 
@@ -61,37 +58,36 @@ fn profile_from_record(
     dictionary: &mut ProfileDictionaryBuilder,
 ) -> Profile {
     let sample_type = Some(ValueType {
-        type_strindex: dictionary.string_index(&record.profile_kind),
-        unit_strindex: dictionary.string_index("nanoseconds"),
-        aggregation_temporality: 0,
+        type_strindex: dictionary.string_index("samples"),
+        unit_strindex: dictionary.string_index("count"),
     });
-    let location_indices = dictionary.location_indices(&record.stack_frames);
+    let stack_index = dictionary.stack_index(&record.stack_frames);
     let attribute_indices = dictionary.attribute_indices(&record.attributes);
+    let duration_nano = if record.duration_nanos == 0 {
+        record.sampling_period_nanos.unwrap_or(1)
+    } else {
+        record.duration_nanos
+    };
 
     Profile {
-        sample_type: sample_type.into_iter().collect(),
-        sample: vec![Sample {
-            locations_start_index: 0,
-            locations_length: i32::try_from(location_indices.len()).unwrap_or(i32::MAX),
-            value: vec![u64_to_i64_saturating(record.sample_count)],
+        sample_type,
+        samples: vec![Sample {
+            stack_index,
             attribute_indices: attribute_indices.clone(),
-            link_index: None,
+            link_index: 0,
+            values: vec![u64_to_i64_saturating(record.sample_count)],
             timestamps_unix_nano: vec![record.timestamp_unix_nanos],
         }],
-        location_indices,
-        time_nanos: u64_to_i64_saturating(record.timestamp_unix_nanos),
-        duration_nanos: u64_to_i64_saturating(record.duration_nanos),
+        time_unix_nano: record.timestamp_unix_nanos,
+        duration_nano,
         period_type: Some(ValueType {
             type_strindex: dictionary.string_index(&record.profile_kind),
             unit_strindex: dictionary.string_index("nanoseconds"),
-            aggregation_temporality: 0,
         }),
         period: record
             .sampling_period_nanos
             .map(u64_to_i64_saturating)
             .unwrap_or_default(),
-        comment_strindices: Vec::new(),
-        default_sample_type_index: 0,
         profile_id: profile_id_bytes(&record.profile_id),
         dropped_attributes_count: 0,
         original_payload_format: String::new(),
@@ -156,8 +152,8 @@ struct ProfileDictionaryBuilder {
     link_table: Vec<Link>,
     string_table: Vec<String>,
     string_indices: BTreeMap<String, i32>,
-    attribute_table: Vec<KeyValue>,
-    attribute_units: Vec<AttributeUnit>,
+    attribute_table: Vec<KeyValueAndUnit>,
+    stack_table: Vec<Stack>,
 }
 
 impl ProfileDictionaryBuilder {
@@ -169,8 +165,8 @@ impl ProfileDictionaryBuilder {
             link_table: vec![Link::default()],
             string_table: vec![String::new()],
             string_indices: BTreeMap::new(),
-            attribute_table: vec![KeyValue::default()],
-            attribute_units: Vec::new(),
+            attribute_table: vec![KeyValueAndUnit::default()],
+            stack_table: vec![Stack::default()],
         }
     }
 
@@ -182,7 +178,7 @@ impl ProfileDictionaryBuilder {
             link_table: self.link_table,
             string_table: self.string_table,
             attribute_table: self.attribute_table,
-            attribute_units: self.attribute_units,
+            stack_table: self.stack_table,
         }
     }
 
@@ -199,11 +195,14 @@ impl ProfileDictionaryBuilder {
         index
     }
 
-    fn location_indices(&mut self, frames: &[crate::OtelProfileFrame]) -> Vec<i32> {
-        frames
+    fn stack_index(&mut self, frames: &[crate::OtelProfileFrame]) -> i32 {
+        let location_indices = frames
             .iter()
             .map(|frame| self.location_index(frame))
-            .collect()
+            .collect();
+        let index = i32::try_from(self.stack_table.len()).unwrap_or(i32::MAX);
+        self.stack_table.push(Stack { location_indices });
+        index
     }
 
     fn location_index(&mut self, frame: &crate::OtelProfileFrame) -> i32 {
@@ -220,14 +219,13 @@ impl ProfileDictionaryBuilder {
             .unwrap_or_default();
         let index = i32::try_from(self.location_table.len()).unwrap_or(i32::MAX);
         self.location_table.push(Location {
-            mapping_index: None,
+            mapping_index: 0,
             address: 0,
-            line: vec![Line {
+            lines: vec![Line {
                 function_index,
                 line: frame.line.map(i64::from).unwrap_or_default(),
                 column: 0,
             }],
-            is_folded: false,
             attribute_indices,
         });
         index
@@ -259,10 +257,11 @@ impl ProfileDictionaryBuilder {
             .iter()
             .map(|(key, value)| {
                 let index = i32::try_from(self.attribute_table.len()).unwrap_or(i32::MAX);
-                self.attribute_table.push(KeyValue {
-                    key: key.clone(),
+                let key_strindex = self.string_index(key);
+                self.attribute_table.push(KeyValueAndUnit {
+                    key_strindex,
                     value: Some(to_any_value(value)),
-                    key_strindex: 0,
+                    unit_strindex: 0,
                 });
                 index
             })
@@ -270,196 +269,176 @@ impl ProfileDictionaryBuilder {
     }
 }
 
-mod collector_profile_proto {
+pub(crate) mod collector_profile_proto {
     use opentelemetry_proto::tonic::{
-        common::v1::{InstrumentationScope, KeyValue},
+        common::v1::{AnyValue, InstrumentationScope},
         resource::v1::Resource,
     };
     use prost::Message;
 
     #[derive(Clone, PartialEq, Message)]
-    pub(super) struct ExportProfilesServiceRequest {
+    pub(crate) struct ExportProfilesServiceRequest {
         #[prost(message, repeated, tag = "1")]
-        pub(super) resource_profiles: Vec<ResourceProfiles>,
+        pub(crate) resource_profiles: Vec<ResourceProfiles>,
         #[prost(message, optional, tag = "2")]
-        pub(super) dictionary: Option<ProfilesDictionary>,
+        pub(crate) dictionary: Option<ProfilesDictionary>,
     }
 
     #[derive(Clone, PartialEq, Message)]
-    pub(super) struct ProfilesDictionary {
+    pub(crate) struct ProfilesDictionary {
         #[prost(message, repeated, tag = "1")]
-        pub(super) mapping_table: Vec<Mapping>,
+        pub(crate) mapping_table: Vec<Mapping>,
         #[prost(message, repeated, tag = "2")]
-        pub(super) location_table: Vec<Location>,
+        pub(crate) location_table: Vec<Location>,
         #[prost(message, repeated, tag = "3")]
-        pub(super) function_table: Vec<Function>,
+        pub(crate) function_table: Vec<Function>,
         #[prost(message, repeated, tag = "4")]
-        pub(super) link_table: Vec<Link>,
+        pub(crate) link_table: Vec<Link>,
         #[prost(string, repeated, tag = "5")]
-        pub(super) string_table: Vec<String>,
+        pub(crate) string_table: Vec<String>,
         #[prost(message, repeated, tag = "6")]
-        pub(super) attribute_table: Vec<KeyValue>,
+        pub(crate) attribute_table: Vec<KeyValueAndUnit>,
         #[prost(message, repeated, tag = "7")]
-        pub(super) attribute_units: Vec<AttributeUnit>,
+        pub(crate) stack_table: Vec<Stack>,
     }
 
     #[derive(Clone, PartialEq, Message)]
-    pub(super) struct ResourceProfiles {
+    pub(crate) struct ResourceProfiles {
         #[prost(message, optional, tag = "1")]
-        pub(super) resource: Option<Resource>,
+        pub(crate) resource: Option<Resource>,
         #[prost(message, repeated, tag = "2")]
-        pub(super) scope_profiles: Vec<ScopeProfiles>,
+        pub(crate) scope_profiles: Vec<ScopeProfiles>,
         #[prost(string, tag = "3")]
-        pub(super) schema_url: String,
+        pub(crate) schema_url: String,
     }
 
     #[derive(Clone, PartialEq, Message)]
-    pub(super) struct ScopeProfiles {
+    pub(crate) struct ScopeProfiles {
         #[prost(message, optional, tag = "1")]
-        pub(super) scope: Option<InstrumentationScope>,
+        pub(crate) scope: Option<InstrumentationScope>,
         #[prost(message, repeated, tag = "2")]
-        pub(super) profiles: Vec<Profile>,
+        pub(crate) profiles: Vec<Profile>,
         #[prost(string, tag = "3")]
-        pub(super) schema_url: String,
+        pub(crate) schema_url: String,
     }
 
     #[derive(Clone, PartialEq, Message)]
-    pub(super) struct Profile {
-        #[prost(message, repeated, tag = "1")]
-        pub(super) sample_type: Vec<ValueType>,
+    pub(crate) struct Profile {
+        #[prost(message, optional, tag = "1")]
+        pub(crate) sample_type: Option<ValueType>,
         #[prost(message, repeated, tag = "2")]
-        pub(super) sample: Vec<Sample>,
-        #[prost(int32, repeated, packed = "true", tag = "3")]
-        pub(super) location_indices: Vec<i32>,
-        #[prost(int64, tag = "4")]
-        pub(super) time_nanos: i64,
-        #[prost(int64, tag = "5")]
-        pub(super) duration_nanos: i64,
-        #[prost(message, optional, tag = "6")]
-        pub(super) period_type: Option<ValueType>,
-        #[prost(int64, tag = "7")]
-        pub(super) period: i64,
-        #[prost(int32, repeated, packed = "true", tag = "8")]
-        pub(super) comment_strindices: Vec<i32>,
-        #[prost(int32, tag = "9")]
-        pub(super) default_sample_type_index: i32,
+        pub(crate) samples: Vec<Sample>,
+        #[prost(fixed64, tag = "3")]
+        pub(crate) time_unix_nano: u64,
+        #[prost(uint64, tag = "4")]
+        pub(crate) duration_nano: u64,
+        #[prost(message, optional, tag = "5")]
+        pub(crate) period_type: Option<ValueType>,
+        #[prost(int64, tag = "6")]
+        pub(crate) period: i64,
+        #[prost(bytes = "vec", tag = "7")]
+        pub(crate) profile_id: Vec<u8>,
+        #[prost(uint32, tag = "8")]
+        pub(crate) dropped_attributes_count: u32,
+        #[prost(string, tag = "9")]
+        pub(crate) original_payload_format: String,
         #[prost(bytes = "vec", tag = "10")]
-        pub(super) profile_id: Vec<u8>,
-        #[prost(uint32, tag = "11")]
-        pub(super) dropped_attributes_count: u32,
-        #[prost(string, tag = "12")]
-        pub(super) original_payload_format: String,
-        #[prost(bytes = "vec", tag = "13")]
-        pub(super) original_payload: Vec<u8>,
-        #[prost(int32, repeated, packed = "true", tag = "14")]
-        pub(super) attribute_indices: Vec<i32>,
+        pub(crate) original_payload: Vec<u8>,
+        #[prost(int32, repeated, packed = "true", tag = "11")]
+        pub(crate) attribute_indices: Vec<i32>,
     }
 
     #[derive(Clone, PartialEq, Message)]
-    pub(super) struct AttributeUnit {
+    pub(crate) struct KeyValueAndUnit {
         #[prost(int32, tag = "1")]
-        pub(super) attribute_key_strindex: i32,
-        #[prost(int32, tag = "2")]
-        pub(super) unit_strindex: i32,
-    }
-
-    #[derive(Clone, PartialEq, Message)]
-    pub(super) struct Link {
-        #[prost(bytes = "vec", tag = "1")]
-        pub(super) trace_id: Vec<u8>,
-        #[prost(bytes = "vec", tag = "2")]
-        pub(super) span_id: Vec<u8>,
-    }
-
-    #[derive(Clone, PartialEq, Message)]
-    pub(super) struct ValueType {
-        #[prost(int32, tag = "1")]
-        pub(super) type_strindex: i32,
-        #[prost(int32, tag = "2")]
-        pub(super) unit_strindex: i32,
-        #[prost(enumeration = "AggregationTemporality", tag = "3")]
-        pub(super) aggregation_temporality: i32,
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, prost::Enumeration)]
-    #[repr(i32)]
-    pub(super) enum AggregationTemporality {
-        Unspecified = 0,
-        Delta = 1,
-        Cumulative = 2,
-    }
-
-    #[derive(Clone, PartialEq, Message)]
-    pub(super) struct Sample {
-        #[prost(int32, tag = "1")]
-        pub(super) locations_start_index: i32,
-        #[prost(int32, tag = "2")]
-        pub(super) locations_length: i32,
-        #[prost(int64, repeated, packed = "true", tag = "3")]
-        pub(super) value: Vec<i64>,
-        #[prost(int32, repeated, packed = "true", tag = "4")]
-        pub(super) attribute_indices: Vec<i32>,
-        #[prost(int32, optional, tag = "5")]
-        pub(super) link_index: Option<i32>,
-        #[prost(uint64, repeated, packed = "true", tag = "6")]
-        pub(super) timestamps_unix_nano: Vec<u64>,
-    }
-
-    #[derive(Clone, PartialEq, Message)]
-    pub(super) struct Mapping {
-        #[prost(uint64, tag = "1")]
-        pub(super) memory_start: u64,
-        #[prost(uint64, tag = "2")]
-        pub(super) memory_limit: u64,
-        #[prost(uint64, tag = "3")]
-        pub(super) file_offset: u64,
-        #[prost(int32, tag = "4")]
-        pub(super) filename_strindex: i32,
-        #[prost(int32, repeated, packed = "true", tag = "5")]
-        pub(super) attribute_indices: Vec<i32>,
-        #[prost(bool, tag = "6")]
-        pub(super) has_functions: bool,
-        #[prost(bool, tag = "7")]
-        pub(super) has_filenames: bool,
-        #[prost(bool, tag = "8")]
-        pub(super) has_line_numbers: bool,
-        #[prost(bool, tag = "9")]
-        pub(super) has_inline_frames: bool,
-    }
-
-    #[derive(Clone, PartialEq, Message)]
-    pub(super) struct Location {
-        #[prost(int32, optional, tag = "1")]
-        pub(super) mapping_index: Option<i32>,
-        #[prost(uint64, tag = "2")]
-        pub(super) address: u64,
-        #[prost(message, repeated, tag = "3")]
-        pub(super) line: Vec<Line>,
-        #[prost(bool, tag = "4")]
-        pub(super) is_folded: bool,
-        #[prost(int32, repeated, packed = "true", tag = "5")]
-        pub(super) attribute_indices: Vec<i32>,
-    }
-
-    #[derive(Clone, PartialEq, Message)]
-    pub(super) struct Line {
-        #[prost(int32, tag = "1")]
-        pub(super) function_index: i32,
-        #[prost(int64, tag = "2")]
-        pub(super) line: i64,
-        #[prost(int64, tag = "3")]
-        pub(super) column: i64,
-    }
-
-    #[derive(Clone, PartialEq, Message)]
-    pub(super) struct Function {
-        #[prost(int32, tag = "1")]
-        pub(super) name_strindex: i32,
-        #[prost(int32, tag = "2")]
-        pub(super) system_name_strindex: i32,
+        pub(crate) key_strindex: i32,
+        #[prost(message, optional, tag = "2")]
+        pub(crate) value: Option<AnyValue>,
         #[prost(int32, tag = "3")]
-        pub(super) filename_strindex: i32,
+        pub(crate) unit_strindex: i32,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(crate) struct Link {
+        #[prost(bytes = "vec", tag = "1")]
+        pub(crate) trace_id: Vec<u8>,
+        #[prost(bytes = "vec", tag = "2")]
+        pub(crate) span_id: Vec<u8>,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(crate) struct ValueType {
+        #[prost(int32, tag = "1")]
+        pub(crate) type_strindex: i32,
+        #[prost(int32, tag = "2")]
+        pub(crate) unit_strindex: i32,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(crate) struct Sample {
+        #[prost(int32, tag = "1")]
+        pub(crate) stack_index: i32,
+        #[prost(int32, repeated, packed = "true", tag = "2")]
+        pub(crate) attribute_indices: Vec<i32>,
+        #[prost(int32, tag = "3")]
+        pub(crate) link_index: i32,
+        #[prost(int64, repeated, packed = "true", tag = "4")]
+        pub(crate) values: Vec<i64>,
+        #[prost(fixed64, repeated, packed = "true", tag = "5")]
+        pub(crate) timestamps_unix_nano: Vec<u64>,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(crate) struct Mapping {
+        #[prost(uint64, tag = "1")]
+        pub(crate) memory_start: u64,
+        #[prost(uint64, tag = "2")]
+        pub(crate) memory_limit: u64,
+        #[prost(uint64, tag = "3")]
+        pub(crate) file_offset: u64,
+        #[prost(int32, tag = "4")]
+        pub(crate) filename_strindex: i32,
+        #[prost(int32, repeated, packed = "true", tag = "5")]
+        pub(crate) attribute_indices: Vec<i32>,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(crate) struct Stack {
+        #[prost(int32, repeated, packed = "true", tag = "1")]
+        pub(crate) location_indices: Vec<i32>,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(crate) struct Location {
+        #[prost(int32, tag = "1")]
+        pub(crate) mapping_index: i32,
+        #[prost(uint64, tag = "2")]
+        pub(crate) address: u64,
+        #[prost(message, repeated, tag = "3")]
+        pub(crate) lines: Vec<Line>,
+        #[prost(int32, repeated, packed = "true", tag = "4")]
+        pub(crate) attribute_indices: Vec<i32>,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(crate) struct Line {
+        #[prost(int32, tag = "1")]
+        pub(crate) function_index: i32,
+        #[prost(int64, tag = "2")]
+        pub(crate) line: i64,
+        #[prost(int64, tag = "3")]
+        pub(crate) column: i64,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    pub(crate) struct Function {
+        #[prost(int32, tag = "1")]
+        pub(crate) name_strindex: i32,
+        #[prost(int32, tag = "2")]
+        pub(crate) system_name_strindex: i32,
+        #[prost(int32, tag = "3")]
+        pub(crate) filename_strindex: i32,
         #[prost(int64, tag = "4")]
-        pub(super) start_line: i64,
+        pub(crate) start_line: i64,
     }
 }

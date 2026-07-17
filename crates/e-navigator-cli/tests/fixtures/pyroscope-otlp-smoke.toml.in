@@ -1,0 +1,31 @@
+log_level = "info"
+queue_capacity = 64
+
+[otlp_http]
+enabled = true
+endpoint = ""
+metrics_endpoint = ""
+traces_endpoint = ""
+profiles_endpoint = "__PROFILES_ENDPOINT__"
+metrics_enabled = false
+traces_enabled = false
+profiles_enabled = true
+queue_capacity = 64
+batch_size = 8
+flush_interval_millis = 50
+timeout_millis = 3000
+max_retries = 2
+retry_initial_backoff_millis = 50
+retry_max_backoff_millis = 500
+circuit_breaker_failure_threshold = 3
+circuit_breaker_cooldown_millis = 1000
+shutdown_timeout_millis = 3000
+tls_insecure_skip_verify = false
+
+[[modules]]
+name = "source.synthetic_exec"
+enabled = true
+
+[[modules]]
+name = "sink.otlp_http"
+enabled = true

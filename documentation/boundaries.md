@@ -30,8 +30,9 @@ E-Navigator does not currently claim:
 
 - production observability backend behavior;
 - trace storage, profile storage, flamegraph UI, dashboards, or query UI;
-- profile upload sink to an external profiling backend (a local
-  `/debug/pprof/profile` serving endpoint is implemented);
+- production or homelab proof of direct profile delivery (the generic OTLP
+  Profiles HTTP sink is locally proven against Pyroscope `1.20.3`; storage,
+  retention, and query service behavior remain backend responsibilities);
 - complete production HTTP/gRPC protocol coverage (bounded HTTP/1 and
   HTTP/2/HPACK request capture with request/response matching is implemented
   and locally proven for Redis and HTTP/2; HTTP/2 CONTINUATION reassembly is
@@ -102,9 +103,10 @@ E-Navigator does not currently claim:
   id are — so namespace/label rules hard-depend on the node pod list; when the
   API is unavailable the filter degrades loudly and applies the configured
   `unknown_cgroup` posture to every workload);
-- glob or regular-expression label capture filtering (capture-filter namespace
-  patterns support `*` and `?` globbing; `label_include`/`label_exclude` are
-  exact key=value matches);
+- glob or regular-expression label values (capture-filter namespace and
+  process/container patterns support `*` and `?`; label rules support exact
+  equality/inequality, existence/non-existence, set membership, and bounded OR
+  groups);
 - cgroup v1 capture filtering (the capture filter's join key is the cgroup v2
   container cgroup inode; it assumes the unified cgroup v2 hierarchy used by
   modern Kubernetes nodes, and host/non-pod processes — which have a cgroup but
