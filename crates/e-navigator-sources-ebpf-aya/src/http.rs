@@ -26,13 +26,17 @@ pub(crate) const RAW_HTTP_ROLE_CLIENT: u32 = 0;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_HTTP_ROLE_SERVER: u32 = 1;
 #[cfg(any(target_os = "linux", test))]
+const MAX_HTTP_REASSEMBLY_STREAMS: usize = 4096;
+#[cfg(any(target_os = "linux", test))]
+const HTTP_REASSEMBLY_STALE_NANOS: u64 = 5 * 60 * 1_000_000_000;
+#[cfg(any(target_os = "linux", test))]
 const PERF_BUFFER_PAGE_COUNT: usize = 64;
 #[cfg(any(target_os = "linux", test))]
 const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
 #[cfg(any(target_os = "linux", test))]
 const HTTP_DIAGNOSTIC_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 #[cfg(any(target_os = "linux", test))]
-const HTTP_DIAGNOSTIC_COUNTERS_LEN: usize = 18;
+const HTTP_DIAGNOSTIC_COUNTERS_LEN: usize = 19;
 #[cfg(any(target_os = "linux", test))]
 const HTTP_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_DIAGNOSTIC_COUNTERS_LEN] = [
     "connect_enter",
@@ -53,6 +57,7 @@ const HTTP_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_DIAGNOSTIC_COUNTERS_LEN] = [
     "accept_active",
     "inbound_read_enter",
     "inbound_output_attempt",
+    "server_write_suppressed",
 ];
 
 #[cfg(any(target_os = "linux", test))]
@@ -117,6 +122,7 @@ pub(crate) struct RawHttpRequestEvent {
     pub local_addr_v6: [u8; 16],
     pub timestamp_unix_nanos: u64,
     pub request_len: u32,
+    pub request_total_len: u32,
     pub request_iovec_lens: [u16; RAW_HTTP_MAX_IOVECS],
     pub command: [u8; 16],
     pub request: [u8; RAW_HTTP_REQUEST_BYTES],
@@ -130,9 +136,11 @@ struct RawHttpInvalidSampleMetadata {
     cgroup_id: u64,
     fd: i32,
     family: u32,
+    role: u32,
     remote_port_be: u16,
     local_port_be: u16,
     request_len: u32,
+    request_total_len: u32,
     request_iovec_lens: [u16; RAW_HTTP_MAX_IOVECS],
     command: [u8; 16],
 }
@@ -146,9 +154,11 @@ impl RawHttpInvalidSampleMetadata {
             cgroup_id: raw.cgroup_id,
             fd: raw.fd,
             family: raw.family,
+            role: raw.role,
             remote_port_be: raw.remote_port_be,
             local_port_be: raw.local_port_be,
             request_len: raw.request_len,
+            request_total_len: raw.request_total_len,
             request_iovec_lens: raw.request_iovec_lens,
             command: raw.command,
         }
@@ -160,6 +170,12 @@ impl RawHttpInvalidSampleMetadata {
 enum RawHttpDecodeError {
     RawSampleTooShort,
     InvalidIovecLength {
+        sample: RawHttpInvalidSampleMetadata,
+    },
+    ReassemblyGap {
+        sample: RawHttpInvalidSampleMetadata,
+    },
+    ReassemblyLimit {
         sample: RawHttpInvalidSampleMetadata,
     },
     HttpExtraction {
@@ -174,6 +190,8 @@ impl RawHttpDecodeError {
         match self {
             Self::RawSampleTooShort => "raw_sample_too_short",
             Self::InvalidIovecLength { .. } => "invalid_iovec_length",
+            Self::ReassemblyGap { .. } => "reassembly_gap",
+            Self::ReassemblyLimit { .. } => "reassembly_limit",
             Self::HttpExtraction {
                 reason: HttpExtraction::HeadersTooLong,
                 ..
@@ -209,9 +227,198 @@ impl RawHttpDecodeError {
         match self {
             Self::RawSampleTooShort => None,
             Self::InvalidIovecLength { sample } => Some(sample),
+            Self::ReassemblyGap { sample } => Some(sample),
+            Self::ReassemblyLimit { sample } => Some(sample),
             Self::HttpExtraction { sample, .. } => Some(sample),
         }
     }
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct HttpStreamKey {
+    pid: u32,
+    fd: i32,
+    role: u32,
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Default)]
+struct HttpStreamState {
+    buffer: Vec<u8>,
+    body_bytes_remaining: usize,
+    last_seen_unix_nanos: u64,
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Default)]
+struct HttpReassemblyOutcome {
+    requests: Vec<Vec<u8>>,
+    errors: Vec<RawHttpDecodeError>,
+    evicted_streams: u64,
+}
+
+/// Bounded per-connection HTTP/1 header reassembly.
+///
+/// The eBPF side emits every read chunk for accepted server sockets. This
+/// state joins segmented headers, consumes fixed-length request bodies, and
+/// extracts multiple pipelined requests without retaining payload bodies.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug)]
+struct HttpRequestReassembler {
+    max_streams: usize,
+    max_header_bytes: usize,
+    streams: std::collections::BTreeMap<HttpStreamKey, HttpStreamState>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl HttpRequestReassembler {
+    fn new(max_streams: usize, max_header_bytes: usize) -> Self {
+        Self {
+            max_streams: max_streams.max(1),
+            max_header_bytes: max_header_bytes.max(1),
+            streams: std::collections::BTreeMap::new(),
+        }
+    }
+
+    fn push(
+        &mut self,
+        raw: &RawHttpRequestEvent,
+        captured: &[u8],
+        observed_unix_nanos: u64,
+        protocol_config: &ProtocolExtractionConfig,
+    ) -> HttpReassemblyOutcome {
+        let mut outcome = HttpReassemblyOutcome::default();
+        self.reap_stale(observed_unix_nanos);
+
+        let key = HttpStreamKey {
+            pid: raw.pid,
+            fd: raw.fd,
+            role: raw.role,
+        };
+        if !self.streams.contains_key(&key)
+            && self.streams.len() >= self.max_streams
+            && let Some(oldest) = self
+                .streams
+                .iter()
+                .min_by_key(|(_, state)| state.last_seen_unix_nanos)
+                .map(|(key, _)| *key)
+        {
+            self.streams.remove(&oldest);
+            outcome.evicted_streams = 1;
+        }
+
+        let state = self.streams.entry(key).or_default();
+        state.last_seen_unix_nanos = observed_unix_nanos;
+
+        let total_len = usize::try_from(raw.request_total_len)
+            .unwrap_or(usize::MAX)
+            .max(captured.len());
+        if total_len > captured.len() {
+            state.buffer.clear();
+            state.body_bytes_remaining = 0;
+            outcome.errors.push(RawHttpDecodeError::ReassemblyGap {
+                sample: RawHttpInvalidSampleMetadata::from_raw(raw),
+            });
+            return outcome;
+        }
+
+        let mut visible = captured;
+        if state.body_bytes_remaining > 0 {
+            let skipped = state.body_bytes_remaining.min(visible.len());
+            state.body_bytes_remaining -= skipped;
+            visible = &visible[skipped..];
+            if state.body_bytes_remaining > 0 {
+                return outcome;
+            }
+        }
+
+        if !state.buffer.is_empty() && starts_with_http_request(visible) {
+            // The fd was reused while an old partial header remained. Prefer
+            // the new, self-identifying request over cross-connection splice.
+            state.buffer.clear();
+        }
+        state.buffer.extend_from_slice(visible);
+
+        loop {
+            if state.buffer.len() > self.max_header_bytes {
+                state.buffer.clear();
+                state.body_bytes_remaining = 0;
+                outcome.errors.push(RawHttpDecodeError::ReassemblyLimit {
+                    sample: RawHttpInvalidSampleMetadata::from_raw(raw),
+                });
+                return outcome;
+            }
+
+            let Some(header_end) = find_http_header_end(&state.buffer) else {
+                return outcome;
+            };
+            let request = state.buffer[..header_end].to_vec();
+            if let Err(reason) = parse_http_request(&request, protocol_config) {
+                state.buffer.clear();
+                state.body_bytes_remaining = 0;
+                outcome.errors.push(RawHttpDecodeError::HttpExtraction {
+                    reason,
+                    sample: RawHttpInvalidSampleMetadata::from_raw(raw),
+                });
+                return outcome;
+            }
+
+            let body_len = http_content_length(&request).unwrap_or(0);
+            state.buffer.drain(..header_end);
+            let buffered_body = body_len.min(state.buffer.len());
+            state.buffer.drain(..buffered_body);
+            state.body_bytes_remaining = body_len.saturating_sub(buffered_body);
+            outcome.requests.push(request);
+
+            if state.body_bytes_remaining > 0 || state.buffer.is_empty() {
+                return outcome;
+            }
+        }
+    }
+
+    fn reap_stale(&mut self, observed_unix_nanos: u64) {
+        self.streams.retain(|_, state| {
+            observed_unix_nanos.saturating_sub(state.last_seen_unix_nanos)
+                <= HTTP_REASSEMBLY_STALE_NANOS
+        });
+    }
+
+    #[cfg(test)]
+    fn stream_count(&self) -> usize {
+        self.streams.len()
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn find_http_header_end(bytes: &[u8]) -> Option<usize> {
+    bytes
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| index + 4)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn starts_with_http_request(bytes: &[u8]) -> bool {
+    let Some(space) = bytes.iter().position(|byte| *byte == b' ') else {
+        return false;
+    };
+    space > 0
+        && space <= 16
+        && bytes[..space]
+            .iter()
+            .all(|byte| byte.is_ascii_uppercase() || *byte == b'-')
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn http_content_length(request: &[u8]) -> Option<usize> {
+    let header = std::str::from_utf8(request).ok()?;
+    header.split("\r\n").skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse::<usize>().ok())
+            .flatten()
+    })
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -254,14 +461,33 @@ fn raw_http_request_to_signal_result_with_config(
 
     let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawHttpRequestEvent>()) };
     let request = compact_raw_http_request(&raw)?;
-    let parsed = parse_http_request(&request, protocol_config).map_err(|reason| {
+    raw_http_request_parts_to_signal(
+        &raw,
+        &request,
+        host,
+        observed_unix_nanos,
+        procfs_root,
+        protocol_config,
+    )
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn raw_http_request_parts_to_signal(
+    raw: &RawHttpRequestEvent,
+    request: &[u8],
+    host: Option<String>,
+    observed_unix_nanos: u64,
+    procfs_root: &std::path::Path,
+    protocol_config: &ProtocolExtractionConfig,
+) -> Result<SignalEnvelope, RawHttpDecodeError> {
+    let parsed = parse_http_request(request, protocol_config).map_err(|reason| {
         RawHttpDecodeError::HttpExtraction {
             reason,
-            sample: RawHttpInvalidSampleMetadata::from_raw(&raw),
+            sample: RawHttpInvalidSampleMetadata::from_raw(raw),
         }
     })?;
     let trace_context = parsed.trace_context.as_ref();
-    let peer = peer_context(&raw, &parsed.attributes);
+    let peer = peer_context(raw, &parsed.attributes);
     let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
     let process = NetworkProcessIdentity {
         pid: raw.pid,
@@ -440,7 +666,10 @@ mod platform {
     };
     use e_navigator_protocol::ProtocolExtractionConfig;
     use e_navigator_signals::{SignalEnvelope, SignalPayload};
-    use std::{path::PathBuf, sync::Arc};
+    use std::{
+        path::PathBuf,
+        sync::{Arc, Mutex},
+    };
     use tokio::{sync::mpsc, task::JoinHandle};
     use tracing::{debug, info, warn};
 
@@ -609,6 +838,10 @@ mod platform {
             .map_err(module_error)?;
 
             let cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
+            let reassembler = Arc::new(Mutex::new(super::HttpRequestReassembler::new(
+                super::MAX_HTTP_REASSEMBLY_STREAMS,
+                self.protocol_config.max_header_bytes,
+            )));
             for cpu_id in cpus {
                 let mut buffer = perf_array
                     .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
@@ -620,6 +853,7 @@ mod platform {
                 let reader_shutdown = shutdown.clone();
                 let diagnostics = diagnostics.clone();
                 let telemetry = telemetry.clone();
+                let reassembler = reassembler.clone();
 
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     let mut closed = false;
@@ -633,35 +867,87 @@ mod platform {
                             match event {
                                 PerfEvent::Sample { head, tail } => {
                                     let bytes = perf_sample_bytes(head, tail);
-                                    match super::raw_http_request_to_signal_result_with_config(
-                                        bytes.as_ref(),
-                                        host.clone(),
-                                        super::now_unix_nanos(),
-                                        &procfs_root,
-                                        &protocol_config,
-                                    ) {
-                                        Ok(signal) => {
-                                            telemetry.record_decoded_sample();
-                                            let diagnostic_decision =
-                                                log_signal_diagnostic(&diagnostics, &signal);
-                                            telemetry
-                                                .record_diagnostic_decision(diagnostic_decision);
-                                            if cpu_tx.blocking_send(signal).is_err() {
-                                                telemetry.record_send_failure();
-                                                closed = true;
-                                            } else {
-                                                telemetry.record_sent_signal();
-                                            }
-                                        }
-                                        Err(err) => {
-                                            telemetry.record_invalid_sample();
-                                            let diagnostic_decision =
-                                                log_invalid_http_sample_diagnostic(
-                                                    &diagnostics,
-                                                    err,
+                                    let observed_unix_nanos = super::now_unix_nanos();
+                                    let decoded = if bytes.len()
+                                        < core::mem::size_of::<super::RawHttpRequestEvent>()
+                                    {
+                                        Err(super::RawHttpDecodeError::RawSampleTooShort)
+                                    } else {
+                                        let raw = unsafe {
+                                            core::ptr::read_unaligned(
+                                                bytes
+                                                    .as_ptr()
+                                                    .cast::<super::RawHttpRequestEvent>(),
+                                            )
+                                        };
+                                        super::compact_raw_http_request(&raw).map(|captured| {
+                                            let outcome = reassembler
+                                                .lock()
+                                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                                .push(
+                                                    &raw,
+                                                    &captured,
+                                                    observed_unix_nanos,
+                                                    &protocol_config,
                                                 );
-                                            telemetry
-                                                .record_diagnostic_decision(diagnostic_decision);
+                                            (raw, outcome)
+                                        })
+                                    };
+
+                                    match decoded {
+                                        Err(err) => {
+                                            record_invalid(&telemetry, &diagnostics, err);
+                                        }
+                                        Ok((raw, outcome)) => {
+                                            if outcome.evicted_streams > 0 {
+                                                telemetry.record_invalid_sample();
+                                                warn!(
+                                                    evicted_streams = outcome.evicted_streams,
+                                                    max_streams = super::MAX_HTTP_REASSEMBLY_STREAMS,
+                                                    "bounded HTTP reassembly evicted connection state"
+                                                );
+                                            }
+                                            for err in outcome.errors {
+                                                record_invalid(&telemetry, &diagnostics, err);
+                                            }
+                                            for request in outcome.requests {
+                                                match super::raw_http_request_parts_to_signal(
+                                                    &raw,
+                                                    &request,
+                                                    host.clone(),
+                                                    observed_unix_nanos,
+                                                    &procfs_root,
+                                                    &protocol_config,
+                                                ) {
+                                                    Ok(signal) => {
+                                                        telemetry.record_decoded_sample();
+                                                        let diagnostic_decision =
+                                                            log_signal_diagnostic(
+                                                                &diagnostics,
+                                                                &signal,
+                                                            );
+                                                        telemetry.record_diagnostic_decision(
+                                                            diagnostic_decision,
+                                                        );
+                                                        if cpu_tx
+                                                            .blocking_send(signal)
+                                                            .is_err()
+                                                        {
+                                                            telemetry.record_send_failure();
+                                                            closed = true;
+                                                            break;
+                                                        }
+                                                        telemetry.record_sent_signal();
+                                                    }
+                                                    Err(err) => {
+                                                        record_invalid(
+                                                            &telemetry,
+                                                            &diagnostics,
+                                                            err,
+                                                        );
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -767,11 +1053,23 @@ mod platform {
             family = ?sample.map(|sample| sample.family),
             remote_port = ?sample.map(|sample| u16::from_be(sample.remote_port_be)),
             local_port = ?sample.map(|sample| u16::from_be(sample.local_port_be)),
+            role = ?sample.map(|sample| sample.role),
             request_len = ?sample.map(|sample| sample.request_len),
+            request_total_len = ?sample.map(|sample| sample.request_total_len),
             request_iovec_lens = ?request_iovec_lens,
             "source diagnostic raw event invalid"
         );
         DiagnosticSampleDecision::Matched
+    }
+
+    fn record_invalid(
+        telemetry: &SourceTelemetry,
+        diagnostics: &SourceDiagnostics,
+        err: super::RawHttpDecodeError,
+    ) {
+        telemetry.record_invalid_sample();
+        let decision = log_invalid_http_sample_diagnostic(diagnostics, err);
+        telemetry.record_diagnostic_decision(decision);
     }
 
     fn spawn_http_diagnostic_counter_logger(
@@ -813,6 +1111,10 @@ mod platform {
                             fallback_candidate = delta.get(12),
                             fallback_non_http_start = delta.get(13),
                             fallback_output_attempt = delta.get(14),
+                            accept_active = delta.get(15),
+                            inbound_read_enter = delta.get(16),
+                            inbound_output_attempt = delta.get(17),
+                            server_write_suppressed = delta.get(18),
                             stage_names = ?super::HTTP_DIAGNOSTIC_COUNTER_NAMES,
                             "source diagnostic http stage counters"
                         );
@@ -973,6 +1275,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 0,
             request_len: request.len() as u32,
+            request_total_len: request.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("curl"),
             request: [0; RAW_HTTP_REQUEST_BYTES],
@@ -1056,6 +1359,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 0,
             request_len: (part1.len() + part2.len()) as u32,
+            request_total_len: (part1.len() + part2.len()) as u32,
             request_iovec_lens: [part1.len() as u16, part2.len() as u16, 0],
             command: fixed_command("curl"),
             request: [0; RAW_HTTP_REQUEST_BYTES],
@@ -1111,6 +1415,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 0,
             request_len: (part1.len() + part2.len() + part3.len()) as u32,
+            request_total_len: (part1.len() + part2.len() + part3.len()) as u32,
             request_iovec_lens: [part1.len() as u16, part2.len() as u16, part3.len() as u16],
             command: fixed_command("curl"),
             request: [0; RAW_HTTP_REQUEST_BYTES],
@@ -1176,6 +1481,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 0,
             request_len: payload.len() as u32,
+            request_total_len: payload.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("curl"),
             request: [0; RAW_HTTP_REQUEST_BYTES],
@@ -1221,6 +1527,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 0,
             request_len: request.len() as u32,
+            request_total_len: request.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("curl"),
             request: [0; RAW_HTTP_REQUEST_BYTES],
@@ -1269,6 +1576,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 0,
             request_len: payload.len() as u32,
+            request_total_len: payload.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("curl"),
             request: [0; RAW_HTTP_REQUEST_BYTES],
@@ -1311,6 +1619,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 0,
             request_len: payload.len() as u32,
+            request_total_len: payload.len() as u32,
             request_iovec_lens: [3, 5, 7],
             command: fixed_command("curl"),
             request: [0; RAW_HTTP_REQUEST_BYTES],
@@ -1359,6 +1668,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 0,
             request_len: (part1.len() + part2.len()) as u32,
+            request_total_len: (part1.len() + part2.len()) as u32,
             request_iovec_lens: [
                 part1.len() as u16,
                 (RAW_HTTP_IOVEC_CHUNK_BYTES + 1) as u16,
@@ -1412,6 +1722,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 0,
             request_len: request.len() as u32,
+            request_total_len: request.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("curl"),
             request: [0; RAW_HTTP_REQUEST_BYTES],
@@ -1439,10 +1750,10 @@ mod tests {
     #[test]
     fn http_diagnostic_counter_snapshot_returns_stage_deltas() {
         let previous = HttpDiagnosticCounterSnapshot::from_counters([
-            10, 5, 100, 30, 1, 0, 2, 7, 0, 20, 3, 20, 4, 3, 1, 0, 0, 0,
+            10, 5, 100, 30, 1, 0, 2, 7, 0, 20, 3, 20, 4, 3, 1, 0, 0, 0, 0,
         ]);
         let current = HttpDiagnosticCounterSnapshot::from_counters([
-            12, 8, 100, 45, 1, 4, 2, 11, 0, 35, 3, 35, 10, 8, 2, 5, 6, 7,
+            12, 8, 100, 45, 1, 4, 2, 11, 0, 35, 3, 35, 10, 8, 2, 5, 6, 7, 8,
         ]);
 
         let delta = current.delta_since(&previous);
@@ -1474,6 +1785,7 @@ mod tests {
                 "accept_active",
                 "inbound_read_enter",
                 "inbound_output_attempt",
+                "server_write_suppressed",
             ]
         );
     }
@@ -1496,6 +1808,7 @@ mod tests {
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 1,
             request_len: request.len() as u32,
+            request_total_len: request.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("server"),
             request: [0; RAW_HTTP_REQUEST_BYTES],
@@ -1523,6 +1836,117 @@ mod tests {
     }
 
     #[test]
+    fn reassembler_joins_segmented_server_request_headers() {
+        let config = ProtocolExtractionConfig::default();
+        let mut reassembler = HttpRequestReassembler::new(8, config.max_header_bytes);
+        let first = raw_http_chunk(
+            77,
+            4,
+            RAW_HTTP_ROLE_SERVER,
+            b"GET /segmented HTTP/1.1\r\nHost:",
+        );
+        let second = raw_http_chunk(77, 4, RAW_HTTP_ROLE_SERVER, b" svc.local\r\n\r\n");
+
+        let first_outcome = reassembler.push(
+            &first,
+            &compact_raw_http_request(&first).expect("first chunk compacts"),
+            1,
+            &config,
+        );
+        assert!(first_outcome.requests.is_empty());
+        assert!(first_outcome.errors.is_empty());
+
+        let second_outcome = reassembler.push(
+            &second,
+            &compact_raw_http_request(&second).expect("second chunk compacts"),
+            2,
+            &config,
+        );
+        assert_eq!(second_outcome.requests.len(), 1);
+        assert_eq!(
+            second_outcome.requests[0],
+            b"GET /segmented HTTP/1.1\r\nHost: svc.local\r\n\r\n"
+        );
+        assert!(second_outcome.errors.is_empty());
+    }
+
+    #[test]
+    fn reassembler_extracts_pipelined_requests_after_fixed_body() {
+        let config = ProtocolExtractionConfig::default();
+        let mut reassembler = HttpRequestReassembler::new(8, config.max_header_bytes);
+        let payload = concat!(
+            "POST /first HTTP/1.1\r\n",
+            "Host: svc.local\r\n",
+            "Content-Length: 4\r\n",
+            "\r\n",
+            "DATA",
+            "GET /second HTTP/1.1\r\n",
+            "Host: svc.local\r\n",
+            "\r\n"
+        );
+        let raw = raw_http_chunk(77, 4, RAW_HTTP_ROLE_SERVER, payload.as_bytes());
+
+        let outcome = reassembler.push(
+            &raw,
+            &compact_raw_http_request(&raw).expect("pipeline compacts"),
+            1,
+            &config,
+        );
+
+        assert!(outcome.errors.is_empty());
+        assert_eq!(outcome.requests.len(), 2);
+        assert!(outcome.requests[0].starts_with(b"POST /first "));
+        assert!(outcome.requests[1].starts_with(b"GET /second "));
+    }
+
+    #[test]
+    fn reassembler_reports_capture_gaps_without_splicing_streams() {
+        let config = ProtocolExtractionConfig::default();
+        let mut reassembler = HttpRequestReassembler::new(8, config.max_header_bytes);
+        let mut raw = raw_http_chunk(77, 4, RAW_HTTP_ROLE_SERVER, b"GET /gap HTTP/1.1\r\n");
+        raw.request_total_len = raw.request_len + 1;
+
+        let outcome = reassembler.push(
+            &raw,
+            &compact_raw_http_request(&raw).expect("captured prefix compacts"),
+            1,
+            &config,
+        );
+
+        assert!(outcome.requests.is_empty());
+        assert!(matches!(
+            outcome.errors.as_slice(),
+            [RawHttpDecodeError::ReassemblyGap { .. }]
+        ));
+    }
+
+    #[test]
+    fn reassembler_evicts_oldest_stream_at_capacity_and_reaps_stale_state() {
+        let config = ProtocolExtractionConfig::default();
+        let mut reassembler = HttpRequestReassembler::new(1, config.max_header_bytes);
+        let first = raw_http_chunk(1, 4, RAW_HTTP_ROLE_SERVER, b"GET /one HTTP/1.1\r\n");
+        let second = raw_http_chunk(2, 5, RAW_HTTP_ROLE_SERVER, b"GET /two HTTP/1.1\r\n");
+
+        let _ = reassembler.push(
+            &first,
+            &first.request[..first.request_len as usize],
+            1,
+            &config,
+        );
+        let outcome = reassembler.push(
+            &second,
+            &second.request[..second.request_len as usize],
+            2,
+            &config,
+        );
+        assert_eq!(outcome.evicted_streams, 1);
+        assert_eq!(reassembler.stream_count(), 1);
+
+        reassembler.reap_stale(HTTP_REASSEMBLY_STALE_NANOS + 3);
+        assert_eq!(reassembler.stream_count(), 0);
+    }
+
+    #[test]
     fn http_diagnostic_counter_snapshot_ignores_empty_delta() {
         let snapshot =
             HttpDiagnosticCounterSnapshot::from_counters([0; HTTP_DIAGNOSTIC_COUNTERS_LEN]);
@@ -1536,6 +1960,32 @@ mod tests {
         let len = bytes.len().min(command.len().saturating_sub(1));
         command[..len].copy_from_slice(&bytes[..len]);
         command
+    }
+
+    fn raw_http_chunk(pid: u32, fd: i32, role: u32, bytes: &[u8]) -> RawHttpRequestEvent {
+        assert!(bytes.len() <= RAW_HTTP_REQUEST_BYTES);
+        let mut raw = RawHttpRequestEvent {
+            pid,
+            uid: 1000,
+            cgroup_id: 7,
+            fd,
+            family: RAW_HTTP_AF_INET,
+            role,
+            remote_port_be: 51000_u16.to_be(),
+            local_port_be: 8080_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([10, 0, 0, 40]),
+            local_addr_v4: u32::from_ne_bytes([10, 0, 0, 41]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 1,
+            request_len: bytes.len() as u32,
+            request_total_len: bytes.len() as u32,
+            request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
+            command: fixed_command("server"),
+            request: [0; RAW_HTTP_REQUEST_BYTES],
+        };
+        raw.request[..bytes.len()].copy_from_slice(bytes);
+        raw
     }
 
     fn raw_as_bytes(raw: &RawHttpRequestEvent) -> &[u8] {
