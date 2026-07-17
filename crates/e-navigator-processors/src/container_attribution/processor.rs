@@ -1,10 +1,8 @@
 use async_trait::async_trait;
 use e_navigator_core::{AttributionConfig, CoreResult, ModuleKind, ModuleMetadata, Processor};
 use e_navigator_signals::{ContainerContext, KubernetesContext, SignalEnvelope, SignalPayload};
-#[cfg(test)]
 use std::sync::Arc;
 
-#[cfg(test)]
 use super::kubernetes::KubernetesMetadataProvider;
 use super::{
     cgroup::parse_container_from_cgroup,
@@ -45,6 +43,22 @@ impl ContainerAttributionProcessor {
             kubernetes: KubernetesAttribution::with_cache(
                 config.kubernetes.clone(),
                 kubernetes_cache,
+            ),
+            config,
+            pid_cache: PidAttributionCache::default(),
+            cgroup_id_cache: CgroupIdAttributionCache::default(),
+        }
+    }
+
+    pub fn with_kubernetes_provider(
+        config: AttributionConfig,
+        kubernetes_provider: Arc<dyn KubernetesMetadataProvider>,
+    ) -> Self {
+        Self {
+            kubernetes: KubernetesAttribution::with_cache_and_provider(
+                config.kubernetes.clone(),
+                KubernetesMetadataCache::default(),
+                kubernetes_provider,
             ),
             config,
             pid_cache: PidAttributionCache::default(),

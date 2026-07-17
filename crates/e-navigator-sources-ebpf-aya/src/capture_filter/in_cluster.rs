@@ -91,19 +91,35 @@ pub(crate) fn parse_raw_pods(
     let mut pods = Vec::new();
     for pod in pod_list.items.into_iter().take(max_pods) {
         let namespace = pod.metadata.namespace.unwrap_or_default();
+        let pod_name = pod.metadata.name.unwrap_or_default();
         let labels = bounded_labels(pod.metadata.labels.unwrap_or_default(), max_labels);
-        let container_ids = pod
-            .status
-            .and_then(|status| status.container_statuses)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|status| status.container_id)
-            .filter_map(|raw| bare_container_id(&raw))
-            .collect();
+        let node_name = pod.spec.and_then(|spec| spec.node_name);
+        let mut container_ids = Vec::new();
+        let mut container_names = BTreeMap::new();
+        let mut pod_ip = None;
+        if let Some(status) = pod.status {
+            pod_ip = status.pod_ip;
+            for container in status.container_statuses.unwrap_or_default() {
+                let Some(container_id) = container
+                    .container_id
+                    .and_then(|raw| bare_container_id(&raw))
+                else {
+                    continue;
+                };
+                if let Some(name) = container.name {
+                    container_names.insert(container_id.clone(), name);
+                }
+                container_ids.push(container_id);
+            }
+        }
         pods.push(RawPod {
             namespace,
+            pod_name,
             pod_uid: pod.metadata.uid,
+            node_name,
+            pod_ip,
             container_ids,
+            container_names,
             labels,
         });
     }
@@ -172,24 +188,35 @@ struct PodList {
 #[derive(Debug, Deserialize)]
 struct Pod {
     metadata: PodMetadata,
+    spec: Option<PodSpec>,
     status: Option<PodStatus>,
 }
 
 #[derive(Debug, Deserialize)]
 struct PodMetadata {
     namespace: Option<String>,
+    name: Option<String>,
     uid: Option<String>,
     labels: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct PodSpec {
+    node_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PodStatus {
+    #[serde(rename = "podIP")]
+    pod_ip: Option<String>,
     container_statuses: Option<Vec<ContainerStatus>>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ContainerStatus {
+    name: Option<String>,
     #[serde(rename = "containerID")]
     container_id: Option<String>,
 }

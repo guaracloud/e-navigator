@@ -58,8 +58,12 @@ struct PodIdentity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawPod {
     pub namespace: String,
+    pub pod_name: String,
     pub pod_uid: Option<String>,
+    pub node_name: Option<String>,
+    pub pod_ip: Option<String>,
     pub container_ids: Vec<String>,
+    pub container_names: BTreeMap<String, String>,
     pub labels: BTreeMap<String, String>,
 }
 
@@ -352,8 +356,12 @@ mod tests {
     fn pod(namespace: &str, uid: &str, labels: &[(&str, &str)], cids: &[&str]) -> RawPod {
         RawPod {
             namespace: namespace.to_string(),
+            pod_name: format!("{namespace}-pod"),
             pod_uid: Some(uid.to_string()),
+            node_name: Some("node-a".to_string()),
+            pod_ip: None,
             container_ids: cids.iter().map(|c| c.to_string()).collect(),
+            container_names: BTreeMap::new(),
             labels: labels
                 .iter()
                 .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
@@ -637,8 +645,12 @@ mod tests {
         let index = RawNodePodIndex::from_pods(
             vec![RawPod {
                 namespace: "top-secret-namespace".to_string(),
+                pod_name: "secret-pod".to_string(),
                 pod_uid: Some(UID.to_string()),
+                node_name: Some("node-a".to_string()),
+                pod_ip: None,
                 container_ids: vec![CID.to_string()],
+                container_names: BTreeMap::new(),
                 labels: [("classification".to_string(), "restricted".to_string())]
                     .into_iter()
                     .collect(),

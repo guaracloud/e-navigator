@@ -3,4 +3,6 @@
 
 pub mod container_attribution;
 
-pub use container_attribution::ContainerAttributionProcessor;
+pub use container_attribution::{
+    ContainerAttributionProcessor, KubernetesMetadataCache, KubernetesMetadataProvider,
+};

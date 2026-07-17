@@ -8,5 +8,5 @@ mod processor;
 #[cfg(test)]
 mod tests;
 
-pub use kubernetes::KubernetesMetadataCache;
+pub use kubernetes::{KubernetesMetadataCache, KubernetesMetadataProvider};
 pub use processor::ContainerAttributionProcessor;

@@ -33,12 +33,15 @@ fn parse_raw_pods_extracts_bare_container_ids_unscoped() {
                 {{
                     "metadata": {{
                         "namespace": "payments",
+                        "name": "payments-api-abc",
                         "uid": "{UID}",
                         "labels": {{ "team": "payments", "tier": "prod" }}
                     }},
+                    "spec": {{ "nodeName": "node-a" }},
                     "status": {{
+                        "podIP": "10.42.0.10",
                         "containerStatuses": [
-                            {{ "containerID": "containerd://{CID}" }},
+                            {{ "name": "api", "containerID": "containerd://{CID}" }},
                             {{ "containerID": null }}
                         ]
                     }}
@@ -55,7 +58,14 @@ fn parse_raw_pods_extracts_bare_container_ids_unscoped() {
     let payments = &pods[0];
     assert_eq!(payments.namespace, "payments");
     assert_eq!(payments.pod_uid.as_deref(), Some(UID));
+    assert_eq!(payments.pod_name, "payments-api-abc");
+    assert_eq!(payments.node_name.as_deref(), Some("node-a"));
+    assert_eq!(payments.pod_ip.as_deref(), Some("10.42.0.10"));
     assert_eq!(payments.container_ids, vec![CID.to_string()]);
+    assert_eq!(
+        payments.container_names.get(CID).map(String::as_str),
+        Some("api")
+    );
     assert_eq!(
         payments.labels.get("team").map(String::as_str),
         Some("payments")
@@ -141,8 +151,12 @@ fn has_unresolved_is_true_without_index_and_false_when_resolved() {
     let index = RawNodePodIndex::from_pods(
         vec![RawPod {
             namespace: "payments".to_string(),
+            pod_name: "payments-api".to_string(),
             pod_uid: Some(UID.to_string()),
+            node_name: Some("node-a".to_string()),
+            pod_ip: Some("10.42.0.10".to_string()),
             container_ids: vec![CID.to_string()],
+            container_names: BTreeMap::new(),
             labels: BTreeMap::new(),
         }],
         1024,
@@ -162,6 +176,27 @@ fn controller_publish_increments_generation() {
     let (generation1, _) = controller.current();
     assert_ne!(generation0, generation1);
     assert_eq!(controller.control_word(), CONTROL_UNKNOWN_DROP);
+}
+
+#[test]
+fn controller_publishes_raw_pods_for_shared_attribution() {
+    let controller = CaptureFilterController::new(CONTROL_UNKNOWN_DROP);
+    controller.publish_raw_pods(vec![RawPod {
+        namespace: "proj-payments".to_string(),
+        pod_name: "payments-api".to_string(),
+        pod_uid: Some(UID.to_string()),
+        node_name: Some("node-a".to_string()),
+        pod_ip: Some("10.42.0.10".to_string()),
+        container_ids: vec![CID.to_string()],
+        container_names: BTreeMap::from([(CID.to_string(), "api".to_string())]),
+        labels: BTreeMap::new(),
+    }]);
+
+    let (generation, pods) = controller.raw_pods();
+
+    assert_eq!(generation, 1);
+    assert_eq!(pods.len(), 1);
+    assert_eq!(pods[0].pod_ip.as_deref(), Some("10.42.0.10"));
 }
 
 #[test]
