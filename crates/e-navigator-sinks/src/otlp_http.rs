@@ -247,7 +247,9 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
             && let Some(exporter) = &self.trace_exporter
         {
             if !trace_record_has_valid_ids(&record) {
-                self.invalid_trace_records.fetch_add(1, Ordering::Relaxed);
+                if signal_declares_trace_identity(signal) {
+                    self.invalid_trace_records.fetch_add(1, Ordering::Relaxed);
+                }
                 return Ok(());
             }
 
@@ -282,6 +284,20 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
             shutdown_exporter(self.profile_exporter.as_ref()),
         );
         metrics.and(traces).and(profiles)
+    }
+}
+
+fn signal_declares_trace_identity(signal: &SignalEnvelope) -> bool {
+    let has_identity = |trace_id: &Option<String>, span_id: &Option<String>| {
+        trace_id.is_some() || span_id.is_some()
+    };
+    match &signal.payload {
+        SignalPayload::TraceSpanObservation(span) => has_identity(&span.trace_id, &span.span_id),
+        SignalPayload::ServiceInteractionSpanObservation(span) => {
+            has_identity(&span.trace_id, &span.span_id)
+        }
+        SignalPayload::RequestSpanObservation(span) => has_identity(&span.trace_id, &span.span_id),
+        _ => false,
     }
 }
 
@@ -1419,7 +1435,7 @@ mod tests {
             .expect("profiling warning without ids is ignored");
 
         assert!(collector.try_next_request().is_none());
-        assert_eq!(sink.telemetry().invalid_trace_records, 1);
+        assert_eq!(sink.telemetry().invalid_trace_records, 0);
     }
 
     #[tokio::test]
@@ -1442,6 +1458,36 @@ mod tests {
         sink.write(&network_flow_warning())
             .await
             .expect("network flow warning without ids is ignored");
+
+        assert!(collector.try_next_request().is_none());
+        assert_eq!(sink.telemetry().invalid_trace_records, 0);
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_counts_declared_but_invalid_trace_identity() {
+        let collector = FakeCollector::spawn(vec![]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            traces_endpoint: collector.url_with_path("/v1/traces"),
+            metrics_enabled: false,
+            traces_enabled: true,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 50,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+        let mut signal = request_span();
+        let SignalPayload::RequestSpanObservation(span) = &mut signal.payload else {
+            panic!("request span fixture");
+        };
+        span.trace_id = Some("invalid".to_string());
+
+        sink.write(&signal)
+            .await
+            .expect("invalid declared identity is dropped");
 
         assert!(collector.try_next_request().is_none());
         assert_eq!(sink.telemetry().invalid_trace_records, 1);
