@@ -124,10 +124,22 @@ unknown_cgroup = "deny"    # "allow" or "deny"
 # then the include gate, then default_posture.
 namespace_include = ["proj-*"]
 namespace_exclude = ["proj-secret"]
-# Label selectors are exact key=value (a pod must carry all label_include
-# entries; any label_exclude match denies it).
-label_include = { "tier" = "prod" }
+# Equality, inequality, existence/non-existence, and set membership compose
+# with AND at the top level. This is the Guara paid-tier policy:
+label_in = { "tier" = ["starter", "pro", "business", "enterprise"] }
+label_not_exists = ["guara.cloud/catalog-slug"]
 label_exclude = { "observability.e-navigator.dev/probe" = "false" }
+# Identity exclusions apply when that identity is known at the decision point.
+process_exclude = ["*exporter", "otelcol*"]
+container_exclude = ["istio-proxy"]
+
+# `[[capture_filter.any_of]]` adds complete OR alternatives to the include
+# gate; `[[capture_filter.exclude_any]]` adds exclude-wins OR alternatives.
+[[capture_filter.any_of]]
+label_equal = { "team" = "payments" }
+
+[[capture_filter.any_of]]
+label_exists = ["observability.e-navigator.dev/include"]
 ```
 
 An allowlist posture (`default_posture`/`unknown_cgroup = "deny"` with
@@ -136,9 +148,11 @@ pod; a denylist posture (`"allow"` with `namespace_exclude`) leaves a brief
 capture leak for a newly started excluded pod. Both are bounded to the few
 seconds before the controller discovers the pod's cgroup and are minimized by
 resolving the pod UID from the cgroup path. Capture-filter namespace pattern and
-label selector lists each accept at most 128 and 64 entries respectively; each
-entry must be non-empty, free of whitespace and control characters, and at most
-253 bytes.
+label selector lists each accept at most 128 and 64 entries respectively; set
+selectors accept at most 64 values per key and OR selectors at most 32 groups.
+Each entry must be non-empty, free of whitespace and control characters, and at
+most 253 bytes. Exclude namespace/label groups and process/container exclusions
+always win before the include gate.
 
 Host resource sampling validates its scan bounds before runtime:
 `resource_source.sample_interval_millis` must be greater than zero and at most

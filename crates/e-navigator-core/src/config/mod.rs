@@ -23,7 +23,7 @@ mod trace_correlation;
 
 pub use argv::ArgvCaptureConfig;
 pub use attribution::AttributionConfig;
-pub use capture_filter::{CaptureFilterConfig, CapturePosture};
+pub use capture_filter::{CaptureFilterConfig, CapturePosture, WorkloadSelectorConfig};
 pub use cpu_profile::{CpuProfileBackpressure, CpuProfileSourceConfig};
 pub use dns_metrics::DnsMetricsConfig;
 pub use dns_source::DnsSourceConfig;
