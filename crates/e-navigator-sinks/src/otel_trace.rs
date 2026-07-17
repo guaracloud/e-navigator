@@ -932,6 +932,7 @@ fn profiling_confidence_name(kind: ProfilingConfidence) -> &'static str {
 fn correlation_kind_name(kind: TraceCorrelationKind) -> &'static str {
     match kind {
         TraceCorrelationKind::ObservedTraceContext => "observed_trace_context",
+        TraceCorrelationKind::GeneratedTraceContext => "generated_trace_context",
         TraceCorrelationKind::ProtocolObserved => "protocol_observed",
         TraceCorrelationKind::NetworkInferred => "network_inferred",
         TraceCorrelationKind::DependencyInferred => "dependency_inferred",

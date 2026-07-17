@@ -20,6 +20,7 @@ const MAX_KUBERNETES_LABEL_KEY_BYTES: usize = 128;
 #[non_exhaustive]
 pub enum TraceCorrelationKind {
     ObservedTraceContext,
+    GeneratedTraceContext,
     ProtocolObserved,
     NetworkInferred,
     DependencyInferred,

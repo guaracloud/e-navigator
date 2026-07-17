@@ -5,6 +5,8 @@ use super::{ConfigError, ConfigResult};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RequestCorrelationConfig {
+    #[serde(default = "default_generate_trace_ids")]
+    pub generate_trace_ids: bool,
     #[serde(default = "default_request_correlation_max_seen_requests")]
     pub max_seen_requests: usize,
     #[serde(default = "default_request_correlation_max_warnings")]
@@ -14,10 +16,15 @@ pub struct RequestCorrelationConfig {
 impl Default for RequestCorrelationConfig {
     fn default() -> Self {
         Self {
+            generate_trace_ids: default_generate_trace_ids(),
             max_seen_requests: default_request_correlation_max_seen_requests(),
             max_warnings: default_request_correlation_max_warnings(),
         }
     }
+}
+
+fn default_generate_trace_ids() -> bool {
+    true
 }
 
 impl RequestCorrelationConfig {

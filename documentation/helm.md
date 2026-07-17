@@ -160,6 +160,11 @@ Host resource sampling validates its scan bounds before runtime:
 `max_fds_per_process` at most 1,048,576, and `max_file_bytes` at most
 1,048,576.
 
+Request correlation generates valid native trace and span identifiers for
+uninstrumented traffic by default while retaining a missing/malformed-context
+warning. Set `request_correlation.generate_trace_ids = false` only when a
+downstream contract intentionally accepts non-exportable spans without IDs.
+
 Metric generator cardinality bounds are validated before runtime:
 `resource_metrics.max_keys`, `network_metrics.max_metric_keys`,
 `dns_metrics.max_counters`, `dns_metrics.max_latencies`, and

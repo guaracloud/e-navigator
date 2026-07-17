@@ -86,6 +86,7 @@ data:
     max_warnings = 1024
 
     [request_correlation]
+    generate_trace_ids = true
     max_seen_requests = 8192
     max_warnings = 1024
 

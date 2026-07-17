@@ -616,7 +616,7 @@ async fn request_span_scalar_fields_are_byte_bounded() {
 }
 
 #[tokio::test]
-async fn missing_trace_context_emits_warning_and_span_without_ids() {
+async fn missing_trace_context_emits_warning_and_generated_exportable_ids() {
     let generator = RequestCorrelationGenerator::default();
     let signal = protocol_request_signal(None, true);
 
@@ -627,7 +627,7 @@ async fn missing_trace_context_emits_warning_and_span_without_ids() {
         matches!(
             &signal.payload,
             SignalPayload::RequestSpanObservation(span)
-                if span.trace_id.is_none() && span.span_id.is_none()
+                if valid_generated_ids(span.trace_id.as_deref(), span.span_id.as_deref())
         )
     }));
     assert_request_warning(&outputs, "missing_trace_context");
@@ -635,13 +635,13 @@ async fn missing_trace_context_emits_warning_and_span_without_ids() {
         matches!(
             &signal.payload,
             SignalPayload::RequestSpanObservation(span)
-                if span.correlation_kind == TraceCorrelationKind::ProtocolObserved
+                if span.correlation_kind == TraceCorrelationKind::GeneratedTraceContext
         )
     }));
 }
 
 #[tokio::test]
-async fn malformed_trace_context_emits_warning_without_inventing_ids() {
+async fn malformed_trace_context_emits_warning_and_generated_ids() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some("00-bad".to_string()), true);
     set_raw_traceparent(&mut signal, "00-bad".to_string());
@@ -653,14 +653,14 @@ async fn malformed_trace_context_emits_warning_without_inventing_ids() {
         matches!(
             &signal.payload,
             SignalPayload::RequestSpanObservation(span)
-                if span.trace_id.is_none() && span.span_id.is_none()
+                if valid_generated_ids(span.trace_id.as_deref(), span.span_id.as_deref())
         )
     }));
     assert_request_warning(&outputs, "malformed_trace_context");
 }
 
 #[tokio::test]
-async fn whitespace_wrapped_traceparent_is_malformed_without_inventing_ids() {
+async fn whitespace_wrapped_traceparent_is_malformed_with_generated_ids() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(format!(" {} ", valid_traceparent())), true);
     set_raw_traceparent(&mut signal, format!(" {} ", valid_traceparent()));
@@ -672,10 +672,46 @@ async fn whitespace_wrapped_traceparent_is_malformed_without_inventing_ids() {
         matches!(
             &signal.payload,
             SignalPayload::RequestSpanObservation(span)
-                if span.trace_id.is_none() && span.span_id.is_none()
+                if valid_generated_ids(span.trace_id.as_deref(), span.span_id.as_deref())
         )
     }));
     assert_request_warning(&outputs, "malformed_trace_context");
+}
+
+#[tokio::test]
+async fn generated_trace_identity_is_deterministic_and_can_be_disabled() {
+    let signal = protocol_request_signal(None, true);
+    let first_generator = RequestCorrelationGenerator::default();
+    let second_generator = RequestCorrelationGenerator::default();
+    let first = observe(&first_generator, &signal).await;
+    let second = observe(&second_generator, &signal).await;
+    let first_span = first.iter().find_map(|output| match &output.payload {
+        SignalPayload::RequestSpanObservation(span) => Some(span),
+        _ => None,
+    });
+    let second_span = second.iter().find_map(|output| match &output.payload {
+        SignalPayload::RequestSpanObservation(span) => Some(span),
+        _ => None,
+    });
+
+    assert_eq!(
+        first_span.and_then(|span| span.trace_id.as_deref()),
+        second_span.and_then(|span| span.trace_id.as_deref())
+    );
+    assert_eq!(
+        first_span.and_then(|span| span.span_id.as_deref()),
+        second_span.and_then(|span| span.span_id.as_deref())
+    );
+
+    let disabled = RequestCorrelationGenerator::with_options(8, 8, false);
+    let outputs = observe(&disabled, &signal).await;
+    assert!(outputs.iter().any(|output| {
+        matches!(
+            &output.payload,
+            SignalPayload::RequestSpanObservation(span)
+                if span.trace_id.is_none() && span.span_id.is_none()
+        )
+    }));
 }
 
 #[tokio::test]
@@ -944,6 +980,18 @@ fn network_close_signal() -> SignalEnvelope {
 
 fn valid_traceparent() -> String {
     "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string()
+}
+
+fn valid_generated_ids(trace_id: Option<&str>, span_id: Option<&str>) -> bool {
+    trace_id.is_some_and(|value| {
+        value.len() == 32
+            && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && !value.bytes().all(|byte| byte == b'0')
+    }) && span_id.is_some_and(|value| {
+        value.len() == 16
+            && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && !value.bytes().all(|byte| byte == b'0')
+    })
 }
 
 fn attribution(attributed: bool) -> (Option<ContainerContext>, Option<KubernetesContext>) {
