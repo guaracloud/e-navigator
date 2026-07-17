@@ -429,8 +429,8 @@ mod tests {
         assert!(err.to_string().contains("sink.prometheus_http"));
     }
 
-    #[test]
-    fn registry_registers_otlp_http_sink_when_enabled() {
+    #[tokio::test]
+    async fn registry_registers_otlp_http_sink_when_enabled() {
         let mut config = RuntimeConfig::default();
         set_module_enabled(&mut config, "sink.otlp_http", true);
         config.otlp_http.enabled = true;

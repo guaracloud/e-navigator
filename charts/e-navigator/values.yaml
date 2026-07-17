@@ -135,8 +135,14 @@ config:
     profiles_enabled = true
     queue_capacity = 1024
     batch_size = 64
+    flush_interval_millis = 1000
     timeout_millis = 3000
     max_retries = 2
+    retry_initial_backoff_millis = 100
+    retry_max_backoff_millis = 5000
+    circuit_breaker_failure_threshold = 5
+    circuit_breaker_cooldown_millis = 30000
+    shutdown_timeout_millis = 10000
     tls_insecure_skip_verify = false
 
     [[modules]]

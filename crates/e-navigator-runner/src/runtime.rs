@@ -3,7 +3,11 @@ use e_navigator_core::{
 };
 use e_navigator_signals::SignalEnvelope;
 use std::{collections::VecDeque, fmt};
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{
+    sync::mpsc,
+    task::JoinHandle,
+    time::{Duration, timeout},
+};
 use tracing::{debug, warn};
 
 use crate::ModuleRegistry;
@@ -47,6 +51,12 @@ impl Runner {
     }
 
     pub async fn run(mut self) -> CoreResult<()> {
+        let pipeline_result = self.run_pipeline().await;
+        let shutdown_result = self.shutdown_sinks().await;
+        pipeline_result.and(shutdown_result)
+    }
+
+    async fn run_pipeline(&mut self) -> CoreResult<()> {
         let (tx, mut rx) = mpsc::channel::<SignalEnvelope>(self.config.queue_capacity);
         let (source_result_tx, mut source_result_rx) =
             mpsc::channel::<CoreResult<()>>(self.registry.sources().len());
@@ -235,6 +245,43 @@ impl Runner {
         }
 
         Ok(())
+    }
+
+    async fn shutdown_sinks(&self) -> CoreResult<()> {
+        let shutdown_timeout =
+            Duration::from_millis(self.config.source_supervisor.shutdown_timeout_millis);
+        let mut first_error = None;
+        for sink in self.registry.sinks() {
+            let metadata = sink.metadata();
+            let module = metadata.name;
+            match timeout(shutdown_timeout, sink.shutdown()).await {
+                Ok(Ok(())) => debug!(module, "sink shut down cleanly"),
+                Ok(Err(err)) => {
+                    let err = with_module_context(metadata, err);
+                    warn!(module, error = %err, "sink shutdown failed");
+                    if first_error.is_none() {
+                        first_error = Some(err);
+                    }
+                }
+                Err(_) => {
+                    let err = CoreError::ModuleFailed {
+                        module: metadata.name.to_string(),
+                        message: format!(
+                            "sink shutdown exceeded {} milliseconds",
+                            shutdown_timeout.as_millis()
+                        ),
+                    };
+                    warn!(module, error = %err, "sink shutdown timed out");
+                    if first_error.is_none() {
+                        first_error = Some(err);
+                    }
+                }
+            }
+        }
+        match first_error {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
     }
 }
 
@@ -591,6 +638,26 @@ mod tests {
         delay: Duration,
     }
 
+    struct ShutdownTrackingSink {
+        shut_down: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl Sink<SignalEnvelope> for ShutdownTrackingSink {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("sink.shutdown_tracking", ModuleKind::Sink)
+        }
+
+        async fn write(&self, _signal: &SignalEnvelope) -> CoreResult<()> {
+            Ok(())
+        }
+
+        async fn shutdown(&self) -> CoreResult<()> {
+            self.shut_down.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
     #[async_trait]
     impl Sink<SignalEnvelope> for SlowMemorySink {
         fn metadata(&self) -> ModuleMetadata {
@@ -907,6 +974,21 @@ mod tests {
         let seen = seen.lock().await;
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].kind(), "process_exit");
+    }
+
+    #[tokio::test]
+    async fn runner_shuts_down_sinks_after_sources_drain() {
+        let shut_down = Arc::new(AtomicBool::new(false));
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(OneSignalSource))
+            .with_sink(Box::new(ShutdownTrackingSink {
+                shut_down: shut_down.clone(),
+            }));
+        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
+
+        runner.run().await.expect("runner exits cleanly");
+
+        assert!(shut_down.load(Ordering::SeqCst));
     }
 
     #[tokio::test]

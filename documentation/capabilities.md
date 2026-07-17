@@ -61,7 +61,7 @@ runner starts.
 | --- | --- | --- |
 | `sink.json_stdout` | Enabled | Emits every signal envelope as newline-delimited JSON schema version 1 and redacts secret-like argv values before stdout export. |
 | `sink.prometheus_http` | Opt-in | Maintains bounded latest metric lines and exposes `/metrics`, `/healthz`, and `/readyz` over HTTP. It renders network, DNS, resource, profile session aggregate, and profiling warning-count signals as Prometheus text with metric/profile family toggles. |
-| `sink.otlp_http` | Opt-in | Exports OTLP HTTP protobuf for metrics, traces with valid trace/span ids, and development-status profiles. Supports per-family endpoints, fallback endpoint, family toggles, queue capacity, batch size, timeout, retries, and optional insecure TLS verification. |
+| `sink.otlp_http` | Opt-in | Exports OTLP HTTP protobuf for metrics, traces with valid trace/span ids, and development-status profiles. Each enabled family owns an independent bounded worker, so collector latency cannot block the shared signal pipeline. Workers support size-or-time batching, capped exponential retry backoff with jitter, circuit breaking, explicit queue/export/circuit loss counters, and bounded shutdown drain, plus per-family endpoints, a fallback endpoint, family toggles, and optional insecure TLS verification. Invalid trace identity is counted instead of silently disappearing. |
 
 ### Packaging, Operations, And Verification Capabilities
 

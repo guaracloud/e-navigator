@@ -5,7 +5,7 @@ use reqwest::{
 use serde::Serialize;
 use std::{collections::VecDeque, time::Duration};
 use thiserror::Error;
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpExporterConfig {
@@ -92,6 +92,11 @@ impl HttpExporterConfig {
                 "queue_capacity must be less than or equal to 65536",
             ));
         }
+        if self.batch_size > self.queue_capacity {
+            return Err(ExporterError::InvalidConfig(
+                "batch_size must be less than or equal to queue_capacity",
+            ));
+        }
         if self.timeout_millis == 0 {
             return Err(ExporterError::InvalidConfig(
                 "timeout_millis must be greater than zero",
@@ -143,6 +148,7 @@ pub struct ExporterCounters {
     pub enqueued: u64,
     pub exported: u64,
     pub dropped_queue_full: u64,
+    pub dropped_export_failure: u64,
     pub failed_batches: u64,
     pub retry_attempts: u64,
 }
@@ -162,6 +168,13 @@ pub struct HttpProtobufExporter<T> {
     counters: ExporterCounters,
     client: Client,
     encode_batch: fn(&[T]) -> Result<Vec<u8>, ExporterError>,
+    retry_backoff: Option<RetryBackoff>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RetryBackoff {
+    initial_millis: u64,
+    max_millis: u64,
 }
 
 impl<T> HttpJsonExporter<T>
@@ -276,7 +289,16 @@ where
             counters: ExporterCounters::default(),
             client,
             encode_batch,
+            retry_backoff: None,
         })
+    }
+
+    pub fn with_retry_backoff(mut self, initial_millis: u64, max_millis: u64) -> Self {
+        self.retry_backoff = Some(RetryBackoff {
+            initial_millis,
+            max_millis,
+        });
+        self
     }
 
     pub fn enqueue(&mut self, item: T) {
@@ -313,6 +335,9 @@ where
         for attempt in 0..=self.config.max_retries {
             if attempt > 0 {
                 self.counters.retry_attempts = self.counters.retry_attempts.saturating_add(1);
+                if let Some(backoff) = self.retry_backoff {
+                    sleep(retry_delay(backoff, attempt, &self.config.endpoint)).await;
+                }
             }
             match self.send_batch(&batch).await {
                 Ok(()) => {
@@ -329,6 +354,18 @@ where
 
         self.counters.failed_batches = self.counters.failed_batches.saturating_add(1);
         Err(last_error.unwrap_or(ExporterError::RetriesExhausted))
+    }
+
+    pub fn discard_next_batch(&mut self) -> usize {
+        let batch_len = self.queue.len().min(self.config.batch_size);
+        for _ in 0..batch_len {
+            let _ = self.queue.pop_front();
+        }
+        self.counters.dropped_export_failure = self
+            .counters
+            .dropped_export_failure
+            .saturating_add(batch_len as u64);
+        batch_len
     }
 
     async fn send_batch(&self, batch: &[T]) -> Result<(), ExporterError> {
@@ -352,6 +389,29 @@ where
         }
         Ok(())
     }
+}
+
+fn retry_delay(backoff: RetryBackoff, attempt: usize, endpoint: &str) -> Duration {
+    let shift = u32::try_from(attempt.saturating_sub(1).min(20)).unwrap_or(20);
+    let exponential = backoff
+        .initial_millis
+        .saturating_mul(1_u64 << shift)
+        .min(backoff.max_millis);
+    let jitter_window = exponential / 4;
+    let seed = endpoint.bytes().fold(attempt as u64, |seed, byte| {
+        seed.wrapping_mul(31).wrapping_add(u64::from(byte))
+    });
+    let jitter = if jitter_window == 0 {
+        0
+    } else {
+        seed % jitter_window.saturating_add(1)
+    };
+    Duration::from_millis(
+        exponential
+            .saturating_sub(jitter_window / 2)
+            .saturating_add(jitter)
+            .min(backoff.max_millis),
+    )
 }
 
 #[derive(Debug, Error)]
