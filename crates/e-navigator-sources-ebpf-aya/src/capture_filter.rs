@@ -344,18 +344,29 @@ fn process_names_for_cgroup(cgroup_path: &Path, procfs_root: &Path) -> Vec<Strin
         if pid.is_empty() || !pid.bytes().all(|byte| byte.is_ascii_digit()) {
             continue;
         }
-        let Ok(raw) = std::fs::read_to_string(procfs_root.join(pid).join("comm")) else {
-            continue;
-        };
-        let name = raw.trim_end_matches(['\r', '\n']);
-        if name.is_empty() || name.len() > MAX_PROCESS_NAME_BYTES {
-            continue;
+        let process_root = procfs_root.join(pid);
+        if let Ok(executable) = std::fs::read_link(process_root.join("exe")) {
+            if let Some(name) = executable.file_name().and_then(|name| name.to_str()) {
+                push_process_name(&mut names, name);
+            }
+            if let Some(path) = executable.to_str() {
+                push_process_name(&mut names, path);
+            }
         }
-        if !names.iter().any(|existing| existing == name) {
-            names.push(name.to_string());
+        if let Ok(raw) = std::fs::read_to_string(process_root.join("comm")) {
+            push_process_name(&mut names, raw.trim_end_matches(['\r', '\n']));
         }
     }
     names
+}
+
+fn push_process_name(names: &mut Vec<String>, name: &str) {
+    if name.is_empty() || name.len() > MAX_PROCESS_NAME_BYTES {
+        return;
+    }
+    if !names.iter().any(|existing| existing == name) {
+        names.push(name.to_string());
+    }
 }
 
 fn normalized_cgroup_path(path: &Path) -> String {
