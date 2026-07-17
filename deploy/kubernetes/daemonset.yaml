@@ -6,6 +6,12 @@ metadata:
   labels:
     app.kubernetes.io/name: e-navigator
 spec:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 10%
+  minReadySeconds: 10
+  revisionHistoryLimit: 5
   selector:
     matchLabels:
       app.kubernetes.io/name: e-navigator
@@ -19,7 +25,7 @@ spec:
       hostPID: false
       hostNetwork: false
       dnsPolicy: ClusterFirst
-      terminationGracePeriodSeconds: 10
+      terminationGracePeriodSeconds: 30
       nodeSelector:
         kubernetes.io/os: linux
       tolerations:
@@ -34,6 +40,10 @@ spec:
             - "unified"
             - "--config"
             - "/etc/e-navigator/e-navigator.toml"
+          ports:
+            - name: http
+              containerPort: 9090
+              protocol: TCP
           env:
             - name: RUST_LOG
               value: "info"
@@ -47,6 +57,8 @@ spec:
             allowPrivilegeEscalation: false
             runAsUser: 0
             runAsNonRoot: false
+            seccompProfile:
+              type: RuntimeDefault
             capabilities:
               drop:
                 - ALL
@@ -61,6 +73,34 @@ spec:
                 - NET_ADMIN
                 - SYS_RESOURCE
                 - SYSLOG
+          resources:
+            requests:
+              cpu: 150m
+              memory: 384Mi
+            limits:
+              cpu: "2"
+              memory: 960Mi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+            timeoutSeconds: 2
           volumeMounts:
             - name: config
               mountPath: /etc/e-navigator

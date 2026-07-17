@@ -694,7 +694,7 @@ mod platform {
                 );
             }
             debug!("aya http source attached");
-            tokio::signal::ctrl_c().await.map_err(module_error)?;
+            crate::shutdown::signal().await.map_err(module_error)?;
             shutdown.stop();
             join_reader_handles(reader_handles).await
         }

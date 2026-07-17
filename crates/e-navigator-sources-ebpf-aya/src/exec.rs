@@ -654,7 +654,7 @@ mod platform {
                 );
             }
             debug!("aya exec source attached");
-            tokio::signal::ctrl_c()
+            crate::shutdown::signal()
                 .await
                 .map_err(|err| CoreError::ModuleFailed {
                     module: "source.aya_exec".to_string(),

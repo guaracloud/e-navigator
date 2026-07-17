@@ -19,6 +19,8 @@ mod procfs;
 pub mod protocol;
 #[cfg(any(target_os = "linux", test))]
 mod reader_shutdown;
+#[cfg(target_os = "linux")]
+mod shutdown;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 mod source_telemetry;
 #[cfg(feature = "fuzzing")]

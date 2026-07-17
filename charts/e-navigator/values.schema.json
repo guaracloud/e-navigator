@@ -2,6 +2,28 @@
   "$schema": "https://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "health": {
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          }
+        },
+        "required": ["health"]
+      },
+      "then": {
+        "properties": {
+          "prometheusHttp": {
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          }
+        },
+        "required": ["prometheusHttp"]
+      }
+    }
+  ],
   "properties": {
     "namespace": {
       "type": "object",
@@ -40,7 +62,18 @@
       "minItems": 1
     },
     "logLevel": { "type": "string", "minLength": 1 },
-    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 },
+    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 1, "maximum": 300 },
+    "priorityClassName": { "type": "string" },
+    "minReadySeconds": { "type": "integer", "minimum": 0, "maximum": 300 },
+    "revisionHistoryLimit": { "type": "integer", "minimum": 0, "maximum": 20 },
+    "updateStrategy": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["RollingUpdate", "OnDelete"] },
+        "rollingUpdate": { "type": "object" }
+      }
+    },
     "features": { "type": "object" },
     "hostPID": { "type": "boolean" },
     "hostNetwork": { "type": "boolean" },
@@ -57,7 +90,17 @@
     "health": {
       "type": "object",
       "properties": {
-        "enabled": { "type": "boolean" }
+        "enabled": { "type": "boolean" },
+        "startupPath": { "type": "string", "pattern": "^/" },
+        "livenessPath": { "type": "string", "pattern": "^/" },
+        "readinessPath": { "type": "string", "pattern": "^/" },
+        "startupPeriodSeconds": { "type": "integer", "minimum": 1 },
+        "startupFailureThreshold": { "type": "integer", "minimum": 1 },
+        "livenessPeriodSeconds": { "type": "integer", "minimum": 1 },
+        "livenessFailureThreshold": { "type": "integer", "minimum": 1 },
+        "readinessPeriodSeconds": { "type": "integer", "minimum": 1 },
+        "readinessFailureThreshold": { "type": "integer", "minimum": 1 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 }
       }
     },
     "service": { "type": "object" },

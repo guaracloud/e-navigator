@@ -246,7 +246,15 @@ logLevel: info
 extraEnv: []
 podAnnotations: {}
 podLabels: {}
-terminationGracePeriodSeconds: 10
+terminationGracePeriodSeconds: 30
+priorityClassName: ""
+minReadySeconds: 10
+revisionHistoryLimit: 5
+
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 10%
 
 nodeSelector:
   kubernetes.io/os: linux
@@ -256,7 +264,13 @@ tolerations:
 
 affinity: {}
 
-resources: {}
+resources:
+  requests:
+    cpu: 150m
+    memory: 384Mi
+  limits:
+    cpu: "2"
+    memory: 960Mi
 
 hostPID: false
 hostNetwork: false
@@ -290,6 +304,16 @@ prometheusHttp:
 
 health:
   enabled: false
+  startupPath: /healthz
+  livenessPath: /healthz
+  readinessPath: /readyz
+  startupPeriodSeconds: 2
+  startupFailureThreshold: 30
+  livenessPeriodSeconds: 15
+  livenessFailureThreshold: 3
+  readinessPeriodSeconds: 5
+  readinessFailureThreshold: 3
+  timeoutSeconds: 2
 
 service:
   enabled: false

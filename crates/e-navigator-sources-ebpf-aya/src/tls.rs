@@ -381,7 +381,7 @@ mod platform {
             let rescan_interval = std::time::Duration::from_secs(super::TLS_LIBRARY_RESCAN_SECS);
             loop {
                 tokio::select! {
-                    result = tokio::signal::ctrl_c() => {
+                    result = crate::shutdown::signal() => {
                         result.map_err(module_error)?;
                         break;
                     }
