@@ -5,7 +5,10 @@ use e_navigator_core::CpuProfileSourceConfig;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_profiling::model::{NormalizationLimits, RawProfileFrame, RawProfileSample};
 #[cfg(any(target_os = "linux", test))]
-use e_navigator_profiling::symbolize::{ElfSymbolTable, ProcessModuleMap};
+use e_navigator_profiling::{
+    jit::JitSymbolMap,
+    symbolize::{ElfSymbolTable, ProcessModuleMap},
+};
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_signals::{
     NetworkProcessIdentity, ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind,
@@ -167,6 +170,9 @@ pub(crate) struct ProcfsSymbolizer {
     max_cached_pids: usize,
     max_cached_modules: usize,
     maps: std::collections::BTreeMap<u32, ProcessModuleMap>,
+    /// Per-process JIT perf maps. Negative results are cached and retried on a
+    /// short interval because runtimes commonly create the map after startup.
+    jit_maps: std::collections::BTreeMap<u32, CachedJitSymbols>,
     /// Module path -> parsed ELF symbol table, shared across every
     /// per-CPU reader thread: symbol tables of large modules dominate
     /// symbolizer memory and must not be duplicated per thread.
@@ -182,6 +188,13 @@ pub(crate) struct ProcfsSymbolizer {
     python_frames: std::collections::BTreeMap<(u32, u64), Option<RawProfileFrame>>,
 }
 
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug)]
+struct CachedJitSymbols {
+    last_checked: std::time::Instant,
+    symbols: Option<JitSymbolMap>,
+}
+
 /// Bounded module-path -> symbol-table cache shared by reader threads.
 #[cfg(any(target_os = "linux", test))]
 #[derive(Debug, Default)]
@@ -192,6 +205,8 @@ pub(crate) struct SharedSymbolTables {
 #[cfg(any(target_os = "linux", test))]
 impl ProcfsSymbolizer {
     const MAX_MODULE_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+    const MAX_JIT_MAP_BYTES: u64 = 16 * 1024 * 1024;
+    const JIT_MAP_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
 
     #[cfg(test)]
     pub(crate) fn new(procfs_root: std::path::PathBuf, resolve_symbols: bool) -> Self {
@@ -213,6 +228,7 @@ impl ProcfsSymbolizer {
             max_cached_pids: 1024,
             max_cached_modules: 512,
             maps: std::collections::BTreeMap::new(),
+            jit_maps: std::collections::BTreeMap::new(),
             symbols,
             thread_comms: std::collections::BTreeMap::new(),
             python_frames: std::collections::BTreeMap::new(),
@@ -258,6 +274,37 @@ impl ProcfsSymbolizer {
             shared.tables.get(module).and_then(Clone::clone)
         };
         table.and_then(|table| table.resolve(offset).map(ToString::to_string))
+    }
+
+    fn jit_symbol(&mut self, pid: u32, ip: u64) -> Option<(String, u64)> {
+        if !self.resolve_symbols {
+            return None;
+        }
+        let refresh = self
+            .jit_maps
+            .get(&pid)
+            .is_none_or(|cached| cached.last_checked.elapsed() >= Self::JIT_MAP_REFRESH_INTERVAL);
+        if refresh {
+            if !self.jit_maps.contains_key(&pid)
+                && self.jit_maps.len() >= self.max_cached_pids
+                && let Some(&oldest) = self.jit_maps.keys().next()
+            {
+                self.jit_maps.remove(&oldest);
+            }
+            self.jit_maps.insert(
+                pid,
+                CachedJitSymbols {
+                    last_checked: std::time::Instant::now(),
+                    symbols: self.load_jit_symbols(pid),
+                },
+            );
+        }
+        self.jit_maps
+            .get(&pid)?
+            .symbols
+            .as_ref()?
+            .resolve(ip)
+            .map(|symbol| (symbol.name.to_string(), symbol.offset))
     }
 
     fn thread_comm(&mut self, pid: u32, tid: u32) -> Option<&str> {
@@ -352,11 +399,75 @@ impl ProcfsSymbolizer {
         let table = ElfSymbolTable::parse(&image);
         (!table.is_empty()).then_some(table)
     }
+
+    fn load_jit_symbols(&self, pid: u32) -> Option<JitSymbolMap> {
+        let process_root = self.procfs_root.join(pid.to_string());
+        let namespace_pid = self.target_namespace_pid(pid).unwrap_or(pid);
+        for map_pid in [Some(namespace_pid), (namespace_pid != pid).then_some(pid)]
+            .into_iter()
+            .flatten()
+        {
+            let path = process_root
+                .join("root")
+                .join("tmp")
+                .join(format!("perf-{map_pid}.map"));
+            let Some(contents) = Self::read_bounded_utf8(&path, Self::MAX_JIT_MAP_BYTES) else {
+                continue;
+            };
+            let symbols = JitSymbolMap::parse(&contents);
+            if !symbols.is_empty() {
+                return Some(symbols);
+            }
+        }
+        None
+    }
+
+    fn target_namespace_pid(&self, pid: u32) -> Option<u32> {
+        const MAX_STATUS_BYTES: u64 = 64 * 1024;
+
+        let status = Self::read_bounded_utf8(
+            &self.procfs_root.join(pid.to_string()).join("status"),
+            MAX_STATUS_BYTES,
+        )?;
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix("NSpid:"))?
+            .split_whitespace()
+            .next_back()?
+            .parse()
+            .ok()
+    }
+
+    fn read_bounded_utf8(path: &std::path::Path, max_bytes: u64) -> Option<String> {
+        use std::io::Read;
+
+        let file = std::fs::File::open(path).ok()?;
+        if file.metadata().ok()?.len() > max_bytes {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        file.take(max_bytes.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if bytes.len() as u64 > max_bytes {
+            return None;
+        }
+        String::from_utf8(bytes).ok()
+    }
 }
 
 #[cfg(any(target_os = "linux", test))]
 impl FrameResolver for ProcfsSymbolizer {
     fn resolve(&mut self, pid: u32, ip: u64) -> RawProfileFrame {
+        if let Some((symbol, offset)) = self.jit_symbol(pid, ip) {
+            return RawProfileFrame {
+                symbol: Some(symbol),
+                module: Some("<jit>".to_string()),
+                file: None,
+                line: None,
+                module_offset: Some(offset),
+            };
+        }
         let Some(location) = self.process_map(pid).resolve(ip) else {
             return RawAddressResolver.resolve(pid, ip);
         };
@@ -483,6 +594,10 @@ fn raw_cpu_profile_to_signal_with_clock(
     } else {
         raw.timestamp_unix_nanos
     };
+    let jit_frame_count = stack_frames
+        .iter()
+        .filter(|frame| frame.module.as_deref() == Some("<jit>"))
+        .count();
     let sample = RawProfileSample {
         timestamp_unix_nanos,
         profiling_kind: ProfilingKind::Cpu,
@@ -544,6 +659,12 @@ fn raw_cpu_profile_to_signal_with_clock(
                 attributes.push(ProfilingAttribute {
                     key: "profiling.stack.py_frames".to_string(),
                     value: py_count.to_string(),
+                });
+            }
+            if jit_frame_count > 0 {
+                attributes.push(ProfilingAttribute {
+                    key: "profiling.stack.jit_frames".to_string(),
+                    value: jit_frame_count.to_string(),
                 });
             }
             if let Some((reason, _)) = py_stop_reason(raw.py_stop) {
@@ -1780,6 +1901,87 @@ mod tests {
         assert!(fallback.symbol.as_deref().unwrap().starts_with("ip:"));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn procfs_symbolizer_resolves_bounded_target_namespace_perf_maps() {
+        let dir = std::env::temp_dir().join(format!("e-nav-jitsymtest-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let pid_dir = dir.join("778");
+        std::fs::create_dir_all(pid_dir.join("root/tmp")).expect("create target tmp");
+        std::fs::write(pid_dir.join("maps"), "").expect("write empty maps");
+        std::fs::write(pid_dir.join("status"), "Name:\tnode\nNSpid:\t778\t1\n")
+            .expect("write namespace status");
+        std::fs::write(
+            pid_dir.join("root/tmp/perf-1.map"),
+            "7f0100001000 30 LazyCompile:*busy /app/server.js:12\n\
+             7f0100002000 40 java::com.example.Worker::run\n",
+        )
+        .expect("write perf map");
+
+        let mut symbolizer = ProcfsSymbolizer::new(dir.clone(), true);
+        let node = symbolizer.resolve(778, 0x7f0100001010);
+        assert_eq!(
+            node.symbol.as_deref(),
+            Some("LazyCompile:*busy /app/server.js:12")
+        );
+        assert_eq!(node.module.as_deref(), Some("<jit>"));
+        assert_eq!(node.module_offset, Some(0x10));
+        let java = symbolizer.resolve(778, 0x7f010000203f);
+        assert_eq!(
+            java.symbol.as_deref(),
+            Some("java::com.example.Worker::run")
+        );
+        assert_eq!(java.module.as_deref(), Some("<jit>"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn jit_frames_are_counted_in_profile_attributes() {
+        struct JitResolver;
+        impl FrameResolver for JitResolver {
+            fn resolve(&mut self, _pid: u32, ip: u64) -> RawProfileFrame {
+                RawProfileFrame {
+                    symbol: Some(format!("generated_{ip:x}")),
+                    module: Some("<jit>".to_string()),
+                    file: None,
+                    line: None,
+                    module_offset: Some(0),
+                }
+            }
+        }
+
+        let raw = RawCpuProfileEvent {
+            pid: 778,
+            tid: 778,
+            uid: 1000,
+            cgroup_id: 0,
+            sample_count: 1,
+            timestamp_unix_nanos: 1_000,
+            command: fixed_command("node"),
+            frame_count: 2,
+            flags: 0,
+            instruction_pointers: padded_pointers(&[0x1000, 0x2000]),
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
+        };
+        let signal = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &source_config(),
+            10_000,
+            &mut JitResolver,
+        )
+        .expect("JIT sample decodes")
+        .signal;
+        let SignalPayload::ProfileSampleObservation(sample) = signal.payload else {
+            panic!("expected profile sample");
+        };
+        assert!(sample.attributes.iter().any(|attribute| {
+            attribute.key == "profiling.stack.jit_frames" && attribute.value == "2"
+        }));
     }
 
     #[test]

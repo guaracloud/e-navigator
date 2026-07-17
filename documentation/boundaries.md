@@ -64,7 +64,10 @@ E-Navigator does not currently claim:
   silently truncated);
 - interpreter unwinding beyond CPython 3.12 (the interpreter walk targets
   CPython 3.12 struct offsets measured from its headers; other versions are
-  counted as unsupported, JIT runtimes are not decoded, thread matching uses
+  counted as unsupported; Node/V8 and JVM generated-code names resolve only
+  when the target runtime or its tooling publishes a bounded
+  `/tmp/perf-<pid>.map` in the target mount namespace, and that symbol map does
+  not itself make every opaque JIT frame unwindable; thread matching uses
   `native_thread_id` and therefore degrades with accounting when the
   interpreter runs in a pid namespace whose CPython thread ids the agent
   cannot translate, and only co_qualname/co_name, co_filename, and
