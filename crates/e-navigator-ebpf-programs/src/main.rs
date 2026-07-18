@@ -4063,73 +4063,41 @@ fn copy_http_request_iovecs(
     Ok(())
 }
 
-#[inline(never)]
+#[inline(always)]
 fn copy_http_request_iovec_slot0(
     buffer: *const u8,
     len: u64,
     event: &mut RawHttpRequestEvent,
 ) -> Result<usize, i64> {
-    let capped_len = if len > HTTP_IOVEC_CHUNK_BYTES as u64 {
-        HTTP_IOVEC_CHUNK_BYTES
-    } else {
-        len as usize
-    };
-    if capped_len == 0 {
-        return Ok(0);
-    }
-
     let request = event.request.as_mut_ptr();
-    let mut index = 0;
-    while index < HTTP_IOVEC_CHUNK_BYTES {
-        if index >= capped_len {
-            break;
-        }
-        let byte =
-            unsafe { bpf_probe_read_user::<u8>(buffer.add(index)) }.map_err(|err| err as i64)?;
-        unsafe {
-            *request.add(index) = byte;
-        }
-        index += 1;
-    }
-    Ok(capped_len)
+    copy_http_request_iovec_bytes(buffer, len, request)
 }
 
-#[inline(never)]
+#[inline(always)]
 fn copy_http_request_iovec_slot1(
     buffer: *const u8,
     len: u64,
     event: &mut RawHttpRequestEvent,
 ) -> Result<usize, i64> {
-    let capped_len = if len > HTTP_IOVEC_CHUNK_BYTES as u64 {
-        HTTP_IOVEC_CHUNK_BYTES
-    } else {
-        len as usize
-    };
-    if capped_len == 0 {
-        return Ok(0);
-    }
-
     let request = unsafe { event.request.as_mut_ptr().add(HTTP_IOVEC_CHUNK_BYTES) };
-    let mut index = 0;
-    while index < HTTP_IOVEC_CHUNK_BYTES {
-        if index >= capped_len {
-            break;
-        }
-        let byte =
-            unsafe { bpf_probe_read_user::<u8>(buffer.add(index)) }.map_err(|err| err as i64)?;
-        unsafe {
-            *request.add(index) = byte;
-        }
-        index += 1;
-    }
-    Ok(capped_len)
+    copy_http_request_iovec_bytes(buffer, len, request)
 }
 
-#[inline(never)]
+#[inline(always)]
 fn copy_http_request_iovec_slot2(
     buffer: *const u8,
     len: u64,
     event: &mut RawHttpRequestEvent,
+) -> Result<usize, i64> {
+    let request = unsafe { event.request.as_mut_ptr().add(HTTP_IOVEC_CHUNK_BYTES * 2) };
+    copy_http_request_iovec_bytes(buffer, len, request)
+}
+
+#[inline(always)]
+fn copy_http_request_iovec_bytes(
+    buffer: *const u8,
+    len: u64,
+    request: *mut u8,
 ) -> Result<usize, i64> {
     let capped_len = if len > HTTP_IOVEC_CHUNK_BYTES as u64 {
         HTTP_IOVEC_CHUNK_BYTES
@@ -4140,8 +4108,48 @@ fn copy_http_request_iovec_slot2(
         return Ok(0);
     }
 
-    let request = unsafe { event.request.as_mut_ptr().add(HTTP_IOVEC_CHUNK_BYTES * 2) };
-    let mut index = 0;
+    // Copy complete 16-byte blocks with a single helper invocation. The
+    // remaining loop is bounded to at most 15 bytes, which keeps Linux 6.6's
+    // verifier below its one-million processed-instruction ceiling without
+    // reading beyond the userspace iovec.
+    let mut index = 0_usize;
+    if capped_len >= 16 {
+        let bytes = unsafe { bpf_probe_read_user::<[u8; 16]>(buffer.cast::<[u8; 16]>()) }
+            .map_err(|err| err as i64)?;
+        unsafe { *request.cast::<[u8; 16]>() = bytes };
+        index = 16;
+    }
+    if capped_len >= 32 {
+        let bytes = unsafe { bpf_probe_read_user::<[u8; 16]>(buffer.add(16).cast::<[u8; 16]>()) }
+            .map_err(|err| err as i64)?;
+        unsafe { *request.add(16).cast::<[u8; 16]>() = bytes };
+        index = 32;
+    }
+    if capped_len >= 48 {
+        let bytes = unsafe { bpf_probe_read_user::<[u8; 16]>(buffer.add(32).cast::<[u8; 16]>()) }
+            .map_err(|err| err as i64)?;
+        unsafe { *request.add(32).cast::<[u8; 16]>() = bytes };
+        index = 48;
+    }
+    if capped_len >= 64 {
+        let bytes = unsafe { bpf_probe_read_user::<[u8; 16]>(buffer.add(48).cast::<[u8; 16]>()) }
+            .map_err(|err| err as i64)?;
+        unsafe { *request.add(48).cast::<[u8; 16]>() = bytes };
+        index = 64;
+    }
+    if capped_len >= 80 {
+        let bytes = unsafe { bpf_probe_read_user::<[u8; 16]>(buffer.add(64).cast::<[u8; 16]>()) }
+            .map_err(|err| err as i64)?;
+        unsafe { *request.add(64).cast::<[u8; 16]>() = bytes };
+        index = 80;
+    }
+    if capped_len >= HTTP_IOVEC_CHUNK_BYTES {
+        let bytes = unsafe { bpf_probe_read_user::<[u8; 16]>(buffer.add(80).cast::<[u8; 16]>()) }
+            .map_err(|err| err as i64)?;
+        unsafe { *request.add(80).cast::<[u8; 16]>() = bytes };
+        index = HTTP_IOVEC_CHUNK_BYTES;
+    }
+
     while index < HTTP_IOVEC_CHUNK_BYTES {
         if index >= capped_len {
             break;

@@ -23,6 +23,7 @@ for expected in \
   "copy_http_request_iovec_slot0" \
   "copy_http_request_iovec_slot1" \
   "copy_http_request_iovec_slot2" \
+  "copy_http_request_iovec_bytes" \
   "request_iovec_lens" \
   "emit_http_request_iovecs_event" \
   "emit_http_request_iovecs_event_without_connection" \
@@ -90,6 +91,11 @@ fi
 
 if ! grep -Fq "bpf_probe_read_user_buf(" "$program"; then
   printf 'expected %s to keep contiguous HTTP request copies on the bounded bulk helper\n' "$program" >&2
+  exit 1
+fi
+
+if ! grep -Fq "bpf_probe_read_user::<[u8; 16]>" "$program"; then
+  printf 'expected %s to copy split HTTP iovecs in verifier-safe fixed blocks\n' "$program" >&2
   exit 1
 fi
 
