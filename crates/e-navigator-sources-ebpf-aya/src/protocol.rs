@@ -2129,7 +2129,7 @@ mod platform {
         let listeners = super::discover_existing_listener_endpoints(procfs_root);
         let map = ebpf
             .map_mut("PROCESS_LISTENER_ENDPOINTS")
-            .ok_or_else(|| module_message("missing PROCESS_LISTENER_ENDPOINTS map"))?;
+            .ok_or_else(|| module_error("missing PROCESS_LISTENER_ENDPOINTS map"))?;
         let mut endpoints: AyaHashMap<&mut MapData, ListenerConnectionKey, ListenerEndpoint> =
             AyaHashMap::try_from(map).map_err(module_error)?;
         for listener in &listeners {
