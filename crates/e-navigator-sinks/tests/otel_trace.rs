@@ -438,6 +438,55 @@ fn formats_request_span_with_bounded_stable_attributes() {
 }
 
 #[test]
+fn formats_request_peer_attributes_for_capture_role() {
+    let client = request_span_signal(
+        ProtocolKind::Http,
+        "http request",
+        "GET",
+        vec![TraceAttribute {
+            key: "e.navigator.protocol.capture.role".to_string(),
+            value: "client".to_string(),
+        }],
+    );
+    let client_record = format_otel_trace_record(&client).expect("client request span formats");
+    assert_eq!(client_record.attributes["server.address"], "203.0.113.10");
+    assert_eq!(client_record.attributes["server.port"], 443);
+    assert!(!client_record.attributes.contains_key("client.address"));
+    assert!(
+        !client_record
+            .attributes
+            .contains_key("network.peer.address")
+    );
+
+    let server = request_span_signal(
+        ProtocolKind::Http,
+        "http request",
+        "GET",
+        vec![TraceAttribute {
+            key: "e.navigator.protocol.capture.role".to_string(),
+            value: "server".to_string(),
+        }],
+    );
+    let server_record = format_otel_trace_record(&server).expect("server request span formats");
+    assert_eq!(server_record.attributes["client.address"], "203.0.113.10");
+    assert_eq!(server_record.attributes["client.port"], 443);
+    assert_eq!(
+        server_record.attributes["network.peer.address"],
+        "203.0.113.10"
+    );
+    assert_eq!(server_record.attributes["network.peer.port"], 443);
+    assert_eq!(
+        server_record.attributes["client.k8s.namespace.name"],
+        "default"
+    );
+    assert_eq!(
+        server_record.attributes["client.container.id"],
+        "container-a"
+    );
+    assert!(!server_record.attributes.contains_key("server.address"));
+}
+
+#[test]
 fn bounds_trace_resource_attributes() {
     const MAX_VALUE_BYTES: usize = 256;
 

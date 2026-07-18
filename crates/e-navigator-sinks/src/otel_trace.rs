@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 const MAX_FORMATTED_TRACE_ATTRIBUTES: usize = 16;
 const MAX_TRACE_ATTRIBUTE_KEY_BYTES: usize = 128;
 const MAX_TRACE_ATTRIBUTE_VALUE_BYTES: usize = 256;
+const PROTOCOL_CAPTURE_ROLE_ATTRIBUTE: &str = "e.navigator.protocol.capture.role";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -247,7 +248,7 @@ fn request_span_record(signal: &SignalEnvelope, span: &RequestSpanObservation) -
     }
     append_request_status_attribute(&mut attributes, span.protocol, span.status_code);
     append_process_attributes(&mut attributes, span.process.as_ref());
-    append_peer_attributes(&mut attributes, span.peer.as_ref());
+    append_request_peer_attributes(&mut attributes, span);
     append_trace_attributes(&mut attributes, &span.attributes);
     let (trace_id, span_id, parent_span_id) =
         trace_identity(&span.trace_id, &span.span_id, &span.parent_span_id);
@@ -720,21 +721,52 @@ fn append_peer_attributes(
     attributes: &mut BTreeMap<String, serde_json::Value>,
     peer: Option<&TracePeerContext>,
 ) {
-    if let Some(peer) = peer {
+    append_peer_endpoint_attributes(attributes, "server", peer);
+}
+
+fn append_request_peer_attributes(
+    attributes: &mut BTreeMap<String, serde_json::Value>,
+    span: &RequestSpanObservation,
+) {
+    let is_server_capture = span.attributes.iter().any(|attribute| {
+        attribute.key == PROTOCOL_CAPTURE_ROLE_ATTRIBUTE && attribute.value == "server"
+    });
+    if !is_server_capture {
+        append_peer_attributes(attributes, span.peer.as_ref());
+        return;
+    }
+
+    append_peer_endpoint_attributes(attributes, "client", span.peer.as_ref());
+    if let Some(peer) = span.peer.as_ref() {
         if let Some(address) = &peer.address {
-            insert_string_attribute(attributes, "server.address", address);
+            insert_string_attribute(attributes, "network.peer.address", address);
         }
         if let Some(port) = peer.port {
-            attributes.insert("server.port".to_string(), serde_json::json!(port));
+            attributes.insert("network.peer.port".to_string(), serde_json::json!(port));
+        }
+    }
+}
+
+fn append_peer_endpoint_attributes(
+    attributes: &mut BTreeMap<String, serde_json::Value>,
+    prefix: &str,
+    peer: Option<&TracePeerContext>,
+) {
+    if let Some(peer) = peer {
+        if let Some(address) = &peer.address {
+            insert_string_attribute(attributes, format!("{prefix}.address"), address);
+        }
+        if let Some(port) = peer.port {
+            attributes.insert(format!("{prefix}.port"), serde_json::json!(port));
         }
         if let Some(domain) = &peer.domain {
             insert_string_attribute(attributes, "dns.question.name", domain);
         }
         if let Some(workload) = &peer.workload {
-            append_workload_attributes(attributes, "server", workload);
+            append_workload_attributes(attributes, prefix, workload);
         }
         if let Some(container) = &peer.container {
-            append_container_attributes(attributes, "server", container);
+            append_container_attributes(attributes, prefix, container);
         }
     }
 }
