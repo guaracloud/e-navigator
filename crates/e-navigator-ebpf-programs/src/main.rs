@@ -3460,6 +3460,9 @@ fn emit_protocol_iovec_event(
         event.payload_offset = 0;
         event.payload_len = first_captured;
         let copy_len = unsafe { core::ptr::addr_of!(event.payload_len).read_volatile() };
+        if copy_len > PROTOCOL_IOVEC_DATA_MAX {
+            return Ok(0);
+        }
         let copied = unsafe {
             bpf_probe_read_user_raw(
                 event.payload.as_mut_ptr().cast(),
@@ -3479,6 +3482,9 @@ fn emit_protocol_iovec_event(
         event.payload_offset = first_captured;
         event.payload_len = second_captured;
         let copy_len = unsafe { core::ptr::addr_of!(event.payload_len).read_volatile() };
+        if copy_len > PROTOCOL_IOVEC_DATA_MAX {
+            return Ok(0);
+        }
         let copied = unsafe {
             bpf_probe_read_user_raw(
                 event.payload.as_mut_ptr().cast(),
@@ -3497,6 +3503,9 @@ fn emit_protocol_iovec_event(
         event.payload_offset = first_captured.saturating_add(second_captured);
         event.payload_len = third_captured;
         let copy_len = unsafe { core::ptr::addr_of!(event.payload_len).read_volatile() };
+        if copy_len > PROTOCOL_IOVEC_DATA_MAX {
+            return Ok(0);
+        }
         let copied = unsafe {
             bpf_probe_read_user_raw(
                 event.payload.as_mut_ptr().cast(),
