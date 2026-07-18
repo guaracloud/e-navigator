@@ -53,6 +53,7 @@ const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 19;
 const CONNECTION_ROLE_CLIENT: u32 = 0;
 const CONNECTION_ROLE_SERVER: u32 = 1;
 const PROTOCOL_DATA_BYTES: usize = 256;
+const PROTOCOL_IOVEC_DATA_MASK: u64 = (PROTOCOL_DATA_BYTES - 1) as u64;
 const PROTOCOL_DIAG_WRITE_ENTER: u32 = 0;
 const PROTOCOL_DIAG_READ_ENTER: u32 = 1;
 const PROTOCOL_DIAG_READ_EXIT: u32 = 2;
@@ -3398,11 +3399,11 @@ fn emit_protocol_iovec_event(
     } else {
         first_len
     };
-    let first_captured = if first_bounded > PROTOCOL_DATA_BYTES as u64 {
-        PROTOCOL_DATA_BYTES as u64
+    let first_captured = if first_bounded > PROTOCOL_IOVEC_DATA_MASK {
+        PROTOCOL_IOVEC_DATA_MASK
     } else {
         first_bounded
-    };
+    } & PROTOCOL_IOVEC_DATA_MASK;
     let first_complete = first_captured == first_len;
     let second_remaining = capture_limit.saturating_sub(first_captured);
     let second_bounded = if second_len > second_remaining {
@@ -3410,13 +3411,13 @@ fn emit_protocol_iovec_event(
     } else {
         second_len
     };
-    let second_captured = if first_complete && second_bounded > PROTOCOL_DATA_BYTES as u64 {
-        PROTOCOL_DATA_BYTES as u64
+    let second_captured = if first_complete && second_bounded > PROTOCOL_IOVEC_DATA_MASK {
+        PROTOCOL_IOVEC_DATA_MASK
     } else if first_complete {
         second_bounded
     } else {
         0
-    };
+    } & PROTOCOL_IOVEC_DATA_MASK;
     let second_complete = second_captured == second_len;
     let third_remaining = second_remaining.saturating_sub(second_captured);
     let third_bounded = if third_len > third_remaining {
@@ -3425,13 +3426,13 @@ fn emit_protocol_iovec_event(
         third_len
     };
     let third_captured =
-        if first_complete && second_complete && third_bounded > PROTOCOL_DATA_BYTES as u64 {
-            PROTOCOL_DATA_BYTES as u64
+        if first_complete && second_complete && third_bounded > PROTOCOL_IOVEC_DATA_MASK {
+            PROTOCOL_IOVEC_DATA_MASK
         } else if first_complete && second_complete {
             third_bounded
         } else {
             0
-        };
+        } & PROTOCOL_IOVEC_DATA_MASK;
     let captured_total = first_captured
         .saturating_add(second_captured)
         .saturating_add(third_captured);
