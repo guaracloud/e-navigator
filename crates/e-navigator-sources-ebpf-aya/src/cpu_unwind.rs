@@ -97,7 +97,8 @@ mod pod {
 }
 
 /// CPython walk parameters shipped to the eBPF program. Offsets are
-/// version-specific; see [`py312_proc_info`] for their provenance.
+/// version-specific; see [`py311_proc_info`] and [`py312_proc_info`] for
+/// their provenance.
 #[cfg(any(target_os = "linux", test))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,6 +116,33 @@ pub(crate) struct PyProcInfoAbi {
     pub iframe_previous: u16,
     pub iframe_owner: u16,
     pub _pad: [u16; 3],
+}
+
+/// Kernel-side CPython 3.11 struct offsets, measured with offsetof()
+/// against CPython 3.11.13 headers (Py_BUILD_CORE, 64-bit, non-debug
+/// build; python:3.11.13-bookworm). Non-standard builds that shift these
+/// offsets fail the in-kernel walk with explicit py_stop accounting.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn py311_proc_info(
+    runtime_addr: u64,
+    pid_ns_dev: u64,
+    pid_ns_ino: u64,
+) -> PyProcInfoAbi {
+    PyProcInfoAbi {
+        runtime_addr,
+        pid_ns_dev,
+        pid_ns_ino,
+        interpreters_head: 40,
+        threads_head: 16,
+        tstate_next: 8,
+        tstate_native_thread_id: 160,
+        tstate_cframe: 56,
+        cframe_current_frame: 8,
+        iframe_code: 32,
+        iframe_previous: 48,
+        iframe_owner: 69,
+        _pad: [0; 3],
+    }
 }
 
 /// Kernel-side CPython 3.12 struct offsets, measured with offsetof()
@@ -142,6 +170,21 @@ pub(crate) fn py312_proc_info(
         iframe_owner: 70,
         _pad: [0; 3],
     }
+}
+
+/// Userspace-side CPython 3.11 code-object and unicode offsets, same
+/// provenance as [`py311_proc_info`].
+#[cfg(any(target_os = "linux", test))]
+pub(crate) mod py311 {
+    pub(crate) const CODE_FILENAME: u64 = 112;
+    pub(crate) const CODE_NAME: u64 = 120;
+    pub(crate) const CODE_QUALNAME: u64 = 128;
+    pub(crate) const CODE_FIRSTLINENO: u64 = 72;
+    /// CPython 3.11 retains the legacy `wstr` pointer in PyASCIIObject,
+    /// so compact-ASCII payload bytes begin at offset 48.
+    pub(crate) const UNICODE_DATA: u64 = 48;
+    pub(crate) const UNICODE_LENGTH: u64 = 16;
+    pub(crate) const UNICODE_STATE: u64 = 32;
 }
 
 /// Userspace-side CPython 3.12 code-object and unicode offsets, same
@@ -277,7 +320,7 @@ pub(crate) struct UnwindTableManager {
     /// map, so unchanged module placements skip the row rewrite.
     last_written: std::collections::BTreeMap<(u64, u64), u32>,
     /// (st_dev, st_ino) -> `_PyRuntime` link-time address and load
-    /// segments of a CPython 3.12 module; `None` records absence.
+    /// segments of a supported CPython module; `None` records absence.
     python_runtimes: std::collections::BTreeMap<(u64, u64), Option<PyRuntimeRecord>>,
     registered_pids: std::collections::BTreeSet<u32>,
     registered_py_pids: std::collections::BTreeSet<u32>,
@@ -391,9 +434,9 @@ impl UnwindTableManager {
         stats
     }
 
-    /// Detects a CPython 3.12 interpreter mapping and resolves the
+    /// Detects a supported CPython interpreter mapping and resolves the
     /// runtime address of `_PyRuntime` for the in-kernel frame walk.
-    /// Other CPython versions are counted, not silently skipped.
+    /// Other versions are counted, not silently skipped.
     fn python_proc_info(
         &mut self,
         pid: u32,
@@ -419,7 +462,7 @@ impl UnwindTableManager {
             let Some(minor) = python_minor_version(&mapping.path) else {
                 continue;
             };
-            if minor != 12 {
+            if !matches!(minor, 11 | 12) {
                 stats.python_unsupported_version += 1;
                 return None;
             }
@@ -469,11 +512,12 @@ impl UnwindTableManager {
             ) else {
                 continue;
             };
-            return Some(py312_proc_info(
-                record.runtime_vaddr.wrapping_add(bias),
-                pid_ns_dev,
-                pid_ns_ino,
-            ));
+            let runtime_addr = record.runtime_vaddr.wrapping_add(bias);
+            return Some(match minor {
+                11 => py311_proc_info(runtime_addr, pid_ns_dev, pid_ns_ino),
+                12 => py312_proc_info(runtime_addr, pid_ns_dev, pid_ns_ino),
+                _ => return None,
+            });
         }
         None
     }
@@ -722,7 +766,7 @@ mod tests;
 /// Extracts the CPython minor version from an interpreter or
 /// libpython mapping path ("python3.12", "libpython3.12.so.1.0").
 #[cfg(any(target_os = "linux", test))]
-fn python_minor_version(path: &str) -> Option<u32> {
+pub(crate) fn python_minor_version(path: &str) -> Option<u32> {
     let index = path.rfind("python3.")?;
     let digits: String = path[index + "python3.".len()..]
         .chars()

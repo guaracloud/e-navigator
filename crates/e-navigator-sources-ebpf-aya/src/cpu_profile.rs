@@ -186,6 +186,9 @@ pub(crate) struct ProcfsSymbolizer {
     /// Stale entries after code unloading or pid reuse only mislabel
     /// python frames of that reused id until eviction.
     python_frames: std::collections::BTreeMap<(u32, u64), Option<RawProfileFrame>>,
+    /// Detected CPython minor version per pid. Unsupported and unreadable
+    /// processes are negatively cached under the same pid bound.
+    python_versions: std::collections::BTreeMap<u32, Option<u32>>,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -221,6 +224,47 @@ pub(crate) struct SharedSymbolTables {
 }
 
 #[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy)]
+struct PythonObjectLayout {
+    code_filename: u64,
+    code_name: u64,
+    code_qualname: u64,
+    code_firstlineno: u64,
+    unicode_data: u64,
+    unicode_length: u64,
+    unicode_state: u64,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl PythonObjectLayout {
+    fn for_minor(minor: u32) -> Option<Self> {
+        use crate::cpu_unwind::{py311, py312};
+
+        match minor {
+            11 => Some(Self {
+                code_filename: py311::CODE_FILENAME,
+                code_name: py311::CODE_NAME,
+                code_qualname: py311::CODE_QUALNAME,
+                code_firstlineno: py311::CODE_FIRSTLINENO,
+                unicode_data: py311::UNICODE_DATA,
+                unicode_length: py311::UNICODE_LENGTH,
+                unicode_state: py311::UNICODE_STATE,
+            }),
+            12 => Some(Self {
+                code_filename: py312::CODE_FILENAME,
+                code_name: py312::CODE_NAME,
+                code_qualname: py312::CODE_QUALNAME,
+                code_firstlineno: py312::CODE_FIRSTLINENO,
+                unicode_data: py312::UNICODE_DATA,
+                unicode_length: py312::UNICODE_LENGTH,
+                unicode_state: py312::UNICODE_STATE,
+            }),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
 impl ProcfsSymbolizer {
     const MAX_MODULE_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
     const MAX_JIT_MAP_BYTES: u64 = 16 * 1024 * 1024;
@@ -250,6 +294,7 @@ impl ProcfsSymbolizer {
             symbols,
             thread_comms: std::collections::BTreeMap::new(),
             python_frames: std::collections::BTreeMap::new(),
+            python_versions: std::collections::BTreeMap::new(),
         }
     }
 
@@ -395,17 +440,20 @@ impl ProcfsSymbolizer {
     }
 
     /// Reads a bounded compact-ASCII CPython unicode object.
-    fn read_python_string(mem: &std::fs::File, address: u64) -> Option<String> {
-        use crate::cpu_unwind::py312;
+    fn read_python_string(
+        mem: &std::fs::File,
+        address: u64,
+        layout: PythonObjectLayout,
+    ) -> Option<String> {
         use std::os::unix::fs::FileExt;
 
         const MAX_PY_STRING_BYTES: u64 = 256;
         let mut word = [0u8; 8];
-        mem.read_exact_at(&mut word, address.checked_add(py312::UNICODE_LENGTH)?)
+        mem.read_exact_at(&mut word, address.checked_add(layout.unicode_length)?)
             .ok()?;
         let length = u64::from_le_bytes(word).min(MAX_PY_STRING_BYTES);
         let mut state = [0u8; 4];
-        mem.read_exact_at(&mut state, address.checked_add(py312::UNICODE_STATE)?)
+        mem.read_exact_at(&mut state, address.checked_add(layout.unicode_state)?)
             .ok()?;
         let state = u32::from_le_bytes(state);
         let kind = (state >> 2) & 0x7;
@@ -415,16 +463,33 @@ impl ProcfsSymbolizer {
             return None;
         }
         let mut bytes = vec![0u8; length as usize];
-        mem.read_exact_at(&mut bytes, address.checked_add(py312::UNICODE_DATA)?)
+        mem.read_exact_at(&mut bytes, address.checked_add(layout.unicode_data)?)
             .ok()?;
         let text = String::from_utf8(bytes).ok()?;
         text.chars().all(|c| !c.is_control()).then_some(text)
     }
 
-    fn load_python_frame(&self, pid: u32, code_ptr: u64) -> Option<RawProfileFrame> {
-        use crate::cpu_unwind::py312;
+    fn python_minor_version(&mut self, pid: u32) -> Option<u32> {
+        if !self.python_versions.contains_key(&pid) {
+            if self.python_versions.len() >= self.max_cached_pids
+                && let Some(&oldest) = self.python_versions.keys().next()
+            {
+                self.python_versions.remove(&oldest);
+            }
+            let minor = self
+                .process_map(pid)
+                .mappings()
+                .iter()
+                .find_map(|mapping| crate::cpu_unwind::python_minor_version(&mapping.path));
+            self.python_versions.insert(pid, minor);
+        }
+        self.python_versions.get(&pid).copied().flatten()
+    }
+
+    fn load_python_frame(&mut self, pid: u32, code_ptr: u64) -> Option<RawProfileFrame> {
         use std::os::unix::fs::FileExt;
 
+        let layout = PythonObjectLayout::for_minor(self.python_minor_version(pid)?)?;
         let mem = std::fs::File::open(self.procfs_root.join(pid.to_string()).join("mem")).ok()?;
         let read_ptr = |offset: u64| -> Option<u64> {
             let mut word = [0u8; 8];
@@ -432,16 +497,16 @@ impl ProcfsSymbolizer {
                 .ok()?;
             Some(u64::from_le_bytes(word))
         };
-        let qualname_ptr = read_ptr(py312::CODE_QUALNAME)?;
-        let symbol = Self::read_python_string(&mem, qualname_ptr).or_else(|| {
-            let name_ptr = read_ptr(py312::CODE_NAME)?;
-            Self::read_python_string(&mem, name_ptr)
+        let qualname_ptr = read_ptr(layout.code_qualname)?;
+        let symbol = Self::read_python_string(&mem, qualname_ptr, layout).or_else(|| {
+            let name_ptr = read_ptr(layout.code_name)?;
+            Self::read_python_string(&mem, name_ptr, layout)
         })?;
-        let file = read_ptr(py312::CODE_FILENAME)
-            .and_then(|filename_ptr| Self::read_python_string(&mem, filename_ptr));
+        let file = read_ptr(layout.code_filename)
+            .and_then(|filename_ptr| Self::read_python_string(&mem, filename_ptr, layout));
         let line = {
             let mut word = [0u8; 4];
-            mem.read_exact_at(&mut word, code_ptr.checked_add(py312::CODE_FIRSTLINENO)?)
+            mem.read_exact_at(&mut word, code_ptr.checked_add(layout.code_firstlineno)?)
                 .ok()
                 .and_then(|()| u32::try_from(i32::from_le_bytes(word)).ok())
         };
@@ -2828,15 +2893,18 @@ mod tests {
         assert!(decoded.py_incomplete);
     }
 
-    #[test]
-    fn procfs_symbolizer_resolves_python_code_objects() {
-        use crate::cpu_unwind::py312;
+    fn assert_python_code_object_resolution(minor: u32, layout: PythonObjectLayout) {
         use std::io::{Seek, SeekFrom, Write};
 
-        let dir = std::env::temp_dir().join(format!("e-nav-pymem-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("e-nav-pymem-{}-{minor}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         let pid_dir = dir.join("888");
         std::fs::create_dir_all(&pid_dir).expect("pid dir");
+        std::fs::write(
+            pid_dir.join("maps"),
+            format!("10000000-10100000 r-xp 00000000 fd:00 100 /usr/local/bin/python3.{minor}\n"),
+        )
+        .expect("maps file");
         let mut mem = std::fs::File::create(pid_dir.join("mem")).expect("mem file");
 
         let code_ptr: u64 = 0x1000;
@@ -2848,17 +2916,17 @@ mod tests {
         };
         write_at(
             &mut mem,
-            code_ptr + py312::CODE_QUALNAME,
+            code_ptr + layout.code_qualname,
             &qualname_ptr.to_le_bytes(),
         );
         write_at(
             &mut mem,
-            code_ptr + py312::CODE_FILENAME,
+            code_ptr + layout.code_filename,
             &filename_ptr.to_le_bytes(),
         );
         write_at(
             &mut mem,
-            code_ptr + py312::CODE_FIRSTLINENO,
+            code_ptr + layout.code_firstlineno,
             &41i32.to_le_bytes(),
         );
         // Compact ASCII unicode objects: kind=1 (bits 2..5), compact
@@ -2870,11 +2938,11 @@ mod tests {
         ] {
             write_at(
                 &mut mem,
-                ptr + py312::UNICODE_LENGTH,
+                ptr + layout.unicode_length,
                 &(text.len() as u64).to_le_bytes(),
             );
-            write_at(&mut mem, ptr + py312::UNICODE_STATE, &state.to_le_bytes());
-            write_at(&mut mem, ptr + py312::UNICODE_DATA, text.as_bytes());
+            write_at(&mut mem, ptr + layout.unicode_state, &state.to_le_bytes());
+            write_at(&mut mem, ptr + layout.unicode_data, text.as_bytes());
         }
         // Sensitive-looking adjacent memory that must never be exported.
         write_at(&mut mem, code_ptr + 0x200, b"password=hunter2");
@@ -2895,6 +2963,22 @@ mod tests {
         assert!(symbolizer.resolve_python_frame(888, 0x9_0000).is_none());
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn procfs_symbolizer_resolves_python311_code_objects() {
+        assert_python_code_object_resolution(
+            11,
+            PythonObjectLayout::for_minor(11).expect("3.11 layout"),
+        );
+    }
+
+    #[test]
+    fn procfs_symbolizer_resolves_python312_code_objects() {
+        assert_python_code_object_resolution(
+            12,
+            PythonObjectLayout::for_minor(12).expect("3.12 layout"),
+        );
     }
 
     #[test]

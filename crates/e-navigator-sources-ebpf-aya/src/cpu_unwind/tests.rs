@@ -367,6 +367,23 @@ fn python_minor_version_parses_interpreter_paths() {
 }
 
 #[test]
+fn py311_offsets_match_measured_values() {
+    // Ground truth measured with offsetof() against CPython 3.11.13.
+    let info = py311_proc_info(0x1000, 0x42, 0xabc);
+    assert_eq!(info.runtime_addr, 0x1000);
+    assert_eq!(info.pid_ns_dev, 0x42);
+    assert_eq!(info.pid_ns_ino, 0xabc);
+    assert_eq!(info.interpreters_head, 40);
+    assert_eq!(info.threads_head, 16);
+    assert_eq!(info.tstate_native_thread_id, 160);
+    assert_eq!(info.tstate_cframe, 56);
+    assert_eq!(info.cframe_current_frame, 8);
+    assert_eq!(info.iframe_code, 32);
+    assert_eq!(info.iframe_previous, 48);
+    assert_eq!(info.iframe_owner, 69);
+}
+
+#[test]
 fn py312_offsets_match_measured_values() {
     // Ground truth measured with offsetof() against CPython 3.12.13.
     let info = py312_proc_info(0x1000, 0x42, 0xabc);
@@ -382,11 +399,11 @@ fn py312_offsets_match_measured_values() {
 
 #[test]
 fn unsupported_python_versions_are_counted_not_registered() {
-    let root = fake_procfs("py311", 700, 0x1000_0000);
-    // Pretend the process maps a python3.11 interpreter.
+    let root = fake_procfs("py310", 700, 0x1000_0000);
+    // Pretend the process maps an unsupported python3.10 interpreter.
     std::fs::write(
         root.join("700").join("maps"),
-        "10000000-10100000 r-xp 00000000 fd:00 100 /usr/local/bin/python3.11\n",
+        "10000000-10100000 r-xp 00000000 fd:00 100 /usr/local/bin/python3.10\n",
     )
     .expect("write maps");
 
