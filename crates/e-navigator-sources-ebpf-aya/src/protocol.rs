@@ -1730,6 +1730,7 @@ mod platform {
         Ebpf, include_bytes_aligned,
         maps::{
             Array as AyaArray, HashMap as AyaHashMap, MapData, PerCpuArray,
+            ProgramArray as AyaProgramArray,
             perf::{PerfEvent, PerfEventArray},
         },
         programs::TracePoint,
@@ -1806,6 +1807,7 @@ mod platform {
             populate_capture_ports(&mut ebpf, &self.config)?;
             populate_capture_limit(&mut ebpf, &self.config)?;
             populate_capture_inbound(&mut ebpf, &self.config)?;
+            setup_protocol_iovec_emitter(&mut ebpf)?;
             if self.config.inbound_enabled {
                 let listeners = prepopulate_existing_listeners(&mut ebpf, &self.procfs_root)?;
                 info!(
@@ -2329,6 +2331,33 @@ mod platform {
             .map_err(module_error)?;
         program.load().map_err(module_error)?;
         program.attach(category, name).map_err(module_error)?;
+        Ok(())
+    }
+
+    fn setup_protocol_iovec_emitter(ebpf: &mut Ebpf) -> CoreResult<()> {
+        let program: &mut TracePoint = ebpf
+            .program_mut("tracepoint_protocol_iovec_emit")
+            .ok_or_else(|| CoreError::ModuleFailed {
+                module: "source.aya_protocol".to_string(),
+                message: "missing tracepoint_protocol_iovec_emit program".to_string(),
+            })?
+            .try_into()
+            .map_err(module_error)?;
+        program.load().map_err(module_error)?;
+        let program_fd = program
+            .fd()
+            .map_err(module_error)?
+            .try_clone()
+            .map_err(module_error)?;
+        let map = ebpf
+            .map_mut("PROTOCOL_IOVEC_PROGS")
+            .ok_or_else(|| CoreError::ModuleFailed {
+                module: "source.aya_protocol".to_string(),
+                message: "missing PROTOCOL_IOVEC_PROGS map".to_string(),
+            })?;
+        let mut programs: AyaProgramArray<&mut MapData> =
+            AyaProgramArray::try_from(map).map_err(module_error)?;
+        programs.set(0, &program_fd, 0).map_err(module_error)?;
         Ok(())
     }
 
