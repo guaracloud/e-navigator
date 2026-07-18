@@ -77,7 +77,7 @@ async fn server_capture_creates_child_span_of_wire_remote_parent() {
 }
 
 #[tokio::test]
-async fn client_capture_preserves_propagating_span_identity() {
+async fn client_capture_does_not_duplicate_propagating_span_identity() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -87,16 +87,7 @@ async fn client_capture_preserves_propagating_span_identity() {
 
     let outputs = observe(&generator, &signal).await;
 
-    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
-        panic!("expected request span");
-    };
-    assert_eq!(span.span_id.as_deref(), Some("00f067aa0ba902b7"));
-    assert_eq!(span.parent_span_id, None);
-    assert!(has_attribute(
-        &span.attributes,
-        "e.navigator.protocol.capture.role",
-        "client"
-    ));
+    assert!(outputs.is_empty());
 }
 
 #[tokio::test]
