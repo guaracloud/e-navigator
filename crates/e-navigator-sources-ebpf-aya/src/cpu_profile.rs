@@ -173,9 +173,9 @@ pub(crate) struct ProcfsSymbolizer {
     /// Per-process JIT perf maps. Negative results are cached and retried on a
     /// short interval because runtimes commonly create the map after startup.
     jit_maps: std::collections::BTreeMap<u32, CachedJitSymbols>,
-    /// Module path -> parsed ELF symbol table, shared across every
-    /// per-CPU reader thread: symbol tables of large modules dominate
-    /// symbolizer memory and must not be duplicated per thread.
+    /// Target-filesystem module identity -> parsed ELF symbol table, shared
+    /// across every per-CPU reader thread: symbol tables of large modules
+    /// dominate symbolizer memory and must not be duplicated per thread.
     symbols: std::sync::Arc<std::sync::Mutex<SharedSymbolTables>>,
     /// Cached thread comms for untranslated pids, keyed by (pid, tid);
     /// `None` records an unreadable thread. Bounded like the other caches;
@@ -195,11 +195,29 @@ struct CachedJitSymbols {
     symbols: Option<JitSymbolMap>,
 }
 
-/// Bounded module-path -> symbol-table cache shared by reader threads.
+/// Stable-enough identity for a module image reached through a target
+/// process's `/proc/<pid>/root`. Device/inode distinguish containers that
+/// expose different files at the same absolute path; size and modification
+/// time prevent stale reuse after a replacement.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ModuleFileIdentity {
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(not(unix))]
+    path: std::path::PathBuf,
+    size: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+/// Bounded target-module identity -> symbol-table cache shared by reader
+/// threads.
 #[cfg(any(target_os = "linux", test))]
 #[derive(Debug, Default)]
 pub(crate) struct SharedSymbolTables {
-    tables: std::collections::BTreeMap<String, Option<std::sync::Arc<ElfSymbolTable>>>,
+    tables: std::collections::BTreeMap<ModuleFileIdentity, Option<std::sync::Arc<ElfSymbolTable>>>,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -251,16 +269,22 @@ impl ProcfsSymbolizer {
         self.maps.get(&pid).expect("map inserted above")
     }
 
-    fn symbol_name(&mut self, module: &str, offset: u64) -> Option<String> {
+    fn symbol_name(&mut self, pid: u32, module: &str, offset: u64) -> Option<String> {
         if !self.resolve_symbols {
             return None;
         }
+        let module_path = self.module_image_path(pid, module)?;
+        let metadata = std::fs::metadata(&module_path).ok()?;
+        if metadata.len() > Self::MAX_MODULE_IMAGE_BYTES {
+            return None;
+        }
+        let identity = Self::module_file_identity(&module_path, &metadata);
         let table = {
             let mut shared = match self.symbols.lock() {
                 Ok(shared) => shared,
                 Err(_) => return None,
             };
-            if !shared.tables.contains_key(module) {
+            if !shared.tables.contains_key(&identity) {
                 if shared.tables.len() >= self.max_cached_modules
                     && let Some(oldest) = shared.tables.keys().next().cloned()
                 {
@@ -268,12 +292,52 @@ impl ProcfsSymbolizer {
                 }
                 // Parsing under the lock trades brief reader stalls for
                 // never parsing (and holding) a large table per thread.
-                let table = self.load_symbol_table(module).map(std::sync::Arc::new);
-                shared.tables.insert(module.to_string(), table);
+                let table = self
+                    .load_symbol_table(&module_path)
+                    .map(std::sync::Arc::new);
+                shared.tables.insert(identity.clone(), table);
             }
-            shared.tables.get(module).and_then(Clone::clone)
+            shared.tables.get(&identity).and_then(Clone::clone)
         };
         table.and_then(|table| table.resolve(offset).map(ToString::to_string))
+    }
+
+    fn module_image_path(&self, pid: u32, module: &str) -> Option<std::path::PathBuf> {
+        use std::path::{Component, Path};
+
+        let relative = Path::new(module).strip_prefix(Path::new("/")).ok()?;
+        if relative.as_os_str().is_empty()
+            || relative
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return None;
+        }
+        Some(
+            self.procfs_root
+                .join(pid.to_string())
+                .join("root")
+                .join(relative),
+        )
+    }
+
+    fn module_file_identity(
+        _module_path: &std::path::Path,
+        metadata: &std::fs::Metadata,
+    ) -> ModuleFileIdentity {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+
+        ModuleFileIdentity {
+            #[cfg(unix)]
+            device: metadata.dev(),
+            #[cfg(unix)]
+            inode: metadata.ino(),
+            #[cfg(not(unix))]
+            path: _module_path.to_path_buf(),
+            size: metadata.len(),
+            modified: metadata.modified().ok(),
+        }
     }
 
     fn jit_symbol(&mut self, pid: u32, ip: u64) -> Option<(String, u64)> {
@@ -390,7 +454,7 @@ impl ProcfsSymbolizer {
         })
     }
 
-    fn load_symbol_table(&self, module: &str) -> Option<ElfSymbolTable> {
+    fn load_symbol_table(&self, module: &std::path::Path) -> Option<ElfSymbolTable> {
         let metadata = std::fs::metadata(module).ok()?;
         if metadata.len() > Self::MAX_MODULE_IMAGE_BYTES {
             return None;
@@ -472,7 +536,7 @@ impl FrameResolver for ProcfsSymbolizer {
             return RawAddressResolver.resolve(pid, ip);
         };
         let symbol = self
-            .symbol_name(&location.module, location.module_offset)
+            .symbol_name(pid, &location.module, location.module_offset)
             .unwrap_or_else(|| format!("{}+{:#x}", location.module, location.module_offset));
         RawProfileFrame {
             symbol: Some(symbol),
@@ -1901,6 +1965,20 @@ mod tests {
         assert!(fallback.symbol.as_deref().unwrap().starts_with("ip:"));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn procfs_symbolizer_scopes_module_images_to_target_root() {
+        let dir =
+            std::env::temp_dir().join(format!("e-nav-module-root-test-{}", std::process::id()));
+        let symbolizer = ProcfsSymbolizer::new(dir.clone(), true);
+
+        assert_eq!(
+            symbolizer.module_image_path(779, "/usr/bin/app"),
+            Some(dir.join("779/root/usr/bin/app"))
+        );
+        assert_eq!(symbolizer.module_image_path(779, "usr/bin/app"), None);
+        assert_eq!(symbolizer.module_image_path(779, "/usr/../host/app"), None);
     }
 
     #[test]

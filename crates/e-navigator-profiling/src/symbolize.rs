@@ -277,6 +277,7 @@ fn parse_elf64_functions(image: &[u8]) -> Option<ElfSymbolTable> {
         return None;
     }
 
+    let load_segments = crate::unwind::parse_load_segments(image);
     let mut functions = BTreeMap::new();
     for index in 0..section_count {
         let header = section_header_offset.checked_add(index.checked_mul(section_entry_size)?)?;
@@ -314,6 +315,9 @@ fn parse_elf64_functions(image: &[u8]) -> Option<ElfSymbolTable> {
             if info & 0x0f != STT_FUNC || value == 0 {
                 continue;
             }
+            let Some(file_offset) = symbol_file_offset(value, &load_segments) else {
+                continue;
+            };
             let Some(name) = read_c_string(string_table, name_offset) else {
                 continue;
             };
@@ -321,7 +325,7 @@ fn parse_elf64_functions(image: &[u8]) -> Option<ElfSymbolTable> {
                 continue;
             }
             functions
-                .entry(value)
+                .entry(file_offset)
                 .or_insert_with(|| (size, name.to_string()));
         }
     }
@@ -330,6 +334,23 @@ fn parse_elf64_functions(image: &[u8]) -> Option<ElfSymbolTable> {
         return None;
     }
     Some(ElfSymbolTable { functions })
+}
+
+fn symbol_file_offset(value: u64, load_segments: &[crate::unwind::LoadSegment]) -> Option<u64> {
+    // Section-only fixtures and relocatable ELF objects do not have PT_LOAD
+    // headers. Preserve their existing offset semantics while translating
+    // executable/shared-object symbols through the segment that contains
+    // their link-time virtual address.
+    if load_segments.is_empty() {
+        return Some(value);
+    }
+    load_segments.iter().find_map(|segment| {
+        let segment_offset = value.checked_sub(segment.vaddr)?;
+        if segment_offset >= segment.file_size {
+            return None;
+        }
+        segment.file_offset.checked_add(segment_offset)
+    })
 }
 
 fn read_c_string(table: &[u8], offset: usize) -> Option<&str> {
@@ -399,8 +420,18 @@ mod tests {
     }
 
     fn synthetic_elf(functions: &[(u64, u64, &str)]) -> Vec<u8> {
-        // Minimal little-endian ELF64 with one SHT_SYMTAB and its string
-        // table. Layout: [ehdr(64)] [symtab] [strtab] [shdr*3].
+        synthetic_elf_with_load_segment(functions, 0, 0, u64::MAX)
+    }
+
+    fn synthetic_elf_with_load_segment(
+        functions: &[(u64, u64, &str)],
+        segment_file_offset: u64,
+        segment_vaddr: u64,
+        segment_file_size: u64,
+    ) -> Vec<u8> {
+        // Minimal little-endian ELF64 with one PT_LOAD, one SHT_SYMTAB,
+        // and its string table. Layout:
+        // [ehdr(64)] [phdr(56)] [symtab] [strtab] [shdr*3].
         let mut strtab = vec![0u8];
         let mut name_offsets = Vec::new();
         for (_, _, name) in functions {
@@ -422,7 +453,9 @@ mod tests {
         }
 
         let ehdr_size = 64usize;
-        let symtab_offset = ehdr_size;
+        let phdr_size = 56usize;
+        let phdr_offset = ehdr_size;
+        let symtab_offset = phdr_offset + phdr_size;
         let strtab_offset = symtab_offset + symtab.len();
         let shdr_offset = strtab_offset + strtab.len();
         let shdr_size = 64usize;
@@ -431,9 +464,19 @@ mod tests {
         image[..4].copy_from_slice(&ELF_MAGIC);
         image[4] = ELFCLASS64;
         image[5] = 1; // little endian
+        image[32..40].copy_from_slice(&(phdr_offset as u64).to_le_bytes());
         image[40..48].copy_from_slice(&(shdr_offset as u64).to_le_bytes());
+        image[54..56].copy_from_slice(&(phdr_size as u16).to_le_bytes());
+        image[56..58].copy_from_slice(&1u16.to_le_bytes());
         image[58..60].copy_from_slice(&(shdr_size as u16).to_le_bytes());
         image[60..62].copy_from_slice(&3u16.to_le_bytes());
+
+        // Program header 0: PT_LOAD.
+        image[phdr_offset..phdr_offset + 4].copy_from_slice(&1u32.to_le_bytes());
+        image[phdr_offset + 8..phdr_offset + 16]
+            .copy_from_slice(&segment_file_offset.to_le_bytes());
+        image[phdr_offset + 16..phdr_offset + 24].copy_from_slice(&segment_vaddr.to_le_bytes());
+        image[phdr_offset + 32..phdr_offset + 40].copy_from_slice(&segment_file_size.to_le_bytes());
         image[symtab_offset..symtab_offset + symtab.len()].copy_from_slice(&symtab);
         image[strtab_offset..strtab_offset + strtab.len()].copy_from_slice(&strtab);
 
@@ -467,6 +510,20 @@ mod tests {
         // Between the end of handle_request (0x1040) and parse there is no
         // covering function.
         assert_eq!(table.resolve(0x1080), None);
+    }
+
+    #[test]
+    fn elf_symbol_table_translates_virtual_addresses_to_file_offsets() {
+        let image = synthetic_elf_with_load_segment(
+            &[(0x21a0, 0x40, "container_handler")],
+            0x1000,
+            0x2000,
+            0x1000,
+        );
+        let table = ElfSymbolTable::parse(&image);
+
+        assert_eq!(table.resolve(0x11a0), Some("container_handler"));
+        assert_eq!(table.resolve(0x21a0), None);
     }
 
     #[test]
