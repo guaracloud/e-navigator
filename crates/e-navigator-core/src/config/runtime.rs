@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 use super::modules::{default_modules, is_known_module_name, known_module_names};
 use super::{
     ArgvCaptureConfig, AttributionConfig, CaptureFilterConfig, ConfigError, ConfigResult,
-    CpuProfileSourceConfig, DnsMetricsConfig, DnsSourceConfig, HttpSourceConfig, ModuleConfig,
-    NetworkMetricsConfig, OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig,
+    CpuProfileSourceConfig, DnsMetricsConfig, DnsSourceConfig, HttpSourceConfig, JsonStdoutConfig,
+    ModuleConfig, NetworkMetricsConfig, OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig,
     ProtocolSourceConfig, RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig,
     RuntimeSecurityConfig, SourceSupervisorConfig, TlsSourceConfig, TraceCorrelationConfig,
 };
@@ -58,6 +58,8 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub profiling: ProfilingConfig,
     #[serde(default)]
+    pub json_stdout: JsonStdoutConfig,
+    #[serde(default)]
     pub prometheus_http: PrometheusHttpConfig,
     #[serde(default)]
     pub otlp_http: OtlpHttpConfig,
@@ -88,6 +90,7 @@ impl Default for RuntimeConfig {
             trace_correlation: TraceCorrelationConfig::default(),
             request_correlation: RequestCorrelationConfig::default(),
             profiling: ProfilingConfig::default(),
+            json_stdout: JsonStdoutConfig::default(),
             prometheus_http: PrometheusHttpConfig::default(),
             otlp_http: OtlpHttpConfig::default(),
         }

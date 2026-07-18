@@ -1,11 +1,36 @@
 use async_trait::async_trait;
-use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Sink};
+use e_navigator_core::{
+    CoreError, CoreResult, JsonStdoutConfig, JsonStdoutMode, ModuleKind, ModuleMetadata, Sink,
+};
 use e_navigator_signals::{SignalEnvelope, SignalPayload};
 use std::borrow::Cow;
 use tokio::io::{self, AsyncWriteExt};
 
 #[derive(Debug, Default)]
-pub struct JsonStdoutSink;
+pub struct JsonStdoutSink {
+    mode: JsonStdoutMode,
+}
+
+impl JsonStdoutSink {
+    pub fn new(config: JsonStdoutConfig) -> Self {
+        Self { mode: config.mode }
+    }
+
+    fn includes(&self, signal: &SignalEnvelope) -> bool {
+        match self.mode {
+            JsonStdoutMode::All => true,
+            JsonStdoutMode::Topology => matches!(
+                &signal.payload,
+                SignalPayload::NetworkFlowSummary(_)
+                    | SignalPayload::NetworkFlowWarning(_)
+                    | SignalPayload::DependencyEdge(_)
+                    | SignalPayload::ServiceInteractionSpanObservation(_)
+                    | SignalPayload::TraceServicePathObservation(_)
+                    | SignalPayload::TraceCorrelationWarning(_)
+            ),
+        }
+    }
+}
 
 #[async_trait]
 impl Sink<SignalEnvelope> for JsonStdoutSink {
@@ -14,6 +39,10 @@ impl Sink<SignalEnvelope> for JsonStdoutSink {
     }
 
     async fn write(&self, signal: &SignalEnvelope) -> CoreResult<()> {
+        if !self.includes(signal) {
+            return Ok(());
+        }
+
         let line = serialize_signal_line(signal)?;
         let mut stdout = io::stdout();
         stdout
@@ -130,18 +159,76 @@ fn module_error(message: String) -> CoreError {
 #[cfg(test)]
 mod tests {
     use e_navigator_signals::{
-        ContainerContext, ExecEvent, KubernetesContext, MatchedProcess, MetricAggregationWindow,
-        NetworkAddressFamily, NetworkFlowDirection, NetworkFlowEndpoint, NetworkFlowSummaryEvent,
-        NetworkFlowWarning, NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation,
-        ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
-        ProfilingKind, ProfilingSessionObservation, ProfilingStackTraceObservation,
-        ProfilingWarningObservation, ProtocolKind, ProtocolRequestObservation,
-        RuntimeSecurityFinding, RuntimeSecuritySeverity, TraceAttribute, TraceConfidence,
-        TraceCorrelationKind,
+        ContainerContext, DependencyEdgeEvent, DependencyEndpoint, ExecEvent, KubernetesContext,
+        MatchedProcess, MetricAggregationWindow, NetworkAddressFamily, NetworkFlowDirection,
+        NetworkFlowEndpoint, NetworkFlowSummaryEvent, NetworkFlowWarning, NetworkProcessIdentity,
+        NetworkProtocol, ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence,
+        ProfilingCorrelationKind, ProfilingFrame, ProfilingKind, ProfilingSessionObservation,
+        ProfilingStackTraceObservation, ProfilingWarningObservation, ProtocolKind,
+        ProtocolRequestObservation, RuntimeSecurityFinding, RuntimeSecuritySeverity,
+        TraceAttribute, TraceConfidence, TraceCorrelationKind,
     };
     use std::collections::BTreeMap;
 
     use super::*;
+
+    #[test]
+    fn topology_mode_emits_only_topology_contracts() {
+        let exec = SignalEnvelope::exec(
+            "source.test",
+            None,
+            ExecEvent {
+                pid: 1,
+                ppid: None,
+                uid: None,
+                command: "true".to_string(),
+                executable: None,
+                arguments: vec![],
+                cgroup_id: None,
+                timestamp_unix_nanos: 1,
+                container: None,
+                kubernetes: None,
+            },
+        );
+        let dependency = SignalEnvelope::dependency_edge(
+            "generator.dependency_graph",
+            None,
+            DependencyEdgeEvent {
+                source: DependencyEndpoint {
+                    owner_name: Some("default/api".to_string()),
+                    owner_type: Some("deployment".to_string()),
+                    workload: None,
+                    container: None,
+                    address: None,
+                    port: None,
+                    domain: None,
+                },
+                destination: DependencyEndpoint {
+                    owner_name: Some("default/database".to_string()),
+                    owner_type: Some("service".to_string()),
+                    workload: None,
+                    container: None,
+                    address: Some("10.96.0.20".to_string()),
+                    port: Some(5432),
+                    domain: None,
+                },
+                protocol: NetworkProtocol::Tcp,
+                observations: 1,
+                first_seen_unix_nanos: 1,
+                last_seen_unix_nanos: 1,
+            },
+        );
+
+        let all = JsonStdoutSink::default();
+        let topology = JsonStdoutSink::new(JsonStdoutConfig {
+            mode: JsonStdoutMode::Topology,
+        });
+
+        assert!(all.includes(&exec));
+        assert!(all.includes(&dependency));
+        assert!(!topology.includes(&exec));
+        assert!(topology.includes(&dependency));
+    }
 
     #[test]
     fn serializes_signal_as_newline_delimited_json() {

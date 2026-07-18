@@ -11,13 +11,13 @@ pub use capture_filter::{CaptureDecision, CaptureFilterPolicy, glob_match};
 pub use config::{
     ArgvCaptureConfig, AttributionConfig, CaptureFilterConfig, CapturePosture, ConfigError,
     ConfigErrorKind, ConfigResult, CpuProfileBackpressure, CpuProfileSourceConfig,
-    DnsMetricsConfig, DnsSourceConfig, HttpSourceConfig, KNOWN_MODULES, KnownModule,
-    KubernetesAttributionConfig, ModuleConfig, NetworkEndpointConfig, NetworkMetricsConfig,
-    OtlpHttpCompression, OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig,
-    ProtocolSourceConfig, RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig,
-    RuntimeConfig, RuntimeSecurityConfig, SourceFailurePolicy, SourceSupervisorConfig,
-    TlsSourceConfig, TraceCorrelationConfig, WorkloadSelectorConfig, is_known_module_name,
-    known_module_names,
+    DnsMetricsConfig, DnsSourceConfig, HttpSourceConfig, JsonStdoutConfig, JsonStdoutMode,
+    KNOWN_MODULES, KnownModule, KubernetesAttributionConfig, ModuleConfig, NetworkEndpointConfig,
+    NetworkMetricsConfig, OtlpHttpCompression, OtlpHttpConfig, ProfilingConfig,
+    PrometheusHttpConfig, ProtocolSourceConfig, RequestCorrelationConfig, ResourceMetricsConfig,
+    ResourceSourceConfig, RuntimeConfig, RuntimeSecurityConfig, SourceFailurePolicy,
+    SourceSupervisorConfig, TlsSourceConfig, TraceCorrelationConfig, WorkloadSelectorConfig,
+    is_known_module_name, known_module_names,
 };
 pub use error::{CoreError, CoreResult};
 pub use module::{ModuleKind, ModuleMetadata};

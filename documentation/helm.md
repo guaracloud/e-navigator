@@ -374,6 +374,14 @@ span ID but it failed OTLP identity validation); and when
 above 0.8 for five minutes. Retry or circuit-open counters alone are early
 degradation signals; the drop counters mean telemetry was irrecoverably lost.
 
+When `sink.json_stdout` is enabled, `[json_stdout] mode = "all"` preserves the
+full native newline-delimited JSON stream. Use `mode = "topology"` when stdout
+is ingested by a log backend for topology queries: it emits only network flow
+summaries and warnings, dependency edges, service interactions, service paths,
+and trace-correlation warnings. OTLP metric, trace, and profile export is
+unchanged, and high-rate raw profile/resource envelopes are not duplicated into
+the log pipeline.
+
 For the workload controller, alert when
 `e_navigator_kubernetes_controller_ready == 0`, when
 `e_navigator_kubernetes_controller_freshness_seconds > 60`, on increases in
