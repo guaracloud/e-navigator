@@ -2335,29 +2335,34 @@ mod platform {
     }
 
     fn setup_protocol_iovec_emitter(ebpf: &mut Ebpf) -> CoreResult<()> {
-        let program: &mut TracePoint = ebpf
-            .program_mut("tracepoint_protocol_iovec_emit")
-            .ok_or_else(|| CoreError::ModuleFailed {
-                module: "source.aya_protocol".to_string(),
-                message: "missing tracepoint_protocol_iovec_emit program".to_string(),
-            })?
-            .try_into()
-            .map_err(module_error)?;
-        program.load().map_err(module_error)?;
-        let program_fd = program
-            .fd()
-            .map_err(module_error)?
-            .try_clone()
-            .map_err(module_error)?;
-        let map = ebpf
-            .map_mut("PROTOCOL_IOVEC_PROGS")
-            .ok_or_else(|| CoreError::ModuleFailed {
-                module: "source.aya_protocol".to_string(),
-                message: "missing PROTOCOL_IOVEC_PROGS map".to_string(),
-            })?;
-        let mut programs: AyaProgramArray<&mut MapData> =
-            AyaProgramArray::try_from(map).map_err(module_error)?;
-        programs.set(0, &program_fd, 0).map_err(module_error)?;
+        for (index, name) in [
+            (0u32, "tracepoint_protocol_iovec_compute"),
+            (1u32, "tracepoint_protocol_iovec_emit"),
+        ] {
+            let program: &mut TracePoint = ebpf
+                .program_mut(name)
+                .ok_or_else(|| CoreError::ModuleFailed {
+                    module: "source.aya_protocol".to_string(),
+                    message: format!("missing {name} program"),
+                })?
+                .try_into()
+                .map_err(module_error)?;
+            program.load().map_err(module_error)?;
+            let program_fd = program
+                .fd()
+                .map_err(module_error)?
+                .try_clone()
+                .map_err(module_error)?;
+            let map =
+                ebpf.map_mut("PROTOCOL_IOVEC_PROGS")
+                    .ok_or_else(|| CoreError::ModuleFailed {
+                        module: "source.aya_protocol".to_string(),
+                        message: "missing PROTOCOL_IOVEC_PROGS map".to_string(),
+                    })?;
+            let mut programs: AyaProgramArray<&mut MapData> =
+                AyaProgramArray::try_from(map).map_err(module_error)?;
+            programs.set(index, &program_fd, 0).map_err(module_error)?;
+        }
         Ok(())
     }
 
