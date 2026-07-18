@@ -2,6 +2,8 @@
 #![no_main]
 #![allow(clippy::needless_borrows_for_generic_args)]
 
+mod dns_peer;
+
 use aya_ebpf::{
     EbpfContext,
     bindings::{BPF_F_USER_STACK, bpf_pidns_info},
@@ -19,6 +21,7 @@ use aya_ebpf::{
     maps::{Array, HashMap, LruHashMap, PerCpuArray, PerfEventArray, ProgramArray},
     programs::{PerfEventContext, ProbeContext, RetProbeContext, TracePointContext},
 };
+use dns_peer::is_dns_ipv4_peer;
 
 const EXECUTABLE_LEN: usize = 256;
 const MAX_ARGS: usize = 8;
@@ -3983,13 +3986,9 @@ fn emit_dns_send_event(
 
     let family =
         unsafe { bpf_probe_read_user::<u16>(sockaddr.cast::<u16>()) }.map_err(|err| err as i64)?;
-    if family as u32 != AF_INET {
-        return Ok(0);
-    }
-
     let server_port_be = unsafe { bpf_probe_read_user::<u16>(sockaddr.add(2).cast::<u16>()) }
         .map_err(|err| err as i64)?;
-    if u16::from_be(server_port_be) != 53 {
+    if !is_dns_ipv4_peer(family, server_port_be) {
         return Ok(0);
     }
 
@@ -4171,20 +4170,19 @@ fn try_tracepoint_dns_recvfrom_exit(ctx: &TracePointContext) -> Result<u32, i64>
         let sockaddr = pending.server_addr_ptr as *const u8;
         let family = unsafe { bpf_probe_read_user::<u16>(sockaddr.cast::<u16>()) }
             .map_err(|err| err as i64)?;
-        if family as u32 == AF_INET {
-            event.server_port_be =
-                unsafe { bpf_probe_read_user::<u16>(sockaddr.add(2).cast::<u16>()) }
-                    .map_err(|err| err as i64)?;
-            event.server_addr_v4 =
-                unsafe { bpf_probe_read_user::<u32>(sockaddr.add(4).cast::<u32>()) }
-                    .map_err(|err| err as i64)?;
-            if event.server_port_be != 0 && u16::from_be(event.server_port_be) != 53 {
-                return Ok(0);
-            }
+        let server_port_be = unsafe { bpf_probe_read_user::<u16>(sockaddr.add(2).cast::<u16>()) }
+            .map_err(|err| err as i64)?;
+        if !is_dns_ipv4_peer(family, server_port_be) {
+            return Ok(0);
         }
-    } else if pending.server_port_be != 0 {
+        event.server_port_be = server_port_be;
+        event.server_addr_v4 = unsafe { bpf_probe_read_user::<u32>(sockaddr.add(4).cast::<u32>()) }
+            .map_err(|err| err as i64)?;
+    } else if is_dns_ipv4_peer(AF_INET as u16, pending.server_port_be) {
         event.server_port_be = pending.server_port_be;
         event.server_addr_v4 = pending.server_addr_v4;
+    } else {
+        return Ok(0);
     }
 
     copy_dns_packet(pending.buffer_ptr as *const u8, retval as u64, event)?;

@@ -1,5 +1,6 @@
 fn main() -> anyhow::Result<()> {
     println!("cargo:rerun-if-changed=../e-navigator-ebpf-programs/src/main.rs");
+    println!("cargo:rerun-if-changed=../e-navigator-ebpf-programs/src/dns_peer.rs");
     println!("cargo:rerun-if-env-changed=E_NAVIGATOR_BPF_TOOLCHAIN");
 
     let target_os = std::env::var("CARGO_CFG_TARGET_OS")?;
