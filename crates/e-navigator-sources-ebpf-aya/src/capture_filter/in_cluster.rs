@@ -13,7 +13,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use e_navigator_core::KubernetesAttributionConfig;
 use e_navigator_core::capture_filter::{RawEndpointSlice, RawPod, RawService};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use super::{
     MAX_LABELS_PER_POD, MAX_POD_LIST_RESPONSE_BYTES, MAX_TOKEN_BYTES, PodWatchError, RawPodFetcher,
@@ -735,7 +735,7 @@ struct EndpointSliceList {
 #[derive(Debug, Deserialize)]
 struct EndpointSlice {
     metadata: EndpointSliceMetadata,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     endpoints: Vec<EndpointSliceEndpoint>,
 }
 
@@ -747,7 +747,7 @@ struct EndpointSliceMetadata {
 
 #[derive(Debug, Deserialize)]
 struct EndpointSliceEndpoint {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     addresses: Vec<String>,
     #[serde(default)]
     conditions: EndpointConditions,
@@ -756,6 +756,14 @@ struct EndpointSliceEndpoint {
 #[derive(Debug, Default, Deserialize)]
 struct EndpointConditions {
     ready: Option<bool>,
+}
+
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Debug, Deserialize)]
