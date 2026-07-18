@@ -53,7 +53,7 @@ const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 19;
 const CONNECTION_ROLE_CLIENT: u32 = 0;
 const CONNECTION_ROLE_SERVER: u32 = 1;
 const PROTOCOL_DATA_BYTES: usize = 256;
-const PROTOCOL_IOVEC_DATA_MASK: u64 = (PROTOCOL_DATA_BYTES - 1) as u64;
+const PROTOCOL_IOVEC_DATA_MAX: u32 = (PROTOCOL_DATA_BYTES - 1) as u32;
 const PROTOCOL_DIAG_WRITE_ENTER: u32 = 0;
 const PROTOCOL_DIAG_READ_ENTER: u32 = 1;
 const PROTOCOL_DIAG_READ_EXIT: u32 = 2;
@@ -3393,46 +3393,46 @@ fn emit_protocol_iovec_event(
         total_len = u32::MAX as u64;
     }
 
-    let capture_limit = protocol_capture_limit() as u64;
-    let first_bounded = if first_len > capture_limit {
+    let capture_limit = protocol_capture_limit();
+    let first_bounded = if first_len > u64::from(capture_limit) {
         capture_limit
     } else {
-        first_len
+        first_len as u32
     };
-    let first_captured = if first_bounded > PROTOCOL_IOVEC_DATA_MASK {
-        PROTOCOL_IOVEC_DATA_MASK
+    let first_captured = if first_bounded > PROTOCOL_IOVEC_DATA_MAX {
+        PROTOCOL_IOVEC_DATA_MAX
     } else {
         first_bounded
-    } & PROTOCOL_IOVEC_DATA_MASK;
-    let first_complete = first_captured == first_len;
+    };
+    let first_complete = u64::from(first_captured) == first_len;
     let second_remaining = capture_limit.saturating_sub(first_captured);
-    let second_bounded = if second_len > second_remaining {
+    let second_bounded = if second_len > u64::from(second_remaining) {
         second_remaining
     } else {
-        second_len
+        second_len as u32
     };
-    let second_captured = if first_complete && second_bounded > PROTOCOL_IOVEC_DATA_MASK {
-        PROTOCOL_IOVEC_DATA_MASK
+    let second_captured = if first_complete && second_bounded > PROTOCOL_IOVEC_DATA_MAX {
+        PROTOCOL_IOVEC_DATA_MAX
     } else if first_complete {
         second_bounded
     } else {
         0
-    } & PROTOCOL_IOVEC_DATA_MASK;
-    let second_complete = second_captured == second_len;
+    };
+    let second_complete = u64::from(second_captured) == second_len;
     let third_remaining = second_remaining.saturating_sub(second_captured);
-    let third_bounded = if third_len > third_remaining {
+    let third_bounded = if third_len > u64::from(third_remaining) {
         third_remaining
     } else {
-        third_len
+        third_len as u32
     };
     let third_captured =
-        if first_complete && second_complete && third_bounded > PROTOCOL_IOVEC_DATA_MASK {
-            PROTOCOL_IOVEC_DATA_MASK
+        if first_complete && second_complete && third_bounded > PROTOCOL_IOVEC_DATA_MAX {
+            PROTOCOL_IOVEC_DATA_MAX
         } else if first_complete && second_complete {
             third_bounded
         } else {
             0
-        } & PROTOCOL_IOVEC_DATA_MASK;
+        };
     let captured_total = first_captured
         .saturating_add(second_captured)
         .saturating_add(third_captured);
@@ -3441,7 +3441,7 @@ fn emit_protocol_iovec_event(
     } else {
         total_len as u32
     };
-    event.payload_captured_len = captured_total as u32;
+    event.payload_captured_len = captured_total;
     if captured_total == 0 {
         record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
         return Ok(0);
@@ -3464,7 +3464,7 @@ fn emit_protocol_iovec_event(
             return Ok(0);
         }
         event.payload_offset = 0;
-        event.payload_len = first_captured as u32;
+        event.payload_len = first_captured;
         record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
         PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
         emitted = true;
@@ -3479,8 +3479,8 @@ fn emit_protocol_iovec_event(
         if copied.is_err() {
             return Ok(0);
         }
-        event.payload_offset = first_captured as u32;
-        event.payload_len = second_captured as u32;
+        event.payload_offset = first_captured;
+        event.payload_len = second_captured;
         record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
         PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
         emitted = true;
@@ -3492,8 +3492,8 @@ fn emit_protocol_iovec_event(
         if copied.is_err() {
             return Ok(0);
         }
-        event.payload_offset = first_captured.saturating_add(second_captured) as u32;
-        event.payload_len = third_captured as u32;
+        event.payload_offset = first_captured.saturating_add(second_captured);
+        event.payload_len = third_captured;
         record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
         PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
         emitted = true;
