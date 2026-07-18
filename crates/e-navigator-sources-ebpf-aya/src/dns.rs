@@ -43,6 +43,7 @@ pub(crate) struct RawDnsEvent {
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedDnsPacket {
+    transaction_id: u16,
     query_name: String,
     query_type: DnsQueryType,
     is_response: bool,
@@ -63,6 +64,7 @@ fn parse_dns_packet_with_config(
         return None;
     }
     let flags = u16::from_be_bytes([packet[2], packet[3]]);
+    let transaction_id = u16::from_be_bytes([packet[0], packet[1]]);
     let qdcount = u16::from_be_bytes([packet[4], packet[5]]);
     if qdcount == 0 {
         return None;
@@ -74,6 +76,7 @@ fn parse_dns_packet_with_config(
     let query_type = u16::from_be_bytes([packet[next], packet[next + 1]]);
     let is_response = flags & 0x8000 != 0;
     Some(ParsedDnsPacket {
+        transaction_id,
         query_name,
         query_type: map_query_type(query_type),
         is_response,
@@ -157,6 +160,7 @@ fn raw_dns_to_signal_with_config(
                 process,
                 query_name: parsed.query_name,
                 query_type: parsed.query_type,
+                transaction_id: Some(parsed.transaction_id),
                 response_code: parsed.response_code.unwrap_or(DnsResponseCode::Other),
                 latency_nanos: (raw.latency_nanos != 0).then_some(raw.latency_nanos),
                 transport_protocol,
@@ -175,6 +179,7 @@ fn raw_dns_to_signal_with_config(
                 process,
                 query_name: parsed.query_name,
                 query_type: parsed.query_type,
+                transaction_id: Some(parsed.transaction_id),
                 transport_protocol,
                 server_address,
                 server_port,
@@ -790,6 +795,7 @@ mod tests {
 
         let parsed = parse_dns_packet(&packet).expect("query parses");
 
+        assert_eq!(parsed.transaction_id, 0x1234);
         assert_eq!(parsed.query_name, "api.example.com");
         assert_eq!(parsed.query_type, DnsQueryType::A);
         assert!(!parsed.is_response);
@@ -804,6 +810,7 @@ mod tests {
 
         let parsed = parse_dns_packet(&packet).expect("response parses");
 
+        assert_eq!(parsed.transaction_id, 0x1234);
         assert_eq!(parsed.query_name, "api.example.com");
         assert_eq!(parsed.query_type, DnsQueryType::Aaaa);
         assert!(parsed.is_response);
@@ -861,6 +868,7 @@ mod tests {
         let e_navigator_signals::SignalPayload::DnsQuery(event) = signal.payload else {
             panic!("expected dns query payload");
         };
+        assert_eq!(event.transaction_id, Some(0x1234));
         assert_eq!(event.query_name, "api.example.com");
         assert_eq!(event.query_type, DnsQueryType::Cname);
         assert_eq!(event.process.pid, 42);
