@@ -3199,6 +3199,7 @@ mod tests {
                 process: network_process(),
                 query_name: "api.example.com".to_string(),
                 query_type: DnsQueryType::A,
+                transaction_id: Some(0x1234),
                 transport_protocol: NetworkProtocol::Udp,
                 server_address: Some("10.96.0.10".to_string()),
                 server_port: Some(53),
@@ -3214,6 +3215,7 @@ mod tests {
                 process: network_process(),
                 query_name: "missing.example.com".to_string(),
                 query_type: DnsQueryType::Aaaa,
+                transaction_id: Some(0x1234),
                 response_code: DnsResponseCode::NxDomain,
                 latency_nanos: Some(15_000),
                 transport_protocol: NetworkProtocol::Udp,
@@ -3231,8 +3233,10 @@ mod tests {
         assert_eq!(query_json["kind"], "dns_query");
         assert_eq!(query_json["payload"]["query_name"], "api.example.com");
         assert_eq!(query_json["payload"]["query_type"], "a");
+        assert_eq!(query_json["payload"]["transaction_id"], 0x1234);
         assert_eq!(response_json["kind"], "dns_response");
         assert_eq!(response_json["payload"]["response_code"], "nx_domain");
+        assert_eq!(response_json["payload"]["transaction_id"], 0x1234);
         assert!(matches!(
             serde_json::from_value::<SignalEnvelope>(query_json)
                 .expect("query round trips")
@@ -3335,6 +3339,7 @@ mod tests {
                 process: process.clone(),
                 query_name: long_value.clone(),
                 query_type: DnsQueryType::A,
+                transaction_id: None,
                 transport_protocol: NetworkProtocol::Udp,
                 server_address: Some(long_value.clone()),
                 server_port: Some(53),
@@ -3350,6 +3355,7 @@ mod tests {
                 process,
                 query_name: long_value.clone(),
                 query_type: DnsQueryType::Aaaa,
+                transaction_id: None,
                 response_code: DnsResponseCode::NxDomain,
                 latency_nanos: Some(15_000),
                 transport_protocol: NetworkProtocol::Udp,
@@ -3453,6 +3459,7 @@ mod tests {
                 process: network_process(),
                 query_name: "api.example.com".to_string(),
                 query_type: DnsQueryType::A,
+                transaction_id: None,
                 transport_protocol: NetworkProtocol::Udp,
                 server_address: Some("10.96.0.10".to_string()),
                 server_port: Some(53),
@@ -3468,6 +3475,7 @@ mod tests {
                 process: network_process(),
                 query_name: "api.example.com".to_string(),
                 query_type: DnsQueryType::A,
+                transaction_id: None,
                 response_code: DnsResponseCode::NoError,
                 latency_nanos: Some(15_000),
                 transport_protocol: NetworkProtocol::Udp,

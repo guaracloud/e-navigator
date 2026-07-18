@@ -614,6 +614,7 @@ struct EventFingerprint {
     kind: &'static str,
     query_name: String,
     query_type: e_navigator_signals::DnsQueryType,
+    transaction_id: Option<u16>,
     response_code: Option<DnsResponseCode>,
     timestamp: u64,
 }
@@ -626,6 +627,7 @@ impl EventFingerprint {
                 query_name: normalize_domain(&event.query_name)
                     .unwrap_or_else(|| event.query_name.clone()),
                 query_type: event.query_type,
+                transaction_id: event.transaction_id,
                 response_code: None,
                 timestamp: event.timestamp_unix_nanos,
             }),
@@ -634,6 +636,7 @@ impl EventFingerprint {
                 query_name: normalize_domain(&event.query_name)
                     .unwrap_or_else(|| event.query_name.clone()),
                 query_type: event.query_type,
+                transaction_id: event.transaction_id,
                 response_code: Some(event.response_code),
                 timestamp: event.timestamp_unix_nanos,
             }),
@@ -895,6 +898,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transaction_id_distinguishes_dns_events_with_the_same_timestamp() {
+        let generator = DnsMetricsGenerator::default();
+        let mut first = dns_query_signal("cached.example.com", DnsQueryType::A, 115);
+        let mut second = first.clone();
+        let SignalPayload::DnsQuery(first_event) = &mut first.payload else {
+            panic!("expected DNS query event");
+        };
+        first_event.transaction_id = Some(1);
+        let SignalPayload::DnsQuery(second_event) = &mut second.payload else {
+            panic!("expected DNS query event");
+        };
+        second_event.transaction_id = Some(2);
+
+        let first_outputs = observe(&generator, &first).await;
+        let second_outputs = observe(&generator, &second).await;
+
+        assert_eq!(dns_counter(&first_outputs, "dns.query.count").value, 1);
+        assert_eq!(dns_counter(&second_outputs, "dns.query.count").value, 2);
+    }
+
+    #[tokio::test]
     async fn bounds_counter_state_across_workload_container_and_server_dimensions() {
         let generator = DnsMetricsGenerator::with_limits(16, 1, 16, 16);
         let first = dns_query_with_dimensions(
@@ -1064,6 +1088,7 @@ mod tests {
             kind: "query",
             query_name: query_name.to_string(),
             query_type: DnsQueryType::A,
+            transaction_id: None,
             response_code: None,
             timestamp,
         }
@@ -1081,6 +1106,7 @@ mod tests {
                 process: network_process(),
                 query_name: query_name.to_string(),
                 query_type,
+                transaction_id: None,
                 transport_protocol: NetworkProtocol::Udp,
                 server_address: Some("10.96.0.10".to_string()),
                 server_port: Some(53),
@@ -1103,6 +1129,7 @@ mod tests {
                 process: network_process(),
                 query_name: query_name.to_string(),
                 query_type: DnsQueryType::A,
+                transaction_id: None,
                 response_code,
                 latency_nanos: Some(15_000),
                 transport_protocol: NetworkProtocol::Udp,

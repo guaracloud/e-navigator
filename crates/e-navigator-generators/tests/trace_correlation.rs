@@ -509,6 +509,7 @@ fn dns_response_signal_at(
             process: network_process(),
             query_name: query_name.to_string(),
             query_type: DnsQueryType::A,
+            transaction_id: None,
             response_code,
             latency_nanos: Some(15_000),
             transport_protocol: NetworkProtocol::Udp,

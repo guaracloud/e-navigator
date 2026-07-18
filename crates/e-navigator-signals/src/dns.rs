@@ -17,6 +17,8 @@ pub struct DnsQueryEvent {
     pub process: NetworkProcessIdentity,
     pub query_name: String,
     pub query_type: DnsQueryType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_id: Option<u16>,
     pub transport_protocol: NetworkProtocol,
     pub server_address: Option<String>,
     pub server_port: Option<u16>,
@@ -30,6 +32,8 @@ pub struct DnsResponseEvent {
     pub process: NetworkProcessIdentity,
     pub query_name: String,
     pub query_type: DnsQueryType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_id: Option<u16>,
     pub response_code: DnsResponseCode,
     pub latency_nanos: Option<u64>,
     pub transport_protocol: NetworkProtocol,

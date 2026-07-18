@@ -1188,6 +1188,7 @@ async fn dns_metric_uses_processor_enriched_attribution() {
             },
             query_name: "api.example.com".to_string(),
             query_type: DnsQueryType::A,
+            transaction_id: None,
             transport_protocol: NetworkProtocol::Udp,
             server_address: Some("10.96.0.10".to_string()),
             server_port: Some(53),
