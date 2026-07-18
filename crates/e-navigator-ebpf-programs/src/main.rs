@@ -11,7 +11,8 @@ use aya_ebpf::{
         bpf_probe_read_user_str_bytes,
         generated::{
             bpf_get_current_cgroup_id, bpf_get_current_task_btf, bpf_get_ns_current_pid_tgid,
-            bpf_probe_read_kernel, bpf_task_pt_regs,
+            bpf_probe_read_kernel, bpf_probe_read_user as bpf_probe_read_user_raw,
+            bpf_task_pt_regs,
         },
     },
     macros::{map, perf_event, tracepoint, uprobe, uretprobe},
@@ -3456,44 +3457,56 @@ fn emit_protocol_iovec_event(
 
     let mut emitted = false;
     if first_captured > 0 {
+        event.payload_offset = 0;
+        event.payload_len = first_captured;
+        let copy_len = unsafe { core::ptr::addr_of!(event.payload_len).read_volatile() };
         let copied = unsafe {
-            bpf_probe_read_user_buf(first_buffer, &mut event.payload[..first_captured as usize])
+            bpf_probe_read_user_raw(
+                event.payload.as_mut_ptr().cast(),
+                copy_len,
+                first_buffer.cast(),
+            )
         };
-        if copied.is_err() {
+        if copied != 0 {
             record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
             return Ok(0);
         }
-        event.payload_offset = 0;
-        event.payload_len = first_captured;
         record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
         PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
         emitted = true;
     }
     if second_captured > 0 {
-        let copied = unsafe {
-            bpf_probe_read_user_buf(
-                second_buffer,
-                &mut event.payload[..second_captured as usize],
-            )
-        };
-        if copied.is_err() {
-            return Ok(0);
-        }
         event.payload_offset = first_captured;
         event.payload_len = second_captured;
+        let copy_len = unsafe { core::ptr::addr_of!(event.payload_len).read_volatile() };
+        let copied = unsafe {
+            bpf_probe_read_user_raw(
+                event.payload.as_mut_ptr().cast(),
+                copy_len,
+                second_buffer.cast(),
+            )
+        };
+        if copied != 0 {
+            return Ok(0);
+        }
         record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
         PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
         emitted = true;
     }
     if third_captured > 0 {
-        let copied = unsafe {
-            bpf_probe_read_user_buf(third_buffer, &mut event.payload[..third_captured as usize])
-        };
-        if copied.is_err() {
-            return Ok(0);
-        }
         event.payload_offset = first_captured.saturating_add(second_captured);
         event.payload_len = third_captured;
+        let copy_len = unsafe { core::ptr::addr_of!(event.payload_len).read_volatile() };
+        let copied = unsafe {
+            bpf_probe_read_user_raw(
+                event.payload.as_mut_ptr().cast(),
+                copy_len,
+                third_buffer.cast(),
+            )
+        };
+        if copied != 0 {
+            return Ok(0);
+        }
         record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
         PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
         emitted = true;
