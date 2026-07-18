@@ -3348,6 +3348,7 @@ fn emit_protocol_iovec_event(
     }
     event.fd = fd;
     event.direction = NETWORK_IO_WRITE;
+    event.role = connection.role;
     event.family = connection.family;
     event.remote_port_be = connection.remote_port_be;
     event.local_port_be = connection.local_port_be;
@@ -3358,10 +3359,14 @@ fn emit_protocol_iovec_event(
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
 
-    // Only the first iovec is copied; the remaining iovec bytes are
-    // accounted as an uncaptured tail gap through payload_total_len so the
-    // userspace stream decoder never splices non-adjacent bytes.
+    // Capture a bounded contiguous prefix across the first iovecs. HTTP/2
+    // implementations commonly split a single frame across several small
+    // iovecs; treating every byte after iovec zero as a gap prevents HPACK
+    // and gRPC request headers from ever reaching userspace intact.
     let mut total_len: u64 = 0;
+    let mut captured_total: u64 = 0;
+    let capture_limit = protocol_capture_limit() as u64;
+    let mut capture_open = true;
     let mut index: usize = 0;
     while index < PROTOCOL_TOTAL_LEN_IOVECS {
         if index as u64 >= iov_len {
@@ -3371,22 +3376,82 @@ fn emit_protocol_iovec_event(
         let len = unsafe { bpf_probe_read_user::<u64>(entry.add(8).cast::<u64>()) }
             .map_err(|err| err as i64)?;
         total_len = total_len.saturating_add(len);
+        if capture_open && captured_total < capture_limit {
+            let remaining = capture_limit - captured_total;
+            let bounded = if len > remaining { remaining } else { len };
+            let contiguous = if bounded > PROTOCOL_DATA_BYTES as u64 {
+                PROTOCOL_DATA_BYTES as u64
+            } else {
+                bounded
+            };
+            captured_total = captured_total.saturating_add(contiguous);
+            if contiguous < len {
+                capture_open = false;
+            }
+        }
         index += 1;
     }
-    let first_buffer = unsafe { bpf_probe_read_user::<*const u8>(iov.cast::<*const u8>()) }
-        .map_err(|err| err as i64)?;
-    let first_len = unsafe { bpf_probe_read_user::<u64>(iov.add(8).cast::<u64>()) }
-        .map_err(|err| err as i64)?;
+    // We cannot inspect an unbounded iovec array in eBPF. Preserve an
+    // unknown remainder as an explicit gap instead of claiming a complete
+    // syscall capture.
+    if iov_len > PROTOCOL_TOTAL_LEN_IOVECS as u64 {
+        total_len = u32::MAX as u64;
+    }
     event.payload_total_len = if total_len > u32::MAX as u64 {
         u32::MAX
     } else {
         total_len as u32
     };
-    if first_buffer.is_null() || first_len == 0 {
+    event.payload_captured_len = captured_total as u32;
+    if captured_total == 0 {
         record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
         return Ok(0);
     }
-    output_protocol_payload_segments(ctx, event, first_buffer, first_len);
+
+    let mut emitted = false;
+    let mut offset: u64 = 0;
+    index = 0;
+    while index < PROTOCOL_TOTAL_LEN_IOVECS {
+        if index as u64 >= iov_len || offset >= captured_total {
+            break;
+        }
+        let entry = unsafe { iov.add(index * 16) };
+        let buffer = unsafe { bpf_probe_read_user::<*const u8>(entry.cast::<*const u8>()) }
+            .map_err(|err| err as i64)?;
+        let len = unsafe { bpf_probe_read_user::<u64>(entry.add(8).cast::<u64>()) }
+            .map_err(|err| err as i64)?;
+        if len == 0 {
+            index += 1;
+            continue;
+        }
+        let remaining = captured_total - offset;
+        let bounded = if len > remaining { remaining } else { len };
+        let chunk_len = if bounded > PROTOCOL_DATA_BYTES as u64 {
+            PROTOCOL_DATA_BYTES
+        } else {
+            bounded as usize
+        };
+        if buffer.is_null() || chunk_len == 0 {
+            break;
+        }
+        let copied = unsafe { bpf_probe_read_user_buf(buffer, &mut event.payload[..chunk_len]) };
+        if copied.is_err() {
+            break;
+        }
+        event.payload_offset = offset as u32;
+        event.payload_len = chunk_len as u32;
+        record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
+        PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
+        emitted = true;
+        offset = offset.saturating_add(chunk_len as u64);
+        if (chunk_len as u64) < len {
+            break;
+        }
+        index += 1;
+    }
+    if !emitted {
+        record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
+    }
     Ok(0)
 }
 
