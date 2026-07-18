@@ -296,21 +296,34 @@ impl HttpRequestReassembler {
         observed_unix_nanos: u64,
         protocol_config: &ProtocolExtractionConfig,
     ) -> HttpReassemblyOutcome {
+        let key = HttpStreamKey::from_raw(raw);
+        let outcome = self.push_inner(raw, captured, observed_unix_nanos, protocol_config, key);
+
+        // A fully consumed request does not need connection state. Removing it
+        // immediately keeps short-lived connections from filling the bounded
+        // map while still retaining partial headers and request bodies.
+        if self
+            .streams
+            .get(&key)
+            .is_some_and(|state| state.buffer.is_empty() && state.body_bytes_remaining == 0)
+        {
+            self.streams.remove(&key);
+        }
+
+        outcome
+    }
+
+    fn push_inner(
+        &mut self,
+        raw: &RawHttpRequestEvent,
+        captured: &[u8],
+        observed_unix_nanos: u64,
+        protocol_config: &ProtocolExtractionConfig,
+        key: HttpStreamKey,
+    ) -> HttpReassemblyOutcome {
         let mut outcome = HttpReassemblyOutcome::default();
         self.reap_stale(observed_unix_nanos);
 
-        let key = HttpStreamKey {
-            pid: raw.pid,
-            fd: raw.fd,
-            role: raw.role,
-            family: raw.family,
-            remote_port_be: raw.remote_port_be,
-            local_port_be: raw.local_port_be,
-            remote_addr_v4: raw.remote_addr_v4,
-            local_addr_v4: raw.local_addr_v4,
-            remote_addr_v6: raw.remote_addr_v6,
-            local_addr_v6: raw.local_addr_v6,
-        };
         if !self.streams.contains_key(&key)
             && self.streams.len() >= self.max_streams
             && let Some(oldest) = self
@@ -473,6 +486,24 @@ impl HttpRequestReassembler {
     #[cfg(test)]
     fn stream_count(&self) -> usize {
         self.streams.len()
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl HttpStreamKey {
+    fn from_raw(raw: &RawHttpRequestEvent) -> Self {
+        Self {
+            pid: raw.pid,
+            fd: raw.fd,
+            role: raw.role,
+            family: raw.family,
+            remote_port_be: raw.remote_port_be,
+            local_port_be: raw.local_port_be,
+            remote_addr_v4: raw.remote_addr_v4,
+            local_addr_v4: raw.local_addr_v4,
+            remote_addr_v6: raw.remote_addr_v6,
+            local_addr_v6: raw.local_addr_v6,
+        }
     }
 }
 
@@ -2070,6 +2101,34 @@ mod tests {
         assert_eq!(reused_outcome.requests.len(), 1);
         assert!(reused_outcome.requests[0].starts_with(b"GET /reused "));
         assert!(reused_outcome.errors.is_empty());
+    }
+
+    #[test]
+    fn reassembler_releases_completed_short_lived_connections() {
+        let config = ProtocolExtractionConfig::default();
+        let mut reassembler = HttpRequestReassembler::new(2, config.max_header_bytes);
+
+        for connection in 0..16_u16 {
+            let mut raw = raw_http_chunk(
+                77,
+                4,
+                RAW_HTTP_ROLE_SERVER,
+                b"GET /complete HTTP/1.1\r\nHost: svc.local\r\n\r\n",
+            );
+            raw.remote_port_be = (40_000 + connection).to_be();
+
+            let outcome = reassembler.push(
+                &raw,
+                &compact_raw_http_request(&raw).expect("complete request compacts"),
+                u64::from(connection) + 1,
+                &config,
+            );
+
+            assert_eq!(outcome.requests.len(), 1);
+            assert!(outcome.errors.is_empty());
+            assert_eq!(outcome.evicted_streams, 0);
+            assert_eq!(reassembler.stream_count(), 0);
+        }
     }
 
     #[test]
