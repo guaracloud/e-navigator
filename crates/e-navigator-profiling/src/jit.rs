@@ -98,8 +98,8 @@ fn parse_line(line: &str) -> Option<JitSymbol> {
     let rest = rest.trim_start();
     let size_end = rest.find(char::is_whitespace)?;
     let (size, name) = rest.split_at(size_end);
-    let start = u64::from_str_radix(address, 16).ok()?;
-    let size = u64::from_str_radix(size, 16).ok()?;
+    let start = parse_hex(address)?;
+    let size = parse_hex(size)?;
     let name = name.trim();
     if size == 0
         || name.is_empty()
@@ -116,6 +116,16 @@ fn parse_line(line: &str) -> Option<JitSymbol> {
     })
 }
 
+fn parse_hex(value: &str) -> Option<u64> {
+    let value = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .unwrap_or(value);
+    (!value.is_empty())
+        .then(|| u64::from_str_radix(value, 16).ok())
+        .flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,7 +134,7 @@ mod tests {
     fn parses_and_resolves_node_and_jvm_perf_map_rows() {
         let map = JitSymbolMap::parse(
             "7f0100001000 30 LazyCompile:*busy /app/server.js:12\n\
-             7f0100002000 40 java::com.example.Worker::run\n",
+             0x7f0100002000 0x40 java::com.example.Worker::run\n",
         );
 
         assert_eq!(map.len(), 2);
