@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "run_id": "019f71f4",
+  "decision": "no-go",
+  "proof_level": "local-and-partial-homelab",
+  "started_at_utc": "2026-07-18T00:19:28Z",
+  "evidence_cutoff_utc": "2026-07-18T02:44:03Z",
+  "ended_at_utc": "2026-07-18T02:51:11Z",
+  "repository": {
+    "branch": "codex/standalone-observability-agent",
+    "origin_main": "39bf46ac4d0ac3be9d25b1a373d74b70bf4c8da0",
+    "runtime_source_commit": "4c047d2ddc71f94dd73511ff1f73fb575eebb748",
+    "commits_ahead_of_origin_main": 39,
+    "pushed": false,
+    "released": false
+  },
+  "cluster": {
+    "context": "homelab",
+    "server": "https://192.168.50.132:6443",
+    "kubernetes": "v1.30.4+k3s1",
+    "nodes": ["homelab-01", "homelab-02"],
+    "os": "NixOS 24.05",
+    "architecture": "linux/amd64",
+    "kernel": "6.6.68",
+    "runtime": "containerd 1.7.20-k3s1"
+  },
+  "deployment": {
+    "namespace": "e-nav-standalone-019f71f4",
+    "helm_release": "e-nav-019f71f4",
+    "final_helm_revision": 13,
+    "image_tag": "e-navigator:standalone-019f71f4-r10-amd64",
+    "image_manifest_list_sha256": "f9cbbae2bf66e3c63261683d18d5d5512aece65377a2e48972f3cd441e2c7f7f",
+    "image_manifest_sha256": "52b3a71e3b6b8485be3ad3dd18da180b7fd8b4860699149af8e2f2ebc721a788",
+    "image_config_sha256": "2cc9e1cba61e1aa5348f69953e968f7f7936dc1f11bc59daac95607a33cdb897",
+    "runtime_config_sha256": "4b5b0c34e888a0faf0edbbfe0c63ec7db88f5cf3598484a57f772f063910b1a1",
+    "fixture_manifest_sha256": "34d2c0b34b1db2eea29377c918b668a5a23db41c4778b55b9e1bc1c0735e1149"
+  },
+  "backends": {
+    "metrics": "E-Navigator OTLP HTTP to existing Alloy gateway",
+    "traces": "E-Navigator OTLP HTTP to existing Alloy gateway to Tempo 2.9.0",
+    "profiles": "direct E-Navigator OTLP Profiles to disposable Pyroscope 1.20.3"
+  },
+  "results": {
+    "full_quality_passed": true,
+    "http_r9_node1_decoded": 17405,
+    "http_r9_node2_decoded": 11430,
+    "http_r9_invalid": 0,
+    "http_r10_node1_decoded": 8663,
+    "http_r10_node2_decoded": 5693,
+    "http_r10_invalid": 0,
+    "http_send_failures": 0,
+    "http_lost_perf_events": 0,
+    "alloy_duplicate_timestamp_matches": 0,
+    "alloy_out_of_order_matches": 0,
+    "pyroscope_direct_query": true,
+    "excluded_profile_services_observed": false,
+    "post_fix_tempo_query": false,
+    "matched_abc_trials": false,
+    "continuous_24h_soak": false
+  },
+  "blockers": {
+    "k3s_repeated_leader_loss_and_restarts": true,
+    "etcd_multisecond_reads": true,
+    "tempo_oom_crash_loop": true,
+    "tempo_restart_count_at_capture": 8,
+    "tempo_ready_at_capture": false
+  },
+  "cleanup": {
+    "status": "complete-for-owned-runtime-state",
+    "helm_release_removed": true,
+    "run_namespaces_removed": true,
+    "run_rbac_removed": true,
+    "node_image_references_removed": true,
+    "local_image_tags_removed": true,
+    "port_forwards_stopped": true,
+    "ignored_resumable_inputs_retained": true,
+    "unrelated_resources_modified": false
+  },
+  "artifacts": ["manifest.json", "report.md", "SHA256SUMS"]
+}
