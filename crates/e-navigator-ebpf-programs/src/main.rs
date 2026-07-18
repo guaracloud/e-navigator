@@ -380,6 +380,13 @@ pub struct PendingProtocolRead {
     pub buffer_ptr: u64,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ProtocolIovecState {
+    pub iov_ptr: u64,
+    pub iov_len: u64,
+}
+
 /// Keys the userspace TLS object pointer (`SSL*` or GnuTLS session) to the
 /// process so the same pointer value in two processes never collides.
 #[repr(C)]
@@ -551,6 +558,15 @@ static PROTOCOL_DATA_EVENTS: PerfEventArray<RawProtocolDataEvent> = PerfEventArr
 #[map]
 static PROTOCOL_DATA_EVENT_SCRATCH: PerCpuArray<RawProtocolDataEvent> =
     PerCpuArray::with_max_entries(1, 0);
+
+#[map]
+static PROTOCOL_IOVEC_STATE: PerCpuArray<ProtocolIovecState> = PerCpuArray::with_max_entries(1, 0);
+
+/// Tail-call target at index 0 emits the iovec segments after the entry
+/// program has established their stable total. Keeping the two bounded
+/// passes in separate programs avoids a verifier state cross-product.
+#[map]
+static PROTOCOL_IOVEC_PROGS: ProgramArray = ProgramArray::with_max_entries(1, 0);
 
 #[map]
 static PROTOCOL_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
@@ -982,6 +998,14 @@ pub fn tracepoint_protocol_writev_enter(ctx: TracePointContext) -> u32 {
 pub fn tracepoint_protocol_sendmsg_enter(ctx: TracePointContext) -> u32 {
     record_protocol_diagnostic(PROTOCOL_DIAG_SENDMSG_ENTER);
     match try_tracepoint_protocol_sendmsg_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_iovec_emit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_protocol_iovec_emit(&ctx) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
@@ -3407,12 +3431,34 @@ fn emit_protocol_iovec_event(
         record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
         return Ok(0);
     }
+
+    let state_ptr = PROTOCOL_IOVEC_STATE.get_ptr_mut(0).ok_or(1_i64)?;
+    let state = unsafe { &mut *state_ptr };
+    state.iov_ptr = iov as u64;
+    state.iov_len = iov_len;
+    unsafe {
+        PROTOCOL_IOVEC_PROGS.tail_call(ctx, 0);
+    }
+    record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
+    Ok(0)
+}
+
+#[inline(always)]
+fn try_tracepoint_protocol_iovec_emit(ctx: &TracePointContext) -> Result<u32, i64> {
+    let state_ptr = PROTOCOL_IOVEC_STATE.get_ptr(0).ok_or(1_i64)?;
+    let state = unsafe { &*state_ptr };
+    let event_ptr = PROTOCOL_DATA_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+    let event = unsafe { &mut *event_ptr };
+    let iov = state.iov_ptr as *const u8;
+    let iov_len = state.iov_len;
+    let captured_total = event.payload_captured_len;
+
     // Emit one segment per complete iovec prefix. All segments share the
     // syscall timestamp and totals, so userspace can join only adjacent
     // offsets and turn any missing event or bounded tail into a gap.
     let mut emitted = false;
     let mut offset = 0_u32;
-    slot = 0;
+    let mut slot = 0_u32;
     while slot < PROTOCOL_MAX_IOVECS {
         if u64::from(slot) >= iov_len || offset >= captured_total {
             break;
