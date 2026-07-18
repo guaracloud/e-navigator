@@ -3509,6 +3509,7 @@ fn try_tracepoint_protocol_read_exit(ctx: &TracePointContext) -> Result<u32, i64
     )
 }
 
+#[inline(always)]
 fn protocol_capture_connection(fd: i32) -> Option<PendingConnect> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let key = ConnectionKey {
