@@ -55,6 +55,11 @@ const PERF_BUFFER_PAGE_COUNT: usize = 64;
 const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
 #[cfg(any(target_os = "linux", test))]
 const RAW_SAMPLE_CHANNEL_CAPACITY: usize = 1024;
+/// Bounds the cross-CPU merge queue. Reaching the bound flushes the oldest
+/// sample instead of dropping it; under normal operation per-CPU poll
+/// watermarks keep the queue near one poll interval of traffic.
+#[cfg(any(target_os = "linux", test))]
+const PROTOCOL_REORDER_MAX_PENDING_SAMPLES: usize = RAW_SAMPLE_CHANNEL_CAPACITY * 8;
 #[cfg(any(target_os = "linux", test))]
 const PROTOCOL_DIAGNOSTIC_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 #[cfg(any(target_os = "linux", test))]
@@ -110,6 +115,134 @@ pub(crate) struct RawProtocolDataEvent {
     pub payload_captured_len: u32,
     pub command: [u8; 16],
     pub payload: [u8; RAW_PROTOCOL_DATA_BYTES],
+}
+
+/// Message sent by each per-CPU perf reader to the single stream decoder.
+/// A poll watermark means that the reader has drained every event that was
+/// visible before `timestamp_monotonic_nanos`.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Copy)]
+// Boxing the sample variant would restore one heap allocation per captured
+// event, defeating InlineSample's allocation-free reader handoff.
+#[allow(clippy::large_enum_variant)]
+enum ProtocolPerfMessage {
+    Sample(crate::perf_sample::InlineSample),
+    Watermark {
+        reader_index: usize,
+        timestamp_monotonic_nanos: u64,
+    },
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Copy)]
+struct PendingProtocolSample {
+    timestamp_monotonic_nanos: u64,
+    sequence: u64,
+    sample: crate::perf_sample::InlineSample,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl PartialEq for PendingProtocolSample {
+    fn eq(&self, other: &Self) -> bool {
+        (self.timestamp_monotonic_nanos, self.sequence)
+            == (other.timestamp_monotonic_nanos, other.sequence)
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl Eq for PendingProtocolSample {}
+
+#[cfg(any(target_os = "linux", test))]
+impl PartialOrd for PendingProtocolSample {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl Ord for PendingProtocolSample {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        // BinaryHeap is a max-heap. Reverse both keys so pop() returns the
+        // earliest kernel timestamp while preserving same-syscall segment
+        // arrival order for equal timestamps.
+        other
+            .timestamp_monotonic_nanos
+            .cmp(&self.timestamp_monotonic_nanos)
+            .then_with(|| other.sequence.cmp(&self.sequence))
+    }
+}
+
+/// Bounded k-way merge for samples read from independent per-CPU perf rings.
+#[cfg(any(target_os = "linux", test))]
+struct ProtocolSampleOrder {
+    reader_watermarks: Vec<Option<u64>>,
+    pending: std::collections::BinaryHeap<PendingProtocolSample>,
+    next_sequence: u64,
+    max_pending_samples: usize,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl ProtocolSampleOrder {
+    fn new(reader_count: usize, max_pending_samples: usize) -> Self {
+        Self {
+            reader_watermarks: vec![None; reader_count],
+            pending: std::collections::BinaryHeap::new(),
+            next_sequence: 0,
+            max_pending_samples: max_pending_samples.max(1),
+        }
+    }
+
+    /// Queues a sample and returns the oldest one only when the hard bound
+    /// requires an early flush. No captured sample is discarded.
+    fn push_sample(
+        &mut self,
+        sample: crate::perf_sample::InlineSample,
+    ) -> Option<crate::perf_sample::InlineSample> {
+        let timestamp_monotonic_nanos = protocol_sample_timestamp(&sample).unwrap_or(0);
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.wrapping_add(1);
+        self.pending.push(PendingProtocolSample {
+            timestamp_monotonic_nanos,
+            sequence,
+            sample,
+        });
+        (self.pending.len() > self.max_pending_samples)
+            .then(|| self.pending.pop().map(|pending| pending.sample))
+            .flatten()
+    }
+
+    fn update_watermark(&mut self, reader_index: usize, timestamp_monotonic_nanos: u64) {
+        if let Some(watermark) = self.reader_watermarks.get_mut(reader_index) {
+            *watermark = Some(watermark.map_or(timestamp_monotonic_nanos, |current| {
+                current.max(timestamp_monotonic_nanos)
+            }));
+        }
+    }
+
+    fn pop_ready(&mut self) -> Option<crate::perf_sample::InlineSample> {
+        // `None` sorts before `Some`, so no sample is ready until every
+        // reader has completed at least one poll.
+        let global_watermark = self.reader_watermarks.iter().copied().min()??;
+        self.pending
+            .peek()
+            .is_some_and(|pending| pending.timestamp_monotonic_nanos <= global_watermark)
+            .then(|| self.pending.pop().map(|pending| pending.sample))
+            .flatten()
+    }
+
+    fn pop_oldest(&mut self) -> Option<crate::perf_sample::InlineSample> {
+        self.pending.pop().map(|pending| pending.sample)
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn protocol_sample_timestamp(sample: &crate::perf_sample::InlineSample) -> Option<u64> {
+    let bytes = sample.as_bytes();
+    (bytes.len() >= core::mem::size_of::<RawProtocolDataEvent>()).then(|| {
+        let raw =
+            unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawProtocolDataEvent>()) };
+        raw.timestamp_unix_nanos
+    })
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -1786,6 +1919,21 @@ mod platform {
         }
     }
 
+    fn monotonic_nanos() -> u64 {
+        let mut timestamp = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut timestamp) } != 0 {
+            // A failed clock read must not stall the merge queue forever.
+            return u64::MAX;
+        }
+        u64::try_from(timestamp.tv_sec)
+            .unwrap_or(0)
+            .saturating_mul(1_000_000_000)
+            .saturating_add(u64::try_from(timestamp.tv_nsec).unwrap_or(0))
+    }
+
     #[async_trait]
     impl Source<SignalEnvelope> for AyaProtocolSource {
         fn metadata(&self) -> ModuleMetadata {
@@ -1980,11 +2128,12 @@ mod platform {
 
             // Reassembly is stateful per connection while perf samples arrive
             // per CPU, so all readers feed a single decoder task.
-            let (sample_tx, mut sample_rx) =
-                mpsc::channel::<InlineSample>(super::RAW_SAMPLE_CHANNEL_CAPACITY);
-
             let cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
-            for cpu_id in cpus {
+            let reader_count = cpus.len();
+            let (sample_tx, mut sample_rx) =
+                mpsc::channel::<super::ProtocolPerfMessage>(super::RAW_SAMPLE_CHANNEL_CAPACITY);
+
+            for (reader_index, cpu_id) in cpus.into_iter().enumerate() {
                 let mut buffer = perf_array
                     .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
                     .map_err(module_error)?;
@@ -1996,6 +2145,10 @@ mod platform {
                     let mut closed = false;
 
                     while !reader_shutdown.is_stopped() {
+                        // Take the watermark before draining. Every event
+                        // older than this point was already available to the
+                        // ring consumer and is sent before the watermark.
+                        let poll_started_monotonic_nanos = monotonic_nanos();
                         buffer.for_each(|event| {
                             if closed {
                                 return;
@@ -2011,7 +2164,10 @@ mod platform {
                                         telemetry.record_lost_perf_events(1);
                                         return;
                                     };
-                                    if sample_tx.blocking_send(sample).is_err() {
+                                    if sample_tx
+                                        .blocking_send(super::ProtocolPerfMessage::Sample(sample))
+                                        .is_err()
+                                    {
                                         closed = true;
                                     }
                                 }
@@ -2023,6 +2179,15 @@ mod platform {
                         });
 
                         if closed {
+                            return;
+                        }
+                        if sample_tx
+                            .blocking_send(super::ProtocolPerfMessage::Watermark {
+                                reader_index,
+                                timestamp_monotonic_nanos: poll_started_monotonic_nanos,
+                            })
+                            .is_err()
+                        {
                             return;
                         }
 
@@ -2047,10 +2212,14 @@ mod platform {
                     &decoder_config,
                 );
                 let mut signals = Vec::new();
+                let mut order = super::ProtocolSampleOrder::new(
+                    reader_count,
+                    super::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
+                );
 
-                while let Some(sample) = sample_rx.blocking_recv() {
+                let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
-                        return;
+                        return false;
                     }
 
                     signals.clear();
@@ -2067,7 +2236,7 @@ mod platform {
                                 decoder_telemetry.record_diagnostic_decision(diagnostic_decision);
                                 if tx.blocking_send(signal).is_err() {
                                     decoder_telemetry.record_send_failure();
-                                    return;
+                                    return false;
                                 }
                                 decoder_telemetry.record_sent_signal();
                             }
@@ -2080,6 +2249,39 @@ mod platform {
                         }
                     }
                     decoder_telemetry.maybe_log_summary();
+                    true
+                };
+
+                while let Some(message) = sample_rx.blocking_recv() {
+                    let forced = match message {
+                        super::ProtocolPerfMessage::Sample(sample) => order.push_sample(sample),
+                        super::ProtocolPerfMessage::Watermark {
+                            reader_index,
+                            timestamp_monotonic_nanos,
+                        } => {
+                            order.update_watermark(reader_index, timestamp_monotonic_nanos);
+                            None
+                        }
+                    };
+                    if let Some(sample) = forced {
+                        warn!(
+                            max_pending_samples = super::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
+                            "protocol perf reorder queue reached its bound; flushing oldest sample"
+                        );
+                        if !decode_sample(sample) {
+                            return;
+                        }
+                    }
+                    while let Some(sample) = order.pop_ready() {
+                        if !decode_sample(sample) {
+                            return;
+                        }
+                    }
+                }
+                while let Some(sample) = order.pop_oldest() {
+                    if !decode_sample(sample) {
+                        return;
+                    }
                 }
             }));
 
@@ -2472,6 +2674,7 @@ pub(crate) use platform::prepopulate_existing_listeners;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::perf_sample::InlineSample;
     use e_navigator_signals::SignalPayload;
 
     fn fixed_command(name: &str) -> [u8; 16] {
@@ -2517,6 +2720,10 @@ mod tests {
         }
     }
 
+    fn inline_sample(event: &RawProtocolDataEvent) -> InlineSample {
+        InlineSample::from_perf(raw_as_bytes(event), &[]).expect("raw protocol event fits inline")
+    }
+
     fn registry() -> ProtocolStreamRegistry {
         ProtocolStreamRegistry::new(
             Some("test-host".to_string()),
@@ -2548,6 +2755,52 @@ mod tests {
         let mut event = raw_event(remote_port, payload, payload.len() as u32);
         event.direction = RAW_PROTOCOL_DIRECTION_READ;
         event
+    }
+
+    #[test]
+    fn protocol_perf_watermarks_merge_cross_cpu_samples_by_kernel_time() {
+        let mut later = raw_event(6379, b"later", 5);
+        later.timestamp_unix_nanos = 300;
+        let mut earlier = raw_event(6379, b"earlier", 7);
+        earlier.timestamp_unix_nanos = 100;
+        let mut order = ProtocolSampleOrder::new(2, 8);
+
+        // Reader 1 delivers first, but reader 0 has not completed its poll,
+        // so the later event must remain buffered.
+        assert!(order.push_sample(inline_sample(&later)).is_none());
+        order.update_watermark(1, 400);
+        assert!(order.pop_ready().is_none());
+
+        assert!(order.push_sample(inline_sample(&earlier)).is_none());
+        order.update_watermark(0, 400);
+        assert_eq!(
+            protocol_sample_timestamp(&order.pop_ready().expect("earlier sample")),
+            Some(100)
+        );
+        assert_eq!(
+            protocol_sample_timestamp(&order.pop_ready().expect("later sample")),
+            Some(300)
+        );
+        assert!(order.pop_ready().is_none());
+    }
+
+    #[test]
+    fn protocol_perf_merge_bound_flushes_without_dropping() {
+        let mut later = raw_event(6379, b"later", 5);
+        later.timestamp_unix_nanos = 300;
+        let mut earlier = raw_event(6379, b"earlier", 7);
+        earlier.timestamp_unix_nanos = 100;
+        let mut order = ProtocolSampleOrder::new(2, 1);
+
+        assert!(order.push_sample(inline_sample(&later)).is_none());
+        let forced = order
+            .push_sample(inline_sample(&earlier))
+            .expect("bound flushes oldest sample");
+        assert_eq!(protocol_sample_timestamp(&forced), Some(100));
+        assert_eq!(
+            protocol_sample_timestamp(&order.pop_oldest().expect("remaining sample")),
+            Some(300)
+        );
     }
 
     fn observation(signal: &SignalEnvelope) -> &ProtocolRequestObservation {
@@ -3374,6 +3627,114 @@ mod tests {
             attribute.key == "e.navigator.trace.tracestate"
                 && attribute.value == "validated_discarded"
         }));
+    }
+
+    #[test]
+    fn server_grpc_cross_cpu_arrival_is_decoded_in_kernel_time_order() {
+        let config = ProtocolSourceConfig {
+            http2_ports: vec![50051],
+            ..ProtocolSourceConfig::default()
+        };
+        let mut registry = ProtocolStreamRegistry::new(
+            None,
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
+        );
+
+        let mut preface_and_settings = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_vec();
+        preface_and_settings.extend_from_slice(&http2_frame(4, 0, 0, &[0; 36]));
+        preface_and_settings.extend_from_slice(&http2_frame(8, 0, 0, &[0, 0, 0, 1]));
+        let mut preface = raw_event(
+            51_000,
+            &preface_and_settings,
+            preface_and_settings.len() as u32,
+        );
+        preface.local_port_be = 50051_u16.to_be();
+        preface.role = RAW_PROTOCOL_ROLE_SERVER;
+        preface.direction = RAW_PROTOCOL_DIRECTION_READ;
+        preface.timestamp_unix_nanos = 100;
+
+        let settings_ack_payload = http2_frame(4, 0x1, 0, &[]);
+        let mut settings_ack = raw_event(
+            51_000,
+            &settings_ack_payload,
+            settings_ack_payload.len() as u32,
+        );
+        settings_ack.local_port_be = 50051_u16.to_be();
+        settings_ack.role = RAW_PROTOCOL_ROLE_SERVER;
+        settings_ack.direction = RAW_PROTOCOL_DIRECTION_READ;
+        settings_ack.timestamp_unix_nanos = 200;
+
+        let mut block = vec![0x83]; // :method POST
+        append_hpack_literal(&mut block, ":path", "/acceptance.Echo/Unary");
+        append_hpack_literal(&mut block, "content-type", "application/grpc");
+        append_hpack_literal(
+            &mut block,
+            "traceparent",
+            "00-d60e3b12000000000000000000000001-face000000000001-01",
+        );
+        append_hpack_literal(&mut block, "user-agent", &"x".repeat(100));
+        let mut request_payload = http2_frame(1, 0x4, 1, &block);
+        request_payload.extend_from_slice(&http2_frame(0, 0x1, 1, &[0; 32]));
+        assert!(request_payload.len() > RAW_PROTOCOL_DATA_BYTES);
+        let mut request_segments = segmented_events(51_000, &request_payload);
+        for segment in &mut request_segments {
+            segment.local_port_be = 50051_u16.to_be();
+            segment.role = RAW_PROTOCOL_ROLE_SERVER;
+            segment.direction = RAW_PROTOCOL_DIRECTION_READ;
+            segment.timestamp_unix_nanos = 300;
+        }
+
+        let response_payload = http2_frame(1, 0x4 | 0x1, 1, &[0x88]);
+        let mut response = raw_event(51_000, &response_payload, response_payload.len() as u32);
+        response.local_port_be = 50051_u16.to_be();
+        response.role = RAW_PROTOCOL_ROLE_SERVER;
+        response.direction = RAW_PROTOCOL_DIRECTION_WRITE;
+        response.timestamp_unix_nanos = 400;
+
+        let mut order = ProtocolSampleOrder::new(2, 16);
+        // Model the observed grpcio scheduling: a worker CPU's HEADERS and
+        // response arrive at userspace before another CPU's connection
+        // preface and SETTINGS samples.
+        for segment in &request_segments {
+            assert!(order.push_sample(inline_sample(segment)).is_none());
+        }
+        assert!(order.push_sample(inline_sample(&response)).is_none());
+        assert!(order.push_sample(inline_sample(&preface)).is_none());
+        assert!(order.push_sample(inline_sample(&settings_ack)).is_none());
+        order.update_watermark(0, 500);
+        assert!(order.pop_ready().is_none());
+        order.update_watermark(1, 500);
+
+        let mut signals = Vec::new();
+        while let Some(sample) = order.pop_ready() {
+            let observed_unix_nanos =
+                10_000 + protocol_sample_timestamp(&sample).expect("kernel timestamp");
+            registry
+                .handle_event(sample.as_bytes(), observed_unix_nanos, &mut signals)
+                .expect("ordered raw event decodes");
+        }
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.protocol, ProtocolKind::Grpc);
+        assert_eq!(observation.method.as_deref(), Some("POST"));
+        assert!(observation.attributes.iter().any(|attribute| {
+            attribute.key == "rpc.service" && attribute.value == "acceptance.Echo"
+        }));
+        assert!(
+            observation
+                .attributes
+                .iter()
+                .any(|attribute| { attribute.key == "rpc.method" && attribute.value == "Unary" })
+        );
+        assert_eq!(
+            observation.trace_id.as_deref(),
+            Some("d60e3b12000000000000000000000001")
+        );
+        assert_eq!(observation.span_id.as_deref(), Some("face000000000001"));
+        assert_eq!(registry.counters().segment_gaps, 0);
+        assert_eq!(registry.counters().unparsed_frames, 0);
     }
 
     fn append_hpack_literal(block: &mut Vec<u8>, name: &str, value: &str) {
