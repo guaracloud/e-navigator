@@ -149,7 +149,9 @@ cleanup/restore evidence.
 E-Navigator favors bounded data structures and explicit attribution warnings.
 Sensitive values must not be added as high-cardinality labels or exported as
 raw secrets. Signal schemas and exporters must keep secret-like label filtering
-and bounded cardinality intact.
+and bounded cardinality intact. Prometheus preserves the identity of bounded
+metric series whose raw workload, process, endpoint, or DNS dimensions are
+redacted by exporting deterministic fingerprints instead of the raw values.
 
 ## Operational Boundaries
 

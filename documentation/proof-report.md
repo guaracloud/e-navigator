@@ -139,7 +139,9 @@ or chart rendering:
   warning-count rendering, metric/profile family toggles, health/readiness
   endpoints, constructor-validated latest-metric storage bounds, bounded
   latest-metric storage, bounded metric attribute counts, bounded label
-  names/values, and secret-like label filtering;
+  names/values, secret-like label filtering, and deterministic fingerprints
+  that keep bounded redacted metric identities distinct without exporting raw
+  workload, process, endpoint, or DNS dimensions;
 - OTLP protobuf request encoding plus per-family endpoint routing and family
   toggle suppression for metrics with bounded scalar/resource/attribute keys
   and values, native `network.flow.bytes` fake-collector export, traces with

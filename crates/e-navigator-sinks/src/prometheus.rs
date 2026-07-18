@@ -549,6 +549,10 @@ fn insert_prometheus_label(
     if key.len() > MAX_PROMETHEUS_LABEL_NAME_BYTES {
         return;
     }
+    if let Some(value) = prometheus_redacted_identity_label_value(&key, value) {
+        labels.insert(format!("{key}_hash"), value);
+        return;
+    }
     if !prometheus_label_allowed(&key) {
         return;
     }
@@ -641,6 +645,41 @@ fn prometheus_label_allowed(key: &str) -> bool {
     !SENSITIVE_FRAGMENTS
         .iter()
         .any(|sensitive| contains_ascii_case_insensitive(key, sensitive))
+}
+
+fn prometheus_redacted_identity_label_value(
+    key: &str,
+    value: &serde_json::Value,
+) -> Option<String> {
+    const REDACTED_IDENTITY_LABELS: &[&str] = &[
+        "server_address",
+        "server_port",
+        "process_pid",
+        "process_parent_pid",
+        "process_command",
+        "linux_cgroup_path",
+        "container_id",
+        "k8s_pod_uid",
+        "dns_question_name",
+    ];
+
+    if !REDACTED_IDENTITY_LABELS.contains(&key) {
+        return None;
+    }
+    let value = prometheus_label_value(value)?;
+    Some(stable_prometheus_label_hash(key, &value))
+}
+
+fn stable_prometheus_label_hash(key: &str, value: &str) -> String {
+    const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let mut hash = FNV_OFFSET_BASIS;
+    for byte in key.bytes().chain([0xff]).chain(value.bytes()) {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    format!("{hash:016x}")
 }
 
 fn sanitize_identifier(value: &str) -> String {
@@ -743,10 +782,11 @@ mod tests {
     use super::*;
     use e_navigator_core::Sink;
     use e_navigator_signals::{
-        ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkAddressFamily,
-        NetworkCounterMetric, NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation,
-        ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
-        ProfilingKind, ProfilingSessionObservation, ProfilingWarningObservation,
+        ContainerContext, DnsCounterMetric, DnsQueryType, KubernetesContext,
+        MetricAggregationWindow, NetworkAddressFamily, NetworkCounterMetric,
+        NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation, ProfilingAttribute,
+        ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame, ProfilingKind,
+        ProfilingSessionObservation, ProfilingWarningObservation,
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -809,7 +849,7 @@ mod tests {
 
         assert_eq!(
             rendered,
-            "network_flow_bytes{host_name=\"node-a\",k8s_container_name=\"workload\",k8s_namespace_name=\"e-navigator-bench\",k8s_node_name=\"homelab-01\",k8s_pod_name=\"workload-a\",net_transport=\"tcp\",network_type=\"ipv4\"} 2048\n"
+            "network_flow_bytes{host_name=\"node-a\",k8s_container_name=\"workload\",k8s_namespace_name=\"e-navigator-bench\",k8s_node_name=\"homelab-01\",k8s_pod_name=\"workload-a\",k8s_pod_uid_hash=\"c4ec3fe00b0d17fd\",net_transport=\"tcp\",network_type=\"ipv4\"} 2048\n"
         );
     }
 
@@ -877,6 +917,67 @@ mod tests {
         assert!(!prometheus_label_allowed("API_TOKEN"));
         assert!(!prometheus_label_allowed("Process_Command"));
         assert!(prometheus_label_allowed("k8s_namespace_name"));
+    }
+
+    #[test]
+    fn preserves_redacted_dns_series_identity_without_exporting_raw_names() {
+        let mut store = PrometheusMetricStore::default();
+        for (query_name, value) in [
+            ("api.private.example", 500),
+            ("missing.private.example", 50),
+        ] {
+            let signal = SignalEnvelope::dns_counter_metric(
+                "generator.dns_metrics",
+                Some("node-a".to_string()),
+                DnsCounterMetric {
+                    metric_name: "dns.query.count".to_string(),
+                    unit: "{query}".to_string(),
+                    value,
+                    window: MetricAggregationWindow {
+                        start_unix_nanos: 1,
+                        end_unix_nanos: 2,
+                    },
+                    query_name: Some(query_name.to_string()),
+                    query_type: Some(DnsQueryType::A),
+                    response_code: None,
+                    server_address: None,
+                    server_port: None,
+                    container: None,
+                    kubernetes: Some(kubernetes_context()),
+                },
+            );
+            for line in format_prometheus_metric_lines(&signal) {
+                store.push(line, 8);
+            }
+        }
+
+        let lines = store.lines();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            lines
+                .iter()
+                .map(|line| line.value.parse::<u64>().expect("counter value"))
+                .sum::<u64>(),
+            550
+        );
+        let hashes = lines
+            .iter()
+            .map(|line| {
+                line.labels
+                    .get("dns_question_name_hash")
+                    .expect("redacted identity hash")
+            })
+            .collect::<Vec<_>>();
+        assert_ne!(hashes[0], hashes[1]);
+        assert!(
+            hashes.iter().all(|hash| {
+                hash.len() == 16 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+        );
+
+        let rendered = render_prometheus_text(&lines);
+        assert!(!rendered.contains("api.private.example"));
+        assert!(!rendered.contains("missing.private.example"));
     }
 
     #[test]
@@ -1080,9 +1181,9 @@ mod tests {
         assert!(metrics.contains("network_connection_open_count"));
         assert!(metrics.contains("k8s_namespace_name=\"e-navigator-bench\""));
         assert!(metrics.contains("k8s_pod_name=\"workload-a\""));
-        assert!(!metrics.contains("server_address"));
+        assert!(metrics.contains("server_address_hash="));
         assert!(!metrics.contains("203.0.113.10"));
-        assert!(!metrics.contains("server_port"));
+        assert!(metrics.contains("server_port_hash="));
     }
 
     #[tokio::test]
