@@ -59,7 +59,7 @@ const RAW_SAMPLE_CHANNEL_CAPACITY: usize = 1024;
 /// sample instead of dropping it; under normal operation per-CPU poll
 /// watermarks keep the queue near one poll interval of traffic.
 #[cfg(any(target_os = "linux", test))]
-const PROTOCOL_REORDER_MAX_PENDING_SAMPLES: usize = RAW_SAMPLE_CHANNEL_CAPACITY * 8;
+pub(crate) const PROTOCOL_REORDER_MAX_PENDING_SAMPLES: usize = RAW_SAMPLE_CHANNEL_CAPACITY * 8;
 #[cfg(any(target_os = "linux", test))]
 const PROTOCOL_DIAGNOSTIC_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 #[cfg(any(target_os = "linux", test))]
@@ -125,7 +125,7 @@ pub(crate) struct RawProtocolDataEvent {
 // Boxing the sample variant would restore one heap allocation per captured
 // event, defeating InlineSample's allocation-free reader handoff.
 #[allow(clippy::large_enum_variant)]
-enum ProtocolPerfMessage {
+pub(crate) enum ProtocolPerfMessage {
     Sample(crate::perf_sample::InlineSample),
     Watermark {
         reader_index: usize,
@@ -174,7 +174,7 @@ impl Ord for PendingProtocolSample {
 
 /// Bounded k-way merge for samples read from independent per-CPU perf rings.
 #[cfg(any(target_os = "linux", test))]
-struct ProtocolSampleOrder {
+pub(crate) struct ProtocolSampleOrder {
     reader_watermarks: Vec<Option<u64>>,
     pending: std::collections::BinaryHeap<PendingProtocolSample>,
     next_sequence: u64,
@@ -183,7 +183,7 @@ struct ProtocolSampleOrder {
 
 #[cfg(any(target_os = "linux", test))]
 impl ProtocolSampleOrder {
-    fn new(reader_count: usize, max_pending_samples: usize) -> Self {
+    pub(crate) fn new(reader_count: usize, max_pending_samples: usize) -> Self {
         Self {
             reader_watermarks: vec![None; reader_count],
             pending: std::collections::BinaryHeap::new(),
@@ -194,7 +194,7 @@ impl ProtocolSampleOrder {
 
     /// Queues a sample and returns the oldest one only when the hard bound
     /// requires an early flush. No captured sample is discarded.
-    fn push_sample(
+    pub(crate) fn push_sample(
         &mut self,
         sample: crate::perf_sample::InlineSample,
     ) -> Option<crate::perf_sample::InlineSample> {
@@ -211,7 +211,7 @@ impl ProtocolSampleOrder {
             .flatten()
     }
 
-    fn update_watermark(&mut self, reader_index: usize, timestamp_monotonic_nanos: u64) {
+    pub(crate) fn update_watermark(&mut self, reader_index: usize, timestamp_monotonic_nanos: u64) {
         if let Some(watermark) = self.reader_watermarks.get_mut(reader_index) {
             *watermark = Some(watermark.map_or(timestamp_monotonic_nanos, |current| {
                 current.max(timestamp_monotonic_nanos)
@@ -219,7 +219,7 @@ impl ProtocolSampleOrder {
         }
     }
 
-    fn pop_ready(&mut self) -> Option<crate::perf_sample::InlineSample> {
+    pub(crate) fn pop_ready(&mut self) -> Option<crate::perf_sample::InlineSample> {
         // `None` sorts before `Some`, so no sample is ready until every
         // reader has completed at least one poll.
         let global_watermark = self.reader_watermarks.iter().copied().min()??;
@@ -230,13 +230,13 @@ impl ProtocolSampleOrder {
             .flatten()
     }
 
-    fn pop_oldest(&mut self) -> Option<crate::perf_sample::InlineSample> {
+    pub(crate) fn pop_oldest(&mut self) -> Option<crate::perf_sample::InlineSample> {
         self.pending.pop().map(|pending| pending.sample)
     }
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn protocol_sample_timestamp(sample: &crate::perf_sample::InlineSample) -> Option<u64> {
+pub(crate) fn protocol_sample_timestamp(sample: &crate::perf_sample::InlineSample) -> Option<u64> {
     let bytes = sample.as_bytes();
     (bytes.len() >= core::mem::size_of::<RawProtocolDataEvent>()).then(|| {
         let raw =
