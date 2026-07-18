@@ -7,7 +7,8 @@ use e_navigator_protocol::{
     ProtocolExtractionConfig,
     http::{parse_http_request, parse_http_response},
     http2::{
-        HTTP2_FLAG_END_STREAM, HTTP2_FRAME_TYPE_HEADERS, HpackDecoder, parse_http2_frame_header,
+        HTTP2_FLAG_END_STREAM, HTTP2_FRAME_TYPE_CONTINUATION, HTTP2_FRAME_TYPE_HEADERS,
+        HpackDecoder, Http2HeaderBlockAssembler, parse_http2_frame_header,
         parse_http2_request_headers_frame, parse_http2_response_headers_frame,
     },
     kafka::{parse_kafka_request, parse_kafka_response_for_api_key},
@@ -325,6 +326,9 @@ struct InFlightRequest {
 struct Http2ConnectionState {
     request_hpack: HpackDecoder,
     response_hpack: HpackDecoder,
+    request_headers: Http2HeaderBlockAssembler,
+    response_headers: Http2HeaderBlockAssembler,
+    request_headers_started_unix_nanos: Option<u64>,
     streams: std::collections::BTreeMap<u32, InFlightRequest>,
 }
 
@@ -509,6 +513,9 @@ impl ProtocolStreamRegistry {
                 http2: (protocol == StreamProtocol::Http2).then(|| Http2ConnectionState {
                     request_hpack: HpackDecoder::new(),
                     response_hpack: HpackDecoder::new(),
+                    request_headers: Http2HeaderBlockAssembler::new(),
+                    response_headers: Http2HeaderBlockAssembler::new(),
+                    request_headers_started_unix_nanos: None,
                     streams: std::collections::BTreeMap::new(),
                 }),
                 context: ObservationContext::from_raw(&raw, &self.procfs_root, self.source),
@@ -923,25 +930,65 @@ fn handle_http2_frames(
         };
 
         if is_request_direction {
-            if header.frame_type != HTTP2_FRAME_TYPE_HEADERS || header.stream_id == 0 {
+            let is_header_frame = matches!(
+                header.frame_type,
+                HTTP2_FRAME_TYPE_HEADERS | HTTP2_FRAME_TYPE_CONTINUATION
+            );
+            if header.stream_id == 0 {
                 counters.response_continuations += 1;
                 continue;
             }
-            let parsed = if truncated {
-                counters.unparsed_frames += 1;
-                ParsedRequestFrame {
-                    protocol: ProtocolKind::Http,
-                    operation: None,
-                    trace_id: None,
-                    span_id: None,
-                    warning: Some("truncated_request_frame".to_string()),
-                    attributes: Vec::new(),
+
+            let (request_header, header_block, started_unix_nanos) = if truncated {
+                http2.request_headers.reset();
+                http2.request_headers_started_unix_nanos = None;
+                if header.frame_type != HTTP2_FRAME_TYPE_HEADERS {
+                    counters.unparsed_frames += 1;
+                    continue;
                 }
+                counters.unparsed_frames += 1;
+                (header, None, observed_unix_nanos)
             } else {
-                match parse_http2_request_headers_frame(
-                    &mut http2.request_hpack,
+                if !is_header_frame && !http2.request_headers.is_pending() {
+                    counters.response_continuations += 1;
+                    continue;
+                }
+
+                let starts_header_block = header.frame_type == HTTP2_FRAME_TYPE_HEADERS;
+                match http2.request_headers.push_frame(
                     &header,
                     payload,
+                    extraction.max_header_bytes,
+                ) {
+                    Ok(Some(assembled)) => {
+                        let started_unix_nanos = http2
+                            .request_headers_started_unix_nanos
+                            .take()
+                            .unwrap_or(observed_unix_nanos);
+                        (assembled.header, Some(assembled.block), started_unix_nanos)
+                    }
+                    Ok(None) => {
+                        if starts_header_block {
+                            http2.request_headers_started_unix_nanos = Some(observed_unix_nanos);
+                        }
+                        continue;
+                    }
+                    Err(_) => {
+                        http2.request_headers_started_unix_nanos = None;
+                        counters.unparsed_frames += 1;
+                        if header.frame_type != HTTP2_FRAME_TYPE_HEADERS {
+                            continue;
+                        }
+                        (header, None, observed_unix_nanos)
+                    }
+                }
+            };
+
+            let parsed = if let Some(header_block) = header_block {
+                match parse_http2_request_headers_frame(
+                    &mut http2.request_hpack,
+                    &request_header,
+                    &header_block,
                     extraction,
                 ) {
                     Ok(parsed) => ParsedRequestFrame {
@@ -970,6 +1017,22 @@ fn handle_http2_frames(
                         }
                     }
                 }
+            } else {
+                ParsedRequestFrame {
+                    protocol: ProtocolKind::Http,
+                    operation: None,
+                    trace_id: None,
+                    span_id: None,
+                    warning: Some(
+                        if truncated {
+                            "truncated_request_frame"
+                        } else {
+                            "unparsed_request_frame"
+                        }
+                        .to_string(),
+                    ),
+                    attributes: Vec::new(),
+                }
             };
             if http2.streams.len() >= MAX_IN_FLIGHT_REQUESTS
                 && let Some((_, entry)) = http2.streams.pop_first()
@@ -984,10 +1047,10 @@ fn handle_http2_frames(
                 ));
             }
             http2.streams.insert(
-                header.stream_id,
+                request_header.stream_id,
                 InFlightRequest {
                     parsed,
-                    started_unix_nanos: observed_unix_nanos,
+                    started_unix_nanos,
                     kafka_api_key: -1,
                     kafka_api_version: -1,
                 },
@@ -1000,25 +1063,50 @@ fn handle_http2_frames(
             counters.response_continuations += 1;
             continue;
         }
-        let Some(mut entry) = http2.streams.remove(&header.stream_id) else {
-            if header.frame_type == HTTP2_FRAME_TYPE_HEADERS {
+
+        let is_header_frame = matches!(
+            header.frame_type,
+            HTTP2_FRAME_TYPE_HEADERS | HTTP2_FRAME_TYPE_CONTINUATION
+        );
+        let (response_header, header_block) = if truncated {
+            http2.response_headers.reset();
+            counters.unparsed_responses += 1;
+            if header.frame_type != HTTP2_FRAME_TYPE_HEADERS {
+                continue;
+            }
+            (header, None)
+        } else if is_header_frame || http2.response_headers.is_pending() {
+            match http2
+                .response_headers
+                .push_frame(&header, payload, extraction.max_header_bytes)
+            {
+                Ok(Some(assembled)) => (assembled.header, Some(assembled.block)),
+                Ok(None) => continue,
+                Err(_) => {
+                    counters.unparsed_responses += 1;
+                    if header.frame_type != HTTP2_FRAME_TYPE_HEADERS {
+                        continue;
+                    }
+                    (header, None)
+                }
+            }
+        } else {
+            (header, None)
+        };
+
+        let Some(mut entry) = http2.streams.remove(&response_header.stream_id) else {
+            if response_header.frame_type == HTTP2_FRAME_TYPE_HEADERS {
                 counters.orphan_responses += 1;
             }
             continue;
         };
 
-        if header.frame_type == HTTP2_FRAME_TYPE_HEADERS {
-            if truncated {
-                counters.unparsed_responses += 1;
-                entry
-                    .parsed
-                    .warning
-                    .get_or_insert_with(|| "truncated_response_frame".to_string());
-            } else {
+        if response_header.frame_type == HTTP2_FRAME_TYPE_HEADERS {
+            if let Some(header_block) = header_block {
                 match parse_http2_response_headers_frame(
                     &mut http2.response_hpack,
-                    &header,
-                    payload,
+                    &response_header,
+                    &header_block,
                     extraction,
                 ) {
                     Ok(response) => {
@@ -1048,10 +1136,19 @@ fn handle_http2_frames(
                             .get_or_insert_with(|| "unparsed_response_frame".to_string());
                     }
                 }
+            } else {
+                entry.parsed.warning.get_or_insert_with(|| {
+                    if truncated {
+                        "truncated_response_frame"
+                    } else {
+                        "unparsed_response_frame"
+                    }
+                    .to_string()
+                });
             }
         }
 
-        if header.flags & HTTP2_FLAG_END_STREAM != 0 {
+        if response_header.flags & HTTP2_FLAG_END_STREAM != 0 {
             signals.push(build_observation(
                 host.clone(),
                 &stream.context,
@@ -1061,7 +1158,7 @@ fn handle_http2_frames(
             ));
         } else {
             // Stream continues (for example gRPC trailers still pending).
-            http2.streams.insert(header.stream_id, entry);
+            http2.streams.insert(response_header.stream_id, entry);
         }
     }
 }
@@ -2510,6 +2607,90 @@ mod tests {
                 .any(|attribute| attribute.key == "http.response.status_code"
                     && attribute.value == "200"),
         );
+    }
+
+    #[test]
+    fn http2_request_continuation_reassembles_before_matching() {
+        let config = ProtocolSourceConfig {
+            http2_ports: vec![50051],
+            ..ProtocolSourceConfig::default()
+        };
+        let mut registry = ProtocolStreamRegistry::new(
+            None,
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
+        );
+
+        let mut request_payload = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_vec();
+        request_payload.extend_from_slice(&http2_frame(HTTP2_FRAME_TYPE_HEADERS, 0, 1, &[0x82]));
+        let request = raw_event(50051, &request_payload, request_payload.len() as u32);
+        assert!(handle_at(&mut registry, &request, 5_000).is_empty());
+
+        let continuation = http2_frame(HTTP2_FRAME_TYPE_CONTINUATION, 0x4, 1, &[0x84]);
+        let request = raw_event(50051, &continuation, continuation.len() as u32);
+        assert!(handle_at(&mut registry, &request, 5_100).is_empty());
+
+        let response_payload = http2_frame(HTTP2_FRAME_TYPE_HEADERS, 0x4 | 0x1, 1, &[0x88]);
+        let mut response = raw_event(50051, &response_payload, response_payload.len() as u32);
+        response.direction = RAW_PROTOCOL_DIRECTION_READ;
+        let signals = handle_at(&mut registry, &response, 6_200);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method.as_deref(), Some("GET"));
+        assert_eq!(observation.duration_nanos, Some(1_200));
+        assert_eq!(registry.counters().unparsed_frames, 0);
+        assert_eq!(registry.counters().unparsed_responses, 0);
+    }
+
+    #[test]
+    fn http2_response_continuation_preserves_initial_end_stream() {
+        let config = ProtocolSourceConfig {
+            http2_ports: vec![50051],
+            ..ProtocolSourceConfig::default()
+        };
+        let mut registry = ProtocolStreamRegistry::new(
+            None,
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
+        );
+
+        let mut request_payload = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_vec();
+        request_payload.extend_from_slice(&http2_frame(
+            HTTP2_FRAME_TYPE_HEADERS,
+            0x4,
+            1,
+            &[0x82, 0x84],
+        ));
+        let request = raw_event(50051, &request_payload, request_payload.len() as u32);
+        assert!(handle_at(&mut registry, &request, 5_000).is_empty());
+
+        let response_headers = http2_frame(HTTP2_FRAME_TYPE_HEADERS, 0x1, 1, &[]);
+        let mut response = raw_event(50051, &response_headers, response_headers.len() as u32);
+        response.direction = RAW_PROTOCOL_DIRECTION_READ;
+        assert!(handle_at(&mut registry, &response, 5_500).is_empty());
+
+        let response_continuation = http2_frame(HTTP2_FRAME_TYPE_CONTINUATION, 0x4, 1, &[0x88]);
+        let mut response = raw_event(
+            50051,
+            &response_continuation,
+            response_continuation.len() as u32,
+        );
+        response.direction = RAW_PROTOCOL_DIRECTION_READ;
+        let signals = handle_at(&mut registry, &response, 6_000);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.duration_nanos, Some(1_000));
+        assert!(
+            observation
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "http.response.status_code"
+                    && attribute.value == "200"),
+        );
+        assert_eq!(registry.counters().unparsed_frames, 0);
+        assert_eq!(registry.counters().unparsed_responses, 0);
     }
 
     #[test]
