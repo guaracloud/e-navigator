@@ -368,6 +368,15 @@ impl HttpRequestReassembler {
         }
 
         let chunk_monotonic_nanos = raw.timestamp_unix_nanos;
+        if visible.starts_with(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n") {
+            // The generic HTTP source owns HTTP/1 request extraction. An
+            // HTTP/2 connection preface is self-identifying protocol traffic,
+            // not a malformed HTTP/1 request; the protocol source handles it.
+            state.buffer.clear();
+            state.buffer_first_monotonic_nanos = 0;
+            state.body_bytes_remaining = 0;
+            return outcome;
+        }
         if state.buffer.is_empty() {
             state.buffer_first_monotonic_nanos = chunk_monotonic_nanos;
             state.buffer.extend_from_slice(visible);
@@ -404,15 +413,6 @@ impl HttpRequestReassembler {
                 state.buffer.clear();
                 state.buffer_first_monotonic_nanos = 0;
                 state.body_bytes_remaining = 0;
-                outcome.errors.push(if uncaptured_bytes > 0 {
-                    RawHttpDecodeError::ReassemblyGap {
-                        sample: RawHttpInvalidSampleMetadata::from_raw(raw),
-                    }
-                } else {
-                    RawHttpDecodeError::ReassemblyLimit {
-                        sample: RawHttpInvalidSampleMetadata::from_raw(raw),
-                    }
-                });
             }
             return outcome;
         }
@@ -2245,6 +2245,44 @@ mod tests {
             outcome.errors.as_slice(),
             [RawHttpDecodeError::ReassemblyGap { .. }]
         ));
+    }
+
+    #[test]
+    fn reassembler_ignores_uncaptured_non_http_payload() {
+        let config = ProtocolExtractionConfig::default();
+        let mut reassembler = HttpRequestReassembler::new(8, config.max_header_bytes);
+        let mut raw = raw_http_chunk(77, 4, RAW_HTTP_ROLE_CLIENT, b"binary protocol payload");
+        raw.request_total_len = raw.request_len + 1;
+
+        let outcome = reassembler.push(
+            &raw,
+            &compact_raw_http_request(&raw).expect("captured non-http payload compacts"),
+            1,
+            &config,
+        );
+
+        assert!(outcome.requests.is_empty());
+        assert!(outcome.errors.is_empty());
+        assert_eq!(reassembler.streams.len(), 0);
+    }
+
+    #[test]
+    fn reassembler_ignores_http2_client_preface() {
+        let config = ProtocolExtractionConfig::default();
+        let mut reassembler = HttpRequestReassembler::new(8, config.max_header_bytes);
+        let payload = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\0\0\x06\x04\0\0\0\0\0";
+        let raw = raw_http_chunk(77, 4, RAW_HTTP_ROLE_CLIENT, payload);
+
+        let outcome = reassembler.push(
+            &raw,
+            &compact_raw_http_request(&raw).expect("HTTP/2 preface compacts"),
+            1,
+            &config,
+        );
+
+        assert!(outcome.requests.is_empty());
+        assert!(outcome.errors.is_empty());
+        assert_eq!(reassembler.streams.len(), 0);
     }
 
     #[test]
