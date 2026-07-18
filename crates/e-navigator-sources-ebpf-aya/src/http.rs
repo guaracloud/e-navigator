@@ -240,6 +240,13 @@ struct HttpStreamKey {
     pid: u32,
     fd: i32,
     role: u32,
+    family: u32,
+    remote_port_be: u16,
+    local_port_be: u16,
+    remote_addr_v4: u32,
+    local_addr_v4: u32,
+    remote_addr_v6: [u8; 16],
+    local_addr_v6: [u8; 16],
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -296,6 +303,13 @@ impl HttpRequestReassembler {
             pid: raw.pid,
             fd: raw.fd,
             role: raw.role,
+            family: raw.family,
+            remote_port_be: raw.remote_port_be,
+            local_port_be: raw.local_port_be,
+            remote_addr_v4: raw.remote_addr_v4,
+            local_addr_v4: raw.local_addr_v4,
+            remote_addr_v6: raw.remote_addr_v6,
+            local_addr_v6: raw.local_addr_v6,
         };
         if !self.streams.contains_key(&key)
             && self.streams.len() >= self.max_streams
@@ -2017,6 +2031,45 @@ mod tests {
         assert_eq!(request_outcome.requests.len(), 1);
         assert!(request_outcome.requests[0].starts_with(b"GET /reused "));
         assert!(request_outcome.errors.is_empty());
+    }
+
+    #[test]
+    fn reassembler_isolates_body_state_when_a_socket_fd_is_reused() {
+        let config = ProtocolExtractionConfig::default();
+        let mut reassembler = HttpRequestReassembler::new(8, config.max_header_bytes);
+        let mut first_connection = raw_http_chunk(
+            77,
+            4,
+            RAW_HTTP_ROLE_SERVER,
+            b"POST /first HTTP/1.1\r\nHost: svc.local\r\nContent-Length: 100\r\n\r\n",
+        );
+        first_connection.remote_port_be = 40_000_u16.to_be();
+        let mut reused_fd = raw_http_chunk(
+            77,
+            4,
+            RAW_HTTP_ROLE_SERVER,
+            b"GET /reused HTTP/1.1\r\nHost: svc.local\r\n\r\n",
+        );
+        reused_fd.remote_port_be = 40_001_u16.to_be();
+
+        let first_outcome = reassembler.push(
+            &first_connection,
+            &compact_raw_http_request(&first_connection).expect("first request compacts"),
+            1,
+            &config,
+        );
+        assert_eq!(first_outcome.requests.len(), 1);
+        assert!(first_outcome.errors.is_empty());
+
+        let reused_outcome = reassembler.push(
+            &reused_fd,
+            &compact_raw_http_request(&reused_fd).expect("reused request compacts"),
+            2,
+            &config,
+        );
+        assert_eq!(reused_outcome.requests.len(), 1);
+        assert!(reused_outcome.requests[0].starts_with(b"GET /reused "));
+        assert!(reused_outcome.errors.is_empty());
     }
 
     #[test]
