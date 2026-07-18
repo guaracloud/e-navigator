@@ -3338,14 +3338,15 @@ fn emit_protocol_iovec_event(
         None => return Ok(0),
     };
 
-    let event = protocol_data_event_scratch()?;
-    event.pid = connection.pid;
-    event.uid = connection.uid;
-    event.cgroup_id = current_cgroup_id();
-    if !cgroup_capture_allowed(event.cgroup_id) {
+    let cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(cgroup_id) {
         record_capture_filter_drop();
         return Ok(0);
     }
+    let event = protocol_data_event_scratch()?;
+    event.pid = connection.pid;
+    event.uid = connection.uid;
+    event.cgroup_id = cgroup_id;
     event.fd = fd;
     event.direction = NETWORK_IO_WRITE;
     event.role = connection.role;
