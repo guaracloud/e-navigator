@@ -2216,6 +2216,7 @@ mod platform {
             cgroup_id = ?diagnostics.redact_optional_u64(cgroup_id),
             fd = ?sample.map(|sample| sample.fd),
             direction = ?sample.map(|sample| sample.direction),
+            role = ?sample.map(|sample| sample.role),
             family = ?sample.map(|sample| sample.family),
             remote_port = ?sample.map(|sample| u16::from_be(sample.remote_port_be)),
             local_port = ?sample.map(|sample| u16::from_be(sample.local_port_be)),
