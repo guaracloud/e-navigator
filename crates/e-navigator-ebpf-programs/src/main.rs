@@ -1282,7 +1282,7 @@ pub fn sample_cpu_profile(ctx: PerfEventContext) -> u32 {
 // OpenSSL: int SSL_write(SSL *ssl, const void *buf, int num).
 #[uprobe]
 pub fn uprobe_ssl_write_enter(ctx: ProbeContext) -> u32 {
-    tls_io_enter(&ctx, NETWORK_IO_WRITE)
+    tls_io_enter(&ctx, NETWORK_IO_WRITE, true)
 }
 
 #[uretprobe]
@@ -1293,7 +1293,7 @@ pub fn uretprobe_ssl_write_exit(ctx: RetProbeContext) -> u32 {
 // OpenSSL: int SSL_read(SSL *ssl, void *buf, int num).
 #[uprobe]
 pub fn uprobe_ssl_read_enter(ctx: ProbeContext) -> u32 {
-    tls_io_enter(&ctx, NETWORK_IO_READ)
+    tls_io_enter(&ctx, NETWORK_IO_READ, true)
 }
 
 #[uretprobe]
@@ -1368,7 +1368,7 @@ pub fn uprobe_ssl_free(ctx: ProbeContext) -> u32 {
 // GnuTLS: ssize_t gnutls_record_send(gnutls_session_t s, const void *d, size_t n).
 #[uprobe]
 pub fn uprobe_gnutls_record_send_enter(ctx: ProbeContext) -> u32 {
-    tls_io_enter(&ctx, NETWORK_IO_WRITE)
+    tls_io_enter(&ctx, NETWORK_IO_WRITE, false)
 }
 
 #[uretprobe]
@@ -1379,7 +1379,7 @@ pub fn uretprobe_gnutls_record_send_exit(ctx: RetProbeContext) -> u32 {
 // GnuTLS: ssize_t gnutls_record_recv(gnutls_session_t s, void *d, size_t n).
 #[uprobe]
 pub fn uprobe_gnutls_record_recv_enter(ctx: ProbeContext) -> u32 {
-    tls_io_enter(&ctx, NETWORK_IO_READ)
+    tls_io_enter(&ctx, NETWORK_IO_READ, false)
 }
 
 #[uretprobe]
@@ -2358,7 +2358,7 @@ fn tls_remove_handle(ctx: &ProbeContext) -> u32 {
     0
 }
 
-fn tls_io_enter(ctx: &ProbeContext, direction: u32) -> u32 {
+fn tls_io_enter(ctx: &ProbeContext, direction: u32, return_is_i32: bool) -> u32 {
     record_tls_diagnostic(TLS_DIAG_IO_ENTER);
     let handle: u64 = match ctx.arg(0) {
         Some(value) => value,
@@ -2372,7 +2372,7 @@ fn tls_io_enter(ctx: &ProbeContext, direction: u32) -> u32 {
         record_tls_diagnostic(TLS_DIAG_NULL_OR_EMPTY);
         return 0;
     }
-    stash_tls_io(handle, buffer, 0, direction);
+    stash_tls_io(handle, buffer, 0, direction, return_is_i32);
     0
 }
 
@@ -2393,19 +2393,19 @@ fn tls_io_enter_ex(ctx: &ProbeContext, direction: u32) -> u32 {
         record_tls_diagnostic(TLS_DIAG_NULL_OR_EMPTY);
         return 0;
     }
-    stash_tls_io(handle, buffer, count_ptr, direction);
+    stash_tls_io(handle, buffer, count_ptr, direction, false);
     0
 }
 
 #[inline(always)]
-fn stash_tls_io(handle: u64, buffer: u64, count_ptr: u64, direction: u32) {
+fn stash_tls_io(handle: u64, buffer: u64, count_ptr: u64, direction: u32, return_is_i32: bool) {
     let pid_tgid = bpf_get_current_pid_tgid();
     let pending = PendingTlsIo {
         handle,
         buffer_ptr: buffer,
         count_ptr,
         direction,
-        reserved: 0,
+        reserved: u32::from(return_is_i32),
     };
     let _ = PENDING_TLS_IO.insert(&pid_tgid, &pending, 0);
 }
@@ -2433,7 +2433,18 @@ fn tls_io_exit(ctx: &RetProbeContext, direction: u32) -> u32 {
             Ok(value) => value,
             Err(_) => return 0,
         }
+    } else if pending.reserved == 1 {
+        // OpenSSL's classic APIs return a C `int`. On x86_64, a negative
+        // value written to EAX is observed through RAX as zero-extended
+        // `0x00000000ffffffff`; sign-extend from 32 bits before deciding
+        // whether the call produced plaintext.
+        let retval = retval as i32;
+        if retval <= 0 {
+            return 0;
+        }
+        retval as u64
     } else {
+        // GnuTLS returns `ssize_t`, so preserve the native signed width.
         if retval <= 0 {
             return 0;
         }
