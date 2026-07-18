@@ -144,7 +144,9 @@ or chart rendering:
   workload, process, endpoint, or DNS dimensions;
 - OTLP protobuf request encoding plus per-family endpoint routing and family
   toggle suppression for metrics with bounded scalar/resource/attribute keys
-  and values, native `network.flow.bytes` fake-collector export, traces with
+  and values, bounded latest-value coalescing for same-receiver-millisecond
+  cumulative updates across batches, idle-window and shutdown flushing, native
+  `network.flow.bytes` fake-collector export, traces with
   HTTP, gRPC, `error.type`, and protocol response-status request/error status
   mapping, server span kind and Kubernetes resource
   attributes with bounded trace resource/context/scalar values

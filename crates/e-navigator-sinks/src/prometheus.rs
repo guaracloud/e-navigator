@@ -1108,6 +1108,7 @@ mod tests {
                 queue_capacity: 64,
                 batch_size: 64,
                 flush_interval_millis: 60_000,
+                max_retries: 0,
                 ..e_navigator_core::OtlpHttpConfig::default()
             },
             telemetry_registry.clone(),
@@ -1130,12 +1131,15 @@ mod tests {
         assert!(
             metrics.contains("e_navigator_export_queue_capacity{signal_family=\"metrics\"} 64")
         );
-        assert!(metrics.contains("e_navigator_export_enqueued_total{signal_family=\"metrics\"} 1"));
+        assert!(metrics.contains("e_navigator_export_enqueued_total{signal_family=\"metrics\"} 0"));
+        assert!(metrics.contains("e_navigator_export_metric_timestamp_pending_series 1"));
+        assert!(metrics.contains("e_navigator_export_metric_same_millisecond_coalesced_total 0"));
         assert!(metrics.contains("e_navigator_export_retry_attempts_total"));
         assert!(metrics.contains("e_navigator_export_partial_success_total"));
         assert!(metrics.contains("e_navigator_export_rejected_items_total"));
         assert!(metrics.contains("e_navigator_export_permanent_responses_total"));
         assert!(metrics.contains("e_navigator_export_invalid_responses_total"));
+        Sink::shutdown(&otlp).await.expect("OTLP workers drain");
     }
 
     #[tokio::test]

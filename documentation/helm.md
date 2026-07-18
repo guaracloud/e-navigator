@@ -326,15 +326,20 @@ uncompressed OTLP/HTTP body. The Guara production preset enables gzip for all
 three family workers.
 Metric sums are cumulative, and repeated cumulative updates for the same
 resource/data-point identity are coalesced to the latest window within each
-export batch. The Guara preset uses a 4,096-record batch so its measured event
-rate reaches the one-second flush boundary before the size boundary; this
-prevents sub-millisecond cumulative updates from colliding after Prometheus
-timestamp conversion while retaining a bounded 8,192-record queue.
+export batch. Across batches, the metrics worker retains only the latest point
+for each receiver millisecond and flushes that point when the series advances,
+the configured interval expires, or shutdown begins. Pending series are bound
+by the configured queue capacity. This prevents duplicate receiver timestamps
+without leaving the terminal cumulative value stale. The Guara preset uses a
+4,096-record batch, a one-second flush interval, and a bounded 8,192-record
+queue.
 Queue overflow, invalid trace identity, exhausted export batches, and open
 circuit drops are exposed through the live Prometheus endpoint using fixed
 `e_navigator_export_*` names and the bounded `signal_family` label. These
 metrics read the worker atomics directly and therefore remain available when
-an OTLP destination is down. A worker drains its accepted queue during bounded
+an OTLP destination is down. Timestamp-series, pending-series, coalesced-point,
+out-of-order, and eviction counts use the same feedback-safe registry. A worker
+drains its accepted queue and latest pending metric points during bounded
 shutdown.
 
 Every destination attempt also updates
