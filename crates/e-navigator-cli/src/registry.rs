@@ -247,6 +247,10 @@ fn aya_source_telemetry_lines(
                     snapshot.decoded_samples,
                 ),
                 metric(
+                    "e_navigator_ebpf_source_filtered_samples_total",
+                    snapshot.filtered_samples,
+                ),
+                metric(
                     "e_navigator_ebpf_source_invalid_samples_total",
                     snapshot.invalid_samples,
                 ),
@@ -589,6 +593,7 @@ mod tests {
                 source: "source.aya_exec",
                 initialized: true,
                 decoded_samples: 3,
+                filtered_samples: 5,
                 invalid_samples: 1,
                 sent_signals: 2,
                 send_failures: 1,
@@ -607,7 +612,7 @@ mod tests {
             .into_iter(),
         );
 
-        assert_eq!(lines.len(), 16);
+        assert_eq!(lines.len(), 17);
         assert!(
             lines.iter().all(
                 |line| line.labels.get("source").map(String::as_str) == Some("source.aya_exec")
@@ -615,6 +620,9 @@ mod tests {
         );
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_lost_perf_events_total" && line.value == "4"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_filtered_samples_total" && line.value == "5"
         }));
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_initialized" && line.value == "1"

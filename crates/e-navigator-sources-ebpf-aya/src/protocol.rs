@@ -299,6 +299,9 @@ pub enum RawProtocolDecodeError {
     InvalidRole {
         sample: RawProtocolInvalidSampleMetadata,
     },
+    UnresolvedServerPort {
+        sample: RawProtocolInvalidSampleMetadata,
+    },
     UnmappedPort {
         sample: RawProtocolInvalidSampleMetadata,
     },
@@ -312,8 +315,13 @@ impl RawProtocolDecodeError {
             Self::InvalidPayloadLength { .. } => "invalid_payload_length",
             Self::InvalidDirection { .. } => "invalid_direction",
             Self::InvalidRole { .. } => "invalid_role",
+            Self::UnresolvedServerPort { .. } => "unresolved_server_port",
             Self::UnmappedPort { .. } => "unmapped_port",
         }
+    }
+
+    pub(crate) fn is_filtered_sample(self) -> bool {
+        matches!(self, Self::UnmappedPort { .. })
     }
 
     fn sample_metadata(self) -> Option<RawProtocolInvalidSampleMetadata> {
@@ -322,6 +330,7 @@ impl RawProtocolDecodeError {
             Self::InvalidPayloadLength { sample } => Some(sample),
             Self::InvalidDirection { sample } => Some(sample),
             Self::InvalidRole { sample } => Some(sample),
+            Self::UnresolvedServerPort { sample } => Some(sample),
             Self::UnmappedPort { sample } => Some(sample),
         }
     }
@@ -613,7 +622,7 @@ impl ProtocolStreamRegistry {
                     resolve_server_local_port(&self.procfs_root, raw.pid, raw.fd).map(u16::to_be)
                 });
             let Some(local_port_be) = local_port_be else {
-                return Err(RawProtocolDecodeError::UnmappedPort {
+                return Err(RawProtocolDecodeError::UnresolvedServerPort {
                     sample: RawProtocolInvalidSampleMetadata::from_raw(&raw),
                 });
             };
@@ -2242,9 +2251,13 @@ mod platform {
                             }
                         }
                         Err(err) => {
-                            decoder_telemetry.record_invalid_sample();
+                            if err.is_filtered_sample() {
+                                decoder_telemetry.record_filtered_sample();
+                            } else {
+                                decoder_telemetry.record_invalid_sample();
+                            }
                             let diagnostic_decision =
-                                log_invalid_protocol_sample_diagnostic(&decoder_diagnostics, err);
+                                log_protocol_decode_error_diagnostic(&decoder_diagnostics, err);
                             decoder_telemetry.record_diagnostic_decision(diagnostic_decision);
                         }
                     }
@@ -2413,11 +2426,16 @@ mod platform {
         DiagnosticSampleDecision::Matched
     }
 
-    fn log_invalid_protocol_sample_diagnostic(
+    fn log_protocol_decode_error_diagnostic(
         diagnostics: &SourceDiagnostics,
         err: super::RawProtocolDecodeError,
     ) -> DiagnosticSampleDecision {
         let reason = err.reason_name();
+        let classification = if err.is_filtered_sample() {
+            "filtered"
+        } else {
+            "invalid"
+        };
         let sample = err.sample_metadata();
         let command = sample
             .map(|sample| super::bytes_to_string(&sample.command))
@@ -2436,8 +2454,9 @@ mod platform {
         info!(
             target: "e_navigator_sources_ebpf_aya::source_diagnostics",
             source = "source.aya_protocol",
-            raw_event = "invalid_protocol_data_sample",
-            invalid_reason = reason,
+            raw_event = "rejected_protocol_data_sample",
+            classification,
+            decode_reason = reason,
             pid = ?sample.map(|sample| sample.pid),
             uid = ?sample.map(|sample| sample.uid),
             command = ?redacted_command,
@@ -2452,7 +2471,7 @@ mod platform {
             payload_total_len = ?sample.map(|sample| sample.payload_total_len),
             payload_offset = ?sample.map(|sample| sample.payload_offset),
             payload_captured_len = ?sample.map(|sample| sample.payload_captured_len),
-            "source diagnostic raw event invalid"
+            "source diagnostic raw event rejected"
         );
         DiagnosticSampleDecision::Matched
     }
@@ -2990,7 +3009,7 @@ mod tests {
     }
 
     #[test]
-    fn unmapped_port_is_an_error() {
+    fn unmapped_port_is_an_explicit_filter() {
         let mut registry = registry();
         let payload = b"PING\r\n";
         let event = raw_event(8080, payload, payload.len() as u32);
@@ -2999,6 +3018,23 @@ mod tests {
             .handle_event(raw_as_bytes(&event), 5_000, &mut signals)
             .expect_err("unmapped port is rejected");
         assert_eq!(err.reason_name(), "unmapped_port");
+        assert!(err.is_filtered_sample());
+    }
+
+    #[test]
+    fn unresolved_server_port_remains_invalid() {
+        let mut registry = registry();
+        let payload = b"PING\r\n";
+        let mut event = raw_event(0, payload, payload.len() as u32);
+        event.local_port_be = 0;
+        event.role = RAW_PROTOCOL_ROLE_SERVER;
+        event.direction = RAW_PROTOCOL_DIRECTION_READ;
+        let mut signals = Vec::new();
+        let err = registry
+            .handle_event(raw_as_bytes(&event), 5_000, &mut signals)
+            .expect_err("unresolved server port is rejected");
+        assert_eq!(err.reason_name(), "unresolved_server_port");
+        assert!(!err.is_filtered_sample());
     }
 
     #[test]
