@@ -5,6 +5,11 @@ use super::{ConfigError, ConfigResult};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProtocolSourceConfig {
+    /// Capture accepted server sockets in addition to outbound client
+    /// connections. Disabled by default because it expands the syscall
+    /// capture surface to configured server ports.
+    #[serde(default)]
+    pub inbound_enabled: bool,
     /// Cleartext HTTP/1 ports; empty disables HTTP/1 stream capture.
     #[serde(default)]
     pub http1_ports: Vec<u16>,
@@ -39,6 +44,7 @@ pub struct ProtocolSourceConfig {
 impl Default for ProtocolSourceConfig {
     fn default() -> Self {
         Self {
+            inbound_enabled: false,
             http1_ports: Vec::new(),
             http2_ports: Vec::new(),
             kafka_ports: default_protocol_source_kafka_ports(),

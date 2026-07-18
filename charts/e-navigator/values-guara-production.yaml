@@ -70,6 +70,7 @@ config:
     inbound_enabled = true
 
     [protocol_source]
+    inbound_enabled = true
     http1_ports = []
     http2_ports = [50051]
     kafka_ports = [9092]

@@ -2689,6 +2689,7 @@ fn protocol_source_defaults_are_bounded() {
     assert_eq!(config.protocol_source.nats_ports, vec![4222]);
     assert_eq!(config.protocol_source.postgresql_ports, vec![5432]);
     assert_eq!(config.protocol_source.redis_ports, vec![6379]);
+    assert!(!config.protocol_source.inbound_enabled);
     assert_eq!(
         config.protocol_source.max_buffered_bytes_per_connection,
         8 * 1024
@@ -2696,6 +2697,24 @@ fn protocol_source_defaults_are_bounded() {
     assert_eq!(config.protocol_source.capture_bytes_per_syscall, 1024);
     assert_eq!(config.protocol_source.max_tracked_connections, 2048);
     assert_eq!(config.protocol_source.max_attributes, 8);
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn protocol_source_inbound_capture_is_explicitly_opt_in() {
+    let config: RuntimeConfig = toml::from_str(
+        r#"
+        [protocol_source]
+        inbound_enabled = true
+
+        [[modules]]
+        name = "sink.json_stdout"
+        enabled = true
+        "#,
+    )
+    .expect("protocol inbound capture config parses");
+
+    assert!(config.protocol_source.inbound_enabled);
     assert!(config.validate().is_ok());
 }
 
