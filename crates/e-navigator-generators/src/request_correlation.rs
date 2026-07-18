@@ -91,6 +91,23 @@ impl RequestCorrelationGenerator {
         request: &ProtocolRequestObservation,
     ) -> CoreResult<Vec<SignalEnvelope>> {
         let mut trace_context = trace_context(request);
+
+        // On an outbound request, the span id carried by traceparent belongs
+        // to the instrumentation that injected the header. Re-exporting that
+        // identity as an E-Navigator client span would create a duplicate OTLP
+        // span and can merge unrelated requests when callers reuse a parent
+        // context. Keep the passive collector out of that ownership boundary;
+        // the downstream server capture will still attach to this remote
+        // parent. Requests without an observed context continue to receive a
+        // generated E-Navigator identity below.
+        if request.role == Some(ProtocolCaptureRole::Client)
+            && trace_context.trace_id.is_some()
+            && trace_context.span_id.is_some()
+            && trace_context.warning_type.is_none()
+        {
+            return Ok(Vec::new());
+        }
+
         let fingerprint = RequestFingerprint::from_request(request, &trace_context);
         if !self.mark_request_seen(fingerprint)? {
             return Ok(Vec::new());
