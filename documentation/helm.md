@@ -393,8 +393,19 @@ Alert on any increase in `e_navigator_ebpf_source_send_failures_total` or
 `e_navigator_ebpf_source_lost_perf_events_total`, and investigate sustained
 growth in `e_navigator_ebpf_source_invalid_samples_total`. These counters are
 cumulative; the periodic structured log retains delta semantics. Initialization
-does not prove that every optional TLS library symbol or language-runtime
-unwinder attached, so those coverage gaps require their own metrics and proof.
+does not prove that every optional target attached. Use the bounded
+`e_navigator_ebpf_source_optional_targets_discovered_total`,
+`e_navigator_ebpf_source_optional_targets_ready_total`,
+`e_navigator_ebpf_source_optional_targets_unsupported_total`,
+`e_navigator_ebpf_source_optional_probe_attachments_total`,
+`e_navigator_ebpf_source_optional_attachment_failures_total`,
+`e_navigator_ebpf_source_optional_rescans_total`, and
+`e_navigator_ebpf_source_optional_capacity_rejections_total` series for that
+coverage. Any increase in unsupported targets, attachment failures, or capacity
+rejections is a blind-spot signal. TLS candidates are accepted only for the
+documented OpenSSL 1.1.1/3 and GnuTLS ABI 30 surfaces after architecture and
+complete-export preflight; an unknown or incomplete library is rejected rather
+than partially attached.
 
 OTLP export runtime bounds are validated before startup:
 `otlp_http.queue_capacity` must be at most 65,536, `batch_size` at most 4,096

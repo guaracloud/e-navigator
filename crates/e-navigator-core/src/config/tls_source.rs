@@ -6,7 +6,7 @@ use super::{ConfigError, ConfigResult};
 /// (`source.aya_tls`).
 ///
 /// This is library-boundary interception at the userspace TLS read/write
-/// calls (OpenSSL/BoringSSL `SSL_read`/`SSL_write`, GnuTLS
+/// calls (OpenSSL 1.1.1/3 `SSL_read`/`SSL_write`, GnuTLS ABI 30
 /// `gnutls_record_recv`/`gnutls_record_send`), NOT on-the-wire decryption.
 /// Captured plaintext is classified by the remote port and fed to the same
 /// bounded protocol parsers used for cleartext capture.

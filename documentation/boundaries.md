@@ -42,13 +42,14 @@ E-Navigator does not currently claim:
   proven);
 - live NATS, MongoDB, MySQL, or PostgreSQL protocol capture proof (implemented
   and unit-tested, not yet runtime-proven);
-- on-the-wire TLS decryption (TLS plaintext capture is implemented as
-  library-boundary interception via `source.aya_tls` uprobes on OpenSSL/
-  BoringSSL — including the OpenSSL 3 `_ex` variants — and GnuTLS, with
-  libraries rescanned every 15s so late-starting workloads are attached;
-  live-proven for OpenSSL Redis over TLS, OpenSSL HTTP/1 over TLS, and GnuTLS
-  HTTP/1 over TLS, including cross-mount-namespace library attach proven on
-  the homelab; Go `crypto/tls` is not yet implemented);
+- on-the-wire TLS decryption (the claimed `source.aya_tls` surface is
+  userspace library-boundary plaintext interception for dynamically linked
+  OpenSSL 1.1.1/3 with the complete required read/write/fd-association export
+  set and GnuTLS ABI 30 using the standard integer socket transport; candidate
+  images are version-gated, architecture-checked, export-preflighted, and
+  transactionally attached, with 15-second rescans and native coverage
+  counters; BoringSSL, Go `crypto/tls`, rustls, custom BIO/custom transport,
+  and statically bundled Node/JVM TLS fail closed and are not claimed);
 - full per-connection TCP state-machine tracking or packet accounting (TCP
   retransmit, reset, and state-transition observation and counting are
   implemented, with resets and state transitions locally proven);

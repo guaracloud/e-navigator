@@ -65,7 +65,7 @@ pub fn bench_inline_sample(head: &[u8], tail: &[u8]) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::perf_sample_bytes;
+    use super::{InlineSample, MAX_INLINE_SAMPLE_BYTES, perf_sample_bytes};
     use std::borrow::Cow;
 
     #[test]
@@ -83,5 +83,13 @@ mod tests {
 
         assert!(matches!(perf_sample_bytes(&head, &tail), Cow::Owned(_)));
         assert_eq!(perf_sample_bytes(&head, &tail).as_ref(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn inline_sample_joins_wrapped_bytes_and_rejects_oversize() {
+        let sample = InlineSample::from_perf(&[1, 2], &[3, 4]).expect("sample fits");
+
+        assert_eq!(sample.as_bytes(), &[1, 2, 3, 4]);
+        assert!(InlineSample::from_perf(&vec![0; MAX_INLINE_SAMPLE_BYTES + 1], &[]).is_none());
     }
 }

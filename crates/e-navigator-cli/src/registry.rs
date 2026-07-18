@@ -274,6 +274,34 @@ fn aya_source_telemetry_lines(
                     "e_navigator_ebpf_source_diagnostic_exhausted_total",
                     snapshot.diagnostic_exhausted,
                 ),
+                metric(
+                    "e_navigator_ebpf_source_optional_targets_discovered_total",
+                    snapshot.optional_targets_discovered,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_optional_targets_ready_total",
+                    snapshot.optional_targets_ready,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_optional_targets_unsupported_total",
+                    snapshot.optional_targets_unsupported,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_optional_probe_attachments_total",
+                    snapshot.optional_probe_attachments,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_optional_attachment_failures_total",
+                    snapshot.optional_attachment_failures,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_optional_rescans_total",
+                    snapshot.optional_rescans,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_optional_capacity_rejections_total",
+                    snapshot.optional_capacity_rejections,
+                ),
             ]
         })
         .collect()
@@ -568,11 +596,18 @@ mod tests {
                 diagnostic_matches: 1,
                 diagnostic_filtered: 1,
                 diagnostic_exhausted: 0,
+                optional_targets_discovered: 2,
+                optional_targets_ready: 1,
+                optional_targets_unsupported: 1,
+                optional_probe_attachments: 14,
+                optional_attachment_failures: 1,
+                optional_rescans: 3,
+                optional_capacity_rejections: 0,
             }]
             .into_iter(),
         );
 
-        assert_eq!(lines.len(), 9);
+        assert_eq!(lines.len(), 16);
         assert!(
             lines.iter().all(
                 |line| line.labels.get("source").map(String::as_str) == Some("source.aya_exec")
@@ -583,6 +618,10 @@ mod tests {
         }));
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_initialized" && line.value == "1"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_optional_probe_attachments_total"
+                && line.value == "14"
         }));
     }
 

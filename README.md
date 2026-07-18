@@ -129,8 +129,9 @@ Evidence-backed today:
 - selected guarded homelab proof for exec, network, DNS, HTTP, profile,
   resource, Prometheus, OTLP, and seccomp paths;
 - local OrbStack proof for Redis request/response capture (plain TCP and
-  OpenSSL), multi-segment reassembly, and the Prometheus sink's
-  `/debug/pprof/profile` endpoint;
+  OpenSSL), version-gated OpenSSL 3 and GnuTLS ABI 30 HTTP/1 TLS capture with
+  fail-closed unknown-ABI handling, multi-segment reassembly, and the
+  Prometheus sink's `/debug/pprof/profile` endpoint;
 - release artifact signing, SBOM generation, Helm packaging, and local quality
   gates.
 
@@ -145,6 +146,8 @@ Important current non-claims:
 - no broad or production protocol-capture claim; selected homelab proof covers
   Redis, PostgreSQL, MongoDB, NATS, gRPC, and Kafka request/response matching,
   while local OrbStack proof covers deeper Redis reassembly and TLS slices;
+- no TLS capture claim for BoringSSL, Go `crypto/tls`, rustls, custom BIO or
+  transport integrations, statically bundled Node TLS, or JVM JSSE;
 - live native `network.flow.bytes` export still needs a positive rerun after
   the native metric migration.
 

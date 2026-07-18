@@ -390,6 +390,23 @@ pub struct TlsHandleKey {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct TlsHandleFds {
+    pub read_fd: i32,
+    pub write_fd: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PendingTlsSetFd {
+    pub handle: u64,
+    pub fd: i32,
+    /// Zero updates both directions; otherwise one of `NETWORK_IO_READ` or
+    /// `NETWORK_IO_WRITE`.
+    pub direction: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct PendingTlsIo {
     pub handle: u64,
     pub buffer_ptr: u64,
@@ -600,7 +617,10 @@ static TLS_CAPTURE_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
 static TLS_CAPTURE_PORTS: HashMap<u16, u32> = HashMap::with_max_entries(64, 0);
 
 #[map]
-static TLS_HANDLE_FDS: HashMap<TlsHandleKey, i32> = HashMap::with_max_entries(16384, 0);
+static TLS_HANDLE_FDS: HashMap<TlsHandleKey, TlsHandleFds> = HashMap::with_max_entries(16384, 0);
+
+#[map]
+static PENDING_TLS_SET_FD: HashMap<u64, PendingTlsSetFd> = HashMap::with_max_entries(8192, 0);
 
 #[map]
 static PENDING_TLS_IO: HashMap<u64, PendingTlsIo> = HashMap::with_max_entries(8192, 0);
@@ -1095,7 +1115,7 @@ pub fn sample_cpu_profile(ctx: PerfEventContext) -> u32 {
     }
 }
 
-// OpenSSL/BoringSSL: int SSL_write(SSL *ssl, const void *buf, int num).
+// OpenSSL: int SSL_write(SSL *ssl, const void *buf, int num).
 #[uprobe]
 pub fn uprobe_ssl_write_enter(ctx: ProbeContext) -> u32 {
     tls_io_enter(&ctx, NETWORK_IO_WRITE)
@@ -1106,7 +1126,7 @@ pub fn uretprobe_ssl_write_exit(ctx: RetProbeContext) -> u32 {
     tls_io_exit(&ctx, NETWORK_IO_WRITE)
 }
 
-// OpenSSL/BoringSSL: int SSL_read(SSL *ssl, void *buf, int num).
+// OpenSSL: int SSL_read(SSL *ssl, void *buf, int num).
 #[uprobe]
 pub fn uprobe_ssl_read_enter(ctx: ProbeContext) -> u32 {
     tls_io_enter(&ctx, NETWORK_IO_READ)
@@ -1141,10 +1161,44 @@ pub fn uretprobe_ssl_read_ex_exit(ctx: RetProbeContext) -> u32 {
     tls_io_exit(&ctx, NETWORK_IO_READ)
 }
 
-// OpenSSL/BoringSSL: int SSL_set_fd(SSL *ssl, int fd).
+// OpenSSL: int SSL_set_fd(SSL *ssl, int fd). The mapping is committed only
+// after the function reports success.
 #[uprobe]
-pub fn uprobe_ssl_set_fd(ctx: ProbeContext) -> u32 {
-    tls_set_handle_fd(&ctx, 1)
+pub fn uprobe_ssl_set_fd_enter(ctx: ProbeContext) -> u32 {
+    tls_stash_handle_fd(&ctx, 0)
+}
+
+#[uretprobe]
+pub fn uretprobe_ssl_set_fd_exit(ctx: RetProbeContext) -> u32 {
+    tls_commit_handle_fd(&ctx)
+}
+
+// OpenSSL: int SSL_set_rfd(SSL *ssl, int fd).
+#[uprobe]
+pub fn uprobe_ssl_set_rfd_enter(ctx: ProbeContext) -> u32 {
+    tls_stash_handle_fd(&ctx, NETWORK_IO_READ)
+}
+
+#[uretprobe]
+pub fn uretprobe_ssl_set_rfd_exit(ctx: RetProbeContext) -> u32 {
+    tls_commit_handle_fd(&ctx)
+}
+
+// OpenSSL: int SSL_set_wfd(SSL *ssl, int fd).
+#[uprobe]
+pub fn uprobe_ssl_set_wfd_enter(ctx: ProbeContext) -> u32 {
+    tls_stash_handle_fd(&ctx, NETWORK_IO_WRITE)
+}
+
+#[uretprobe]
+pub fn uretprobe_ssl_set_wfd_exit(ctx: RetProbeContext) -> u32 {
+    tls_commit_handle_fd(&ctx)
+}
+
+// OpenSSL: void SSL_free(SSL *ssl).
+#[uprobe]
+pub fn uprobe_ssl_free(ctx: ProbeContext) -> u32 {
+    tls_remove_handle(&ctx)
 }
 
 // GnuTLS: ssize_t gnutls_record_send(gnutls_session_t s, const void *d, size_t n).
@@ -1169,20 +1223,19 @@ pub fn uretprobe_gnutls_record_recv_exit(ctx: RetProbeContext) -> u32 {
     tls_io_exit(&ctx, NETWORK_IO_READ)
 }
 
-// GnuTLS: void gnutls_transport_set_ptr(gnutls_session_t s, gnutls_transport_ptr_t p).
-// gnutls_transport_set_int(s, fd) expands to set_ptr(s, (void*)(intptr_t)fd),
-// so the fd travels in the pointer argument.
-#[uprobe]
-pub fn uprobe_gnutls_transport_set_ptr(ctx: ProbeContext) -> u32 {
-    tls_set_handle_fd(&ctx, 1)
-}
-
 // GnuTLS: void gnutls_transport_set_int2(gnutls_session_t s, int recv, int send).
 // gnutls_transport_set_int(s, fd) expands to this with recv == send == fd,
-// so hooking it covers the common integer-fd setup path.
+// so this covers the standard socket-descriptor setup without confusing a
+// custom transport pointer for an fd.
 #[uprobe]
 pub fn uprobe_gnutls_transport_set_int2(ctx: ProbeContext) -> u32 {
-    tls_set_handle_fd(&ctx, 1)
+    tls_set_handle_fds(&ctx, 1, 2)
+}
+
+// GnuTLS: void gnutls_deinit(gnutls_session_t session).
+#[uprobe]
+pub fn uprobe_gnutls_deinit(ctx: ProbeContext) -> u32 {
+    tls_remove_handle(&ctx)
 }
 
 fn try_tracepoint_execve(ctx: TracePointContext) -> Result<u32, i64> {
@@ -2035,16 +2088,25 @@ fn tls_capture_limit() -> u32 {
     configured.clamp(PROTOCOL_MIN_CAPTURE_BYTES, PROTOCOL_MAX_CAPTURE_BYTES)
 }
 
-/// Records the fd behind a userspace TLS handle (`SSL*` or GnuTLS session).
-/// `fd_arg_index` is the probe argument carrying the fd (or, for GnuTLS, the
-/// pointer whose integer value is the fd).
 #[inline(always)]
-fn tls_set_handle_fd(ctx: &ProbeContext, fd_arg_index: usize) -> u32 {
+fn tls_handle_key(handle: u64) -> TlsHandleKey {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    TlsHandleKey {
+        tgid: (pid_tgid >> 32) as u32,
+        reserved: 0,
+        handle,
+    }
+}
+
+/// Stashes an OpenSSL `SSL_set_*fd` call until its return probe confirms the
+/// operation succeeded. A direction of zero updates both read and write fds.
+#[inline(always)]
+fn tls_stash_handle_fd(ctx: &ProbeContext, direction: u32) -> u32 {
     let handle: u64 = match ctx.arg(0) {
         Some(value) => value,
         None => return 0,
     };
-    let fd_value: i64 = match ctx.arg(fd_arg_index) {
+    let fd_value: i64 = match ctx.arg(1) {
         Some(value) => value,
         None => return 0,
     };
@@ -2052,13 +2114,82 @@ fn tls_set_handle_fd(ctx: &ProbeContext, fd_arg_index: usize) -> u32 {
         return 0;
     }
     let pid_tgid = bpf_get_current_pid_tgid();
-    let key = TlsHandleKey {
-        tgid: (pid_tgid >> 32) as u32,
-        reserved: 0,
+    let pending = PendingTlsSetFd {
         handle,
+        fd: fd_value as i32,
+        direction,
     };
-    if TLS_HANDLE_FDS.insert(&key, &(fd_value as i32), 0).is_ok() {
+    let _ = PENDING_TLS_SET_FD.insert(&pid_tgid, &pending, 0);
+    0
+}
+
+fn tls_commit_handle_fd(ctx: &RetProbeContext) -> u32 {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let pending = match unsafe { PENDING_TLS_SET_FD.get(&pid_tgid) } {
+        Some(value) => *value,
+        None => return 0,
+    };
+    PENDING_TLS_SET_FD.remove(&pid_tgid).ok();
+    let retval: i64 = ctx.ret();
+    if retval != 1 {
+        return 0;
+    }
+    tls_update_handle_fds(pending.handle, pending.fd, pending.fd, pending.direction);
+    0
+}
+
+/// Records the two explicit descriptors passed through GnuTLS's standard
+/// socket transport API. Custom-pointer transports intentionally do not
+/// populate this map.
+#[inline(always)]
+fn tls_set_handle_fds(ctx: &ProbeContext, read_arg_index: usize, write_arg_index: usize) -> u32 {
+    let handle: u64 = match ctx.arg(0) {
+        Some(value) => value,
+        None => return 0,
+    };
+    let read_fd: i64 = match ctx.arg(read_arg_index) {
+        Some(value) => value,
+        None => return 0,
+    };
+    let write_fd: i64 = match ctx.arg(write_arg_index) {
+        Some(value) => value,
+        None => return 0,
+    };
+    if handle == 0 || read_fd < 0 || write_fd < 0 {
+        return 0;
+    }
+    tls_update_handle_fds(handle, read_fd as i32, write_fd as i32, 0);
+    0
+}
+
+#[inline(always)]
+fn tls_update_handle_fds(handle: u64, read_fd: i32, write_fd: i32, direction: u32) {
+    let key = tls_handle_key(handle);
+    let mut fds = unsafe { TLS_HANDLE_FDS.get(&key) }
+        .copied()
+        .unwrap_or(TlsHandleFds {
+            read_fd: -1,
+            write_fd: -1,
+        });
+    if direction == 0 || direction == NETWORK_IO_READ {
+        fds.read_fd = read_fd;
+    }
+    if direction == 0 || direction == NETWORK_IO_WRITE {
+        fds.write_fd = write_fd;
+    }
+    if TLS_HANDLE_FDS.insert(&key, &fds, 0).is_ok() {
         record_tls_diagnostic(TLS_DIAG_SET_FD);
+    }
+}
+
+#[inline(always)]
+fn tls_remove_handle(ctx: &ProbeContext) -> u32 {
+    let handle: u64 = match ctx.arg(0) {
+        Some(value) => value,
+        None => return 0,
+    };
+    if handle != 0 {
+        TLS_HANDLE_FDS.remove(&tls_handle_key(handle)).ok();
     }
     0
 }
@@ -2159,7 +2290,7 @@ fn tls_io_exit(ctx: &RetProbeContext, direction: u32) -> u32 {
     }
 }
 
-fn tls_connection_for_handle(handle: u64) -> Option<PendingConnect> {
+fn tls_connection_for_handle(handle: u64, direction: u32) -> Option<PendingConnect> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let tgid = (pid_tgid >> 32) as u32;
     let handle_key = TlsHandleKey {
@@ -2167,13 +2298,22 @@ fn tls_connection_for_handle(handle: u64) -> Option<PendingConnect> {
         reserved: 0,
         handle,
     };
-    let fd = match unsafe { TLS_HANDLE_FDS.get(&handle_key) } {
+    let fds = match unsafe { TLS_HANDLE_FDS.get(&handle_key) } {
         Some(value) => *value,
         None => {
             record_tls_diagnostic(TLS_DIAG_FD_UNRESOLVED);
             return None;
         }
     };
+    let fd = if direction == NETWORK_IO_READ {
+        fds.read_fd
+    } else {
+        fds.write_fd
+    };
+    if fd < 0 {
+        record_tls_diagnostic(TLS_DIAG_FD_UNRESOLVED);
+        return None;
+    }
     let key = ConnectionKey { tgid, fd };
     let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
         Some(value) => *value,
@@ -2206,7 +2346,7 @@ fn emit_tls_data(
     buffer: *const u8,
     len: u64,
 ) -> Result<u32, i64> {
-    let connection = match tls_connection_for_handle(handle) {
+    let connection = match tls_connection_for_handle(handle, direction) {
         Some(value) => value,
         None => return Ok(0),
     };
