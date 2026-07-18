@@ -55,6 +55,9 @@ pub enum Http2Extraction {
     InvalidHuffman,
     DecoderPoisoned,
     UnsupportedFrame,
+    ContinuationExpected,
+    UnexpectedContinuation,
+    ContinuationStreamMismatch,
     InvalidStatusCode,
 }
 
@@ -91,6 +94,115 @@ pub struct ParsedHttp2Response {
     pub error_type: Option<String>,
     pub warning: Option<String>,
     pub attributes: Vec<TraceAttribute>,
+}
+
+/// A complete, bounded HPACK header block assembled from one HEADERS frame
+/// and any required CONTINUATION frames. `header` retains the initial
+/// HEADERS semantics, including END_STREAM, and always carries END_HEADERS.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssembledHttp2HeaderBlock {
+    pub header: Http2FrameHeader,
+    pub block: Vec<u8>,
+}
+
+#[derive(Debug)]
+struct PendingHttp2HeaderBlock {
+    header: Http2FrameHeader,
+    block: Vec<u8>,
+}
+
+/// Connection-direction-scoped state for HTTP/2 header block reassembly.
+///
+/// HTTP/2 forbids any interleaving frame between a HEADERS frame without
+/// END_HEADERS and its final CONTINUATION. Violations discard the partial
+/// block so bytes from different streams can never be fed into HPACK.
+#[derive(Debug, Default)]
+pub struct Http2HeaderBlockAssembler {
+    pending: Option<PendingHttp2HeaderBlock>,
+}
+
+impl Http2HeaderBlockAssembler {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn is_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    pub fn reset(&mut self) {
+        self.pending = None;
+    }
+
+    /// Accepts one complete HTTP/2 frame. Non-header frames return `None`
+    /// when no block is pending. A completed block is returned only after
+    /// END_HEADERS, with the total encoded bytes bounded by
+    /// `max_header_bytes`.
+    pub fn push_frame(
+        &mut self,
+        header: &Http2FrameHeader,
+        payload: &[u8],
+        max_header_bytes: usize,
+    ) -> Result<Option<AssembledHttp2HeaderBlock>, Http2Extraction> {
+        match header.frame_type {
+            HTTP2_FRAME_TYPE_HEADERS => {
+                if self.pending.take().is_some() {
+                    return Err(Http2Extraction::ContinuationExpected);
+                }
+                if header.stream_id == 0 {
+                    return Err(Http2Extraction::MalformedFrame);
+                }
+                let block = headers_frame_block(header, payload)?;
+                if block.len() > max_header_bytes {
+                    return Err(Http2Extraction::HeadersTooLong);
+                }
+                if header.flags & HTTP2_FLAG_END_HEADERS != 0 {
+                    let mut assembled_header = *header;
+                    assembled_header.flags &= !(HTTP2_FLAG_PADDED | HTTP2_FLAG_PRIORITY);
+                    assembled_header.length = block.len();
+                    return Ok(Some(AssembledHttp2HeaderBlock {
+                        header: assembled_header,
+                        block: block.to_vec(),
+                    }));
+                }
+                self.pending = Some(PendingHttp2HeaderBlock {
+                    header: *header,
+                    block: block.to_vec(),
+                });
+                Ok(None)
+            }
+            HTTP2_FRAME_TYPE_CONTINUATION => {
+                let Some(mut pending) = self.pending.take() else {
+                    return Err(Http2Extraction::UnexpectedContinuation);
+                };
+                if header.stream_id == 0 || header.stream_id != pending.header.stream_id {
+                    return Err(Http2Extraction::ContinuationStreamMismatch);
+                }
+                let assembled_len = pending
+                    .block
+                    .len()
+                    .checked_add(payload.len())
+                    .ok_or(Http2Extraction::HeadersTooLong)?;
+                if assembled_len > max_header_bytes {
+                    return Err(Http2Extraction::HeadersTooLong);
+                }
+                pending.block.extend_from_slice(payload);
+                if header.flags & HTTP2_FLAG_END_HEADERS == 0 {
+                    self.pending = Some(pending);
+                    return Ok(None);
+                }
+                pending.header.flags |= HTTP2_FLAG_END_HEADERS;
+                pending.header.flags &= !(HTTP2_FLAG_PADDED | HTTP2_FLAG_PRIORITY);
+                pending.header.length = pending.block.len();
+                Ok(Some(AssembledHttp2HeaderBlock {
+                    header: pending.header,
+                    block: pending.block,
+                }))
+            }
+            _ if self.pending.take().is_some() => Err(Http2Extraction::ContinuationExpected),
+            _ => Ok(None),
+        }
+    }
 }
 
 /// Connection-scoped HPACK decoding state for one stream direction.
@@ -388,9 +500,14 @@ pub fn parse_http2_request_headers_frame(
     payload: &[u8],
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedHttp2Request, Http2Extraction> {
+    if header.flags & HTTP2_FLAG_END_HEADERS == 0 {
+        return Err(Http2Extraction::ContinuationExpected);
+    }
     let block = headers_frame_block(header, payload)?;
-    let mut warning = (header.flags & HTTP2_FLAG_END_HEADERS == 0)
-        .then(|| "continuation_headers_not_reassembled".to_string());
+    if block.len() > config.max_header_bytes {
+        return Err(Http2Extraction::HeadersTooLong);
+    }
+    let mut warning = None;
     let headers = decoder.decode_header_block(block)?;
 
     let mut method = None;
@@ -503,9 +620,14 @@ pub fn parse_http2_response_headers_frame(
     payload: &[u8],
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedHttp2Response, Http2Extraction> {
+    if header.flags & HTTP2_FLAG_END_HEADERS == 0 {
+        return Err(Http2Extraction::ContinuationExpected);
+    }
     let block = headers_frame_block(header, payload)?;
-    let warning = (header.flags & HTTP2_FLAG_END_HEADERS == 0)
-        .then(|| "continuation_headers_not_reassembled".to_string());
+    if block.len() > config.max_header_bytes {
+        return Err(Http2Extraction::HeadersTooLong);
+    }
+    let warning = None;
     let headers = decoder.decode_header_block(block)?;
 
     let mut status_code = None;
@@ -726,6 +848,152 @@ mod tests {
     }
 
     #[test]
+    fn continuation_frames_reassemble_before_hpack_decode() {
+        let mut assembler = Http2HeaderBlockAssembler::new();
+        let headers = Http2FrameHeader {
+            length: 1,
+            frame_type: HTTP2_FRAME_TYPE_HEADERS,
+            flags: HTTP2_FLAG_END_STREAM,
+            stream_id: 1,
+        };
+        assert_eq!(assembler.push_frame(&headers, &[0x82], 16), Ok(None));
+        assert!(assembler.is_pending());
+
+        let middle = Http2FrameHeader {
+            length: 0,
+            frame_type: HTTP2_FRAME_TYPE_CONTINUATION,
+            flags: 0,
+            stream_id: 1,
+        };
+        assert_eq!(assembler.push_frame(&middle, &[], 16), Ok(None));
+
+        let continuation = Http2FrameHeader {
+            length: 1,
+            frame_type: HTTP2_FRAME_TYPE_CONTINUATION,
+            flags: HTTP2_FLAG_END_HEADERS,
+            stream_id: 1,
+        };
+        let assembled = assembler
+            .push_frame(&continuation, &[0x84], 16)
+            .expect("continuation is valid")
+            .expect("header block is complete");
+        assert_eq!(assembled.block, vec![0x82, 0x84]);
+        assert_eq!(
+            assembled.header.flags,
+            HTTP2_FLAG_END_STREAM | HTTP2_FLAG_END_HEADERS,
+        );
+        assert!(!assembler.is_pending());
+
+        let parsed = parse_http2_request_headers_frame(
+            &mut HpackDecoder::new(),
+            &assembled.header,
+            &assembled.block,
+            &ProtocolExtractionConfig::default(),
+        )
+        .expect("assembled block parses");
+        assert_eq!(parsed.method.as_deref(), Some("GET"));
+    }
+
+    #[test]
+    fn continuation_stream_mismatch_discards_partial_block() {
+        let mut assembler = Http2HeaderBlockAssembler::new();
+        let headers = Http2FrameHeader {
+            length: 1,
+            frame_type: HTTP2_FRAME_TYPE_HEADERS,
+            flags: 0,
+            stream_id: 1,
+        };
+        assert_eq!(assembler.push_frame(&headers, &[0x82], 16), Ok(None));
+        let wrong_stream = Http2FrameHeader {
+            length: 1,
+            frame_type: HTTP2_FRAME_TYPE_CONTINUATION,
+            flags: HTTP2_FLAG_END_HEADERS,
+            stream_id: 3,
+        };
+        assert_eq!(
+            assembler.push_frame(&wrong_stream, &[0x84], 16),
+            Err(Http2Extraction::ContinuationStreamMismatch),
+        );
+        assert!(!assembler.is_pending());
+
+        let complete = Http2FrameHeader {
+            length: 2,
+            frame_type: HTTP2_FRAME_TYPE_HEADERS,
+            flags: HTTP2_FLAG_END_HEADERS,
+            stream_id: 5,
+        };
+        assert!(
+            assembler
+                .push_frame(&complete, &[0x82, 0x84], 16)
+                .expect("fresh block is accepted")
+                .is_some(),
+        );
+    }
+
+    #[test]
+    fn interleaved_or_oversized_header_blocks_fail_closed() {
+        let mut assembler = Http2HeaderBlockAssembler::new();
+        let headers = Http2FrameHeader {
+            length: 2,
+            frame_type: HTTP2_FRAME_TYPE_HEADERS,
+            flags: 0,
+            stream_id: 1,
+        };
+        assert_eq!(assembler.push_frame(&headers, &[0x82, 0x84], 2), Ok(None));
+        let data = Http2FrameHeader {
+            length: 0,
+            frame_type: HTTP2_FRAME_TYPE_DATA,
+            flags: 0,
+            stream_id: 1,
+        };
+        assert_eq!(
+            assembler.push_frame(&data, &[], 2),
+            Err(Http2Extraction::ContinuationExpected),
+        );
+        assert!(!assembler.is_pending());
+
+        assert_eq!(assembler.push_frame(&headers, &[0x82, 0x84], 2), Ok(None));
+        let continuation = Http2FrameHeader {
+            length: 1,
+            frame_type: HTTP2_FRAME_TYPE_CONTINUATION,
+            flags: HTTP2_FLAG_END_HEADERS,
+            stream_id: 1,
+        };
+        assert_eq!(
+            assembler.push_frame(&continuation, &[0x00], 2),
+            Err(Http2Extraction::HeadersTooLong),
+        );
+        assert!(!assembler.is_pending());
+    }
+
+    #[test]
+    fn incomplete_header_frame_does_not_poison_hpack_decoder() {
+        let mut decoder = HpackDecoder::new();
+        let incomplete = Http2FrameHeader {
+            length: 1,
+            frame_type: HTTP2_FRAME_TYPE_HEADERS,
+            flags: 0,
+            stream_id: 1,
+        };
+        assert_eq!(
+            parse_http2_request_headers_frame(
+                &mut decoder,
+                &incomplete,
+                &[0xff],
+                &ProtocolExtractionConfig::default(),
+            ),
+            Err(Http2Extraction::ContinuationExpected),
+        );
+        assert_eq!(
+            decoder.decode_header_block(&[0x82, 0x84]),
+            Ok(vec![
+                (":method".to_string(), "GET".to_string()),
+                (":path".to_string(), "/".to_string()),
+            ]),
+        );
+    }
+
+    #[test]
     fn rfc7541_c4_huffman_requests_decode() {
         let mut decoder = HpackDecoder::new();
         let first = hex("828684418cf1e3c2e5f23a6ba0ab90f4ff");
@@ -913,7 +1181,6 @@ mod tests {
 
     #[test]
     fn padded_headers_frame_strips_padding() {
-        let mut decoder = HpackDecoder::new();
         let block = hex("828684418cf1e3c2e5f23a6ba0ab90f4ff");
         let mut payload = vec![2u8];
         payload.extend_from_slice(&block);
@@ -924,10 +1191,16 @@ mod tests {
             flags: HTTP2_FLAG_END_HEADERS | HTTP2_FLAG_PADDED,
             stream_id: 1,
         };
+        let assembled = Http2HeaderBlockAssembler::new()
+            .push_frame(&header, &payload, 64)
+            .expect("padded frame is valid")
+            .expect("header block is complete");
+        assert_eq!(assembled.block, block);
+        assert_eq!(assembled.header.flags, HTTP2_FLAG_END_HEADERS);
         let parsed = parse_http2_request_headers_frame(
-            &mut decoder,
-            &header,
-            &payload,
+            &mut HpackDecoder::new(),
+            &assembled.header,
+            &assembled.block,
             &ProtocolExtractionConfig::default(),
         )
         .expect("padded frame parses");
