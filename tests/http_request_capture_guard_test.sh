@@ -74,8 +74,8 @@ if ! grep -Fq "HTTP_IOVEC_CHUNK_BYTES: usize = 96" "$program"; then
   exit 1
 fi
 
-if ! grep -Fq "HTTP_REQUEST_BYTES: usize = HTTP_IOVEC_CHUNK_BYTES * HTTP_MAX_IOVECS" "$program"; then
-  printf 'expected %s to derive split HTTP request bytes from the fixed iovec slot bound\n' "$program" >&2
+if ! grep -Fq "HTTP_REQUEST_BYTES: usize = 1024" "$program"; then
+  printf 'expected %s to retain a bounded 1 KiB contiguous HTTP request prefix\n' "$program" >&2
   exit 1
 fi
 
@@ -84,8 +84,8 @@ if ! grep -Fq "RAW_HTTP_IOVEC_CHUNK_BYTES: usize = 96" "$source_file"; then
   exit 1
 fi
 
-if ! grep -Fq "RAW_HTTP_REQUEST_BYTES: usize = RAW_HTTP_IOVEC_CHUNK_BYTES * RAW_HTTP_MAX_IOVECS" "$source_file"; then
-  printf 'expected %s to derive raw HTTP request bytes from the fixed iovec slot bound\n' "$source_file" >&2
+if ! grep -Fq "RAW_HTTP_REQUEST_BYTES: usize = 1024" "$source_file"; then
+  printf 'expected %s to decode the bounded 1 KiB contiguous HTTP request prefix\n' "$source_file" >&2
   exit 1
 fi
 

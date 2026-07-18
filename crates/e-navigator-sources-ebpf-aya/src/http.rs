@@ -16,7 +16,7 @@ const RAW_HTTP_MAX_IOVECS: usize = 3;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 const RAW_HTTP_IOVEC_CHUNK_BYTES: usize = 96;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-pub(crate) const RAW_HTTP_REQUEST_BYTES: usize = RAW_HTTP_IOVEC_CHUNK_BYTES * RAW_HTTP_MAX_IOVECS;
+pub(crate) const RAW_HTTP_REQUEST_BYTES: usize = 1024;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_HTTP_AF_INET: u32 = 2;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -246,6 +246,7 @@ struct HttpStreamKey {
 #[derive(Debug, Default)]
 struct HttpStreamState {
     buffer: Vec<u8>,
+    buffer_first_monotonic_nanos: u64,
     body_bytes_remaining: usize,
     last_seen_unix_nanos: u64,
 }
@@ -314,35 +315,85 @@ impl HttpRequestReassembler {
         let total_len = usize::try_from(raw.request_total_len)
             .unwrap_or(usize::MAX)
             .max(captured.len());
-        if total_len > captured.len() {
-            state.buffer.clear();
-            state.body_bytes_remaining = 0;
-            outcome.errors.push(RawHttpDecodeError::ReassemblyGap {
-                sample: RawHttpInvalidSampleMetadata::from_raw(raw),
-            });
-            return outcome;
-        }
+        let mut uncaptured_bytes = total_len.saturating_sub(captured.len());
 
         let mut visible = captured;
         if state.body_bytes_remaining > 0 {
             let skipped = state.body_bytes_remaining.min(visible.len());
             state.body_bytes_remaining -= skipped;
             visible = &visible[skipped..];
+            let skipped = state.body_bytes_remaining.min(uncaptured_bytes);
+            state.body_bytes_remaining -= skipped;
+            uncaptured_bytes -= skipped;
             if state.body_bytes_remaining > 0 {
+                return outcome;
+            }
+            if visible.is_empty() {
+                if uncaptured_bytes > 0 {
+                    state.buffer.clear();
+                    state.buffer_first_monotonic_nanos = 0;
+                    outcome.errors.push(RawHttpDecodeError::ReassemblyGap {
+                        sample: RawHttpInvalidSampleMetadata::from_raw(raw),
+                    });
+                }
                 return outcome;
             }
         }
 
-        if !state.buffer.is_empty() && starts_with_http_request(visible) {
-            // The fd was reused while an old partial header remained. Prefer
-            // the new, self-identifying request over cross-connection splice.
-            state.buffer.clear();
+        let chunk_monotonic_nanos = raw.timestamp_unix_nanos;
+        if state.buffer.is_empty() {
+            state.buffer_first_monotonic_nanos = chunk_monotonic_nanos;
+            state.buffer.extend_from_slice(visible);
+        } else if starts_with_http_request(visible) {
+            if !starts_with_http_request(&state.buffer)
+                && chunk_monotonic_nanos < state.buffer_first_monotonic_nanos
+            {
+                // Perf buffers preserve order per CPU, not across CPUs. A
+                // task can migrate between segmented syscalls, so retain an
+                // already-seen suffix when its kernel timestamp proves this
+                // self-identifying prefix happened first.
+                let suffix = std::mem::take(&mut state.buffer);
+                state.buffer.extend_from_slice(visible);
+                state.buffer.extend_from_slice(&suffix);
+                state.buffer_first_monotonic_nanos = chunk_monotonic_nanos;
+            } else {
+                // A later self-identifying request means the fd was reused or
+                // an orphaned suffix can no longer be completed safely.
+                state.buffer.clear();
+                state.buffer.extend_from_slice(visible);
+                state.buffer_first_monotonic_nanos = chunk_monotonic_nanos;
+            }
+        } else if chunk_monotonic_nanos < state.buffer_first_monotonic_nanos {
+            let suffix = std::mem::take(&mut state.buffer);
+            state.buffer.extend_from_slice(visible);
+            state.buffer.extend_from_slice(&suffix);
+            state.buffer_first_monotonic_nanos = chunk_monotonic_nanos;
+        } else {
+            state.buffer.extend_from_slice(visible);
         }
-        state.buffer.extend_from_slice(visible);
+
+        if !starts_with_http_request(&state.buffer) {
+            if state.buffer.len() > self.max_header_bytes || uncaptured_bytes > 0 {
+                state.buffer.clear();
+                state.buffer_first_monotonic_nanos = 0;
+                state.body_bytes_remaining = 0;
+                outcome.errors.push(if uncaptured_bytes > 0 {
+                    RawHttpDecodeError::ReassemblyGap {
+                        sample: RawHttpInvalidSampleMetadata::from_raw(raw),
+                    }
+                } else {
+                    RawHttpDecodeError::ReassemblyLimit {
+                        sample: RawHttpInvalidSampleMetadata::from_raw(raw),
+                    }
+                });
+            }
+            return outcome;
+        }
 
         loop {
             if state.buffer.len() > self.max_header_bytes {
                 state.buffer.clear();
+                state.buffer_first_monotonic_nanos = 0;
                 state.body_bytes_remaining = 0;
                 outcome.errors.push(RawHttpDecodeError::ReassemblyLimit {
                     sample: RawHttpInvalidSampleMetadata::from_raw(raw),
@@ -351,11 +402,20 @@ impl HttpRequestReassembler {
             }
 
             let Some(header_end) = find_http_header_end(&state.buffer) else {
+                if uncaptured_bytes > 0 {
+                    state.buffer.clear();
+                    state.buffer_first_monotonic_nanos = 0;
+                    state.body_bytes_remaining = 0;
+                    outcome.errors.push(RawHttpDecodeError::ReassemblyGap {
+                        sample: RawHttpInvalidSampleMetadata::from_raw(raw),
+                    });
+                }
                 return outcome;
             };
             let request = state.buffer[..header_end].to_vec();
             if let Err(reason) = parse_http_request(&request, protocol_config) {
                 state.buffer.clear();
+                state.buffer_first_monotonic_nanos = 0;
                 state.body_bytes_remaining = 0;
                 outcome.errors.push(RawHttpDecodeError::HttpExtraction {
                     reason,
@@ -369,9 +429,21 @@ impl HttpRequestReassembler {
             let buffered_body = body_len.min(state.buffer.len());
             state.buffer.drain(..buffered_body);
             state.body_bytes_remaining = body_len.saturating_sub(buffered_body);
+            let uncaptured_body = state.body_bytes_remaining.min(uncaptured_bytes);
+            state.body_bytes_remaining -= uncaptured_body;
+            uncaptured_bytes -= uncaptured_body;
             outcome.requests.push(request);
 
-            if state.body_bytes_remaining > 0 || state.buffer.is_empty() {
+            if state.body_bytes_remaining > 0 {
+                return outcome;
+            }
+            if state.buffer.is_empty() {
+                state.buffer_first_monotonic_nanos = 0;
+                if uncaptured_bytes > 0 {
+                    outcome.errors.push(RawHttpDecodeError::ReassemblyGap {
+                        sample: RawHttpInvalidSampleMetadata::from_raw(raw),
+                    });
+                }
                 return outcome;
             }
         }
@@ -1365,7 +1437,7 @@ mod tests {
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.request[..part1.len()].copy_from_slice(part1);
-        let second_offset = RAW_HTTP_REQUEST_BYTES / raw.request_iovec_lens.len();
+        let second_offset = RAW_HTTP_IOVEC_CHUNK_BYTES;
         raw.request[second_offset..second_offset + part2.len()].copy_from_slice(part2);
 
         let signal = raw_http_request_to_signal_with_clock_and_procfs(
@@ -1421,7 +1493,7 @@ mod tests {
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.request[..part1.len()].copy_from_slice(part1);
-        let slot_len = RAW_HTTP_REQUEST_BYTES / raw.request_iovec_lens.len();
+        let slot_len = RAW_HTTP_IOVEC_CHUNK_BYTES;
         assert_eq!(slot_len, RAW_HTTP_IOVEC_CHUNK_BYTES);
         assert!(part1.len() <= RAW_HTTP_IOVEC_CHUNK_BYTES);
         assert!(part2.len() <= RAW_HTTP_IOVEC_CHUNK_BYTES);
@@ -1871,6 +1943,83 @@ mod tests {
     }
 
     #[test]
+    fn reassembler_orders_segmented_headers_by_kernel_timestamp() {
+        let config = ProtocolExtractionConfig::default();
+        let mut reassembler = HttpRequestReassembler::new(8, config.max_header_bytes);
+        let mut first = raw_http_chunk(
+            77,
+            4,
+            RAW_HTTP_ROLE_SERVER,
+            b"GET /segmented HTTP/1.1\r\nHost: svc.local\r\n",
+        );
+        first.timestamp_unix_nanos = 10;
+        let mut second = raw_http_chunk(77, 4, RAW_HTTP_ROLE_SERVER, b"Connection: close\r\n\r\n");
+        second.timestamp_unix_nanos = 20;
+
+        let second_outcome = reassembler.push(
+            &second,
+            &compact_raw_http_request(&second).expect("second chunk compacts"),
+            1,
+            &config,
+        );
+        assert!(second_outcome.requests.is_empty());
+        assert!(second_outcome.errors.is_empty());
+
+        let first_outcome = reassembler.push(
+            &first,
+            &compact_raw_http_request(&first).expect("first chunk compacts"),
+            2,
+            &config,
+        );
+        assert_eq!(first_outcome.requests.len(), 1);
+        assert_eq!(
+            first_outcome.requests[0],
+            concat!(
+                "GET /segmented HTTP/1.1\r\n",
+                "Host: svc.local\r\n",
+                "Connection: close\r\n",
+                "\r\n"
+            )
+            .as_bytes()
+        );
+        assert!(first_outcome.errors.is_empty());
+    }
+
+    #[test]
+    fn reassembler_drops_older_orphan_for_later_request_on_reused_fd() {
+        let config = ProtocolExtractionConfig::default();
+        let mut reassembler = HttpRequestReassembler::new(8, config.max_header_bytes);
+        let mut orphan = raw_http_chunk(77, 4, RAW_HTTP_ROLE_SERVER, b"Connection: close\r\n\r\n");
+        orphan.timestamp_unix_nanos = 10;
+        let mut request = raw_http_chunk(
+            77,
+            4,
+            RAW_HTTP_ROLE_SERVER,
+            b"GET /reused HTTP/1.1\r\nHost: svc.local\r\n\r\n",
+        );
+        request.timestamp_unix_nanos = 20;
+
+        let orphan_outcome = reassembler.push(
+            &orphan,
+            &compact_raw_http_request(&orphan).expect("orphan chunk compacts"),
+            1,
+            &config,
+        );
+        assert!(orphan_outcome.requests.is_empty());
+        assert!(orphan_outcome.errors.is_empty());
+
+        let request_outcome = reassembler.push(
+            &request,
+            &compact_raw_http_request(&request).expect("request compacts"),
+            2,
+            &config,
+        );
+        assert_eq!(request_outcome.requests.len(), 1);
+        assert!(request_outcome.requests[0].starts_with(b"GET /reused "));
+        assert!(request_outcome.errors.is_empty());
+    }
+
+    #[test]
     fn reassembler_extracts_pipelined_requests_after_fixed_body() {
         let config = ProtocolExtractionConfig::default();
         let mut reassembler = HttpRequestReassembler::new(8, config.max_header_bytes);
@@ -1897,6 +2046,60 @@ mod tests {
         assert_eq!(outcome.requests.len(), 2);
         assert!(outcome.requests[0].starts_with(b"POST /first "));
         assert!(outcome.requests[1].starts_with(b"GET /second "));
+    }
+
+    #[test]
+    fn reassembler_accepts_uncaptured_tail_within_declared_body() {
+        let config = ProtocolExtractionConfig::default();
+        let mut reassembler = HttpRequestReassembler::new(8, config.max_header_bytes);
+        let captured = concat!(
+            "POST /body HTTP/1.1\r\n",
+            "Host: svc.local\r\n",
+            "Content-Length: 4\r\n",
+            "\r\n",
+            "DA"
+        );
+        let mut raw = raw_http_chunk(77, 4, RAW_HTTP_ROLE_SERVER, captured.as_bytes());
+        raw.request_total_len += 2;
+
+        let outcome = reassembler.push(
+            &raw,
+            &compact_raw_http_request(&raw).expect("captured body prefix compacts"),
+            1,
+            &config,
+        );
+
+        assert!(outcome.errors.is_empty());
+        assert_eq!(outcome.requests.len(), 1);
+        assert!(outcome.requests[0].starts_with(b"POST /body "));
+    }
+
+    #[test]
+    fn reassembler_reports_uncaptured_bytes_beyond_declared_body() {
+        let config = ProtocolExtractionConfig::default();
+        let mut reassembler = HttpRequestReassembler::new(8, config.max_header_bytes);
+        let captured = concat!(
+            "POST /body HTTP/1.1\r\n",
+            "Host: svc.local\r\n",
+            "Content-Length: 4\r\n",
+            "\r\n",
+            "DATA"
+        );
+        let mut raw = raw_http_chunk(77, 4, RAW_HTTP_ROLE_SERVER, captured.as_bytes());
+        raw.request_total_len += 1;
+
+        let outcome = reassembler.push(
+            &raw,
+            &compact_raw_http_request(&raw).expect("captured request compacts"),
+            1,
+            &config,
+        );
+
+        assert_eq!(outcome.requests.len(), 1);
+        assert!(matches!(
+            outcome.errors.as_slice(),
+            [RawHttpDecodeError::ReassemblyGap { .. }]
+        ));
     }
 
     #[test]
