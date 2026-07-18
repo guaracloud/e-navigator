@@ -1920,6 +1920,30 @@ mod platform {
                 "syscalls",
                 "sys_exit_recvfrom",
             )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_protocol_readv_enter",
+                "syscalls",
+                "sys_enter_readv",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_protocol_readv_exit",
+                "syscalls",
+                "sys_exit_readv",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_protocol_recvmsg_enter",
+                "syscalls",
+                "sys_enter_recvmsg",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_protocol_recvmsg_exit",
+                "syscalls",
+                "sys_exit_recvmsg",
+            )?;
 
             if diagnostics.enabled() {
                 let diagnostic_counters = PerCpuArray::try_from(
