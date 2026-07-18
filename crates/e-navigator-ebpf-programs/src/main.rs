@@ -55,6 +55,7 @@ const CONNECTION_ROLE_CLIENT: u32 = 0;
 const CONNECTION_ROLE_SERVER: u32 = 1;
 const PROTOCOL_DATA_BYTES: usize = 256;
 const PROTOCOL_IOVEC_DATA_MAX: u32 = (PROTOCOL_DATA_BYTES - 1) as u32;
+const PROTOCOL_MAX_IOVECS: u32 = 64;
 const PROTOCOL_DIAG_WRITE_ENTER: u32 = 0;
 const PROTOCOL_DIAG_READ_ENTER: u32 = 1;
 const PROTOCOL_DIAG_READ_EXIT: u32 = 2;
@@ -3361,82 +3362,41 @@ fn emit_protocol_iovec_event(
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
 
-    // Capture a straight-line, verifier-friendly prefix across the first
-    // three iovecs. HTTP/2 implementations commonly split a single frame
-    // into this shape. Larger vectors and oversized slots remain explicit
-    // gaps rather than being spliced as if their missing bytes were present.
-    let first_buffer = unsafe { bpf_probe_read_user::<*const u8>(iov.cast::<*const u8>()) }
-        .map_err(|err| err as i64)?;
-    let first_len = unsafe { bpf_probe_read_user::<u64>(iov.add(8).cast::<u64>()) }
-        .map_err(|err| err as i64)?;
-    let mut second_buffer = core::ptr::null();
-    let mut second_len = 0_u64;
-    if iov_len > 1 {
-        second_buffer =
-            unsafe { bpf_probe_read_user::<*const u8>(iov.add(16).cast::<*const u8>()) }
-                .map_err(|err| err as i64)?;
-        second_len = unsafe { bpf_probe_read_user::<u64>(iov.add(24).cast::<u64>()) }
-            .map_err(|err| err as i64)?;
+    // First establish one stable total for every segment emitted by the
+    // second pass. Real HTTP/2 stacks can split a single header block across
+    // dozens of small iovecs. Vectors beyond the hard bound retain an
+    // explicit uncaptured tail rather than being spliced as contiguous data.
+    let capture_limit = protocol_capture_limit();
+    let mut total_len = 0_u64;
+    let mut captured_total = 0_u32;
+    let mut capture_contiguous = true;
+    let mut slot = 0_u32;
+    while slot < PROTOCOL_MAX_IOVECS {
+        if u64::from(slot) >= iov_len {
+            break;
+        }
+        let slot_len = read_protocol_iovec_len(iov, slot)?;
+        total_len = total_len.saturating_add(slot_len);
+        if capture_contiguous {
+            let remaining = capture_limit.saturating_sub(captured_total);
+            let bounded = if slot_len > u64::from(remaining) {
+                remaining
+            } else {
+                slot_len as u32
+            };
+            let captured = if bounded > PROTOCOL_IOVEC_DATA_MAX {
+                PROTOCOL_IOVEC_DATA_MAX
+            } else {
+                bounded
+            };
+            captured_total = captured_total.saturating_add(captured);
+            capture_contiguous = u64::from(captured) == slot_len;
+        }
+        slot += 1;
     }
-    let mut third_buffer = core::ptr::null();
-    let mut third_len = 0_u64;
-    if iov_len > 2 {
-        third_buffer = unsafe { bpf_probe_read_user::<*const u8>(iov.add(32).cast::<*const u8>()) }
-            .map_err(|err| err as i64)?;
-        third_len = unsafe { bpf_probe_read_user::<u64>(iov.add(40).cast::<u64>()) }
-            .map_err(|err| err as i64)?;
-    }
-
-    let mut total_len = first_len
-        .saturating_add(second_len)
-        .saturating_add(third_len);
-    if iov_len > 3 {
+    if iov_len > u64::from(PROTOCOL_MAX_IOVECS) {
         total_len = u32::MAX as u64;
     }
-
-    let capture_limit = protocol_capture_limit();
-    let first_bounded = if first_len > u64::from(capture_limit) {
-        capture_limit
-    } else {
-        first_len as u32
-    };
-    let first_captured = if first_bounded > PROTOCOL_IOVEC_DATA_MAX {
-        PROTOCOL_IOVEC_DATA_MAX
-    } else {
-        first_bounded
-    };
-    let first_complete = u64::from(first_captured) == first_len;
-    let second_remaining = capture_limit.saturating_sub(first_captured);
-    let second_bounded = if second_len > u64::from(second_remaining) {
-        second_remaining
-    } else {
-        second_len as u32
-    };
-    let second_captured = if first_complete && second_bounded > PROTOCOL_IOVEC_DATA_MAX {
-        PROTOCOL_IOVEC_DATA_MAX
-    } else if first_complete {
-        second_bounded
-    } else {
-        0
-    };
-    let second_complete = u64::from(second_captured) == second_len;
-    let third_remaining = second_remaining.saturating_sub(second_captured);
-    let third_bounded = if third_len > u64::from(third_remaining) {
-        third_remaining
-    } else {
-        third_len as u32
-    };
-    let third_captured =
-        if first_complete && second_complete && third_bounded > PROTOCOL_IOVEC_DATA_MAX {
-            PROTOCOL_IOVEC_DATA_MAX
-        } else if first_complete && second_complete {
-            third_bounded
-        } else {
-            0
-        };
-    let captured_total = first_captured
-        .saturating_add(second_captured)
-        .saturating_add(third_captured);
     event.payload_total_len = if total_len > u32::MAX as u64 {
         u32::MAX
     } else {
@@ -3447,50 +3407,47 @@ fn emit_protocol_iovec_event(
         record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
         return Ok(0);
     }
-    if (first_captured > 0 && first_buffer.is_null())
-        || (second_captured > 0 && second_buffer.is_null())
-        || (third_captured > 0 && third_buffer.is_null())
-    {
-        record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
-        return Ok(0);
-    }
-
+    // Emit one segment per complete iovec prefix. All segments share the
+    // syscall timestamp and totals, so userspace can join only adjacent
+    // offsets and turn any missing event or bounded tail into a gap.
     let mut emitted = false;
-    if first_captured > 0 {
-        event.payload_offset = 0;
-        event.payload_len = first_captured;
-        let copy_len = unsafe { core::ptr::addr_of!(event.payload_len).read_volatile() };
-        if copy_len > PROTOCOL_IOVEC_DATA_MAX {
-            return Ok(0);
+    let mut offset = 0_u32;
+    slot = 0;
+    while slot < PROTOCOL_MAX_IOVECS {
+        if u64::from(slot) >= iov_len || offset >= captured_total {
+            break;
         }
-        let copied = unsafe {
-            bpf_probe_read_user_raw(
-                event.payload.as_mut_ptr().cast(),
-                copy_len,
-                first_buffer.cast(),
-            )
+        let (buffer, slot_len) = read_protocol_iovec(iov, slot)?;
+        let remaining = captured_total.saturating_sub(offset);
+        let bounded = if slot_len > u64::from(remaining) {
+            remaining
+        } else {
+            slot_len as u32
         };
-        if copied != 0 {
+        let captured = if bounded > PROTOCOL_IOVEC_DATA_MAX {
+            PROTOCOL_IOVEC_DATA_MAX
+        } else {
+            bounded
+        };
+        if captured == 0 {
+            if slot_len == 0 {
+                slot += 1;
+                continue;
+            }
+            break;
+        }
+        if buffer.is_null() {
             record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
             return Ok(0);
         }
-        record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
-        PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
-        emitted = true;
-    }
-    if second_captured > 0 {
-        event.payload_offset = first_captured;
-        event.payload_len = second_captured;
+        event.payload_offset = offset;
+        event.payload_len = captured;
         let copy_len = unsafe { core::ptr::addr_of!(event.payload_len).read_volatile() };
         if copy_len > PROTOCOL_IOVEC_DATA_MAX {
             return Ok(0);
         }
         let copied = unsafe {
-            bpf_probe_read_user_raw(
-                event.payload.as_mut_ptr().cast(),
-                copy_len,
-                second_buffer.cast(),
-            )
+            bpf_probe_read_user_raw(event.payload.as_mut_ptr().cast(), copy_len, buffer.cast())
         };
         if copied != 0 {
             return Ok(0);
@@ -3498,32 +3455,32 @@ fn emit_protocol_iovec_event(
         record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
         PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
         emitted = true;
-    }
-    if third_captured > 0 {
-        event.payload_offset = first_captured.saturating_add(second_captured);
-        event.payload_len = third_captured;
-        let copy_len = unsafe { core::ptr::addr_of!(event.payload_len).read_volatile() };
-        if copy_len > PROTOCOL_IOVEC_DATA_MAX {
-            return Ok(0);
+        offset = offset.saturating_add(captured);
+        if u64::from(captured) != slot_len {
+            break;
         }
-        let copied = unsafe {
-            bpf_probe_read_user_raw(
-                event.payload.as_mut_ptr().cast(),
-                copy_len,
-                third_buffer.cast(),
-            )
-        };
-        if copied != 0 {
-            return Ok(0);
-        }
-        record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
-        PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
-        emitted = true;
+        slot += 1;
     }
     if !emitted {
         record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
     }
     Ok(0)
+}
+
+#[inline(always)]
+fn read_protocol_iovec_len(iov: *const u8, slot: u32) -> Result<u64, i64> {
+    let offset = slot as usize * 16 + 8;
+    unsafe { bpf_probe_read_user::<u64>(iov.add(offset).cast::<u64>()) }.map_err(|err| err as i64)
+}
+
+#[inline(always)]
+fn read_protocol_iovec(iov: *const u8, slot: u32) -> Result<(*const u8, u64), i64> {
+    let offset = slot as usize * 16;
+    let buffer = unsafe { bpf_probe_read_user::<*const u8>(iov.add(offset).cast::<*const u8>()) }
+        .map_err(|err| err as i64)?;
+    let len = unsafe { bpf_probe_read_user::<u64>(iov.add(offset + 8).cast::<u64>()) }
+        .map_err(|err| err as i64)?;
+    Ok((buffer, len))
 }
 
 fn try_tracepoint_protocol_read_enter(ctx: &TracePointContext) -> Result<u32, i64> {
