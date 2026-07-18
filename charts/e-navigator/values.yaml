@@ -117,6 +117,9 @@ config:
     max_warnings = 1024
     window_nanos = 30000000000
 
+    [json_stdout]
+    mode = "all"
+
     [prometheus_http]
     enabled = false
     bind_address = "0.0.0.0"

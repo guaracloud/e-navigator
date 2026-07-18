@@ -71,6 +71,21 @@ fn default_config_does_not_inflate_opt_in_module_claims() {
 
     assert!(!config.module_enabled("source.aya_cpu_profile"));
     assert!(!config.cpu_profile_source.enabled);
+    assert_eq!(config.json_stdout.mode, JsonStdoutMode::All);
+}
+
+#[test]
+fn json_stdout_topology_mode_parses_as_a_bounded_native_contract() {
+    let config: RuntimeConfig = toml::from_str(
+        r#"
+[json_stdout]
+mode = "topology"
+"#,
+    )
+    .expect("topology stdout mode parses");
+
+    assert_eq!(config.json_stdout.mode, JsonStdoutMode::Topology);
+    assert!(config.validate().is_ok());
 }
 
 #[test]

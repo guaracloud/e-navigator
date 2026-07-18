@@ -193,7 +193,7 @@ pub(crate) fn build_registry(
     }
 
     if config.module_enabled("sink.json_stdout") {
-        registry = registry.with_sink(Box::new(JsonStdoutSink));
+        registry = registry.with_sink(Box::new(JsonStdoutSink::new(config.json_stdout.clone())));
     }
 
     if config.module_enabled("sink.prometheus_http") && config.prometheus_http.enabled {
