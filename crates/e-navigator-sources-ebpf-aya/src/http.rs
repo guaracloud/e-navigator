@@ -873,6 +873,18 @@ mod platform {
             if self.inbound_enabled {
                 attach_tracepoint(
                     &mut ebpf,
+                    "tracepoint_socket_bind_enter",
+                    "syscalls",
+                    "sys_enter_bind",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_socket_bind_exit",
+                    "syscalls",
+                    "sys_exit_bind",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
                     "tracepoint_http_accept_enter",
                     "syscalls",
                     "sys_enter_accept",

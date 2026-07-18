@@ -15,7 +15,7 @@ use aya_ebpf::{
         },
     },
     macros::{map, perf_event, tracepoint, uprobe, uretprobe},
-    maps::{Array, HashMap, PerCpuArray, PerfEventArray, ProgramArray},
+    maps::{Array, HashMap, LruHashMap, PerCpuArray, PerfEventArray, ProgramArray},
     programs::{PerfEventContext, ProbeContext, RetProbeContext, TracePointContext},
 };
 
@@ -478,6 +478,43 @@ pub struct ConnectionKey {
     pub fd: i32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PendingBind {
+    pub fd: i32,
+    pub family: u32,
+    pub local_port_be: u16,
+    pub reserved: u16,
+    pub local_addr_v4: u32,
+    pub local_addr_v6: [u8; 16],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ListenerKey {
+    pub cgroup_id: u64,
+    pub fd: i32,
+    pub reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ListenerEndpoint {
+    pub family: u32,
+    pub local_port_be: u16,
+    pub reserved: u16,
+    pub local_addr_v4: u32,
+    pub local_addr_v6: [u8; 16],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PendingAccept {
+    pub listen_fd: i32,
+    pub reserved: u32,
+    pub sockaddr_ptr: u64,
+}
+
 #[map]
 static EXEC_EVENTS: PerfEventArray<RawExecEvent> = PerfEventArray::new(0);
 
@@ -522,6 +559,12 @@ static PROTOCOL_CAPTURE_PORTS: HashMap<u16, u32> = HashMap::with_max_entries(64,
 
 #[map]
 static PROTOCOL_CAPTURE_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
+
+/// Whether the protocol source may emit accepted server sockets whose bound
+/// port could not be recovered in-kernel. Userspace resolves those sockets
+/// through bounded procfs lookup before selecting a configured parser.
+#[map]
+static PROTOCOL_CAPTURE_INBOUND: Array<u32> = Array::with_max_entries(1, 0);
 
 #[map]
 static PENDING_PROTOCOL_READS: HashMap<u64, PendingProtocolRead> =
@@ -598,7 +641,22 @@ static PENDING_NETWORK_IO: HashMap<u64, PendingNetworkIo> = HashMap::with_max_en
 static PENDING_DNS_RECVS: HashMap<u64, PendingDnsRecv> = HashMap::with_max_entries(4096, 0);
 
 #[map]
-static PENDING_ACCEPTS: HashMap<u64, u64> = HashMap::with_max_entries(4096, 0);
+static PENDING_BINDS: HashMap<u64, PendingBind> = HashMap::with_max_entries(4096, 0);
+
+/// Precise listener lookup for servers that bind and accept in one process.
+#[map]
+static PROCESS_LISTENER_ENDPOINTS: LruHashMap<ConnectionKey, ListenerEndpoint> =
+    LruHashMap::with_max_entries(4096, 0);
+
+/// Bounded prefork fallback: a child in the same cgroup commonly inherits the
+/// parent's listening fd. The process-scoped map is always preferred so an
+/// unrelated same-cgroup fd cannot override an ordinary server lookup.
+#[map]
+static LISTENER_ENDPOINTS: LruHashMap<ListenerKey, ListenerEndpoint> =
+    LruHashMap::with_max_entries(4096, 0);
+
+#[map]
+static PENDING_ACCEPTS: HashMap<u64, PendingAccept> = HashMap::with_max_entries(4096, 0);
 
 #[map]
 static PENDING_HTTP_READS: HashMap<u64, PendingHttpRead> = HashMap::with_max_entries(4096, 0);
@@ -784,6 +842,22 @@ pub fn tracepoint_http_sendto_enter(ctx: TracePointContext) -> u32 {
 #[tracepoint]
 pub fn tracepoint_http_sendmsg_enter(ctx: TracePointContext) -> u32 {
     match try_tracepoint_http_sendmsg_enter(ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_socket_bind_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_socket_bind_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_socket_bind_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_socket_bind_exit(&ctx) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
@@ -2932,19 +3006,105 @@ fn emit_http_request_iovecs_event_without_connection(
     Ok(0)
 }
 
+fn try_tracepoint_socket_bind_enter(ctx: &TracePointContext) -> Result<u32, i64> {
+    let cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(0);
+    }
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let sockaddr = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    if sockaddr.is_null() {
+        return Ok(0);
+    }
+    let family = unsafe { bpf_probe_read_user::<u16>(sockaddr.cast::<u16>()) }
+        .map_err(|err| err as i64)? as u32;
+    let mut pending = PendingBind {
+        fd,
+        family,
+        local_port_be: 0,
+        reserved: 0,
+        local_addr_v4: 0,
+        local_addr_v6: [0; 16],
+    };
+    if family == AF_INET {
+        pending.local_port_be =
+            unsafe { bpf_probe_read_user::<u16>(sockaddr.add(2).cast::<u16>()) }
+                .map_err(|err| err as i64)?;
+        pending.local_addr_v4 =
+            unsafe { bpf_probe_read_user::<u32>(sockaddr.add(4).cast::<u32>()) }
+                .map_err(|err| err as i64)?;
+    } else if family == AF_INET6 {
+        pending.local_port_be =
+            unsafe { bpf_probe_read_user::<u16>(sockaddr.add(2).cast::<u16>()) }
+                .map_err(|err| err as i64)?;
+        pending.local_addr_v6 =
+            unsafe { bpf_probe_read_user::<[u8; 16]>(sockaddr.add(8).cast::<[u8; 16]>()) }
+                .map_err(|err| err as i64)?;
+    } else {
+        return Ok(0);
+    }
+    PENDING_BINDS
+        .insert(&pid_tgid, &pending, 0)
+        .map_err(|err| err as i64)?;
+    Ok(0)
+}
+
+fn try_tracepoint_socket_bind_exit(ctx: &TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let pending = match unsafe { PENDING_BINDS.get(&pid_tgid) } {
+        Some(value) => *value,
+        None => return Ok(0),
+    };
+    PENDING_BINDS.remove(&pid_tgid).ok();
+    let retval = unsafe { ctx.read_at::<i64>(16) }.map_err(|err| err as i64)?;
+    if retval != 0 || pending.local_port_be == 0 {
+        return Ok(0);
+    }
+    let key = ListenerKey {
+        cgroup_id: current_cgroup_id(),
+        fd: pending.fd,
+        reserved: 0,
+    };
+    let process_key = ConnectionKey {
+        tgid: (pid_tgid >> 32) as u32,
+        fd: pending.fd,
+    };
+    let endpoint = ListenerEndpoint {
+        family: pending.family,
+        local_port_be: pending.local_port_be,
+        reserved: 0,
+        local_addr_v4: pending.local_addr_v4,
+        local_addr_v6: pending.local_addr_v6,
+    };
+    PROCESS_LISTENER_ENDPOINTS
+        .insert(&process_key, &endpoint, 0)
+        .map_err(|err| err as i64)?;
+    LISTENER_ENDPOINTS
+        .insert(&key, &endpoint, 0)
+        .map_err(|err| err as i64)?;
+    Ok(0)
+}
+
 fn try_tracepoint_http_accept_enter(ctx: &TracePointContext) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
+    let listen_fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
     let sockaddr = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
-    let sockaddr_ptr = sockaddr as u64;
+    let pending = PendingAccept {
+        listen_fd,
+        reserved: 0,
+        sockaddr_ptr: sockaddr as u64,
+    };
     PENDING_ACCEPTS
-        .insert(&pid_tgid, &sockaddr_ptr, 0)
+        .insert(&pid_tgid, &pending, 0)
         .map_err(|err| err as i64)?;
     Ok(0)
 }
 
 fn try_tracepoint_http_accept_exit(ctx: &TracePointContext) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
-    let sockaddr_ptr = match unsafe { PENDING_ACCEPTS.get(&pid_tgid) } {
+    let accept = match unsafe { PENDING_ACCEPTS.get(&pid_tgid) } {
         Some(value) => *value,
         None => return Ok(0),
     };
@@ -2984,8 +3144,26 @@ fn try_tracepoint_http_accept_exit(ctx: &TracePointContext) -> Result<u32, i64> 
         command: bpf_get_current_comm().map_err(|err| err as i64)?,
     };
 
-    if sockaddr_ptr != 0 {
-        let sockaddr = sockaddr_ptr as *const u8;
+    let listener_key = ListenerKey {
+        cgroup_id,
+        fd: accept.listen_fd,
+        reserved: 0,
+    };
+    let process_listener_key = ConnectionKey {
+        tgid: (pid_tgid >> 32) as u32,
+        fd: accept.listen_fd,
+    };
+    let endpoint = unsafe { PROCESS_LISTENER_ENDPOINTS.get(&process_listener_key) }
+        .or_else(|| unsafe { LISTENER_ENDPOINTS.get(&listener_key) });
+    if let Some(endpoint) = endpoint {
+        pending.family = endpoint.family;
+        pending.local_port_be = endpoint.local_port_be;
+        pending.local_addr_v4 = endpoint.local_addr_v4;
+        pending.local_addr_v6 = endpoint.local_addr_v6;
+    }
+
+    if accept.sockaddr_ptr != 0 {
+        let sockaddr = accept.sockaddr_ptr as *const u8;
         let family = unsafe { bpf_probe_read_user::<u16>(sockaddr.cast::<u16>()) }
             .map_err(|err| err as i64)?;
         pending.family = family as u32;
@@ -3287,7 +3465,11 @@ fn protocol_capture_connection(fd: i32) -> Option<PendingConnect> {
     } else {
         u16::from_be(connection.remote_port_be)
     };
-    if unsafe { PROTOCOL_CAPTURE_PORTS.get(&capture_port) }.is_none() {
+    let unresolved_inbound = connection.role == CONNECTION_ROLE_SERVER && capture_port == 0;
+    let inbound_enabled = PROTOCOL_CAPTURE_INBOUND.get(0).copied().unwrap_or(0) == 1;
+    if (unresolved_inbound && !inbound_enabled)
+        || (!unresolved_inbound && unsafe { PROTOCOL_CAPTURE_PORTS.get(&capture_port) }.is_none())
+    {
         record_protocol_diagnostic(PROTOCOL_DIAG_PORT_FILTERED);
         return None;
     }

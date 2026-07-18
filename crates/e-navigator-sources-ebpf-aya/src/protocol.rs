@@ -430,7 +430,7 @@ impl ProtocolStreamRegistry {
             return Err(RawProtocolDecodeError::RawSampleTooShort);
         }
 
-        let raw =
+        let mut raw =
             unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawProtocolDataEvent>()) };
         if raw.payload_len as usize > RAW_PROTOCOL_DATA_BYTES
             || raw.payload_captured_len > RAW_PROTOCOL_MAX_CAPTURE_BYTES
@@ -456,6 +456,27 @@ impl ProtocolStreamRegistry {
             });
         }
 
+        let connection_id = ConnectionId {
+            pid: raw.pid,
+            fd: raw.fd,
+        };
+        if raw.role == RAW_PROTOCOL_ROLE_SERVER && raw.local_port_be == 0 {
+            let local_port_be = self
+                .connections
+                .get(&connection_id)
+                .map(|stream| stream.context.local_port_be)
+                .filter(|port| *port != 0)
+                .or_else(|| {
+                    resolve_server_local_port(&self.procfs_root, raw.pid, raw.fd).map(u16::to_be)
+                });
+            let Some(local_port_be) = local_port_be else {
+                return Err(RawProtocolDecodeError::UnmappedPort {
+                    sample: RawProtocolInvalidSampleMetadata::from_raw(&raw),
+                });
+            };
+            raw.local_port_be = local_port_be;
+        }
+
         let capture_port = if raw.role == RAW_PROTOCOL_ROLE_SERVER {
             u16::from_be(raw.local_port_be)
         } else {
@@ -479,10 +500,6 @@ impl ProtocolStreamRegistry {
             return Ok(());
         }
 
-        let connection_id = ConnectionId {
-            pid: raw.pid,
-            fd: raw.fd,
-        };
         if self
             .connections
             .get(&connection_id)
@@ -1499,6 +1516,61 @@ fn ipv6_to_string(value: [u8; 16]) -> String {
     std::net::Ipv6Addr::from(value).to_string()
 }
 
+/// Resolves an accepted socket's bound port when the bind happened before
+/// the eBPF source attached or in a prefork parent that cannot be matched
+/// safely in-kernel. Reads are bounded and scoped to the observed process's
+/// network namespace.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn resolve_server_local_port(procfs_root: &std::path::Path, pid: u32, fd: i32) -> Option<u16> {
+    const MAX_PROC_NET_BYTES: u64 = 2 * 1024 * 1024;
+    const MAX_PROC_NET_LINES: usize = 65_536;
+
+    if pid == 0 || fd < 0 {
+        return None;
+    }
+    let fd_path = procfs_root
+        .join(pid.to_string())
+        .join("fd")
+        .join(fd.to_string());
+    let target = std::fs::read_link(fd_path).ok()?;
+    let target = target.to_str()?;
+    let inode = target.strip_prefix("socket:[")?.strip_suffix(']')?;
+    if inode.is_empty() || !inode.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+
+    for table in ["tcp", "tcp6"] {
+        let path = procfs_root.join(pid.to_string()).join("net").join(table);
+        let Ok(file) = std::fs::File::open(path) else {
+            continue;
+        };
+        let mut contents = String::new();
+        let mut bounded = std::io::Read::take(file, MAX_PROC_NET_BYTES);
+        if std::io::Read::read_to_string(&mut bounded, &mut contents).is_err() {
+            continue;
+        }
+        for line in contents.lines().skip(1).take(MAX_PROC_NET_LINES) {
+            if let Some(port) = proc_net_line_port(line, inode) {
+                return Some(port);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn proc_net_line_port(line: &str, expected_inode: &str) -> Option<u16> {
+    let mut fields = line.split_ascii_whitespace();
+    let local_address = fields.nth(1)?;
+    let inode = fields.nth(7)?;
+    if inode != expected_inode {
+        return None;
+    }
+    let (_, port) = local_address.rsplit_once(':')?;
+    let port = u16::from_str_radix(port, 16).ok()?;
+    (port != 0).then_some(port)
+}
+
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn bytes_to_string(bytes: &[u8]) -> String {
     let end = bytes
@@ -1582,6 +1654,7 @@ mod platform {
 
             populate_capture_ports(&mut ebpf, &self.config)?;
             populate_capture_limit(&mut ebpf, &self.config)?;
+            populate_capture_inbound(&mut ebpf, &self.config)?;
 
             attach_tracepoint(
                 &mut ebpf,
@@ -1595,6 +1668,44 @@ mod platform {
                 "syscalls",
                 "sys_exit_connect",
             )?;
+            if self.config.inbound_enabled {
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_socket_bind_enter",
+                    "syscalls",
+                    "sys_enter_bind",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_socket_bind_exit",
+                    "syscalls",
+                    "sys_exit_bind",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_accept_enter",
+                    "syscalls",
+                    "sys_enter_accept",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_accept_exit",
+                    "syscalls",
+                    "sys_exit_accept",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_accept4_enter",
+                    "syscalls",
+                    "sys_enter_accept4",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_accept4_exit",
+                    "syscalls",
+                    "sys_exit_accept4",
+                )?;
+            }
             attach_tracepoint(
                 &mut ebpf,
                 "tracepoint_protocol_close_enter",
@@ -1835,6 +1946,21 @@ mod platform {
             ProtocolSourceConfig::MAX_CAPTURE_BYTES_PER_SYSCALL,
         ) as u32;
         limit.set(0, capture_bytes, 0).map_err(module_error)?;
+        Ok(())
+    }
+
+    fn populate_capture_inbound(ebpf: &mut Ebpf, config: &ProtocolSourceConfig) -> CoreResult<()> {
+        let map =
+            ebpf.map_mut("PROTOCOL_CAPTURE_INBOUND")
+                .ok_or_else(|| CoreError::ModuleFailed {
+                    module: "source.aya_protocol".to_string(),
+                    message: "missing PROTOCOL_CAPTURE_INBOUND map".to_string(),
+                })?;
+        let mut inbound: AyaArray<&mut MapData, u32> =
+            AyaArray::try_from(map).map_err(module_error)?;
+        inbound
+            .set(0, u32::from(config.inbound_enabled), 0)
+            .map_err(module_error)?;
         Ok(())
     }
 
@@ -2878,6 +3004,68 @@ mod tests {
         assert_eq!(observation.role, Some(ProtocolCaptureRole::Server));
         assert_eq!(observation.method.as_deref(), Some("GET"));
         assert_eq!(observation.duration_nanos, Some(1_000));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn server_role_resolves_preexisting_listener_port_from_bounded_procfs() {
+        use std::os::unix::fs::symlink;
+
+        let fixture_root = std::env::temp_dir().join(format!(
+            "e-navigator-protocol-procfs-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos(),
+        ));
+        let pid = 4_242_u32;
+        let fd = 17_i32;
+        let fd_root = fixture_root.join(pid.to_string()).join("fd");
+        let net_root = fixture_root.join(pid.to_string()).join("net");
+        std::fs::create_dir_all(&fd_root).expect("fixture fd directory");
+        std::fs::create_dir_all(&net_root).expect("fixture net directory");
+        symlink("socket:[12345]", fd_root.join(fd.to_string())).expect("fixture socket link");
+        std::fs::write(
+            net_root.join("tcp"),
+            "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
+               0: 00000000:20FB 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 12345\n",
+        )
+        .expect("fixture tcp table");
+
+        let config = ProtocolSourceConfig {
+            inbound_enabled: true,
+            http1_ports: vec![8_443],
+            ..ProtocolSourceConfig::default()
+        };
+        let mut registry = ProtocolStreamRegistry::new(None, fixture_root.clone(), &config);
+
+        let request = b"GET /inbound HTTP/1.1\r\nHost: api.test\r\n\r\n";
+        let mut event = raw_event(51_000, request, request.len() as u32);
+        event.pid = pid;
+        event.fd = fd;
+        event.local_port_be = 0;
+        event.role = RAW_PROTOCOL_ROLE_SERVER;
+        event.direction = RAW_PROTOCOL_DIRECTION_READ;
+        assert!(handle_at(&mut registry, &event, 5_000).is_empty());
+
+        // The resolved endpoint is connection-scoped; later frames do not
+        // depend on the procfs entry remaining readable.
+        std::fs::remove_file(fd_root.join(fd.to_string())).expect("remove fixture link");
+        let response = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+        let mut event = raw_event(51_000, response, response.len() as u32);
+        event.pid = pid;
+        event.fd = fd;
+        event.local_port_be = 0;
+        event.role = RAW_PROTOCOL_ROLE_SERVER;
+        event.direction = RAW_PROTOCOL_DIRECTION_WRITE;
+        let signals = handle_at(&mut registry, &event, 6_000);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.role, Some(ProtocolCaptureRole::Server));
+        assert_eq!(observation.method.as_deref(), Some("GET"));
+        std::fs::remove_dir_all(&fixture_root).expect("remove fixture procfs");
     }
 
     #[test]

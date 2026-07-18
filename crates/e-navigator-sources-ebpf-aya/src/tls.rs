@@ -92,6 +92,7 @@ pub(crate) fn stream_protocol_config(
     config: &e_navigator_core::TlsSourceConfig,
 ) -> e_navigator_core::ProtocolSourceConfig {
     e_navigator_core::ProtocolSourceConfig {
+        inbound_enabled: true,
         http1_ports: config.http1_ports.clone(),
         http2_ports: config.http2_ports.clone(),
         kafka_ports: config.kafka_ports.clone(),
@@ -291,6 +292,7 @@ mod platform {
 
             populate_capture_ports(&mut ebpf, &self.config)?;
             populate_capture_limit(&mut ebpf, &self.config)?;
+            populate_capture_inbound(&mut ebpf)?;
 
             // Connection tuples come from the same connect/accept tracepoints
             // the cleartext protocol source uses; the uprobes resolve their
@@ -306,6 +308,8 @@ mod platform {
                     "syscalls",
                     "sys_exit_connect",
                 ),
+                ("tracepoint_socket_bind_enter", "syscalls", "sys_enter_bind"),
+                ("tracepoint_socket_bind_exit", "syscalls", "sys_exit_bind"),
                 (
                     "tracepoint_protocol_close_enter",
                     "syscalls",
@@ -984,6 +988,16 @@ mod platform {
         Ok(())
     }
 
+    fn populate_capture_inbound(ebpf: &mut Ebpf) -> CoreResult<()> {
+        let map = ebpf
+            .map_mut("PROTOCOL_CAPTURE_INBOUND")
+            .ok_or_else(|| module_message("missing PROTOCOL_CAPTURE_INBOUND map"))?;
+        let mut inbound: AyaArray<&mut MapData, u32> =
+            AyaArray::try_from(map).map_err(module_error)?;
+        inbound.set(0, 1, 0).map_err(module_error)?;
+        Ok(())
+    }
+
     fn attach_tracepoint(
         ebpf: &mut Ebpf,
         program_name: &'static str,
@@ -1124,6 +1138,7 @@ mod tests {
         assert_eq!(protocol.http2_ports, vec![8443]);
         assert_eq!(protocol.postgresql_ports, vec![5433]);
         assert_eq!(protocol.max_attributes, 5);
+        assert!(protocol.inbound_enabled);
         // Cleartext defaults must not leak into the TLS-derived config.
         assert!(protocol.kafka_ports.is_empty());
         assert!(protocol.redis_ports.is_empty());
