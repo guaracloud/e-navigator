@@ -2719,6 +2719,25 @@ fn protocol_source_inbound_capture_is_explicitly_opt_in() {
 }
 
 #[test]
+fn runtime_rejects_overlapping_http1_sources() {
+    assert_invalid(
+        RuntimeConfig {
+            modules: vec![
+                ModuleConfig::enabled("source.aya_http"),
+                ModuleConfig::enabled("source.aya_protocol"),
+                ModuleConfig::enabled("sink.json_stdout"),
+            ],
+            protocol_source: ProtocolSourceConfig {
+                http1_ports: vec![8_080],
+                ..ProtocolSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "protocol_source.http1_ports must be empty when source.aya_http and source.aya_protocol are both enabled; overlapping HTTP/1 capture would emit duplicate telemetry",
+    );
+}
+
+#[test]
 fn protocol_source_rejects_duplicate_and_zero_ports() {
     assert_invalid(
         RuntimeConfig {
