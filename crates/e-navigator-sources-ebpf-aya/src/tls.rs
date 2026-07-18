@@ -293,6 +293,12 @@ mod platform {
             populate_capture_ports(&mut ebpf, &self.config)?;
             populate_capture_limit(&mut ebpf, &self.config)?;
             populate_capture_inbound(&mut ebpf)?;
+            let listeners =
+                crate::protocol::prepopulate_existing_listeners(&mut ebpf, &self.procfs_root)?;
+            info!(
+                source = "source.aya_tls",
+                listeners, "prepopulated existing TCP listeners"
+            );
 
             // Connection tuples come from the same connect/accept tracepoints
             // the cleartext protocol source uses; the uprobes resolve their

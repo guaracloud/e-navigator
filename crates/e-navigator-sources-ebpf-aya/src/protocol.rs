@@ -73,6 +73,16 @@ const PROTOCOL_DIAGNOSTIC_COUNTER_NAMES: [&str; PROTOCOL_DIAGNOSTIC_COUNTERS_LEN
     "writev_enter",
     "sendmsg_enter",
 ];
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+const MAX_PROC_NET_BYTES: u64 = 2 * 1024 * 1024;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+const MAX_PROC_NET_LINES: usize = 65_536;
+#[cfg(any(target_os = "linux", test))]
+const MAX_EXISTING_LISTENER_PROCESSES: usize = 4_096;
+#[cfg(any(target_os = "linux", test))]
+const MAX_EXISTING_LISTENER_FDS_PER_PROCESS: usize = 1_024;
+#[cfg(any(target_os = "linux", test))]
+const MAX_EXISTING_LISTENERS: usize = 4_096;
 
 /// Raw payload capture event; must stay byte-identical to the eBPF-side
 /// `RawProtocolDataEvent` in `e-navigator-ebpf-programs`.
@@ -1522,9 +1532,6 @@ fn ipv6_to_string(value: [u8; 16]) -> String {
 /// network namespace.
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn resolve_server_local_port(procfs_root: &std::path::Path, pid: u32, fd: i32) -> Option<u16> {
-    const MAX_PROC_NET_BYTES: u64 = 2 * 1024 * 1024;
-    const MAX_PROC_NET_LINES: usize = 65_536;
-
     if pid == 0 || fd < 0 {
         return None;
     }
@@ -1556,6 +1563,129 @@ fn resolve_server_local_port(procfs_root: &std::path::Path, pid: u32, fd: i32) -
         }
     }
     None
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ExistingListenerEndpoint {
+    pid: u32,
+    fd: i32,
+    family: u32,
+    local_port_be: u16,
+    local_addr_v4: u32,
+    local_addr_v6: [u8; 16],
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn discover_existing_listener_endpoints(
+    procfs_root: &std::path::Path,
+) -> Vec<ExistingListenerEndpoint> {
+    use std::collections::BTreeMap;
+
+    let Ok(processes) = std::fs::read_dir(procfs_root) else {
+        return Vec::new();
+    };
+    let mut listeners = Vec::new();
+    for process in processes.flatten().take(MAX_EXISTING_LISTENER_PROCESSES) {
+        if listeners.len() >= MAX_EXISTING_LISTENERS {
+            break;
+        }
+        let Some(pid) = process
+            .file_name()
+            .to_str()
+            .and_then(|value| value.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let process_root = process.path();
+        let Ok(fds) = std::fs::read_dir(process_root.join("fd")) else {
+            continue;
+        };
+        let mut socket_fds = BTreeMap::new();
+        for fd in fds.flatten().take(MAX_EXISTING_LISTENER_FDS_PER_PROCESS) {
+            let Some(fd_number) = fd
+                .file_name()
+                .to_str()
+                .and_then(|value| value.parse::<i32>().ok())
+            else {
+                continue;
+            };
+            let Ok(target) = std::fs::read_link(fd.path()) else {
+                continue;
+            };
+            let Some(target) = target.to_str() else {
+                continue;
+            };
+            let Some(inode) = target
+                .strip_prefix("socket:[")
+                .and_then(|value| value.strip_suffix(']'))
+                .filter(|value| {
+                    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+                })
+            else {
+                continue;
+            };
+            socket_fds.insert(inode.to_string(), fd_number);
+        }
+        if socket_fds.is_empty() {
+            continue;
+        }
+
+        for (table, family) in [
+            ("tcp", RAW_PROTOCOL_AF_INET),
+            ("tcp6", RAW_PROTOCOL_AF_INET6),
+        ] {
+            let Ok(file) = std::fs::File::open(process_root.join("net").join(table)) else {
+                continue;
+            };
+            let mut contents = String::new();
+            let mut bounded = std::io::Read::take(file, MAX_PROC_NET_BYTES);
+            if std::io::Read::read_to_string(&mut bounded, &mut contents).is_err() {
+                continue;
+            }
+            for line in contents.lines().skip(1).take(MAX_PROC_NET_LINES) {
+                let Some((inode, local_port_be, local_addr_v4, local_addr_v6)) =
+                    parse_proc_net_listener(line, family)
+                else {
+                    continue;
+                };
+                let Some(fd) = socket_fds.get(inode).copied() else {
+                    continue;
+                };
+                listeners.push(ExistingListenerEndpoint {
+                    pid,
+                    fd,
+                    family,
+                    local_port_be,
+                    local_addr_v4,
+                    local_addr_v6,
+                });
+                if listeners.len() >= MAX_EXISTING_LISTENERS {
+                    return listeners;
+                }
+            }
+        }
+    }
+    listeners
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_proc_net_listener(line: &str, family: u32) -> Option<(&str, u16, u32, [u8; 16])> {
+    let fields: Vec<&str> = line.split_ascii_whitespace().collect();
+    if fields.len() < 10 || fields[3] != "0A" {
+        return None;
+    }
+    let (address, port) = fields[1].rsplit_once(':')?;
+    let port = u16::from_str_radix(port, 16).ok()?;
+    if port == 0 {
+        return None;
+    }
+    let local_addr_v4 = if family == RAW_PROTOCOL_AF_INET {
+        u32::from_str_radix(address, 16).ok()?
+    } else {
+        0
+    };
+    Some((fields[9], port.to_be(), local_addr_v4, [0; 16]))
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -1613,6 +1743,27 @@ mod platform {
     use tokio::{sync::mpsc, task::JoinHandle};
     use tracing::{debug, info, warn};
 
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct ListenerConnectionKey {
+        tgid: u32,
+        fd: i32,
+    }
+
+    unsafe impl aya::Pod for ListenerConnectionKey {}
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct ListenerEndpoint {
+        family: u32,
+        local_port_be: u16,
+        reserved: u16,
+        local_addr_v4: u32,
+        local_addr_v6: [u8; 16],
+    }
+
+    unsafe impl aya::Pod for ListenerEndpoint {}
+
     #[derive(Debug, Default)]
     pub struct AyaProtocolSource {
         host: Option<String>,
@@ -1655,6 +1806,13 @@ mod platform {
             populate_capture_ports(&mut ebpf, &self.config)?;
             populate_capture_limit(&mut ebpf, &self.config)?;
             populate_capture_inbound(&mut ebpf, &self.config)?;
+            if self.config.inbound_enabled {
+                let listeners = prepopulate_existing_listeners(&mut ebpf, &self.procfs_root)?;
+                info!(
+                    source = "source.aya_protocol",
+                    listeners, "prepopulated existing TCP listeners"
+                );
+            }
 
             attach_tracepoint(
                 &mut ebpf,
@@ -1964,6 +2122,37 @@ mod platform {
         Ok(())
     }
 
+    pub(crate) fn prepopulate_existing_listeners(
+        ebpf: &mut Ebpf,
+        procfs_root: &std::path::Path,
+    ) -> CoreResult<usize> {
+        let listeners = super::discover_existing_listener_endpoints(procfs_root);
+        let map = ebpf
+            .map_mut("PROCESS_LISTENER_ENDPOINTS")
+            .ok_or_else(|| module_message("missing PROCESS_LISTENER_ENDPOINTS map"))?;
+        let mut endpoints: AyaHashMap<&mut MapData, ListenerConnectionKey, ListenerEndpoint> =
+            AyaHashMap::try_from(map).map_err(module_error)?;
+        for listener in &listeners {
+            endpoints
+                .insert(
+                    ListenerConnectionKey {
+                        tgid: listener.pid,
+                        fd: listener.fd,
+                    },
+                    ListenerEndpoint {
+                        family: listener.family,
+                        local_port_be: listener.local_port_be,
+                        reserved: 0,
+                        local_addr_v4: listener.local_addr_v4,
+                        local_addr_v6: listener.local_addr_v6,
+                    },
+                    0,
+                )
+                .map_err(module_error)?;
+        }
+        Ok(listeners.len())
+    }
+
     fn log_signal_diagnostic(
         diagnostics: &SourceDiagnostics,
         signal: &SignalEnvelope,
@@ -2218,6 +2407,8 @@ mod platform {
 }
 
 pub use platform::AyaProtocolSource;
+#[cfg(target_os = "linux")]
+pub(crate) use platform::prepopulate_existing_listeners;
 
 #[cfg(test)]
 mod tests {
@@ -3032,6 +3223,13 @@ mod tests {
                0: 00000000:20FB 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 12345\n",
         )
         .expect("fixture tcp table");
+
+        let listeners = discover_existing_listener_endpoints(&fixture_root);
+        assert_eq!(listeners.len(), 1);
+        assert_eq!(listeners[0].pid, pid);
+        assert_eq!(listeners[0].fd, fd);
+        assert_eq!(listeners[0].family, RAW_PROTOCOL_AF_INET);
+        assert_eq!(u16::from_be(listeners[0].local_port_be), 8_443);
 
         let config = ProtocolSourceConfig {
             inbound_enabled: true,
