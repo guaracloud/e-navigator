@@ -199,6 +199,15 @@ impl RuntimeConfig {
         self.dns_source.validate()?;
         self.http_source.validate()?;
         self.protocol_source.validate()?;
+        if self.module_enabled("source.aya_http")
+            && self.module_enabled("source.aya_protocol")
+            && !self.protocol_source.http1_ports.is_empty()
+        {
+            return Err(ConfigError::invalid_value(
+                "protocol_source.http1_ports",
+                "protocol_source.http1_ports must be empty when source.aya_http and source.aya_protocol are both enabled; overlapping HTTP/1 capture would emit duplicate telemetry",
+            ));
+        }
         self.tls_source.validate()?;
         self.cpu_profile_source.validate(self)?;
         self.resource_metrics.validate()?;
