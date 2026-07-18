@@ -87,6 +87,7 @@ fn raw_dns_to_signal(bytes: &[u8], host: Option<String>) -> Option<SignalEnvelop
         bytes,
         host,
         now_unix_nanos(),
+        monotonic_nanos(),
         std::path::Path::new("/proc"),
     )
 }
@@ -96,12 +97,14 @@ fn raw_dns_to_signal_with_clock_and_procfs(
     bytes: &[u8],
     host: Option<String>,
     observed_unix_nanos: u64,
+    observed_monotonic_nanos: u64,
     procfs_root: &std::path::Path,
 ) -> Option<SignalEnvelope> {
     raw_dns_to_signal_with_config(
         bytes,
         host,
         observed_unix_nanos,
+        observed_monotonic_nanos,
         procfs_root,
         &DnsSourceConfig::default(),
     )
@@ -112,6 +115,7 @@ fn raw_dns_to_signal_with_config(
     bytes: &[u8],
     host: Option<String>,
     observed_unix_nanos: u64,
+    observed_monotonic_nanos: u64,
     procfs_root: &std::path::Path,
     config: &DnsSourceConfig,
 ) -> Option<SignalEnvelope> {
@@ -139,6 +143,11 @@ fn raw_dns_to_signal_with_config(
         let port = u16::from_be(raw.server_port_be);
         (port != 0).then_some(port)
     };
+    let event_unix_nanos = monotonic_to_unix_nanos(
+        raw.timestamp_unix_nanos,
+        observed_monotonic_nanos,
+        observed_unix_nanos,
+    );
     let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
     if parsed.is_response {
         Some(SignalEnvelope::dns_response(
@@ -153,7 +162,7 @@ fn raw_dns_to_signal_with_config(
                 transport_protocol,
                 server_address,
                 server_port,
-                timestamp_unix_nanos: observed_unix_nanos,
+                timestamp_unix_nanos: event_unix_nanos,
                 container,
                 kubernetes: None,
             },
@@ -169,7 +178,7 @@ fn raw_dns_to_signal_with_config(
                 transport_protocol,
                 server_address,
                 server_port,
-                timestamp_unix_nanos: observed_unix_nanos,
+                timestamp_unix_nanos: event_unix_nanos,
                 container,
                 kubernetes: None,
             },
@@ -185,6 +194,7 @@ pub fn fuzz_decode_raw_dns_event(bytes: &[u8]) -> bool {
     raw_dns_to_signal_with_config(
         bytes,
         None,
+        1_000,
         1_000,
         std::path::Path::new("__e_navigator_fuzz_no_procfs__"),
         &DnsSourceConfig::default(),
@@ -248,6 +258,42 @@ fn now_unix_nanos() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos().min(u128::from(u64::MAX)) as u64)
         .unwrap_or(0)
+}
+
+#[cfg(target_os = "linux")]
+fn monotonic_nanos() -> u64 {
+    let mut timestamp = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut timestamp) } != 0 {
+        return 0;
+    }
+    u64::try_from(timestamp.tv_sec)
+        .unwrap_or(0)
+        .saturating_mul(1_000_000_000)
+        .saturating_add(u64::try_from(timestamp.tv_nsec).unwrap_or(0))
+}
+
+#[cfg(all(not(target_os = "linux"), any(test, feature = "fuzzing")))]
+fn monotonic_nanos() -> u64 {
+    0
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn monotonic_to_unix_nanos(
+    event_monotonic_nanos: u64,
+    observed_monotonic_nanos: u64,
+    observed_unix_nanos: u64,
+) -> u64 {
+    if event_monotonic_nanos == 0 || observed_monotonic_nanos == 0 {
+        return observed_unix_nanos;
+    }
+    if event_monotonic_nanos <= observed_monotonic_nanos {
+        observed_unix_nanos.saturating_sub(observed_monotonic_nanos - event_monotonic_nanos)
+    } else {
+        observed_unix_nanos.saturating_add(event_monotonic_nanos - observed_monotonic_nanos)
+    }
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -477,6 +523,11 @@ mod platform {
                 .map_err(module_error)?;
 
             let cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
+            // One anchor shared by every CPU reader preserves the kernel's global
+            // monotonic ordering. Re-sampling both clocks for each drained event
+            // can collapse a burst to the userspace clock's coarser resolution.
+            let observed_monotonic_nanos = super::monotonic_nanos();
+            let observed_unix_nanos = super::now_unix_nanos();
             for cpu_id in cpus {
                 let mut buffer = perf_array
                     .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
@@ -505,7 +556,8 @@ mod platform {
                                     if let Some(signal) = super::raw_dns_to_signal_with_config(
                                         sample,
                                         host.clone(),
-                                        super::now_unix_nanos(),
+                                        observed_unix_nanos,
+                                        observed_monotonic_nanos,
                                         &procfs_root,
                                         &config,
                                     ) {
@@ -840,6 +892,7 @@ mod tests {
                 raw_as_bytes(&raw),
                 Some("node-a".to_string()),
                 1_000,
+                1_000,
                 std::path::Path::new("/proc"),
                 &DnsSourceConfig {
                     max_packet_bytes: packet.len() - 1,
@@ -872,7 +925,7 @@ mod tests {
             protocol: RAW_DNS_PROTOCOL_UDP,
             server_port_be: 53_u16.to_be(),
             server_addr_v4: u32::from_ne_bytes([10, 96, 0, 10]),
-            timestamp_unix_nanos: 1_000,
+            timestamp_unix_nanos: 900,
             latency_nanos: 0,
             packet_len: packet.len() as u32,
             command: fixed_command("api"),
@@ -883,6 +936,7 @@ mod tests {
         let signal = raw_dns_to_signal_with_clock_and_procfs(
             raw_as_bytes(&raw),
             Some("node-a".to_string()),
+            10_000,
             1_000,
             &temp,
         )
@@ -891,11 +945,19 @@ mod tests {
         let e_navigator_signals::SignalPayload::DnsQuery(event) = signal.payload else {
             panic!("expected dns query payload");
         };
+        assert_eq!(event.timestamp_unix_nanos, 9_900);
         let container = event.container.expect("container attribution");
         assert_eq!(container.container_id, CONTAINER_ID);
         assert_eq!(container.runtime.as_deref(), Some("containerd"));
 
         let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn distinct_monotonic_dns_events_keep_distinct_unix_timestamps() {
+        assert_eq!(monotonic_to_unix_nanos(900, 1_000, 10_000), 9_900);
+        assert_eq!(monotonic_to_unix_nanos(901, 1_000, 10_000), 9_901);
+        assert_eq!(monotonic_to_unix_nanos(0, 1_000, 10_000), 10_000);
     }
 
     #[test]
