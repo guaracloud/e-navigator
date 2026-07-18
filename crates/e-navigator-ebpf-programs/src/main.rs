@@ -383,6 +383,15 @@ pub struct PendingProtocolRead {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct PendingProtocolIovecRead {
+    pub fd: i32,
+    pub reserved: u32,
+    pub iov_ptr: u64,
+    pub iov_len: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ProtocolIovecState {
     pub iov_ptr: u64,
     pub iov_len: u64,
@@ -391,6 +400,9 @@ pub struct ProtocolIovecState {
     pub captured_total: u32,
     pub slot: u32,
     pub capture_contiguous: u32,
+    /// Exact successful syscall length for receive-side vectors; zero means
+    /// an entry-side write whose complete vector length must be computed.
+    pub total_bound: u64,
 }
 
 /// Keys the userspace TLS object pointer (`SSL*` or GnuTLS session) to the
@@ -591,6 +603,10 @@ static PROTOCOL_CAPTURE_INBOUND: Array<u32> = Array::with_max_entries(1, 0);
 
 #[map]
 static PENDING_PROTOCOL_READS: HashMap<u64, PendingProtocolRead> =
+    HashMap::with_max_entries(4096, 0);
+
+#[map]
+static PENDING_PROTOCOL_IOVEC_READS: HashMap<u64, PendingProtocolIovecRead> =
     HashMap::with_max_entries(4096, 0);
 
 #[map]
@@ -1003,6 +1019,38 @@ pub fn tracepoint_protocol_writev_enter(ctx: TracePointContext) -> u32 {
 pub fn tracepoint_protocol_sendmsg_enter(ctx: TracePointContext) -> u32 {
     record_protocol_diagnostic(PROTOCOL_DIAG_SENDMSG_ENTER);
     match try_tracepoint_protocol_sendmsg_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_readv_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_protocol_iovec_read_enter(&ctx, false) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_readv_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_protocol_iovec_read_exit(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_recvmsg_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_protocol_iovec_read_enter(&ctx, true) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_recvmsg_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_protocol_iovec_read_exit(&ctx) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
@@ -3346,7 +3394,7 @@ fn try_tracepoint_protocol_writev_enter(ctx: &TracePointContext) -> Result<u32, 
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
     let iov = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
     let iov_len = unsafe { ctx.read_at::<u64>(32) }.map_err(|err| err as i64)?;
-    emit_protocol_iovec_event(ctx, fd, iov, iov_len)
+    emit_protocol_iovec_event(ctx, fd, iov, iov_len, NETWORK_IO_WRITE, 0)
 }
 
 fn try_tracepoint_protocol_sendmsg_enter(ctx: &TracePointContext) -> Result<u32, i64> {
@@ -3357,7 +3405,7 @@ fn try_tracepoint_protocol_sendmsg_enter(ctx: &TracePointContext) -> Result<u32,
         return Ok(0);
     }
     let (iov, iov_len) = read_msghdr_iovecs(message)?;
-    emit_protocol_iovec_event(ctx, fd, iov, iov_len)
+    emit_protocol_iovec_event(ctx, fd, iov, iov_len, NETWORK_IO_WRITE, 0)
 }
 
 #[inline(always)]
@@ -3366,6 +3414,8 @@ fn emit_protocol_iovec_event(
     fd: i32,
     iov: *const u8,
     iov_len: u64,
+    direction: u32,
+    total_bound: u64,
 ) -> Result<u32, i64> {
     if iov.is_null() || iov_len == 0 {
         record_protocol_diagnostic(PROTOCOL_DIAG_NULL_OR_EMPTY);
@@ -3387,7 +3437,7 @@ fn emit_protocol_iovec_event(
     event.uid = connection.uid;
     event.cgroup_id = cgroup_id;
     event.fd = fd;
-    event.direction = NETWORK_IO_WRITE;
+    event.direction = direction;
     event.role = connection.role;
     event.family = connection.family;
     event.remote_port_be = connection.remote_port_be;
@@ -3408,6 +3458,7 @@ fn emit_protocol_iovec_event(
     state.captured_total = 0;
     state.slot = 0;
     state.capture_contiguous = 1;
+    state.total_bound = total_bound;
     unsafe {
         PROTOCOL_IOVEC_PROGS.tail_call(ctx, 0);
     }
@@ -3422,10 +3473,18 @@ fn try_tracepoint_protocol_iovec_compute(ctx: &TracePointContext) -> Result<u32,
     let iov = state.iov_ptr as *const u8;
     let mut processed = 0_u32;
     while processed < PROTOCOL_IOVEC_CHUNK {
-        if state.slot >= PROTOCOL_MAX_IOVECS || u64::from(state.slot) >= state.iov_len {
+        if state.slot >= PROTOCOL_MAX_IOVECS
+            || u64::from(state.slot) >= state.iov_len
+            || (state.total_bound != 0 && state.total_len >= state.total_bound)
+        {
             break;
         }
-        let slot_len = read_protocol_iovec_len(iov, state.slot)?;
+        let raw_slot_len = read_protocol_iovec_len(iov, state.slot)?;
+        let slot_len = if state.total_bound != 0 {
+            raw_slot_len.min(state.total_bound.saturating_sub(state.total_len))
+        } else {
+            raw_slot_len
+        };
         state.total_len = state.total_len.saturating_add(slot_len);
         if state.capture_contiguous != 0 {
             let remaining = state.capture_limit.saturating_sub(state.captured_total);
@@ -3446,7 +3505,10 @@ fn try_tracepoint_protocol_iovec_compute(ctx: &TracePointContext) -> Result<u32,
         processed += 1;
     }
 
-    if state.slot < PROTOCOL_MAX_IOVECS && u64::from(state.slot) < state.iov_len {
+    if state.slot < PROTOCOL_MAX_IOVECS
+        && u64::from(state.slot) < state.iov_len
+        && (state.total_bound == 0 || state.total_len < state.total_bound)
+    {
         unsafe {
             PROTOCOL_IOVEC_PROGS.tail_call(ctx, 0);
         }
@@ -3456,12 +3518,13 @@ fn try_tracepoint_protocol_iovec_compute(ctx: &TracePointContext) -> Result<u32,
 
     let event_ptr = PROTOCOL_DATA_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
     let event = unsafe { &mut *event_ptr };
-    event.payload_total_len =
-        if state.iov_len > u64::from(PROTOCOL_MAX_IOVECS) || state.total_len > u32::MAX as u64 {
-            u32::MAX
-        } else {
-            state.total_len as u32
-        };
+    event.payload_total_len = if state.total_bound != 0 {
+        state.total_bound.min(u32::MAX as u64) as u32
+    } else if state.iov_len > u64::from(PROTOCOL_MAX_IOVECS) || state.total_len > u32::MAX as u64 {
+        u32::MAX
+    } else {
+        state.total_len as u32
+    };
     event.payload_captured_len = state.captured_total;
     if state.captured_total == 0 {
         record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
@@ -3558,6 +3621,88 @@ fn read_protocol_iovec(iov: *const u8, slot: u32) -> Result<(*const u8, u64), i6
     let len = unsafe { bpf_probe_read_user::<u64>(iov.add(offset + 8).cast::<u64>()) }
         .map_err(|err| err as i64)?;
     Ok((buffer, len))
+}
+
+fn try_tracepoint_protocol_iovec_read_enter(
+    ctx: &TracePointContext,
+    recvmsg: bool,
+) -> Result<u32, i64> {
+    record_protocol_diagnostic(PROTOCOL_DIAG_READ_ENTER);
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let pointer = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    let (iov, iov_len) = if recvmsg {
+        if pointer.is_null() {
+            record_protocol_diagnostic(PROTOCOL_DIAG_NULL_OR_EMPTY);
+            return Ok(0);
+        }
+        read_msghdr_iovecs(pointer)?
+    } else {
+        let iov_len = unsafe { ctx.read_at::<u64>(32) }.map_err(|err| err as i64)?;
+        (pointer, iov_len)
+    };
+    if iov.is_null() || iov_len == 0 {
+        record_protocol_diagnostic(PROTOCOL_DIAG_NULL_OR_EMPTY);
+        return Ok(0);
+    }
+    if protocol_capture_connection(fd).is_none() {
+        return Ok(0);
+    }
+
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let pending = PendingProtocolIovecRead {
+        fd,
+        reserved: 0,
+        iov_ptr: iov as u64,
+        iov_len,
+    };
+    PENDING_PROTOCOL_IOVEC_READS
+        .insert(&pid_tgid, &pending, 0)
+        .map_err(|err| err as i64)?;
+    Ok(0)
+}
+
+fn try_tracepoint_protocol_iovec_read_exit(ctx: &TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let pending = match unsafe { PENDING_PROTOCOL_IOVEC_READS.get(&pid_tgid) } {
+        Some(value) => *value,
+        None => return Ok(0),
+    };
+    PENDING_PROTOCOL_IOVEC_READS.remove(&pid_tgid).ok();
+
+    let retval = unsafe { ctx.read_at::<i64>(16) }.map_err(|err| err as i64)?;
+    if retval <= 0 {
+        return Ok(0);
+    }
+    let connection = match protocol_capture_connection(pending.fd) {
+        Some(value) => value,
+        None => return Ok(0),
+    };
+    record_protocol_diagnostic(PROTOCOL_DIAG_READ_EXIT);
+
+    // A single receive buffer is contiguous even when its iovec capacity is
+    // much larger than the returned bytes. Reuse the scalar segment emitter
+    // so the configured capture limit, rather than one event, bounds it.
+    if pending.iov_len == 1 {
+        let (buffer, capacity) = read_protocol_iovec(pending.iov_ptr as *const u8, 0)?;
+        let len = (retval as u64).min(capacity);
+        return emit_protocol_data_event(
+            ctx,
+            &connection,
+            pending.fd,
+            NETWORK_IO_READ,
+            buffer,
+            len,
+        );
+    }
+
+    emit_protocol_iovec_event(
+        ctx,
+        pending.fd,
+        pending.iov_ptr as *const u8,
+        pending.iov_len,
+        NETWORK_IO_READ,
+        retval as u64,
+    )
 }
 
 fn try_tracepoint_protocol_read_enter(ctx: &TracePointContext) -> Result<u32, i64> {
