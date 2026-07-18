@@ -162,7 +162,7 @@ pub enum RawProtocolDecodeError {
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 impl RawProtocolDecodeError {
-    fn reason_name(self) -> &'static str {
+    pub(crate) fn reason_name(self) -> &'static str {
         match self {
             Self::RawSampleTooShort => "raw_sample_too_short",
             Self::InvalidPayloadLength { .. } => "invalid_payload_length",
@@ -255,6 +255,7 @@ struct ConnectionId {
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug, Clone)]
 struct ObservationContext {
+    source: &'static str,
     pid: u32,
     uid: u32,
     cgroup_id: u64,
@@ -272,8 +273,13 @@ struct ObservationContext {
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 impl ObservationContext {
-    fn from_raw(raw: &RawProtocolDataEvent, procfs_root: &std::path::Path) -> Self {
+    fn from_raw(
+        raw: &RawProtocolDataEvent,
+        procfs_root: &std::path::Path,
+        source: &'static str,
+    ) -> Self {
         Self {
+            source,
             pid: raw.pid,
             uid: raw.uid,
             cgroup_id: raw.cgroup_id,
@@ -351,6 +357,7 @@ struct ConnectionStream {
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug)]
 pub struct ProtocolStreamRegistry {
+    source: &'static str,
     host: Option<String>,
     procfs_root: std::path::PathBuf,
     ports: ProtocolPortMap,
@@ -369,7 +376,17 @@ impl ProtocolStreamRegistry {
         procfs_root: std::path::PathBuf,
         config: &ProtocolSourceConfig,
     ) -> Self {
+        Self::new_with_source(host, procfs_root, config, "source.aya_protocol")
+    }
+
+    pub(crate) fn new_with_source(
+        host: Option<String>,
+        procfs_root: std::path::PathBuf,
+        config: &ProtocolSourceConfig,
+        source: &'static str,
+    ) -> Self {
         Self {
+            source,
             host,
             procfs_root,
             ports: ProtocolPortMap::from_config(config),
@@ -494,7 +511,7 @@ impl ProtocolStreamRegistry {
                     response_hpack: HpackDecoder::new(),
                     streams: std::collections::BTreeMap::new(),
                 }),
-                context: ObservationContext::from_raw(&raw, &self.procfs_root),
+                context: ObservationContext::from_raw(&raw, &self.procfs_root, self.source),
                 last_seen_unix_nanos: observed_unix_nanos,
             });
         stream.last_seen_unix_nanos = observed_unix_nanos;
@@ -1136,7 +1153,7 @@ fn build_observation(
     };
 
     SignalEnvelope::protocol_request_observation(
-        "source.aya_protocol",
+        context.source,
         host,
         ProtocolRequestObservation {
             protocol: parsed.protocol,
@@ -2625,6 +2642,28 @@ mod tests {
         // The request target path must not leak as a high-cardinality value.
         let serialized = serde_json::to_string(&signals[0]).expect("signal serializes");
         assert!(serialized.contains("url.path"));
+    }
+
+    #[test]
+    fn registry_preserves_tls_source_provenance() {
+        let config = ProtocolSourceConfig {
+            http1_ports: vec![8443],
+            ..ProtocolSourceConfig::default()
+        };
+        let mut registry = ProtocolStreamRegistry::new_with_source(
+            None,
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
+            "source.aya_tls",
+        );
+        let request = b"GET / HTTP/1.1\r\nHost: api.test\r\n\r\n";
+        let event = raw_event(8443, request, request.len() as u32);
+        assert!(handle_at(&mut registry, &event, 5_000).is_empty());
+        let response = response_event(8443, b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        let signals = handle_at(&mut registry, &response, 6_000);
+
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0].source, "source.aya_tls");
     }
 
     #[test]

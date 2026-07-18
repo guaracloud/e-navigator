@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "run_id": "standalone-20260717-tls-hardening",
+  "decision": "no-go",
+  "proof_level": "local-linux-arm64",
+  "captured_at_utc": "2026-07-18T00:02:03Z",
+  "repository": {
+    "branch": "codex/standalone-observability-agent",
+    "source_parent": "558ff62",
+    "worktree_patch_sha256": "2041fcd13dc4a038abd9cc89a85352cabcd756386c8e36f18a79f25ddfc71c49"
+  },
+  "artifact": {
+    "linux_arm64": {
+      "tag": "e-navigator:standalone-tls-final-arm64-20260717",
+      "manifest_list_sha256": "c9490e633a8044a8d2ccd25eccbf20ddde20d5f6dae8dff5652b3ed9e6ccc0cf",
+      "runtime_smoke": true
+    },
+    "linux_amd64": {
+      "tag": "e-navigator:standalone-tls-final-amd64-20260717",
+      "manifest_list_sha256": "1d70b524981ee7015952f33311b364905e2b5c12aa44020a27b0213f3a9d6379",
+      "runtime_smoke": false
+    }
+  },
+  "results": {
+    "openssl3_http_200": true,
+    "gnutls_abi30_http_200": true,
+    "tls_source_provenance": true,
+    "unknown_openssl_abi_failed_closed": true,
+    "invalid_samples": 0,
+    "lost_perf_events": 0,
+    "attachment_failures": 0,
+    "capacity_rejections": 0
+  },
+  "cleanup": {
+    "smoke_containers_removed": true,
+    "smoke_network_removed": true,
+    "intermediate_images_removed": true,
+    "final_images_retained_for_next_stage": true
+  },
+  "production_claim": false
+}

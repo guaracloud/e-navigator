@@ -1,7 +1,7 @@
 //! Uprobe-based TLS plaintext capture source (`source.aya_tls`).
 //!
 //! This is library-boundary interception: uprobes on the userspace TLS
-//! read/write calls (OpenSSL/BoringSSL `SSL_read`/`SSL_write`, GnuTLS
+//! read/write calls (version-gated OpenSSL `SSL_read`/`SSL_write`, GnuTLS
 //! `gnutls_record_recv`/`gnutls_record_send`) copy the plaintext the
 //! application already holds. It is NOT on-the-wire decryption. Captured
 //! plaintext shares the `RawProtocolDataEvent` layout with the cleartext
@@ -17,6 +17,72 @@ const TLS_RAW_SAMPLE_CHANNEL_CAPACITY: usize = 1024;
 /// How often to rescan process maps for newly loaded TLS libraries.
 #[cfg(target_os = "linux")]
 const TLS_LIBRARY_RESCAN_SECS: u64 = 15;
+#[cfg(target_os = "linux")]
+const TLS_MAX_SCANNED_PROCESSES: usize = 4096;
+#[cfg(target_os = "linux")]
+const TLS_MAX_DISCOVERED_LIBRARIES: usize = 1024;
+#[cfg(target_os = "linux")]
+const TLS_MAX_TRACKED_LIBRARY_IDENTITIES: usize = 4096;
+#[cfg(target_os = "linux")]
+const TLS_MAX_LIBRARY_BYTES: u64 = 128 * 1024 * 1024;
+#[cfg(target_os = "linux")]
+const TLS_ATTACHMENT_WARNING_LIMIT: usize = 64;
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TlsLibraryKind {
+    OpenSsl1_1,
+    OpenSsl3,
+    GnuTls30,
+}
+
+#[cfg(target_os = "linux")]
+impl TlsLibraryKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::OpenSsl1_1 => "openssl_1_1",
+            Self::OpenSsl3 => "openssl_3",
+            Self::GnuTls30 => "gnutls_30",
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TlsLibraryClassification {
+    Supported(TlsLibraryKind),
+    UnsupportedOpenSsl,
+    UnsupportedGnuTls,
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn classify_tls_library_basename(basename: &str) -> Option<TlsLibraryClassification> {
+    let versioned_name = |prefix: &str| {
+        basename == prefix
+            || basename
+                .strip_prefix(prefix)
+                .is_some_and(|suffix| suffix.starts_with('.'))
+    };
+    if versioned_name("libssl.so.1.1") {
+        Some(TlsLibraryClassification::Supported(
+            TlsLibraryKind::OpenSsl1_1,
+        ))
+    } else if versioned_name("libssl.so.3") {
+        Some(TlsLibraryClassification::Supported(
+            TlsLibraryKind::OpenSsl3,
+        ))
+    } else if basename.starts_with("libssl.so") {
+        Some(TlsLibraryClassification::UnsupportedOpenSsl)
+    } else if versioned_name("libgnutls.so.30") {
+        Some(TlsLibraryClassification::Supported(
+            TlsLibraryKind::GnuTls30,
+        ))
+    } else if basename.starts_with("libgnutls.so") {
+        Some(TlsLibraryClassification::UnsupportedGnuTls)
+    } else {
+        None
+    }
+}
 
 /// Builds a protocol-source configuration that reuses the existing stream
 /// registry for the stream-framed protocols carried over TLS. HTTP/1 ports
@@ -67,7 +133,7 @@ pub(crate) fn stream_capture_ports(config: &e_navigator_core::TlsSourceConfig) -
 
 #[cfg(target_os = "linux")]
 mod platform {
-    use crate::diagnostics::SourceDiagnostics;
+    use crate::diagnostics::{DiagnosticSampleDecision, SourceDiagnostics};
     use crate::perf_sample::InlineSample;
     use crate::reader_shutdown::ReaderShutdown;
     use crate::source_telemetry::SourceTelemetry;
@@ -75,15 +141,16 @@ mod platform {
     use aya::{
         Ebpf, include_bytes_aligned,
         maps::{Array as AyaArray, HashMap as AyaHashMap, MapData, perf::PerfEventArray},
-        programs::{TracePoint, UProbe, uprobe::UProbeScope},
+        programs::{TracePoint, UProbe, uprobe::UProbeLinkId, uprobe::UProbeScope},
         util::online_cpus,
     };
     use e_navigator_core::{
         CoreError, CoreResult, ModuleKind, ModuleMetadata, Source, TlsSourceConfig,
     };
     use e_navigator_signals::SignalEnvelope;
+    use object::{Architecture, BinaryFormat, Object, ObjectSymbol};
     use std::{
-        collections::BTreeSet,
+        collections::{BTreeMap, BTreeSet},
         path::{Path, PathBuf},
         sync::Arc,
     };
@@ -98,8 +165,32 @@ mod platform {
 
     const OPENSSL_BINDINGS: &[UprobeBinding] = &[
         UprobeBinding {
-            program: "uprobe_ssl_set_fd",
+            program: "uprobe_ssl_set_fd_enter",
             symbol: "SSL_set_fd",
+        },
+        UprobeBinding {
+            program: "uretprobe_ssl_set_fd_exit",
+            symbol: "SSL_set_fd",
+        },
+        UprobeBinding {
+            program: "uprobe_ssl_set_rfd_enter",
+            symbol: "SSL_set_rfd",
+        },
+        UprobeBinding {
+            program: "uretprobe_ssl_set_rfd_exit",
+            symbol: "SSL_set_rfd",
+        },
+        UprobeBinding {
+            program: "uprobe_ssl_set_wfd_enter",
+            symbol: "SSL_set_wfd",
+        },
+        UprobeBinding {
+            program: "uretprobe_ssl_set_wfd_exit",
+            symbol: "SSL_set_wfd",
+        },
+        UprobeBinding {
+            program: "uprobe_ssl_free",
+            symbol: "SSL_free",
         },
         UprobeBinding {
             program: "uprobe_ssl_write_enter",
@@ -117,9 +208,7 @@ mod platform {
             program: "uretprobe_ssl_read_exit",
             symbol: "SSL_read",
         },
-        // OpenSSL 3 length-in-out-parameter variants (used by, for example,
-        // CPython's _ssl). Absent on older OpenSSL and BoringSSL, which are
-        // then accounted by the attach count.
+        // Length-in-out-parameter variants used by OpenSSL 1.1.1 and 3.x.
         UprobeBinding {
             program: "uprobe_ssl_write_ex_enter",
             symbol: "SSL_write_ex",
@@ -140,12 +229,12 @@ mod platform {
 
     const GNUTLS_BINDINGS: &[UprobeBinding] = &[
         UprobeBinding {
-            program: "uprobe_gnutls_transport_set_ptr",
-            symbol: "gnutls_transport_set_ptr",
-        },
-        UprobeBinding {
             program: "uprobe_gnutls_transport_set_int2",
             symbol: "gnutls_transport_set_int2",
+        },
+        UprobeBinding {
+            program: "uprobe_gnutls_deinit",
+            symbol: "gnutls_deinit",
         },
         UprobeBinding {
             program: "uprobe_gnutls_record_send_enter",
@@ -244,36 +333,47 @@ mod platform {
 
             load_uprobe_programs(&mut ebpf, OPENSSL_BINDINGS);
             load_uprobe_programs(&mut ebpf, GNUTLS_BINDINGS);
-            let mut attached_openssl: BTreeSet<(u64, u64)> = BTreeSet::new();
-            let mut attached_gnutls: BTreeSet<(u64, u64)> = BTreeSet::new();
+            let mut seen_libraries: BTreeSet<(u64, u64)> = BTreeSet::new();
+            let mut terminal_libraries: BTreeSet<(u64, u64)> = BTreeSet::new();
+            let mut warning_budget = super::TLS_ATTACHMENT_WARNING_LIMIT;
+            warn!(
+                source = "source.aya_tls",
+                "TLS plaintext capture is limited to dynamically linked OpenSSL 1.1.1/3.x and \
+                 GnuTLS ABI 30 using standard socket descriptors; Go crypto/tls, rustls, \
+                 statically bundled Node TLS, JVM JSSE, BoringSSL, custom BIOs, and custom \
+                 GnuTLS transports are not captured"
+            );
             let libraries = discover_tls_libraries(&self.procfs_root);
-            let openssl_attached = attach_uprobe_libraries(
-                &mut ebpf,
-                OPENSSL_BINDINGS,
-                &libraries.openssl,
-                &mut attached_openssl,
+            telemetry.record_optional_rescan();
+            telemetry.record_optional_capacity_rejections(
+                libraries
+                    .skipped_processes
+                    .saturating_add(libraries.skipped_libraries),
             );
-            let gnutls_attached = attach_uprobe_libraries(
+            let attachment = attach_discovered_libraries(
                 &mut ebpf,
-                GNUTLS_BINDINGS,
-                &libraries.gnutls,
-                &mut attached_gnutls,
+                &libraries.libraries,
+                &mut seen_libraries,
+                &mut terminal_libraries,
+                &telemetry,
+                &mut warning_budget,
             );
-            if attached_openssl.is_empty() && attached_gnutls.is_empty() {
+            if attachment.ready_libraries == 0 {
                 warn!(
                     source = "source.aya_tls",
-                    "no OpenSSL/BoringSSL or GnuTLS libraries mapped yet; TLS capture \
-                     starts once a TLS workload is running (libraries are rescanned \
-                     periodically)"
+                    "no complete, supported TLS library attachment is ready yet; supported \
+                     libraries are rescanned periodically"
                 );
             }
             info!(
                 source = "source.aya_tls",
-                openssl_libraries = attached_openssl.len(),
-                openssl_probes_attached = openssl_attached,
-                gnutls_libraries = attached_gnutls.len(),
-                gnutls_probes_attached = gnutls_attached,
-                "attached TLS uprobes"
+                ready_libraries = attachment.ready_libraries,
+                unsupported_libraries = attachment.unsupported_libraries,
+                attachment_failures = attachment.attachment_failures,
+                probes_attached = attachment.probes_attached,
+                skipped_processes = libraries.skipped_processes,
+                skipped_libraries = libraries.skipped_libraries,
+                "completed TLS library discovery"
             );
             if let Some(handle) =
                 crate::capture_filter::attach_capture_filter(&mut ebpf, "source.aya_tls", {
@@ -341,12 +441,13 @@ mod platform {
             let decoder_config = super::stream_protocol_config(&self.config);
             let decoder_shutdown = shutdown.clone();
             let decoder_telemetry = telemetry.clone();
-            let _ = &diagnostics;
+            let decoder_diagnostics = diagnostics.clone();
             reader_handles.push(tokio::task::spawn_blocking(move || {
-                let mut registry = crate::protocol::ProtocolStreamRegistry::new(
+                let mut registry = crate::protocol::ProtocolStreamRegistry::new_with_source(
                     decoder_host,
                     decoder_procfs_root,
                     &decoder_config,
+                    "source.aya_tls",
                 );
                 let mut signals = Vec::new();
 
@@ -355,7 +456,18 @@ mod platform {
                         return;
                     }
                     signals.clear();
-                    match registry.handle_event(sample.as_bytes(), now_unix_nanos(), &mut signals) {
+                    let result =
+                        registry.handle_event(sample.as_bytes(), now_unix_nanos(), &mut signals);
+                    let diagnostic_decision = log_tls_sample_diagnostic(
+                        &decoder_diagnostics,
+                        sample.as_bytes(),
+                        registry.counters(),
+                        registry.tracked_connections(),
+                        signals.len(),
+                        result.err(),
+                    );
+                    decoder_telemetry.record_diagnostic_decision(diagnostic_decision);
+                    match result {
                         Ok(()) => {
                             decoder_telemetry.record_decoded_sample();
                             for signal in signals.drain(..) {
@@ -374,6 +486,14 @@ mod platform {
                 }
             }));
 
+            if diagnostics.enabled() {
+                info!(
+                    source = "source.aya_tls",
+                    remaining_samples = diagnostics.remaining_samples(),
+                    "source diagnostics enabled"
+                );
+            }
+
             telemetry.mark_initialized();
             debug!("aya tls source attached");
             // TLS libraries mapped by processes that start after the agent are
@@ -388,24 +508,31 @@ mod platform {
                     }
                     _ = tokio::time::sleep(rescan_interval) => {
                         let libraries = discover_tls_libraries(&self.procfs_root);
-                        let openssl_new = attach_uprobe_libraries(
-                            &mut ebpf,
-                            OPENSSL_BINDINGS,
-                            &libraries.openssl,
-                            &mut attached_openssl,
+                        telemetry.record_optional_rescan();
+                        telemetry.record_optional_capacity_rejections(
+                            libraries.skipped_processes.saturating_add(libraries.skipped_libraries),
                         );
-                        let gnutls_new = attach_uprobe_libraries(
+                        let attachment = attach_discovered_libraries(
                             &mut ebpf,
-                            GNUTLS_BINDINGS,
-                            &libraries.gnutls,
-                            &mut attached_gnutls,
+                            &libraries.libraries,
+                            &mut seen_libraries,
+                            &mut terminal_libraries,
+                            &telemetry,
+                            &mut warning_budget,
                         );
-                        if openssl_new + gnutls_new > 0 {
+                        if !attachment.is_empty()
+                            || libraries.skipped_processes > 0
+                            || libraries.skipped_libraries > 0
+                        {
                             info!(
                                 source = "source.aya_tls",
-                                openssl_probes_attached = openssl_new,
-                                gnutls_probes_attached = gnutls_new,
-                                "attached uprobes for newly mapped TLS libraries"
+                                ready_libraries = attachment.ready_libraries,
+                                unsupported_libraries = attachment.unsupported_libraries,
+                                attachment_failures = attachment.attachment_failures,
+                                probes_attached = attachment.probes_attached,
+                                skipped_processes = libraries.skipped_processes,
+                                skipped_libraries = libraries.skipped_libraries,
+                                "completed periodic TLS library discovery"
                             );
                         }
                     }
@@ -416,38 +543,47 @@ mod platform {
         }
     }
 
-    /// The OpenSSL/BoringSSL and GnuTLS shared objects mapped into any process.
+    #[derive(Debug)]
+    struct DiscoveredTlsLibrary {
+        identity: (u64, u64),
+        path: PathBuf,
+        basename: String,
+        classification: super::TlsLibraryClassification,
+    }
+
+    /// Version-classified OpenSSL and GnuTLS shared objects mapped into any
+    /// process, plus explicit capacity diagnostics for a bounded scan.
     #[derive(Debug, Default)]
     struct DiscoveredTlsLibraries {
-        openssl: Vec<((u64, u64), PathBuf)>,
-        gnutls: Vec<((u64, u64), PathBuf)>,
+        libraries: Vec<DiscoveredTlsLibrary>,
+        skipped_processes: usize,
+        skipped_libraries: usize,
     }
 
     /// Scans `/proc/<pid>/maps` for mapped TLS shared objects. Library
     /// paths are resolved through `<procfs>/<pid>/root/<path>` so files in
     /// other mount namespaces (container workloads) are attachable, and
     /// deduplicated by (device, inode) so each distinct library file is
-    /// probed exactly once no matter how many processes map it.
+    /// considered exactly once no matter how many processes map it.
     fn discover_tls_libraries(procfs_root: &Path) -> DiscoveredTlsLibraries {
-        const MAX_SCANNED_PROCESSES: usize = 4096;
-        let mut openssl: std::collections::BTreeMap<(u64, u64), PathBuf> =
-            std::collections::BTreeMap::new();
-        let mut gnutls: std::collections::BTreeMap<(u64, u64), PathBuf> =
-            std::collections::BTreeMap::new();
+        let mut libraries = BTreeMap::new();
+        let mut skipped_processes = 0_usize;
+        let mut skipped_libraries = 0_usize;
 
         let Ok(entries) = std::fs::read_dir(procfs_root) else {
             return DiscoveredTlsLibraries::default();
         };
         let mut scanned = 0;
         for entry in entries.flatten() {
-            if scanned >= MAX_SCANNED_PROCESSES {
-                break;
-            }
             let file_name = entry.file_name();
             let Some(name) = file_name.to_str() else {
                 continue;
             };
             if !name.bytes().all(|byte| byte.is_ascii_digit()) {
+                continue;
+            }
+            if scanned >= super::TLS_MAX_SCANNED_PROCESSES {
+                skipped_processes = skipped_processes.saturating_add(1);
                 continue;
             }
             scanned += 1;
@@ -464,11 +600,7 @@ mod platform {
                 else {
                     continue;
                 };
-                let target = if basename.starts_with("libssl.so") {
-                    &mut openssl
-                } else if basename.starts_with("libgnutls.so") {
-                    &mut gnutls
-                } else {
+                let Some(classification) = super::classify_tls_library_basename(basename) else {
                     continue;
                 };
                 let resolved = entry.path().join("root").join(path.trim_start_matches('/'));
@@ -476,15 +608,30 @@ mod platform {
                     continue;
                 };
                 use std::os::linux::fs::MetadataExt;
-                target
-                    .entry((metadata.st_dev(), metadata.st_ino()))
-                    .or_insert(resolved);
+                let identity = (metadata.st_dev(), metadata.st_ino());
+                if libraries.contains_key(&identity) {
+                    continue;
+                }
+                if libraries.len() >= super::TLS_MAX_DISCOVERED_LIBRARIES {
+                    skipped_libraries = skipped_libraries.saturating_add(1);
+                    continue;
+                }
+                libraries.insert(
+                    identity,
+                    DiscoveredTlsLibrary {
+                        identity,
+                        path: resolved,
+                        basename: basename.to_string(),
+                        classification,
+                    },
+                );
             }
         }
 
         DiscoveredTlsLibraries {
-            openssl: openssl.into_iter().collect(),
-            gnutls: gnutls.into_iter().collect(),
+            libraries: libraries.into_values().collect(),
+            skipped_processes,
+            skipped_libraries,
         }
     }
 
@@ -510,45 +657,305 @@ mod platform {
         }
     }
 
-    /// Attaches every binding to each library not already attached, recording
-    /// attached paths so a periodic rescan only probes newly mapped libraries.
-    /// Libraries missing a symbol (for example a BoringSSL build without
-    /// `SSL_set_fd`) are accounted by the lower count, never silently assumed
-    /// present. Returns the number of new (program, library) attachments.
-    fn attach_uprobe_libraries(
+    #[derive(Debug, Default)]
+    struct AttachmentSummary {
+        ready_libraries: usize,
+        unsupported_libraries: usize,
+        attachment_failures: usize,
+        probes_attached: usize,
+        capacity_rejections: usize,
+    }
+
+    impl AttachmentSummary {
+        fn is_empty(&self) -> bool {
+            self.ready_libraries == 0
+                && self.unsupported_libraries == 0
+                && self.attachment_failures == 0
+                && self.probes_attached == 0
+                && self.capacity_rejections == 0
+        }
+    }
+
+    fn attach_discovered_libraries(
         ebpf: &mut Ebpf,
-        bindings: &[UprobeBinding],
-        libraries: &[((u64, u64), PathBuf)],
-        attached_identities: &mut BTreeSet<(u64, u64)>,
-    ) -> usize {
-        let mut attached = 0;
-        for (identity, library) in libraries {
-            if !attached_identities.insert(*identity) {
+        libraries: &[DiscoveredTlsLibrary],
+        seen_identities: &mut BTreeSet<(u64, u64)>,
+        terminal_identities: &mut BTreeSet<(u64, u64)>,
+        telemetry: &SourceTelemetry,
+        warning_budget: &mut usize,
+    ) -> AttachmentSummary {
+        let mut summary = AttachmentSummary::default();
+        for library in libraries {
+            if terminal_identities.contains(&library.identity) {
                 continue;
             }
-            for binding in bindings {
-                let program: &mut UProbe = match ebpf
-                    .program_mut(binding.program)
-                    .and_then(|program| program.try_into().ok())
-                {
-                    Some(program) => program,
-                    None => continue,
-                };
-                match program.attach(binding.symbol, library, UProbeScope::AllProcesses) {
-                    Ok(_) => attached += 1,
-                    Err(err) => {
-                        debug!(
-                            program = binding.program,
-                            symbol = binding.symbol,
-                            library = %library.display(),
-                            error = %err,
-                            "TLS symbol not attachable in library; accounting as unsupported"
-                        );
-                    }
+            if !seen_identities.contains(&library.identity)
+                && seen_identities.len() >= super::TLS_MAX_TRACKED_LIBRARY_IDENTITIES
+            {
+                summary.capacity_rejections = summary.capacity_rejections.saturating_add(1);
+                telemetry.record_optional_capacity_rejections(1);
+                warn_tls_attachment(
+                    warning_budget,
+                    &library.basename,
+                    "tracked TLS library identity capacity exhausted",
+                );
+                continue;
+            }
+            if seen_identities.insert(library.identity) {
+                telemetry.record_optional_target_discovered();
+            }
+
+            let kind = match library.classification {
+                super::TlsLibraryClassification::Supported(kind) => kind,
+                super::TlsLibraryClassification::UnsupportedOpenSsl => {
+                    terminal_identities.insert(library.identity);
+                    summary.unsupported_libraries = summary.unsupported_libraries.saturating_add(1);
+                    telemetry.record_optional_target_unsupported();
+                    warn_tls_attachment(
+                        warning_budget,
+                        &library.basename,
+                        "unsupported or unversioned OpenSSL-compatible ABI; skipped fail-closed",
+                    );
+                    continue;
+                }
+                super::TlsLibraryClassification::UnsupportedGnuTls => {
+                    terminal_identities.insert(library.identity);
+                    summary.unsupported_libraries = summary.unsupported_libraries.saturating_add(1);
+                    telemetry.record_optional_target_unsupported();
+                    warn_tls_attachment(
+                        warning_budget,
+                        &library.basename,
+                        "unsupported or unversioned GnuTLS ABI; skipped fail-closed",
+                    );
+                    continue;
+                }
+            };
+
+            let bindings = bindings_for_kind(kind);
+            if let Err(reason) = validate_library_image(&library.path, kind, bindings) {
+                terminal_identities.insert(library.identity);
+                summary.unsupported_libraries = summary.unsupported_libraries.saturating_add(1);
+                summary.attachment_failures = summary.attachment_failures.saturating_add(1);
+                telemetry.record_optional_target_unsupported();
+                telemetry.record_optional_attachment_failure();
+                warn_tls_attachment(warning_budget, &library.basename, &reason);
+                continue;
+            }
+            match attach_library_transaction(ebpf, &library.path, kind, bindings) {
+                Ok(attached) => {
+                    terminal_identities.insert(library.identity);
+                    summary.ready_libraries = summary.ready_libraries.saturating_add(1);
+                    summary.probes_attached = summary.probes_attached.saturating_add(attached);
+                    telemetry.record_optional_target_ready();
+                    telemetry.record_optional_probe_attachments(attached);
+                }
+                Err(reason) => {
+                    summary.attachment_failures = summary.attachment_failures.saturating_add(1);
+                    telemetry.record_optional_attachment_failure();
+                    warn_tls_attachment(warning_budget, &library.basename, &reason);
                 }
             }
         }
-        attached
+        summary
+    }
+
+    fn bindings_for_kind(kind: super::TlsLibraryKind) -> &'static [UprobeBinding] {
+        match kind {
+            super::TlsLibraryKind::OpenSsl1_1 | super::TlsLibraryKind::OpenSsl3 => OPENSSL_BINDINGS,
+            super::TlsLibraryKind::GnuTls30 => GNUTLS_BINDINGS,
+        }
+    }
+
+    fn attach_library_transaction(
+        ebpf: &mut Ebpf,
+        library: &Path,
+        kind: super::TlsLibraryKind,
+        bindings: &'static [UprobeBinding],
+    ) -> Result<usize, String> {
+        let mut links: Vec<(&'static str, UProbeLinkId)> = Vec::with_capacity(bindings.len());
+        for binding in bindings {
+            let Some(program): Option<&mut UProbe> = ebpf
+                .program_mut(binding.program)
+                .and_then(|program| program.try_into().ok())
+            else {
+                rollback_uprobe_links(ebpf, links);
+                return Err(format!("missing loaded uprobe program {}", binding.program));
+            };
+            let result = program.attach(binding.symbol, library, UProbeScope::AllProcesses);
+            match result {
+                Ok(link_id) => links.push((binding.program, link_id)),
+                Err(err) => {
+                    rollback_uprobe_links(ebpf, links);
+                    return Err(format!(
+                        "{} attachment failed for {}: {err}",
+                        binding.symbol,
+                        kind.label()
+                    ));
+                }
+            }
+        }
+        Ok(links.len())
+    }
+
+    fn rollback_uprobe_links(ebpf: &mut Ebpf, links: Vec<(&'static str, UProbeLinkId)>) {
+        for (program_name, link_id) in links {
+            let Some(program): Option<&mut UProbe> = ebpf
+                .program_mut(program_name)
+                .and_then(|program| program.try_into().ok())
+            else {
+                continue;
+            };
+            if let Err(err) = program.detach(link_id) {
+                warn!(
+                    program = program_name,
+                    error = %err,
+                    "failed to roll back incomplete TLS uprobe attachment"
+                );
+            }
+        }
+    }
+
+    fn validate_library_image(
+        library: &Path,
+        kind: super::TlsLibraryKind,
+        bindings: &[UprobeBinding],
+    ) -> Result<(), String> {
+        let metadata = std::fs::metadata(library)
+            .map_err(|err| format!("{} metadata unavailable: {err}", kind.label()))?;
+        if metadata.len() == 0 || metadata.len() > super::TLS_MAX_LIBRARY_BYTES {
+            return Err(format!(
+                "{} image size {} is outside the supported 1..={} byte range",
+                kind.label(),
+                metadata.len(),
+                super::TLS_MAX_LIBRARY_BYTES
+            ));
+        }
+        let image = std::fs::read(library)
+            .map_err(|err| format!("{} image unreadable: {err}", kind.label()))?;
+        let object = object::File::parse(image.as_slice())
+            .map_err(|err| format!("{} image is not a valid object: {err}", kind.label()))?;
+        if object.format() != BinaryFormat::Elf || !object.is_64() {
+            return Err(format!(
+                "{} image is not a supported 64-bit ELF object",
+                kind.label()
+            ));
+        }
+        let expected_architecture = match std::env::consts::ARCH {
+            "x86_64" => Architecture::X86_64,
+            "aarch64" => Architecture::Aarch64,
+            other => {
+                return Err(format!(
+                    "agent architecture {other} is unsupported for TLS uprobes"
+                ));
+            }
+        };
+        if object.architecture() != expected_architecture {
+            return Err(format!(
+                "{} architecture {:?} does not match agent architecture {:?}",
+                kind.label(),
+                object.architecture(),
+                expected_architecture
+            ));
+        }
+
+        let mut required = bindings
+            .iter()
+            .map(|binding| binding.symbol)
+            .collect::<BTreeSet<_>>();
+        for symbol in object.dynamic_symbols() {
+            if symbol.is_undefined() {
+                continue;
+            }
+            if let Ok(name) = symbol.name() {
+                required.remove(name);
+            }
+        }
+        if required.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "{} image lacks required exported symbols: {}",
+                kind.label(),
+                required.into_iter().collect::<Vec<_>>().join(",")
+            ))
+        }
+    }
+
+    fn warn_tls_attachment(warning_budget: &mut usize, basename: &str, reason: &str) {
+        if *warning_budget == 0 {
+            return;
+        }
+        *warning_budget -= 1;
+        warn!(
+            source = "source.aya_tls",
+            library = basename,
+            reason,
+            remaining_attachment_warnings = *warning_budget,
+            "TLS library is not capture-ready"
+        );
+    }
+
+    fn log_tls_sample_diagnostic(
+        diagnostics: &SourceDiagnostics,
+        bytes: &[u8],
+        counters: crate::protocol::ProtocolRegistryCounters,
+        tracked_connections: usize,
+        emitted_signals: usize,
+        error: Option<crate::protocol::RawProtocolDecodeError>,
+    ) -> DiagnosticSampleDecision {
+        if !diagnostics.enabled() {
+            return DiagnosticSampleDecision::Disabled;
+        }
+        let raw = (bytes.len() >= core::mem::size_of::<crate::protocol::RawProtocolDataEvent>())
+            .then(|| unsafe {
+                core::ptr::read_unaligned(
+                    bytes
+                        .as_ptr()
+                        .cast::<crate::protocol::RawProtocolDataEvent>(),
+                )
+            });
+        let command = raw
+            .map(|raw| {
+                let end = raw
+                    .command
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .unwrap_or(raw.command.len());
+                String::from_utf8_lossy(&raw.command[..end]).into_owned()
+            })
+            .unwrap_or_default();
+        let reason = error.map_or("decoded", |error| error.reason_name());
+        let decision = diagnostics.sample_decision_for(&[command.as_str(), reason]);
+        if decision != DiagnosticSampleDecision::Matched {
+            return decision;
+        }
+        info!(
+            target: "e_navigator_sources_ebpf_aya::source_diagnostics",
+            source = "source.aya_tls",
+            raw_event = "tls_protocol_data_sample",
+            result = reason,
+            pid = ?raw.map(|raw| raw.pid),
+            command = ?diagnostics.redact_optional_value((!command.is_empty()).then_some(command.as_str())),
+            fd = ?raw.map(|raw| raw.fd),
+            direction = ?raw.map(|raw| raw.direction),
+            role = ?raw.map(|raw| raw.role),
+            remote_port = ?raw.map(|raw| u16::from_be(raw.remote_port_be)),
+            local_port = ?raw.map(|raw| u16::from_be(raw.local_port_be)),
+            payload_len = ?raw.map(|raw| raw.payload_len),
+            payload_total_len = ?raw.map(|raw| raw.payload_total_len),
+            payload_offset = ?raw.map(|raw| raw.payload_offset),
+            payload_captured_len = ?raw.map(|raw| raw.payload_captured_len),
+            emitted_signals,
+            tracked_connections,
+            unparsed_frames = counters.unparsed_frames,
+            truncated_frames = counters.truncated_frames,
+            matched_responses = counters.matched_responses,
+            orphan_responses = counters.orphan_responses,
+            unparsed_responses = counters.unparsed_responses,
+            segment_gaps = counters.segment_gaps,
+            "source diagnostic TLS sample processed"
+        );
+        DiagnosticSampleDecision::Matched
     }
 
     fn populate_capture_ports(ebpf: &mut Ebpf, config: &TlsSourceConfig) -> CoreResult<()> {
@@ -720,5 +1127,40 @@ mod tests {
         // Cleartext defaults must not leak into the TLS-derived config.
         assert!(protocol.kafka_ports.is_empty());
         assert!(protocol.redis_ports.is_empty());
+    }
+
+    #[test]
+    fn tls_library_versions_are_classified_fail_closed() {
+        assert_eq!(
+            classify_tls_library_basename("libssl.so.1.1"),
+            Some(TlsLibraryClassification::Supported(
+                TlsLibraryKind::OpenSsl1_1
+            ))
+        );
+        assert_eq!(
+            classify_tls_library_basename("libssl.so.3.4.0"),
+            Some(TlsLibraryClassification::Supported(
+                TlsLibraryKind::OpenSsl3
+            ))
+        );
+        assert_eq!(
+            classify_tls_library_basename("libgnutls.so.30.42.0"),
+            Some(TlsLibraryClassification::Supported(
+                TlsLibraryKind::GnuTls30
+            ))
+        );
+        assert_eq!(
+            classify_tls_library_basename("libssl.so"),
+            Some(TlsLibraryClassification::UnsupportedOpenSsl)
+        );
+        assert_eq!(
+            classify_tls_library_basename("libssl.so.4"),
+            Some(TlsLibraryClassification::UnsupportedOpenSsl)
+        );
+        assert_eq!(
+            classify_tls_library_basename("libgnutls.so.31"),
+            Some(TlsLibraryClassification::UnsupportedGnuTls)
+        );
+        assert_eq!(classify_tls_library_basename("libcrypto.so.3"), None);
     }
 }

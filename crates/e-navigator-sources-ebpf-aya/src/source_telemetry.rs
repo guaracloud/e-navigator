@@ -28,6 +28,13 @@ struct SourceCounters {
     diagnostic_matches: AtomicU64,
     diagnostic_filtered: AtomicU64,
     diagnostic_exhausted: AtomicU64,
+    optional_targets_discovered: AtomicU64,
+    optional_targets_ready: AtomicU64,
+    optional_targets_unsupported: AtomicU64,
+    optional_probe_attachments: AtomicU64,
+    optional_attachment_failures: AtomicU64,
+    optional_rescans: AtomicU64,
+    optional_capacity_rejections: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +49,13 @@ pub struct SourceTelemetrySnapshot {
     pub diagnostic_matches: u64,
     pub diagnostic_filtered: u64,
     pub diagnostic_exhausted: u64,
+    pub optional_targets_discovered: u64,
+    pub optional_targets_ready: u64,
+    pub optional_targets_unsupported: u64,
+    pub optional_probe_attachments: u64,
+    pub optional_attachment_failures: u64,
+    pub optional_rescans: u64,
+    pub optional_capacity_rejections: u64,
 }
 
 static SOURCE_COUNTERS: OnceLock<Mutex<BTreeMap<&'static str, Arc<SourceCounters>>>> =
@@ -127,6 +141,48 @@ impl SourceTelemetry {
         }
     }
 
+    pub(crate) fn record_optional_target_discovered(&self) {
+        self.counters
+            .optional_targets_discovered
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_optional_target_ready(&self) {
+        self.counters
+            .optional_targets_ready
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_optional_target_unsupported(&self) {
+        self.counters
+            .optional_targets_unsupported
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_optional_probe_attachments(&self, count: usize) {
+        self.counters
+            .optional_probe_attachments
+            .fetch_add(u64::try_from(count).unwrap_or(u64::MAX), Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_optional_attachment_failure(&self) {
+        self.counters
+            .optional_attachment_failures
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_optional_rescan(&self) {
+        self.counters
+            .optional_rescans
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_optional_capacity_rejections(&self, count: usize) {
+        self.counters
+            .optional_capacity_rejections
+            .fetch_add(u64::try_from(count).unwrap_or(u64::MAX), Ordering::Relaxed);
+    }
+
     pub(crate) fn maybe_log_summary(&self) {
         let elapsed_nanos = u64::try_from(self.started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
         if !self.try_claim_summary(elapsed_nanos) {
@@ -150,6 +206,13 @@ impl SourceTelemetry {
             diagnostic_matches = snapshot.diagnostic_matches,
             diagnostic_filtered = snapshot.diagnostic_filtered,
             diagnostic_exhausted = snapshot.diagnostic_exhausted,
+            optional_targets_discovered = snapshot.optional_targets_discovered,
+            optional_targets_ready = snapshot.optional_targets_ready,
+            optional_targets_unsupported = snapshot.optional_targets_unsupported,
+            optional_probe_attachments = snapshot.optional_probe_attachments,
+            optional_attachment_failures = snapshot.optional_attachment_failures,
+            optional_rescans = snapshot.optional_rescans,
+            optional_capacity_rejections = snapshot.optional_capacity_rejections,
             "source telemetry summary"
         );
     }
@@ -222,6 +285,19 @@ fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceT
         diagnostic_matches: counters.diagnostic_matches.load(Ordering::Relaxed),
         diagnostic_filtered: counters.diagnostic_filtered.load(Ordering::Relaxed),
         diagnostic_exhausted: counters.diagnostic_exhausted.load(Ordering::Relaxed),
+        optional_targets_discovered: counters.optional_targets_discovered.load(Ordering::Relaxed),
+        optional_targets_ready: counters.optional_targets_ready.load(Ordering::Relaxed),
+        optional_targets_unsupported: counters
+            .optional_targets_unsupported
+            .load(Ordering::Relaxed),
+        optional_probe_attachments: counters.optional_probe_attachments.load(Ordering::Relaxed),
+        optional_attachment_failures: counters
+            .optional_attachment_failures
+            .load(Ordering::Relaxed),
+        optional_rescans: counters.optional_rescans.load(Ordering::Relaxed),
+        optional_capacity_rejections: counters
+            .optional_capacity_rejections
+            .load(Ordering::Relaxed),
     }
 }
 
@@ -238,6 +314,13 @@ impl SourceTelemetrySnapshot {
             diagnostic_matches: 0,
             diagnostic_filtered: 0,
             diagnostic_exhausted: 0,
+            optional_targets_discovered: 0,
+            optional_targets_ready: 0,
+            optional_targets_unsupported: 0,
+            optional_probe_attachments: 0,
+            optional_attachment_failures: 0,
+            optional_rescans: 0,
+            optional_capacity_rejections: 0,
         }
     }
 
@@ -265,6 +348,27 @@ impl SourceTelemetrySnapshot {
             diagnostic_exhausted: self
                 .diagnostic_exhausted
                 .saturating_sub(previous.diagnostic_exhausted),
+            optional_targets_discovered: self
+                .optional_targets_discovered
+                .saturating_sub(previous.optional_targets_discovered),
+            optional_targets_ready: self
+                .optional_targets_ready
+                .saturating_sub(previous.optional_targets_ready),
+            optional_targets_unsupported: self
+                .optional_targets_unsupported
+                .saturating_sub(previous.optional_targets_unsupported),
+            optional_probe_attachments: self
+                .optional_probe_attachments
+                .saturating_sub(previous.optional_probe_attachments),
+            optional_attachment_failures: self
+                .optional_attachment_failures
+                .saturating_sub(previous.optional_attachment_failures),
+            optional_rescans: self
+                .optional_rescans
+                .saturating_sub(previous.optional_rescans),
+            optional_capacity_rejections: self
+                .optional_capacity_rejections
+                .saturating_sub(previous.optional_capacity_rejections),
         }
     }
 
@@ -277,6 +381,13 @@ impl SourceTelemetrySnapshot {
             && self.diagnostic_matches == 0
             && self.diagnostic_filtered == 0
             && self.diagnostic_exhausted == 0
+            && self.optional_targets_discovered == 0
+            && self.optional_targets_ready == 0
+            && self.optional_targets_unsupported == 0
+            && self.optional_probe_attachments == 0
+            && self.optional_attachment_failures == 0
+            && self.optional_rescans == 0
+            && self.optional_capacity_rejections == 0
     }
 }
 

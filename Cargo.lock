@@ -607,6 +607,7 @@ dependencies = [
  "e-navigator-protocol",
  "e-navigator-signals",
  "libc",
+ "object",
  "reqwest",
  "serde",
  "serde_json",
