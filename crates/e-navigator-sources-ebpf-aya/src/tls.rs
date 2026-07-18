@@ -272,6 +272,21 @@ mod platform {
         }
     }
 
+    fn monotonic_nanos() -> u64 {
+        let mut timestamp = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut timestamp) } != 0 {
+            // A failed clock read must not stall the merge queue forever.
+            return u64::MAX;
+        }
+        u64::try_from(timestamp.tv_sec)
+            .unwrap_or(0)
+            .saturating_mul(1_000_000_000)
+            .saturating_add(u64::try_from(timestamp.tv_nsec).unwrap_or(0))
+    }
+
     #[async_trait]
     impl Source<SignalEnvelope> for AyaTlsSource {
         fn metadata(&self) -> ModuleMetadata {
@@ -400,11 +415,13 @@ mod platform {
             )
             .map_err(module_error)?;
 
-            let (sample_tx, mut sample_rx) =
-                mpsc::channel::<InlineSample>(super::TLS_RAW_SAMPLE_CHANNEL_CAPACITY);
+            let (sample_tx, mut sample_rx) = mpsc::channel::<crate::protocol::ProtocolPerfMessage>(
+                super::TLS_RAW_SAMPLE_CHANNEL_CAPACITY,
+            );
 
             let cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
-            for cpu_id in cpus {
+            let reader_count = cpus.len();
+            for (reader_index, cpu_id) in cpus.into_iter().enumerate() {
                 let mut buffer = perf_array
                     .open(cpu_id, Some(super::TLS_PERF_BUFFER_PAGE_COUNT))
                     .map_err(module_error)?;
@@ -415,6 +432,7 @@ mod platform {
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     let mut closed = false;
                     while !reader_shutdown.is_stopped() {
+                        let poll_started_monotonic_nanos = monotonic_nanos();
                         buffer.for_each(|event| {
                             if closed {
                                 return;
@@ -425,7 +443,12 @@ mod platform {
                                         telemetry.record_lost_perf_events(1);
                                         return;
                                     };
-                                    if sample_tx.blocking_send(sample).is_err() {
+                                    if sample_tx
+                                        .blocking_send(
+                                            crate::protocol::ProtocolPerfMessage::Sample(sample),
+                                        )
+                                        .is_err()
+                                    {
                                         closed = true;
                                     }
                                 }
@@ -436,6 +459,15 @@ mod platform {
                             }
                         });
                         if closed {
+                            return;
+                        }
+                        if sample_tx
+                            .blocking_send(crate::protocol::ProtocolPerfMessage::Watermark {
+                                reader_index,
+                                timestamp_monotonic_nanos: poll_started_monotonic_nanos,
+                            })
+                            .is_err()
+                        {
                             return;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(
@@ -460,10 +492,14 @@ mod platform {
                     "source.aya_tls",
                 );
                 let mut signals = Vec::new();
+                let mut order = crate::protocol::ProtocolSampleOrder::new(
+                    reader_count,
+                    crate::protocol::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
+                );
 
-                while let Some(sample) = sample_rx.blocking_recv() {
+                let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
-                        return;
+                        return false;
                     }
                     signals.clear();
                     let result =
@@ -483,7 +519,7 @@ mod platform {
                             for signal in signals.drain(..) {
                                 if tx.blocking_send(signal).is_err() {
                                     decoder_telemetry.record_send_failure();
-                                    return;
+                                    return false;
                                 }
                                 decoder_telemetry.record_sent_signal();
                             }
@@ -493,6 +529,42 @@ mod platform {
                         }
                     }
                     decoder_telemetry.maybe_log_summary();
+                    true
+                };
+
+                while let Some(message) = sample_rx.blocking_recv() {
+                    let forced = match message {
+                        crate::protocol::ProtocolPerfMessage::Sample(sample) => {
+                            order.push_sample(sample)
+                        }
+                        crate::protocol::ProtocolPerfMessage::Watermark {
+                            reader_index,
+                            timestamp_monotonic_nanos,
+                        } => {
+                            order.update_watermark(reader_index, timestamp_monotonic_nanos);
+                            None
+                        }
+                    };
+                    if let Some(sample) = forced {
+                        warn!(
+                            max_pending_samples =
+                                crate::protocol::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
+                            "TLS perf reorder queue reached its bound; flushing oldest sample"
+                        );
+                        if !decode_sample(sample) {
+                            return;
+                        }
+                    }
+                    while let Some(sample) = order.pop_ready() {
+                        if !decode_sample(sample) {
+                            return;
+                        }
+                    }
+                }
+                while let Some(sample) = order.pop_oldest() {
+                    if !decode_sample(sample) {
+                        return;
+                    }
                 }
             }));
 
@@ -1113,7 +1185,46 @@ pub use platform::AyaTlsSource;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        perf_sample::InlineSample,
+        protocol::{
+            ProtocolSampleOrder, RAW_PROTOCOL_DATA_BYTES, RAW_PROTOCOL_ROLE_CLIENT,
+            RawProtocolDataEvent, protocol_sample_timestamp,
+        },
+    };
     use e_navigator_core::TlsSourceConfig;
+
+    fn tls_order_sample(timestamp_unix_nanos: u64) -> InlineSample {
+        let event = RawProtocolDataEvent {
+            pid: 1,
+            uid: 0,
+            cgroup_id: 1,
+            fd: 3,
+            direction: 2,
+            role: RAW_PROTOCOL_ROLE_CLIENT,
+            family: 2,
+            remote_port_be: 8443_u16.to_be(),
+            local_port_be: 0,
+            remote_addr_v4: 0,
+            local_addr_v4: 0,
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos,
+            payload_len: 0,
+            payload_total_len: 0,
+            payload_offset: 0,
+            payload_captured_len: 0,
+            command: [0; 16],
+            payload: [0; RAW_PROTOCOL_DATA_BYTES],
+        };
+        let bytes = unsafe {
+            core::slice::from_raw_parts(
+                (&event as *const RawProtocolDataEvent).cast::<u8>(),
+                core::mem::size_of::<RawProtocolDataEvent>(),
+            )
+        };
+        InlineSample::from_perf(bytes, &[]).expect("TLS protocol event fits inline")
+    }
 
     #[test]
     fn stream_capture_ports_includes_http1_and_dedupes() {
@@ -1148,6 +1259,27 @@ mod tests {
         // Cleartext defaults must not leak into the TLS-derived config.
         assert!(protocol.kafka_ports.is_empty());
         assert!(protocol.redis_ports.is_empty());
+    }
+
+    #[test]
+    fn tls_perf_watermarks_restore_cross_cpu_kernel_order() {
+        let mut order = ProtocolSampleOrder::new(2, 8);
+
+        assert!(order.push_sample(tls_order_sample(400)).is_none());
+        order.update_watermark(1, 500);
+        assert!(order.pop_ready().is_none());
+
+        assert!(order.push_sample(tls_order_sample(300)).is_none());
+        order.update_watermark(0, 500);
+        assert_eq!(
+            protocol_sample_timestamp(&order.pop_ready().expect("request sample")),
+            Some(300)
+        );
+        assert_eq!(
+            protocol_sample_timestamp(&order.pop_ready().expect("response sample")),
+            Some(400)
+        );
+        assert!(order.pop_ready().is_none());
     }
 
     #[test]
