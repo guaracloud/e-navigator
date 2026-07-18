@@ -9,14 +9,14 @@ use std::{
     collections::BTreeMap,
     sync::{
         Arc, Mutex as StdMutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
 use tokio::{
-    sync::{Mutex, mpsc},
+    sync::{Mutex, mpsc, oneshot},
     task::JoinHandle,
-    time::{Instant, sleep_until, timeout},
+    time::{Instant, MissedTickBehavior, sleep_until, timeout},
 };
 use tracing::warn;
 
@@ -76,6 +76,7 @@ pub struct OtlpHttpTelemetry {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MetricTimestampTelemetry {
     pub tracked_series: usize,
+    /// Intermediate same-millisecond points replaced by the latest cumulative value.
     pub same_millisecond_suppressed: u64,
     pub out_of_order_dropped: u64,
     pub series_evicted: u64,
@@ -84,18 +85,38 @@ pub struct MetricTimestampTelemetry {
 const MAX_METRIC_TIMESTAMP_SERIES: usize = 65_536;
 const METRIC_TIMESTAMP_STALE_NANOS: u64 = 10 * 60 * 1_000_000_000;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 struct MetricSeriesTimestamp {
-    receiver_timestamp_millis: u64,
+    last_exported_receiver_timestamp_millis: Option<u64>,
     last_seen_unix_nanos: u64,
+    pending: Option<PendingMetricRecord>,
+}
+
+#[derive(Debug)]
+struct PendingMetricRecord {
+    receiver_timestamp_millis: u64,
+    updated_at: Instant,
+    record: crate::OtelMetricRecord,
+}
+
+#[derive(Debug, Default)]
+struct MetricTimestampState {
+    series: StdMutex<BTreeMap<String, MetricSeriesTimestamp>>,
+    pending_series: AtomicUsize,
+    same_millisecond_suppressed: AtomicU64,
+    out_of_order_dropped: AtomicU64,
+    series_evicted: AtomicU64,
 }
 
 #[derive(Debug)]
 struct MetricTimestampGuard {
-    series: StdMutex<BTreeMap<String, MetricSeriesTimestamp>>,
-    same_millisecond_suppressed: AtomicU64,
-    out_of_order_dropped: AtomicU64,
-    series_evicted: AtomicU64,
+    state: Arc<MetricTimestampState>,
+    exporter: AsyncProtobufExporterHandle<crate::OtelMetricRecord>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+    shutdown_sender: StdMutex<Option<oneshot::Sender<()>>>,
+    accepting: AtomicBool,
+    max_pending_series: usize,
+    shutdown_timeout: Duration,
 }
 
 #[derive(Debug, Default)]
@@ -160,8 +181,15 @@ struct AsyncProtobufExporter<T> {
     sender: mpsc::Sender<ExportCommand<T>>,
     worker: Mutex<Option<JoinHandle<()>>>,
     telemetry: Arc<AtomicExportWorkerTelemetry>,
-    accepting: AtomicBool,
+    accepting: Arc<AtomicBool>,
     shutdown_timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+struct AsyncProtobufExporterHandle<T> {
+    sender: mpsc::Sender<ExportCommand<T>>,
+    telemetry: Arc<AtomicExportWorkerTelemetry>,
+    accepting: Arc<AtomicBool>,
 }
 
 impl OtlpHttpSink {
@@ -180,13 +208,6 @@ impl OtlpHttpSink {
                 invalid_trace_records: invalid_trace_records.clone(),
             }));
         }
-        let metric_timestamp_guard = if config.metrics_enabled {
-            let guard = Arc::new(MetricTimestampGuard::default());
-            telemetry_registry.register_source(guard.clone());
-            Some(guard)
-        } else {
-            None
-        };
         let metric_exporter = if config.metrics_enabled {
             Some(build_exporter(
                 exporter_config_for(&config, required_metrics_endpoint(&config)?),
@@ -196,6 +217,21 @@ impl OtlpHttpSink {
                 "metrics",
                 &telemetry_registry,
             )?)
+        } else {
+            None
+        };
+        let metric_timestamp_guard = if let Some(exporter) = &metric_exporter {
+            let guard = Arc::new(
+                MetricTimestampGuard::spawn(
+                    exporter.handle(),
+                    Duration::from_millis(config.flush_interval_millis),
+                    config.queue_capacity,
+                    Duration::from_millis(config.shutdown_timeout_millis),
+                )
+                .map_err(exporter_module_error)?,
+            );
+            telemetry_registry.register_source(guard.clone());
+            Some(guard)
         } else {
             None
         };
@@ -339,7 +375,7 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
             && let Some(exporter) = &self.metric_exporter
         {
             if let Some(guard) = &self.metric_timestamp_guard {
-                guard.enqueue(record, exporter)?;
+                guard.enqueue(record)?;
             } else {
                 exporter.enqueue(record);
             }
@@ -359,12 +395,16 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
     }
 
     async fn shutdown(&self) -> CoreResult<()> {
+        let metric_timestamps = match &self.metric_timestamp_guard {
+            Some(guard) => guard.shutdown().await,
+            None => Ok(()),
+        };
         let (metrics, traces, profiles) = tokio::join!(
             shutdown_exporter(self.metric_exporter.as_ref()),
             shutdown_exporter(self.trace_exporter.as_ref()),
             shutdown_exporter(self.profile_exporter.as_ref()),
         );
-        metrics.and(traces).and(profiles)
+        metric_timestamps.and(metrics).and(traces).and(profiles)
     }
 }
 
@@ -539,35 +579,20 @@ where
             sender,
             worker: Mutex::new(Some(worker)),
             telemetry,
-            accepting: AtomicBool::new(true),
+            accepting: Arc::new(AtomicBool::new(true)),
             shutdown_timeout: Duration::from_millis(config.shutdown_timeout_millis),
         })
     }
 
     fn enqueue(&self, record: T) -> bool {
-        if !self.accepting.load(Ordering::Acquire) {
-            self.telemetry
-                .dropped_worker_closed
-                .fetch_add(1, Ordering::Relaxed);
-            return false;
-        }
-        match self.sender.try_send(ExportCommand::Record(record)) {
-            Ok(()) => {
-                self.telemetry.enqueued.fetch_add(1, Ordering::Relaxed);
-                true
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                self.telemetry
-                    .dropped_queue_full
-                    .fetch_add(1, Ordering::Relaxed);
-                false
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                self.telemetry
-                    .dropped_worker_closed
-                    .fetch_add(1, Ordering::Relaxed);
-                false
-            }
+        self.handle().enqueue(record)
+    }
+
+    fn handle(&self) -> AsyncProtobufExporterHandle<T> {
+        AsyncProtobufExporterHandle {
+            sender: self.sender.clone(),
+            telemetry: self.telemetry.clone(),
+            accepting: self.accepting.clone(),
         }
     }
 
@@ -610,6 +635,56 @@ where
     }
 }
 
+impl<T> AsyncProtobufExporterHandle<T> {
+    fn enqueue(&self, record: T) -> bool {
+        if !self.accepting.load(Ordering::Acquire) {
+            self.telemetry
+                .dropped_worker_closed
+                .fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+        match self.sender.try_send(ExportCommand::Record(record)) {
+            Ok(()) => {
+                self.telemetry.enqueued.fetch_add(1, Ordering::Relaxed);
+                true
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.telemetry
+                    .dropped_queue_full
+                    .fetch_add(1, Ordering::Relaxed);
+                false
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.telemetry
+                    .dropped_worker_closed
+                    .fetch_add(1, Ordering::Relaxed);
+                false
+            }
+        }
+    }
+
+    async fn enqueue_wait(&self, record: T) -> bool {
+        if !self.accepting.load(Ordering::Acquire) {
+            self.telemetry
+                .dropped_worker_closed
+                .fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+        match self.sender.send(ExportCommand::Record(record)).await {
+            Ok(()) => {
+                self.telemetry.enqueued.fetch_add(1, Ordering::Relaxed);
+                true
+            }
+            Err(_) => {
+                self.telemetry
+                    .dropped_worker_closed
+                    .fetch_add(1, Ordering::Relaxed);
+                false
+            }
+        }
+    }
+}
+
 struct ExportWorkerTelemetrySource<T> {
     family: &'static str,
     sender: mpsc::WeakSender<ExportCommand<T>>,
@@ -620,82 +695,263 @@ struct InvalidTraceTelemetrySource {
     invalid_trace_records: Arc<AtomicU64>,
 }
 
-impl Default for MetricTimestampGuard {
-    fn default() -> Self {
-        Self {
-            series: StdMutex::new(BTreeMap::new()),
-            same_millisecond_suppressed: AtomicU64::new(0),
-            out_of_order_dropped: AtomicU64::new(0),
-            series_evicted: AtomicU64::new(0),
-        }
-    }
-}
-
 impl MetricTimestampGuard {
-    fn enqueue(
-        &self,
-        record: crate::OtelMetricRecord,
-        exporter: &AsyncProtobufExporter<crate::OtelMetricRecord>,
-    ) -> CoreResult<()> {
+    fn spawn(
+        exporter: AsyncProtobufExporterHandle<crate::OtelMetricRecord>,
+        coalesce_delay: Duration,
+        max_pending_series: usize,
+        shutdown_timeout: Duration,
+    ) -> Result<Self, String> {
+        let runtime = tokio::runtime::Handle::try_current()
+            .map_err(|_| "metric timestamp coalescing requires a Tokio runtime".to_string())?;
+        let state = Arc::new(MetricTimestampState::default());
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+        let worker = runtime.spawn(run_metric_timestamp_coalescer(
+            state.clone(),
+            exporter.clone(),
+            coalesce_delay,
+            shutdown_receiver,
+        ));
+        Ok(Self {
+            state,
+            exporter,
+            worker: Mutex::new(Some(worker)),
+            shutdown_sender: StdMutex::new(Some(shutdown_sender)),
+            accepting: AtomicBool::new(true),
+            max_pending_series,
+            shutdown_timeout,
+        })
+    }
+
+    fn enqueue(&self, record: crate::OtelMetricRecord) -> CoreResult<()> {
+        if !self.accepting.load(Ordering::Acquire) {
+            self.exporter
+                .telemetry
+                .dropped_worker_closed
+                .fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
         let key =
             metric_series_key(&record).map_err(|err| exporter_module_error(err.to_string()))?;
         let observed_unix_nanos = record.window.end_unix_nanos;
         let receiver_timestamp_millis = observed_unix_nanos / 1_000_000;
+        let now = Instant::now();
         let mut series = self
+            .state
             .series
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let expired = series.len();
         series.retain(|_, state| {
-            observed_unix_nanos.saturating_sub(state.last_seen_unix_nanos)
-                <= METRIC_TIMESTAMP_STALE_NANOS
+            state.pending.is_some()
+                || observed_unix_nanos.saturating_sub(state.last_seen_unix_nanos)
+                    <= METRIC_TIMESTAMP_STALE_NANOS
         });
         let expired = expired.saturating_sub(series.len());
         if expired > 0 {
-            self.series_evicted
+            self.state
+                .series_evicted
                 .fetch_add(expired as u64, Ordering::Relaxed);
         }
 
-        if let Some(previous) = series.get(&key) {
-            if receiver_timestamp_millis < previous.receiver_timestamp_millis {
-                self.out_of_order_dropped.fetch_add(1, Ordering::Relaxed);
-                return Ok(());
-            }
-            if receiver_timestamp_millis == previous.receiver_timestamp_millis {
-                self.same_millisecond_suppressed
-                    .fetch_add(1, Ordering::Relaxed);
-                return Ok(());
-            }
-        } else if series.len() >= MAX_METRIC_TIMESTAMP_SERIES
+        if !series.contains_key(&key)
+            && series.len() >= MAX_METRIC_TIMESTAMP_SERIES
             && let Some(oldest_key) = series
                 .iter()
                 .min_by_key(|(_, state)| state.last_seen_unix_nanos)
                 .map(|(key, _)| key.clone())
         {
-            series.remove(&oldest_key);
-            self.series_evicted.fetch_add(1, Ordering::Relaxed);
+            if let Some(mut evicted) = series.remove(&oldest_key)
+                && let Some(pending) = evicted.pending.take()
+            {
+                self.state.pending_series.fetch_sub(1, Ordering::Relaxed);
+                self.exporter.enqueue(pending.record);
+            }
+            self.state.series_evicted.fetch_add(1, Ordering::Relaxed);
         }
 
-        if exporter.enqueue(record) {
-            series.insert(
-                key,
-                MetricSeriesTimestamp {
-                    receiver_timestamp_millis,
-                    last_seen_unix_nanos: observed_unix_nanos,
-                },
-            );
+        let needs_pending_slot = series.get(&key).is_none_or(|state| state.pending.is_none());
+        if needs_pending_slot
+            && self.state.pending_series.load(Ordering::Relaxed) >= self.max_pending_series
+            && let Some(oldest_pending_key) = series
+                .iter()
+                .filter(|(_, state)| state.pending.is_some())
+                .min_by_key(|(_, state)| state.last_seen_unix_nanos)
+                .map(|(key, _)| key.clone())
+            && let Some(pending) = series
+                .get_mut(&oldest_pending_key)
+                .and_then(|state| state.pending.take())
+        {
+            self.state.pending_series.fetch_sub(1, Ordering::Relaxed);
+            self.exporter.enqueue(pending.record);
+        }
+
+        let state = series.entry(key).or_insert_with(|| MetricSeriesTimestamp {
+            last_exported_receiver_timestamp_millis: None,
+            last_seen_unix_nanos: observed_unix_nanos,
+            pending: None,
+        });
+        state.last_seen_unix_nanos = state.last_seen_unix_nanos.max(observed_unix_nanos);
+
+        if let Some(last_exported) = state.last_exported_receiver_timestamp_millis {
+            if receiver_timestamp_millis < last_exported {
+                self.state
+                    .out_of_order_dropped
+                    .fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
+            if receiver_timestamp_millis == last_exported {
+                self.state
+                    .same_millisecond_suppressed
+                    .fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
+        }
+
+        if let Some(pending) = state.pending.as_mut() {
+            if receiver_timestamp_millis < pending.receiver_timestamp_millis {
+                self.state
+                    .out_of_order_dropped
+                    .fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
+            if receiver_timestamp_millis == pending.receiver_timestamp_millis {
+                pending.record = record;
+                pending.updated_at = now;
+                self.state
+                    .same_millisecond_suppressed
+                    .fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
+
+            let previous = state.pending.take().expect("pending metric exists");
+            if self.exporter.enqueue(previous.record) {
+                state.last_exported_receiver_timestamp_millis =
+                    Some(previous.receiver_timestamp_millis);
+            }
+        }
+
+        state.pending = Some(PendingMetricRecord {
+            receiver_timestamp_millis,
+            updated_at: now,
+            record,
+        });
+        if needs_pending_slot {
+            self.state.pending_series.fetch_add(1, Ordering::Relaxed);
         }
         Ok(())
     }
 
+    async fn shutdown(&self) -> CoreResult<()> {
+        if !self.accepting.swap(false, Ordering::AcqRel) {
+            return Ok(());
+        }
+        if let Some(sender) = self
+            .shutdown_sender
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+        {
+            let _ = sender.send(());
+        }
+
+        let Some(mut worker) = self.worker.lock().await.take() else {
+            return Ok(());
+        };
+        match timeout(self.shutdown_timeout, &mut worker).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => Err(exporter_module_error(format!(
+                "metric timestamp coalescer join failed: {err}"
+            ))),
+            Err(_) => {
+                worker.abort();
+                Err(exporter_module_error(
+                    "timed out draining metric timestamp coalescer",
+                ))
+            }
+        }
+    }
+
     fn telemetry(&self) -> MetricTimestampTelemetry {
         MetricTimestampTelemetry {
-            tracked_series: self.series.lock().map_or(0, |series| series.len()),
-            same_millisecond_suppressed: self.same_millisecond_suppressed.load(Ordering::Relaxed),
-            out_of_order_dropped: self.out_of_order_dropped.load(Ordering::Relaxed),
-            series_evicted: self.series_evicted.load(Ordering::Relaxed),
+            tracked_series: self.state.series.lock().map_or(0, |series| series.len()),
+            same_millisecond_suppressed: self
+                .state
+                .same_millisecond_suppressed
+                .load(Ordering::Relaxed),
+            out_of_order_dropped: self.state.out_of_order_dropped.load(Ordering::Relaxed),
+            series_evicted: self.state.series_evicted.load(Ordering::Relaxed),
         }
+    }
+}
+
+async fn run_metric_timestamp_coalescer(
+    state: Arc<MetricTimestampState>,
+    exporter: AsyncProtobufExporterHandle<crate::OtelMetricRecord>,
+    coalesce_delay: Duration,
+    mut shutdown: oneshot::Receiver<()>,
+) {
+    let mut interval = tokio::time::interval(coalesce_delay);
+    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    interval.tick().await;
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                flush_ready_metric_records(&state, &exporter, coalesce_delay);
+            }
+            _ = &mut shutdown => {
+                flush_all_metric_records(&state, &exporter).await;
+                return;
+            }
+        }
+    }
+}
+
+fn flush_ready_metric_records(
+    state: &MetricTimestampState,
+    exporter: &AsyncProtobufExporterHandle<crate::OtelMetricRecord>,
+    coalesce_delay: Duration,
+) {
+    let now = Instant::now();
+    let mut series = state
+        .series
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for series_state in series.values_mut() {
+        let ready = series_state
+            .pending
+            .as_ref()
+            .is_some_and(|pending| now.duration_since(pending.updated_at) >= coalesce_delay);
+        if !ready {
+            continue;
+        }
+        let pending = series_state.pending.take().expect("pending metric exists");
+        state.pending_series.fetch_sub(1, Ordering::Relaxed);
+        if exporter.enqueue(pending.record) {
+            series_state.last_exported_receiver_timestamp_millis =
+                Some(pending.receiver_timestamp_millis);
+        }
+    }
+}
+
+async fn flush_all_metric_records(
+    state: &MetricTimestampState,
+    exporter: &AsyncProtobufExporterHandle<crate::OtelMetricRecord>,
+) {
+    let pending = {
+        let mut series = state
+            .series
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        series
+            .values_mut()
+            .filter_map(|state| state.pending.take().map(|pending| pending.record))
+            .collect::<Vec<_>>()
+    };
+    state.pending_series.store(0, Ordering::Relaxed);
+    for record in pending {
+        exporter.enqueue_wait(record).await;
     }
 }
 
@@ -713,7 +969,15 @@ impl NativeTelemetrySource for MetricTimestampGuard {
                 telemetry.tracked_series as u64,
             ),
             metric(
+                "e_navigator_export_metric_timestamp_pending_series",
+                self.state.pending_series.load(Ordering::Relaxed) as u64,
+            ),
+            metric(
                 "e_navigator_export_metric_same_millisecond_suppressed_total",
+                telemetry.same_millisecond_suppressed,
+            ),
+            metric(
+                "e_navigator_export_metric_same_millisecond_coalesced_total",
                 telemetry.same_millisecond_suppressed,
             ),
             metric(
@@ -1557,7 +1821,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn otlp_http_sink_suppresses_cross_batch_receiver_timestamp_collisions() {
+    async fn otlp_http_sink_coalesces_cross_batch_receiver_timestamp_collisions() {
         const BASE: u64 = 1_784_321_612_093_000_000;
         let collector = FakeCollector::spawn(vec![200, 200]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
@@ -1576,22 +1840,20 @@ mod tests {
 
         sink.write(&network_metric_at(333, BASE))
             .await
-            .expect("first cumulative point enqueues");
-        let first = collector.next_request().await;
-        assert_eq!(metric_point(&first), (333, BASE));
-
+            .expect("first cumulative point is pending");
         sink.write(&network_metric_at(557, BASE + 500_000))
             .await
-            .expect("same-millisecond point is intentionally suppressed");
+            .expect("same-millisecond point replaces the pending value");
         sink.write(&network_metric_at(100, BASE - 1_000_000))
             .await
             .expect("out-of-order point is intentionally dropped");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        assert!(collector.try_next_request().is_none());
-
         sink.write(&network_metric_at(558, BASE + 1_000_000))
             .await
-            .expect("next receiver timestamp enqueues");
+            .expect("next receiver timestamp flushes the coalesced point");
+        Sink::shutdown(&sink).await.expect("worker drains");
+
+        let first = collector.next_request().await;
+        assert_eq!(metric_point(&first), (557, BASE + 500_000));
         let next = collector.next_request().await;
         assert_eq!(metric_point(&next), (558, BASE + 1_000_000));
 
@@ -1602,7 +1864,75 @@ mod tests {
         assert_eq!(telemetry.same_millisecond_suppressed, 1);
         assert_eq!(telemetry.out_of_order_dropped, 1);
         assert_eq!(telemetry.tracked_series, 1);
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_flushes_latest_same_millisecond_point_after_idle_window() {
+        const BASE: u64 = 1_784_321_612_093_000_000;
+        let collector = FakeCollector::spawn(vec![200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 8,
+            flush_interval_millis: 10,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_metric_at(333, BASE))
+            .await
+            .expect("first cumulative point is pending");
+        sink.write(&network_metric_at(557, BASE + 500_000))
+            .await
+            .expect("same-millisecond point replaces the pending value");
+
+        let request = collector.next_request().await;
+        assert_eq!(metric_point(&request), (557, BASE + 500_000));
+        assert!(collector.try_next_request().is_none());
         Sink::shutdown(&sink).await.expect("worker drains");
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_bounds_pending_metric_series_by_queue_capacity() {
+        let collector = FakeCollector::spawn(vec![200, 200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 1,
+            flush_interval_millis: 60_000,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_metric_named("network.first", 1, 200))
+            .await
+            .expect("first series is pending");
+        sink.write(&network_metric_named("network.second", 1, 200))
+            .await
+            .expect("second series rotates the bounded pending slot");
+
+        let guard = sink
+            .metric_timestamp_guard
+            .as_ref()
+            .expect("metric timestamp guard");
+        assert_eq!(guard.state.pending_series.load(Ordering::Relaxed), 1);
+        assert_eq!(guard.telemetry().tracked_series, 2);
+
+        Sink::shutdown(&sink).await.expect("worker drains");
+        assert!(collector.next_request().await.contains("network.first"));
+        assert!(collector.next_request().await.contains("network.second"));
     }
 
     #[tokio::test]
@@ -1644,21 +1974,16 @@ mod tests {
         );
         assert_eq!(telemetry.out_of_order_dropped, 0);
 
-        let mut previous_timestamp = None;
-        let mut previous_value = None;
-        for _ in 0..MILLISECONDS {
+        Sink::shutdown(&sink).await.expect("worker drains");
+        for millisecond in 0..MILLISECONDS {
             let request = collector.next_request().await;
             let (value, timestamp) = metric_point(&request);
-            if let Some(previous) = previous_timestamp {
-                assert!(timestamp > previous, "receiver timestamps must be unique");
-            }
-            if let Some(previous) = previous_value {
-                assert!(value > previous, "cumulative values must remain monotonic");
-            }
-            previous_timestamp = Some(timestamp);
-            previous_value = Some(value);
+            assert_eq!(value, (millisecond + 1) * POINTS_PER_MILLISECOND);
+            assert_eq!(
+                timestamp,
+                BASE + millisecond * 1_000_000 + (POINTS_PER_MILLISECOND - 1) * 10_000
+            );
         }
-        Sink::shutdown(&sink).await.expect("worker drains");
     }
 
     #[tokio::test]
@@ -1847,7 +2172,7 @@ mod tests {
 
         sink.write(&network_metric()).await.expect("first enqueue");
         let _ = collector.next_request().await;
-        for index in 0..3 {
+        for index in 0..4 {
             sink.write(&network_metric_at(index + 2, (index + 1) * 1_000_000))
                 .await
                 .expect("bounded enqueue");
@@ -1874,6 +2199,7 @@ mod tests {
             profiles_enabled: false,
             batch_size: 1,
             queue_capacity: 2,
+            flush_interval_millis: 20,
             timeout_millis: 1_000,
             max_retries: 0,
             circuit_breaker_failure_threshold: 1,
@@ -2744,11 +3070,15 @@ mod tests {
     }
 
     fn network_metric_at(value: u64, end_unix_nanos: u64) -> SignalEnvelope {
+        network_metric_named("network.connection.open.count", value, end_unix_nanos)
+    }
+
+    fn network_metric_named(metric_name: &str, value: u64, end_unix_nanos: u64) -> SignalEnvelope {
         SignalEnvelope::network_counter_metric(
             "generator.network_metrics",
             Some("node-a".to_string()),
             NetworkCounterMetric {
-                metric_name: "network.connection.open.count".to_string(),
+                metric_name: metric_name.to_string(),
                 unit: "{connection}".to_string(),
                 value,
                 window: MetricAggregationWindow {
