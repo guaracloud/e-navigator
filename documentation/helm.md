@@ -398,7 +398,11 @@ Alert on any increase in `e_navigator_ebpf_source_send_failures_total` or
 `e_navigator_ebpf_source_lost_perf_events_total`, and investigate sustained
 growth in `e_navigator_ebpf_source_invalid_samples_total`. These counters are
 cumulative; the periodic structured log retains delta semantics. Initialization
-does not prove that every optional target attached. Use the bounded
+does not prove that every optional target attached. The cumulative
+`e_navigator_ebpf_source_filtered_samples_total` records well-formed samples
+that userspace intentionally rejects after resolving capture scope, such as an
+accepted server socket whose recovered port has no configured protocol parser;
+it is separate from corrupt or undecodable input. Use the bounded
 `e_navigator_ebpf_source_optional_targets_discovered_total`,
 `e_navigator_ebpf_source_optional_targets_ready_total`,
 `e_navigator_ebpf_source_optional_targets_unsupported_total`,

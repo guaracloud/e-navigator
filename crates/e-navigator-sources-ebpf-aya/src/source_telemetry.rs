@@ -21,6 +21,7 @@ pub(crate) struct SourceTelemetry {
 struct SourceCounters {
     initialized: AtomicU64,
     decoded_samples: AtomicU64,
+    filtered_samples: AtomicU64,
     invalid_samples: AtomicU64,
     sent_signals: AtomicU64,
     send_failures: AtomicU64,
@@ -42,6 +43,7 @@ pub struct SourceTelemetrySnapshot {
     pub source: &'static str,
     pub initialized: bool,
     pub decoded_samples: u64,
+    pub filtered_samples: u64,
     pub invalid_samples: u64,
     pub sent_signals: u64,
     pub send_failures: u64,
@@ -96,6 +98,12 @@ impl SourceTelemetry {
     pub(crate) fn record_decoded_sample(&self) {
         self.counters
             .decoded_samples
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_filtered_sample(&self) {
+        self.counters
+            .filtered_samples
             .fetch_add(1, Ordering::Relaxed);
     }
 
@@ -199,6 +207,7 @@ impl SourceTelemetry {
             source = self.source,
             initialized = snapshot.initialized,
             decoded_samples = snapshot.decoded_samples,
+            filtered_samples = snapshot.filtered_samples,
             invalid_samples = snapshot.invalid_samples,
             sent_signals = snapshot.sent_signals,
             send_failures = snapshot.send_failures,
@@ -278,6 +287,7 @@ fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceT
         source,
         initialized: counters.initialized.load(Ordering::Relaxed) != 0,
         decoded_samples: counters.decoded_samples.load(Ordering::Relaxed),
+        filtered_samples: counters.filtered_samples.load(Ordering::Relaxed),
         invalid_samples: counters.invalid_samples.load(Ordering::Relaxed),
         sent_signals: counters.sent_signals.load(Ordering::Relaxed),
         send_failures: counters.send_failures.load(Ordering::Relaxed),
@@ -307,6 +317,7 @@ impl SourceTelemetrySnapshot {
             source,
             initialized: false,
             decoded_samples: 0,
+            filtered_samples: 0,
             invalid_samples: 0,
             sent_signals: 0,
             send_failures: 0,
@@ -331,6 +342,9 @@ impl SourceTelemetrySnapshot {
             decoded_samples: self
                 .decoded_samples
                 .saturating_sub(previous.decoded_samples),
+            filtered_samples: self
+                .filtered_samples
+                .saturating_sub(previous.filtered_samples),
             invalid_samples: self
                 .invalid_samples
                 .saturating_sub(previous.invalid_samples),
@@ -374,6 +388,7 @@ impl SourceTelemetrySnapshot {
 
     fn is_empty(&self) -> bool {
         self.decoded_samples == 0
+            && self.filtered_samples == 0
             && self.invalid_samples == 0
             && self.sent_signals == 0
             && self.send_failures == 0
@@ -427,6 +442,7 @@ mod tests {
 
         telemetry.mark_initialized();
         telemetry.record_decoded_sample();
+        telemetry.record_filtered_sample();
         telemetry.record_invalid_sample();
         telemetry.record_sent_signal();
         telemetry.record_send_failure();
@@ -439,6 +455,7 @@ mod tests {
         let snapshot = telemetry.snapshot_for_test();
         assert!(snapshot.initialized);
         assert_eq!(snapshot.decoded_samples, 1);
+        assert_eq!(snapshot.filtered_samples, 1);
         assert_eq!(snapshot.invalid_samples, 1);
         assert_eq!(snapshot.sent_signals, 1);
         assert_eq!(snapshot.send_failures, 1);
@@ -449,6 +466,7 @@ mod tests {
 
         let first_delta = telemetry.take_summary_delta();
         assert_eq!(first_delta.decoded_samples, 1);
+        assert_eq!(first_delta.filtered_samples, 1);
         assert_eq!(first_delta.lost_perf_events, 3);
         let empty_delta = telemetry.take_summary_delta();
         assert_eq!(empty_delta.decoded_samples, 0);
@@ -456,6 +474,7 @@ mod tests {
 
         let cumulative = telemetry.snapshot_for_test();
         assert_eq!(cumulative.decoded_samples, 1);
+        assert_eq!(cumulative.filtered_samples, 1);
         assert_eq!(cumulative.lost_perf_events, 3);
         let registered = source_telemetry_snapshots()
             .into_iter()
