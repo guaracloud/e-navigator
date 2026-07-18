@@ -3623,6 +3623,7 @@ fn read_protocol_iovec(iov: *const u8, slot: u32) -> Result<(*const u8, u64), i6
     Ok((buffer, len))
 }
 
+#[inline(always)]
 fn try_tracepoint_protocol_iovec_read_enter(
     ctx: &TracePointContext,
     recvmsg: bool,
@@ -3661,6 +3662,7 @@ fn try_tracepoint_protocol_iovec_read_enter(
     Ok(0)
 }
 
+#[inline(always)]
 fn try_tracepoint_protocol_iovec_read_exit(ctx: &TracePointContext) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let pending = match unsafe { PENDING_PROTOCOL_IOVEC_READS.get(&pid_tgid) } {
