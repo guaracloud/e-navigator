@@ -2122,6 +2122,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn otlp_http_sink_accounts_timed_out_batch_after_bounded_retries() {
+        let collector =
+            FakeCollector::spawn_with_delay(vec![200, 200], Duration::from_millis(100)).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 10,
+            max_retries: 1,
+            retry_initial_backoff_millis: 1,
+            retry_max_backoff_millis: 1,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_metric())
+            .await
+            .expect("metric enqueues");
+        let _ = collector.next_request().await;
+        let _ = collector.next_request().await;
+        timeout(Duration::from_secs(1), async {
+            while sink
+                .telemetry()
+                .metrics
+                .expect("metrics worker")
+                .failed_batches
+                == 0
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed-out batch is accounted");
+
+        let telemetry = sink.telemetry().metrics.expect("metrics worker");
+        assert_eq!(telemetry.request_attempts, 2);
+        assert_eq!(telemetry.retry_attempts, 1);
+        assert_eq!(telemetry.failed_batches, 1);
+        assert_eq!(telemetry.dropped_export_failure, 1);
+        Sink::shutdown(&sink).await.expect("worker drains");
+    }
+
+    #[tokio::test]
     async fn otlp_http_sink_flushes_partial_batch_on_interval() {
         let collector = FakeCollector::spawn(vec![200]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
@@ -2248,6 +2295,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn otlp_http_sink_recovers_after_circuit_cooldown() {
+        let collector = FakeCollector::spawn(vec![500, 200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            flush_interval_millis: 5,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            circuit_breaker_failure_threshold: 1,
+            circuit_breaker_cooldown_millis: 20,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_metric()).await.expect("first enqueue");
+        let _ = collector.next_request().await;
+        timeout(Duration::from_secs(1), async {
+            while sink
+                .telemetry()
+                .metrics
+                .expect("metrics worker")
+                .circuit_opened
+                == 0
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("circuit opens");
+
+        sink.write(&network_metric_at(2, 1_000_000))
+            .await
+            .expect("open-circuit write is accounted");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        sink.write(&network_metric_at(3, 2_000_000))
+            .await
+            .expect("post-cooldown write enqueues");
+        let _ = collector.next_request().await;
+        timeout(Duration::from_secs(1), async {
+            while sink.telemetry().metrics.expect("metrics worker").exported == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("worker recovers after cooldown");
+
+        let telemetry = sink.telemetry().metrics.expect("metrics worker");
+        assert_eq!(telemetry.circuit_opened, 1);
+        assert_eq!(telemetry.dropped_circuit_open, 1);
+        assert_eq!(telemetry.failed_batches, 1);
+        assert_eq!(telemetry.exported, 1);
+        Sink::shutdown(&sink).await.expect("worker drains");
+    }
+
+    #[tokio::test]
     async fn otlp_http_sink_shutdown_drains_partial_batch() {
         let collector = FakeCollector::spawn(vec![200]).await;
         let sink = OtlpHttpSink::new(OtlpHttpConfig {
@@ -2279,6 +2386,96 @@ mod tests {
             sink.telemetry().metrics.expect("metrics worker").exported,
             1
         );
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_accounts_writes_after_worker_shutdown() {
+        let collector = FakeCollector::spawn(vec![]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: collector.url_with_path("/v1/metrics"),
+            metrics_enabled: true,
+            traces_enabled: false,
+            profiles_enabled: false,
+            batch_size: 1,
+            queue_capacity: 2,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        Sink::shutdown(&sink).await.expect("worker shuts down");
+        sink.write(&network_metric())
+            .await
+            .expect("closed-worker write is accounted without blocking");
+
+        let telemetry = sink.telemetry().metrics.expect("metrics worker");
+        assert_eq!(telemetry.enqueued, 0);
+        assert_eq!(telemetry.dropped_worker_closed, 1);
+        assert_eq!(telemetry.queue_depth, 0);
+    }
+
+    #[tokio::test]
+    async fn otlp_http_sink_isolates_profile_outage_from_metrics_and_traces() {
+        let metrics = FakeCollector::spawn(vec![200]).await;
+        let traces = FakeCollector::spawn(vec![200]).await;
+        let profiles = FakeCollector::spawn(vec![503]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            metrics_endpoint: metrics.url_with_path("/v1/metrics"),
+            traces_endpoint: traces.url_with_path("/v1/traces"),
+            profiles_endpoint: profiles.url_with_path("/v1/profiles"),
+            metrics_enabled: true,
+            traces_enabled: true,
+            profiles_enabled: true,
+            batch_size: 1,
+            queue_capacity: 4,
+            timeout_millis: 1_000,
+            max_retries: 0,
+            circuit_breaker_failure_threshold: 1,
+            ..OtlpHttpConfig::default()
+        })
+        .expect("sink builds");
+
+        sink.write(&network_metric())
+            .await
+            .expect("metric enqueues");
+        sink.write(&request_span()).await.expect("trace enqueues");
+        sink.write(&profile_sample())
+            .await
+            .expect("profile enqueues");
+        let _ = metrics.next_request().await;
+        let _ = traces.next_request().await;
+        let _ = profiles.next_request().await;
+        timeout(Duration::from_secs(1), async {
+            loop {
+                let telemetry = sink.telemetry();
+                let metric_exported = telemetry.metrics.expect("metrics worker").exported;
+                let trace_exported = telemetry.traces.expect("traces worker").exported;
+                let profile_failed = telemetry.profiles.expect("profiles worker").failed_batches;
+                if metric_exported == 1 && trace_exported == 1 && profile_failed == 1 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("signal-family outcomes settle independently");
+
+        let telemetry = sink.telemetry();
+        let metrics = telemetry.metrics.expect("metrics worker");
+        let traces = telemetry.traces.expect("traces worker");
+        let profiles = telemetry.profiles.expect("profiles worker");
+        assert_eq!(metrics.exported, 1);
+        assert_eq!(metrics.failed_batches, 0);
+        assert_eq!(traces.exported, 1);
+        assert_eq!(traces.failed_batches, 0);
+        assert_eq!(profiles.exported, 0);
+        assert_eq!(profiles.failed_batches, 1);
+        assert_eq!(profiles.dropped_export_failure, 1);
+        assert_eq!(profiles.circuit_opened, 1);
+        Sink::shutdown(&sink).await.expect("workers drain");
     }
 
     #[tokio::test]
