@@ -56,6 +56,7 @@ const CONNECTION_ROLE_SERVER: u32 = 1;
 const PROTOCOL_DATA_BYTES: usize = 256;
 const PROTOCOL_IOVEC_DATA_MAX: u32 = (PROTOCOL_DATA_BYTES - 1) as u32;
 const PROTOCOL_MAX_IOVECS: u32 = 40;
+const PROTOCOL_IOVEC_CHUNK: u32 = 8;
 const PROTOCOL_DIAG_WRITE_ENTER: u32 = 0;
 const PROTOCOL_DIAG_READ_ENTER: u32 = 1;
 const PROTOCOL_DIAG_READ_EXIT: u32 = 2;
@@ -385,6 +386,11 @@ pub struct PendingProtocolRead {
 pub struct ProtocolIovecState {
     pub iov_ptr: u64,
     pub iov_len: u64,
+    pub total_len: u64,
+    pub capture_limit: u32,
+    pub captured_total: u32,
+    pub slot: u32,
+    pub capture_contiguous: u32,
 }
 
 /// Keys the userspace TLS object pointer (`SSL*` or GnuTLS session) to the
@@ -562,11 +568,10 @@ static PROTOCOL_DATA_EVENT_SCRATCH: PerCpuArray<RawProtocolDataEvent> =
 #[map]
 static PROTOCOL_IOVEC_STATE: PerCpuArray<ProtocolIovecState> = PerCpuArray::with_max_entries(1, 0);
 
-/// Tail-call target at index 0 emits the iovec segments after the entry
-/// program has established their stable total. Keeping the two bounded
-/// passes in separate programs avoids a verifier state cross-product.
+/// Tail-call target 0 computes stable totals in verifier-small chunks;
+/// target 1 emits the captured segments.
 #[map]
-static PROTOCOL_IOVEC_PROGS: ProgramArray = ProgramArray::with_max_entries(1, 0);
+static PROTOCOL_IOVEC_PROGS: ProgramArray = ProgramArray::with_max_entries(2, 0);
 
 #[map]
 static PROTOCOL_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
@@ -1006,6 +1011,14 @@ pub fn tracepoint_protocol_sendmsg_enter(ctx: TracePointContext) -> u32 {
 #[tracepoint]
 pub fn tracepoint_protocol_iovec_emit(ctx: TracePointContext) -> u32 {
     match try_tracepoint_protocol_iovec_emit(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_protocol_iovec_compute(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_protocol_iovec_compute(&ctx) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
@@ -3386,23 +3399,36 @@ fn emit_protocol_iovec_event(
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
 
-    // First establish one stable total for every segment emitted by the
-    // second pass. Real HTTP/2 stacks can split a single header block across
-    // dozens of small iovecs. Vectors beyond the hard bound retain an
-    // explicit uncaptured tail rather than being spliced as contiguous data.
-    let capture_limit = protocol_capture_limit();
-    let mut total_len = 0_u64;
-    let mut captured_total = 0_u32;
-    let mut capture_contiguous = true;
-    let mut slot = 0_u32;
-    while slot < PROTOCOL_MAX_IOVECS {
-        if u64::from(slot) >= iov_len {
+    let state_ptr = PROTOCOL_IOVEC_STATE.get_ptr_mut(0).ok_or(1_i64)?;
+    let state = unsafe { &mut *state_ptr };
+    state.iov_ptr = iov as u64;
+    state.iov_len = iov_len;
+    state.total_len = 0;
+    state.capture_limit = protocol_capture_limit();
+    state.captured_total = 0;
+    state.slot = 0;
+    state.capture_contiguous = 1;
+    unsafe {
+        PROTOCOL_IOVEC_PROGS.tail_call(ctx, 0);
+    }
+    record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
+    Ok(0)
+}
+
+#[inline(always)]
+fn try_tracepoint_protocol_iovec_compute(ctx: &TracePointContext) -> Result<u32, i64> {
+    let state_ptr = PROTOCOL_IOVEC_STATE.get_ptr_mut(0).ok_or(1_i64)?;
+    let state = unsafe { &mut *state_ptr };
+    let iov = state.iov_ptr as *const u8;
+    let mut processed = 0_u32;
+    while processed < PROTOCOL_IOVEC_CHUNK {
+        if state.slot >= PROTOCOL_MAX_IOVECS || u64::from(state.slot) >= state.iov_len {
             break;
         }
-        let slot_len = read_protocol_iovec_len(iov, slot)?;
-        total_len = total_len.saturating_add(slot_len);
-        if capture_contiguous {
-            let remaining = capture_limit.saturating_sub(captured_total);
+        let slot_len = read_protocol_iovec_len(iov, state.slot)?;
+        state.total_len = state.total_len.saturating_add(slot_len);
+        if state.capture_contiguous != 0 {
+            let remaining = state.capture_limit.saturating_sub(state.captured_total);
             let bounded = if slot_len > u64::from(remaining) {
                 remaining
             } else {
@@ -3413,31 +3439,36 @@ fn emit_protocol_iovec_event(
             } else {
                 bounded
             };
-            captured_total = captured_total.saturating_add(captured);
-            capture_contiguous = u64::from(captured) == slot_len;
+            state.captured_total = state.captured_total.saturating_add(captured);
+            state.capture_contiguous = u32::from(u64::from(captured) == slot_len);
         }
-        slot += 1;
+        state.slot = state.slot.saturating_add(1);
+        processed += 1;
     }
-    if iov_len > u64::from(PROTOCOL_MAX_IOVECS) {
-        total_len = u32::MAX as u64;
-    }
-    event.payload_total_len = if total_len > u32::MAX as u64 {
-        u32::MAX
-    } else {
-        total_len as u32
-    };
-    event.payload_captured_len = captured_total;
-    if captured_total == 0 {
+
+    if state.slot < PROTOCOL_MAX_IOVECS && u64::from(state.slot) < state.iov_len {
+        unsafe {
+            PROTOCOL_IOVEC_PROGS.tail_call(ctx, 0);
+        }
         record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
         return Ok(0);
     }
 
-    let state_ptr = PROTOCOL_IOVEC_STATE.get_ptr_mut(0).ok_or(1_i64)?;
-    let state = unsafe { &mut *state_ptr };
-    state.iov_ptr = iov as u64;
-    state.iov_len = iov_len;
+    let event_ptr = PROTOCOL_DATA_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+    let event = unsafe { &mut *event_ptr };
+    event.payload_total_len =
+        if state.iov_len > u64::from(PROTOCOL_MAX_IOVECS) || state.total_len > u32::MAX as u64 {
+            u32::MAX
+        } else {
+            state.total_len as u32
+        };
+    event.payload_captured_len = state.captured_total;
+    if state.captured_total == 0 {
+        record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
+        return Ok(0);
+    }
     unsafe {
-        PROTOCOL_IOVEC_PROGS.tail_call(ctx, 0);
+        PROTOCOL_IOVEC_PROGS.tail_call(ctx, 1);
     }
     record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
     Ok(0)
