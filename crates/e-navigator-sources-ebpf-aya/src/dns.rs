@@ -1,5 +1,9 @@
 #![allow(dead_code)]
 
+#[cfg(test)]
+#[path = "../../e-navigator-ebpf-programs/src/dns_peer.rs"]
+mod dns_peer_filter;
+
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_core::DnsSourceConfig;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -719,6 +723,14 @@ pub use platform::AyaDnsSource;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dns_receive_peer_filter_fails_closed() {
+        assert!(dns_peer_filter::is_dns_ipv4_peer(2, 53_u16.to_be()));
+        assert!(!dns_peer_filter::is_dns_ipv4_peer(2, 0));
+        assert!(!dns_peer_filter::is_dns_ipv4_peer(2, 50_051_u16.to_be()));
+        assert!(!dns_peer_filter::is_dns_ipv4_peer(10, 53_u16.to_be()));
+    }
 
     #[test]
     fn parses_valid_dns_query_packet() {

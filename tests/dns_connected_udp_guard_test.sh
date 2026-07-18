@@ -15,6 +15,7 @@ for expected in \
   "try_tracepoint_dns_read_enter" \
   "connected_dns_recv_peer" \
   "connected_dns_peer" \
+  "is_dns_ipv4_peer" \
   "emit_dns_connected_send_event"; do
   if ! grep -Fq "$expected" "$program"; then
     printf 'expected %s to support connected UDP DNS path: missing %s\n' "$program" "$expected" >&2
