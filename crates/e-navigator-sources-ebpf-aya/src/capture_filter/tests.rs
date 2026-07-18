@@ -131,6 +131,14 @@ fn parses_service_cluster_ips_and_ready_endpoint_slice_addresses() {
     .expect("endpoint slices");
     assert_eq!(slices.len(), 1);
     assert_eq!(slices[0].addresses, vec!["10.42.1.20"]);
+
+    let nullable = in_cluster::parse_raw_endpoint_slices(
+        r#"{"items":[{"metadata":{"namespace":"proj","labels":{"kubernetes.io/service-name":"empty"}},"endpoints":null},{"metadata":{"namespace":"proj","labels":{"kubernetes.io/service-name":"nullable-address"}},"endpoints":[{"addresses":null,"conditions":{"ready":true}}]}]}"#,
+        16,
+    )
+    .expect("nullable endpoint slice lists");
+    assert_eq!(nullable.len(), 2);
+    assert!(nullable.iter().all(|slice| slice.addresses.is_empty()));
 }
 
 #[test]
