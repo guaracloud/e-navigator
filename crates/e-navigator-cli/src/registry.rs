@@ -9,6 +9,7 @@ use e_navigator_generators::{
 };
 use e_navigator_processors::{
     ContainerAttributionProcessor, KubernetesMetadataCache, KubernetesMetadataProvider,
+    WorkloadResourceFilterProcessor,
 };
 use e_navigator_runner::{ModuleRegistry, SourceHealthRegistry};
 use e_navigator_sinks::{
@@ -124,6 +125,12 @@ pub(crate) fn build_registry(
                 std::sync::Arc::new(SharedKubernetesMetadataProvider),
             ),
         ));
+    }
+
+    if config.capture_filter.enabled && config.module_enabled("source.host_resource") {
+        registry = registry.with_processor(Box::new(WorkloadResourceFilterProcessor::new(
+            &config.capture_filter,
+        )));
     }
 
     if config.module_enabled("generator.dependency_graph") {
@@ -844,6 +851,29 @@ mod tests {
         assert_eq!(source_config.max_file_bytes, 19);
     }
 
+    #[test]
+    fn active_capture_filter_registers_post_attribution_resource_filter() {
+        let mut config = RuntimeConfig::default();
+        config.capture_filter.enabled = true;
+
+        let registry = build_test_registry(&config, SourceMode::Unified);
+
+        assert_eq!(
+            processor_names(&registry),
+            vec![
+                "processor.container_attribution",
+                "processor.workload_resource_filter",
+            ]
+        );
+
+        set_module_enabled(&mut config, "source.host_resource", false);
+        let registry = build_test_registry(&config, SourceMode::Unified);
+        assert_eq!(
+            processor_names(&registry),
+            vec!["processor.container_attribution"]
+        );
+    }
+
     fn set_module_enabled(config: &mut RuntimeConfig, name: &str, enabled: bool) {
         let Some(module) = config.modules.iter_mut().find(|module| module.name == name) else {
             panic!("missing module {name}");
@@ -868,6 +898,14 @@ mod tests {
             .generators()
             .iter()
             .map(|generator| generator.metadata().name.to_string())
+            .collect()
+    }
+
+    fn processor_names(registry: &ModuleRegistry) -> Vec<&'static str> {
+        registry
+            .processors()
+            .iter()
+            .map(|processor| processor.metadata().name)
             .collect()
     }
 

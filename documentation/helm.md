@@ -416,6 +416,12 @@ documented OpenSSL 1.1.1/3 and GnuTLS ABI 30 surfaces after architecture and
 complete-export preflight; an unknown or incomplete library is rejected rather
 than partially attached.
 
+When the workload capture filter is enabled, the same namespace, label,
+process, and container policy is applied to host process and cgroup resource
+samples after Kubernetes attribution. Unknown workload-scoped resource samples
+follow `capture_filter.unknown_cgroup`; node-level CPU, load, memory, and disk
+signals remain available because they do not identify a tenant workload.
+
 OTLP export runtime bounds are validated before startup:
 `otlp_http.queue_capacity` must be at most 65,536, `batch_size` at most 4,096
 and no larger than the queue, `flush_interval_millis` at most 60,000,
