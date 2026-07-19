@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "run_id": "standalone-go-20260718t060517z-f20e3b12",
+  "decision": "PASS",
+  "gitops_repository": "https://github.com/vicotrbb/home-datacenter",
+  "blocker_repairs": [
+    {
+      "pull_request": 27,
+      "url": "https://github.com/vicotrbb/home-datacenter/pull/27",
+      "merge_commit": "abe6b7cf34a43eac137c7ae8984f7f6736ac597b",
+      "title": "fix(observability): prevent Tempo recovery OOMs",
+      "root_cause": "The chart's 1 GiB ballast under a 2 GiB limit left insufficient recovery headroom for WAL replay and the metrics generator.",
+      "durable_repair": {
+        "ballast_mib": 256,
+        "memory_request": "2Gi",
+        "memory_limit": "4Gi"
+      },
+      "result": "Tempo recovered, remained Ready with zero restarts, and served sustained acceptance traffic."
+    },
+    {
+      "pull_request": 30,
+      "url": "https://github.com/vicotrbb/home-datacenter/pull/30",
+      "merge_commit": "0932c3d1751366605bfdd9c1353c0a04e611b1a9",
+      "title": "fix(k3s): isolate etcd from storage workloads",
+      "root_cause": "etcd shared Btrfs and storage-workload I/O pressure across both control-plane servers, producing multi-second ReadIndex/apply latency and repeated leader loss.",
+      "durable_repair": "Keep homelab-02 as the sole etcd member and disable etcd on the workload-heavy homelab-01 control-plane server.",
+      "result": "Both nodes remained Ready, the single-member etcd endpoint stayed healthy, and k3s restart counters remained stable through acceptance."
+    }
+  ],
+  "cutover": [
+    {
+      "pull_request": 31,
+      "url": "https://github.com/vicotrbb/home-datacenter/pull/31",
+      "merge_commit": "7c814f47f214377cb2d75e80ae711e203c63598a",
+      "title": "feat(observability): deploy E-Navigator replacement",
+      "result": "Added source allow-listing, Argo applications, digest-pinned E-Navigator and Pyroscope workloads, persistent profile storage, and operator documentation."
+    },
+    {
+      "pull_request": 32,
+      "url": "https://github.com/vicotrbb/home-datacenter/pull/32",
+      "merge_commit": "80f362e6532c26a21a7dac85aa71ffcbc949794c",
+      "title": "fix(observability): make Pyroscope storage writable",
+      "root_cause": "The Longhorn volume was root-owned while the pinned Pyroscope image runs as UID 10001.",
+      "result": "A source-controlled pod security context supplied runAsUser and fsGroup 10001; profile writes and direct self-profile queries succeeded without permission rejections."
+    },
+    {
+      "pull_request": 33,
+      "url": "https://github.com/vicotrbb/home-datacenter/pull/33",
+      "merge_commit": "59f9e4d3cdac95525a9bf7389aa5e6956b18d9c5",
+      "title": "refactor(observability): replace Beyla with E-Navigator",
+      "result": "Removed only the Beyla Argo application and values. The shared Alloy logs and OTLP metric/trace gateway remained unchanged."
+    }
+  ],
+  "rollback_drill": {
+    "pull_request": 34,
+    "url": "https://github.com/vicotrbb/home-datacenter/pull/34",
+    "merge_commit": "c9ba65484b9a8711aab221259460c51588c01299",
+    "title": "revert(observability): exercise Beyla rollback",
+    "method": "Revert the Beyla-removal commit while retaining E-Navigator, Pyroscope, and the shared Alloy gateway.",
+    "live_result": {
+      "argocd_sync": "Synced",
+      "argocd_health": "Healthy",
+      "daemonset_desired": 2,
+      "daemonset_ready": 2,
+      "pod_restarts": 0,
+      "image": "docker.io/grafana/beyla:3.1.2",
+      "process_attachment": "Both node agents attached to the controlled Python soak processes.",
+      "telemetry": "Beyla scrape endpoints exposed nonzero attributed HTTP client and server counters for the soak services."
+    }
+  },
+  "accepted_state_restore": {
+    "pull_request": 35,
+    "url": "https://github.com/vicotrbb/home-datacenter/pull/35",
+    "merge_commit": "efb17b904a39a576c93fbc6384cfd7d8ebc745a6",
+    "title": "refactor(observability): restore E-Navigator cutover",
+    "result": {
+      "root_app_sync": "Synced",
+      "root_app_health": "Healthy",
+      "beyla_application_present": false,
+      "beyla_daemonset_present": false,
+      "e_navigator_application": "Synced/Healthy",
+      "pyroscope_application": "Synced/Healthy",
+      "alloy_application": "Synced/Healthy"
+    }
+  },
+  "accepted_architecture": {
+    "e_navigator_agents": 2,
+    "e_navigator_image": "ghcr.io/guaracloud/e-navigator@sha256:89bbc0b8e42fceda8205387896060c5dfa2c2fdf95d793f9f2a74fe7e3d7cc14",
+    "profiles": "direct OTLP Profiles to Pyroscope in e-navigator-system",
+    "metrics_and_traces": "standard OTLP HTTP through the existing shared Alloy gateway",
+    "alloy_profiling_path_present": false,
+    "beyla_present": false,
+    "legacy_unmanaged_e_navigator_canary_present": false,
+    "vendor_compatibility_mode": false
+  },
+  "unrelated_scope": {
+    "shared_alloy_removed_or_reconfigured": false,
+    "unrelated_workloads_changed": false,
+    "production_guara_cloud_changed": false,
+    "release_or_tag_created": false
+  }
+}
