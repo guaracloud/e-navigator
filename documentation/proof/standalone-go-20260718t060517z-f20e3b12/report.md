@@ -6,23 +6,31 @@
 
 The controlled functional and failure matrices, matched A/B/C performance
 trials, source-controlled homelab cutover, and exercised rollback are complete
-and passing. The mandatory uninterrupted E-Navigator-only soak began at
-`2026-07-19T04:26:52Z` and cannot pass before `2026-07-20T04:26:52Z`.
-Publication to final `main`, final image verification, and run-owned cleanup
-remain pending until that interval is complete.
+and passing. Replacement soak attempt 3 began at `2026-07-19T09:03:08Z` and
+cannot pass before `2026-07-20T09:03:08Z`. Publication to final `main`, final
+image verification, and run-owned cleanup remain pending until that interval
+is complete.
 
-The first proposed clock, beginning at `2026-07-19T01:43:29Z`, was
-invalidated after 1,942 seconds because a run-owned functional collector still
-existed outside the claimed final topology. None of that interval contributes
-to acceptance. Before attempt 2, the extra collector was removed, a late
-listener-admission defect was fixed and regression-tested, the fixed official
-image was deployed through GitOps, matched A/B/C was rerun against that exact
-artifact, and the final selected workloads were restarted after the agents.
+Attempt 1, beginning at `2026-07-19T01:43:29Z`, was invalidated after 1,942
+seconds because a run-owned functional collector still existed outside the
+claimed final topology. Attempt 2, beginning at `2026-07-19T04:26:52Z`, was
+invalidated after 15,540 seconds because the workload error counter increased
+from zero to one. Neither interval contributes any accepted time. The attempt-2
+failure was isolated to one self-recovered client transaction: all 233,099
+successful requests were decoded and sent exactly, while every E-Navigator and
+backend failure counter remained at baseline.
+
+Before attempt 3, the run-owned harness gained bounded exception phase/class
+diagnostics and a fixed-cardinality reason counter without changing rate,
+request mix, timeout, images, server work, or acceptance criteria. Both fixture
+pods were then replaced, stabilized for more than six minutes, and frozen with
+new identities and baselines.
 
 The clock will be restarted if an agent, Tempo, Pyroscope, Alloy, the workload
 server, or the workload client is replaced or restarts; if configuration or
-image identity changes; or if a monitoring gap makes continuity
-unverifiable. A clean point sample is not treated as a soak pass.
+image identity changes; if the workload error counter increases; or if a
+monitoring gap makes continuity unverifiable. A clean point sample is not
+treated as a soak pass.
 
 ## Product boundary and architecture
 
@@ -224,43 +232,47 @@ samples throughout.
 Status: **IN PROGRESS**
 
 - Attempt 1: **INVALIDATED** at 1,942 seconds; accepted duration zero
-- Attempt 2 server start: `2026-07-19T04:19:27Z`
-- Attempt 2 client start: `2026-07-19T04:19:38Z`
-- Valid clock start: `2026-07-19T04:26:52Z` (epoch `1784435212`)
-- Earliest valid end: `2026-07-20T04:26:52Z` (epoch `1784521612`)
+- Attempt 2: **INVALIDATED** at 15,540 seconds after one workload error;
+  accepted duration zero
+- Attempt 3 server start: `2026-07-19T08:56:59Z`
+- Attempt 3 client start: `2026-07-19T08:56:59Z`
+- Valid clock start: `2026-07-19T09:03:08Z` (epoch `1784451788`)
+- Earliest valid end: `2026-07-20T09:03:08Z` (epoch `1784538188`)
 - Offered workload: 15 RPS cross-node HTTP/1.1
-- Start workload totals: 6,419 scheduled, 6,419 successful, 0 errors
-- Five pre-clock one-minute windows: 900 successes, 0 errors each
-- Pre-clock p99 range: 36.239 to 37.301 ms
+- Start workload totals: 5,503 scheduled, 5,503 successful, 0 errors, 0
+  diagnostic error reasons
+- Six pre-clock one-minute windows: 5,400 total successes, 0 errors
+- Pre-clock observed p99 range: 50.287 to 53.186 ms
 
 The accepted fixture preserves the 15 RPS and 60/40 path mix while adding
 bounded deterministic CPU work to make the low-rate workload continuously
-visible to the production 10 Hz profiler. Its ignored source manifest is
+visible to the production 10 Hz profiler. Its bounded diagnostics identify any
+future caught exception without masking it. The ignored source manifest is
 represented by SHA-256
-`f7601697b6f46afe5307eefc16a52e9b55f8495fae53204e8f29a5c647cea242`.
+`1daf5decf90052fd53c207b25a783af0a08ce8c22e2533b0195392425167724c`.
 
 At the frozen boundary:
 
 - both agent scrape targets and the workload target were up;
 - all agent, backend, and workload containers were Ready with zero restarts;
 - both agents used the fixed accepted OCI index digest;
-- HTTP decoded and sent were both 17,564, with invalid, lost, and send failure
+- HTTP decoded and sent were both 266,864, with invalid, lost, and send failure
   all zero;
 - every metric/profile/trace exporter queue was empty;
 - every exporter drop, retry, failed-batch, partial, rejected, permanent, and
   invalid-response counter was zero;
-- both Kubernetes controllers were Ready with maximum 51-second freshness,
+- both Kubernetes controllers were Ready with maximum 48-second freshness,
   watch failures were zero, and the one node-1 API relist failure occurred
   during startup before the clock;
-- Tempo returned traces for the new server pod with correct Kubernetes
+- Tempo returned traces for `soak-server-7bcb66845c-v6gkp` with correct Kubernetes
   identity, `python` root service, and `http request` server span;
-- Pyroscope returned 157.9 seconds of the direct soak profile, 372 names, 32
-  levels, and 25 named Python-frame matches;
+- Pyroscope returned 171.9 seconds for the new pod, 394 names, 29 levels, and
+  15 named Python-frame matches with no interior timeline gap;
 - the excluded-namespace Tempo query and excluded-service Pyroscope query both
   returned zero;
-- the agents used 0.0276 and 0.0292 CPU cores and 239.4 MB and 179.9 MB working
-  set; the client/server remained bounded at 0.0197/0.1728 cores and
-  21.4/18.3 MB.
+- the agents used 0.0278 and 0.0321 CPU cores and 277.2 MB and 174.0 MB working
+  set; the client/server remained bounded at 0.0198/0.1958 cores and
+  28.2/20.8 MB.
 
 Prometheus continuously scrapes the agent and workload series. Tempo and
 Pyroscope continuously retain backend receipt. An hourly heartbeat attached
@@ -321,7 +333,7 @@ and deliberately documented.
 | Three matched A/B/C trials | PASS | `abc-results.json`; all thresholds pass |
 | Source-controlled final cutover | PASS | Home-datacenter PRs #31, #33, #35, #36, #38; Argo Synced/Healthy |
 | Bounded rollback exercised | PASS | PR #34, 2/2 Beyla Ready, nonzero attributed telemetry, restore via #35 |
-| Uninterrupted 24-hour soak | IN PROGRESS | `soak-start.json`; earliest end `2026-07-20T04:26:52Z` |
+| Uninterrupted 24-hour soak | IN PROGRESS | `soak-start.json`; attempt 3 earliest end `2026-07-20T09:03:08Z` |
 | Complete final quality gate | IN PROGRESS | Full `scripts/quality.sh` pass against `0cd5e9a`; final post-evidence hygiene remains |
 | Ready PR, checks, protected merge | PENDING | Run after soak passes |
 | Final main image/source and GitOps digest match | PENDING | Run after protected merge and image publication |
