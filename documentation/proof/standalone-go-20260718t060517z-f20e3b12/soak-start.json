@@ -1,8 +1,8 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "run_id": "standalone-go-20260718t060517z-f20e3b12",
   "decision": "IN_PROGRESS",
-  "accepted_attempt": 3,
+  "accepted_attempt": 4,
   "attempts": [
     {
       "attempt": 1,
@@ -17,6 +17,7 @@
         "discovered_epoch_seconds": 1784427351,
         "discovered_utc": "2026-07-19T02:15:51Z",
         "elapsed_seconds": 1942,
+        "attempt_time_accepted_for_final_decision_seconds": 0,
         "reason": "A run-owned functional-test E-Navigator Helm release still existed outside the final GitOps topology, so the frozen claim that exactly two final collector agents were present was false.",
         "signal_overlap": false,
         "resolution": "The extra Helm release, namespace, and cluster RBAC were removed by exact name. No attempt-1 time contributes to acceptance."
@@ -317,7 +318,7 @@
     },
     {
       "attempt": 3,
-      "decision": "IN_PROGRESS",
+      "decision": "INVALIDATED",
       "clock": {
         "start_epoch_seconds": 1784451788,
         "start_utc": "2026-07-19T09:03:08Z",
@@ -333,6 +334,17 @@
           "workload error counter increase",
           "Prometheus or backend evidence gap that makes continuity unverifiable"
         ]
+      },
+      "invalidation": {
+        "discovered_epoch_seconds": 1784454506,
+        "discovered_utc": "2026-07-19T09:48:26Z",
+        "elapsed_seconds": 2718,
+        "first_nonzero_error_evaluation_epoch_seconds": 1784452155,
+        "first_nonzero_error_evaluation_utc": "2026-07-19T09:09:15Z",
+        "reason": "The instrumented client recorded three open_connection TimeoutError events at 2026-07-19T09:09:03Z, increasing both workload error counters from zero to three. A later transient GnuTLS symbol-resolution attachment failure independently increased the frozen optional attachment counter from zero to one.",
+        "attempt_time_accepted_for_final_decision_seconds": 0,
+        "diagnosis": "The connect phase combined asynchronous Service-name resolution and TCP establishment. The server, all targets, pod and node error/drop counters, server throttling and OOM counters, CoreDNS health, client-node TCP SYN retransmission and timeout counters, events, and warning-level node journal remained clean. The exact sub-phase is not retrospectively provable; repeated Service-name resolution is the most likely stalled operation because no TCP SYN evidence changed.",
+        "resolution": "The run-owned client now resolves the stable Service FQDN once at startup with a bounded timeout and uses the frozen ClusterIP for each TCP connection while retaining the FQDN Host header, cross-node Service routing, 15 RPS rate, 60/40 request mix, two-second request timeout, images, server work, and acceptance criteria. The phase label is now tcp_connect. Both fixture pods were rolled before attempt 4."
       },
       "stabilization": {
         "server_started_epoch_seconds": 1784451419,
@@ -634,6 +646,370 @@
             "samples_not_retained_by_bounded_aggregation": 55,
             "structured_warning_count": 1
           }
+        }
+      },
+      "quality_before_clock": {
+        "command": "scripts/quality.sh",
+        "result": "PASS",
+        "completed_utc": "2026-07-19T04:13:33Z"
+      }
+    },
+    {
+      "attempt": 4,
+      "decision": "IN_PROGRESS",
+      "clock": {
+        "start_epoch_seconds": 1784456001,
+        "start_utc": "2026-07-19T10:13:21Z",
+        "start_america_sao_paulo": "2026-07-19T07:13:21-03:00",
+        "minimum_end_epoch_seconds": 1784542401,
+        "minimum_end_utc": "2026-07-20T10:13:21Z",
+        "minimum_end_america_sao_paulo": "2026-07-20T07:13:21-03:00",
+        "minimum_duration_seconds": 86400,
+        "attempts_1_through_3_accepted_seconds": 0,
+        "restart_conditions": [
+          "E-Navigator agent restart or replacement",
+          "Tempo, Pyroscope, Alloy, server, or client restart or replacement",
+          "configuration, image, Service UID, or Service ClusterIP change",
+          "workload error or structured error-reason counter increase",
+          "source, optional attachment or capacity, exporter, controller, backend, or excluded-sentinel counter departure from the accepted baseline",
+          "Prometheus or backend evidence gap that makes continuity unverifiable"
+        ]
+      },
+      "stabilization": {
+        "server_started_epoch_seconds": 1784455468,
+        "server_started_utc": "2026-07-19T10:04:28Z",
+        "server_ready_utc": "2026-07-19T10:04:28.874381477Z",
+        "client_started_epoch_seconds": 1784455468,
+        "client_started_utc": "2026-07-19T10:04:28Z",
+        "client_resolved_utc": "2026-07-19T10:04:29.101952107Z",
+        "client_ready_utc": "2026-07-19T10:04:29.102179258Z",
+        "stable_seconds_before_clock": 533,
+        "offered_rps": 15,
+        "scheduled_requests": 7912,
+        "successful_requests": 7912,
+        "errors": 0,
+        "error_reasons": 0,
+        "inflight": 0,
+        "fixture": {
+          "manifest": "target/standalone-go-f20e3b12-soak.yaml",
+          "sha256": "66418734b329b4a0b9c4a7b527e724792014029da0035893c3aa7c8ee7b81b50",
+          "configmap_uid": "46a59112-f004-4064-a8f9-aa126db85fc6",
+          "configmap_resource_version": "79645928",
+          "client_sha256": "26716265d391f76d407250dea348663194bb5c5dfd70a6b7f622c7f05c130f20",
+          "server_sha256": "941276a9e0141b5840dfd3a743e2a1c411049e6571cf141b51b392bde4efd4e9",
+          "harness_revision": "resolved-service-ip-v3",
+          "service_uid": "c3b8a4b3-ba45-489a-a94c-037f1c1d620c",
+          "service_cluster_ip": "10.43.107.252",
+          "resolved_service_ip": "10.43.107.252",
+          "request_mix": "60% /fast and 40% /work at an unchanged 15 RPS",
+          "server_cpu_rounds": {
+            "fast": 10000,
+            "work": 100000
+          },
+          "diagnostic_change": "The client resolves the Service FQDN once before readiness and uses that frozen IPv4 ClusterIP for each TCP connection while preserving the original Host header. The runtime phase is tcp_connect. Offered rate, request mix, two-second per-operation timeout, images, server work, cross-node Service routing, and acceptance criteria are unchanged."
+        },
+        "one_minute_windows": [
+          {
+            "ending_utc": "2026-07-19T10:05:29.103777855Z",
+            "requests": 900,
+            "errors": 0,
+            "error_reasons": 0,
+            "p99_ms": 51.382
+          },
+          {
+            "ending_utc": "2026-07-19T10:06:29.104327763Z",
+            "requests": 900,
+            "errors": 0,
+            "error_reasons": 0,
+            "p99_ms": 48.452
+          },
+          {
+            "ending_utc": "2026-07-19T10:07:29.105238356Z",
+            "requests": 900,
+            "errors": 0,
+            "error_reasons": 0,
+            "p99_ms": 48.318
+          },
+          {
+            "ending_utc": "2026-07-19T10:08:29.106803282Z",
+            "requests": 900,
+            "errors": 0,
+            "error_reasons": 0,
+            "p99_ms": 48.439
+          },
+          {
+            "ending_utc": "2026-07-19T10:09:29.108063191Z",
+            "requests": 900,
+            "errors": 0,
+            "error_reasons": 0,
+            "p99_ms": 48.597
+          },
+          {
+            "ending_utc": "2026-07-19T10:10:29.109145601Z",
+            "requests": 900,
+            "errors": 0,
+            "error_reasons": 0,
+            "p99_ms": 48.647
+          }
+        ]
+      },
+      "gitops": {
+        "repository": "https://github.com/vicotrbb/home-datacenter",
+        "accepted_revision": "553e4365710f307cb485e1609a01881a7a9f3bbf",
+        "root_app": "Synced/Healthy",
+        "e_navigator": "Synced/Healthy",
+        "pyroscope": "Synced/Healthy",
+        "alloy": "Synced/Healthy",
+        "e_navigator_daemonset": {
+          "desired": 2,
+          "ready": 2,
+          "available": 2
+        },
+        "beyla_application_present": false,
+        "beyla_daemonset_present": false,
+        "legacy_or_temporary_e_navigator_collector_present": false,
+        "matching_helm_releases": 0
+      },
+      "immutable_images": {
+        "e_navigator_tag": "ghcr.io/guaracloud/e-navigator:sha-0cd5e9a",
+        "e_navigator_oci_index": "sha256:62402d21b9cb02d59d63365c7e3716ffa0980bfea42d070b43fed618703a7df9",
+        "e_navigator_linux_amd64_manifest": "sha256:ae8b5a7e936f01423d01d42744907b4098ea5818f3d2326fa242b6237f9e6f0c",
+        "e_navigator_linux_amd64_config": "sha256:5a3c9c907092a236ad0bbfef13356b70f7cf7da965a4f6babea1b50b5ab76e86",
+        "e_navigator_attestation_manifest": "sha256:87731e53b59607ef58eb97b7dd208f216b0fb14b70a9b39990b54e9cd0024131",
+        "pyroscope": "sha256:47fc578b2227e9c0c5c5efda34966c1566b0d0a0802cb2adc2e1e9f7ae16a7aa",
+        "tempo": "sha256:65a5789759435f1ef696f1953258b9bbdb18eb571d5ce711ff812d2e128288a4",
+        "alloy": "sha256:c311595156fca7b1131683d383dae1acfd29e8879d347161d2a6f714ebac0c0b",
+        "soak_python": "sha256:9d7f287598e1a5a978c015ee176d8216435aaf335ed69ac3c38dd1bbb10e8d64"
+      },
+      "configuration": {
+        "e_navigator_configmap_uid": "8672691d-abfa-4da7-adac-61320ab83479",
+        "e_navigator_configmap_resource_version": "79441596",
+        "e_navigator_config_sha256": "a9c15c3c565452a7d812426d9b01c57d08a2ae9228e8fff71396276c3901e9b2",
+        "capture_filter": "default deny; proj-* plus paid tier; catalog, load-generator, exporter, Alloy, Beyla, and E-Navigator exclusions"
+      },
+      "continuity_identities": [
+        {
+          "namespace": "e-navigator-system",
+          "pod": "e-navigator-agent-rxf26",
+          "uid": "bf33db19-968a-47a1-84be-dfca4e102965",
+          "node": "homelab-02",
+          "started_utc": "2026-07-19T04:07:52Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "e-navigator-system",
+          "pod": "e-navigator-agent-x2fnh",
+          "uid": "4a8a204b-f56d-43ac-8b2e-9a8ab7d250af",
+          "node": "homelab-01",
+          "started_utc": "2026-07-19T04:07:52Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "e-navigator-system",
+          "pod": "pyroscope-845cf6bff-rx4dp",
+          "uid": "70720a96-9964-466a-a540-bfa1cc964ed7",
+          "node": "homelab-01",
+          "started_utc": "2026-07-19T01:19:59Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "observability-system",
+          "pod": "alloy-9kxdn",
+          "uid": "9e5dfad7-6e44-4b6c-a592-9359241d87ec",
+          "node": "homelab-01",
+          "started_utc": "2026-03-16T13:35:14Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "observability-system",
+          "pod": "tempo-0",
+          "uid": "97849a2e-d93d-4d3d-87a0-b7696704bced",
+          "node": "homelab-01",
+          "started_utc": "2026-07-18T06:34:01Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "proj-enav-soak-f20e3b12",
+          "pod": "soak-client-dd547b598-v4lpt",
+          "uid": "a6c49faf-3752-4bfe-ac0e-01cac9bc7388",
+          "node": "homelab-01",
+          "started_utc": "2026-07-19T10:04:28Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "proj-enav-soak-f20e3b12",
+          "pod": "soak-server-7f6696b87-7jfmp",
+          "uid": "a6611de0-97ea-4f7e-86be-1bc589140b62",
+          "node": "homelab-02",
+          "started_utc": "2026-07-19T10:04:28Z",
+          "restarts": 0
+        }
+      ],
+      "baseline": {
+        "prometheus": {
+          "sample_epoch_seconds": 1784456001,
+          "targets_expected": 3,
+          "targets_up": 3,
+          "minimum_up_since_fixture_roll": 1,
+          "agent_samples_each_since_fixture_roll": 16,
+          "client_samples_since_fixture_roll": 32,
+          "required_series_present": true,
+          "workload_counter_resets": 0
+        },
+        "workload": {
+          "scheduled": 7912,
+          "successful": 7912,
+          "errors": 0,
+          "error_reasons": 0,
+          "inflight": 0,
+          "two_minute_rate_rps": 14.999999999999998,
+          "two_minute_p99_seconds": 0.04955058528428094
+        },
+        "e_navigator_sources": {
+          "http_decoded": 330321,
+          "http_sent": 330321,
+          "all_invalid": 0,
+          "protocol_invalid": 0,
+          "all_lost_perf_events": 0,
+          "all_send_failures": 0,
+          "source_failures": 0,
+          "optional_attachment_failures": {
+            "e-navigator-agent-x2fnh/source.aya_tls": 1,
+            "all_other_agent_sources": 0
+          },
+          "optional_capacity_rejections": 0
+        },
+        "export": {
+          "enqueued": {
+            "e-navigator-agent-x2fnh": {
+              "metrics": 15947,
+              "profiles": 0,
+              "traces": 0
+            },
+            "e-navigator-agent-rxf26": {
+              "metrics": 36007,
+              "profiles": 82568,
+              "traces": 330321
+            }
+          },
+          "sent": {
+            "e-navigator-agent-x2fnh": {
+              "metrics": 15947,
+              "profiles": 0,
+              "traces": 0
+            },
+            "e-navigator-agent-rxf26": {
+              "metrics": 36007,
+              "profiles": 82562,
+              "traces": 330308
+            }
+          },
+          "queue_depth_all_families_all_agents": 0,
+          "drop_retry_failed_partial_rejected_permanent_invalid_out_of_order": 0
+        },
+        "metric_integrity": {
+          "same_millisecond_coalesced": 3628,
+          "same_millisecond_suppressed": 3628,
+          "timestamp_series_maximum": 54,
+          "timestamp_pending_series": 2,
+          "timestamp_series_evicted": 298,
+          "out_of_order_dropped": 0,
+          "selected_server_metric_series": 38,
+          "excluded_client_metric_series": 0,
+          "excluded_namespace_metric_series": 0
+        },
+        "kubernetes_controller": {
+          "ready_agents": 2,
+          "maximum_freshness_seconds": 17,
+          "watch_failures": 0,
+          "relist_failures_before_clock": 1,
+          "expired_resource_versions": 0,
+          "unresolved_cgroups": 0,
+          "allowed_cgroups": {
+            "e-navigator-agent-x2fnh": 0,
+            "e-navigator-agent-rxf26": 3
+          }
+        },
+        "resources": {
+          "cpu_cores": {
+            "e-navigator-agent-rxf26": 0.026846370271127695,
+            "e-navigator-agent-x2fnh": 0.031777523073620764,
+            "soak-client-dd547b598-v4lpt": 0.010592356722771708,
+            "soak-server-7f6696b87-7jfmp": 0.2030828905323569
+          },
+          "memory_bytes": {
+            "e-navigator-agent-rxf26": 277282816,
+            "e-navigator-agent-x2fnh": 189087744,
+            "soak-client-dd547b598-v4lpt": 20344832,
+            "soak-server-7f6696b87-7jfmp": 18534400
+          }
+        },
+        "backend_integrity": {
+          "tempo_discarded_spans": 3698681,
+          "tempo_ingester_append_failures": 0,
+          "tempo_metrics_generator_push_failures": 0,
+          "tempo_ingester_failed_flushes": 0,
+          "tempo_service_graph_dropped_spans": 1349325,
+          "tempo_metrics_generator_discarded_spans": 325919,
+          "tempo_receiver_refused_spans": 1988094,
+          "prometheus_out_of_order_samples_appended": 0,
+          "prometheus_remote_storage_samples_dropped": 0,
+          "prometheus_target_out_of_order_samples": 0
+        },
+        "tempo": {
+          "query": "{ resource.k8s.pod.name = \"soak-server-7f6696b87-7jfmp\" }",
+          "query_start_epoch_seconds": 1784455821,
+          "query_end_epoch_seconds": 1784456001,
+          "returned_trace_limit": 20,
+          "latest_returned_trace_start_epoch_nanos": 1784455886794892110,
+          "sample_trace_id": "3284ae7c2c9aad0dba35fd311abcb5b7",
+          "root_service_names": [
+            "python"
+          ],
+          "root_span_names": [
+            "http request"
+          ],
+          "sample_trace": {
+            "resource_span_count": 1,
+            "span_count": 1,
+            "kind": "SPAN_KIND_SERVER",
+            "parent_span_present": false,
+            "namespace": "proj-enav-soak-f20e3b12",
+            "pod": "soak-server-7f6696b87-7jfmp",
+            "pod_uid": "a6611de0-97ea-4f7e-86be-1bc589140b62",
+            "node": "homelab-02",
+            "client_address": "10.42.248.231",
+            "identity_source": "generated",
+            "correlation_confidence": "high"
+          },
+          "excluded_client_traces": 0,
+          "excluded_namespace_traces": 0
+        },
+        "pyroscope": {
+          "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds{service_name=\"enav-soak-server-f20e3b12\",k8s_pod_name=\"soak-server-7f6696b87-7jfmp\"}",
+          "profile_type": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+          "query_start_epoch_seconds": 1784455701,
+          "query_end_epoch_seconds": 1784456001,
+          "flamegraph_total_nanoseconds": 131700000000,
+          "flamegraph_names": 325,
+          "flamegraph_levels": 28,
+          "named_python_frames": 7,
+          "example_names": [
+            "PyEval_EvalCode",
+            "_PyEval_EvalFrameDefault",
+            "PyObject_Vectorcall",
+            "PyObject_VectorcallMethod",
+            "_PyObject_MakeTpCall",
+            "_PyObject_GC_NewVar",
+            "PyObject_RichCompare"
+          ],
+          "timeline_start_epoch_seconds": 1784455695,
+          "timeline_step_seconds": 15,
+          "timeline_samples": 20,
+          "interior_zero_samples": 0,
+          "last_sample_nanoseconds": 6500000000,
+          "excluded_client_total_nanoseconds": 0,
+          "excluded_namespace_total_nanoseconds": 0
         }
       },
       "quality_before_clock": {
