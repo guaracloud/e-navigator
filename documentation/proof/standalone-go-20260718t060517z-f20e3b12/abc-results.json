@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "run_id": "standalone-go-20260718t060517z-f20e3b12",
+  "decision": "PASS",
+  "contract": {
+    "throughput_regression_max_percent": 1.0,
+    "p99_regression_max_percent": 2.0,
+    "collector_cpu_plus_memory_reduction_min_percent": 25.0,
+    "combined_resource_unit": "CPU cores plus GiB working set"
+  },
+  "harness": {
+    "manifest": "target/standalone-go-f20e3b12-performance.yaml",
+    "namespace": "e-nav-perf-f20e3b12",
+    "warmup_seconds": 45,
+    "measurement_seconds": 120,
+    "concurrency": 32,
+    "offered_rps": 150,
+    "request_mix": {"fast_percent": 60, "work_percent": 40},
+    "client_node": "homelab-01",
+    "server_node": "homelab-02",
+    "client_image": "python:3.13-slim-bookworm@sha256:9d7f287598e1a5a978c015ee176d8216435aaf335ed69ac3c38dd1bbb10e8d64",
+    "server_image": "python:3.13-slim-bookworm@sha256:9d7f287598e1a5a978c015ee176d8216435aaf335ed69ac3c38dd1bbb10e8d64",
+    "selection": "client explicitly excluded; server selected as paid starter workload",
+    "historical_target_rps": {
+      "paid_a": 10.2658,
+      "catalog": 4.6791,
+      "combined": 14.9449,
+      "trial_multiple": 10.037
+    }
+  },
+  "condition_a_no_collector": {
+    "trials": [
+      {"trial": "A1", "start_epoch_nanos": 1784419015317609779, "end_epoch_nanos": 1784419135314751520, "throughput_rps": 150.00357477394135, "p50_us": 2843, "p95_us": 5025, "p99_us": 22448, "errors": 0},
+      {"trial": "A2", "start_epoch_nanos": 1784419184793837082, "end_epoch_nanos": 1784419304803632377, "throughput_rps": 149.98775811917253, "p50_us": 2852, "p95_us": 5013, "p99_us": 22439, "errors": 0},
+      {"trial": "A3", "start_epoch_nanos": 1784419354171367775, "end_epoch_nanos": 1784419474168005365, "throughput_rps": 150.00420427033595, "p50_us": 2843, "p95_us": 5014, "p99_us": 22452, "errors": 0}
+    ],
+    "mean": {"throughput_rps": 149.9985123878166, "p50_us": 2846.0, "p95_us": 5017.333333333333, "p99_us": 22446.333333333332, "errors": 0}
+  },
+  "condition_b_beyla_plus_alloy_profiling": {
+    "reference_images": ["docker.io/grafana/beyla:3.1.2", "docker.io/grafana/alloy:v1.12.1"],
+    "trials": [
+      {"trial": "B1", "start_epoch_nanos": 1784419786333673306, "end_epoch_nanos": 1784419906343806555, "throughput_rps": 149.98733608550515, "p50_us": 2926, "p95_us": 5106, "p99_us": 22550, "errors": 0, "beyla_cpu_cores": 0.012306177829293823, "beyla_memory_bytes": 180038769.7778, "alloy_cpu_cores": 0.004414160356575965, "alloy_memory_bytes": 200798208.0},
+      {"trial": "B2", "start_epoch_nanos": 1784419990143772555, "end_epoch_nanos": 1784420110141097074, "throughput_rps": 150.00334581587822, "p50_us": 2925, "p95_us": 5112, "p99_us": 22520, "errors": 0, "beyla_cpu_cores": 0.010668171991890867, "beyla_memory_bytes": 210422272.0, "alloy_cpu_cores": 0.004544910680970312, "alloy_memory_bytes": 175925760.0},
+      {"trial": "B3", "start_epoch_nanos": 1784420162345332125, "end_epoch_nanos": 1784420282355497938, "throughput_rps": 149.98729573857952, "p50_us": 2929, "p95_us": 5125, "p99_us": 22582, "errors": 0, "beyla_cpu_cores": 0.009359175043464063, "beyla_memory_bytes": 236021077.3333, "alloy_cpu_cores": 0.004001435061452725, "alloy_memory_bytes": 175155882.6667}
+    ],
+    "mean": {
+      "throughput_rps": 149.99265921332096,
+      "p50_us": 2926.6666666666665,
+      "p95_us": 5114.333333333333,
+      "p99_us": 22550.666666666668,
+      "collector_cpu_cores": 0.015098010321215919,
+      "collector_memory_bytes": 392787323.2592592,
+      "collector_memory_gib": 0.36581170117413553,
+      "collector_cpu_plus_memory": 0.38090971149535147
+    },
+    "correctness": {
+      "alloy_profile_series_per_trial": 1,
+      "alloy_profile_points_nonzero": true,
+      "alloy_profile_dropped_or_failed": 0,
+      "beyla_expected_requests": 74250,
+      "beyla_observed_spans": 60543,
+      "beyla_unaccounted_spans": 13707,
+      "beyla_unaccounted_percent": 18.46060606060606,
+      "tempo_windows_partial": true
+    }
+  },
+  "condition_c_e_navigator": {
+    "image": "ghcr.io/guaracloud/e-navigator@sha256:89bbc0b8e42fceda8205387896060c5dfa2c2fdf95d793f9f2a74fe7e3d7cc14",
+    "source_commit": "e6bc3952715d6ef97a7b4dd581bff8e7c4e2be71",
+    "trials": [
+      {"trial": "C1", "start_epoch_nanos": 1784422163484064997, "end_epoch_nanos": 1784422283493937517, "throughput_rps": 149.98766164248394, "p50_us": 2893, "p95_us": 5079, "p99_us": 22479, "max_us": 23631, "errors": 0, "collector_cpu_cores": 0.061282222599592893, "collector_memory_bytes": 212540984.8888889, "tempo_traces": 18072},
+      {"trial": "C2", "start_epoch_nanos": 1784422336855982591, "end_epoch_nanos": 1784422456852822088, "throughput_rps": 150.00395242414163, "p50_us": 2897, "p95_us": 5098, "p99_us": 22548, "max_us": 24687, "errors": 0, "collector_cpu_cores": 0.06313153461400828, "collector_memory_bytes": 214031360.0, "tempo_traces": 18132},
+      {"trial": "C3", "start_epoch_nanos": 1784422507320817724, "end_epoch_nanos": 1784422627330429111, "throughput_rps": 149.98798801699527, "p50_us": 2903, "p95_us": 5090, "p99_us": 22496, "max_us": 25437, "errors": 0, "collector_cpu_cores": 0.06433171637719395, "collector_memory_bytes": 216305208.8888889, "tempo_traces": 18048}
+    ],
+    "mean": {
+      "throughput_rps": 149.9932006945403,
+      "p99_us": 22507.666666666668,
+      "collector_cpu_cores": 0.06291515786359837,
+      "collector_memory_bytes": 214292517.92592594,
+      "collector_memory_gib": 0.19957545951560693,
+      "collector_cpu_plus_memory": 0.2624906173792053
+    },
+    "correctness": {
+      "http_expected": 74250,
+      "http_decoded": 74250,
+      "http_sent": 74250,
+      "traces_enqueued": 74250,
+      "traces_sent": 74250,
+      "filtered_invalid_lost_send_failure_drop_failed_retry_rejected": 0,
+      "final_queue_depth": 0,
+      "tempo_root_service": "python",
+      "tempo_root_span": "http request",
+      "pyroscope_service": "enav-perf-server-f20e3b12",
+      "pyroscope_named_stacks": true
+    }
+  },
+  "thresholds_and_results": {
+    "minimum_c_throughput_rps": 148.49852726393845,
+    "maximum_c_p99_us": 22895.26,
+    "maximum_c_cpu_plus_memory": 0.2856822836215136,
+    "c_throughput_regression_percent": -0.0035411639700555497,
+    "c_p99_regression_percent": 0.27324433092266176,
+    "c_resource_reduction_vs_b_percent": 31.088494344570183,
+    "throughput": "PASS",
+    "p99": "PASS",
+    "collector_resource_reduction": "PASS",
+    "correctness": "PASS"
+  }
+}

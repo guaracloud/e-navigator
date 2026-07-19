@@ -1,0 +1,216 @@
+{
+  "schema_version": 1,
+  "run_id": "standalone-go-20260718t060517z-f20e3b12",
+  "decision": "PASS",
+  "runtime_source_commit": "e6bc3952715d6ef97a7b4dd581bff8e7c4e2be71",
+  "runtime_image": "ghcr.io/guaracloud/e-navigator@sha256:89bbc0b8e42fceda8205387896060c5dfa2c2fdf95d793f9f2a74fe7e3d7cc14",
+  "matrices": [
+    {
+      "name": "HTTP and protocol",
+      "decision": "PASS",
+      "fixtures": [
+        "target/standalone-go-f20e3b12-fixtures.yaml",
+        "target/standalone-go-f20e3b12-grpc.yaml",
+        "target/standalone-go-f20e3b12-grpc-strace.yaml"
+      ],
+      "covered": [
+        "fragmented and cross-CPU HTTP/1.1 headers",
+        "fixed and chunked bodies",
+        "pipelining, gaps, short-lived connections, fd reuse, and socket reuse",
+        "connection churn beyond bounded-map capacity",
+        "HTTP/2 continuation headers",
+        "gRPC unary and streaming traffic",
+        "accepted server connections and pre-existing listeners",
+        "vectored server reads and writes",
+        "DNS transactions, cache reuse, peer validation, and kernel timestamps",
+        "TCP roles, statistics, retransmits, and connection churn",
+        "malformed and unsupported input"
+      ],
+      "controlled_oracle": {
+        "expected_http_events": 74250,
+        "decoded_http_events": 74250,
+        "sent_http_signals": 74250,
+        "coverage_percent": 100.0,
+        "invalid_http_events": 0,
+        "lost_perf_events": 0,
+        "send_failures": 0
+      }
+    },
+    {
+      "name": "Metrics",
+      "decision": "PASS",
+      "covered": [
+        "complete resource and data-point series identity",
+        "bounded timestamp state",
+        "latest cumulative sample coalescing",
+        "same-millisecond duplicate suppression",
+        "counter reset and collector restart behavior",
+        "bounded cardinality",
+        "backend receipt queries against controlled counts"
+      ],
+      "results": {
+        "duplicate_timestamps": 0,
+        "out_of_order_samples": 0,
+        "backend_rejected_samples": 0,
+        "timestamp_state_evictions": 0,
+        "unexplained_series_identity_collisions": 0
+      }
+    },
+    {
+      "name": "Distributed tracing",
+      "decision": "PASS",
+      "fixtures": [
+        "target/standalone-go-f20e3b12-oracle-r4.yaml",
+        "target/standalone-go-f20e3b12-sdk-r45.yaml",
+        "target/standalone-go-f20e3b12-topology-r48.yaml",
+        "target/standalone-go-f20e3b12-topology-cross-r50.yaml"
+      ],
+      "covered": [
+        "unique generated trace and span IDs",
+        "observed client span ownership",
+        "client and server parent trees",
+        "multi-hop HTTP and gRPC",
+        "retries and keep-alive reuse",
+        "malformed and missing trace context",
+        "SDK coexistence without duplicate client spans",
+        "same-node and cross-node backend receipt",
+        "passive-capture non-injection boundary"
+      ],
+      "results": {
+        "expected_controlled_spans": 74250,
+        "enqueued_controlled_spans": 74250,
+        "sent_controlled_spans": 74250,
+        "invalid_trace_records": 0,
+        "duplicate_span_ids": 0,
+        "duplicate_sdk_owned_client_spans": 0,
+        "tempo_backend_queries": "PASS"
+      }
+    },
+    {
+      "name": "Topology and tenancy",
+      "decision": "PASS",
+      "fixtures": [
+        "target/standalone-go-f20e3b12-topology-r48.yaml",
+        "target/standalone-go-f20e3b12-topology-cross-r50.yaml",
+        "target/standalone-go-f20e3b12-topology-churn-r51.yaml",
+        "target/standalone-go-f20e3b12-topology-reconciled-r52.yaml",
+        "target/standalone-go-f20e3b12-topology-filter-r54.yaml",
+        "target/standalone-go-f20e3b12-topology-backend-r55.yaml"
+      ],
+      "covered": [
+        "ingress, egress, same-node, and cross-node traffic",
+        "Pod, owner, Service, EndpointSlice, namespace, container, and node attribution",
+        "restart, reschedule, IP reuse, ownership churn, watch reconnect, and relist",
+        "cross-agent deduplication",
+        "excluded namespace, unpaid tier, catalog slug, process, cgroup, and load-generator cases"
+      ],
+      "results": {
+        "unresolved_cgroups": 0,
+        "cross_agent_duplicates": 0,
+        "excluded_namespace_signals": 0,
+        "unpaid_tenant_signals": 0,
+        "catalog_signals": 0,
+        "cross_tenant_signals": 0
+      }
+    },
+    {
+      "name": "Profiling",
+      "decision": "PASS",
+      "fixture": "target/standalone-go-f20e3b12-profiles.yaml",
+      "delivery": "direct E-Navigator OTLP Profiles to Pyroscope",
+      "runtimes": [
+        "C",
+        "C++",
+        "Rust",
+        "Go",
+        "CPython 3.11",
+        "CPython 3.12",
+        "Node/V8",
+        "JVM"
+      ],
+      "covered": [
+        "native frames",
+        "Python runtime frames across multiple versions",
+        "JIT/perf-map frames and refresh",
+        "bounded symbol and unwind caches",
+        "selection, exclusion, and tenant isolation",
+        "backend service labels and useful named stacks"
+      ],
+      "results": {
+        "profile_export_drops": 0,
+        "profile_export_failures": 0,
+        "excluded_profile_services": 0,
+        "all_required_runtime_queries_useful": true,
+        "alloy_profiling_dependency": false
+      }
+    },
+    {
+      "name": "TLS",
+      "decision": "PASS",
+      "fixtures": [
+        "target/standalone-go-f20e3b12-tls-r56.yaml",
+        "target/standalone-go-f20e3b12-tls-r57.yaml"
+      ],
+      "supported_live_matrix": [
+        "OpenSSL 1.1.1",
+        "OpenSSL 3",
+        "GnuTLS ABI 30"
+      ],
+      "covered": [
+        "HTTP and gRPC over supported TLS",
+        "transactional attachment",
+        "fail-closed missing-export and unsupported-ABI behavior",
+        "architecture and shared-library gating",
+        "cross-CPU plaintext ordering"
+      ],
+      "explicit_non_claims": [
+        "BoringSSL",
+        "Go crypto/tls",
+        "rustls",
+        "statically bundled Node TLS",
+        "JVM JSSE",
+        "custom BIOs",
+        "custom GnuTLS transports"
+      ],
+      "results": {
+        "supported_matrix_cases": 6,
+        "supported_matrix_backend_matches": 6,
+        "parser_diagnostics": 0,
+        "lost_perf_events": 0,
+        "fail_closed_cases": "PASS"
+      }
+    },
+    {
+      "name": "Exporter reliability",
+      "decision": "PASS",
+      "covered": [
+        "gzip and uncompressed requests",
+        "success and partial success",
+        "retryable, permanent, malformed, and timeout responses",
+        "queue saturation and worker closure",
+        "backend outage and circuit opening/recovery",
+        "bounded shutdown",
+        "independent metric, trace, and profile failure domains",
+        "bounded memory and queue depth",
+        "native accounting for every drop and rejected item",
+        "final Prometheus, Tempo, and Pyroscope receipt"
+      ],
+      "results": {
+        "deterministic_fake_server_matrix": "PASS",
+        "live_queue_depth_after_flush": 0,
+        "live_unaccounted_drops": 0,
+        "live_retries_after_stabilization": 0,
+        "live_rejections_after_stabilization": 0,
+        "backend_receipt": "PASS"
+      }
+    }
+  ],
+  "quality_at_runtime_commit": {
+    "cargo_fmt": "PASS",
+    "workspace_clippy": "PASS",
+    "workspace_tests": "PASS",
+    "focused_aya_tests": {"passed": 189, "failed": 0},
+    "git_diff_check": "PASS",
+    "full_scripts_quality_gate": "PENDING_FINAL_EVIDENCE_TREE"
+  }
+}
