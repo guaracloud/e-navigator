@@ -7,6 +7,9 @@ mod cpu_unwind;
 #[cfg(any(target_os = "linux", test))]
 mod diagnostics;
 pub mod dns;
+#[cfg(test)]
+#[path = "../../e-navigator-ebpf-programs/src/capture_policy.rs"]
+mod ebpf_capture_policy;
 #[cfg(target_os = "linux")]
 mod ebpf_maps;
 pub mod exec;
