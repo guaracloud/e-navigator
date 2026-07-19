@@ -1,8 +1,8 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "run_id": "standalone-go-20260718t060517z-f20e3b12",
   "decision": "IN_PROGRESS",
-  "accepted_attempt": 2,
+  "accepted_attempt": 3,
   "attempts": [
     {
       "attempt": 1,
@@ -24,7 +24,7 @@
     },
     {
       "attempt": 2,
-      "decision": "IN_PROGRESS",
+      "decision": "INVALIDATED",
       "clock": {
         "start_epoch_seconds": 1784435212,
         "start_utc": "2026-07-19T04:26:52Z",
@@ -39,6 +39,17 @@
           "configuration or image change",
           "Prometheus or backend evidence gap that makes continuity unverifiable"
         ]
+      },
+      "invalidation": {
+        "discovered_epoch_seconds": 1784450752,
+        "discovered_utc": "2026-07-19T08:45:52Z",
+        "elapsed_seconds": 15540,
+        "first_nonzero_error_evaluation_epoch_seconds": 1784449038,
+        "first_nonzero_error_evaluation_utc": "2026-07-19T08:17:18Z",
+        "reason": "The fixed-rate soak client recorded one failed request, increasing its error counter from zero to one. The zero-error acceptance condition was therefore false even though all 233099 successful requests were decoded and sent exactly and every E-Navigator and backend failure counter remained at baseline.",
+        "attempt_time_accepted_for_final_decision_seconds": 0,
+        "diagnosis": "The client harness did not retain the caught exception class. Pod identities and restart counts, Prometheus targets, resources, namespace events, node and container network-error evidence, E-Navigator accounting, and backend counters remained clean, so the recoverable classification is a single self-recovered workload transport or protocol transaction failure without E-Navigator loss.",
+        "resolution": "The run-owned harness was upgraded with fixed-cardinality exception phase/class diagnostics and per-reason counters without changing rate, request mix, timeout, image, or acceptance criteria. Both fixture deployments were rolled to new zero-restart pods before attempt 3."
       },
       "stabilization": {
         "server_started_epoch_seconds": 1784434767,
@@ -296,6 +307,333 @@
             "_PySuper_Lookup"
           ],
           "excluded_profile_total_nanoseconds": 0
+        }
+      },
+      "quality_before_clock": {
+        "command": "scripts/quality.sh",
+        "result": "PASS",
+        "completed_utc": "2026-07-19T04:13:33Z"
+      }
+    },
+    {
+      "attempt": 3,
+      "decision": "IN_PROGRESS",
+      "clock": {
+        "start_epoch_seconds": 1784451788,
+        "start_utc": "2026-07-19T09:03:08Z",
+        "start_america_sao_paulo": "2026-07-19T06:03:08-03:00",
+        "minimum_end_epoch_seconds": 1784538188,
+        "minimum_end_utc": "2026-07-20T09:03:08Z",
+        "minimum_end_america_sao_paulo": "2026-07-20T06:03:08-03:00",
+        "minimum_duration_seconds": 86400,
+        "restart_conditions": [
+          "E-Navigator agent restart or replacement",
+          "Tempo, Pyroscope, Alloy, server, or client restart or replacement",
+          "configuration or image change",
+          "workload error counter increase",
+          "Prometheus or backend evidence gap that makes continuity unverifiable"
+        ]
+      },
+      "stabilization": {
+        "server_started_epoch_seconds": 1784451419,
+        "server_started_utc": "2026-07-19T08:56:59Z",
+        "server_ready_utc": "2026-07-19T08:57:00.511122238Z",
+        "client_started_epoch_seconds": 1784451419,
+        "client_started_utc": "2026-07-19T08:56:59Z",
+        "client_ready_utc": "2026-07-19T08:57:00.632341692Z",
+        "stable_seconds_before_clock": 367,
+        "offered_rps": 15,
+        "scheduled_requests": 5503,
+        "successful_requests": 5503,
+        "errors": 0,
+        "error_reasons": 0,
+        "inflight": 0,
+        "fixture": {
+          "manifest": "target/standalone-go-f20e3b12-soak.yaml",
+          "sha256": "1daf5decf90052fd53c207b25a783af0a08ce8c22e2533b0195392425167724c",
+          "configmap_uid": "46a59112-f004-4064-a8f9-aa126db85fc6",
+          "configmap_resource_version": "79620103",
+          "client_sha256": "3bc698350e997bc31009954a8c3b356b7b28f8895a2e93cc5fb4ea61139c8b5a",
+          "server_sha256": "941276a9e0141b5840dfd3a743e2a1c411049e6571cf141b51b392bde4efd4e9",
+          "harness_revision": "error-diagnostics-v2",
+          "request_mix": "60% /fast and 40% /work at an unchanged 15 RPS",
+          "server_cpu_rounds": {
+            "fast": 10000,
+            "work": 100000
+          },
+          "diagnostic_change": "The client now records bounded request phase and exception class in structured logs and a fixed-cardinality error-reason counter. Offered rate, request mix, two-second timeout, images, server work, and acceptance criteria are unchanged."
+        },
+        "one_minute_windows": [
+          {
+            "ending_utc": "2026-07-19T08:58:00.632842449Z",
+            "requests": 900,
+            "errors": 0,
+            "error_reasons": 0,
+            "p99_ms": 53.186
+          },
+          {
+            "ending_utc": "2026-07-19T08:59:00.634437607Z",
+            "requests": 900,
+            "errors": 0,
+            "error_reasons": 0,
+            "p99_ms": 51.566
+          },
+          {
+            "ending_utc": "2026-07-19T09:00:00.635050589Z",
+            "requests": 899,
+            "errors": 0,
+            "error_reasons": 0,
+            "p99_ms": 50.287
+          },
+          {
+            "ending_utc": "2026-07-19T09:01:00.636218699Z",
+            "requests": 901,
+            "errors": 0,
+            "error_reasons": 0,
+            "p99_ms": 51.244
+          },
+          {
+            "ending_utc": "2026-07-19T09:02:00.637612014Z",
+            "requests": 900,
+            "errors": 0,
+            "error_reasons": 0,
+            "p99_ms": 50.974
+          },
+          {
+            "ending_utc": "2026-07-19T09:03:00.638139877Z",
+            "requests": 900,
+            "errors": 0,
+            "error_reasons": 0,
+            "p99_ms": 50.901
+          }
+        ]
+      },
+      "gitops": {
+        "repository": "https://github.com/vicotrbb/home-datacenter",
+        "accepted_revision": "553e4365710f307cb485e1609a01881a7a9f3bbf",
+        "root_app": "Synced/Healthy",
+        "e_navigator": "Synced/Healthy",
+        "pyroscope": "Synced/Healthy",
+        "alloy": "Synced/Healthy",
+        "e_navigator_daemonset": {
+          "desired": 2,
+          "ready": 2,
+          "available": 2
+        },
+        "beyla_application_present": false,
+        "beyla_daemonset_present": false,
+        "legacy_or_temporary_e_navigator_collector_present": false,
+        "matching_helm_releases": 0
+      },
+      "immutable_images": {
+        "e_navigator_tag": "ghcr.io/guaracloud/e-navigator:sha-0cd5e9a",
+        "e_navigator_oci_index": "sha256:62402d21b9cb02d59d63365c7e3716ffa0980bfea42d070b43fed618703a7df9",
+        "e_navigator_linux_amd64_manifest": "sha256:ae8b5a7e936f01423d01d42744907b4098ea5818f3d2326fa242b6237f9e6f0c",
+        "e_navigator_linux_amd64_config": "sha256:5a3c9c907092a236ad0bbfef13356b70f7cf7da965a4f6babea1b50b5ab76e86",
+        "e_navigator_attestation_manifest": "sha256:87731e53b59607ef58eb97b7dd208f216b0fb14b70a9b39990b54e9cd0024131",
+        "pyroscope": "sha256:47fc578b2227e9c0c5c5efda34966c1566b0d0a0802cb2adc2e1e9f7ae16a7aa",
+        "tempo": "sha256:65a5789759435f1ef696f1953258b9bbdb18eb571d5ce711ff812d2e128288a4",
+        "alloy": "sha256:c311595156fca7b1131683d383dae1acfd29e8879d347161d2a6f714ebac0c0b",
+        "soak_python": "sha256:9d7f287598e1a5a978c015ee176d8216435aaf335ed69ac3c38dd1bbb10e8d64"
+      },
+      "configuration": {
+        "e_navigator_configmap_uid": "8672691d-abfa-4da7-adac-61320ab83479",
+        "e_navigator_config_sha256": "a9c15c3c565452a7d812426d9b01c57d08a2ae9228e8fff71396276c3901e9b2",
+        "capture_filter": "default deny; proj-* plus paid tier; catalog, load-generator, exporter, Alloy, Beyla, and E-Navigator exclusions"
+      },
+      "continuity_identities": [
+        {
+          "namespace": "e-navigator-system",
+          "pod": "e-navigator-agent-rxf26",
+          "uid": "bf33db19-968a-47a1-84be-dfca4e102965",
+          "node": "homelab-02",
+          "started_utc": "2026-07-19T04:07:52Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "e-navigator-system",
+          "pod": "e-navigator-agent-x2fnh",
+          "uid": "4a8a204b-f56d-43ac-8b2e-9a8ab7d250af",
+          "node": "homelab-01",
+          "started_utc": "2026-07-19T04:07:52Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "e-navigator-system",
+          "pod": "pyroscope-845cf6bff-rx4dp",
+          "uid": "70720a96-9964-466a-a540-bfa1cc964ed7",
+          "node": "homelab-01",
+          "started_utc": "2026-07-19T01:19:55Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "observability-system",
+          "pod": "alloy-9kxdn",
+          "uid": "9e5dfad7-6e44-4b6c-a592-9359241d87ec",
+          "node": "homelab-01",
+          "started_utc": "2026-03-16T13:35:13Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "observability-system",
+          "pod": "tempo-0",
+          "uid": "97849a2e-d93d-4d3d-87a0-b7696704bced",
+          "node": "homelab-01",
+          "started_utc": "2026-07-18T06:33:48Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "proj-enav-soak-f20e3b12",
+          "pod": "soak-client-7847cc7b5b-zxj9w",
+          "uid": "5100a617-8170-441c-a8b0-e1e09ce0b73c",
+          "node": "homelab-01",
+          "started_utc": "2026-07-19T08:56:59Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "proj-enav-soak-f20e3b12",
+          "pod": "soak-server-7bcb66845c-v6gkp",
+          "uid": "2ef800f7-378b-4a1e-8265-6cd909fa29d2",
+          "node": "homelab-02",
+          "started_utc": "2026-07-19T08:56:59Z",
+          "restarts": 0
+        }
+      ],
+      "baseline": {
+        "prometheus": {
+          "sample_epoch_seconds": 1784451788,
+          "targets_expected": 3,
+          "targets_up": 3,
+          "required_series_present": true
+        },
+        "workload": {
+          "scheduled": 5503,
+          "successful": 5503,
+          "errors": 0,
+          "error_reasons": 0,
+          "inflight": 0,
+          "two_minute_rate_rps": 14.999999999999998,
+          "two_minute_p99_seconds": 0.07284482758620674
+        },
+        "e_navigator_sources": {
+          "http_decoded": 266864,
+          "http_sent": 266864,
+          "all_invalid": 0,
+          "protocol_invalid": 0,
+          "all_lost_perf_events": 0,
+          "all_send_failures": 0,
+          "source_failures": 0,
+          "optional_attachment_or_capacity_failures": 0
+        },
+        "export": {
+          "enqueued": {
+            "e-navigator-agent-x2fnh": {
+              "metrics": 12816,
+              "profiles": 0,
+              "traces": 0
+            },
+            "e-navigator-agent-rxf26": {
+              "metrics": 29377,
+              "profiles": 65725,
+              "traces": 266864
+            }
+          },
+          "sent": {
+            "e-navigator-agent-x2fnh": {
+              "metrics": 12816,
+              "profiles": 0,
+              "traces": 0
+            },
+            "e-navigator-agent-rxf26": {
+              "metrics": 29377,
+              "profiles": 65725,
+              "traces": 266860
+            }
+          },
+          "queue_depth_all_families_all_agents": 0,
+          "drop_retry_failed_partial_rejected_permanent_invalid_out_of_order": 0
+        },
+        "metric_integrity": {
+          "same_millisecond_coalesced": 2926,
+          "same_millisecond_suppressed": 2926,
+          "timestamp_series_maximum": 62,
+          "timestamp_pending_series": 1,
+          "timestamp_series_evicted": 235,
+          "out_of_order_dropped": 0,
+          "excluded_client_metric_series": 0,
+          "selected_server_metric_series": 38
+        },
+        "kubernetes_controller": {
+          "ready_agents": 2,
+          "maximum_freshness_seconds": 48,
+          "watch_failures": 0,
+          "relist_failures_before_clock": 1,
+          "expired_resource_versions": 0,
+          "pods_per_agent": 173,
+          "services_per_agent": 101,
+          "endpoint_slices_per_agent": 102,
+          "unresolved_cgroups": 0,
+          "allowed_cgroups_selected_agent": 3
+        },
+        "resources": {
+          "cpu_cores": {
+            "e-navigator-agent-rxf26": 0.027758773276297055,
+            "e-navigator-agent-x2fnh": 0.0320567917892065,
+            "soak-client-7847cc7b5b-zxj9w": 0.019794710730997964,
+            "soak-server-7bcb66845c-v6gkp": 0.19582099610440337
+          },
+          "memory_bytes": {
+            "e-navigator-agent-rxf26": 277184512,
+            "e-navigator-agent-x2fnh": 174030848,
+            "soak-client-7847cc7b5b-zxj9w": 28151808,
+            "soak-server-7bcb66845c-v6gkp": 20848640
+          }
+        },
+        "backend_integrity": {
+          "tempo_discarded_spans": 3698681,
+          "tempo_ingester_append_failures": 0,
+          "tempo_metrics_generator_push_failures": 0,
+          "tempo_ingester_failed_flushes": 0,
+          "tempo_service_graph_dropped_spans": 1349325,
+          "tempo_metrics_generator_discarded_spans": 325919,
+          "tempo_receiver_refused_spans": 1988094,
+          "prometheus_out_of_order_samples_appended": 0,
+          "prometheus_remote_storage_samples_dropped": 0
+        },
+        "tempo": {
+          "query": "{ resource.k8s.pod.name = \"soak-server-7bcb66845c-v6gkp\" }",
+          "returned_trace_limit": 20,
+          "latest_returned_trace_start_epoch_nanos": 1784451666464665959,
+          "sample_trace_id": "373caf710ae3e2c96cd7f23d84712eef",
+          "root_service_names": [
+            "python"
+          ],
+          "root_span_names": [
+            "http request"
+          ],
+          "resource_span_count": 1,
+          "excluded_client_traces": 0,
+          "excluded_namespace_traces": 0
+        },
+        "pyroscope": {
+          "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds{service_name=\"enav-soak-server-f20e3b12\",k8s_pod_name=\"soak-server-7bcb66845c-v6gkp\"}",
+          "profile_type": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+          "flamegraph_total_nanoseconds": 171900000000,
+          "flamegraph_names": 394,
+          "flamegraph_levels": 29,
+          "named_python_frames": 15,
+          "timeline_start_epoch_seconds": 1784451420,
+          "timeline_step_seconds": 15,
+          "timeline_samples": 24,
+          "interior_zero_samples": 0,
+          "last_sample_nanoseconds": 6900000000,
+          "excluded_profile_total_nanoseconds": 0,
+          "bounded_generator_window": {
+            "observed_samples": 64,
+            "distinct_stacks": 64,
+            "samples_not_retained_by_bounded_aggregation": 55,
+            "structured_warning_count": 1
+          }
         }
       },
       "quality_before_clock": {

@@ -57,7 +57,7 @@
     "target/standalone-go-f20e3b12-tls-r56.yaml": "7e3360582716e924e5216cc98136e46d5e42abdc43b4344fad98c1983ab740e7",
     "target/standalone-go-f20e3b12-tls-r57.yaml": "92520d4d143e9e8cdcca701ef5e48199a31ead8412e98f29c2be5af07ec49e36",
     "target/standalone-go-f20e3b12-performance.yaml": "58f0efb7052ffdd8b6821aa1271b2f499d9727822e67031a3f99958cb0bb5d20",
-    "target/standalone-go-f20e3b12-soak.yaml": "f7601697b6f46afe5307eefc16a52e9b55f8495fae53204e8f29a5c647cea242",
+    "target/standalone-go-f20e3b12-soak.yaml": "1daf5decf90052fd53c207b25a783af0a08ce8c22e2533b0195392425167724c",
     "deployed_e_navigator_config": "a9c15c3c565452a7d812426d9b01c57d08a2ae9228e8fff71396276c3901e9b2"
   },
   "final_publication": {
