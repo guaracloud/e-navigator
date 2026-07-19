@@ -6,7 +6,7 @@
     "authoritative_start_commit": "21a9e7f1734b81d92389f4799ef3d27480dfb51f",
     "branch": "codex/standalone-production-acceptance",
     "runtime_source_commit": "0cd5e9aa517c361875ceb0d2a5a1e564a6fbfdf2",
-    "evidence_checkpoint_commit": null,
+    "evidence_checkpoint_commit": "60e9abe5940a2f50b4ccf59f0a578d43eb0098dd",
     "final_main_commit": null,
     "release_or_tag_created": false
   },
