@@ -2,6 +2,7 @@
 #![no_main]
 #![allow(clippy::needless_borrows_for_generic_args)]
 
+mod capture_policy;
 mod dns_peer;
 
 use aya_ebpf::{
@@ -23,6 +24,7 @@ use aya_ebpf::{
     },
     programs::{PerfEventContext, ProbeContext, RetProbeContext, TracePointContext},
 };
+use capture_policy::{CAPTURE_FILTER_DISABLED, capture_allowed, listener_metadata_allowed};
 use dns_peer::is_dns_ipv4_peer;
 
 /// Source-stage diagnostics are intentionally opt-in. The userspace loader
@@ -765,8 +767,6 @@ static TLS_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
 // `0` disables the filter; `1` enables it with unknown cgroups captured; any
 // other enabled value (userspace writes `2`) enables it with unknown cgroups
 // dropped.
-const CAPTURE_FILTER_DISABLED: u32 = 0;
-const CAPTURE_FILTER_UNKNOWN_CAPTURE: u32 = 1;
 
 /// Single-slot control word: disabled, or enabled with the posture applied to
 /// cgroups that are absent from `CGROUP_CAPTURE_FILTER`.
@@ -3142,8 +3142,13 @@ fn emit_http_request_iovecs_event_without_connection(
 }
 
 fn try_tracepoint_socket_bind_enter(ctx: &TracePointContext) -> Result<u32, i64> {
+    // Listener metadata is bounded and never emitted by itself. Track binds
+    // before workload admission so a pod that binds before the Kubernetes
+    // controller publishes its cgroup can still be filtered by the configured
+    // port when it later accepts traffic. The accept and payload paths retain
+    // the default-deny cgroup gate.
     let cgroup_id = current_cgroup_id();
-    if !cgroup_capture_allowed(cgroup_id) {
+    if !cgroup_listener_metadata_allowed(cgroup_id) {
         record_capture_filter_drop();
         return Ok(0);
     }
@@ -4776,13 +4781,25 @@ fn cgroup_capture_allowed(cgroup_id: u64) -> bool {
         .get(0)
         .copied()
         .unwrap_or(CAPTURE_FILTER_DISABLED);
-    if control == CAPTURE_FILTER_DISABLED {
-        return true;
-    }
-    match unsafe { CGROUP_CAPTURE_FILTER.get(&cgroup_id) } {
-        Some(verdict) => *verdict != 0,
-        None => control == CAPTURE_FILTER_UNKNOWN_CAPTURE,
-    }
+    let explicit_verdict = unsafe { CGROUP_CAPTURE_FILTER.get(&cgroup_id) }.copied();
+    capture_allowed(control, explicit_verdict)
+}
+
+/// Whether bounded listener metadata should be retained for `cgroup_id`.
+///
+/// An unknown cgroup may belong to a pod that bound its listener before the
+/// Kubernetes controller published the workload verdict. Retaining only this
+/// endpoint metadata closes that admission race; known denied cgroups still
+/// skip the map, and accept/payload emission continues to use the stricter
+/// `cgroup_capture_allowed` decision.
+#[inline(always)]
+fn cgroup_listener_metadata_allowed(cgroup_id: u64) -> bool {
+    let control = CAPTURE_FILTER_CONTROL
+        .get(0)
+        .copied()
+        .unwrap_or(CAPTURE_FILTER_DISABLED);
+    let explicit_verdict = unsafe { CGROUP_CAPTURE_FILTER.get(&cgroup_id) }.copied();
+    listener_metadata_allowed(control, explicit_verdict)
 }
 
 /// Account one handler invocation suppressed by the capture filter.
