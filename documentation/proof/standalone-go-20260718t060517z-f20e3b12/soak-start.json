@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "run_id": "standalone-go-20260718t060517z-f20e3b12",
+  "decision": "IN_PROGRESS",
+  "clock": {
+    "start_epoch_seconds": 1784425409,
+    "start_utc": "2026-07-19T01:43:29Z",
+    "start_america_sao_paulo": "2026-07-18T22:43:29-03:00",
+    "minimum_end_epoch_seconds": 1784511809,
+    "minimum_end_utc": "2026-07-20T01:43:29Z",
+    "minimum_duration_seconds": 86400,
+    "restart_conditions": [
+      "E-Navigator agent restart or replacement",
+      "Tempo, Pyroscope, Alloy, server, or client restart or replacement",
+      "configuration or image change",
+      "Prometheus evidence gap that makes continuity unverifiable"
+    ]
+  },
+  "stabilization": {
+    "workload_started_epoch_seconds": 1784425062.9340189,
+    "stable_seconds_before_clock": 347.2273328304291,
+    "offered_rps": 15,
+    "scheduled_requests": 5208,
+    "successful_requests": 5208,
+    "errors": 0,
+    "inflight": 0,
+    "one_minute_windows": [
+      {"requests": 900, "errors": 0, "p99_ms": 27.530},
+      {"requests": 900, "errors": 0, "p99_ms": 26.936},
+      {"requests": 900, "errors": 0, "p99_ms": 27.099},
+      {"requests": 900, "errors": 0, "p99_ms": 26.538},
+      {"requests": 900, "errors": 0, "p99_ms": 26.922}
+    ]
+  },
+  "gitops": {
+    "home_datacenter_revision": "efb17b904a39a576c93fbc6384cfd7d8ebc745a6",
+    "root_app": {"sync": "Synced", "health": "Healthy"},
+    "e_navigator": {"sync": "Synced", "health": "Healthy"},
+    "pyroscope": {"sync": "Synced", "health": "Healthy"},
+    "alloy": {"sync": "Synced", "health": "Healthy"},
+    "beyla_application_present": false,
+    "legacy_e_navigator_daemonset_present": false
+  },
+  "immutable_images": {
+    "e_navigator_oci_index": "sha256:89bbc0b8e42fceda8205387896060c5dfa2c2fdf95d793f9f2a74fe7e3d7cc14",
+    "pyroscope": "sha256:47fc578b2227e9c0c5c5efda34966c1566b0d0a0802cb2adc2e1e9f7ae16a7aa",
+    "tempo": "sha256:65a5789759435f1ef696f1953258b9bbdb18eb571d5ce711ff812d2e128288a4",
+    "alloy": "sha256:c311595156fca7b1131683d383dae1acfd29e8879d347161d2a6f714ebac0c0b",
+    "soak_python": "sha256:9d7f287598e1a5a978c015ee176d8216435aaf335ed69ac3c38dd1bbb10e8d64"
+  },
+  "continuity_identities": [
+    {"namespace": "e-navigator-system", "pod": "e-navigator-agent-hxss9", "uid": "f20d63b0-a5c3-41ab-9ac4-e4be4d1a4b52", "node": "homelab-01", "restarts": 0},
+    {"namespace": "e-navigator-system", "pod": "e-navigator-agent-ntnwd", "uid": "fcb96118-d75e-441d-94f9-ae9539fa98fe", "node": "homelab-02", "restarts": 0},
+    {"namespace": "e-navigator-system", "pod": "pyroscope-845cf6bff-rx4dp", "uid": "70720a96-9964-466a-a540-bfa1cc964ed7", "node": "homelab-01", "restarts": 0},
+    {"namespace": "observability-system", "pod": "alloy-9kxdn", "uid": "9e5dfad7-6e44-4b6c-a592-9359241d87ec", "node": "homelab-01", "restarts": 0},
+    {"namespace": "observability-system", "pod": "tempo-0", "uid": "97849a2e-d93d-4d3d-87a0-b7696704bced", "node": "homelab-01", "restarts": 0},
+    {"namespace": "proj-enav-soak-f20e3b12", "pod": "soak-client-d64ccbbb7-ccnbw", "uid": "40d63cf5-3d3a-4ea5-b178-946b93f3f43f", "node": "homelab-01", "restarts": 0},
+    {"namespace": "proj-enav-soak-f20e3b12", "pod": "soak-server-f57b95cbb-tvt5s", "uid": "3e4f30be-9051-4cdb-a0e3-cc7c88431628", "node": "homelab-02", "restarts": 0}
+  ],
+  "e_navigator_baseline": {
+    "prometheus_targets_up": 2,
+    "http": {
+      "decoded_samples": 6767,
+      "sent_signals": 6767,
+      "invalid_samples": 0,
+      "lost_perf_events": 0,
+      "send_failures": 0
+    },
+    "export": {
+      "queue_depth_all_families_all_agents": 0,
+      "metrics_enqueued": 1840,
+      "metrics_sent": 1837,
+      "profiles_enqueued": 26,
+      "profiles_sent": 26,
+      "traces_enqueued": 6767,
+      "traces_sent": 6758,
+      "drops_retries_failures_partial_rejected_permanent_invalid": 0
+    },
+    "kubernetes_controller": {
+      "ready_agents": 2,
+      "watch_failures": 0,
+      "expired_resource_versions": 0,
+      "startup_relist_failures_before_clock": 1,
+      "startup_relists": 5,
+      "maximum_freshness_seconds": 12
+    }
+  },
+  "backend_baseline": {
+    "prometheus_targets": {"expected": 3, "up": 3},
+    "tempo": {
+      "query": "{ resource.k8s.pod.name = \"soak-server-f57b95cbb-tvt5s\" }",
+      "returned_trace_limit": 20,
+      "root_service_name": "python",
+      "root_span_name": "http request"
+    },
+    "pyroscope": {
+      "service_names": ["enav-soak-server-f20e3b12", "pyroscope"],
+      "profile_type": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+      "flamegraph_total_nanoseconds": 3000000000,
+      "flamegraph_names": 67,
+      "flamegraph_levels": 28,
+      "named_python_frames": 60
+    }
+  }
+}
