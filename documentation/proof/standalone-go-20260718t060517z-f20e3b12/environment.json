@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "run_id": "standalone-go-20260718t060517z-f20e3b12",
+  "repository": {
+    "url": "https://github.com/guaracloud/e-navigator",
+    "authoritative_start_commit": "21a9e7f1734b81d92389f4799ef3d27480dfb51f",
+    "branch": "codex/standalone-production-acceptance",
+    "runtime_source_commit": "e6bc3952715d6ef97a7b4dd581bff8e7c4e2be71",
+    "evidence_checkpoint_commit": "cd70dd3518c2baab95a79619a4dc15b732dbeed4",
+    "final_main_commit": null,
+    "release_or_tag_created": false
+  },
+  "cluster": {
+    "context": "homelab",
+    "api_server": "https://192.168.50.132:6443",
+    "kubernetes": "v1.30.4+k3s1",
+    "architecture": "linux/amd64",
+    "nodes": [
+      {"name": "homelab-01", "uid": "d475da32-8e39-429c-b4ec-521a1caa9a5b", "ready": true, "os": "NixOS 24.05 (Uakari)", "kernel": "6.6.68", "runtime": "containerd 1.7.20-k3s1"},
+      {"name": "homelab-02", "uid": "c5a4363d-5090-4439-ab3e-d30ab04caf5c", "ready": true, "os": "NixOS 24.05 (Uakari)", "kernel": "6.6.68", "runtime": "containerd 1.7.20-k3s1"}
+    ]
+  },
+  "acceptance_image": {
+    "tag": "ghcr.io/guaracloud/e-navigator:sha-e6bc395",
+    "oci_index_digest": "sha256:89bbc0b8e42fceda8205387896060c5dfa2c2fdf95d793f9f2a74fe7e3d7cc14",
+    "linux_amd64_manifest_digest": "sha256:d7cf0465d44bd637380b175fc32f3296d98eb2e9c0b9b1d59d99d4de24733f5f",
+    "linux_amd64_config_digest": "sha256:7611b64b52cac79d47cf9aae4d1cd85addf5d079bd3495deab0940f7f91a7ffd",
+    "attestation_manifest_digest": "sha256:ca1013fc17b33e227be6f921f9b1f97698dc490247625f89dd141fe488686780"
+  },
+  "backends": {
+    "metrics": "E-Navigator OTLP HTTP through the shared Alloy gateway to Prometheus",
+    "traces": "E-Navigator OTLP HTTP through the shared Alloy gateway to Tempo 2.9.0",
+    "profiles": "direct E-Navigator OTLP Profiles to Pyroscope 1.20.3",
+    "images": {
+      "alloy": "docker.io/grafana/alloy@sha256:c311595156fca7b1131683d383dae1acfd29e8879d347161d2a6f714ebac0c0b",
+      "tempo": "docker.io/grafana/tempo@sha256:65a5789759435f1ef696f1953258b9bbdb18eb571d5ce711ff812d2e128288a4",
+      "pyroscope": "docker.io/grafana/pyroscope@sha256:47fc578b2227e9c0c5c5efda34966c1566b0d0a0802cb2adc2e1e9f7ae16a7aa"
+    }
+  },
+  "deployment": {
+    "agent_namespace": "e-navigator-system",
+    "agent_daemonset": "e-navigator-agent",
+    "agent_replicas": 2,
+    "profile_storage": "4Gi Longhorn persistent volume",
+    "soak_namespace": "proj-enav-soak-f20e3b12",
+    "soak_client_node": "homelab-01",
+    "soak_server_node": "homelab-02",
+    "soak_workload_image": "python:3.13-slim-bookworm@sha256:9d7f287598e1a5a978c015ee176d8216435aaf335ed69ac3c38dd1bbb10e8d64"
+  },
+  "input_sha256": {
+    "target/standalone-go-f20e3b12.toml": "dd95e87e39ca6f5d30bbd2357eac77102e8e986f45e24d46d5b1b7e76303494b",
+    "target/standalone-go-f20e3b12-fixtures.yaml": "2bca1dd97384a91dd258a8bc07822eaaeaaf3009f4864b3cd2703453d3a4c244",
+    "target/standalone-go-f20e3b12-profiles.yaml": "297ca302b867692e5ca06970b83265ad589418229959d0af56fad4ba6334003f",
+    "target/standalone-go-f20e3b12-tls-r56.yaml": "7e3360582716e924e5216cc98136e46d5e42abdc43b4344fad98c1983ab740e7",
+    "target/standalone-go-f20e3b12-tls-r57.yaml": "92520d4d143e9e8cdcca701ef5e48199a31ead8412e98f29c2be5af07ec49e36",
+    "target/standalone-go-f20e3b12-performance.yaml": "58f0efb7052ffdd8b6821aa1271b2f499d9727822e67031a3f99958cb0bb5d20",
+    "target/standalone-go-f20e3b12-soak.yaml": "1ce9fe994f261aaa684c73133638c91d48334ce94d49c4027b48673161f05607",
+    "deployed_e_navigator_config": "a9c15c3c565452a7d812426d9b01c57d08a2ae9228e8fff71396276c3901e9b2"
+  },
+  "final_publication": {
+    "main_image_digest": null,
+    "main_image_source_commit": null,
+    "post_merge_workflow": null,
+    "gitops_main_digest_revision": null
+  }
+}
