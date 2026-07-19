@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "run_id": "standalone-go-20260718t060517z-f20e3b12",
+  "decision": "PASS",
+  "defect": "A selected workload can bind before the Kubernetes controller publishes its cgroup verdict, leaving accepted sockets without listener-port metadata and producing UnresolvedServerPort protocol samples.",
+  "repair": {
+    "source_commit": "0cd5e9aa517c361875ceb0d2a5a1e564a6fbfdf2",
+    "image_workflow": "https://github.com/guaracloud/e-navigator/actions/runs/29670877259",
+    "oci_index": "sha256:62402d21b9cb02d59d63365c7e3716ffa0980bfea42d070b43fed618703a7df9",
+    "amd64_manifest": "sha256:ae8b5a7e936f01423d01d42744907b4098ea5818f3d2326fa242b6237f9e6f0c",
+    "amd64_config": "sha256:5a3c9c907092a236ad0bbfef13356b70f7cf7da965a4f6babea1b50b5ab76e86",
+    "attestation_manifest": "sha256:87731e53b59607ef58eb97b7dd208f216b0fb14b70a9b39990b54e9cd0024131",
+    "gitops_pull_request": "https://github.com/vicotrbb/home-datacenter/pull/36",
+    "gitops_merge_commit": "e47f7d38a74a135f49208a9b98f3fccc20caae23"
+  },
+  "static_verification": {
+    "policy_regression_tests": {"passed": 2, "failed": 0},
+    "protocol_tests": {"passed": 41, "failed": 0},
+    "focused_clippy": "PASS",
+    "format_check": "PASS",
+    "diff_check": "PASS",
+    "linux_arm64_container_and_ebpf_build": "PASS"
+  },
+  "live_ordering": {
+    "agents_ready_before_server_bind": true,
+    "agents": [
+      {
+        "pod": "e-navigator-agent-cnzlr",
+        "uid": "98333c8b-3071-4379-8c1a-c7a0eab0980d",
+        "node": "homelab-01",
+        "start_utc": "2026-07-19T03:05:00Z",
+        "restarts": 0
+      },
+      {
+        "pod": "e-navigator-agent-sx5gn",
+        "uid": "77be79d7-943f-44c2-8f97-e6c38a8e310b",
+        "node": "homelab-02",
+        "start_utc": "2026-07-19T03:04:14Z",
+        "restarts": 0
+      }
+    ],
+    "selected_server": {
+      "namespace": "proj-enav-soak-f20e3b12",
+      "pod": "soak-server-77bfc49c6c-p8rq6",
+      "uid": "f1377d08-07e9-40f9-8db9-149f79873880",
+      "node": "homelab-02",
+      "start_utc": "2026-07-19T03:05:37Z",
+      "restarts": 0
+    }
+  },
+  "prometheus_window": {
+    "start_epoch_seconds": 1784430337,
+    "end_epoch_seconds": 1784430784,
+    "duration_seconds": 447,
+    "step_seconds": 15,
+    "protocol_invalid_samples": 30,
+    "protocol_invalid_minimum": 0,
+    "protocol_invalid_maximum": 0,
+    "protocol_sources_initialized": 2,
+    "last_five_minutes": {
+      "http_decoded_samples": 4500,
+      "http_sent_signals": 4500,
+      "protocol_invalid_samples": 0,
+      "http_invalid_samples": 0,
+      "http_and_protocol_lost_perf_events": 0,
+      "http_and_protocol_send_failures": 0
+    }
+  },
+  "assertions": {
+    "late_admission_listener_metadata_retained": "PASS",
+    "payload_default_deny_preserved_by_unit_regression": "PASS",
+    "selected_http_exact": "PASS",
+    "protocol_unresolved_server_port_regression": "PASS",
+    "source_loss_or_send_failure": "PASS"
+  }
+}

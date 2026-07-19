@@ -5,8 +5,8 @@
     "url": "https://github.com/guaracloud/e-navigator",
     "authoritative_start_commit": "21a9e7f1734b81d92389f4799ef3d27480dfb51f",
     "branch": "codex/standalone-production-acceptance",
-    "runtime_source_commit": "e6bc3952715d6ef97a7b4dd581bff8e7c4e2be71",
-    "evidence_checkpoint_commit": "cd70dd3518c2baab95a79619a4dc15b732dbeed4",
+    "runtime_source_commit": "0cd5e9aa517c361875ceb0d2a5a1e564a6fbfdf2",
+    "evidence_checkpoint_commit": null,
     "final_main_commit": null,
     "release_or_tag_created": false
   },
@@ -21,11 +21,13 @@
     ]
   },
   "acceptance_image": {
-    "tag": "ghcr.io/guaracloud/e-navigator:sha-e6bc395",
-    "oci_index_digest": "sha256:89bbc0b8e42fceda8205387896060c5dfa2c2fdf95d793f9f2a74fe7e3d7cc14",
-    "linux_amd64_manifest_digest": "sha256:d7cf0465d44bd637380b175fc32f3296d98eb2e9c0b9b1d59d99d4de24733f5f",
-    "linux_amd64_config_digest": "sha256:7611b64b52cac79d47cf9aae4d1cd85addf5d079bd3495deab0940f7f91a7ffd",
-    "attestation_manifest_digest": "sha256:ca1013fc17b33e227be6f921f9b1f97698dc490247625f89dd141fe488686780"
+    "tag": "ghcr.io/guaracloud/e-navigator:sha-0cd5e9a",
+    "source_commit": "0cd5e9aa517c361875ceb0d2a5a1e564a6fbfdf2",
+    "workflow_run": "https://github.com/guaracloud/e-navigator/actions/runs/29670877259",
+    "oci_index_digest": "sha256:62402d21b9cb02d59d63365c7e3716ffa0980bfea42d070b43fed618703a7df9",
+    "linux_amd64_manifest_digest": "sha256:ae8b5a7e936f01423d01d42744907b4098ea5818f3d2326fa242b6237f9e6f0c",
+    "linux_amd64_config_digest": "sha256:5a3c9c907092a236ad0bbfef13356b70f7cf7da965a4f6babea1b50b5ab76e86",
+    "attestation_manifest_digest": "sha256:87731e53b59607ef58eb97b7dd208f216b0fb14b70a9b39990b54e9cd0024131"
   },
   "backends": {
     "metrics": "E-Navigator OTLP HTTP through the shared Alloy gateway to Prometheus",
@@ -41,6 +43,7 @@
     "agent_namespace": "e-navigator-system",
     "agent_daemonset": "e-navigator-agent",
     "agent_replicas": 2,
+    "gitops_revision": "553e4365710f307cb485e1609a01881a7a9f3bbf",
     "profile_storage": "4Gi Longhorn persistent volume",
     "soak_namespace": "proj-enav-soak-f20e3b12",
     "soak_client_node": "homelab-01",
@@ -54,7 +57,7 @@
     "target/standalone-go-f20e3b12-tls-r56.yaml": "7e3360582716e924e5216cc98136e46d5e42abdc43b4344fad98c1983ab740e7",
     "target/standalone-go-f20e3b12-tls-r57.yaml": "92520d4d143e9e8cdcca701ef5e48199a31ead8412e98f29c2be5af07ec49e36",
     "target/standalone-go-f20e3b12-performance.yaml": "58f0efb7052ffdd8b6821aa1271b2f499d9727822e67031a3f99958cb0bb5d20",
-    "target/standalone-go-f20e3b12-soak.yaml": "1ce9fe994f261aaa684c73133638c91d48334ce94d49c4027b48673161f05607",
+    "target/standalone-go-f20e3b12-soak.yaml": "f7601697b6f46afe5307eefc16a52e9b55f8495fae53204e8f29a5c647cea242",
     "deployed_e_navigator_config": "a9c15c3c565452a7d812426d9b01c57d08a2ae9228e8fff71396276c3901e9b2"
   },
   "final_publication": {
