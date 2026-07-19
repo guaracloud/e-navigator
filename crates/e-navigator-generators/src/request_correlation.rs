@@ -62,17 +62,26 @@ impl Generator<SignalEnvelope> for RequestCorrelationGenerator {
         ModuleMetadata::new("generator.request_correlation", ModuleKind::Generator)
     }
 
+    fn accepts(&self, signal: &SignalEnvelope) -> bool {
+        matches!(
+            &signal.payload,
+            SignalPayload::ProtocolRequestObservation(_)
+        )
+    }
+
+    fn observe_immediate(
+        &self,
+        signal: &SignalEnvelope,
+    ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
+        Some(self.outputs_for_signal(signal))
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
-        let outputs = match &signal.payload {
-            SignalPayload::ProtocolRequestObservation(request) => {
-                self.observe_protocol_request(signal, request)?
-            }
-            _ => Vec::new(),
-        };
+        let outputs = self.outputs_for_signal(signal)?;
 
         for output in outputs {
             tx.send(output)
@@ -85,6 +94,15 @@ impl Generator<SignalEnvelope> for RequestCorrelationGenerator {
 }
 
 impl RequestCorrelationGenerator {
+    fn outputs_for_signal(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
+        match &signal.payload {
+            SignalPayload::ProtocolRequestObservation(request) => {
+                self.observe_protocol_request(signal, request)
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
+
     fn observe_protocol_request(
         &self,
         signal: &SignalEnvelope,

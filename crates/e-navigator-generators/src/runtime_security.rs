@@ -43,6 +43,13 @@ impl Generator<SignalEnvelope> for RuntimeSecurityGenerator {
         ModuleMetadata::new("generator.runtime_security", ModuleKind::Generator)
     }
 
+    fn accepts(&self, signal: &SignalEnvelope) -> bool {
+        matches!(
+            &signal.payload,
+            SignalPayload::Exec(_) | SignalPayload::NetworkConnectionOpen(_)
+        )
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,

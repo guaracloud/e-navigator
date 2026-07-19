@@ -338,7 +338,7 @@ fn scan_cgroups_discovers_pod_and_container_tokens() {
     // A host cgroup that must not resolve to any pod.
     std::fs::create_dir_all(root.join("system.slice").join("sshd.service")).expect("host cgroup");
 
-    let observations = scan_cgroups_blocking(&root, &root.join("proc"));
+    let observations = scan_cgroups_blocking(&root, &root.join("proc"), false);
 
     // The scan emits an observation per cgroup level; the container-scope leaf
     // carries both the pod UID and container id (both resolve to the same pod).
@@ -358,12 +358,51 @@ fn scan_cgroups_discovers_pod_and_container_tokens() {
 }
 
 #[test]
-fn controller_publish_increments_generation() {
+fn controller_publish_increments_only_for_changed_desired_state() {
     let controller = CaptureFilterController::new(CONTROL_UNKNOWN_DROP);
     let (generation0, _) = controller.current();
-    controller.publish(DesiredFilterMap::default());
+
+    assert!(!controller.publish(DesiredFilterMap::default()));
+    assert_eq!(controller.current().0, generation0);
+
+    let policy = CaptureFilterPolicy::from_config(&CaptureFilterConfig {
+        enabled: true,
+        default_posture: CapturePosture::Allow,
+        ..Default::default()
+    });
+    let index = RawNodePodIndex::from_pods(
+        [RawPod {
+            namespace: "proj".to_string(),
+            pod_name: "api".to_string(),
+            pod_uid: Some(UID.to_string()),
+            node_name: Some("node-a".to_string()),
+            pod_ip: None,
+            workload_name: Some("api".to_string()),
+            workload_type: Some("deployment".to_string()),
+            container_ids: vec![CID.to_string()],
+            container_names: BTreeMap::new(),
+            labels: BTreeMap::new(),
+        }],
+        1,
+    );
+    let desired = build_desired_filter_map(
+        &[CgroupObservation::from_cgroup_path(
+            41,
+            &format!(
+                "/kubepods-pod{}.slice/cri-containerd-{CID}.scope",
+                UID.replace('-', "_")
+            ),
+        )],
+        &index,
+        &policy,
+        1,
+    );
+
+    assert!(controller.publish(desired.clone()));
     let (generation1, _) = controller.current();
     assert_ne!(generation0, generation1);
+    assert!(!controller.publish(desired));
+    assert_eq!(controller.current().0, generation1);
     assert_eq!(controller.control_word(), CONTROL_UNKNOWN_DROP);
 }
 
@@ -422,7 +461,7 @@ fn scan_cgroups_reads_bounded_process_names_from_host_procfs() {
     )
     .expect("fixture exe symlink");
 
-    let observations = scan_cgroups_blocking(&cgroup_root, &procfs_root);
+    let observations = scan_cgroups_blocking(&cgroup_root, &procfs_root, true);
     let container = observations
         .iter()
         .find(|observation| observation.container_id.as_deref() == Some(CID))
@@ -436,5 +475,28 @@ fn scan_cgroups_reads_bounded_process_names_from_host_procfs() {
             "postgres-exporter"
         ]
     );
+    std::fs::remove_dir_all(&fixture).expect("cleanup");
+}
+
+#[test]
+fn scan_cgroups_skips_process_procfs_without_process_rules() {
+    let fixture = std::env::temp_dir().join(format!(
+        "e-nav-cf-process-scan-disabled-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&fixture);
+    let cgroup_root = fixture.join("cgroup");
+    let procfs_root = fixture.join("proc");
+    let leaf = cgroup_root.join(format!("cri-containerd-{CID}.scope"));
+    std::fs::create_dir_all(&leaf).expect("fixture cgroup");
+    std::fs::write(leaf.join("cgroup.procs"), "123\n").expect("fixture cgroup.procs");
+
+    let observations = scan_cgroups_blocking(&cgroup_root, &procfs_root, false);
+    let container = observations
+        .iter()
+        .find(|observation| observation.container_id.as_deref() == Some(CID))
+        .expect("container observation");
+
+    assert!(container.process_names.is_empty());
     std::fs::remove_dir_all(&fixture).expect("cleanup");
 }

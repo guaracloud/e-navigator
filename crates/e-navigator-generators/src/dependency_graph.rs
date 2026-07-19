@@ -40,6 +40,13 @@ impl Generator<SignalEnvelope> for DependencyGraphGenerator {
         ModuleMetadata::new("generator.dependency_graph", ModuleKind::Generator)
     }
 
+    fn accepts(&self, signal: &SignalEnvelope) -> bool {
+        matches!(
+            &signal.payload,
+            SignalPayload::NetworkConnectionOpen(_) | SignalPayload::NetworkConnectionClose(_)
+        )
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,

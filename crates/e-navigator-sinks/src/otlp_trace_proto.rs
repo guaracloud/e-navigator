@@ -8,6 +8,8 @@ use opentelemetry_proto::tonic::{
     trace::v1::{ResourceSpans, ScopeSpans, Span, Status, span, status},
 };
 use prost::Message;
+use serde_json::Value;
+use std::collections::BTreeMap;
 
 pub(crate) fn trace_record_has_valid_ids(record: &OtelTraceRecord) -> bool {
     record
@@ -25,10 +27,7 @@ pub(crate) fn trace_record_has_valid_ids(record: &OtelTraceRecord) -> bool {
 pub(crate) fn encode_trace_export_request(
     records: &[OtelTraceRecord],
 ) -> Result<Vec<u8>, ExporterError> {
-    let resource_spans = records
-        .iter()
-        .filter_map(resource_spans_from_record)
-        .collect::<Vec<_>>();
+    let resource_spans = resource_spans_from_records(records);
     let request = ExportTraceServiceRequest { resource_spans };
     let mut bytes = Vec::with_capacity(request.encoded_len());
     request
@@ -37,11 +36,32 @@ pub(crate) fn encode_trace_export_request(
     Ok(bytes)
 }
 
-fn resource_spans_from_record(record: &OtelTraceRecord) -> Option<ResourceSpans> {
-    let span = span_from_record(record)?;
-    Some(ResourceSpans {
+fn resource_spans_from_records(records: &[OtelTraceRecord]) -> Vec<ResourceSpans> {
+    let mut groups: Vec<(&BTreeMap<String, Value>, Vec<Span>)> = Vec::new();
+    for record in records {
+        let Some(span) = span_from_record(record) else {
+            continue;
+        };
+        if let Some(index) = groups
+            .iter()
+            .position(|(resource, _)| *resource == &record.resource)
+        {
+            groups[index].1.push(span);
+        } else {
+            groups.push((&record.resource, vec![span]));
+        }
+    }
+
+    groups
+        .into_iter()
+        .map(|(resource, spans)| resource_spans(resource, spans))
+        .collect()
+}
+
+fn resource_spans(resource: &BTreeMap<String, Value>, spans: Vec<Span>) -> ResourceSpans {
+    ResourceSpans {
         resource: Some(Resource {
-            attributes: key_values(&record.resource),
+            attributes: key_values(resource),
             dropped_attributes_count: 0,
             entity_refs: Vec::new(),
         }),
@@ -52,11 +72,11 @@ fn resource_spans_from_record(record: &OtelTraceRecord) -> Option<ResourceSpans>
                 attributes: Vec::new(),
                 dropped_attributes_count: 0,
             }),
-            spans: vec![span],
+            spans,
             schema_url: String::new(),
         }],
         schema_url: String::new(),
-    })
+    }
 }
 
 fn span_from_record(record: &OtelTraceRecord) -> Option<Span> {
@@ -188,6 +208,39 @@ mod tests {
             serde_json::json!("client"),
         );
         assert_eq!(span_kind(&client), span::SpanKind::Client);
+    }
+
+    #[test]
+    fn groups_equal_resources_without_losing_or_merging_spans() {
+        let mut first = trace_record();
+        first
+            .resource
+            .insert("service.name".to_string(), serde_json::json!("api"));
+        let mut second = first.clone();
+        second.span_id = Some("10f067aa0ba902b7".to_string());
+        let mut third = first.clone();
+        third.span_id = Some("20f067aa0ba902b7".to_string());
+        third
+            .resource
+            .insert("service.name".to_string(), serde_json::json!("worker"));
+
+        let bytes =
+            encode_trace_export_request(&[first, second, third]).expect("trace request encodes");
+        let request =
+            ExportTraceServiceRequest::decode(bytes.as_slice()).expect("trace request decodes");
+
+        assert_eq!(request.resource_spans.len(), 2);
+        assert_eq!(request.resource_spans[0].scope_spans[0].spans.len(), 2);
+        assert_eq!(request.resource_spans[1].scope_spans[0].spans.len(), 1);
+        assert_eq!(
+            request
+                .resource_spans
+                .iter()
+                .flat_map(|resource| &resource.scope_spans)
+                .flat_map(|scope| &scope.spans)
+                .count(),
+            3
+        );
     }
 
     fn trace_record() -> OtelTraceRecord {

@@ -38,6 +38,7 @@ tracing = { workspace = true }
 aya = { workspace = true }
 libc = { workspace = true }
 object = { workspace = true }
+rustix = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }

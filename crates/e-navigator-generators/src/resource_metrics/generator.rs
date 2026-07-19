@@ -41,6 +41,22 @@ impl Generator<SignalEnvelope> for ResourceMetricsGenerator {
         ModuleMetadata::new("generator.resource_metrics", ModuleKind::Generator)
     }
 
+    fn accepts(&self, signal: &SignalEnvelope) -> bool {
+        matches!(
+            &signal.payload,
+            SignalPayload::NodeCpuObservation(_)
+                | SignalPayload::NodeLoadObservation(_)
+                | SignalPayload::NodeMemoryObservation(_)
+                | SignalPayload::NodeFilesystemObservation(_)
+                | SignalPayload::NodeDiskIoObservation(_)
+                | SignalPayload::ProcessResourceObservation(_)
+                | SignalPayload::CgroupCpuObservation(_)
+                | SignalPayload::CgroupMemoryObservation(_)
+                | SignalPayload::CgroupPidsObservation(_)
+                | SignalPayload::CgroupFileDescriptorObservation(_)
+        )
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,

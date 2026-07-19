@@ -20,9 +20,6 @@ pub(crate) const RAW_DNS_PROTOCOL_UDP: u32 = 17;
 pub(crate) const RAW_DNS_PROTOCOL_TCP: u32 = 6;
 #[cfg(any(target_os = "linux", test))]
 const PERF_BUFFER_PAGE_COUNT: usize = 64;
-#[cfg(any(target_os = "linux", test))]
-const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
-
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -381,7 +378,7 @@ mod platform {
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
-        Ebpf, include_bytes_aligned,
+        Ebpf, EbpfLoader, include_bytes_aligned,
         maps::perf::{PerfEvent, PerfEventArray},
         programs::TracePoint,
         util::online_cpus,
@@ -424,11 +421,17 @@ mod platform {
             let mut reader_handles = Vec::new();
             let diagnostics = SourceDiagnostics::from_env();
             let telemetry = Arc::new(SourceTelemetry::new("source.aya_dns"));
-            let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
-                env!("OUT_DIR"),
-                "/e-navigator-ebpf-programs"
-            )))
-            .map_err(module_error)?;
+            let mut loader = EbpfLoader::new();
+            crate::ebpf_maps::constrain_unrelated_maps(
+                &mut loader,
+                crate::ebpf_maps::SourceMapProfile::Dns,
+            );
+            let mut ebpf = loader
+                .load(include_bytes_aligned!(concat!(
+                    env!("OUT_DIR"),
+                    "/e-navigator-ebpf-programs"
+                )))
+                .map_err(module_error)?;
 
             attach_tracepoint(
                 &mut ebpf,
@@ -549,6 +552,11 @@ mod platform {
                     let mut closed = false;
 
                     while !reader_shutdown.is_stopped() {
+                        if crate::perf_reader::wait_for_events(&buffer, "source.aya_dns", cpu_id)
+                            != Some(true)
+                        {
+                            continue;
+                        }
                         buffer.for_each(|event| {
                             if closed {
                                 return;
@@ -604,10 +612,6 @@ mod platform {
                         if closed {
                             return;
                         }
-
-                        std::thread::sleep(std::time::Duration::from_millis(
-                            super::PERF_READER_POLL_INTERVAL_MS,
-                        ));
                     }
                 }));
             }

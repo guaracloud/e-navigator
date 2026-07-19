@@ -7,9 +7,13 @@ mod cpu_unwind;
 #[cfg(any(target_os = "linux", test))]
 mod diagnostics;
 pub mod dns;
+#[cfg(target_os = "linux")]
+mod ebpf_maps;
 pub mod exec;
 pub mod http;
 pub mod network;
+#[cfg(target_os = "linux")]
+mod perf_reader;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 mod perf_sample;
 #[cfg(feature = "fuzzing")]

@@ -1,5 +1,7 @@
 use e_navigator_core::capture_filter::parse_container_id_from_cgroup_path;
 use e_navigator_signals::ContainerContext;
+#[cfg(any(target_os = "linux", test))]
+use std::collections::{BTreeMap, VecDeque};
 use std::{
     fs::File,
     io::{self, Read},
@@ -9,6 +11,59 @@ use tracing::{debug, warn};
 
 const MAX_CGROUP_BYTES: u64 = 4096;
 const ESRCH: i32 = 3;
+
+/// Bounded source-time container attribution keyed by both PID and cgroup.
+///
+/// Hot protocol sources can emit many observations for one long-lived
+/// process. Reopening `/proc/<pid>/cgroup` for every observation needlessly
+/// puts filesystem I/O in the capture path. Including the kernel cgroup ID in
+/// the key prevents a recycled PID from inheriting attribution from a prior
+/// process. Unknown cgroup IDs and failed lookups are intentionally not
+/// cached, so transient procfs races can recover on a later observation.
+#[derive(Debug)]
+#[cfg(any(target_os = "linux", test))]
+pub(crate) struct ContainerContextCache {
+    capacity: usize,
+    entries: BTreeMap<(u32, u64), ContainerContext>,
+    insertion_order: VecDeque<(u32, u64)>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl ContainerContextCache {
+    pub(crate) fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            entries: BTreeMap::new(),
+            insertion_order: VecDeque::new(),
+        }
+    }
+
+    pub(crate) fn resolve(
+        &mut self,
+        procfs_root: &Path,
+        pid: u32,
+        cgroup_id: u64,
+    ) -> Option<ContainerContext> {
+        if cgroup_id == 0 {
+            return container_from_pid_cgroup(procfs_root, pid);
+        }
+
+        let key = (pid, cgroup_id);
+        if let Some(container) = self.entries.get(&key) {
+            return Some(container.clone());
+        }
+
+        let container = container_from_pid_cgroup(procfs_root, pid)?;
+        if self.entries.len() >= self.capacity
+            && let Some(oldest) = self.insertion_order.pop_front()
+        {
+            self.entries.remove(&oldest);
+        }
+        self.entries.insert(key, container.clone());
+        self.insertion_order.push_back(key);
+        Some(container)
+    }
+}
 
 pub(crate) fn container_from_pid_cgroup(procfs_root: &Path, pid: u32) -> Option<ContainerContext> {
     let path = procfs_root.join(pid.to_string()).join("cgroup");
@@ -112,6 +167,50 @@ mod tests {
         let err = io::Error::from_raw_os_error(ESRCH);
 
         assert!(is_disappeared_process_error(&err));
+    }
+
+    #[test]
+    fn source_container_cache_reuses_attribution_for_the_same_process_cgroup() {
+        let temp = test_temp_dir("source-container-cache");
+        let cgroup = temp.join("123/cgroup");
+        std::fs::create_dir_all(cgroup.parent().expect("parent")).expect("mkdir");
+        std::fs::write(
+            &cgroup,
+            format!("0::/kubepods.slice/cri-containerd-{CONTAINER_ID}.scope\n"),
+        )
+        .expect("write cgroup");
+        let mut cache = ContainerContextCache::new(2);
+
+        let first = cache.resolve(&temp, 123, 41).expect("first attribution");
+        std::fs::remove_file(&cgroup).expect("remove source file");
+        let cached = cache.resolve(&temp, 123, 41).expect("cached attribution");
+
+        assert_eq!(cached, first);
+        assert!(cache.resolve(&temp, 123, 42).is_none());
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn source_container_cache_evicts_at_its_bound() {
+        let temp = test_temp_dir("source-container-cache-bound");
+        for pid in [101_u32, 102] {
+            let cgroup = temp.join(format!("{pid}/cgroup"));
+            std::fs::create_dir_all(cgroup.parent().expect("parent")).expect("mkdir");
+            std::fs::write(
+                cgroup,
+                format!("0::/kubepods.slice/cri-containerd-{CONTAINER_ID}.scope\n"),
+            )
+            .expect("write cgroup");
+        }
+        let mut cache = ContainerContextCache::new(1);
+
+        assert!(cache.resolve(&temp, 101, 51).is_some());
+        assert!(cache.resolve(&temp, 102, 52).is_some());
+
+        assert_eq!(cache.entries.len(), 1);
+        assert!(!cache.entries.contains_key(&(101, 51)));
+        assert!(cache.entries.contains_key(&(102, 52)));
+        let _ = std::fs::remove_dir_all(temp);
     }
 
     fn test_temp_dir(name: &str) -> std::path::PathBuf {

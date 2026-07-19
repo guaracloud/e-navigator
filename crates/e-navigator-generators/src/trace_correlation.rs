@@ -62,6 +62,16 @@ impl Generator<SignalEnvelope> for TraceCorrelationGenerator {
         ModuleMetadata::new("generator.trace_correlation", ModuleKind::Generator)
     }
 
+    fn accepts(&self, signal: &SignalEnvelope) -> bool {
+        matches!(
+            &signal.payload,
+            SignalPayload::NetworkConnectionClose(_)
+                | SignalPayload::NetworkConnectionFailure(_)
+                | SignalPayload::DependencyEdge(_)
+                | SignalPayload::DnsResponse(_)
+        )
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,
