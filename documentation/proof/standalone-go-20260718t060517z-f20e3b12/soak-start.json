@@ -1,8 +1,8 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "run_id": "standalone-go-20260718t060517z-f20e3b12",
   "decision": "IN_PROGRESS",
-  "accepted_attempt": 4,
+  "accepted_attempt": 5,
   "attempts": [
     {
       "attempt": 1,
@@ -656,7 +656,7 @@
     },
     {
       "attempt": 4,
-      "decision": "IN_PROGRESS",
+      "decision": "INVALIDATED",
       "clock": {
         "start_epoch_seconds": 1784456001,
         "start_utc": "2026-07-19T10:13:21Z",
@@ -674,6 +674,50 @@
           "source, optional attachment or capacity, exporter, controller, backend, or excluded-sentinel counter departure from the accepted baseline",
           "Prometheus or backend evidence gap that makes continuity unverifiable"
         ]
+      },
+      "invalidation": {
+        "discovered_epoch_seconds": 1784473121,
+        "discovered_utc": "2026-07-19T14:58:41Z",
+        "elapsed_seconds": 17120,
+        "attempt_time_accepted_for_final_decision_seconds": 0,
+        "reason": "The full accepted Pyroscope window was no longer queryable: 186 interior timeline samples were zero and the earliest approximately 46 minutes of attempt 4 had disappeared, so continuous useful profiling evidence from the accepted boundary could not be proven.",
+        "evidence": {
+          "fixed_evaluation_epoch_seconds": 1784472672,
+          "fixed_evaluation_utc": "2026-07-19T14:51:12Z",
+          "query_start_epoch_seconds": 1784456001,
+          "query_end_epoch_seconds": 1784472672,
+          "timeline_samples": 1111,
+          "interior_zero_samples": 186,
+          "previous_heartbeat_timeline_samples": 871,
+          "previous_heartbeat_interior_zero_samples": 0,
+          "earliest_1800_second_slice_nonzero_samples": 0,
+          "second_1800_second_slice_nonzero_samples": 53,
+          "second_slice_first_nonzero_sample_index": 67,
+          "later_slices_gap_free": true,
+          "recent_profiles_still_useful": true
+        },
+        "diagnosis": "Pyroscope had no block-storage backend and used relative default paths outside the PVC mounted at /data. Startup logged that no storage bucket was configured, runtime configuration showed an empty storage backend, and the 4 GiB PVC remained 99.378 percent free.",
+        "resolution": {
+          "repository": "https://github.com/vicotrbb/home-datacenter",
+          "persistent_storage_pull_request": 39,
+          "persistent_storage_merge_commit": "730ac8c377efb36ffe10b8fff6d7634bd4e4ba4c",
+          "argument_order_pull_request": 40,
+          "argument_order_merge_commit": "4b2d5c618216cd8a766a3e9bf440dc9666b24eb3",
+          "disk_floor_pull_request": 41,
+          "disk_floor_merge_commit": "1cd19431e0de0f6c52e3a62e8785212ef0c2f153",
+          "configured_backend": "filesystem",
+          "configured_pvc_paths_absolute": true,
+          "configured_retention": "72h",
+          "configured_minimum_free_disk_gibibytes": 1,
+          "runtime_verification_complete": true,
+          "runtime_verification_utc": "2026-07-19T15:36:58Z",
+          "accepted_gitops_revision": "1cd19431e0de0f6c52e3a62e8785212ef0c2f153",
+          "replacement_pyroscope_uid": "c4058d26-fa14-4204-ade4-90c73946c152",
+          "replacement_clock_started": true,
+          "replacement_attempt": 5,
+          "replacement_start_epoch_seconds": 1784475418,
+          "replacement_minimum_end_epoch_seconds": 1784561818
+        }
       },
       "stabilization": {
         "server_started_epoch_seconds": 1784455468,
@@ -1016,6 +1060,417 @@
         "command": "scripts/quality.sh",
         "result": "PASS",
         "completed_utc": "2026-07-19T04:13:33Z"
+      }
+    },
+    {
+      "attempt": 5,
+      "decision": "IN_PROGRESS",
+      "clock": {
+        "start_epoch_seconds": 1784475418,
+        "start_utc": "2026-07-19T15:36:58Z",
+        "start_america_sao_paulo": "2026-07-19T12:36:58-03:00",
+        "minimum_end_epoch_seconds": 1784561818,
+        "minimum_end_utc": "2026-07-20T15:36:58Z",
+        "minimum_end_america_sao_paulo": "2026-07-20T12:36:58-03:00",
+        "minimum_duration_seconds": 86400,
+        "attempts_1_through_4_accepted_seconds": 0,
+        "restart_conditions": [
+          "E-Navigator agent restart or replacement",
+          "Tempo, Pyroscope, Alloy, server, or client restart or replacement",
+          "configuration, image, Service UID, Service ClusterIP, GitOps revision, or Pyroscope storage setting change",
+          "workload error or structured error-reason counter increase",
+          "source, optional attachment or capacity, exporter, controller, backend, or excluded-sentinel counter departure from the attempt-5 baseline",
+          "Prometheus, Tempo, or Pyroscope evidence gap that makes continuity unverifiable",
+          "Pyroscope PVC, block upload, retention, disk enforcement, or full-window query failure"
+        ]
+      },
+      "stabilization": {
+        "pyroscope_started_epoch_seconds": 1784474866,
+        "pyroscope_started_utc": "2026-07-19T15:27:46Z",
+        "stable_seconds_before_clock": 552,
+        "offered_rps": 15,
+        "five_minute_scheduled_requests": 4500,
+        "five_minute_successful_requests": 4500,
+        "five_minute_errors": 0,
+        "five_minute_error_reasons": 0,
+        "five_minute_http_decoded": 4500,
+        "five_minute_http_sent": 4500,
+        "prometheus_targets_minimum_up": 1,
+        "five_minute_export_failure_drop_retry_counter_delta": 0,
+        "five_structured_workload_windows": {
+          "windows": 5,
+          "requests_each": 900,
+          "errors": 0,
+          "nonempty_error_reason_windows": 0,
+          "maximum_p99_ms": 49.059
+        },
+        "pyroscope_runtime": {
+          "ready": true,
+          "storage_backend": "filesystem",
+          "storage_filesystem_directory": "/data/shared",
+          "pyroscopedb_data_path": "/data/ingester",
+          "bucket_sync_directory": "/data/sync",
+          "compactor_data_directory": "/data/compactor",
+          "embedded_grafana_data_path": "/data/embedded-grafana",
+          "blocks_retention": "3d",
+          "minimum_free_disk_gibibytes": 1,
+          "minimum_available_percentage": 0.05,
+          "disk_enforcement_interval": "5m",
+          "post_enforcement_error_lines": 0,
+          "startup_no_storage_bucket_warning_present": false
+        },
+        "pyroscope_persistence_proof": {
+          "prior_pod_window_start_epoch_seconds": 1784474350,
+          "prior_pod_window_end_epoch_seconds": 1784474820,
+          "queried_after_final_pod_replacement": true,
+          "total_nanoseconds": 203700000000,
+          "flamegraph_names": 363,
+          "named_python_matches": 8,
+          "timeline_samples": 32,
+          "nonzero_samples": 30,
+          "interior_zero_samples_after_first_nonzero": 0,
+          "bucket_blocks": 1,
+          "object_store_operation_failures": 0,
+          "pvc_capacity_bytes": 4143677440,
+          "pvc_available_bytes": 4114579456,
+          "pvc_used_bytes": 12320768,
+          "pvc_free_percent": 99.29777391166819
+        },
+        "fixture": {
+          "manifest": "target/standalone-go-f20e3b12-soak.yaml",
+          "configmap_uid": "46a59112-f004-4064-a8f9-aa126db85fc6",
+          "configmap_resource_version": "79645928",
+          "client_sha256": "26716265d391f76d407250dea348663194bb5c5dfd70a6b7f622c7f05c130f20",
+          "server_sha256": "941276a9e0141b5840dfd3a743e2a1c411049e6571cf141b51b392bde4efd4e9",
+          "harness_revision": "resolved-service-ip-v3",
+          "service_uid": "c3b8a4b3-ba45-489a-a94c-037f1c1d620c",
+          "service_cluster_ip": "10.43.107.252",
+          "resolved_service_ip": "10.43.107.252",
+          "request_mix": "60% /fast and 40% /work at an unchanged 15 RPS",
+          "server_cpu_rounds": {
+            "fast": 10000,
+            "work": 100000
+          }
+        }
+      },
+      "gitops": {
+        "repository": "https://github.com/vicotrbb/home-datacenter",
+        "accepted_revision": "1cd19431e0de0f6c52e3a62e8785212ef0c2f153",
+        "persistent_storage_pull_request": 39,
+        "argument_order_pull_request": 40,
+        "disk_floor_pull_request": 41,
+        "root_app": "Synced/Healthy",
+        "e_navigator": "Synced/Healthy",
+        "pyroscope": "Synced/Healthy",
+        "alloy": "Synced/Healthy",
+        "e_navigator_daemonset": {
+          "desired": 2,
+          "current": 2,
+          "ready": 2,
+          "available": 2,
+          "updated": 2
+        },
+        "beyla_application_present": false,
+        "beyla_daemonset_present": false,
+        "legacy_or_temporary_e_navigator_collector_present": false,
+        "matching_helm_releases": 0
+      },
+      "immutable_images": {
+        "e_navigator_tag": "ghcr.io/guaracloud/e-navigator:sha-0cd5e9a",
+        "e_navigator_oci_index": "sha256:62402d21b9cb02d59d63365c7e3716ffa0980bfea42d070b43fed618703a7df9",
+        "e_navigator_linux_amd64_manifest": "sha256:ae8b5a7e936f01423d01d42744907b4098ea5818f3d2326fa242b6237f9e6f0c",
+        "e_navigator_linux_amd64_config": "sha256:5a3c9c907092a236ad0bbfef13356b70f7cf7da965a4f6babea1b50b5ab76e86",
+        "e_navigator_attestation_manifest": "sha256:87731e53b59607ef58eb97b7dd208f216b0fb14b70a9b39990b54e9cd0024131",
+        "pyroscope": "sha256:47fc578b2227e9c0c5c5efda34966c1566b0d0a0802cb2adc2e1e9f7ae16a7aa",
+        "tempo": "sha256:65a5789759435f1ef696f1953258b9bbdb18eb571d5ce711ff812d2e128288a4",
+        "alloy": "sha256:c311595156fca7b1131683d383dae1acfd29e8879d347161d2a6f714ebac0c0b",
+        "soak_python": "sha256:9d7f287598e1a5a978c015ee176d8216435aaf335ed69ac3c38dd1bbb10e8d64"
+      },
+      "configuration": {
+        "e_navigator_configmap_uid": "8672691d-abfa-4da7-adac-61320ab83479",
+        "e_navigator_configmap_resource_version": "79441596",
+        "e_navigator_config_sha256": "a9c15c3c565452a7d812426d9b01c57d08a2ae9228e8fff71396276c3901e9b2",
+        "capture_filter": "default deny; proj-* plus paid tier; catalog, load-generator, exporter, Alloy, Beyla, and E-Navigator exclusions",
+        "pyroscope_working_directory": "/data",
+        "pyroscope_arguments": [
+          "-storage.backend=filesystem",
+          "-storage.filesystem.dir=/data/shared",
+          "-pyroscopedb.data-path=/data/ingester",
+          "-pyroscopedb.retention-policy-min-free-disk-gb=1",
+          "-blocks-storage.bucket-store.sync-dir=/data/sync",
+          "-compactor.data-dir=/data/compactor",
+          "-embedded-grafana.data-path=/data/embedded-grafana",
+          "-compactor.blocks-retention-period=72h",
+          "server"
+        ]
+      },
+      "continuity_identities": [
+        {
+          "namespace": "e-navigator-system",
+          "pod": "e-navigator-agent-rxf26",
+          "uid": "bf33db19-968a-47a1-84be-dfca4e102965",
+          "node": "homelab-02",
+          "started_utc": "2026-07-19T04:07:52Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "e-navigator-system",
+          "pod": "e-navigator-agent-x2fnh",
+          "uid": "4a8a204b-f56d-43ac-8b2e-9a8ab7d250af",
+          "node": "homelab-01",
+          "started_utc": "2026-07-19T04:07:52Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "e-navigator-system",
+          "pod": "pyroscope-6fc678d89f-97hh8",
+          "uid": "c4058d26-fa14-4204-ade4-90c73946c152",
+          "node": "homelab-01",
+          "started_utc": "2026-07-19T15:27:46Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "observability-system",
+          "pod": "alloy-9kxdn",
+          "uid": "9e5dfad7-6e44-4b6c-a592-9359241d87ec",
+          "node": "homelab-01",
+          "started_utc": "2026-03-16T13:35:14Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "observability-system",
+          "pod": "tempo-0",
+          "uid": "97849a2e-d93d-4d3d-87a0-b7696704bced",
+          "node": "homelab-01",
+          "started_utc": "2026-07-18T06:34:01Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "proj-enav-soak-f20e3b12",
+          "pod": "soak-client-dd547b598-v4lpt",
+          "uid": "a6c49faf-3752-4bfe-ac0e-01cac9bc7388",
+          "node": "homelab-01",
+          "started_utc": "2026-07-19T10:04:28Z",
+          "restarts": 0
+        },
+        {
+          "namespace": "proj-enav-soak-f20e3b12",
+          "pod": "soak-server-7f6696b87-7jfmp",
+          "uid": "a6611de0-97ea-4f7e-86be-1bc589140b62",
+          "node": "homelab-02",
+          "started_utc": "2026-07-19T10:04:28Z",
+          "restarts": 0
+        }
+      ],
+      "baseline": {
+        "prometheus": {
+          "sample_epoch_seconds": 1784475418,
+          "targets_expected": 3,
+          "targets_up": 3,
+          "minimum_up_over_ten_minutes": 1,
+          "ten_minute_samples": {
+            "e-navigator-agent-x2fnh": 20,
+            "e-navigator-agent-rxf26": 20,
+            "soak-client-dd547b598-v4lpt": 40
+          },
+          "required_canonical_server_series_minimum_samples_each": 20,
+          "target_info_samples": 377,
+          "workload_counter_resets": 0
+        },
+        "workload": {
+          "scheduled": 299062,
+          "successful": 299062,
+          "errors": 0,
+          "error_reasons": 0,
+          "inflight": 0,
+          "two_minute_rate_rps": 14.999999999999998,
+          "two_minute_p99_seconds": 0.049588954468802696
+        },
+        "e_navigator_sources": {
+          "http_decoded": 621921,
+          "http_sent": 621921,
+          "all_invalid": 0,
+          "all_lost_perf_events": 0,
+          "all_send_failures": 0,
+          "source_failures": 0,
+          "optional_attachment_failures": {
+            "e-navigator-agent-x2fnh/source.aya_tls": 1,
+            "all_other_agent_sources": 0
+          },
+          "optional_capacity_rejections": 0
+        },
+        "export": {
+          "enqueued": {
+            "e-navigator-agent-x2fnh": {
+              "metrics": 30313,
+              "profiles": 0,
+              "traces": 0
+            },
+            "e-navigator-agent-rxf26": {
+              "metrics": 64142,
+              "profiles": 175428,
+              "traces": 621921
+            }
+          },
+          "sent": {
+            "e-navigator-agent-x2fnh": {
+              "metrics": 30313,
+              "profiles": 0,
+              "traces": 0
+            },
+            "e-navigator-agent-rxf26": {
+              "metrics": 64141,
+              "profiles": 174763,
+              "traces": 621913
+            }
+          },
+          "queue_depth_all_families_all_agents": 0,
+          "repair_window_counter_baselines": {
+            "profile_circuit_opened": 3,
+            "profile_dropped_circuit_open": 464,
+            "profile_dropped_failure": 200,
+            "profile_failed_batches": 15,
+            "profile_retry_attempts": 45,
+            "all_other_drop_retry_failure_partial_rejection_permanent_invalid_out_of_order": 0,
+            "note": "These increments occurred only while the invalidated Pyroscope backend was deliberately replaced. Their five-minute delta was zero before attempt 5 and every value is frozen as the accepted attempt-5 baseline."
+          }
+        },
+        "metric_integrity": {
+          "same_millisecond_coalesced": 8601,
+          "same_millisecond_suppressed": 8601,
+          "timestamp_series_maximum": 57,
+          "timestamp_pending_series": 1,
+          "timestamp_series_evicted": 558,
+          "out_of_order_dropped": 0,
+          "selected_server_metric_series": 37,
+          "excluded_client_metric_series": 0,
+          "excluded_namespace_metric_series": 0
+        },
+        "kubernetes_controller": {
+          "ready_agents": 2,
+          "maximum_freshness_seconds": 55,
+          "watch_failures": 0,
+          "relist_failures_before_clock": 1,
+          "expired_resource_versions": 0,
+          "unresolved_cgroups": 0,
+          "allowed_cgroups": {
+            "e-navigator-agent-x2fnh": 0,
+            "e-navigator-agent-rxf26": 3
+          }
+        },
+        "resources": {
+          "cpu_cores": {
+            "e-navigator-agent-rxf26": 0.030128862603449227,
+            "e-navigator-agent-x2fnh": 0.03159570911934137,
+            "soak-client-dd547b598-v4lpt": 0.01089073588775305,
+            "soak-server-7f6696b87-7jfmp": 0.20271399077833605
+          },
+          "memory_bytes": {
+            "e-navigator-agent-rxf26": 287404032,
+            "e-navigator-agent-x2fnh": 190705664,
+            "soak-client-dd547b598-v4lpt": 20344832,
+            "soak-server-7f6696b87-7jfmp": 18272256
+          }
+        },
+        "backend_integrity": {
+          "tempo_discarded_spans": 3698681,
+          "tempo_ingester_append_failures": 0,
+          "tempo_metrics_generator_push_failures": 0,
+          "tempo_ingester_failed_flushes": 0,
+          "tempo_service_graph_dropped_spans": 1349325,
+          "tempo_metrics_generator_discarded_spans": 325919,
+          "tempo_receiver_refused_spans": 1988094,
+          "prometheus_out_of_order_samples_appended": 0,
+          "prometheus_remote_storage_samples_dropped": 0,
+          "prometheus_target_out_of_order_samples": 0,
+          "pyroscope_object_store_operation_failures": 0,
+          "pyroscope_compactor_failures": 0,
+          "pyroscope_error_lines_after_readiness": 0,
+          "alloy_drop_or_reject_lines_after_final_repair": 0,
+          "tempo_error_lines_after_final_repair": 0
+        },
+        "tempo": {
+          "query": "{ resource.k8s.pod.name = \"soak-server-7f6696b87-7jfmp\" }",
+          "query_start_epoch_seconds": 1784475388,
+          "query_end_epoch_seconds": 1784475418,
+          "returned_trace_limit": 100,
+          "returned_traces": 100,
+          "latest_returned_trace_start_epoch_nanos": 1784475396261994092,
+          "latest_trace_age_seconds": 21.738006114959717,
+          "root_service_names": [
+            "python"
+          ],
+          "root_span_names": [
+            "http request"
+          ],
+          "sample_trace_id": "35a9ceea202be5c5cce555144e274cbb",
+          "sample_trace": {
+            "kind": "SPAN_KIND_SERVER",
+            "parent_span_present": false,
+            "namespace": "proj-enav-soak-f20e3b12",
+            "pod": "soak-server-7f6696b87-7jfmp",
+            "pod_uid": "a6611de0-97ea-4f7e-86be-1bc589140b62",
+            "node": "homelab-02",
+            "method": "GET",
+            "path": "/work",
+            "identity_source": "generated",
+            "correlation_confidence": "high"
+          },
+          "excluded_client_traces": 0,
+          "excluded_namespace_traces": 0
+        },
+        "pyroscope": {
+          "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds{service_name=\"enav-soak-server-f20e3b12\",k8s_pod_name=\"soak-server-7f6696b87-7jfmp\"}",
+          "profile_type": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+          "query_start_epoch_seconds": 1784475118,
+          "query_end_epoch_seconds": 1784475418,
+          "flamegraph_total_nanoseconds": 130600000000,
+          "flamegraph_names": 283,
+          "flamegraph_levels": 30,
+          "named_python_frames": 6,
+          "example_names": [
+            "PyEval_EvalCode",
+            "_PyEval_EvalFrameDefault",
+            "PyObject_ClearWeakRefs",
+            "_PyObject_MakeTpCall",
+            "PyObject_SetAttr",
+            "_PyObject_GenericSetAttrWithDict"
+          ],
+          "timeline_start_epoch_seconds": 1784475105,
+          "timeline_step_seconds": 15,
+          "timeline_samples": 20,
+          "timeline_minimum_nanoseconds": 5800000000,
+          "timeline_maximum_nanoseconds": 7100000000,
+          "interior_zero_samples": 0,
+          "last_sample_nanoseconds": 6300000000,
+          "excluded_client_total_nanoseconds": 0,
+          "excluded_namespace_total_nanoseconds": 0
+        },
+        "pyroscope_storage": {
+          "bucket_blocks": 1,
+          "blocks_marked_for_deletion": 0,
+          "object_store_operation_failures": 0,
+          "compactor_failures": 0,
+          "pvc_capacity_bytes": 4143677440,
+          "pvc_available_bytes": 4114579456,
+          "pvc_used_bytes": 12320768,
+          "pvc_free_percent": 99.29777391166819
+        }
+      },
+      "quality_before_clock": {
+        "command": "scripts/quality.sh",
+        "result": "PASS",
+        "completed_utc": "2026-07-19T04:13:33Z",
+        "repair_validation": [
+          "running Pyroscope binary flag help",
+          "git diff --check",
+          "kubectl kustomize --context homelab",
+          "kubectl apply --dry-run=server --context homelab",
+          "kubectl diff --context homelab",
+          "post-rollout runtime configuration",
+          "post-restart persistent-block query",
+          "post-enforcement exporter and backend stability"
+        ]
       }
     }
   ]
