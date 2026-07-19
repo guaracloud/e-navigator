@@ -240,19 +240,23 @@ decision will be added only after the minimum end boundary.
 
 ## Quality and publication
 
-At runtime commit `e6bc395`, the following gates were already green:
+At proof-bearing branch commit
+`cf24ff4ff5d3596a719049db9a2b68a112276163`, `scripts/quality.sh` completed
+successfully on 2026-07-19. The gate covered formatting, release metadata,
+strict workspace Clippy, locked workspace tests, fuzz-crate compilation,
+`cargo deny`, `cargo audit`, `cargo machete`, the container build and smoke
+test, Helm lint and rendering, strict Kubernetes schema validation, local link
+validation, and `git diff --check`. The focused Aya suite separately passed
+189 tests with zero failures.
 
-- focused Aya suite: 189 passed, 0 failed;
-- `cargo fmt --all -- --check`;
-- strict workspace Clippy excluding the eBPF program crate;
-- locked workspace tests excluding the eBPF program crate;
-- `git diff --check`.
-
-The final evidence tree still requires the complete `scripts/quality.sh` gate,
-explicit Helm lint/template capture, checksums, ready PR, every required GitHub
-check, protected merge, post-merge image workflow, final `main` digest/source
-match, and the corresponding GitOps digest update. These are intentionally
-pending.
+The first complete-gate attempt exposed that the runtime's new `rustix`
+dependency edge had not been propagated into `fuzz/Cargo.lock`. The lockfile
+was regenerated mechanically in commit `cf24ff4`; the complete rerun then
+passed. Because the soak-end evidence, manifest, and checksums do not exist
+yet, final post-evidence hygiene remains required before publication. The
+ready PR, every required GitHub check, protected merge, post-merge image
+workflow, final `main` digest/source match, and corresponding GitOps digest
+update also remain pending.
 
 ## Cleanup
 
@@ -283,7 +287,7 @@ and deliberately documented.
 | Source-controlled final cutover | PASS | Home-datacenter PRs #31, #33, #35; Argo Synced/Healthy |
 | Bounded rollback exercised | PASS | PR #34, 2/2 Beyla Ready, nonzero attributed telemetry, restore via #35 |
 | Uninterrupted 24-hour soak | IN PROGRESS | `soak-start.json`; earliest end `2026-07-20T01:43:29Z` |
-| Complete final quality gate | PENDING | Run after final evidence files are complete |
+| Complete final quality gate | IN PROGRESS | Full `scripts/quality.sh` pass at `cf24ff4`; final post-evidence hygiene remains |
 | Ready PR, checks, protected merge | PENDING | Run after soak passes |
 | Final main image/source and GitOps digest match | PENDING | Run after protected merge and image publication |
 | Owned cleanup complete | PENDING | Run after publication verification |
