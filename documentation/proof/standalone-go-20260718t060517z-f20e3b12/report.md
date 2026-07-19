@@ -7,9 +7,17 @@
 The controlled functional and failure matrices, matched A/B/C performance
 trials, source-controlled homelab cutover, and exercised rollback are complete
 and passing. The mandatory uninterrupted E-Navigator-only soak began at
-`2026-07-19T01:43:29Z` and cannot pass before `2026-07-20T01:43:29Z`.
+`2026-07-19T04:26:52Z` and cannot pass before `2026-07-20T04:26:52Z`.
 Publication to final `main`, final image verification, and run-owned cleanup
 remain pending until that interval is complete.
+
+The first proposed clock, beginning at `2026-07-19T01:43:29Z`, was
+invalidated after 1,942 seconds because a run-owned functional collector still
+existed outside the claimed final topology. None of that interval contributes
+to acceptance. Before attempt 2, the extra collector was removed, a late
+listener-admission defect was fixed and regression-tested, the fixed official
+image was deployed through GitOps, matched A/B/C was rerun against that exact
+artifact, and the final selected workloads were restarted after the agents.
 
 The clock will be restarted if an agent, Tempo, Pyroscope, Alloy, the workload
 server, or the workload client is replaced or restarts; if configuration or
@@ -49,12 +57,12 @@ storage backend was introduced.
 
 - Authoritative start: `21a9e7f1734b81d92389f4799ef3d27480dfb51f`
 - Acceptance branch: `codex/standalone-production-acceptance`
-- Runtime source commit: `e6bc3952715d6ef97a7b4dd581bff8e7c4e2be71`
-- Acceptance tag: `ghcr.io/guaracloud/e-navigator:sha-e6bc395`
-- OCI index: `sha256:89bbc0b8e42fceda8205387896060c5dfa2c2fdf95d793f9f2a74fe7e3d7cc14`
-- Linux/amd64 manifest: `sha256:d7cf0465d44bd637380b175fc32f3296d98eb2e9c0b9b1d59d99d4de24733f5f`
-- Linux/amd64 config: `sha256:7611b64b52cac79d47cf9aae4d1cd85addf5d079bd3495deab0940f7f91a7ffd`
-- Attestation manifest: `sha256:ca1013fc17b33e227be6f921f9b1f97698dc490247625f89dd141fe488686780`
+- Runtime source commit: `0cd5e9aa517c361875ceb0d2a5a1e564a6fbfdf2`
+- Acceptance tag: `ghcr.io/guaracloud/e-navigator:sha-0cd5e9a`
+- OCI index: `sha256:62402d21b9cb02d59d63365c7e3716ffa0980bfea42d070b43fed618703a7df9`
+- Linux/amd64 manifest: `sha256:ae8b5a7e936f01423d01d42744907b4098ea5818f3d2326fa242b6237f9e6f0c`
+- Linux/amd64 config: `sha256:5a3c9c907092a236ad0bbfef13356b70f7cf7da965a4f6babea1b50b5ab76e86`
+- Attestation manifest: `sha256:87731e53b59607ef58eb97b7dd208f216b0fb14b70a9b39990b54e9cd0024131`
 - Release or version tag created: no
 
 The final `main` image and its GitOps deployment revision are deliberately
@@ -137,7 +145,8 @@ statically bundled Node TLS, JVM JSSE, custom BIOs, and custom GnuTLS
 transports are explicit non-claims.
 
 The changes found during the matrices include HTTP/2 continuation reassembly,
-accepted-server and existing-listener capture, span-role peer attribution,
+accepted-server capture, listener metadata retention through late admission,
+existing-listener capture, span-role peer attribution,
 container symbol resolution, JVM perf-map naming, CPython 3.11 stack support,
 vectored server I/O, cross-CPU ordering, non-HTTP filtering, DNS peer and
 timestamp corrections, metric identity/coalescing, capture-policy accounting,
@@ -156,20 +165,22 @@ times the observed 14.945 RPS combined target workload rate.
 
 | Condition | Throughput RPS mean | p99 mean | Collector CPU | Collector memory | CPU + GiB |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| A, no collector | 149.9985 | 22.446 ms | n/a | n/a | n/a |
-| B, Beyla + Alloy profiling | 149.9927 | 22.551 ms | 0.01510 cores | 0.36581 GiB | 0.38091 |
-| C, E-Navigator | 149.9932 | 22.508 ms | 0.06292 cores | 0.19958 GiB | 0.26249 |
+| A, no collector | 149.9984 | 22.445 ms | n/a | n/a | n/a |
+| B, Beyla + Alloy profiling | 149.9979 | 22.557 ms | 0.01616 cores | 0.35682 GiB | 0.37299 |
+| C, E-Navigator | 149.9930 | 22.470 ms | 0.05800 cores | 0.20572 GiB | 0.26372 |
 
-Against condition A, E-Navigator changed throughput by -0.00354% and p99 by
-0.27324%. Against condition B, combined CPU-plus-GiB fell by 31.09%. The
+Against condition A, E-Navigator changed throughput by -0.00359% and p99 by
+0.11287%. Against condition B, combined CPU-plus-GiB fell by 29.30%. The
 contract permits at most 1% throughput regression, at most 2% p99 regression,
 and requires at least 25% combined collector reduction. All three gates pass.
 
 E-Navigator decoded, enqueued, exported, and delivered all 74,250 controlled
-HTTP traces with zero invalid/lost/drop/retry/rejection counters. The Beyla
-reference plateaued at 60,543 of 74,250 expected spans, leaving 13,707
-unaccounted (18.46%). That reference loss is recorded rather than normalized
-away.
+HTTP traces with zero invalid/lost/drop/retry/rejection counters. It also sent
+635 direct profile items and returned useful named Python stacks. The clean
+Beyla reference observed 40,889 of 74,250 expected requests, leaving 33,361
+unaccounted (44.93%). Earlier B trials that accidentally selected the constant
+soak workload were excluded before acceptance and rerun after a fresh reference
+restart. The reference loss is recorded rather than normalized away.
 
 ## GitOps cutover and rollback
 
@@ -190,43 +201,66 @@ The exact commit and live reconciliation record is in
    endpoints exposed nonzero attributed HTTP client/server telemetry.
 4. PR [#35](https://github.com/vicotrbb/home-datacenter/pull/35)
    restored the accepted E-Navigator-only state. Argo pruned the Beyla
-   application and DaemonSet. Root, E-Navigator, Pyroscope, and Alloy returned
-   Synced/Healthy at revision
-   `efb17b904a39a576c93fbc6384cfd7d8ebc745a6`.
+   application and DaemonSet.
+5. PR [#36](https://github.com/vicotrbb/home-datacenter/pull/36)
+   pinned the listener-admission repair commit and official OCI index.
+6. PR [#37](https://github.com/vicotrbb/home-datacenter/pull/37)
+   temporarily isolated the production agents with an impossible node selector
+   for the final no-collector and clean reference measurements.
+7. PR [#38](https://github.com/vicotrbb/home-datacenter/pull/38)
+   removed that selector and restored the exact accepted state. Root,
+   E-Navigator, Pyroscope, and Alloy returned Synced/Healthy at revision
+   `553e4365710f307cb485e1609a01881a7a9f3bbf`.
 
 An older unmanaged E-Navigator canary was separately inventoried by exact
 name, ownership, image, ConfigMap, service account, and cluster RBAC, then
 removed. The final soak has exactly the two GitOps-owned agents and no second
-collector.
+collector. Both fixed agents were Ready before the selected server bound its
+listener, and the live regression window retained zero protocol-invalid
+samples throughout.
 
 ## Uninterrupted E-Navigator-only soak
 
 Status: **IN PROGRESS**
 
-- Stabilization began: `2026-07-19T01:37:42Z`
-- Clock start: `2026-07-19T01:43:29Z` (epoch `1784425409`)
-- Earliest valid end: `2026-07-20T01:43:29Z` (epoch `1784511809`)
+- Attempt 1: **INVALIDATED** at 1,942 seconds; accepted duration zero
+- Attempt 2 server start: `2026-07-19T04:19:27Z`
+- Attempt 2 client start: `2026-07-19T04:19:38Z`
+- Valid clock start: `2026-07-19T04:26:52Z` (epoch `1784435212`)
+- Earliest valid end: `2026-07-20T04:26:52Z` (epoch `1784521612`)
 - Offered workload: 15 RPS cross-node HTTP/1.1
-- Start workload totals: 5,208 scheduled, 5,208 successful, 0 errors
+- Start workload totals: 6,419 scheduled, 6,419 successful, 0 errors
 - Five pre-clock one-minute windows: 900 successes, 0 errors each
-- Pre-clock p99 range: 26.538 to 27.530 ms
+- Pre-clock p99 range: 36.239 to 37.301 ms
+
+The accepted fixture preserves the 15 RPS and 60/40 path mix while adding
+bounded deterministic CPU work to make the low-rate workload continuously
+visible to the production 10 Hz profiler. Its ignored source manifest is
+represented by SHA-256
+`f7601697b6f46afe5307eefc16a52e9b55f8495fae53204e8f29a5c647cea242`.
 
 At the frozen boundary:
 
 - both agent scrape targets and the workload target were up;
 - all agent, backend, and workload containers were Ready with zero restarts;
-- both agents used the accepted OCI index digest;
-- HTTP decoded and sent were both 6,767, with invalid, lost, and send failure
+- both agents used the fixed accepted OCI index digest;
+- HTTP decoded and sent were both 17,564, with invalid, lost, and send failure
   all zero;
 - every metric/profile/trace exporter queue was empty;
 - every exporter drop, retry, failed-batch, partial, rejected, permanent, and
   invalid-response counter was zero;
-- both Kubernetes controllers were Ready, watch failures were zero, and the
-  one node-1 API relist failure occurred during startup before the clock;
+- both Kubernetes controllers were Ready with maximum 51-second freshness,
+  watch failures were zero, and the one node-1 API relist failure occurred
+  during startup before the clock;
 - Tempo returned traces for the new server pod with correct Kubernetes
   identity, `python` root service, and `http request` server span;
-- Pyroscope returned only the soak service plus Pyroscope in the start window,
-  with 3.0 seconds of samples, 67 names, 28 levels, and 60 named Python frames.
+- Pyroscope returned 157.9 seconds of the direct soak profile, 372 names, 32
+  levels, and 25 named Python-frame matches;
+- the excluded-namespace Tempo query and excluded-service Pyroscope query both
+  returned zero;
+- the agents used 0.0276 and 0.0292 CPU cores and 239.4 MB and 179.9 MB working
+  set; the client/server remained bounded at 0.0197/0.1728 cores and
+  21.4/18.3 MB.
 
 Prometheus continuously scrapes the agent and workload series. Tempo and
 Pyroscope continuously retain backend receipt. An hourly heartbeat attached
@@ -240,19 +274,20 @@ decision will be added only after the minimum end boundary.
 
 ## Quality and publication
 
-At proof-bearing branch commit
-`cf24ff4ff5d3596a719049db9a2b68a112276163`, `scripts/quality.sh` completed
-successfully on 2026-07-19. The gate covered formatting, release metadata,
+Against source commit
+`0cd5e9aa517c361875ceb0d2a5a1e564a6fbfdf2`, `scripts/quality.sh` completed
+successfully immediately before the accepted clock on 2026-07-19. The gate
+covered formatting, release metadata,
 strict workspace Clippy, locked workspace tests, fuzz-crate compilation,
 `cargo deny`, `cargo audit`, `cargo machete`, the container build and smoke
 test, Helm lint and rendering, strict Kubernetes schema validation, local link
-validation, and `git diff --check`. The focused Aya suite separately passed
-189 tests with zero failures.
-
-The first complete-gate attempt exposed that the runtime's new `rustix`
+validation, and `git diff --check`. The focused Aya suite passed 191 tests with
+zero failures, including both listener-admission cases. The first complete-gate
+attempt exposed that the runtime's new `rustix`
 dependency edge had not been propagated into `fuzz/Cargo.lock`. The lockfile
-was regenerated mechanically in commit `cf24ff4`; the complete rerun then
-passed. Because the soak-end evidence, manifest, and checksums do not exist
+was regenerated mechanically in commit `cf24ff4`; complete reruns after the
+runtime optimization and listener repair then passed. Because the soak-end
+evidence, manifest, and checksums do not exist
 yet, final post-evidence hygiene remains required before publication. The
 ready PR, every required GitHub check, protected merge, post-merge image
 workflow, final `main` digest/source match, and corresponding GitOps digest
@@ -284,10 +319,10 @@ and deliberately documented.
 | TLS matrix | PASS | OpenSSL 1.1.1/3 and GnuTLS 30 plus fail-closed non-claims |
 | Export reliability matrix | PASS | Deterministic failure matrix and live end-to-end receipt |
 | Three matched A/B/C trials | PASS | `abc-results.json`; all thresholds pass |
-| Source-controlled final cutover | PASS | Home-datacenter PRs #31, #33, #35; Argo Synced/Healthy |
+| Source-controlled final cutover | PASS | Home-datacenter PRs #31, #33, #35, #36, #38; Argo Synced/Healthy |
 | Bounded rollback exercised | PASS | PR #34, 2/2 Beyla Ready, nonzero attributed telemetry, restore via #35 |
-| Uninterrupted 24-hour soak | IN PROGRESS | `soak-start.json`; earliest end `2026-07-20T01:43:29Z` |
-| Complete final quality gate | IN PROGRESS | Full `scripts/quality.sh` pass at `cf24ff4`; final post-evidence hygiene remains |
+| Uninterrupted 24-hour soak | IN PROGRESS | `soak-start.json`; earliest end `2026-07-20T04:26:52Z` |
+| Complete final quality gate | IN PROGRESS | Full `scripts/quality.sh` pass against `0cd5e9a`; final post-evidence hygiene remains |
 | Ready PR, checks, protected merge | PENDING | Run after soak passes |
 | Final main image/source and GitOps digest match | PENDING | Run after protected merge and image publication |
 | Owned cleanup complete | PENDING | Run after publication verification |

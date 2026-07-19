@@ -49,6 +49,13 @@
       "merge_commit": "59f9e4d3cdac95525a9bf7389aa5e6956b18d9c5",
       "title": "refactor(observability): replace Beyla with E-Navigator",
       "result": "Removed only the Beyla Argo application and values. The shared Alloy logs and OTLP metric/trace gateway remained unchanged."
+    },
+    {
+      "pull_request": 36,
+      "url": "https://github.com/vicotrbb/home-datacenter/pull/36",
+      "merge_commit": "e47f7d38a74a135f49208a9b98f3fccc20caae23",
+      "title": "fix(observability): deploy listener-admission repair",
+      "result": "Pinned the E-Navigator chart source to 0cd5e9aa517c361875ceb0d2a5a1e564a6fbfdf2 and the agent image to OCI index sha256:62402d21b9cb02d59d63365c7e3716ffa0980bfea42d070b43fed618703a7df9. Both fixed agents became Ready with zero restarts before selected workload listeners started."
     }
   ],
   "rollback_drill": {
@@ -83,9 +90,26 @@
       "alloy_application": "Synced/Healthy"
     }
   },
+  "performance_isolation_and_final_restore": {
+    "isolation": {
+      "pull_request": 37,
+      "url": "https://github.com/vicotrbb/home-datacenter/pull/37",
+      "merge_commit": "7486ebcf0165fa1d28fe7f07af9c0f3981d692b8",
+      "method": "Temporarily selected an impossible node label so the production GitOps E-Navigator DaemonSet had desired count zero during matched no-collector and reference trials.",
+      "result": "Condition A and the clean condition-B reruns had no production E-Navigator agent while the fixed benchmark placement and background load remained unchanged."
+    },
+    "restore": {
+      "pull_request": 38,
+      "url": "https://github.com/vicotrbb/home-datacenter/pull/38",
+      "merge_commit": "553e4365710f307cb485e1609a01881a7a9f3bbf",
+      "result": "Removed the temporary selector, restored exactly two fixed-image agents, and returned root-app, E-Navigator, Pyroscope, and Alloy to Synced/Healthy before the accepted soak clock."
+    }
+  },
   "accepted_architecture": {
     "e_navigator_agents": 2,
-    "e_navigator_image": "ghcr.io/guaracloud/e-navigator@sha256:89bbc0b8e42fceda8205387896060c5dfa2c2fdf95d793f9f2a74fe7e3d7cc14",
+    "gitops_revision": "553e4365710f307cb485e1609a01881a7a9f3bbf",
+    "e_navigator_source_commit": "0cd5e9aa517c361875ceb0d2a5a1e564a6fbfdf2",
+    "e_navigator_image": "ghcr.io/guaracloud/e-navigator@sha256:62402d21b9cb02d59d63365c7e3716ffa0980bfea42d070b43fed618703a7df9",
     "profiles": "direct OTLP Profiles to Pyroscope in e-navigator-system",
     "metrics_and_traces": "standard OTLP HTTP through the existing shared Alloy gateway",
     "alloy_profiling_path_present": false,
