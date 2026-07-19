@@ -140,13 +140,17 @@ impl CaptureFilterController {
         (state.generation, state.desired.clone())
     }
 
-    fn publish(&self, desired: DesiredFilterMap) {
+    fn publish(&self, desired: DesiredFilterMap) -> bool {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.desired.as_ref() == &desired {
+            return false;
+        }
         state.generation = state.generation.wrapping_add(1);
         state.desired = Arc::new(desired);
+        true
     }
 
     fn publish_snapshot(&self, snapshot: RawPodSnapshot) {
@@ -444,9 +448,10 @@ async fn run_poll_loop(
 ) {
     let mut index = RawNodePodIndex::default();
     let mut pod_generation = 0_u64;
+    let inspect_process_names = policy.requires_process_identity();
 
     loop {
-        let observations = scan_cgroups(&cgroup_root, &procfs_root).await;
+        let observations = scan_cgroups(&cgroup_root, &procfs_root, inspect_process_names).await;
         let (next_generation, pods) = controller.raw_pods();
         if next_generation != pod_generation {
             index = RawNodePodIndex::from_pods(pods.iter().cloned(), CAPTURE_FILTER_MAP_CAPACITY);
@@ -482,15 +487,25 @@ async fn run_poll_loop(
 
 /// Walk the cgroup filesystem and derive an observation per container cgroup.
 /// Runs on a blocking thread; returns an empty list on any failure.
-async fn scan_cgroups(cgroup_root: &Path, procfs_root: &Path) -> Vec<CgroupObservation> {
+async fn scan_cgroups(
+    cgroup_root: &Path,
+    procfs_root: &Path,
+    inspect_process_names: bool,
+) -> Vec<CgroupObservation> {
     let root = cgroup_root.to_path_buf();
     let procfs = procfs_root.to_path_buf();
-    tokio::task::spawn_blocking(move || scan_cgroups_blocking(&root, &procfs))
-        .await
-        .unwrap_or_default()
+    tokio::task::spawn_blocking(move || {
+        scan_cgroups_blocking(&root, &procfs, inspect_process_names)
+    })
+    .await
+    .unwrap_or_default()
 }
 
-fn scan_cgroups_blocking(root: &Path, procfs_root: &Path) -> Vec<CgroupObservation> {
+fn scan_cgroups_blocking(
+    root: &Path,
+    procfs_root: &Path,
+    inspect_process_names: bool,
+) -> Vec<CgroupObservation> {
     #[cfg(unix)]
     use std::os::unix::fs::MetadataExt;
 
@@ -511,7 +526,9 @@ fn scan_cgroups_blocking(root: &Path, procfs_root: &Path) -> Vec<CgroupObservati
             let cgroup_path = normalized_cgroup_path(relative);
             let mut observation = CgroupObservation::from_cgroup_path(metadata.ino(), &cgroup_path);
             if observation.container_id.is_some() || observation.pod_uid.is_some() {
-                observation.process_names = process_names_for_cgroup(&path, procfs_root);
+                if inspect_process_names {
+                    observation.process_names = process_names_for_cgroup(&path, procfs_root);
+                }
                 observations.push(observation);
             }
         }

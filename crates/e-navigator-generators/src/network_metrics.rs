@@ -77,6 +77,16 @@ impl Generator<SignalEnvelope> for NetworkMetricsGenerator {
         ModuleMetadata::new("generator.network_metrics", ModuleKind::Generator)
     }
 
+    fn accepts(&self, signal: &SignalEnvelope) -> bool {
+        matches!(
+            &signal.payload,
+            SignalPayload::NetworkConnectionOpen(_)
+                | SignalPayload::NetworkConnectionClose(_)
+                | SignalPayload::NetworkConnectionFailure(_)
+                | SignalPayload::NetworkTcpStatObservation(_)
+        )
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,

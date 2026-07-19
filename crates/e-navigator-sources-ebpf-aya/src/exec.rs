@@ -11,8 +11,6 @@ const RAW_ARG_BYTES: usize = RAW_MAX_ARGS * RAW_ARG_LEN;
 const EXECUTABLE_LEN: usize = 256;
 #[cfg(any(target_os = "linux", test))]
 const PERF_BUFFER_PAGE_COUNT: usize = 64;
-#[cfg(any(target_os = "linux", test))]
-const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 const EXEC_EVENT_SOURCE_SYSCALL_ENTER: u32 = 1;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -301,7 +299,7 @@ mod platform {
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
-        Ebpf, include_bytes_aligned,
+        Ebpf, EbpfLoader, include_bytes_aligned,
         maps::Array,
         maps::perf::{PerfEvent, PerfEventArray},
         programs::TracePoint,
@@ -366,14 +364,20 @@ mod platform {
             let telemetry = Arc::new(SourceTelemetry::new("source.aya_exec"));
             let exec_normalizer = Arc::new(Mutex::new(super::ExecEventNormalizer::default()));
 
-            let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
-                env!("OUT_DIR"),
-                "/e-navigator-ebpf-programs"
-            )))
-            .map_err(|err| CoreError::ModuleFailed {
-                module: "source.aya_exec".to_string(),
-                message: err.to_string(),
-            })?;
+            let mut loader = EbpfLoader::new();
+            crate::ebpf_maps::constrain_unrelated_maps(
+                &mut loader,
+                crate::ebpf_maps::SourceMapProfile::Exec,
+            );
+            let mut ebpf = loader
+                .load(include_bytes_aligned!(concat!(
+                    env!("OUT_DIR"),
+                    "/e-navigator-ebpf-programs"
+                )))
+                .map_err(|err| CoreError::ModuleFailed {
+                    module: "source.aya_exec".to_string(),
+                    message: err.to_string(),
+                })?;
 
             configure_argv_capture(&mut ebpf, argv_capture.enabled)?;
 
@@ -507,9 +511,9 @@ mod platform {
                 message: err.to_string(),
             })?;
 
-            for cpu_id in &cpus {
+            for &cpu_id in &cpus {
                 let mut buffer = perf_array
-                    .open(*cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
+                    .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
                     .map_err(|err| CoreError::ModuleFailed {
                         module: "source.aya_exec".to_string(),
                         message: err.to_string(),
@@ -527,6 +531,11 @@ mod platform {
                     let mut closed = false;
 
                     while !reader_shutdown.is_stopped() {
+                        if crate::perf_reader::wait_for_events(&buffer, "source.aya_exec", cpu_id)
+                            != Some(true)
+                        {
+                            continue;
+                        }
                         buffer.for_each(|event| {
                             if closed {
                                 return;
@@ -572,17 +581,13 @@ mod platform {
                         if closed {
                             return;
                         }
-
-                        std::thread::sleep(std::time::Duration::from_millis(
-                            super::PERF_READER_POLL_INTERVAL_MS,
-                        ));
                     }
                 }));
             }
 
-            for cpu_id in &cpus {
+            for &cpu_id in &cpus {
                 let mut buffer = exit_perf_array
-                    .open(*cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
+                    .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
                     .map_err(|err| CoreError::ModuleFailed {
                         module: "source.aya_exec".to_string(),
                         message: err.to_string(),
@@ -598,6 +603,11 @@ mod platform {
                     let mut closed = false;
 
                     while !reader_shutdown.is_stopped() {
+                        if crate::perf_reader::wait_for_events(&buffer, "source.aya_exec", cpu_id)
+                            != Some(true)
+                        {
+                            continue;
+                        }
                         buffer.for_each(|event| {
                             if closed {
                                 return;
@@ -636,10 +646,6 @@ mod platform {
                         if closed {
                             return;
                         }
-
-                        std::thread::sleep(std::time::Duration::from_millis(
-                            super::PERF_READER_POLL_INTERVAL_MS,
-                        ));
                     }
                 }));
             }
@@ -1012,9 +1018,8 @@ mod tests {
     }
 
     #[test]
-    fn perf_reader_settings_are_bounded_for_short_bursts() {
+    fn perf_buffer_is_bounded_for_short_bursts() {
         assert!((16..=128).contains(&PERF_BUFFER_PAGE_COUNT));
-        assert!((10..=50).contains(&PERF_READER_POLL_INTERVAL_MS));
     }
 
     #[test]

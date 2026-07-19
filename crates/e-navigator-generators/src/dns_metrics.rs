@@ -89,6 +89,13 @@ impl Generator<SignalEnvelope> for DnsMetricsGenerator {
         ModuleMetadata::new("generator.dns_metrics", ModuleKind::Generator)
     }
 
+    fn accepts(&self, signal: &SignalEnvelope) -> bool {
+        matches!(
+            &signal.payload,
+            SignalPayload::DnsQuery(_) | SignalPayload::DnsResponse(_)
+        )
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,

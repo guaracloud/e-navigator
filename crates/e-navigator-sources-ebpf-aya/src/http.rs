@@ -28,11 +28,11 @@ pub(crate) const RAW_HTTP_ROLE_SERVER: u32 = 1;
 #[cfg(any(target_os = "linux", test))]
 const MAX_HTTP_REASSEMBLY_STREAMS: usize = 4096;
 #[cfg(any(target_os = "linux", test))]
+const MAX_HTTP_CONTAINER_CACHE_ENTRIES: usize = 4096;
+#[cfg(any(target_os = "linux", test))]
 const HTTP_REASSEMBLY_STALE_NANOS: u64 = 5 * 60 * 1_000_000_000;
 #[cfg(any(target_os = "linux", test))]
 const PERF_BUFFER_PAGE_COUNT: usize = 64;
-#[cfg(any(target_os = "linux", test))]
-const PERF_READER_POLL_INTERVAL_MS: u64 = 25;
 #[cfg(any(target_os = "linux", test))]
 const HTTP_DIAGNOSTIC_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 #[cfg(any(target_os = "linux", test))]
@@ -182,6 +182,47 @@ enum RawHttpDecodeError {
         reason: HttpExtraction,
         sample: RawHttpInvalidSampleMetadata,
     },
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn raw_http_capture_span(raw: &RawHttpRequestEvent) -> usize {
+    let request_len = (raw.request_len as usize).min(RAW_HTTP_REQUEST_BYTES);
+    if raw.request_iovec_lens[2] > 0 {
+        (RAW_HTTP_IOVEC_CHUNK_BYTES * 2 + usize::from(raw.request_iovec_lens[2]))
+            .min(RAW_HTTP_REQUEST_BYTES)
+    } else if raw.request_iovec_lens[1] > 0 {
+        (RAW_HTTP_IOVEC_CHUNK_BYTES + usize::from(raw.request_iovec_lens[1]))
+            .min(RAW_HTTP_REQUEST_BYTES)
+    } else {
+        request_len
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn decode_raw_http_event(bytes: &[u8]) -> Result<RawHttpRequestEvent, RawHttpDecodeError> {
+    let prefix_len = core::mem::offset_of!(RawHttpRequestEvent, request);
+    if bytes.len() < prefix_len {
+        return Err(RawHttpDecodeError::RawSampleTooShort);
+    }
+
+    // A short wire record intentionally omits the unused tail of the bounded
+    // request buffer. Zero-initialize that tail before copying the record so
+    // downstream parsing retains the same fixed-size in-memory ABI.
+    let mut raw = unsafe { core::mem::zeroed::<RawHttpRequestEvent>() };
+    let copy_len = bytes.len().min(core::mem::size_of::<RawHttpRequestEvent>());
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            core::ptr::from_mut(&mut raw).cast::<u8>(),
+            copy_len,
+        );
+    }
+
+    let required_len = prefix_len + raw_http_capture_span(&raw);
+    if raw.request_len as usize > RAW_HTTP_REQUEST_BYTES || bytes.len() < required_len {
+        return Err(RawHttpDecodeError::RawSampleTooShort);
+    }
+    Ok(raw)
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -572,11 +613,7 @@ fn raw_http_request_to_signal_result_with_config(
     procfs_root: &std::path::Path,
     protocol_config: &ProtocolExtractionConfig,
 ) -> Result<SignalEnvelope, RawHttpDecodeError> {
-    if bytes.len() < core::mem::size_of::<RawHttpRequestEvent>() {
-        return Err(RawHttpDecodeError::RawSampleTooShort);
-    }
-
-    let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawHttpRequestEvent>()) };
+    let raw = decode_raw_http_event(bytes)?;
     let request = compact_raw_http_request(&raw)?;
     raw_http_request_parts_to_signal(
         &raw,
@@ -597,6 +634,26 @@ fn raw_http_request_parts_to_signal(
     procfs_root: &std::path::Path,
     protocol_config: &ProtocolExtractionConfig,
 ) -> Result<SignalEnvelope, RawHttpDecodeError> {
+    let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
+    raw_http_request_parts_to_signal_with_container(
+        raw,
+        request,
+        host,
+        observed_unix_nanos,
+        container,
+        protocol_config,
+    )
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn raw_http_request_parts_to_signal_with_container(
+    raw: &RawHttpRequestEvent,
+    request: &[u8],
+    host: Option<String>,
+    observed_unix_nanos: u64,
+    container: Option<e_navigator_signals::ContainerContext>,
+    protocol_config: &ProtocolExtractionConfig,
+) -> Result<SignalEnvelope, RawHttpDecodeError> {
     let parsed = parse_http_request(request, protocol_config).map_err(|reason| {
         RawHttpDecodeError::HttpExtraction {
             reason,
@@ -605,7 +662,6 @@ fn raw_http_request_parts_to_signal(
     })?;
     let trace_context = parsed.trace_context.as_ref();
     let peer = peer_context(raw, &parsed.attributes);
-    let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
     let process = NetworkProcessIdentity {
         pid: raw.pid,
         ppid: None,
@@ -770,7 +826,7 @@ mod platform {
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
-        Ebpf, include_bytes_aligned,
+        Ebpf, EbpfLoader, include_bytes_aligned,
         maps::{
             MapData, PerCpuArray,
             perf::{PerfEvent, PerfEventArray},
@@ -822,11 +878,19 @@ mod platform {
             let mut reader_handles = Vec::new();
             let diagnostics = SourceDiagnostics::from_env();
             let telemetry = Arc::new(SourceTelemetry::new("source.aya_http"));
-            let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
-                env!("OUT_DIR"),
-                "/e-navigator-ebpf-programs"
-            )))
-            .map_err(module_error)?;
+            let diagnostics_enabled = u8::from(diagnostics.enabled());
+            let mut loader = EbpfLoader::new();
+            loader.override_global("SOURCE_DIAGNOSTICS_ENABLED", &diagnostics_enabled, true);
+            crate::ebpf_maps::constrain_unrelated_maps(
+                &mut loader,
+                crate::ebpf_maps::SourceMapProfile::Http,
+            );
+            let mut ebpf = loader
+                .load(include_bytes_aligned!(concat!(
+                    env!("OUT_DIR"),
+                    "/e-navigator-ebpf-programs"
+                )))
+                .map_err(module_error)?;
 
             attach_tracepoint(
                 &mut ebpf,
@@ -971,6 +1035,9 @@ mod platform {
                 super::MAX_HTTP_REASSEMBLY_STREAMS,
                 self.protocol_config.max_header_bytes,
             )));
+            let container_cache = Arc::new(Mutex::new(crate::procfs::ContainerContextCache::new(
+                super::MAX_HTTP_CONTAINER_CACHE_ENTRIES,
+            )));
             for cpu_id in cpus {
                 let mut buffer = perf_array
                     .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
@@ -983,11 +1050,20 @@ mod platform {
                 let diagnostics = diagnostics.clone();
                 let telemetry = telemetry.clone();
                 let reassembler = reassembler.clone();
+                let container_cache = container_cache.clone();
 
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     let mut closed = false;
 
                     while !reader_shutdown.is_stopped() {
+                        if crate::perf_reader::wait_for_events(
+                            &buffer,
+                            "source.aya_http",
+                            cpu_id,
+                        ) != Some(true)
+                        {
+                            continue;
+                        }
                         buffer.for_each(|event| {
                             if closed {
                                 return;
@@ -997,19 +1073,9 @@ mod platform {
                                 PerfEvent::Sample { head, tail } => {
                                     let bytes = perf_sample_bytes(head, tail);
                                     let observed_unix_nanos = super::now_unix_nanos();
-                                    let decoded = if bytes.len()
-                                        < core::mem::size_of::<super::RawHttpRequestEvent>()
-                                    {
-                                        Err(super::RawHttpDecodeError::RawSampleTooShort)
-                                    } else {
-                                        let raw = unsafe {
-                                            core::ptr::read_unaligned(
-                                                bytes
-                                                    .as_ptr()
-                                                    .cast::<super::RawHttpRequestEvent>(),
-                                            )
-                                        };
-                                        super::compact_raw_http_request(&raw).map(|captured| {
+                                    let decoded = super::decode_raw_http_event(&bytes).and_then(
+                                        |raw| {
+                                            super::compact_raw_http_request(&raw).map(|captured| {
                                             let outcome = reassembler
                                                 .lock()
                                                 .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1020,8 +1086,9 @@ mod platform {
                                                     &protocol_config,
                                                 );
                                             (raw, outcome)
-                                        })
-                                    };
+                                            })
+                                        },
+                                    );
 
                                     match decoded {
                                         Err(err) => {
@@ -1039,13 +1106,27 @@ mod platform {
                                             for err in outcome.errors {
                                                 record_invalid(&telemetry, &diagnostics, err);
                                             }
+                                            let container = (!outcome.requests.is_empty())
+                                                .then(|| {
+                                                    container_cache
+                                                        .lock()
+                                                        .unwrap_or_else(|poisoned| {
+                                                            poisoned.into_inner()
+                                                        })
+                                                        .resolve(
+                                                            &procfs_root,
+                                                            raw.pid,
+                                                            raw.cgroup_id,
+                                                        )
+                                                })
+                                                .flatten();
                                             for request in outcome.requests {
-                                                match super::raw_http_request_parts_to_signal(
+                                                match super::raw_http_request_parts_to_signal_with_container(
                                                     &raw,
                                                     &request,
                                                     host.clone(),
                                                     observed_unix_nanos,
-                                                    &procfs_root,
+                                                    container.clone(),
                                                     &protocol_config,
                                                 ) {
                                                     Ok(signal) => {
@@ -1091,10 +1172,6 @@ mod platform {
                         if closed {
                             return;
                         }
-
-                        std::thread::sleep(std::time::Duration::from_millis(
-                            super::PERF_READER_POLL_INTERVAL_MS,
-                        ));
                     }
                 }));
             }
@@ -1464,6 +1541,53 @@ mod tests {
     }
 
     #[test]
+    fn compact_wire_event_decodes_without_fixed_buffer_tail() {
+        let request = b"GET /compact HTTP/1.1\r\nHost: compact.example.test\r\n\r\n";
+        let mut raw = RawHttpRequestEvent {
+            pid: 42,
+            role: RAW_HTTP_ROLE_SERVER,
+            uid: 1000,
+            cgroup_id: 7,
+            fd: 9,
+            family: RAW_HTTP_AF_INET,
+            remote_port_be: 39000_u16.to_be(),
+            local_port_be: 8080_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([10, 42, 1, 23]),
+            local_addr_v4: u32::from_ne_bytes([10, 43, 0, 77]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 0,
+            request_len: request.len() as u32,
+            request_total_len: request.len() as u32,
+            request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
+            command: fixed_command("python"),
+            request: [0; RAW_HTTP_REQUEST_BYTES],
+        };
+        raw.request[..request.len()].copy_from_slice(request);
+        let wire_len = core::mem::offset_of!(RawHttpRequestEvent, request) + request.len();
+
+        let signal = raw_http_request_to_signal_with_clock_and_procfs(
+            &raw_as_bytes(&raw)[..wire_len],
+            Some("node-a".to_string()),
+            1_000,
+            std::path::Path::new("/proc"),
+        )
+        .expect("compact raw event decodes");
+
+        let SignalPayload::ProtocolRequestObservation(event) = signal.payload else {
+            panic!("expected protocol request observation");
+        };
+        assert_eq!(event.role, Some(ProtocolCaptureRole::Server));
+        assert_eq!(event.method.as_deref(), Some("GET"));
+        assert!(
+            event
+                .attributes
+                .iter()
+                .any(|attribute| { attribute.key == "url.path" && attribute.value == "/compact" })
+        );
+    }
+
+    #[test]
     fn split_iovec_raw_http_request_compacts_before_decode() {
         let part1 = b"GET /split-iovec";
         let part2 = concat!(
@@ -1636,6 +1760,43 @@ mod tests {
 
         assert_eq!(err, RawHttpDecodeError::RawSampleTooShort);
         assert_eq!(err.reason_name(), "raw_sample_too_short");
+    }
+
+    #[test]
+    fn raw_http_decode_rejects_truncated_compact_payload() {
+        let request = b"GET /truncated HTTP/1.1\r\nHost: example.test\r\n\r\n";
+        let mut raw = RawHttpRequestEvent {
+            pid: 42,
+            role: RAW_HTTP_ROLE_CLIENT,
+            uid: 1000,
+            cgroup_id: 7,
+            fd: 9,
+            family: RAW_HTTP_AF_INET,
+            remote_port_be: 8080_u16.to_be(),
+            local_port_be: 39000_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([10, 43, 0, 77]),
+            local_addr_v4: u32::from_ne_bytes([10, 42, 1, 23]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            timestamp_unix_nanos: 0,
+            request_len: request.len() as u32,
+            request_total_len: request.len() as u32,
+            request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
+            command: fixed_command("curl"),
+            request: [0; RAW_HTTP_REQUEST_BYTES],
+        };
+        raw.request[..request.len()].copy_from_slice(request);
+        let wire_len = core::mem::offset_of!(RawHttpRequestEvent, request) + request.len();
+
+        let err = raw_http_request_to_signal_result(
+            &raw_as_bytes(&raw)[..wire_len - 1],
+            None,
+            1_000,
+            std::path::Path::new("/proc"),
+        )
+        .expect_err("truncated compact raw samples are invalid");
+
+        assert_eq!(err, RawHttpDecodeError::RawSampleTooShort);
     }
 
     #[test]

@@ -291,6 +291,73 @@ impl OtlpHttpSink {
                 .map(|guard| guard.telemetry()),
         }
     }
+
+    fn accepts_signal(&self, signal: &SignalEnvelope) -> bool {
+        (self.config.traces_enabled
+            && matches!(
+                &signal.payload,
+                SignalPayload::TraceSpanObservation(_)
+                    | SignalPayload::ServiceInteractionSpanObservation(_)
+                    | SignalPayload::TraceServicePathObservation(_)
+                    | SignalPayload::TraceCorrelationWarning(_)
+                    | SignalPayload::RequestSpanObservation(_)
+                    | SignalPayload::RequestCorrelationWarning(_)
+                    | SignalPayload::NetworkFlowWarning(_)
+                    | SignalPayload::ProfilingWarningObservation(_)
+            ))
+            || (self.config.metrics_enabled
+                && matches!(
+                    &signal.payload,
+                    SignalPayload::NetworkCounterMetric(_)
+                        | SignalPayload::NetworkDurationMetric(_)
+                        | SignalPayload::NetworkGaugeMetric(_)
+                        | SignalPayload::DnsCounterMetric(_)
+                        | SignalPayload::DnsLatencyMetric(_)
+                        | SignalPayload::ResourceGaugeMetric(_)
+                        | SignalPayload::ResourceCounterMetric(_)
+                ))
+            || (self.config.profiles_enabled
+                && matches!(&signal.payload, SignalPayload::ProfileSampleObservation(_)))
+    }
+
+    fn write_signal(&self, signal: &SignalEnvelope) -> CoreResult<()> {
+        if self.config.traces_enabled
+            && let Some(record) = format_otel_trace_record(signal)
+            && let Some(exporter) = &self.trace_exporter
+        {
+            if !trace_record_has_valid_ids(&record) {
+                if signal_declares_trace_identity(signal) {
+                    self.invalid_trace_records.fetch_add(1, Ordering::Relaxed);
+                }
+                return Ok(());
+            }
+
+            exporter.enqueue(record);
+            return Ok(());
+        }
+
+        if self.config.metrics_enabled
+            && let Some(record) = format_otel_metric_record(signal)
+            && let Some(exporter) = &self.metric_exporter
+        {
+            if let Some(guard) = &self.metric_timestamp_guard {
+                guard.enqueue(record)?;
+            } else {
+                exporter.enqueue(record);
+            }
+            return Ok(());
+        }
+
+        if self.config.profiles_enabled
+            && matches!(&signal.payload, SignalPayload::ProfileSampleObservation(_))
+            && let Some(record) = format_otel_profile_record(signal)
+            && let Some(exporter) = &self.profile_exporter
+        {
+            exporter.enqueue(record);
+        }
+
+        Ok(())
+    }
 }
 
 fn validate_worker_tuning(config: &OtlpHttpConfig) -> Result<(), String> {
@@ -354,44 +421,16 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
         ModuleMetadata::new("sink.otlp_http", ModuleKind::Sink)
     }
 
+    fn accepts(&self, signal: &SignalEnvelope) -> bool {
+        self.accepts_signal(signal)
+    }
+
+    fn write_immediate(&self, signal: &SignalEnvelope) -> Option<CoreResult<()>> {
+        Some(self.write_signal(signal))
+    }
+
     async fn write(&self, signal: &SignalEnvelope) -> CoreResult<()> {
-        if self.config.traces_enabled
-            && let Some(record) = format_otel_trace_record(signal)
-            && let Some(exporter) = &self.trace_exporter
-        {
-            if !trace_record_has_valid_ids(&record) {
-                if signal_declares_trace_identity(signal) {
-                    self.invalid_trace_records.fetch_add(1, Ordering::Relaxed);
-                }
-                return Ok(());
-            }
-
-            exporter.enqueue(record);
-            return Ok(());
-        }
-
-        if self.config.metrics_enabled
-            && let Some(record) = format_otel_metric_record(signal)
-            && let Some(exporter) = &self.metric_exporter
-        {
-            if let Some(guard) = &self.metric_timestamp_guard {
-                guard.enqueue(record)?;
-            } else {
-                exporter.enqueue(record);
-            }
-            return Ok(());
-        }
-
-        if self.config.profiles_enabled
-            && matches!(&signal.payload, SignalPayload::ProfileSampleObservation(_))
-            && let Some(record) = format_otel_profile_record(signal)
-            && let Some(exporter) = &self.profile_exporter
-        {
-            exporter.enqueue(record);
-            return Ok(());
-        }
-
-        Ok(())
+        self.write_signal(signal)
     }
 
     async fn shutdown(&self) -> CoreResult<()> {

@@ -75,6 +75,10 @@ impl Generator<SignalEnvelope> for ProfilingGenerator {
         ModuleMetadata::new("generator.profiling", ModuleKind::Generator)
     }
 
+    fn accepts(&self, signal: &SignalEnvelope) -> bool {
+        matches!(&signal.payload, SignalPayload::ProfileSampleObservation(_))
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,

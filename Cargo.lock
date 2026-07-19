@@ -609,6 +609,7 @@ dependencies = [
  "libc",
  "object",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "tokio",

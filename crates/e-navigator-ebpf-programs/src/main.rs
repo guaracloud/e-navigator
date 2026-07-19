@@ -5,7 +5,7 @@
 mod dns_peer;
 
 use aya_ebpf::{
-    EbpfContext,
+    EbpfContext, Global,
     bindings::{BPF_F_USER_STACK, bpf_pidns_info},
     helpers::{
         bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_get_stack,
@@ -18,10 +18,19 @@ use aya_ebpf::{
         },
     },
     macros::{map, perf_event, tracepoint, uprobe, uretprobe},
-    maps::{Array, HashMap, LruHashMap, PerCpuArray, PerfEventArray, ProgramArray},
+    maps::{
+        Array, HashMap, LruHashMap, PerCpuArray, PerfEventArray, PerfEventByteArray, ProgramArray,
+    },
     programs::{PerfEventContext, ProbeContext, RetProbeContext, TracePointContext},
 };
 use dns_peer::is_dns_ipv4_peer;
+
+/// Source-stage diagnostics are intentionally opt-in. The userspace loader
+/// overrides this read-only global before loading an object when diagnostic
+/// sampling is enabled. Keeping the default fast path at zero avoids doing
+/// several counter-map writes for every captured syscall in production.
+#[unsafe(no_mangle)]
+static SOURCE_DIAGNOSTICS_ENABLED: Global<u8> = Global::new(0);
 
 const EXECUTABLE_LEN: usize = 256;
 const MAX_ARGS: usize = 8;
@@ -567,7 +576,7 @@ static CPU_PROFILE_EVENTS: PerfEventArray<RawCpuProfileEvent> = PerfEventArray::
 static DNS_EVENTS: PerfEventArray<RawDnsEvent> = PerfEventArray::new(0);
 
 #[map]
-static HTTP_REQUEST_EVENTS: PerfEventArray<RawHttpRequestEvent> = PerfEventArray::new(0);
+static HTTP_REQUEST_EVENTS: PerfEventByteArray = PerfEventByteArray::new(0);
 
 #[map]
 static HTTP_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
@@ -592,8 +601,17 @@ static PROTOCOL_IOVEC_PROGS: ProgramArray = ProgramArray::with_max_entries(2, 0)
 static PROTOCOL_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
     PerCpuArray::with_max_entries(PROTOCOL_DIAGNOSTIC_COUNTERS_LEN, 0);
 
+// Ordinary BPF hash maps preallocate every bucket by default. Each E-Navigator
+// source loads the shared eBPF object independently, so preallocation charges
+// the full configured capacity for every retained source map even when only a
+// handful of entries are live. `BPF_F_NO_PREALLOC` preserves the exact maximum
+// entry bound and lookup/update semantics while charging storage as entries
+// are inserted. LRU maps intentionally keep their required preallocated form.
+const HASH_MAP_NO_PREALLOC: u32 = 1;
+
 #[map]
-static PROTOCOL_CAPTURE_PORTS: HashMap<u16, u32> = HashMap::with_max_entries(64, 0);
+static PROTOCOL_CAPTURE_PORTS: HashMap<u16, u32> =
+    HashMap::with_max_entries(64, HASH_MAP_NO_PREALLOC);
 
 #[map]
 static PROTOCOL_CAPTURE_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
@@ -606,11 +624,11 @@ static PROTOCOL_CAPTURE_INBOUND: Array<u32> = Array::with_max_entries(1, 0);
 
 #[map]
 static PENDING_PROTOCOL_READS: HashMap<u64, PendingProtocolRead> =
-    HashMap::with_max_entries(4096, 0);
+    HashMap::with_max_entries(4096, HASH_MAP_NO_PREALLOC);
 
 #[map]
 static PENDING_PROTOCOL_IOVEC_READS: HashMap<u64, PendingProtocolIovecRead> =
-    HashMap::with_max_entries(4096, 0);
+    HashMap::with_max_entries(4096, HASH_MAP_NO_PREALLOC);
 
 #[map]
 static EXEC_EVENT_SCRATCH: PerCpuArray<RawExecEvent> = PerCpuArray::with_max_entries(1, 0);
@@ -639,12 +657,14 @@ static UNWIND_ROWS: Array<UnwindRowAbi> = Array::with_max_entries(UNWIND_ROW_POO
 
 /// module id -> span of that module's rows inside UNWIND_ROWS.
 #[map]
-static UNWIND_MODULES: HashMap<u32, UnwindModuleSpan> = HashMap::with_max_entries(512, 0);
+static UNWIND_MODULES: HashMap<u32, UnwindModuleSpan> =
+    HashMap::with_max_entries(512, HASH_MAP_NO_PREALLOC);
 
 /// pid (in the symbolization namespace) -> executable mappings with
 /// precomputed load bias and module ids.
 #[map]
-static UNWIND_PROC_MAPPINGS: HashMap<u32, UnwindProcMappings> = HashMap::with_max_entries(1024, 0);
+static UNWIND_PROC_MAPPINGS: HashMap<u32, UnwindProcMappings> =
+    HashMap::with_max_entries(1024, HASH_MAP_NO_PREALLOC);
 
 /// Tail-call targets: index 0 = cpu_profile_unwind (chunked DWARF),
 /// index 1 = cpu_profile_py_find (CPython thread-state search),
@@ -654,7 +674,8 @@ static CPU_PROFILE_PROGS: ProgramArray = ProgramArray::with_max_entries(3, 0);
 
 /// pid (in the symbolization namespace) -> CPython walk parameters.
 #[map]
-static PY_PROC_INFO: HashMap<u32, PyProcInfo> = HashMap::with_max_entries(1024, 0);
+static PY_PROC_INFO: HashMap<u32, PyProcInfo> =
+    HashMap::with_max_entries(1024, HASH_MAP_NO_PREALLOC);
 
 #[map]
 static CPU_PROFILE_UNWIND_STATE: PerCpuArray<UnwindState> = PerCpuArray::with_max_entries(1, 0);
@@ -670,20 +691,24 @@ static HTTP_REQUEST_EVENT_SCRATCH: PerCpuArray<RawHttpRequestEvent> =
 static ARGV_CAPTURE_ENABLED: Array<u32> = Array::with_max_entries(1, 0);
 
 #[map]
-static PENDING_CONNECTS: HashMap<u64, PendingConnect> = HashMap::with_max_entries(4096, 0);
+static PENDING_CONNECTS: HashMap<u64, PendingConnect> =
+    HashMap::with_max_entries(4096, HASH_MAP_NO_PREALLOC);
 
 #[map]
 static ACTIVE_CONNECTIONS: HashMap<ConnectionKey, PendingConnect> =
-    HashMap::with_max_entries(16384, 0);
+    HashMap::with_max_entries(16384, HASH_MAP_NO_PREALLOC);
 
 #[map]
-static PENDING_NETWORK_IO: HashMap<u64, PendingNetworkIo> = HashMap::with_max_entries(8192, 0);
+static PENDING_NETWORK_IO: HashMap<u64, PendingNetworkIo> =
+    HashMap::with_max_entries(8192, HASH_MAP_NO_PREALLOC);
 
 #[map]
-static PENDING_DNS_RECVS: HashMap<u64, PendingDnsRecv> = HashMap::with_max_entries(4096, 0);
+static PENDING_DNS_RECVS: HashMap<u64, PendingDnsRecv> =
+    HashMap::with_max_entries(4096, HASH_MAP_NO_PREALLOC);
 
 #[map]
-static PENDING_BINDS: HashMap<u64, PendingBind> = HashMap::with_max_entries(4096, 0);
+static PENDING_BINDS: HashMap<u64, PendingBind> =
+    HashMap::with_max_entries(4096, HASH_MAP_NO_PREALLOC);
 
 /// Precise listener lookup for servers that bind and accept in one process.
 #[map]
@@ -698,10 +723,12 @@ static LISTENER_ENDPOINTS: LruHashMap<ListenerKey, ListenerEndpoint> =
     LruHashMap::with_max_entries(4096, 0);
 
 #[map]
-static PENDING_ACCEPTS: HashMap<u64, PendingAccept> = HashMap::with_max_entries(4096, 0);
+static PENDING_ACCEPTS: HashMap<u64, PendingAccept> =
+    HashMap::with_max_entries(4096, HASH_MAP_NO_PREALLOC);
 
 #[map]
-static PENDING_HTTP_READS: HashMap<u64, PendingHttpRead> = HashMap::with_max_entries(4096, 0);
+static PENDING_HTTP_READS: HashMap<u64, PendingHttpRead> =
+    HashMap::with_max_entries(4096, HASH_MAP_NO_PREALLOC);
 
 #[map]
 static TLS_DATA_EVENTS: PerfEventArray<RawProtocolDataEvent> = PerfEventArray::new(0);
@@ -714,16 +741,19 @@ static TLS_DATA_EVENT_SCRATCH: PerCpuArray<RawProtocolDataEvent> =
 static TLS_CAPTURE_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
 
 #[map]
-static TLS_CAPTURE_PORTS: HashMap<u16, u32> = HashMap::with_max_entries(64, 0);
+static TLS_CAPTURE_PORTS: HashMap<u16, u32> = HashMap::with_max_entries(64, HASH_MAP_NO_PREALLOC);
 
 #[map]
-static TLS_HANDLE_FDS: HashMap<TlsHandleKey, TlsHandleFds> = HashMap::with_max_entries(16384, 0);
+static TLS_HANDLE_FDS: HashMap<TlsHandleKey, TlsHandleFds> =
+    HashMap::with_max_entries(16384, HASH_MAP_NO_PREALLOC);
 
 #[map]
-static PENDING_TLS_SET_FD: HashMap<u64, PendingTlsSetFd> = HashMap::with_max_entries(8192, 0);
+static PENDING_TLS_SET_FD: HashMap<u64, PendingTlsSetFd> =
+    HashMap::with_max_entries(8192, HASH_MAP_NO_PREALLOC);
 
 #[map]
-static PENDING_TLS_IO: HashMap<u64, PendingTlsIo> = HashMap::with_max_entries(8192, 0);
+static PENDING_TLS_IO: HashMap<u64, PendingTlsIo> =
+    HashMap::with_max_entries(8192, HASH_MAP_NO_PREALLOC);
 
 #[map]
 static TLS_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
@@ -746,7 +776,8 @@ static CAPTURE_FILTER_CONTROL: Array<u32> = Array::with_max_entries(1, 0);
 /// Per-cgroup capture verdict populated by userspace: `1` capture, `0` drop.
 /// Capacity mirrors `e_navigator_core::capture_filter::CAPTURE_FILTER_MAP_CAPACITY`.
 #[map]
-static CGROUP_CAPTURE_FILTER: HashMap<u64, u8> = HashMap::with_max_entries(8192, 0);
+static CGROUP_CAPTURE_FILTER: HashMap<u64, u8> =
+    HashMap::with_max_entries(8192, HASH_MAP_NO_PREALLOC);
 
 /// Count of handler invocations suppressed by the capture filter, summed
 /// across CPUs by userspace for the filter diagnostic (drop-with-accounting).
@@ -2236,6 +2267,9 @@ fn cpu_profile_frame_limit() -> u32 {
 
 #[inline(always)]
 fn record_tls_diagnostic(stage: u32) {
+    if SOURCE_DIAGNOSTICS_ENABLED.load() == 0 {
+        return;
+    }
     if let Some(counter) = TLS_DIAGNOSTIC_COUNTERS.get_ptr_mut(stage) {
         unsafe {
             *counter = (*counter).wrapping_add(1);
@@ -2967,7 +3001,7 @@ fn emit_http_request_event(
     }
     record_http_diagnostic(HTTP_DIAG_COPY_SUCCESS);
     record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
-    HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
+    output_http_request_event(ctx, event);
     Ok(0)
 }
 
@@ -3004,7 +3038,7 @@ fn emit_http_request_event_without_connection(
     record_http_diagnostic(HTTP_DIAG_COPY_SUCCESS);
     record_http_diagnostic(HTTP_DIAG_FALLBACK_OUTPUT_ATTEMPT);
     record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
-    HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
+    output_http_request_event(ctx, event);
     Ok(0)
 }
 
@@ -3066,7 +3100,7 @@ fn emit_http_request_iovecs_event(
     }
     record_http_diagnostic(HTTP_DIAG_COPY_SUCCESS);
     record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
-    HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
+    output_http_request_event(ctx, event);
     Ok(0)
 }
 
@@ -3103,7 +3137,7 @@ fn emit_http_request_iovecs_event_without_connection(
     record_http_diagnostic(HTTP_DIAG_COPY_SUCCESS);
     record_http_diagnostic(HTTP_DIAG_FALLBACK_OUTPUT_ATTEMPT);
     record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
-    HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
+    output_http_request_event(ctx, event);
     Ok(0)
 }
 
@@ -3372,7 +3406,7 @@ fn try_tracepoint_http_read_exit(ctx: &TracePointContext) -> Result<u32, i64> {
     record_http_diagnostic(HTTP_DIAG_COPY_SUCCESS);
     record_http_diagnostic(HTTP_DIAG_INBOUND_OUTPUT_ATTEMPT);
     record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
-    HTTP_REQUEST_EVENTS.output(ctx, &*event, 0);
+    output_http_request_event(ctx, event);
     Ok(0)
 }
 
@@ -3937,6 +3971,9 @@ fn protocol_data_event_scratch() -> Result<&'static mut RawProtocolDataEvent, i6
 
 #[inline(always)]
 fn record_protocol_diagnostic(stage: u32) {
+    if SOURCE_DIAGNOSTICS_ENABLED.load() == 0 {
+        return;
+    }
     if let Some(counter) = PROTOCOL_DIAGNOSTIC_COUNTERS.get_ptr_mut(stage) {
         unsafe {
             *counter = (*counter).wrapping_add(1);
@@ -4366,6 +4403,35 @@ fn dns_event_scratch() -> Result<&'static mut RawDnsEvent, i64> {
     Ok(event)
 }
 
+#[inline(always)]
+fn http_request_capture_span(event: &RawHttpRequestEvent) -> usize {
+    let request_len = if event.request_len as usize > HTTP_REQUEST_BYTES {
+        HTTP_REQUEST_BYTES
+    } else {
+        event.request_len as usize
+    };
+    if event.request_iovec_lens[2] > 0 {
+        (HTTP_IOVEC_CHUNK_BYTES * 2 + event.request_iovec_lens[2] as usize).min(HTTP_REQUEST_BYTES)
+    } else if event.request_iovec_lens[1] > 0 {
+        (HTTP_IOVEC_CHUNK_BYTES + event.request_iovec_lens[1] as usize).min(HTTP_REQUEST_BYTES)
+    } else {
+        request_len
+    }
+}
+
+#[inline(always)]
+fn output_http_request_event(ctx: &TracePointContext, event: &RawHttpRequestEvent) {
+    let prefix_len = core::mem::offset_of!(RawHttpRequestEvent, request);
+    let output_len = prefix_len + http_request_capture_span(event);
+    let bytes = unsafe {
+        core::slice::from_raw_parts(
+            core::ptr::from_ref(event).cast::<u8>(),
+            output_len.min(core::mem::size_of::<RawHttpRequestEvent>()),
+        )
+    };
+    HTTP_REQUEST_EVENTS.output(ctx, bytes, 0);
+}
+
 fn http_request_event_scratch() -> Result<&'static mut RawHttpRequestEvent, i64> {
     let ptr = HTTP_REQUEST_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
     let event = unsafe { &mut *ptr };
@@ -4386,12 +4452,14 @@ fn http_request_event_scratch() -> Result<&'static mut RawHttpRequestEvent, i64>
     event.request_total_len = 0;
     event.request_iovec_lens = [0; HTTP_MAX_IOVECS];
     event.command = [0; 16];
-    event.request = [0; HTTP_REQUEST_BYTES];
     Ok(event)
 }
 
 #[inline(always)]
 fn record_http_diagnostic(stage: u32) {
+    if SOURCE_DIAGNOSTICS_ENABLED.load() == 0 {
+        return;
+    }
     if let Some(counter) = HTTP_DIAGNOSTIC_COUNTERS.get_ptr_mut(stage) {
         unsafe {
             *counter = (*counter).wrapping_add(1);

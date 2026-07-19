@@ -1253,7 +1253,7 @@ mod platform {
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
-        Ebpf, include_bytes_aligned,
+        Ebpf, EbpfLoader, include_bytes_aligned,
         maps::{
             Array as AyaArray, HashMap as AyaHashMap, MapData, ProgramArray as AyaProgramArray,
             perf::{PerfEvent as PerfBufferEvent, PerfEventArray},
@@ -1304,11 +1304,17 @@ mod platform {
             let mut reader_handles = Vec::new();
             let telemetry = SourceTelemetry::new("source.aya_cpu_profile");
             let drop_counters = std::sync::Arc::new(super::CpuProfileDropCounters::default());
-            let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
-                env!("OUT_DIR"),
-                "/e-navigator-ebpf-programs"
-            )))
-            .map_err(module_error)?;
+            let mut loader = EbpfLoader::new();
+            crate::ebpf_maps::constrain_unrelated_maps(
+                &mut loader,
+                crate::ebpf_maps::SourceMapProfile::CpuProfile,
+            );
+            let mut ebpf = loader
+                .load(include_bytes_aligned!(concat!(
+                    env!("OUT_DIR"),
+                    "/e-navigator-ebpf-programs"
+                )))
+                .map_err(module_error)?;
             populate_frame_limit(&mut ebpf, &self.config)?;
             populate_pid_namespace(&mut ebpf, &self.procfs_root);
             if self.config.dwarf_unwind {
@@ -1406,6 +1412,14 @@ mod platform {
 
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     while !reader_shutdown.is_stopped() {
+                        if crate::perf_reader::wait_for_events(
+                            &buffer,
+                            "source.aya_cpu_profile",
+                            cpu_id,
+                        ) != Some(true)
+                        {
+                            continue;
+                        }
                         let mut accepted = 0_usize;
                         let mut exit = ReaderExit::Stopped;
                         buffer.for_each(|event| {
@@ -1474,8 +1488,6 @@ mod platform {
                         if matches!(exit, ReaderExit::BackpressureStop) {
                             return ReaderExit::BackpressureStop;
                         }
-
-                        std::thread::sleep(std::time::Duration::from_millis(100));
                     }
                     ReaderExit::Stopped
                 }));

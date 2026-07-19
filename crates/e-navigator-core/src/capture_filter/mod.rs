@@ -173,6 +173,15 @@ impl CaptureFilterPolicy {
         self.enabled
     }
 
+    /// Whether policy evaluation needs live process names from cgroup members.
+    ///
+    /// Container identity comes from the Kubernetes snapshot, so only an
+    /// explicit process exclusion requires the comparatively expensive
+    /// `/proc` scan on every local cgroup refresh.
+    pub fn requires_process_identity(&self) -> bool {
+        !self.process_exclude.is_empty()
+    }
+
     /// Decision for a cgroup that could not be resolved to a pod.
     pub fn unknown_decision(&self) -> CaptureDecision {
         self.unknown_decision
@@ -423,6 +432,18 @@ mod tests {
     fn disabled_policy_reports_disabled() {
         let policy = policy(CaptureFilterConfig::default());
         assert!(!policy.is_enabled());
+        assert!(!policy.requires_process_identity());
+    }
+
+    #[test]
+    fn process_exclusions_require_live_process_identity() {
+        let policy = policy(CaptureFilterConfig {
+            enabled: true,
+            process_exclude: vec!["*exporter".to_string()],
+            ..Default::default()
+        });
+
+        assert!(policy.requires_process_identity());
     }
 
     #[test]

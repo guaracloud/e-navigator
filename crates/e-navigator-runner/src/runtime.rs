@@ -139,6 +139,9 @@ impl Runner {
         );
         let mut pending_generated = VecDeque::new();
         for (generator_index, generator) in self.registry.generators().iter().enumerate() {
+            if !generator.accepts(&signal) {
+                continue;
+            }
             let generated = self.handle_generator(generator.as_ref(), &signal).await?;
             for derived in generated {
                 if !budget.try_accept(generator.metadata(), 1) {
@@ -159,6 +162,9 @@ impl Runner {
                 .enumerate()
                 .skip(start_index)
             {
+                if !generator.accepts(&generated_signal) {
+                    continue;
+                }
                 let next_depth = depth.saturating_add(1);
                 let downstream = self
                     .handle_generator(generator.as_ref(), &generated_signal)
@@ -207,6 +213,14 @@ impl Runner {
         generator: &dyn e_navigator_core::Generator<SignalEnvelope>,
         signal: &SignalEnvelope,
     ) -> CoreResult<Vec<SignalEnvelope>> {
+        if let Some(outputs) = generator.observe_immediate(signal) {
+            let mut generated = Vec::new();
+            for output in outputs? {
+                push_generated(&mut generated, output, generator.metadata())?;
+            }
+            return Ok(generated);
+        }
+
         let (derived_tx, mut derived_rx) = mpsc::channel(16);
         let observe = generator.observe(signal, &derived_tx);
         tokio::pin!(observe);
@@ -236,8 +250,15 @@ impl Runner {
 
     async fn write_to_sinks(&self, signal: &SignalEnvelope) -> CoreResult<()> {
         for sink in self.registry.sinks() {
+            if !sink.accepts(signal) {
+                continue;
+            }
             let metadata = sink.metadata();
-            if let Err(err) = sink.write(signal).await {
+            let result = match sink.write_immediate(signal) {
+                Some(result) => result,
+                None => sink.write(signal).await,
+            };
+            if let Err(err) = result {
                 let module = metadata.name;
                 let err = with_module_context(metadata, err);
                 warn!(
@@ -419,7 +440,7 @@ mod tests {
         collections::BTreeMap,
         sync::{
             Arc,
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
     };
 
@@ -786,6 +807,79 @@ mod tests {
         count: usize,
     }
 
+    struct RejectingGenerator {
+        observed: Arc<AtomicBool>,
+    }
+
+    struct ImmediateCloneGenerator {
+        async_observed: Arc<AtomicBool>,
+    }
+
+    struct ImmediateCountingSink {
+        writes: Arc<AtomicUsize>,
+        async_written: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl Generator<SignalEnvelope> for RejectingGenerator {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("generator.rejecting", ModuleKind::Generator)
+        }
+
+        fn accepts(&self, _signal: &SignalEnvelope) -> bool {
+            false
+        }
+
+        async fn observe(
+            &self,
+            _signal: &SignalEnvelope,
+            _tx: &mpsc::Sender<SignalEnvelope>,
+        ) -> CoreResult<()> {
+            self.observed.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl Generator<SignalEnvelope> for ImmediateCloneGenerator {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("generator.immediate_clone", ModuleKind::Generator)
+        }
+
+        fn observe_immediate(
+            &self,
+            signal: &SignalEnvelope,
+        ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
+            Some(Ok(vec![signal.clone()]))
+        }
+
+        async fn observe(
+            &self,
+            _signal: &SignalEnvelope,
+            _tx: &mpsc::Sender<SignalEnvelope>,
+        ) -> CoreResult<()> {
+            self.async_observed.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl Sink<SignalEnvelope> for ImmediateCountingSink {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("sink.immediate_counting", ModuleKind::Sink)
+        }
+
+        fn write_immediate(&self, _signal: &SignalEnvelope) -> Option<CoreResult<()>> {
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            Some(Ok(()))
+        }
+
+        async fn write(&self, _signal: &SignalEnvelope) -> CoreResult<()> {
+            self.async_written.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
     #[async_trait]
     impl Generator<SignalEnvelope> for ManySignalsGenerator {
         fn metadata(&self) -> ModuleMetadata {
@@ -1027,6 +1121,47 @@ mod tests {
             .expect("runner exits after source closes");
 
         assert_eq!(seen.lock().await.len(), 18);
+    }
+
+    #[tokio::test]
+    async fn runner_skips_generators_that_reject_the_signal() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let observed = Arc::new(AtomicBool::new(false));
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(OneSignalSource))
+            .with_generator(Box::new(RejectingGenerator {
+                observed: observed.clone(),
+            }))
+            .with_sink(Box::new(MemorySink { seen: seen.clone() }));
+        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
+
+        runner.run().await.expect("runner exits cleanly");
+
+        assert!(!observed.load(Ordering::SeqCst));
+        assert_eq!(seen.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn runner_uses_immediate_generator_and_sink_paths() {
+        let async_observed = Arc::new(AtomicBool::new(false));
+        let async_written = Arc::new(AtomicBool::new(false));
+        let writes = Arc::new(AtomicUsize::new(0));
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(OneSignalSource))
+            .with_generator(Box::new(ImmediateCloneGenerator {
+                async_observed: async_observed.clone(),
+            }))
+            .with_sink(Box::new(ImmediateCountingSink {
+                writes: writes.clone(),
+                async_written: async_written.clone(),
+            }));
+        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
+
+        runner.run().await.expect("runner exits cleanly");
+
+        assert!(!async_observed.load(Ordering::SeqCst));
+        assert!(!async_written.load(Ordering::SeqCst));
+        assert_eq!(writes.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

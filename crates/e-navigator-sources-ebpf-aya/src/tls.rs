@@ -11,7 +11,6 @@
 #[cfg(target_os = "linux")]
 const TLS_PERF_BUFFER_PAGE_COUNT: usize = 64;
 #[cfg(target_os = "linux")]
-const TLS_PERF_READER_POLL_INTERVAL_MS: u64 = 25;
 #[cfg(target_os = "linux")]
 const TLS_RAW_SAMPLE_CHANNEL_CAPACITY: usize = 1024;
 /// How often to rescan process maps for newly loaded TLS libraries.
@@ -140,7 +139,7 @@ mod platform {
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
-        Ebpf, include_bytes_aligned,
+        Ebpf, EbpfLoader, include_bytes_aligned,
         maps::{Array as AyaArray, HashMap as AyaHashMap, MapData, perf::PerfEventArray},
         programs::{TracePoint, UProbe, uprobe::UProbeLinkId, uprobe::UProbeScope},
         util::online_cpus,
@@ -299,11 +298,19 @@ mod platform {
             let mut reader_handles = Vec::new();
             let diagnostics = SourceDiagnostics::from_env();
             let telemetry = Arc::new(SourceTelemetry::new("source.aya_tls"));
-            let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
-                env!("OUT_DIR"),
-                "/e-navigator-ebpf-programs"
-            )))
-            .map_err(module_error)?;
+            let diagnostics_enabled = u8::from(diagnostics.enabled());
+            let mut loader = EbpfLoader::new();
+            loader.override_global("SOURCE_DIAGNOSTICS_ENABLED", &diagnostics_enabled, true);
+            crate::ebpf_maps::constrain_unrelated_maps(
+                &mut loader,
+                crate::ebpf_maps::SourceMapProfile::Tls,
+            );
+            let mut ebpf = loader
+                .load(include_bytes_aligned!(concat!(
+                    env!("OUT_DIR"),
+                    "/e-navigator-ebpf-programs"
+                )))
+                .map_err(module_error)?;
 
             populate_capture_ports(&mut ebpf, &self.config)?;
             populate_capture_limit(&mut ebpf, &self.config)?;
@@ -432,32 +439,42 @@ mod platform {
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     let mut closed = false;
                     while !reader_shutdown.is_stopped() {
+                        let Some(readable) =
+                            crate::perf_reader::wait_for_events(&buffer, "source.aya_tls", cpu_id)
+                        else {
+                            continue;
+                        };
                         let poll_started_monotonic_nanos = monotonic_nanos();
-                        buffer.for_each(|event| {
-                            if closed {
-                                return;
-                            }
-                            match event {
-                                aya::maps::perf::PerfEvent::Sample { head, tail } => {
-                                    let Some(sample) = InlineSample::from_perf(head, tail) else {
-                                        telemetry.record_lost_perf_events(1);
-                                        return;
-                                    };
-                                    if sample_tx
-                                        .blocking_send(
-                                            crate::protocol::ProtocolPerfMessage::Sample(sample),
-                                        )
-                                        .is_err()
-                                    {
-                                        closed = true;
+                        if readable {
+                            buffer.for_each(|event| {
+                                if closed {
+                                    return;
+                                }
+                                match event {
+                                    aya::maps::perf::PerfEvent::Sample { head, tail } => {
+                                        let Some(sample) = InlineSample::from_perf(head, tail)
+                                        else {
+                                            telemetry.record_lost_perf_events(1);
+                                            return;
+                                        };
+                                        if sample_tx
+                                            .blocking_send(
+                                                crate::protocol::ProtocolPerfMessage::Sample(
+                                                    sample,
+                                                ),
+                                            )
+                                            .is_err()
+                                        {
+                                            closed = true;
+                                        }
+                                    }
+                                    aya::maps::perf::PerfEvent::Lost { count } => {
+                                        telemetry.record_lost_perf_events(count);
+                                        warn!(count, "lost TLS data perf events");
                                     }
                                 }
-                                aya::maps::perf::PerfEvent::Lost { count } => {
-                                    telemetry.record_lost_perf_events(count);
-                                    warn!(count, "lost TLS data perf events");
-                                }
-                            }
-                        });
+                            });
+                        }
                         if closed {
                             return;
                         }
@@ -470,9 +487,6 @@ mod platform {
                         {
                             return;
                         }
-                        std::thread::sleep(std::time::Duration::from_millis(
-                            super::TLS_PERF_READER_POLL_INTERVAL_MS,
-                        ));
                     }
                 }));
             }

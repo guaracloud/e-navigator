@@ -322,6 +322,43 @@ impl PrometheusHttpSink {
             address,
         ))
     }
+
+    fn accepts_signal(&self, signal: &SignalEnvelope) -> bool {
+        (self.metrics_enabled
+            && matches!(
+                &signal.payload,
+                SignalPayload::NetworkCounterMetric(_)
+                    | SignalPayload::NetworkDurationMetric(_)
+                    | SignalPayload::NetworkGaugeMetric(_)
+                    | SignalPayload::DnsCounterMetric(_)
+                    | SignalPayload::DnsLatencyMetric(_)
+                    | SignalPayload::ResourceGaugeMetric(_)
+                    | SignalPayload::ResourceCounterMetric(_)
+            ))
+            || (self.profiles_enabled
+                && matches!(
+                    &signal.payload,
+                    SignalPayload::ProfileSampleObservation(_)
+                        | SignalPayload::ProfilingSessionObservation(_)
+                        | SignalPayload::ProfilingWarningObservation(_)
+                ))
+    }
+
+    fn write_signal(&self, signal: &SignalEnvelope) -> CoreResult<()> {
+        for line in format_prometheus_metric_lines_with_families(
+            signal,
+            self.metrics_enabled,
+            self.profiles_enabled,
+        ) {
+            self.state.push(line)?;
+        }
+        if self.profiles_enabled
+            && matches!(signal.payload, SignalPayload::ProfileSampleObservation(_))
+        {
+            self.state.push_profile(signal.clone())?;
+        }
+        Ok(())
+    }
 }
 
 fn validate_max_metric_lines(max_metric_lines: usize) -> CoreResult<()> {
@@ -345,23 +382,16 @@ impl Sink<SignalEnvelope> for PrometheusHttpSink {
         ModuleMetadata::new("sink.prometheus_http", ModuleKind::Sink)
     }
 
+    fn accepts(&self, signal: &SignalEnvelope) -> bool {
+        self.accepts_signal(signal)
+    }
+
+    fn write_immediate(&self, signal: &SignalEnvelope) -> Option<CoreResult<()>> {
+        Some(self.write_signal(signal))
+    }
+
     async fn write(&self, signal: &SignalEnvelope) -> CoreResult<()> {
-        for line in format_prometheus_metric_lines_with_families(
-            signal,
-            self.metrics_enabled,
-            self.profiles_enabled,
-        ) {
-            self.state.push(line)?;
-        }
-        if self.profiles_enabled
-            && matches!(
-                signal.payload,
-                e_navigator_signals::SignalPayload::ProfileSampleObservation(_)
-            )
-        {
-            self.state.push_profile(signal.clone())?;
-        }
-        Ok(())
+        self.write_signal(signal)
     }
 }
 
