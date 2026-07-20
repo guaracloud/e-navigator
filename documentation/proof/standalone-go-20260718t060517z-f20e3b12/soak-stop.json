@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "run_id": "standalone-go-20260718t060517z-f20e3b12",
+  "decision": "STOPPED_BY_USER_BEFORE_MINIMUM_DURATION",
+  "stopped_utc": "2026-07-20T13:53:40Z",
+  "stopped_epoch_seconds": 1784555620,
+  "acceptance": {
+    "accepted_attempt": 5,
+    "minimum_duration_seconds": 86400,
+    "minimum_duration_reached": false,
+    "accepted_as_24_hour_soak": false,
+    "go_declared": false,
+    "release_or_tag_created": false
+  },
+  "attempt_history": [
+    {
+      "attempt": 1,
+      "decision": "INVALIDATED",
+      "accepted_seconds": 0,
+      "reason": "run-owned functional collector remained outside the claimed final topology"
+    },
+    {
+      "attempt": 2,
+      "decision": "INVALIDATED",
+      "accepted_seconds": 0,
+      "reason": "one workload request failed"
+    },
+    {
+      "attempt": 3,
+      "decision": "INVALIDATED",
+      "accepted_seconds": 0,
+      "reason": "three connection TimeoutError events and an independent optional TLS attachment counter departure"
+    },
+    {
+      "attempt": 4,
+      "decision": "INVALIDATED",
+      "accepted_seconds": 0,
+      "reason": "the full Pyroscope window was not retained because block storage was not configured on the PVC"
+    },
+    {
+      "attempt": 5,
+      "decision": "STOPPED_BY_USER_BEFORE_MINIMUM_DURATION",
+      "accepted_seconds": 79982,
+      "remaining_seconds": 6418
+    }
+  ],
+  "attempt_5_final_proven_accounting": {
+    "start_utc": "2026-07-19T15:36:58Z",
+    "minimum_end_utc": "2026-07-20T15:36:58Z",
+    "sampled_utc": "2026-07-20T13:50:00Z",
+    "sampled_epoch_seconds": 1784555400,
+    "scheduled": 1498762,
+    "successful": 1498762,
+    "errors": 0,
+    "baseline_scheduled": 299062,
+    "baseline_successful": 299062,
+    "successful_delta": 1199700,
+    "http_decoded": 1821621,
+    "http_sent": 1821621,
+    "baseline_http_decoded": 621921,
+    "baseline_http_sent": 621921,
+    "http_decoded_delta": 1199700,
+    "http_sent_delta": 1199700,
+    "exact_workload_decoded_sent_accounting": true
+  },
+  "latest_complete_backend_heartbeat": {
+    "path": "target/standalone-go-20260718t060517z-f20e3b12/soak-heartbeats/20260720T134100Z.json",
+    "sampled_utc": "2026-07-20T13:41:00Z",
+    "continuity_valid": true,
+    "all_accepted_uids_unchanged": true,
+    "all_restarts_zero": true,
+    "prometheus_targets_up": 3,
+    "workload_rps": 15,
+    "workload_errors": 0,
+    "source_invalid_lost_send_failures": 0,
+    "export_queue_depth": 0,
+    "export_counter_departures": 0,
+    "tempo_correct_server_traces_present": true,
+    "tempo_excluded_sentinels_empty": true,
+    "pyroscope_timeline_samples": 2649,
+    "pyroscope_interior_zero_samples": 0,
+    "pyroscope_total_nanoseconds": 36221000000000,
+    "pyroscope_names": 5090,
+    "pyroscope_named_python_matches": 182,
+    "pyroscope_excluded_sentinels_empty": true,
+    "pyroscope_pvc_free_percent": 96.07775493258471
+  },
+  "cleanup": {
+    "automation_deleted": "e-navigator-24h-soak-monitor",
+    "deleted_namespaces": [
+      "proj-enav-soak-f20e3b12",
+      "e-nav-accept-20260718t060517z-f20e3b12",
+      "e-nav-go-f20e3b12-a",
+      "e-nav-go-f20e3b12-b",
+      "e-nav-go-f20e3b12-excluded",
+      "e-nav-go-f20e3b12-profiles",
+      "e-nav-perf-f20e3b12"
+    ],
+    "remaining_namespaces_with_run_id": 0,
+    "matching_cluster_rbac_remaining": 0,
+    "matching_helm_releases_remaining": 0,
+    "closed_local_port_forwards": [
+      19120,
+      19130,
+      19135
+    ],
+    "production_components_deleted": false,
+    "shared_node_image_or_nix_store_cache_deleted": false
+  },
+  "production_state_after_cleanup": {
+    "nodes_ready": 2,
+    "e_navigator_agents_desired": 2,
+    "e_navigator_agents_ready": 2,
+    "e_navigator_image": "ghcr.io/guaracloud/e-navigator@sha256:62402d21b9cb02d59d63365c7e3716ffa0980bfea42d070b43fed618703a7df9",
+    "e_navigator_agent_restarts": 0,
+    "pyroscope_ready": true,
+    "pyroscope_restarts": 0,
+    "tempo_ready": true,
+    "tempo_restarts": 0,
+    "alloy_ready": true,
+    "alloy_restarts": 0,
+    "root_app": "Synced/Healthy",
+    "e_navigator_app": "Synced/Healthy",
+    "pyroscope_app": "Synced/Healthy",
+    "alloy_app": "Synced/Healthy",
+    "accepted_gitops_revision": "1cd19431e0de0f6c52e3a62e8785212ef0c2f153",
+    "beyla_present": false,
+    "legacy_or_temporary_e_navigator_present": false
+  },
+  "publication": {
+    "snapshot_at_stop": true,
+    "ready_pull_request_opened": false,
+    "protected_merge_completed": false,
+    "final_main_image_verified": false,
+    "gitops_updated_to_final_main_digest": false,
+    "publication_later_authorized": true,
+    "acceptance_decision_unchanged": true,
+    "reason": "The user stopped the soak before the mandatory 24-hour boundary, then separately authorized repository publication."
+  }
+}

@@ -1,8 +1,21 @@
 {
   "schema_version": 5,
   "run_id": "standalone-go-20260718t060517z-f20e3b12",
-  "decision": "IN_PROGRESS",
+  "decision": "STOPPED_BY_USER_BEFORE_MINIMUM_DURATION",
   "accepted_attempt": 5,
+  "stop": {
+    "requested_by_user": true,
+    "stopped_epoch_seconds": 1784555620,
+    "stopped_utc": "2026-07-20T13:53:40Z",
+    "last_proven_fixed_sample_epoch_seconds": 1784555400,
+    "last_proven_fixed_sample_utc": "2026-07-20T13:50:00Z",
+    "accepted_elapsed_seconds": 79982,
+    "remaining_to_minimum_seconds": 6418,
+    "minimum_duration_reached": false,
+    "acceptance_decision": "NOT_ACCEPTED_AS_A_24_HOUR_SOAK",
+    "go_declared": false,
+    "cleanup_evidence": "documentation/proof/standalone-go-20260718t060517z-f20e3b12/soak-stop.json"
+  },
   "attempts": [
     {
       "attempt": 1,
@@ -1064,7 +1077,7 @@
     },
     {
       "attempt": 5,
-      "decision": "IN_PROGRESS",
+      "decision": "STOPPED_BY_USER_BEFORE_MINIMUM_DURATION",
       "clock": {
         "start_epoch_seconds": 1784475418,
         "start_utc": "2026-07-19T15:36:58Z",

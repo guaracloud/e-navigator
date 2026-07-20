@@ -2,35 +2,30 @@
 
 ## Decision
 
-**IN PROGRESS. GO is not yet declared.**
+**STOPPED BY USER BEFORE THE 24-HOUR MINIMUM. GO is not declared.**
 
 The controlled functional and failure matrices, matched A/B/C performance
-trials, source-controlled homelab cutover, and exercised rollback are complete
-and passing. Replacement soak attempt 3 began at `2026-07-19T09:03:08Z` and
-cannot pass before `2026-07-20T09:03:08Z`. Publication to final `main`, final
-image verification, and run-owned cleanup remain pending until that interval
-is complete.
+trials, source-controlled homelab cutover, and exercised rollback completed and
+passed. The fifth soak attempt was continuity-valid through the final fixed
+sample at `2026-07-20T13:50:00Z`, when the user requested that the soak stop.
+That sample represented 79,982 seconds (`22h13m02s`) of accepted continuity,
+leaving 6,418 seconds (`1h46m58s`) before the mandatory boundary.
 
-Attempt 1, beginning at `2026-07-19T01:43:29Z`, was invalidated after 1,942
-seconds because a run-owned functional collector still existed outside the
-claimed final topology. Attempt 2, beginning at `2026-07-19T04:26:52Z`, was
-invalidated after 15,540 seconds because the workload error counter increased
-from zero to one. Neither interval contributes any accepted time. The attempt-2
-failure was isolated to one self-recovered client transaction: all 233,099
-successful requests were decoded and sent exactly, while every E-Navigator and
-backend failure counter remained at baseline.
+At the final sample, attempt 5 had produced 1,199,700 successful requests since
+its baseline with zero workload errors. E-Navigator decoded and sent exactly
+the same 1,199,700 HTTP signals. The final full backend heartbeat remained
+gap-free, bounded, and free of excluded or cross-tenant signals. Attempts 1
+through 4 remain invalidated and contribute zero accepted seconds: stale
+run-owned topology in attempt 1, one workload error in attempt 2, three
+connection timeouts plus an optional TLS attachment departure in attempt 3,
+and non-persistent Pyroscope history in attempt 4.
 
-Before attempt 3, the run-owned harness gained bounded exception phase/class
-diagnostics and a fixed-cardinality reason counter without changing rate,
-request mix, timeout, images, server work, or acceptance criteria. Both fixture
-pods were then replaced, stabilized for more than six minutes, and frozen with
-new identities and baselines.
-
-The clock will be restarted if an agent, Tempo, Pyroscope, Alloy, the workload
-server, or the workload client is replaced or restarts; if configuration or
-image identity changes; if the workload error counter increases; or if a
-monitoring gap makes continuity unverifiable. A clean point sample is not
-treated as a soak pass.
+The hourly automation, disposable fixtures, and owned Kubernetes namespaces
+were removed. The production E-Navigator, Pyroscope, Tempo, Alloy, and GitOps
+state was preserved. At the stop point no ready PR, protected merge,
+final-main image proof, release, or tag had been created. The user later
+authorized repository publication as a separate action. That authorization
+does not retroactively complete the 24-hour soak or change this decision to GO.
 
 ## Product boundary and architecture
 
@@ -229,60 +224,38 @@ samples throughout.
 
 ## Uninterrupted E-Navigator-only soak
 
-Status: **IN PROGRESS**
+Status: **STOPPED BEFORE MINIMUM DURATION; NOT ACCEPTED AS A 24-HOUR SOAK**
 
-- Attempt 1: **INVALIDATED** at 1,942 seconds; accepted duration zero
-- Attempt 2: **INVALIDATED** at 15,540 seconds after one workload error;
-  accepted duration zero
-- Attempt 3 server start: `2026-07-19T08:56:59Z`
-- Attempt 3 client start: `2026-07-19T08:56:59Z`
-- Valid clock start: `2026-07-19T09:03:08Z` (epoch `1784451788`)
-- Earliest valid end: `2026-07-20T09:03:08Z` (epoch `1784538188`)
+- Attempts 1 through 4: **INVALIDATED**; accepted duration zero
+- Attempt 5 start: `2026-07-19T15:36:58Z` (epoch `1784475418`)
+- Mandatory end: `2026-07-20T15:36:58Z` (epoch `1784561818`)
+- Final proven fixed sample: `2026-07-20T13:50:00Z` (epoch `1784555400`)
+- Accepted continuity: 79,982 seconds (`22h13m02s`)
+- Missing duration: 6,418 seconds (`1h46m58s`)
 - Offered workload: 15 RPS cross-node HTTP/1.1
-- Start workload totals: 5,503 scheduled, 5,503 successful, 0 errors, 0
-  diagnostic error reasons
-- Six pre-clock one-minute windows: 5,400 total successes, 0 errors
-- Pre-clock observed p99 range: 50.287 to 53.186 ms
+- Attempt-5 workload delta: 1,199,700 scheduled and successful, zero errors
+- Attempt-5 HTTP delta: 1,199,700 decoded and 1,199,700 sent
 
-The accepted fixture preserves the 15 RPS and 60/40 path mix while adding
-bounded deterministic CPU work to make the low-rate workload continuously
-visible to the production 10 Hz profiler. Its bounded diagnostics identify any
-future caught exception without masking it. The ignored source manifest is
-represented by SHA-256
-`1daf5decf90052fd53c207b25a783af0a08ce8c22e2533b0195392425167724c`.
+Through the final complete backend heartbeat at `2026-07-20T13:41:00Z`, all
+accepted pod UIDs remained unchanged, every restart count remained zero, both
+nodes were Ready, and root-app, E-Navigator, Pyroscope, and Alloy were
+Synced/Healthy at the accepted GitOps state. Prometheus retained all three
+targets and required series without a continuity gap. Source invalid, lost,
+send-failure, optional-capacity, exporter, controller, backend, and excluded
+sentinel counters remained at their attempt-5 baselines; queues were empty and
+metric/controller/resource state stayed bounded.
 
-At the frozen boundary:
+Tempo continued to return root `python` / `http request` server spans with the
+accepted pod UID, node, method, path, and generated high-confidence identity.
+Pyroscope returned 2,649 consecutive 30-second samples from the attempt-5
+boundary with zero interior gaps, 36,221,000,000,000 total nanoseconds, 5,090
+names, 182 named Python symbols, healthy persistent block maintenance, and
+96.08% PVC free space. Client and excluded-namespace Tempo, Pyroscope, and
+metric sentinel queries remained empty.
 
-- both agent scrape targets and the workload target were up;
-- all agent, backend, and workload containers were Ready with zero restarts;
-- both agents used the fixed accepted OCI index digest;
-- HTTP decoded and sent were both 266,864, with invalid, lost, and send failure
-  all zero;
-- every metric/profile/trace exporter queue was empty;
-- every exporter drop, retry, failed-batch, partial, rejected, permanent, and
-  invalid-response counter was zero;
-- both Kubernetes controllers were Ready with maximum 48-second freshness,
-  watch failures were zero, and the one node-1 API relist failure occurred
-  during startup before the clock;
-- Tempo returned traces for `soak-server-7bcb66845c-v6gkp` with correct Kubernetes
-  identity, `python` root service, and `http request` server span;
-- Pyroscope returned 171.9 seconds for the new pod, 394 names, 29 levels, and
-  15 named Python-frame matches with no interior timeline gap;
-- the excluded-namespace Tempo query and excluded-service Pyroscope query both
-  returned zero;
-- the agents used 0.0278 and 0.0321 CPU cores and 277.2 MB and 174.0 MB working
-  set; the client/server remained bounded at 0.0198/0.1958 cores and
-  28.2/20.8 MB.
-
-Prometheus continuously scrapes the agent and workload series. Tempo and
-Pyroscope continuously retain backend receipt. An hourly heartbeat attached
-to this task checks immutable pod UIDs, restarts, Argo state, collector
-absence, scrape continuity, workload rate/errors, HTTP loss, exporter state,
-controller freshness, backend queries, resource bounds, and tenant sentinels.
-
-The exact start identities and baseline counters are in `soak-start.json`.
-End-boundary values, query-range continuity assertions, and the final soak
-decision will be added only after the minimum end boundary.
+The run was stopped by explicit user request at `2026-07-20T13:53:40Z`. This
+is a strong 22-hour continuity result, but it is not the required 24-hour proof
+and must never be represented as one.
 
 ## Quality and publication
 
@@ -298,23 +271,26 @@ zero failures, including both listener-admission cases. The first complete-gate
 attempt exposed that the runtime's new `rustix`
 dependency edge had not been propagated into `fuzz/Cargo.lock`. The lockfile
 was regenerated mechanically in commit `cf24ff4`; complete reruns after the
-runtime optimization and listener repair then passed. Because the soak-end
-evidence, manifest, and checksums do not exist
-yet, final post-evidence hygiene remains required before publication. The
-ready PR, every required GitHub check, protected merge, post-merge image
-workflow, final `main` digest/source match, and corresponding GitOps digest
-update also remain pending.
+runtime optimization and listener repair then passed. Because the user stopped
+the run before the 24-hour boundary, final end-boundary evidence was not
+collected and cannot be reconstructed. The user subsequently authorized a
+fresh quality rerun and protected repository publication. Those publication
+steps are independent of the stopped acceptance decision; no release or tag is
+authorized, and publication cannot turn this result into a 24-hour GO.
+
+The fresh complete `scripts/quality.sh` publication gate passed on 2026-07-20
+after the stop record was finalized. It reran the Rust, supply-chain, container,
+Helm, Kubernetes, documentation-link, and diff checks listed above with no
+failures.
 
 ## Cleanup
 
-Final cleanup is pending until the soak and publication checks complete.
-Run-owned resources include the controlled fixture namespaces, performance
-namespace, soak namespace, acceptance diagnostics, RBAC and Helm state, node
-image references, three `/tmp/enav-f20e3b12-*-perf.data` files on
-`homelab-02`, the temporarily fetched Nix perf store path, local temporary
-files, and owned port forwards. Exact targets will be re-resolved immediately
-before deletion. Recovery inputs will be retained only when they are sanitized
-and deliberately documented.
+At user stop, the soak namespace and six other exact-run disposable acceptance,
+matrix, profiling, excluded-sentinel, and performance namespaces were deleted.
+No matching run-owned namespace, cluster RBAC, or Helm release remained. The
+hourly automation was deleted and the Prometheus, Tempo, and Pyroscope port
+forwards were terminated. Sanitized proof and recovery inputs were retained.
+Potentially shared node image and Nix-store cache entries were not deleted.
 
 ## Requirement decision table
 
@@ -333,10 +309,11 @@ and deliberately documented.
 | Three matched A/B/C trials | PASS | `abc-results.json`; all thresholds pass |
 | Source-controlled final cutover | PASS | Home-datacenter PRs #31, #33, #35, #36, #38; Argo Synced/Healthy |
 | Bounded rollback exercised | PASS | PR #34, 2/2 Beyla Ready, nonzero attributed telemetry, restore via #35 |
-| Uninterrupted 24-hour soak | IN PROGRESS | `soak-start.json`; attempt 3 earliest end `2026-07-20T09:03:08Z` |
-| Complete final quality gate | IN PROGRESS | Full `scripts/quality.sh` pass against `0cd5e9a`; final post-evidence hygiene remains |
-| Ready PR, checks, protected merge | PENDING | Run after soak passes |
-| Final main image/source and GitOps digest match | PENDING | Run after protected merge and image publication |
-| Owned cleanup complete | PENDING | Run after publication verification |
+| Uninterrupted 24-hour soak | STOPPED / NOT ACCEPTED | Attempt 5 stopped at 22h13m02s, 1h46m58s short |
+| Complete final quality gate | PASS FOR PUBLICATION | Fresh post-stop `scripts/quality.sh` rerun passed in full |
+| Ready PR, checks, protected merge | AUTHORIZED AFTER STOP | Separate repository-publication request; cannot alter the stopped soak result |
+| Final main image/source and GitOps digest match | OUTSIDE STOPPED SOAK | No final acceptance claim or GitOps rollout follows from repository publication |
+| Owned cleanup complete | PASS FOR KUBERNETES FIXTURES | Seven exact-run disposable namespaces, automation, and port forwards removed |
 
-No GO will be recorded while any row remains in progress or pending.
+No GO is recorded because the mandatory 24-hour row was stopped and not
+accepted. Later repository publication does not change that fact.
