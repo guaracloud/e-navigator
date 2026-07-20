@@ -50,11 +50,30 @@ impl Generator<SignalEnvelope> for RuntimeSecurityGenerator {
         )
     }
 
+    fn observe_immediate(
+        &self,
+        signal: &SignalEnvelope,
+    ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
+        Some(Ok(self.outputs_for_signal(signal)))
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
+        for finding in self.outputs_for_signal(signal) {
+            tx.send(finding)
+                .await
+                .map_err(|_| CoreError::PipelineClosed)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl RuntimeSecurityGenerator {
+    fn outputs_for_signal(&self, signal: &SignalEnvelope) -> Vec<SignalEnvelope> {
         let finding = match &signal.payload {
             SignalPayload::Exec(event) => finding_for_exec(event),
             SignalPayload::NetworkConnectionOpen(event) => self.finding_for_network_open(event),
@@ -62,16 +81,14 @@ impl Generator<SignalEnvelope> for RuntimeSecurityGenerator {
         };
 
         let Some(finding) = finding else {
-            return Ok(());
+            return Vec::new();
         };
 
-        tx.send(SignalEnvelope::runtime_security_finding(
+        vec![SignalEnvelope::runtime_security_finding(
             "generator.runtime_security",
             signal.host.clone(),
             finding,
-        ))
-        .await
-        .map_err(|_| CoreError::PipelineClosed)
+        )]
     }
 }
 

@@ -1,3 +1,9 @@
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "benchmark setup and assertions abort the benchmark on invalid fixtures"
+)]
+
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
 use e_navigator_core::{Generator, PrometheusHttpConfig, Sink};
 use e_navigator_generators::{
@@ -603,7 +609,6 @@ fn bench_generators(c: &mut Criterion) {
 fn bench_network_open_aggregation(c: &mut Criterion) {
     let runtime = Runtime::new().unwrap();
     let generator = NetworkMetricsGenerator::with_limits(8192, 8192);
-    let (tx, mut rx) = mpsc::channel(1024);
     let timestamp = Cell::new(0_u64);
 
     c.bench_function("generator/network_open_aggregation", |b| {
@@ -614,10 +619,11 @@ fn bench_network_open_aggregation(c: &mut Criterion) {
                 network_open_signal(10_000 + next)
             },
             |signal| {
-                runtime
-                    .block_on(generator.observe(black_box(&signal), &tx))
-                    .unwrap();
-                while rx.try_recv().is_ok() {}
+                black_box(observe_generator_like_runner(
+                    &runtime,
+                    &generator,
+                    black_box(&signal),
+                ));
             },
             BatchSize::SmallInput,
         )
@@ -627,7 +633,6 @@ fn bench_network_open_aggregation(c: &mut Criterion) {
 fn bench_dns_query_aggregation(c: &mut Criterion) {
     let runtime = Runtime::new().unwrap();
     let generator = DnsMetricsGenerator::with_limits(4096, 4096, 4096, 4096);
-    let (tx, mut rx) = mpsc::channel(1024);
     let timestamp = Cell::new(0_u64);
 
     c.bench_function("generator/dns_query_aggregation", |b| {
@@ -638,10 +643,11 @@ fn bench_dns_query_aggregation(c: &mut Criterion) {
                 dns_query_signal(10_000 + next)
             },
             |signal| {
-                runtime
-                    .block_on(generator.observe(black_box(&signal), &tx))
-                    .unwrap();
-                while rx.try_recv().is_ok() {}
+                black_box(observe_generator_like_runner(
+                    &runtime,
+                    &generator,
+                    black_box(&signal),
+                ));
             },
             BatchSize::SmallInput,
         )
@@ -657,25 +663,46 @@ fn bench_generator<G>(
     G: Generator<SignalEnvelope> + 'static,
 {
     let runtime = Runtime::new().unwrap();
-    let (tx, mut rx) = mpsc::channel(1024);
     let index = Cell::new(0_usize);
     c.bench_function(name, |b| {
         b.iter(|| {
             let next = index.get().wrapping_add(1);
             index.set(next);
             let signal = &signals[next % signals.len()];
-            runtime
-                .block_on(generator.observe(black_box(signal), &tx))
-                .unwrap();
-            while rx.try_recv().is_ok() {}
+            black_box(observe_generator_like_runner(
+                &runtime,
+                &generator,
+                black_box(signal),
+            ));
         })
     });
+}
+
+fn observe_generator_like_runner<G>(
+    runtime: &Runtime,
+    generator: &G,
+    signal: &SignalEnvelope,
+) -> Vec<SignalEnvelope>
+where
+    G: Generator<SignalEnvelope>,
+{
+    if let Some(outputs) = generator.observe_immediate(signal) {
+        return outputs.unwrap();
+    }
+
+    let (tx, mut rx) = mpsc::channel(64);
+    runtime.block_on(generator.observe(signal, &tx)).unwrap();
+    drop(tx);
+    let mut outputs = Vec::new();
+    while let Ok(output) = rx.try_recv() {
+        outputs.push(output);
+    }
+    outputs
 }
 
 fn bench_network_flow_byte_aggregation(c: &mut Criterion) {
     let runtime = Runtime::new().unwrap();
     let generator = NetworkMetricsGenerator::with_limits(8192, 8192);
-    let (tx, mut rx) = mpsc::channel(1024);
     let index = Cell::new(0_u64);
 
     c.bench_function("generator/network_flow_byte_aggregation", |b| {
@@ -691,10 +718,11 @@ fn bench_network_flow_byte_aggregation(c: &mut Criterion) {
                 )
             },
             |signal| {
-                runtime
-                    .block_on(generator.observe(black_box(&signal), &tx))
-                    .unwrap();
-                while rx.try_recv().is_ok() {}
+                black_box(observe_generator_like_runner(
+                    &runtime,
+                    &generator,
+                    black_box(&signal),
+                ));
             },
             BatchSize::SmallInput,
         )

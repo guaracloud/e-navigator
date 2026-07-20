@@ -6,6 +6,72 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-20
+
+### Added
+
+- Add a production performance golden path, architecture guide, operations
+  guide, Rust engineering standard, documentation index, and validated
+  low-overhead production configuration.
+- Add a website documentation portal with responsive navigation, accessible
+  content structure, and direct routes for deployment, architecture,
+  operations, performance evidence, and proof boundaries.
+- Add automated documentation contracts for em-dash policy, local links,
+  documentation index coverage, README entry points, and the website golden
+  path.
+
+### Performance
+
+- Route every built-in synchronous generator through the immediate runner
+  contract, avoiding a Tokio channel and async-trait future for each accepted
+  signal while preserving the async trait path for direct callers.
+- Move validated immediate generator results directly into runner dispatch
+  instead of copying them through a second vector.
+- Reduce the container build context from 82.25 MB to 2.29 MB by excluding
+  documentation, deployment, proof, development, and repository-only assets
+  that are not required to build the runtime image.
+
+### Reliability And Engineering
+
+- Deny production `unwrap`, `expect`, direct `panic`, `dbg`, `todo`, and
+  `unimplemented` usage across the workspace, with documented test-only
+  allowances.
+- Deny broken Rustdoc links, bare Rustdoc URLs, and missing crate-level
+  documentation, and run Rustdoc with warnings denied in local and CI gates.
+- Replace assumed endpoint, pending-metric, profile-map, and protocol-queue
+  states with explicit safe handling.
+- Enforce the 64-output generator limit on immediate output and cover the
+  failure with a runner regression test.
+
+### Repository And Delivery
+
+- Add weekly Cargo, GitHub Actions, and container dependency updates plus a
+  pull-request template that keeps architecture, safety, evidence, and
+  documentation review explicit.
+- Validate documentation, website links, Rustdoc, and the production example
+  configuration in CI, and validate documentation before GitHub Pages upload.
+- Remove unused Helm feature flags and add chart home, icon, and source
+  metadata.
+
+### Validation
+
+- Measure nine changed generator hot paths between 15.0% and 61.1% faster in
+  the focused Criterion comparison, with DNS query aggregation statistically
+  unchanged and an unchanged request-correlation control recorded separately
+  to expose local measurement sensitivity.
+- Run formatting, strict Clippy, Rustdoc, complete Linux workspace tests,
+  workspace build, fuzz-target compilation, configuration and synthetic
+  execution, supply-chain checks, repository guards, Docker smoke, Helm,
+  Kubeconform, website link checks, and desktop and mobile browser QA.
+- Keep the benchmark claim scoped to userspace hot-path evidence. This release
+  does not add a new privileged Aya, Kubernetes runtime, backend, or production
+  overhead claim.
+
+### Compatibility
+
+- Preserve native signal schemas, module names and order, configuration
+  contracts, bounded state limits, supported sinks, and deployment surfaces.
+
 ## [0.1.1] - 2026-07-13
 
 ### Performance
@@ -155,7 +221,8 @@ All notable changes to E-Navigator are documented here. The format follows
   reduced-privilege operation, and universal protocol/profile coverage remain
   explicit non-claims documented in `documentation/boundaries.md`.
 
-[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/guaracloud/e-navigator/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/guaracloud/e-navigator/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.3...v0.1.0
 [0.1.0-rc.3]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.2...v0.1.0-rc.3

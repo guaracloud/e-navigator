@@ -864,8 +864,9 @@ impl MetricTimestampGuard {
                 return Ok(());
             }
 
-            let previous = state.pending.take().expect("pending metric exists");
-            if self.exporter.enqueue(previous.record) {
+            if let Some(previous) = state.pending.take()
+                && self.exporter.enqueue(previous.record)
+            {
                 state.last_exported_receiver_timestamp_millis =
                     Some(previous.receiver_timestamp_millis);
             }
@@ -965,7 +966,9 @@ fn flush_ready_metric_records(
         if !ready {
             continue;
         }
-        let pending = series_state.pending.take().expect("pending metric exists");
+        let Some(pending) = series_state.pending.take() else {
+            continue;
+        };
         state.pending_series.fetch_sub(1, Ordering::Relaxed);
         if exporter.enqueue(pending.record) {
             series_state.last_exported_receiver_timestamp_millis =

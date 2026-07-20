@@ -1005,10 +1005,10 @@ fn handle_response_frames(
         let response = if truncated {
             Err("truncated_response_frame")
         } else {
-            let front = stream
-                .in_flight
-                .front()
-                .expect("in-flight queue checked non-empty");
+            let Some(front) = stream.in_flight.front() else {
+                counters.orphan_responses += 1;
+                continue;
+            };
             parse_response_frame(
                 stream.protocol,
                 frame_bytes,
@@ -1345,10 +1345,9 @@ fn expire_in_flight(
         {
             return;
         }
-        let entry = stream
-            .in_flight
-            .pop_front()
-            .expect("front entry exists while expiring");
+        let Some(entry) = stream.in_flight.pop_front() else {
+            return;
+        };
         counters.unmatched_expired += 1;
         signals.push(build_observation(
             host.clone(),

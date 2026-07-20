@@ -96,22 +96,19 @@ impl Generator<SignalEnvelope> for DnsMetricsGenerator {
         )
     }
 
+    fn observe_immediate(
+        &self,
+        signal: &SignalEnvelope,
+    ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
+        Some(self.outputs_for_signal(signal))
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
-        if !self.mark_seen(signal)? {
-            return Ok(());
-        }
-
-        let outputs = match &signal.payload {
-            SignalPayload::DnsQuery(event) => self.observe_query(signal, event)?,
-            SignalPayload::DnsResponse(event) => self.observe_response(signal, event)?,
-            _ => Vec::new(),
-        };
-
-        for output in outputs {
+        for output in self.outputs_for_signal(signal)? {
             tx.send(output)
                 .await
                 .map_err(|_| CoreError::PipelineClosed)?;
@@ -122,6 +119,19 @@ impl Generator<SignalEnvelope> for DnsMetricsGenerator {
 }
 
 impl DnsMetricsGenerator {
+    fn outputs_for_signal(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
+        if !self.mark_seen(signal)? {
+            return Ok(Vec::new());
+        }
+
+        let outputs = match &signal.payload {
+            SignalPayload::DnsQuery(event) => self.observe_query(signal, event)?,
+            SignalPayload::DnsResponse(event) => self.observe_response(signal, event)?,
+            _ => Vec::new(),
+        };
+        Ok(outputs)
+    }
+
     fn observe_query(
         &self,
         signal: &SignalEnvelope,

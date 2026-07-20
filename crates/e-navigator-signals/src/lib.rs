@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 #![warn(missing_debug_implementations, rust_2018_idioms, unreachable_pub)]
+//! Versioned, bounded signal envelopes shared across the E-Navigator pipeline.
 
 pub mod dns;
 pub mod envelope;

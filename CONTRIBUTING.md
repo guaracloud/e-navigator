@@ -40,7 +40,9 @@ E_NAVIGATOR_SKIP_DOCKER=1 E_NAVIGATOR_SKIP_KUBERNETES=1 scripts/quality.sh
 
 ```bash
 cargo fmt --all -- --check
+python3 scripts/check_docs.py
 cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --exclude e-navigator-ebpf-programs
 cargo test --locked --workspace --exclude e-navigator-ebpf-programs
 cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 cargo run --locked -p e-navigator-cli -- --source synthetic
@@ -49,6 +51,7 @@ helm template e-navigator charts/e-navigator
 docker build -f Containerfile -t e-navigator:local .
 docker run --rm e-navigator:local --source synthetic
 tests/smoke_docker.sh e-navigator:local
+node website/check-links.mjs
 git diff --check
 ```
 
@@ -79,3 +82,21 @@ yamllint .github/workflows charts/e-navigator deploy/kubernetes
 - Do not weaken bounds, schemas, or explicit non-goal language.
 - Do not claim production OTLP, pprof, Pyroscope, UI, storage, live HTTP/gRPC parsing, runtime DNS capture, or full continuous profiling without implementation and integration tests.
 - Separate non-privileged parser/decode/generator/smoke proof from privileged Linux, eBPF, and Kubernetes proof.
+
+## Rust And Documentation Policy
+
+- Production code does not use `unwrap`, `expect`, direct `panic`, `dbg`,
+  `todo`, or `unimplemented`. Integration tests may carry a documented
+  test-only allowance.
+- Every crate has crate-level documentation, and rustdoc warnings fail CI.
+- Add focused tests at the behavior boundary and fuzz untrusted parser or raw
+  event boundaries.
+- Start optimization work with a reproducible baseline. Keep microbenchmark,
+  live-node, backend, and production claims separate.
+- Use commas, parentheses, or separate sentences instead of em dashes in public
+  documentation.
+- Add every top-level guide and ADR to `documentation/README.md`, and keep the
+  README and website routes current.
+
+See [the Rust engineering standard](documentation/rust-engineering.md) and
+[the documentation index](documentation/README.md).

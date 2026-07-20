@@ -1,9 +1,9 @@
 //! DWARF/CFI unwind-table construction from ELF `.eh_frame` data.
 //!
-//! Parses the call-frame-information subset needed for stack unwinding —
-//! CFA as a signed offset from the stack or frame pointer, the return
-//! address and frame pointer as CFA-relative slots — into flat,
-//! pc-sorted rows an eBPF program can binary-search. Rules this subset
+//! Parses the call-frame-information subset needed for stack unwinding into
+//! flat, pc-sorted rows an eBPF program can binary-search. The supported subset
+//! covers CFA as a signed offset from the stack or frame pointer, plus the
+//! return address and frame pointer as CFA-relative slots. Rules this subset
 //! cannot express (DWARF expressions, exotic CFA registers) become
 //! explicit `Unsupported` rows so an unwinder stops with accounting
 //! instead of fabricating frames. Parsing never panics on malformed

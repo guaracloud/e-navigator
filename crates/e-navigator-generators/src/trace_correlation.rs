@@ -72,11 +72,30 @@ impl Generator<SignalEnvelope> for TraceCorrelationGenerator {
         )
     }
 
+    fn observe_immediate(
+        &self,
+        signal: &SignalEnvelope,
+    ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
+        Some(self.outputs_for_signal(signal))
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
+        for output in self.outputs_for_signal(signal)? {
+            tx.send(output)
+                .await
+                .map_err(|_| CoreError::PipelineClosed)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl TraceCorrelationGenerator {
+    fn outputs_for_signal(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
         let outputs = match &signal.payload {
             SignalPayload::NetworkConnectionClose(event) => {
                 self.observe_network_close(signal, event)?
@@ -88,18 +107,9 @@ impl Generator<SignalEnvelope> for TraceCorrelationGenerator {
             SignalPayload::DnsResponse(event) => self.observe_dns_response(signal, event)?,
             _ => Vec::new(),
         };
-
-        for output in outputs {
-            tx.send(output)
-                .await
-                .map_err(|_| CoreError::PipelineClosed)?;
-        }
-
-        Ok(())
+        Ok(outputs)
     }
-}
 
-impl TraceCorrelationGenerator {
     fn observe_network_close(
         &self,
         signal: &SignalEnvelope,

@@ -2,8 +2,12 @@ apiVersion: v2
 name: e-navigator
 description: Rust and eBPF signal plane for Linux and Kubernetes observability
 type: application
-version: 0.1.1
-appVersion: "0.1.1"
+version: 0.1.2
+appVersion: "0.1.2"
+home: https://github.com/guaracloud/e-navigator
+icon: https://guaracloud.github.io/e-navigator/logos/logo-square-transparent.png
+sources:
+  - https://github.com/guaracloud/e-navigator
 keywords:
   - ebpf
   - observability

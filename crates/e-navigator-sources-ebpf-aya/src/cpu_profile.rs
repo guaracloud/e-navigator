@@ -311,7 +311,7 @@ impl ProcfsSymbolizer {
                 .unwrap_or_default();
             self.maps.insert(pid, parsed);
         }
-        self.maps.get(&pid).expect("map inserted above")
+        self.maps.entry(pid).or_default()
     }
 
     fn symbol_name(&mut self, pid: u32, module: &str, offset: u64) -> Option<String> {

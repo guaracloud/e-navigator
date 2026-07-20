@@ -1075,7 +1075,8 @@ mod tests {
     fn test_temp_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("e-navigator-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let created = std::fs::create_dir_all(&dir);
+        assert!(created.is_ok(), "create temp dir: {created:?}");
         dir
     }
 }

@@ -79,19 +79,19 @@ impl Generator<SignalEnvelope> for ProfilingGenerator {
         matches!(&signal.payload, SignalPayload::ProfileSampleObservation(_))
     }
 
+    fn observe_immediate(
+        &self,
+        signal: &SignalEnvelope,
+    ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
+        Some(self.outputs_for_signal(signal))
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
-        let outputs = match &signal.payload {
-            SignalPayload::ProfileSampleObservation(sample) => {
-                self.observe_sample(signal, sample)?
-            }
-            _ => Vec::new(),
-        };
-
-        for output in outputs {
+        for output in self.outputs_for_signal(signal)? {
             tx.send(output)
                 .await
                 .map_err(|_| CoreError::PipelineClosed)?;
@@ -102,6 +102,16 @@ impl Generator<SignalEnvelope> for ProfilingGenerator {
 }
 
 impl ProfilingGenerator {
+    fn outputs_for_signal(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
+        let outputs = match &signal.payload {
+            SignalPayload::ProfileSampleObservation(sample) => {
+                self.observe_sample(signal, sample)?
+            }
+            _ => Vec::new(),
+        };
+        Ok(outputs)
+    }
+
     fn observe_sample(
         &self,
         signal: &SignalEnvelope,

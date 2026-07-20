@@ -318,10 +318,7 @@ fn validate_endpoint(path: &'static str, endpoint: &str) -> ConfigResult<()> {
             format!("{path} must start with http:// or https://"),
         ));
     };
-    let authority = rest
-        .split(['/', '?', '#'])
-        .next()
-        .expect("split always returns at least one segment");
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
     if !authority_has_host(authority) {
         return Err(ConfigError::invalid_value(
             path,

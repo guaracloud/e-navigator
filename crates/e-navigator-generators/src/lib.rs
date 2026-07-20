@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 #![warn(missing_debug_implementations, rust_2018_idioms, unreachable_pub)]
+//! Bounded generators that derive metrics, traces, topology, profiles, and findings.
 
 pub mod dependency_graph;
 pub mod dns_metrics;

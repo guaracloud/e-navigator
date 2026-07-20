@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 #![warn(missing_debug_implementations, rust_2018_idioms, unreachable_pub)]
+//! Core module traits, configuration, errors, and bounded pipeline contracts.
 
 pub mod capture_filter;
 pub mod config;

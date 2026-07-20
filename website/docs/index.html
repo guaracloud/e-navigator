@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="Technical documentation for E-Navigator, including architecture, the low-overhead production golden path, operations, Rust engineering, and proof boundaries."
+    >
+    <meta property="og:title" content="E-Navigator documentation">
+    <meta
+      property="og:description"
+      content="Run, understand, operate, and evaluate the E-Navigator Rust and eBPF signal plane."
+    >
+    <meta property="og:image" content="../logos/og-image.png">
+    <meta property="og:type" content="website">
+    <title>E-Navigator Documentation</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="../logos/favicon-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="../logos/favicon-16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="../logos/apple-touch-icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Afacad+Flux:wght@500;600;700&amp;family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&amp;family=Recursive+Mono:wght@500;600&amp;display=swap"
+      rel="stylesheet"
+    >
+    <link rel="stylesheet" href="../styles.css">
+  </head>
+  <body class="docs-page">
+    <a class="skip-link" href="#documentation">Skip to documentation</a>
+    <header class="site-header">
+      <nav class="nav" aria-label="Primary navigation">
+        <a class="brand" href="../index.html" aria-label="E-Navigator home">
+          <span class="brand-mark" aria-hidden="true">
+            <img src="../logos/logo-square-transparent.png" alt="">
+          </span>
+          <span>E-Navigator</span>
+        </a>
+        <div class="nav-links">
+          <a href="#golden-path">Golden path</a>
+          <a href="#architecture">Architecture</a>
+          <a href="#operations">Operations</a>
+          <a href="#reference">Reference</a>
+          <a href="https://github.com/guaracloud/e-navigator">GitHub</a>
+        </div>
+      </nav>
+    </header>
+
+    <div class="docs-shell">
+      <aside class="docs-sidebar" aria-label="Documentation sections">
+        <p class="sidebar-title">On this page</p>
+        <nav>
+          <a href="#documentation">Start here</a>
+          <a href="#local-run">Local run</a>
+          <a href="#golden-path">Production golden path</a>
+          <a href="#architecture">Architecture</a>
+          <a href="#configuration">Configuration</a>
+          <a href="#operations">Operations</a>
+          <a href="#performance">Performance</a>
+          <a href="#engineering">Rust engineering</a>
+          <a href="#proof">Proof boundaries</a>
+          <a href="#reference">Reference</a>
+        </nav>
+      </aside>
+
+      <main id="documentation" class="docs-content">
+        <header class="docs-intro">
+          <p class="eyebrow">Technical documentation</p>
+          <h1>Run the signal plane. Understand every boundary.</h1>
+          <p class="docs-lede">
+            E-Navigator is a node-local Rust and eBPF collector with bounded
+            capture, derivation, and export. This guide is the website route
+            from a synthetic run to a measured production rollout.
+          </p>
+          <div class="docs-actions">
+            <a class="button button-primary" href="#golden-path">Production golden path</a>
+            <a class="button button-secondary" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/README.md">Markdown index</a>
+          </div>
+        </header>
+
+        <section class="doc-section path-grid" aria-label="Documentation paths">
+          <a class="path-card" href="#local-run">
+            <strong>Run it</strong>
+            <span>Validate the pipeline locally without Linux privileges.</span>
+          </a>
+          <a class="path-card" href="#golden-path">
+            <strong>Deploy it</strong>
+            <span>Start narrow, pin the release, and measure each added family.</span>
+          </a>
+          <a class="path-card" href="#architecture">
+            <strong>Understand it</strong>
+            <span>Follow signals from kernel and host sources to bounded sinks.</span>
+          </a>
+          <a class="path-card" href="#operations">
+            <strong>Operate it</strong>
+            <span>Read health, loss, queue, controller, and exporter state.</span>
+          </a>
+        </section>
+
+        <section id="local-run" class="doc-section">
+          <div class="section-number" aria-hidden="true">01</div>
+          <div>
+            <h2>Local run</h2>
+            <p>
+              The synthetic source exercises the static pipeline, versioned
+              envelopes, generators, and default JSON output without eBPF,
+              Docker, or Kubernetes.
+            </p>
+            <div class="command-code">
+              <button class="copy-button" type="button">Copy</button>
+              <pre><code>cargo run --locked -p e-navigator-cli -- --source synthetic</code></pre>
+            </div>
+            <p>
+              Validate configuration separately. Unknown fields, invalid
+              endpoints, inconsistent limits, and unknown module names fail
+              before capture begins.
+            </p>
+            <div class="command-code">
+              <button class="copy-button" type="button">Copy</button>
+              <pre><code>cargo run --locked -p e-navigator-cli -- --validate-config
+cargo run --locked -p e-navigator-cli -- \
+  --validate-config \
+  --config documentation/examples/production-performance.toml</code></pre>
+            </div>
+            <aside class="callout callout-neutral">
+              A synthetic run proves userspace behavior. It does not prove
+              probe attachment or live signal capture on a target kernel.
+            </aside>
+          </div>
+        </section>
+
+        <section id="golden-path" class="doc-section">
+          <div class="section-number" aria-hidden="true">02</div>
+          <div>
+            <h2>Production performance golden path</h2>
+            <p>
+              The lowest-risk route is a narrow, measurable base profile. No
+              fixed configuration is universally fastest across kernels,
+              workloads, traffic, and backends.
+            </p>
+            <ol class="step-list">
+              <li>
+                <strong>Verify and pin.</strong>
+                Check the release manifest, checksums, Cosign signatures,
+                SBOMs, image digest, and chart digest.
+              </li>
+              <li>
+                <strong>Scope capture first.</strong>
+                Use a deny-by-default namespace and label allowlist. Exclude
+                collectors, exporters, and E-Navigator itself.
+              </li>
+              <li>
+                <strong>Begin with cheap coverage.</strong>
+                Enable exec, TCP lifecycle, one-minute host resources,
+                attribution, resource and network metrics, topology, and
+                security findings.
+              </li>
+              <li>
+                <strong>Keep expensive families off.</strong>
+                Leave DNS payload capture, HTTP, protocols, TLS uprobes, CPU
+                profiling, and JSON stdout disabled until each has a consumer.
+              </li>
+              <li>
+                <strong>Export through bounded workers.</strong>
+                Use Prometheus for health and native counters, plus only the
+                OTLP families needed by the backend.
+              </li>
+              <li>
+                <strong>Measure matched conditions.</strong>
+                Compare no agent, the base profile, and one added family at a
+                time on the same node, workload, duration, and backend state.
+              </li>
+              <li>
+                <strong>Tune the bottleneck.</strong>
+                Fix destination throughput and capture scope before increasing
+                queues or cardinality limits.
+              </li>
+              <li>
+                <strong>Roll out with thresholds.</strong>
+                Stop when application latency, node CPU, memory, source loss,
+                export loss, or attribution freshness exceeds its baseline.
+              </li>
+            </ol>
+
+            <h3>Render the base profile</h3>
+            <div class="command-code">
+              <button class="copy-button" type="button">Copy</button>
+              <pre><code>helm template e-navigator charts/e-navigator \
+  --namespace e-navigator-system \
+  --set image.digest=sha256:&lt;verified-image-digest&gt; \
+  --set-file config.toml=documentation/examples/production-performance.toml \
+  --set prometheusHttp.enabled=true \
+  --set health.enabled=true \
+  --set service.enabled=true</code></pre>
+            </div>
+            <p>
+              Replace the example OTLP endpoint and capture selectors before
+              rendering or installing. Inspect the ConfigMap, capabilities,
+              RBAC, resource bounds, update strategy, and digest.
+            </p>
+            <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/golden-path.md">Read the exhaustive golden path</a>
+          </div>
+        </section>
+
+        <section id="architecture" class="doc-section">
+          <div class="section-number" aria-hidden="true">03</div>
+          <div>
+            <h2>Architecture</h2>
+            <p>
+              Runtime code is statically registered. Configuration selects
+              known modules but never loads arbitrary plugins.
+            </p>
+            <div class="pipeline" role="img" aria-label="Source to processor to generator to sink pipeline">
+              <span>Sources</span>
+              <i aria-hidden="true">to</i>
+              <span>Processors</span>
+              <i aria-hidden="true">to</i>
+              <span>Generators</span>
+              <i aria-hidden="true">to</i>
+              <span>Sinks</span>
+            </div>
+            <dl class="definition-grid">
+              <div>
+                <dt>Sources</dt>
+                <dd>Observe bounded kernel events and host filesystem state.</dd>
+              </div>
+              <div>
+                <dt>Processors</dt>
+                <dd>Filter and attach context only when evidence exists.</dd>
+              </div>
+              <div>
+                <dt>Generators</dt>
+                <dd>Derive metrics, topology, spans, profiles, and findings.</dd>
+              </div>
+              <div>
+                <dt>Sinks</dt>
+                <dd>Export through bounded, failure-isolated surfaces.</dd>
+              </div>
+            </dl>
+            <p>
+              Every observation is a versioned `SignalEnvelope`. Processing,
+              per-generator output, total derivation breadth, derivation depth,
+              export queues, retries, and shutdown are bounded. Pure
+              synchronous generators use an immediate path, while the async
+              trait remains available for streaming implementations.
+            </p>
+            <p>
+              One Kubernetes controller supplies Pod, Service, and
+              EndpointSlice state to capture filtering and attribution. Metric,
+              trace, and profile OTLP workers are independent, so one failed
+              destination cannot block another family or the shared signal
+              path.
+            </p>
+            <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/architecture.md">Read the crate and lifecycle map</a>
+          </div>
+        </section>
+
+        <section id="configuration" class="doc-section">
+          <div class="section-number" aria-hidden="true">04</div>
+          <div>
+            <h2>Configuration model</h2>
+            <p>
+              The TOML file owns runtime behavior. Helm owns packaging, mounts,
+              capabilities, resources, rollout, services, and probes. Keep
+              those two layers consistent.
+            </p>
+            <div class="comparison-table" role="table" aria-label="Configuration boundaries">
+              <div role="row">
+                <strong role="columnheader">Runtime TOML</strong>
+                <strong role="columnheader">Helm values</strong>
+              </div>
+              <div role="row">
+                <span role="cell">Modules and source limits</span>
+                <span role="cell">Image repository and digest</span>
+              </div>
+              <div role="row">
+                <span role="cell">Capture and attribution policy</span>
+                <span role="cell">RBAC, mounts, and capabilities</span>
+              </div>
+              <div role="row">
+                <span role="cell">Generator cardinality limits</span>
+                <span role="cell">CPU and memory bounds</span>
+              </div>
+              <div role="row">
+                <span role="cell">Sink endpoints, queues, and retries</span>
+                <span role="cell">Service, probes, and rollout strategy</span>
+              </div>
+            </div>
+            <aside class="callout callout-warn">
+              Attribution selectors limit retained metadata. The capture filter
+              decides which workload cgroups are probed. They are separate
+              policies.
+            </aside>
+            <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/helm.md">Open every validated setting</a>
+          </div>
+        </section>
+
+        <section id="operations" class="doc-section">
+          <div class="section-number" aria-hidden="true">05</div>
+          <div>
+            <h2>Operations</h2>
+            <p>
+              With the Prometheus HTTP sink and matching chart options enabled,
+              use `/healthz` for liveness, `/readyz` for configured runtime
+              readiness, and `/metrics` for native health and loss telemetry.
+            </p>
+            <h3>First ten minutes</h3>
+            <ul class="check-list">
+              <li>Confirm every Pod runs the verified digest.</li>
+              <li>Confirm desired source-running and attachment state.</li>
+              <li>Confirm the workload controller and Pod watch are fresh.</li>
+              <li>Produce one known event for each enabled family.</li>
+              <li>Confirm the intended sink and backend accept it.</li>
+              <li>Confirm perf loss, send failures, queue drops, invalid records, and rejections stay at zero.</li>
+              <li>Record CPU, resident memory, throughput, and latency against the no-agent baseline.</li>
+            </ul>
+            <h3>Failure isolation</h3>
+            <p>
+              The chart uses the `isolate` source policy, so one failed source
+              does not stop healthy sources. This means process liveness alone
+              cannot prove complete coverage. Alert on each required source,
+              optional attachment, controller freshness, and export family.
+            </p>
+            <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/operations.md">Read diagnostics, capacity, and shutdown guidance</a>
+          </div>
+        </section>
+
+        <section id="performance" class="doc-section">
+          <div class="section-number" aria-hidden="true">06</div>
+          <div>
+            <h2>Performance evidence</h2>
+            <p>
+              Local Criterion benchmarks catch parser, generator, filter, and
+              formatting regressions. Runtime overhead requires matched live
+              trials because kernel, workload, backend, and node contention
+              dominate the real cost.
+            </p>
+            <div class="evidence-scale" aria-label="Evidence tiers">
+              <span>Unit and fixture</span>
+              <span>Criterion hot path</span>
+              <span>Docker or local Linux</span>
+              <span>Guarded Kubernetes</span>
+              <span>Production soak</span>
+            </div>
+            <p>
+              Do not collapse these tiers into one number. Record commands,
+              versions, warmup, sample count, confidence intervals, workload,
+              node, and cleanup state.
+            </p>
+            <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/benchmark.md">Read the complete benchmark methodology</a>
+          </div>
+        </section>
+
+        <section id="engineering" class="doc-section">
+          <div class="section-number" aria-hidden="true">07</div>
+          <div>
+            <h2>Rust engineering</h2>
+            <p>
+              The workspace uses Rust 2024 and MSRV 1.96. Production code
+              denies `unwrap`, `expect`, direct `panic`, `dbg`, `todo`, and
+              `unimplemented`. Rustdoc warnings, broken links, and missing crate
+              documentation fail the quality gate.
+            </p>
+            <ul class="check-list">
+              <li>Unsafe code is limited to host FFI and Aya raw-event boundaries.</li>
+              <li>External input is bounded, validated, fixture-tested, and fuzzed at high-risk boundaries.</li>
+              <li>Async channels, retries, response bodies, fanout, and shutdown are bounded.</li>
+              <li>Optimizations start with a saved baseline and keep public contracts stable.</li>
+              <li>Supply-chain policy runs cargo-deny, cargo-audit, and cargo-machete.</li>
+            </ul>
+            <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/rust-engineering.md">Read the complete engineering standard</a>
+          </div>
+        </section>
+
+        <section id="proof" class="doc-section">
+          <div class="section-number" aria-hidden="true">08</div>
+          <div>
+            <h2>Proof and boundaries</h2>
+            <p>
+              E-Navigator separates implemented code, local tests, privileged
+              runtime evidence, backend acceptance, and production readiness.
+              A passing parser test cannot become a Kubernetes claim, and a
+              healthy DaemonSet cannot become backend query proof.
+            </p>
+            <div class="proof-bands">
+              <article>
+                <strong>Implemented</strong>
+                <p>Code and bounded contracts exist.</p>
+              </article>
+              <article>
+                <strong>Locally proven</strong>
+                <p>Tests, fixtures, fuzz-builds, or local smoke cover the path.</p>
+              </article>
+              <article>
+                <strong>Runtime-proven slice</strong>
+                <p>A capable Linux host or cluster produced recorded evidence.</p>
+              </article>
+              <article>
+                <strong>Production-ready</strong>
+                <p>Target backend, workload, thresholds, soak, upgrade, and rollback are proven.</p>
+              </article>
+            </div>
+            <div class="inline-links">
+              <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/capabilities.md">Capabilities</a>
+              <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/boundaries.md">Boundaries</a>
+              <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/proof-report.md">Proof report</a>
+            </div>
+          </div>
+        </section>
+
+        <section id="reference" class="doc-section reference-section">
+          <div class="section-number" aria-hidden="true">09</div>
+          <div>
+            <h2>Complete reference</h2>
+            <p>
+              The Markdown documentation is the exhaustive, reviewable source
+              of truth. The website keeps the operating path readable and links
+              directly to every detailed contract.
+            </p>
+            <div class="reference-grid">
+              <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/README.md"><strong>Documentation index</strong><span>Audience routes and source-of-truth rules</span></a>
+              <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/helm.md"><strong>Helm install</strong><span>Every validated setting and deployment control</span></a>
+              <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/module-authoring.md"><strong>Module authoring</strong><span>Source, processor, generator, sink, and signal rules</span></a>
+              <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/engineering-invariants.md"><strong>Engineering invariants</strong><span>Stable runtime and public-claim contracts</span></a>
+              <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/release-verification.md"><strong>Release verification</strong><span>Signatures, SBOMs, digests, and immutable rollout</span></a>
+              <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/release-process.md"><strong>Release process</strong><span>Maintainer publication workflow</span></a>
+              <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/standalone-readiness.md"><strong>Readiness matrix</strong><span>Dated implementation and proof backlog</span></a>
+              <a href="https://github.com/guaracloud/e-navigator/tree/main/documentation/adr"><strong>Architecture decisions</strong><span>Accepted system decisions and consequences</span></a>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <footer class="site-footer docs-footer">
+      <div>
+        <strong>E-Navigator</strong>
+        <p>Apache-2.0 licensed Rust and eBPF runtime signal plane.</p>
+      </div>
+      <nav aria-label="Footer links">
+        <a href="../index.html">Home</a>
+        <a href="https://github.com/guaracloud/e-navigator">GitHub</a>
+        <a href="https://github.com/guaracloud/e-navigator/blob/main/README.md">README</a>
+        <a href="https://github.com/guaracloud/e-navigator/blob/main/CONTRIBUTING.md">Contributing</a>
+      </nav>
+    </footer>
+    <script src="../script.js" defer></script>
+  </body>
+</html>

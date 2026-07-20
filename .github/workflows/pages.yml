@@ -30,6 +30,11 @@ jobs:
         with:
           enablement: true
 
+      - name: Validate documentation and local links
+        run: |
+          python3 scripts/check_docs.py
+          node website/check-links.mjs
+
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: website

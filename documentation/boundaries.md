@@ -57,8 +57,8 @@ E-Navigator does not currently claim:
   DWARF/CFI rules parsed from `.eh_frame` for registered processes, with
   frame-pointer unwinding as the fallback, up to 128 configurable frames and
   the kernel `kernel.perf_event_max_stack` sysctl bound of 127 for the
-  frame-pointer path; DWARF-expression CFI rules are not evaluated — they
-  stop the unwind with accounting — coverage is bounded by row/module/process
+  frame-pointer path; DWARF-expression CFI rules are not evaluated, so they
+  stop the unwind with accounting. Coverage is bounded by row/module/process
   budgets with counters, terminal frames in modules that do not CFI-mark
   their outermost function classify conservatively as `no_mapping`, and
   stacks that fill the configured budget are flagged and counted, never
@@ -84,13 +84,13 @@ E-Navigator does not currently claim:
 - cross-pid-namespace symbolization beyond verified pids (pids are translated
   in-kernel into the symbolization procfs namespace where the kernel allows;
   untranslatable pids are symbolized only after a thread-comm identity check
-  and otherwise carry raw addresses with accounting — an unrelated process
+  and otherwise carry raw addresses with accounting. An unrelated process
   sharing pid, tid, and thread comm would evade this check);
 - instant capture-scope changes for newly started workloads (the optional
   `[capture_filter]` cgroup-id capture filter cannot decide a pod that
   userspace has not yet discovered; a new pod's cgroup id is absent from the
-  eBPF membership map until the next controller refresh — pod identity arrives
-  through a Kubernetes watch while the local cgroup tree is scanned every ~2s — so there is a bootstrap
+  eBPF membership map until the next controller refresh. Pod identity arrives
+  through a Kubernetes watch while the local cgroup tree is scanned every ~2s, so there is a bootstrap
   window of roughly a few seconds during which the pod follows the configured
   `unknown_cgroup` posture: under an allowlist posture that is a brief coverage
   gap for new included pods, and under a denylist posture a brief capture leak
@@ -103,8 +103,8 @@ E-Navigator does not currently claim:
   observations are therefore treated as node-scoped and are always emitted, never
   cgroup-filtered);
 - namespace or label capture filtering without the Kubernetes API (a namespace
-  and labels are not present in the cgroup path — only the pod UID and container
-  id are — so namespace/label rules hard-depend on the node pod list; when the
+  and labels are not present in the cgroup path. Only the pod UID and container
+  id are present, so namespace/label rules hard-depend on the node pod list; when the
   API is unavailable the filter degrades loudly and applies the configured
   `unknown_cgroup` posture to every workload);
 - glob or regular-expression label values (capture-filter namespace and
@@ -113,8 +113,8 @@ E-Navigator does not currently claim:
   groups);
 - cgroup v1 capture filtering (the capture filter's join key is the cgroup v2
   container cgroup inode; it assumes the unified cgroup v2 hierarchy used by
-  modern Kubernetes nodes, and host/non-pod processes — which have a cgroup but
-  no namespace — always fall to the `unknown_cgroup` posture);
+  modern Kubernetes nodes, and host/non-pod processes, which have a cgroup but
+  no namespace, always fall to the `unknown_cgroup` posture);
 - capture filtering of a connection's network open/close lifecycle events after
   a mid-connection verdict flip (the capture decision for connection-lifecycle
   events is taken at connect/accept establishment; a workload whose verdict

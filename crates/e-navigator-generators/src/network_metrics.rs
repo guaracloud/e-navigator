@@ -87,28 +87,19 @@ impl Generator<SignalEnvelope> for NetworkMetricsGenerator {
         )
     }
 
+    fn observe_immediate(
+        &self,
+        signal: &SignalEnvelope,
+    ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
+        Some(self.outputs_for_signal(signal))
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
-        if !self.mark_seen(signal)? {
-            return Ok(());
-        }
-
-        let metrics = match &signal.payload {
-            SignalPayload::NetworkConnectionOpen(event) => self.observe_open(signal, event)?,
-            SignalPayload::NetworkConnectionClose(event) => self.observe_close(signal, event)?,
-            SignalPayload::NetworkConnectionFailure(event) => {
-                self.observe_failure(signal, event)?
-            }
-            SignalPayload::NetworkTcpStatObservation(event) => {
-                self.observe_tcp_stat(signal, event)?
-            }
-            _ => Vec::new(),
-        };
-
-        for metric in metrics {
+        for metric in self.outputs_for_signal(signal)? {
             tx.send(metric)
                 .await
                 .map_err(|_| CoreError::PipelineClosed)?;
@@ -119,6 +110,25 @@ impl Generator<SignalEnvelope> for NetworkMetricsGenerator {
 }
 
 impl NetworkMetricsGenerator {
+    fn outputs_for_signal(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
+        if !self.mark_seen(signal)? {
+            return Ok(Vec::new());
+        }
+
+        let outputs = match &signal.payload {
+            SignalPayload::NetworkConnectionOpen(event) => self.observe_open(signal, event)?,
+            SignalPayload::NetworkConnectionClose(event) => self.observe_close(signal, event)?,
+            SignalPayload::NetworkConnectionFailure(event) => {
+                self.observe_failure(signal, event)?
+            }
+            SignalPayload::NetworkTcpStatObservation(event) => {
+                self.observe_tcp_stat(signal, event)?
+            }
+            _ => Vec::new(),
+        };
+        Ok(outputs)
+    }
+
     fn observe_open(
         &self,
         signal: &SignalEnvelope,
