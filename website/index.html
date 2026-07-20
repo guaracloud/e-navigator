@@ -50,7 +50,7 @@
         <div class="nav-links">
           <a href="./docs/">Docs</a>
           <a href="#capabilities">Capabilities</a>
-          <a href="#proof">Proof</a>
+          <a href="#proof">Platform</a>
           <a href="#install">Install</a>
           <a href="https://github.com/guaracloud/e-navigator">GitHub</a>
         </div>
@@ -138,31 +138,31 @@
 
       <section id="proof" class="section proof-section" aria-labelledby="proof-title">
         <div class="section-heading">
-          <p class="eyebrow">Proof status</p>
-          <h2 id="proof-title">Public evidence is curated, not dumped.</h2>
+          <p class="eyebrow">Runtime intelligence</p>
+          <h2 id="proof-title">See applications, infrastructure, and security as one system.</h2>
           <p>
-            E-Navigator separates local tests, Docker smoke, Helm rendering, and
-            privileged runtime proof. The proof report is the current public
-            evidence map.
+            E-Navigator converts Linux and Kubernetes runtime activity into
+            workload-aware metrics, traces, profiles, dependency topology, and
+            security signals, without application SDKs or source-code changes.
           </p>
         </div>
         <div class="status-grid">
           <article class="status">
-            <strong>Proven locally</strong>
-            <p>Static runtime, strict config schema validation, config selectors, envelopes, DNS configurable source limits, HTTP configurable parser limits and request/status coverage, gRPC metadata/status, profile fixture normalization filtering, Kafka request/ApiVersions-error, MongoDB command/error, MySQL command/error, NATS command/error, PostgreSQL query/error, and Redis command/error parser coverage, flow-attribution warnings, synthetic protocol request/error spans, the Kubernetes-aware capture filter (policy, resolver, map diff, cgroup-path parsing, glob and cgroup-path fuzz targets, a privacy invariant test, and rule-eval/map-diff benches), Docker smoke, and chart rendering.</p>
+            <h3>Automatic application visibility</h3>
+            <p>Correlate HTTP/1, HTTP/2, gRPC, Kafka, MongoDB, MySQL, NATS, PostgreSQL, and Redis requests with responses to surface latency, status, errors, and service dependencies.</p>
           </article>
           <article class="status">
-            <strong>Runtime-proven slices</strong>
-            <p>Selected exec, network, DNS, HTTP, profile, resource, Prometheus, OTLP, and seccomp paths, plus homelab request/response matching for Redis, PostgreSQL, MongoDB, NATS, gRPC, and Kafka. Local OrbStack proof covers outbound and inbound HTTP capture, HTTP/2 with HPACK matching, deeper Redis reassembly and TLS slices, native and CPython profile symbolization, a served pprof endpoint, TCP reset and state-transition observation, and Kubernetes-aware capture filtering. These are bounded runtime slices, not production coverage.</p>
+            <h3>Workload context on every signal</h3>
+            <p>Attribute runtime activity across hosts, processes, containers, namespaces, and Kubernetes workloads. Scope capture by namespace and labels for focused, low-overhead collection.</p>
           </article>
           <article class="status">
-            <strong>Still partial</strong>
-            <p>Native flow-byte live export, symmetric all-node DNS/HTTP capture, live MySQL capture proof, broad protocol and TLS coverage, native DWARF pod-process coverage under high node load, live TCP retransmit induction, production backend proof, production soak, and reduced privilege.</p>
+            <h3>Performance and security, unified</h3>
+            <p>Combine DNS and network telemetry, TLS visibility, TCP health, CPU profiles, resource metrics, and runtime security signals, then export through Prometheus, OTLP, pprof, or structured JSON.</p>
           </article>
         </div>
         <div class="link-row">
-          <a class="button button-secondary" href="./docs/#proof">Open proof guide</a>
-          <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/proof-report.md">Read the complete report</a>
+          <a class="button button-secondary" href="./docs/#golden-path">Deploy E-Navigator</a>
+          <a class="text-link" href="./docs/#architecture">Explore the architecture</a>
         </div>
       </section>
 
