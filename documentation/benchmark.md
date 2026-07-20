@@ -76,6 +76,57 @@ Treat local Criterion output as:
 - **not valid** as live eBPF, Kubernetes, collector, or production overhead
   proof.
 
+### Immediate generator dispatch, 2026-07-20
+
+The built-in generators perform bounded synchronous derivation. The runner
+formerly sent those results through a fresh Tokio channel and an async-trait
+future for each accepted signal. They now use the existing immediate generator
+contract, while retaining equivalent async behavior for direct trait callers.
+The runner also moves the returned vector after validating its 64-output limit
+instead of copying each item into a second vector.
+
+The benchmark helper was first changed to mirror the runner: use
+`observe_immediate` when present, otherwise create and drain the bounded async
+channel. A pre-change baseline was then saved and compared with 100 samples,
+five seconds of measurement, and two seconds of warmup:
+
+```bash
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  'generator/' \
+  --save-baseline elite-grade-pre \
+  --sample-size 100 \
+  --measurement-time 5 \
+  --warm-up-time 2
+
+cargo bench --locked -p e-navigator-local-benches --bench hot_paths -- \
+  'generator/' \
+  --baseline elite-grade-pre \
+  --sample-size 100 \
+  --measurement-time 5 \
+  --warm-up-time 2
+```
+
+| Benchmark | Before | After | Criterion result |
+| --- | --- | --- | --- |
+| Network metric duplicate path | 319.11-322.48 ns | 123.82-127.48 ns | 59.2% faster |
+| Network open aggregation | 3.4315-3.4481 us | 2.7803-2.8581 us | 15.0% faster |
+| Network flow-byte aggregation | 2.9771-3.0145 us | 2.1402-2.1926 us | 28.1% faster |
+| DNS metric duplicate path | 316.67-318.30 ns | 123.25-127.87 ns | 61.1% faster |
+| DNS query aggregation | 1.7620-1.8329 us | 1.5198-1.8547 us | no significant change |
+| Resource metrics | 468.03-481.03 ns | 319.62-373.88 ns | 32.1% faster |
+| Dependency graph | 441.75-444.68 ns | 301.57-314.79 ns | 34.1% faster |
+| Trace correlation | 394.75-398.52 ns | 222.33-234.63 ns | 39.2% faster |
+| Profiling | 355.81-364.08 ns | 186.40-199.84 ns | 44.8% faster |
+| Runtime security | 689.33-699.45 ns | 428.28-450.53 ns | 34.9% faster |
+
+The unchanged request-correlation immediate path acted as a control. A focused
+200-sample repeat moved from 214.98-215.57 ns to 235.21-243.42 ns, a 12.4%
+regression despite no implementation change in that generator. That movement
+shows the sensitivity of sub-microsecond whole-binary measurements to local
+conditions and code layout. The changed paths improved by substantially more
+than the control movement, but these results remain scoped hot-path evidence,
+not a claim about total node overhead.
+
 Focused Prometheus profile formatter smoke from this development host:
 
 ```bash
@@ -446,7 +497,7 @@ capture filter differed.
 
 What this proves: an excluded workload measurably reclaims per-syscall cost
 because its connections are filtered at `connect()` and never tracked, so the
-read/write capture path early-exits — the filter is an overhead lever, not only
+read/write capture path early-exits. The filter is an overhead lever, not only
 a scope control. What it does not prove: a production overhead number. OrbStack
 is a shared VM and this is a single-run local smoke A/B; the direction and
 rough magnitude are consistent with the ~−43% cost of capturing this workload

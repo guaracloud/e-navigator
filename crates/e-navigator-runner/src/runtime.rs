@@ -214,9 +214,9 @@ impl Runner {
         signal: &SignalEnvelope,
     ) -> CoreResult<Vec<SignalEnvelope>> {
         if let Some(outputs) = generator.observe_immediate(signal) {
-            let mut generated = Vec::new();
-            for output in outputs? {
-                push_generated(&mut generated, output, generator.metadata())?;
+            let generated = outputs?;
+            if generated.len() > MAX_DERIVED_SIGNALS_PER_GENERATOR {
+                return Err(generator_output_limit_error(generator.metadata()));
             }
             return Ok(generated);
         }
@@ -358,16 +358,20 @@ fn push_generated(
     metadata: ModuleMetadata,
 ) -> CoreResult<()> {
     if generated.len() >= MAX_DERIVED_SIGNALS_PER_GENERATOR {
-        return Err(CoreError::ModuleFailed {
-            module: metadata.name.to_string(),
-            message: format!(
-                "generator emitted more than {MAX_DERIVED_SIGNALS_PER_GENERATOR} derived signals for one input"
-            ),
-        });
+        return Err(generator_output_limit_error(metadata));
     }
 
     generated.push(signal);
     Ok(())
+}
+
+fn generator_output_limit_error(metadata: ModuleMetadata) -> CoreError {
+    CoreError::ModuleFailed {
+        module: metadata.name.to_string(),
+        message: format!(
+            "generator emitted more than {MAX_DERIVED_SIGNALS_PER_GENERATOR} derived signals for one input"
+        ),
+    }
 }
 
 async fn finish_source_results(
@@ -815,6 +819,11 @@ mod tests {
         async_observed: Arc<AtomicBool>,
     }
 
+    struct ManyImmediateSignalsGenerator {
+        count: usize,
+        async_observed: Arc<AtomicBool>,
+    }
+
     struct ImmediateCountingSink {
         writes: Arc<AtomicUsize>,
         async_written: Arc<AtomicBool>,
@@ -851,6 +860,29 @@ mod tests {
             signal: &SignalEnvelope,
         ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
             Some(Ok(vec![signal.clone()]))
+        }
+
+        async fn observe(
+            &self,
+            _signal: &SignalEnvelope,
+            _tx: &mpsc::Sender<SignalEnvelope>,
+        ) -> CoreResult<()> {
+            self.async_observed.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl Generator<SignalEnvelope> for ManyImmediateSignalsGenerator {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("generator.many_immediate", ModuleKind::Generator)
+        }
+
+        fn observe_immediate(
+            &self,
+            signal: &SignalEnvelope,
+        ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
+            Some(Ok(vec![signal.clone(); self.count]))
         }
 
         async fn observe(
@@ -1180,6 +1212,33 @@ mod tests {
             .expect_err("derived signal limit is enforced");
 
         assert!(err.to_string().contains("generator.many"));
+        assert!(
+            err.to_string()
+                .contains("more than 64 derived signals for one input")
+        );
+    }
+
+    #[tokio::test]
+    async fn runner_rejects_immediate_generator_output_above_limit() {
+        let async_observed = Arc::new(AtomicBool::new(false));
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(OneSignalSource))
+            .with_generator(Box::new(ManyImmediateSignalsGenerator {
+                count: 65,
+                async_observed: async_observed.clone(),
+            }))
+            .with_sink(Box::new(MemorySink {
+                seen: Arc::new(Mutex::new(Vec::new())),
+            }));
+        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
+
+        let err = runner
+            .run()
+            .await
+            .expect_err("immediate generator limit is enforced");
+
+        assert!(!async_observed.load(Ordering::SeqCst));
+        assert!(err.to_string().contains("generator.many_immediate"));
         assert!(
             err.to_string()
                 .contains("more than 64 derived signals for one input")

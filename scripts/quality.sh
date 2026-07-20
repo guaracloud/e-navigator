@@ -18,11 +18,14 @@ require_tool() {
 }
 
 run cargo fmt --all -- --check
+run python3 scripts/check_docs.py
 run python3 scripts/release.py check
 run cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings
+run env "RUSTDOCFLAGS=-D warnings" cargo doc --locked --workspace --no-deps --exclude e-navigator-ebpf-programs
 run cargo test --locked --workspace --exclude e-navigator-ebpf-programs
 run cargo build --locked --workspace --exclude e-navigator-ebpf-programs
 run bash scripts/fuzz_check.sh
+run cargo run --locked -p e-navigator-cli -- --validate-config --config documentation/examples/production-performance.toml
 run cargo run --locked -p e-navigator-cli -- --source synthetic
 run tests/homelab_bench_guard_test.sh
 run tests/packaged_config_guard_test.sh

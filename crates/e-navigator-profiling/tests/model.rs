@@ -1,3 +1,10 @@
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "integration tests use panic-oriented assertions for failed contracts"
+)]
+
 use e_navigator_profiling::model::{
     NormalizationLimits, RawProfileFrame, RawProfileSample, parse_profile_fixture,
 };

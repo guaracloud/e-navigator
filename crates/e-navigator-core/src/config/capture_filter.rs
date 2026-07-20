@@ -24,7 +24,7 @@ impl CapturePosture {
 /// (not merely enriched) by the eBPF sources, keyed on cgroup id.
 ///
 /// Precedence when [`Self::enabled`] and a workload resolves to a pod
-/// (namespace + labels), highest first — this ordering is fixed and part of
+/// (namespace + labels), highest first. This ordering is fixed and part of
 /// the contract:
 ///
 /// 1. **Exclude wins.** If the namespace matches any `namespace_exclude`
@@ -37,9 +37,10 @@ impl CapturePosture {
 /// 3. **Default posture.** With no exclude match and no include lists
 ///    configured, [`Self::default_posture`] decides.
 ///
-/// Workloads whose cgroup id cannot (yet) be resolved to a pod — the bootstrap
-/// window, host/non-pod processes, or a missing Kubernetes API — follow
-/// [`Self::unknown_cgroup`] instead. Namespace patterns support `*`
+/// Workloads whose cgroup id cannot yet be resolved to a pod follow
+/// [`Self::unknown_cgroup`] instead. This includes the bootstrap window, host or
+/// non-pod processes, and missing Kubernetes API access. Namespace patterns
+/// support `*`
 /// (any run) and `?` (single byte) globbing. Label selectors support equality,
 /// inequality, existence, non-existence, and value sets. Matching is bytewise
 /// over the ASCII DNS-label domain.

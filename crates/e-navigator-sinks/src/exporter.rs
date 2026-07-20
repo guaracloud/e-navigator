@@ -64,10 +64,7 @@ impl HttpExporterConfig {
             .ok_or(ExporterError::InvalidConfig(
                 "endpoint must start with http:// or https://",
             ))?;
-        let authority = rest
-            .split(['/', '?', '#'])
-            .next()
-            .expect("split always returns at least one segment");
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
         if authority.is_empty() || authority.starts_with(':') {
             return Err(ExporterError::InvalidConfig("endpoint must include a host"));
         }

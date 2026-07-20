@@ -254,12 +254,6 @@ config:
     name = "sink.otlp_http"
     enabled = true
 
-features:
-  metrics: true
-  traces: true
-  profiles: true
-  protocolProbes: true
-
 podLabels:
   observability.guara.cloud/collector: e-navigator
 

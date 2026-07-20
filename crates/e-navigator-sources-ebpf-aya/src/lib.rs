@@ -1,4 +1,5 @@
 #![warn(missing_debug_implementations, rust_2018_idioms, unreachable_pub)]
+//! Aya-based Linux sources, raw-event decoding, and privileged attachment logic.
 
 pub mod capture_filter;
 pub mod cpu_profile;

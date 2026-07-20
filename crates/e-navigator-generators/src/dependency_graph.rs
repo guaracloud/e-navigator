@@ -47,13 +47,30 @@ impl Generator<SignalEnvelope> for DependencyGraphGenerator {
         )
     }
 
+    fn observe_immediate(
+        &self,
+        signal: &SignalEnvelope,
+    ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
+        Some(self.outputs_for_signal(signal))
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
+        for edge in self.outputs_for_signal(signal)? {
+            tx.send(edge).await.map_err(|_| CoreError::PipelineClosed)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl DependencyGraphGenerator {
+    fn outputs_for_signal(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
         let Some(observation) = observation_from_signal(signal) else {
-            return Ok(());
+            return Ok(Vec::new());
         };
 
         let edge = {
@@ -91,15 +108,9 @@ impl Generator<SignalEnvelope> for DependencyGraphGenerator {
             }
         };
 
-        if let Some(edge) = edge {
-            tx.send(edge).await.map_err(|_| CoreError::PipelineClosed)?;
-        }
-
-        Ok(())
+        Ok(edge.into_iter().collect())
     }
-}
 
-impl DependencyGraphGenerator {
     fn edges(&self) -> CoreResult<MutexGuard<'_, BTreeMap<EdgeKey, EdgeState>>> {
         self.edges.lock().map_err(|err| CoreError::ModuleFailed {
             module: "generator.dependency_graph".to_string(),

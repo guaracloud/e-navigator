@@ -48,9 +48,9 @@
           <span>E-Navigator</span>
         </a>
         <div class="nav-links">
+          <a href="./docs/">Docs</a>
           <a href="#capabilities">Capabilities</a>
           <a href="#proof">Proof</a>
-          <a href="#benchmark">Benchmarks</a>
           <a href="#install">Install</a>
           <a href="https://github.com/guaracloud/e-navigator">GitHub</a>
         </div>
@@ -68,16 +68,15 @@
             every public claim tied to explicit proof.
           </p>
           <div class="hero-actions" role="group" aria-label="Primary actions">
-            <a class="button button-primary" href="#install">Install with Helm</a>
-            <a class="button button-secondary" href="#proof">Read proof status</a>
+            <a class="button button-primary" href="./docs/#golden-path">Follow the golden path</a>
+            <a class="button button-secondary" href="./docs/">Read the docs</a>
             <a class="button button-ghost" href="#local">Run synthetic demo</a>
           </div>
           <ul class="trust-row" aria-label="Project properties">
             <li>Static Rust pipeline</li>
             <li>eBPF sources</li>
             <li>Versioned signals</li>
-            <li>Curated proof report</li>
-            <li>Public preview 0.1.1</li>
+            <li>Public preview 0.1.2</li>
           </ul>
         </div>
 
@@ -162,8 +161,8 @@
           </article>
         </div>
         <div class="link-row">
-          <a class="button button-secondary" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/proof-report.md">Open proof report</a>
-          <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/boundaries.md">Read boundaries</a>
+          <a class="button button-secondary" href="./docs/#proof">Open proof guide</a>
+          <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/proof-report.md">Read the complete report</a>
         </div>
       </section>
 
@@ -191,7 +190,7 @@
             <span class="metric-label">curated proof report for current claims</span>
           </article>
         </div>
-        <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/benchmark.md">Read benchmark methodology</a>
+        <a class="text-link" href="./docs/#performance">Read performance methodology</a>
       </section>
 
       <section id="install" class="section install" aria-labelledby="install-title">
@@ -218,7 +217,7 @@
             <div class="command-code">
               <button class="copy-button" type="button">Copy</button>
               <pre><code>helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
-  --version 0.1.1 \
+  --version 0.1.2 \
   --namespace e-navigator-system \
   --create-namespace</code></pre>
             </div>
@@ -230,7 +229,7 @@
             </div>
             <div class="command-code">
               <button class="copy-button" type="button">Copy</button>
-              <pre><code>gh release download v0.1.1 --repo guaracloud/e-navigator --dir e-navigator-release
+              <pre><code>gh release download v0.1.2 --repo guaracloud/e-navigator --dir e-navigator-release
 jq -r '.images[0].reference' e-navigator-release/release-manifest.json</code></pre>
             </div>
           </article>
@@ -239,15 +238,20 @@ jq -r '.images[0].reference' e-navigator-release/release-manifest.json</code></p
 
       <section class="section docs-section" aria-labelledby="docs-title">
         <div class="section-heading">
-          <p class="eyebrow">White-paper ready docs</p>
-          <h2 id="docs-title">A clean evidence base for the follow-on paper.</h2>
+          <p class="eyebrow">Documentation</p>
+          <h2 id="docs-title">One route from first run to production evidence.</h2>
+          <p>
+            The website guide covers architecture, the production performance
+            path, operations, engineering standards, and proof boundaries. The
+            Markdown source remains the exhaustive, reviewable reference.
+          </p>
         </div>
         <div class="doc-links" aria-label="Documentation links">
-          <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/capabilities.md">Capabilities</a>
-          <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/boundaries.md">Boundaries</a>
-          <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/proof-report.md">Proof report</a>
-          <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/benchmark.md">Benchmarks</a>
-          <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/release-verification.md">Release verification</a>
+          <a href="./docs/">Documentation home</a>
+          <a href="./docs/#golden-path">Golden path</a>
+          <a href="./docs/#architecture">Architecture</a>
+          <a href="./docs/#operations">Operations</a>
+          <a href="./docs/#proof">Proof and boundaries</a>
         </div>
       </section>
     </main>
@@ -259,6 +263,7 @@ jq -r '.images[0].reference' e-navigator-release/release-manifest.json</code></p
       </div>
       <nav aria-label="Footer links">
         <a href="https://github.com/guaracloud/e-navigator">GitHub</a>
+        <a href="./docs/">Docs</a>
         <a href="https://github.com/guaracloud/e-navigator/blob/main/README.md">README</a>
         <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/helm.md">Helm</a>
         <a href="https://github.com/guaracloud/e-navigator/blob/main/documentation/proof-report.md">Proof</a>

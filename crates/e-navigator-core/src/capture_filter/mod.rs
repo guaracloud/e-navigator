@@ -2,8 +2,8 @@
 //!
 //! [`CaptureFilterPolicy`] is compiled once from a validated
 //! [`CaptureFilterConfig`] and answers, for a resolved pod, whether its
-//! workload should be probed. It holds only the operator's rules — never a
-//! live pod list — so it is trivially unit-testable and carries no I/O.
+//! workload should be probed. It holds only the operator's rules, never a
+//! live pod list, so it is trivially unit-testable and carries no I/O.
 //!
 //! Cgroups that cannot be resolved to a pod are handled by the caller via
 //! [`CaptureFilterPolicy::unknown_decision`]; the precedence and glob
@@ -336,7 +336,7 @@ fn labels_not_in_sets(
 }
 
 /// Bytewise glob match supporting `*` (any run, including empty) and `?`
-/// (exactly one byte). Iterative with backtracking — no allocation, no
+/// (exactly one byte). Iterative with backtracking, no allocation and no
 /// recursion, bounded by the input lengths. Values in this domain are ASCII
 /// DNS labels, so bytewise matching never splits a multibyte character.
 pub fn glob_match(pattern: &str, value: &str) -> bool {

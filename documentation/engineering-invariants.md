@@ -44,6 +44,11 @@ These invariants keep E-Navigator's implementation and public claims aligned.
 
 - `README.md`, `capabilities.md`, `boundaries.md`, `proof-report.md`, and
   `benchmark.md` must agree.
+- `documentation/README.md` indexes every top-level guide and ADR.
+- The website exposes the same start, architecture, golden-path, operations,
+  engineering, and proof routes as the Markdown manual.
+- Public prose uses commas, parentheses, or separate sentences instead of em
+  dashes.
 - Historical proof details belong in raw ignored result directories, not in the
   public reader path.
 - Public docs should state what is proven, partial, not proven, or blocked

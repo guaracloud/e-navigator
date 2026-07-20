@@ -50,8 +50,8 @@ impl InlineSample {
     }
 }
 
-/// Benchmark helper: reproduces the old per-event allocation (used to
-/// compare against [`InlineSample::from_perf`]).
+/// Benchmark helper that reproduces the old per-event allocation for
+/// comparison with the inline sample path.
 #[cfg(feature = "fuzzing")]
 pub fn bench_perf_sample_into_owned(head: &[u8], tail: &[u8]) -> usize {
     perf_sample_bytes(head, tail).into_owned().len()

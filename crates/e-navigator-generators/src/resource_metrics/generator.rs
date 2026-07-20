@@ -57,19 +57,38 @@ impl Generator<SignalEnvelope> for ResourceMetricsGenerator {
         )
     }
 
+    fn observe_immediate(
+        &self,
+        signal: &SignalEnvelope,
+    ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
+        Some(self.outputs_for_signal(signal))
+    }
+
     async fn observe(
         &self,
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
-        let Some(fingerprint) = ObservationFingerprint::from_signal(signal) else {
-            return Ok(());
-        };
-        if !self.mark_seen(fingerprint)? {
-            return Ok(());
+        for metric in self.outputs_for_signal(signal)? {
+            tx.send(metric)
+                .await
+                .map_err(|_| CoreError::PipelineClosed)?;
         }
 
-        let metrics = match &signal.payload {
+        Ok(())
+    }
+}
+
+impl ResourceMetricsGenerator {
+    fn outputs_for_signal(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
+        let Some(fingerprint) = ObservationFingerprint::from_signal(signal) else {
+            return Ok(Vec::new());
+        };
+        if !self.mark_seen(fingerprint)? {
+            return Ok(Vec::new());
+        }
+
+        let outputs = match &signal.payload {
             SignalPayload::NodeCpuObservation(observation) => {
                 self.node_cpu_metrics(signal, observation)?
             }
@@ -102,13 +121,6 @@ impl Generator<SignalEnvelope> for ResourceMetricsGenerator {
             }
             _ => Vec::new(),
         };
-
-        for metric in metrics {
-            tx.send(metric)
-                .await
-                .map_err(|_| CoreError::PipelineClosed)?;
-        }
-
-        Ok(())
+        Ok(outputs)
     }
 }

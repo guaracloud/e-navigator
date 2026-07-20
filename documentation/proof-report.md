@@ -194,7 +194,7 @@ Guarded Linux/Kubernetes runs have recorded these slices:
     API-unavailable warning, confirming the raw attribution-unscoped node
     pod-list fetch worked in-cluster.
   - `proj-included` was captured with full attribution (exec/network/protocol
-    records carrying container id and pod context — namespace, pod name/uid,
+    records carrying container id and pod context, including namespace, pod name/uid,
     container name, node, labels).
   - `proj-excluded` produced zero filterable signals (0 exec, 0
     network-connection open/close, 0 protocol) over the whole run; its only
@@ -221,7 +221,7 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   namespaces. Recorded, then cleaned up:
   - Included pods were captured with full attribution resolved from the
     **systemd `kubepods.slice` cgroup driver** (`runtime=containerd`, pod UID
-    read from the `...-pod<uid>.slice` path) — the cgroup-driver path the
+    read from the `...-pod<uid>.slice` path), which is the cgroup-driver path the
     OrbStack docker runtime does not exercise. The controller applied
     `allowed=3, denied=50` cgroups, confirming the in-cluster raw pod-list
     fetch.
@@ -264,7 +264,7 @@ Guarded Linux/Kubernetes runs have recorded these slices:
     `network_*` metric families in-cluster.
   Recorded honestly as homelab live proof, not production proof. Not cleanly
   verified on the homelab this session: native DWARF unwinding of pod
-  process stacks specifically — the in-kernel unwind-table row pool is
+  process stacks specifically, because the in-kernel unwind-table row pool is
   capacity-bounded on a node running several hundred processes with large
   system libraries, and while demand-driven prioritization and per-refresh
   pool re-allocation are implemented and DWARF-proven on OrbStack, full pod

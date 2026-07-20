@@ -151,7 +151,7 @@ impl RawNodePodIndex {
 }
 
 /// The verdict for every cgroup that resolved to a pod. Cgroups that did not
-/// resolve are intentionally absent — the eBPF fast path applies the
+/// resolve are intentionally absent, and the eBPF fast path applies the
 /// configured unknown-cgroup posture to anything not in the map.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DesiredFilterMap {

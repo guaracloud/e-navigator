@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![allow(clippy::needless_borrows_for_generic_args)]
+//! Kernel-side eBPF programs and fixed event layouts for E-Navigator sources.
 
 mod capture_policy;
 mod dns_peer;

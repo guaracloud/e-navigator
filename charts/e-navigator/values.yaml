@@ -234,12 +234,6 @@ config:
     name = "sink.otlp_http"
     enabled = false
 
-features:
-  metrics: true
-  traces: true
-  profiles: false
-  protocolProbes: false
-
 args:
   - "--source"
   - "unified"

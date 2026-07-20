@@ -1,6 +1,6 @@
 //! Userspace control plane for the Kubernetes-aware capture filter.
 //!
-//! One shared [`CaptureFilterController`] (spawned once by the CLI) polls the
+//! One shared `CaptureFilterController`, spawned once by the CLI, polls the
 //! node: it scans the cgroup filesystem for container cgroups and fetches one
 //! bounded Kubernetes workload snapshot (node-scoped by default, optionally
 //! cluster-wide with local Pods retained first). It resolves each
@@ -8,9 +8,9 @@
 //! desired `{cgroup_id -> verdict}` map. Because every eBPF source loads its
 //! own program object (and therefore its own copy of the filter map), the
 //! expensive computation is shared here while each source cheaply applies the
-//! diff to its own map via [`attach_capture_filter`].
+//! diff to its own map through the internal attachment helper.
 //!
-//! Only cgroup ids and a posture byte ever reach the kernel — never a
+//! Only cgroup ids and a posture byte ever reach the kernel, never a
 //! namespace or label.
 
 use std::path::{Path, PathBuf};

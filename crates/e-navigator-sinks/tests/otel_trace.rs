@@ -1,3 +1,10 @@
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "integration tests use panic-oriented assertions for failed contracts"
+)]
+
 use e_navigator_signals::{
     ContainerContext, DependencyEndpoint, KubernetesContext, NetworkAddressFamily,
     NetworkFlowWarning, NetworkProcessIdentity, NetworkProtocol, ProfilingAttribute,

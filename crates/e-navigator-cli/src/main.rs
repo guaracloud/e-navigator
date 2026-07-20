@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 #![warn(missing_debug_implementations, rust_2018_idioms, unreachable_pub)]
+//! Command-line entry point and static runtime assembly for E-Navigator.
 
 mod args;
 mod config;
