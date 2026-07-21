@@ -180,6 +180,23 @@ or chart rendering:
 
 Guarded Linux/Kubernetes runs have recorded these slices:
 
+- Dual BPF event transport proof (2026-07-21, homelab k3s v1.30, kernel 6.6,
+  amd64, two NixOS nodes). A locally built, never-pushed image was loaded into
+  the homelab only. Three counterbalanced 180-second runs each compared no
+  benchmark E-Navigator release, forced perf buffers, and forced RingBuf with
+  the exec and network Aya sources under identical connection, DNS, and process
+  churn. Both forced modes loaded on both nodes and all captured source
+  summaries reported zero transport loss, perf loss, RingBuf reservation
+  failures, invalid samples, and send failures. RingBuf versus perf measured
+  -0.56% requests/s, +1.46% mean latency, +11.40% summed agent CPU, and -4.45%
+  summed agent RSS. These short shared-cluster results prove transport operation
+  and accounting, not a RingBuf overhead win. The older-kernel automatic
+  fallback remains unit-tested but not runtime-proven because both nodes run
+  Linux 6.6. The numeric artifact and exact non-claims are in
+  `documentation/proof/event-transport-20260721/`. Disposable resources were
+  removed and the standing Argo CD application returned Synced/Healthy with its
+  original digest-pinned DaemonSet 2/2 Ready.
+
 - Capture-filter verifier-load and OrbStack live scoping proof (2026-07-07,
   OrbStack Docker plus its in-VM Kubernetes v1.34, arm64). The cgroup capture
   filter's in-kernel fast-path check verifier-loaded on every modified program:

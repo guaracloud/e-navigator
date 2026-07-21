@@ -1,0 +1,208 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e-navigator-bench-workload-server
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/name: e-navigator-bench-workload
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: e-navigator-validation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: e-navigator-bench-workload
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: e-navigator-bench-workload
+        app.kubernetes.io/component: server
+        app.kubernetes.io/part-of: e-navigator-validation
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: homelab-01
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: server
+          image: docker.io/library/python:3.12.10-alpine3.21@sha256:9c51ecce261773a684c8345b2d4673700055c513b4d54bc0719337d3e4ee552e
+          command: ["python", "-u", "-c"]
+          args:
+            - |
+              from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+              class Handler(BaseHTTPRequestHandler):
+                  protocol_version = "HTTP/1.1"
+
+                  def do_GET(self):
+                      body = b"ok\n"
+                      self.send_response(200)
+                      self.send_header("Content-Type", "text/plain")
+                      self.send_header("Content-Length", str(len(body)))
+                      self.send_header("Connection", "close")
+                      self.end_headers()
+                      self.wfile.write(body)
+
+                  def log_message(self, _format, *_args):
+                      return
+
+              ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 1
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: e-navigator-bench-workload-server
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/name: e-navigator-bench-workload
+    app.kubernetes.io/part-of: e-navigator-validation
+spec:
+  selector:
+    app.kubernetes.io/name: e-navigator-bench-workload
+    app.kubernetes.io/component: server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: e-navigator-bench-workload
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/name: e-navigator-bench-workload
+    app.kubernetes.io/component: load
+    app.kubernetes.io/part-of: e-navigator-validation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 240 # Replaced by the guarded collector.
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: e-navigator-bench-workload
+        app.kubernetes.io/component: load
+        app.kubernetes.io/part-of: e-navigator-validation
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: homelab-01
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: load
+          image: docker.io/library/python:3.12.10-alpine3.21@sha256:9c51ecce261773a684c8345b2d4673700055c513b4d54bc0719337d3e4ee552e
+          env:
+            - name: DURATION_SECONDS
+              value: "120" # Replaced by the guarded collector.
+            - name: WORKLOAD_SERVICE
+              value: e-navigator-bench-workload-server
+          command: ["python", "-u", "-c"]
+          args:
+            - |
+              import concurrent.futures
+              import json
+              import os
+              import socket
+              import subprocess
+              import time
+              import urllib.request
+
+              duration = int(os.environ["DURATION_SECONDS"])
+              service = os.environ["WORKLOAD_SERVICE"]
+              url = f"http://{service}:8080/benchmark"
+              bounds_ms = [0.25, 0.5, 1, 2, 5, 10, 20, 50, 100, 250, 500, 1000, 2000]
+              buckets = [0 for _ in bounds_ms]
+              total = 0
+              failures = 0
+              latency_sum_ms = 0.0
+              latency_max_ms = 0.0
+
+              def request_once():
+                  started = time.perf_counter()
+                  try:
+                      request = urllib.request.Request(url, headers={"Connection": "close"})
+                      with urllib.request.urlopen(request, timeout=2) as response:
+                          if response.status != 200:
+                              return False, (time.perf_counter() - started) * 1000
+                          response.read(3)
+                      return True, (time.perf_counter() - started) * 1000
+                  except Exception:
+                      return False, (time.perf_counter() - started) * 1000
+
+              def percentile_upper_bound(percentile):
+                  if total == 0:
+                      return None
+                  target = max(1, int(total * percentile + 0.999999))
+                  cumulative = 0
+                  for bound, count in zip(bounds_ms, buckets):
+                      cumulative += count
+                      if cumulative >= target:
+                          return bound
+                  return latency_max_ms
+
+              started = time.monotonic()
+              deadline = started + duration
+              burst_number = 0
+              with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+                  while time.monotonic() < deadline:
+                      burst_number += 1
+                      burst_deadline = min(deadline, time.monotonic() + 20)
+                      socket.getaddrinfo(service, 8080)
+                      for _ in range(64):
+                          subprocess.run(["/bin/true"], check=True)
+                      while time.monotonic() < burst_deadline:
+                          futures = [executor.submit(request_once) for _ in range(64)]
+                          for future in concurrent.futures.as_completed(futures):
+                              ok, elapsed_ms = future.result()
+                              total += 1
+                              failures += int(not ok)
+                              latency_sum_ms += elapsed_ms
+                              latency_max_ms = max(latency_max_ms, elapsed_ms)
+                              for index, bound in enumerate(bounds_ms):
+                                  if elapsed_ms <= bound:
+                                      buckets[index] += 1
+                                      break
+                      remaining = deadline - time.monotonic()
+                      if remaining > 0:
+                          time.sleep(min(10, remaining))
+
+              elapsed = time.monotonic() - started
+              print(json.dumps({
+                  "schema": "e-navigator.event-transport-workload.v1",
+                  "duration_seconds": duration,
+                  "elapsed_seconds": round(elapsed, 6),
+                  "bursts": burst_number,
+                  "requests": total,
+                  "failures": failures,
+                  "throughput_requests_per_second": round(total / elapsed, 3),
+                  "latency_mean_ms": round(latency_sum_ms / total, 6) if total else None,
+                  "latency_p50_upper_bound_ms": percentile_upper_bound(0.50),
+                  "latency_p95_upper_bound_ms": percentile_upper_bound(0.95),
+                  "latency_p99_upper_bound_ms": percentile_upper_bound(0.99),
+                  "latency_max_ms": round(latency_max_ms, 6),
+                  "histogram_bounds_ms": bounds_ms,
+                  "histogram_counts": buckets,
+              }, sort_keys=True))
+          resources:
+            requests:
+              cpu: 250m
+              memory: 64Mi
+            limits:
+              cpu: "2"
+              memory: 256Mi

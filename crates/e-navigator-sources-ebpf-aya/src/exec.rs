@@ -294,19 +294,12 @@ pub fn fuzz_decode_raw_exec_event(bytes: &[u8]) -> bool {
 #[cfg(target_os = "linux")]
 mod platform {
     use crate::diagnostics::{DiagnosticSampleDecision, SourceDiagnostics};
-    use crate::perf_sample::perf_sample_bytes;
     use crate::reader_shutdown::ReaderShutdown;
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
-    use aya::{
-        Ebpf, EbpfLoader, include_bytes_aligned,
-        maps::Array,
-        maps::perf::{PerfEvent, PerfEventArray},
-        programs::TracePoint,
-        util::online_cpus,
-    };
+    use aya::{Ebpf, maps::Array, programs::TracePoint};
     use e_navigator_core::{
-        ArgvCaptureConfig, CoreError, CoreResult, ModuleKind, ModuleMetadata, Source,
+        ArgvCaptureConfig, CoreError, CoreResult, EbpfConfig, ModuleKind, ModuleMetadata, Source,
     };
     use e_navigator_signals::{
         ContainerContext, KubernetesContext, ProcessExitEvent, SignalEnvelope, SignalPayload,
@@ -317,7 +310,7 @@ mod platform {
     };
     use tokio::sync::mpsc;
     use tokio::task::JoinHandle;
-    use tracing::{debug, info, warn};
+    use tracing::{debug, info};
 
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -333,6 +326,7 @@ mod platform {
         host: Option<String>,
         argv_capture: ArgvCaptureConfig,
         procfs_root: PathBuf,
+        ebpf: EbpfConfig,
     }
 
     impl AyaExecSource {
@@ -345,7 +339,13 @@ mod platform {
                 host,
                 argv_capture,
                 procfs_root,
+                ebpf: EbpfConfig::default(),
             }
+        }
+
+        pub fn with_ebpf_config(mut self, ebpf: EbpfConfig) -> Self {
+            self.ebpf = ebpf;
+            self
         }
     }
 
@@ -361,23 +361,16 @@ mod platform {
             let mut reader_handles = Vec::new();
             let argv_capture = self.argv_capture.clone();
             let diagnostics = SourceDiagnostics::from_env();
-            let telemetry = Arc::new(SourceTelemetry::new("source.aya_exec"));
             let exec_normalizer = Arc::new(Mutex::new(super::ExecEventNormalizer::default()));
-
-            let mut loader = EbpfLoader::new();
-            crate::ebpf_maps::constrain_unrelated_maps(
-                &mut loader,
+            let (mut ebpf, transport) = crate::event_transport::load_ebpf(
+                &self.ebpf,
                 crate::ebpf_maps::SourceMapProfile::Exec,
-            );
-            let mut ebpf = loader
-                .load(include_bytes_aligned!(concat!(
-                    env!("OUT_DIR"),
-                    "/e-navigator-ebpf-programs"
-                )))
-                .map_err(|err| CoreError::ModuleFailed {
-                    module: "source.aya_exec".to_string(),
-                    message: err.to_string(),
-                })?;
+                "source.aya_exec",
+            )?;
+            let telemetry = Arc::new(SourceTelemetry::new_with_transport(
+                "source.aya_exec",
+                transport.kind.as_str(),
+            ));
 
             configure_argv_capture(&mut ebpf, argv_capture.enabled)?;
 
@@ -482,173 +475,104 @@ mod platform {
                 reader_handles.push(handle);
             }
 
-            let mut perf_array =
-                PerfEventArray::try_from(ebpf.take_map("EXEC_EVENTS").ok_or_else(|| {
-                    CoreError::ModuleFailed {
-                        module: "source.aya_exec".to_string(),
-                        message: "missing EXEC_EVENTS map".to_string(),
-                    }
-                })?)
-                .map_err(|err| CoreError::ModuleFailed {
-                    module: "source.aya_exec".to_string(),
-                    message: err.to_string(),
-                })?;
-
-            let mut exit_perf_array =
-                PerfEventArray::try_from(ebpf.take_map("EXIT_EVENTS").ok_or_else(|| {
-                    CoreError::ModuleFailed {
-                        module: "source.aya_exec".to_string(),
-                        message: "missing EXIT_EVENTS map".to_string(),
-                    }
-                })?)
-                .map_err(|err| CoreError::ModuleFailed {
-                    module: "source.aya_exec".to_string(),
-                    message: err.to_string(),
-                })?;
-
-            let cpus = online_cpus().map_err(|(_, err)| CoreError::ModuleFailed {
-                module: "source.aya_exec".to_string(),
-                message: err.to_string(),
-            })?;
-
-            for &cpu_id in &cpus {
-                let mut buffer = perf_array
-                    .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
-                    .map_err(|err| CoreError::ModuleFailed {
-                        module: "source.aya_exec".to_string(),
-                        message: err.to_string(),
-                    })?;
-                let cpu_tx = tx.clone();
-                let host = self.host.clone();
-                let argv_capture = argv_capture.clone();
-                let procfs_root = self.procfs_root.clone();
-                let exec_normalizer = exec_normalizer.clone();
-                let reader_shutdown = shutdown.clone();
-                let diagnostics = diagnostics.clone();
-                let telemetry = telemetry.clone();
-
-                reader_handles.push(tokio::task::spawn_blocking(move || {
-                    let mut closed = false;
-
-                    while !reader_shutdown.is_stopped() {
-                        if crate::perf_reader::wait_for_events(&buffer, "source.aya_exec", cpu_id)
-                            != Some(true)
-                        {
-                            continue;
-                        }
-                        buffer.for_each(|event| {
-                            if closed {
-                                return;
-                            }
-
-                            match event {
-                                PerfEvent::Sample { head, tail } => {
-                                    let bytes = perf_sample_bytes(head, tail);
-                                    match super::raw_to_signal(
-                                        bytes.as_ref(),
-                                        host.clone(),
-                                        &argv_capture,
-                                        &procfs_root,
-                                        &exec_normalizer,
-                                    ) {
-                                        super::ExecDecodeResult::Emitted(signal) => {
-                                            telemetry.record_decoded_sample();
-                                            let diagnostic_decision =
-                                                log_signal_diagnostic(&diagnostics, &signal);
-                                            telemetry
-                                                .record_diagnostic_decision(diagnostic_decision);
-                                            if cpu_tx.blocking_send(*signal).is_err() {
-                                                telemetry.record_send_failure();
-                                                closed = true;
-                                            } else {
-                                                telemetry.record_sent_signal();
-                                            }
-                                        }
-                                        super::ExecDecodeResult::Pending => {}
-                                        super::ExecDecodeResult::Invalid => {
-                                            telemetry.record_invalid_sample();
-                                        }
-                                    }
-                                }
-                                PerfEvent::Lost { count } => {
-                                    telemetry.record_lost_perf_events(count);
-                                    warn!(count, "lost exec perf events");
-                                }
-                            }
-                            telemetry.maybe_log_summary();
-                        });
-
-                        if closed {
-                            return;
-                        }
-                    }
-                }));
+            let exec_events = crate::event_transport::take_event_map(
+                &mut ebpf,
+                "EXEC_EVENTS",
+                transport,
+                "source.aya_exec",
+            )?;
+            let exit_events = crate::event_transport::take_event_map(
+                &mut ebpf,
+                "EXIT_EVENTS",
+                transport,
+                "source.aya_exec",
+            )?;
+            if let Some(handle) = crate::event_transport::spawn_transport_loss_reader(
+                &mut ebpf,
+                crate::ebpf_maps::SourceMapProfile::Exec,
+                transport,
+                "source.aya_exec",
+                shutdown.clone(),
+                telemetry.clone(),
+            )? {
+                reader_handles.push(handle);
             }
 
-            for &cpu_id in &cpus {
-                let mut buffer = exit_perf_array
-                    .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
-                    .map_err(|err| CoreError::ModuleFailed {
-                        module: "source.aya_exec".to_string(),
-                        message: err.to_string(),
-                    })?;
-                let cpu_tx = tx.clone();
-                let host = self.host.clone();
-                let procfs_root = self.procfs_root.clone();
-                let reader_shutdown = shutdown.clone();
-                let diagnostics = diagnostics.clone();
-                let telemetry = telemetry.clone();
-
-                reader_handles.push(tokio::task::spawn_blocking(move || {
-                    let mut closed = false;
-
-                    while !reader_shutdown.is_stopped() {
-                        if crate::perf_reader::wait_for_events(&buffer, "source.aya_exec", cpu_id)
-                            != Some(true)
-                        {
-                            continue;
+            reader_handles.extend(crate::event_transport::spawn_event_readers(
+                exec_events,
+                "source.aya_exec",
+                "exec",
+                super::PERF_BUFFER_PAGE_COUNT,
+                shutdown.clone(),
+                telemetry.clone(),
+                || {
+                    let cpu_tx = tx.clone();
+                    let host = self.host.clone();
+                    let argv_capture = argv_capture.clone();
+                    let procfs_root = self.procfs_root.clone();
+                    let exec_normalizer = exec_normalizer.clone();
+                    let diagnostics = diagnostics.clone();
+                    let telemetry = telemetry.clone();
+                    move |bytes| match super::raw_to_signal(
+                        bytes,
+                        host.clone(),
+                        &argv_capture,
+                        &procfs_root,
+                        &exec_normalizer,
+                    ) {
+                        super::ExecDecodeResult::Emitted(signal) => {
+                            telemetry.record_decoded_sample();
+                            let decision = log_signal_diagnostic(&diagnostics, &signal);
+                            telemetry.record_diagnostic_decision(decision);
+                            if cpu_tx.blocking_send(*signal).is_err() {
+                                telemetry.record_send_failure();
+                                false
+                            } else {
+                                telemetry.record_sent_signal();
+                                true
+                            }
                         }
-                        buffer.for_each(|event| {
-                            if closed {
-                                return;
-                            }
-
-                            match event {
-                                PerfEvent::Sample { head, tail } => {
-                                    let bytes = perf_sample_bytes(head, tail);
-                                    if let Some(signal) = raw_exit_to_signal(
-                                        bytes.as_ref(),
-                                        host.clone(),
-                                        &procfs_root,
-                                    ) {
-                                        telemetry.record_decoded_sample();
-                                        let diagnostic_decision =
-                                            log_signal_diagnostic(&diagnostics, &signal);
-                                        telemetry.record_diagnostic_decision(diagnostic_decision);
-                                        if cpu_tx.blocking_send(signal).is_err() {
-                                            telemetry.record_send_failure();
-                                            closed = true;
-                                        } else {
-                                            telemetry.record_sent_signal();
-                                        }
-                                    } else {
-                                        telemetry.record_invalid_sample();
-                                    }
-                                }
-                                PerfEvent::Lost { count } => {
-                                    telemetry.record_lost_perf_events(count);
-                                    warn!(count, "lost process exit perf events");
-                                }
-                            }
-                            telemetry.maybe_log_summary();
-                        });
-
-                        if closed {
-                            return;
+                        super::ExecDecodeResult::Pending => true,
+                        super::ExecDecodeResult::Invalid => {
+                            telemetry.record_invalid_sample();
+                            true
                         }
                     }
-                }));
-            }
+                },
+            )?);
+
+            reader_handles.extend(crate::event_transport::spawn_event_readers(
+                exit_events,
+                "source.aya_exec",
+                "process_exit",
+                super::PERF_BUFFER_PAGE_COUNT,
+                shutdown.clone(),
+                telemetry.clone(),
+                || {
+                    let cpu_tx = tx.clone();
+                    let host = self.host.clone();
+                    let procfs_root = self.procfs_root.clone();
+                    let diagnostics = diagnostics.clone();
+                    let telemetry = telemetry.clone();
+                    move |bytes| {
+                        let Some(signal) = raw_exit_to_signal(bytes, host.clone(), &procfs_root)
+                        else {
+                            telemetry.record_invalid_sample();
+                            return true;
+                        };
+                        telemetry.record_decoded_sample();
+                        let decision = log_signal_diagnostic(&diagnostics, &signal);
+                        telemetry.record_diagnostic_decision(decision);
+                        if cpu_tx.blocking_send(signal).is_err() {
+                            telemetry.record_send_failure();
+                            false
+                        } else {
+                            telemetry.record_sent_signal();
+                            true
+                        }
+                    }
+                },
+            )?);
 
             if diagnostics.enabled() {
                 info!(
@@ -902,7 +826,7 @@ mod platform {
 mod platform {
     use async_trait::async_trait;
     use e_navigator_core::{
-        ArgvCaptureConfig, CoreError, CoreResult, ModuleKind, ModuleMetadata, Source,
+        ArgvCaptureConfig, CoreError, CoreResult, EbpfConfig, ModuleKind, ModuleMetadata, Source,
     };
     use e_navigator_signals::SignalEnvelope;
     use tokio::sync::mpsc;
@@ -912,6 +836,7 @@ mod platform {
         host: Option<String>,
         _argv_capture: ArgvCaptureConfig,
         _procfs_root: std::path::PathBuf,
+        _ebpf: EbpfConfig,
     }
 
     impl AyaExecSource {
@@ -924,7 +849,13 @@ mod platform {
                 host,
                 _argv_capture: argv_capture,
                 _procfs_root: procfs_root,
+                _ebpf: EbpfConfig::default(),
             }
+        }
+
+        pub fn with_ebpf_config(mut self, ebpf: EbpfConfig) -> Self {
+            self._ebpf = ebpf;
+            self
         }
     }
 

@@ -5,21 +5,27 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 namespace="${E_NAVIGATOR_HOMELAB_NAMESPACE:-e-navigator-bench}"
-context="${E_NAVIGATOR_HOMELAB_CONTEXT:-}"
+context="${E_NAVIGATOR_HOMELAB_CONTEXT:-homelab}"
 timestamp="$(date -u +%Y%m%d-%H%M%S)"
 results_dir="${E_NAVIGATOR_HOMELAB_RESULTS_DIR:-benchmarks/results/${timestamp}}"
 release="${E_NAVIGATOR_HOMELAB_RELEASE:-e-navigator-bench}"
-required_context="staging"
+required_context="homelab"
 required_namespace="e-navigator-bench"
 required_image_repository="ghcr.io/guaracloud/e-navigator"
 required_image_tag="sha-8ab271c"
 image_repository="${E_NAVIGATOR_HOMELAB_IMAGE_REPOSITORY:-$required_image_repository}"
 image_tag="${E_NAVIGATOR_HOMELAB_IMAGE_TAG:-$required_image_tag}"
+image_pull_policy="${E_NAVIGATOR_HOMELAB_IMAGE_PULL_POLICY:-IfNotPresent}"
 image_pull_secret="${E_NAVIGATOR_HOMELAB_IMAGE_PULL_SECRET:-}"
 cleanup_all_requested="${E_NAVIGATOR_HOMELAB_CLEANUP:-0}"
 cleanup_workload_requested="${E_NAVIGATOR_HOMELAB_CLEANUP_WORKLOAD:-$cleanup_all_requested}"
 uninstall_release_requested="${E_NAVIGATOR_HOMELAB_UNINSTALL_RELEASE:-$cleanup_all_requested}"
 workload_wait_timeout="${E_NAVIGATOR_HOMELAB_WORKLOAD_WAIT_TIMEOUT:-300s}"
+event_transport="${E_NAVIGATOR_HOMELAB_EVENT_TRANSPORT:-}"
+disable_json_stdout="${E_NAVIGATOR_HOMELAB_DISABLE_JSON_STDOUT:-0}"
+agent_mode="${E_NAVIGATOR_HOMELAB_AGENT_MODE:-enabled}"
+workload_template="${E_NAVIGATOR_HOMELAB_WORKLOAD_TEMPLATE:-benchmarks/k8s/workload.yaml}"
+workload_duration_seconds="${E_NAVIGATOR_HOMELAB_WORKLOAD_DURATION_SECONDS:-120}"
 
 if [ "${E_NAVIGATOR_HOMELAB_CONFIRM:-0}" != "1" ]; then
   cat >&2 <<MSG
@@ -30,24 +36,47 @@ MSG
   exit 2
 fi
 
-current_context="$(kubectl config current-context 2>/dev/null || true)"
-
-if [ -z "$current_context" ]; then
-  printf 'kubectl context is empty; set E_NAVIGATOR_HOMELAB_CONTEXT\n' >&2
+if [ "$context" != "$required_context" ]; then
+  printf 'target context must be exactly homelab; got: %s\n' "$context" >&2
   exit 2
 fi
 
-if [ "$current_context" != "$required_context" ]; then
-  printf 'current context must be exactly staging; got: %s\n' "$current_context" >&2
-  exit 2
-fi
+case "$event_transport" in
+  ""|auto|ring_buffer|perf_buffer) ;;
+  *)
+    printf 'E_NAVIGATOR_HOMELAB_EVENT_TRANSPORT must be auto, ring_buffer, or perf_buffer; got: %s\n' \
+      "$event_transport" >&2
+    exit 2
+    ;;
+esac
 
-if [ -z "$context" ]; then
-  context="$current_context"
-fi
+case "$image_pull_policy" in
+  Always|IfNotPresent|Never) ;;
+  *)
+    printf 'E_NAVIGATOR_HOMELAB_IMAGE_PULL_POLICY must be Always, IfNotPresent, or Never; got: %s\n' \
+      "$image_pull_policy" >&2
+    exit 2
+    ;;
+esac
 
-if [ "$context" != "$current_context" ]; then
-  printf 'requested context must match current context %s; got: %s\n' "$current_context" "$context" >&2
+case "$disable_json_stdout" in
+  0|1) ;;
+  *)
+    printf 'E_NAVIGATOR_HOMELAB_DISABLE_JSON_STDOUT must be 0 or 1\n' >&2
+    exit 2
+    ;;
+esac
+
+case "$agent_mode" in
+  enabled|none) ;;
+  *)
+    printf 'E_NAVIGATOR_HOMELAB_AGENT_MODE must be enabled or none\n' >&2
+    exit 2
+    ;;
+esac
+
+if ! kubectl --context "$context" get namespace kube-system >/dev/null 2>&1; then
+  printf 'unable to reach the guarded homelab context: %s\n' "$context" >&2
   exit 2
 fi
 
@@ -55,6 +84,23 @@ if [ "$namespace" != "$required_namespace" ]; then
   printf 'homelab validation namespace must be exactly e-navigator-bench; got: %s\n' "$namespace" >&2
   exit 2
 fi
+
+if [ ! -f "$workload_template" ]; then
+  printf 'homelab workload template does not exist: %s\n' "$workload_template" >&2
+  exit 2
+fi
+
+case "$workload_duration_seconds" in
+  ""|*[!0-9]*)
+    printf 'E_NAVIGATOR_HOMELAB_WORKLOAD_DURATION_SECONDS must be an integer\n' >&2
+    exit 2
+    ;;
+esac
+if [ "$workload_duration_seconds" -lt 1 ] || [ "$workload_duration_seconds" -gt 3600 ]; then
+  printf 'E_NAVIGATOR_HOMELAB_WORKLOAD_DURATION_SECONDS must be between 1 and 3600\n' >&2
+  exit 2
+fi
+workload_active_deadline_seconds="$((workload_duration_seconds + 120))"
 
 kubectl_cmd=(kubectl --context "$context")
 
@@ -85,7 +131,7 @@ run_required_capture() {
   "$@" >"$results_dir/${name}.txt" 2>&1
 }
 
-write_prometheus_http_runtime_config() {
+write_runtime_config() {
   local output="$1"
 
   awk '
@@ -95,10 +141,25 @@ write_prometheus_http_runtime_config() {
     in_config { exit }
   ' charts/e-navigator/values.yaml >"$output"
 
-  perl -0pi -e '
-    s/(\[prometheus_http\]\nenabled = )false/${1}true/;
-    s/(\[\[modules\]\]\nname = "sink\.prometheus_http"\nenabled = )false/${1}true/;
-  ' "$output"
+  if [ "${E_NAVIGATOR_HOMELAB_ENABLE_PROMETHEUS_HTTP:-0}" = "1" ]; then
+    perl -0pi -e '
+      s/(\[prometheus_http\]\nenabled = )false/${1}true/;
+      s/(\[\[modules\]\]\nname = "sink\.prometheus_http"\nenabled = )false/${1}true/;
+    ' "$output"
+  fi
+
+  case "$event_transport" in
+    auto) perl -0pi -e 's/event_transport = "[^"]+"/event_transport = "auto"/' "$output" ;;
+    ring_buffer) perl -0pi -e 's/event_transport = "[^"]+"/event_transport = "ring_buffer"/' "$output" ;;
+    perf_buffer) perl -0pi -e 's/event_transport = "[^"]+"/event_transport = "perf_buffer"/' "$output" ;;
+  esac
+
+
+  if [ "$disable_json_stdout" = "1" ]; then
+    perl -0pi -e '
+      s/(\[\[modules\]\]\nname = "sink\.json_stdout"\nenabled = )true/${1}false/;
+    ' "$output"
+  fi
 }
 
 write_run_metadata() {
@@ -119,15 +180,21 @@ Release: ${release}
 Apply mode: ${E_NAVIGATOR_HOMELAB_APPLY:-0}
 Required image: ${required_image_repository}:${required_image_tag}
 Configured image: ${image_repository}:${image_tag}
+Image pull policy: ${image_pull_policy}
 Image substitution: ${image_substitution}
 Pull secret configured: ${pull_secret_configured}
 Prometheus HTTP opt-in: ${E_NAVIGATOR_HOMELAB_ENABLE_PROMETHEUS_HTTP:-0}
+Event transport override: ${event_transport:-none}
+JSON stdout disabled: ${disable_json_stdout}
+Agent mode: ${agent_mode}
 ServiceMonitor opt-in: ${E_NAVIGATOR_HOMELAB_ENABLE_SERVICE_MONITOR:-0}
 Prometheus API configured: $([ -n "${E_NAVIGATOR_HOMELAB_PROMETHEUS_URL:-}${E_NAVIGATOR_HOMELAB_PROMETHEUS_SERVICE:-}" ] && printf 'yes' || printf 'no')
 Cleanup requested: ${E_NAVIGATOR_HOMELAB_CLEANUP:-0}
 Cleanup workload requested: ${cleanup_workload_requested}
 Uninstall release requested: ${uninstall_release_requested}
 Workload wait timeout: ${workload_wait_timeout}
+Workload template: ${workload_template}
+Workload duration seconds: ${workload_duration_seconds}
 EOF
 }
 
@@ -136,8 +203,11 @@ workload_manifest="$results_dir/workload-manifest.yaml"
 workload_selector="app.kubernetes.io/name=${workload_name}"
 
 write_workload_manifest() {
-  sed "s/name: e-navigator-bench-workload/name: ${workload_name}/" \
-    benchmarks/k8s/workload.yaml >"$workload_manifest"
+  sed \
+    -e "s/e-navigator-bench-workload/${workload_name}/g" \
+    -e "s/activeDeadlineSeconds: 240/activeDeadlineSeconds: ${workload_active_deadline_seconds}/" \
+    -e "s/value: \"120\" # Replaced by the guarded collector./value: \"${workload_duration_seconds}\" # Replaced by the guarded collector./" \
+    "$workload_template" >"$workload_manifest"
 }
 
 capture_workload_artifacts() {
@@ -152,7 +222,9 @@ top_interval_seconds="${E_NAVIGATOR_HOMELAB_TOP_INTERVAL_SECONDS:-5}"
 
 capture_top_samples() {
   local output="$results_dir/top-pods-10-samples.txt"
+  local node_output="$results_dir/top-nodes-10-samples.txt"
   : >"$output"
+  : >"$node_output"
   printf '\n==> top-pods-10-samples\n' | tee -a "$results_dir/commands.txt"
   printf 'kubectl --context %q -n %q top pods --containers # repeated %q times every %q seconds\n' \
     "$context" "$namespace" "$top_samples" "$top_interval_seconds" | tee -a "$results_dir/commands.txt"
@@ -160,6 +232,8 @@ capture_top_samples() {
   for sample in $(seq 1 "$top_samples"); do
     printf 'sample=%s timestamp=%s\n' "$sample" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$output"
     "${kubectl_cmd[@]}" -n "$namespace" top pods --containers >>"$output" 2>&1 || true
+    printf 'sample=%s timestamp=%s\n' "$sample" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$node_output"
+    "${kubectl_cmd[@]}" top nodes >>"$node_output" 2>&1 || true
     if [ "$sample" != "$top_samples" ]; then
       sleep "$top_interval_seconds"
     fi
@@ -389,7 +463,7 @@ itself; inspect the referenced evidence before updating documentation.
 - Prometheus API checks: \`prometheus-api-targets.txt\`, \`prometheus-api-query-up.txt\`, \`prometheus-api-query-e-navigator.txt\`, \`prometheus-api-series.txt\`, \`prometheus-api-port-forward.txt\`, or \`prometheus-api-skipped.txt\`
 - Logs: \`logs.txt\`
 - Events: \`events.txt\`
-- Resource samples: \`top-pods-10-samples.txt\`
+- Resource samples: \`top-pods-10-samples.txt\`, \`top-nodes-10-samples.txt\`
 - Capability decode: \`capability-decode.txt\`
 - Cleanup outputs, when cleanup is enabled: \`cleanup-workload.txt\`, \`cleanup-helm-uninstall.txt\`
 EOF
@@ -411,7 +485,7 @@ EOF
 | Prometheus runtime config | captured when enabled | \`prometheus-http-runtime-config.toml\` | config enablement does not prove scrape or queryability |
 | Prometheus HTTP endpoints | captured when Service exists | \`prometheus-http-healthz.txt\`, \`prometheus-http-readyz.txt\`, \`prometheus-http-metrics.txt\`, \`prometheus-http-port-forward.txt\`, or \`prometheus-http-skipped.txt\` | endpoint captures alone do not prove Prometheus active target or queryability |
 | Prometheus API queries | captured when configured | \`prometheus-api-targets.txt\`, \`prometheus-api-query-up.txt\`, \`prometheus-api-query-e-navigator.txt\`, \`prometheus-api-series.txt\`, \`prometheus-api-port-forward.txt\`, or \`prometheus-api-skipped.txt\` | empty query results are negative or inconclusive, not success |
-| Resource overhead | captured | \`top-pods-10-samples.txt\` | no reduced-overhead claim without a comparable baseline |
+| Resource overhead | captured | \`top-pods-10-samples.txt\`, \`top-nodes-10-samples.txt\` | no reduced-overhead claim without a comparable baseline |
 | Capabilities | captured | \`capability-decode.txt\` | no reduced-privilege claim if CAP_SYS_ADMIN remains or seccomp is disabled |
 | Cleanup | captured when enabled | \`cleanup-workload.txt\`, \`cleanup-helm-uninstall.txt\` | no cleanup occurred unless cleanup artifacts or commands prove it |
 EOF
@@ -421,13 +495,13 @@ render_args=(--namespace "$namespace" --set namespace.create=false --set namespa
 write_run_metadata
 write_workload_manifest
 
-if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ]; then
+if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ] && [ "$agent_mode" = "enabled" ]; then
   helm_args=(
     --set namespace.create=false
     --set namespace.name="$namespace"
     --set image.repository="$image_repository"
     --set image.tag="$image_tag"
-    --set image.pullPolicy=IfNotPresent
+    --set image.pullPolicy="$image_pull_policy"
     --set resources.requests.cpu=50m
     --set resources.requests.memory=128Mi
     --set resources.limits.memory=512Mi
@@ -436,14 +510,19 @@ if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ]; then
     helm_args+=(--set "imagePullSecrets[0].name=$image_pull_secret")
   fi
 
+  if [ "${E_NAVIGATOR_HOMELAB_ENABLE_PROMETHEUS_HTTP:-0}" = "1" ] || \
+    [ -n "$event_transport" ] || [ "$disable_json_stdout" = "1" ]; then
+    runtime_config="$results_dir/runtime-config.toml"
+    write_runtime_config "$runtime_config"
+    cp "$runtime_config" "$results_dir/prometheus-http-runtime-config.toml"
+    helm_args+=(--set-file "config.toml=$runtime_config")
+  fi
+
   if [ "${E_NAVIGATOR_HOMELAB_ENABLE_PROMETHEUS_HTTP:-0}" = "1" ]; then
-    prometheus_runtime_config="$results_dir/prometheus-http-runtime-config.toml"
-    write_prometheus_http_runtime_config "$prometheus_runtime_config"
     helm_args+=(
       --set prometheusHttp.enabled=true
       --set health.enabled=true
       --set service.enabled=true
-      --set-file "config.toml=$prometheus_runtime_config"
     )
 
     if [ "${E_NAVIGATOR_HOMELAB_ENABLE_SERVICE_MONITOR:-0}" = "1" ]; then
@@ -459,16 +538,29 @@ if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ]; then
     --namespace "$namespace" "${helm_args[@]}"
 fi
 
-run_capture current-context kubectl config current-context
+if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ] && [ "$agent_mode" = "none" ]; then
+  run_required_capture namespace-apply bash -c \
+    'kubectl --context "$1" create namespace "$2" --dry-run=client -o yaml | kubectl --context "$1" apply -f -' \
+    _ "$context" "$namespace"
+fi
+
+run_capture current-context bash -c 'printf "%s\n" "$1"' _ "$context"
 run_capture rendered-manifest helm --kube-context "$context" template "$release" charts/e-navigator "${render_args[@]}"
 run_capture helm-values helm --kube-context "$context" get values "$release" --namespace "$namespace" --all
 run_capture helm-manifest helm --kube-context "$context" get manifest "$release" --namespace "$namespace"
 run_capture namespace "${kubectl_cmd[@]}" get namespace "$namespace" -o yaml
-run_capture rollout "${kubectl_cmd[@]}" -n "$namespace" rollout status "daemonset/${release}" --timeout="${E_NAVIGATOR_HOMELAB_ROLLOUT_TIMEOUT:-120s}"
+if [ "$agent_mode" = "enabled" ]; then
+  run_capture rollout "${kubectl_cmd[@]}" -n "$namespace" rollout status "daemonset/${release}" --timeout="${E_NAVIGATOR_HOMELAB_ROLLOUT_TIMEOUT:-120s}"
+else
+  printf 'agent rollout skipped for no-agent baseline\n' >"$results_dir/rollout.txt"
+fi
 if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ]; then
   run_required_capture workload-apply "${kubectl_cmd[@]}" -n "$namespace" apply -f "$workload_manifest"
+  capture_top_samples &
+  top_capture_pid="$!"
   run_capture workload-wait "${kubectl_cmd[@]}" -n "$namespace" wait --for=condition=complete "job/${workload_name}" --timeout="$workload_wait_timeout"
   capture_workload_artifacts
+  wait "$top_capture_pid"
 fi
 run_capture pods "${kubectl_cmd[@]}" -n "$namespace" get pods -o wide
 run_capture daemonset "${kubectl_cmd[@]}" -n "$namespace" get daemonset -o wide
@@ -480,7 +572,9 @@ capture_prometheus_api_queries
 run_capture pod-json "${kubectl_cmd[@]}" -n "$namespace" get pods -o json
 run_capture logs "${kubectl_cmd[@]}" -n "$namespace" logs -l app.kubernetes.io/name=e-navigator --all-containers --tail="${E_NAVIGATOR_HOMELAB_LOG_TAIL:-2000}" --prefix
 run_capture events "${kubectl_cmd[@]}" -n "$namespace" get events --sort-by=.lastTimestamp
-capture_top_samples
+if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" != "1" ]; then
+  capture_top_samples
+fi
 capture_capabilities
 write_summary_files
 
@@ -489,7 +583,7 @@ if [ "$cleanup_workload_requested" = "1" ]; then
   run_capture cleanup-workload "${kubectl_cmd[@]}" -n "$namespace" delete -f "$workload_manifest" --ignore-not-found=true
 fi
 
-if [ "$uninstall_release_requested" = "1" ]; then
+if [ "$uninstall_release_requested" = "1" ] && [ "$agent_mode" = "enabled" ]; then
   printf 'uninstalling Helm release %s in %s\n' "$release" "$namespace"
   run_capture cleanup-helm-uninstall helm --kube-context "$context" uninstall "$release" --namespace "$namespace"
 fi

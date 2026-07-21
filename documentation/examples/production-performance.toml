@@ -9,6 +9,10 @@ max_derived_signal_depth = 8
 failure_policy = "isolate"
 shutdown_timeout_millis = 10000
 
+[ebpf]
+event_transport = "auto"
+ring_buffer_bytes = 262144
+
 [argv_capture]
 enabled = false
 max_args = 8

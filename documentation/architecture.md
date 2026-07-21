@@ -32,7 +32,7 @@ disable registered modules, but it cannot load arbitrary code.
 | `e-navigator-protocol` | Bounded protocol parsing, stream reassembly, and trace-context parsing |
 | `e-navigator-profiling` | Profile models, normalization, symbolization, JIT support, and unwind tables |
 | `e-navigator-sources-host` | Host resource observations from procfs, sysfs, and cgroups |
-| `e-navigator-sources-ebpf-aya` | Aya loaders, perf readers, raw-event decoding, protocol capture, TLS uprobes, and CPU profiling |
+| `e-navigator-sources-ebpf-aya` | Aya loaders, dual RingBuf/perf event readers, raw-event decoding, protocol capture, TLS uprobes, and CPU profiling |
 | `e-navigator-processors` | Container and Kubernetes attribution plus workload filtering |
 | `e-navigator-generators` | Metrics, dependency edges, request spans, profile sessions, trace paths, and security findings |
 | `e-navigator-sinks` | JSON, Prometheus, OTLP HTTP, and local pprof formatting and delivery |

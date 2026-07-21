@@ -3,9 +3,18 @@
 #![allow(clippy::needless_borrows_for_generic_args)]
 //! Kernel-side eBPF programs and fixed event layouts for E-Navigator sources.
 
+#[cfg(all(feature = "perf-buffer", feature = "ring-buffer"))]
+compile_error!("exactly one event transport feature must be enabled");
+#[cfg(not(any(feature = "perf-buffer", feature = "ring-buffer")))]
+compile_error!("one event transport feature must be enabled");
+
 mod capture_policy;
 mod dns_peer;
 
+#[cfg(feature = "ring-buffer")]
+use aya_ebpf::maps::RingBuf;
+#[cfg(feature = "perf-buffer")]
+use aya_ebpf::maps::{PerfEventArray, PerfEventByteArray};
 use aya_ebpf::{
     EbpfContext, Global,
     bindings::{BPF_F_USER_STACK, bpf_pidns_info},
@@ -20,9 +29,7 @@ use aya_ebpf::{
         },
     },
     macros::{map, perf_event, tracepoint, uprobe, uretprobe},
-    maps::{
-        Array, HashMap, LruHashMap, PerCpuArray, PerfEventArray, PerfEventByteArray, ProgramArray,
-    },
+    maps::{Array, HashMap, LruHashMap, PerCpuArray, ProgramArray},
     programs::{PerfEventContext, ProbeContext, RetProbeContext, TracePointContext},
 };
 use capture_policy::{CAPTURE_FILTER_DISABLED, capture_allowed, listener_metadata_allowed};
@@ -234,6 +241,19 @@ const TLS_DIAG_COPY_EMPTY: u32 = 7;
 const TLS_DIAG_OUTPUT_ATTEMPT: u32 = 8;
 const TLS_DIAG_SET_FD: u32 = 9;
 const TLS_DIAGNOSTIC_COUNTERS_LEN: u32 = 10;
+const TRANSPORT_LOSS_EXEC: u32 = 0;
+const TRANSPORT_LOSS_EXIT: u32 = 1;
+const TRANSPORT_LOSS_NETWORK: u32 = 2;
+const TRANSPORT_LOSS_TCP_STAT: u32 = 3;
+const TRANSPORT_LOSS_CPU_PROFILE: u32 = 4;
+const TRANSPORT_LOSS_DNS: u32 = 5;
+const TRANSPORT_LOSS_HTTP: u32 = 6;
+const TRANSPORT_LOSS_PROTOCOL: u32 = 7;
+const TRANSPORT_LOSS_TLS: u32 = 8;
+#[cfg(feature = "ring-buffer")]
+const EVENT_TRANSPORT_LOSSES_LEN: u32 = 9;
+#[cfg(feature = "ring-buffer")]
+const DEFAULT_RING_BUFFER_BYTES: u32 = 256 * 1024;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -557,36 +577,68 @@ pub struct PendingAccept {
     pub sockaddr_ptr: u64,
 }
 
+#[cfg(feature = "perf-buffer")]
 #[map]
 static EXEC_EVENTS: PerfEventArray<RawExecEvent> = PerfEventArray::new(0);
+#[cfg(feature = "ring-buffer")]
+#[map]
+static EXEC_EVENTS: RingBuf = RingBuf::with_byte_size(DEFAULT_RING_BUFFER_BYTES, 0);
 
+#[cfg(feature = "perf-buffer")]
 #[map]
 static EXIT_EVENTS: PerfEventArray<RawExitEvent> = PerfEventArray::new(0);
+#[cfg(feature = "ring-buffer")]
+#[map]
+static EXIT_EVENTS: RingBuf = RingBuf::with_byte_size(DEFAULT_RING_BUFFER_BYTES, 0);
 
+#[cfg(feature = "perf-buffer")]
 #[map]
 static NETWORK_EVENTS: PerfEventArray<RawNetworkEvent> = PerfEventArray::new(0);
+#[cfg(feature = "ring-buffer")]
+#[map]
+static NETWORK_EVENTS: RingBuf = RingBuf::with_byte_size(DEFAULT_RING_BUFFER_BYTES, 0);
 
+#[cfg(feature = "perf-buffer")]
 #[map]
 static TCP_STAT_EVENTS: PerfEventArray<RawTcpStatEvent> = PerfEventArray::new(0);
+#[cfg(feature = "ring-buffer")]
+#[map]
+static TCP_STAT_EVENTS: RingBuf = RingBuf::with_byte_size(DEFAULT_RING_BUFFER_BYTES, 0);
 
 #[map]
 static TCP_STAT_EVENT_SCRATCH: PerCpuArray<RawTcpStatEvent> = PerCpuArray::with_max_entries(1, 0);
 
+#[cfg(feature = "perf-buffer")]
 #[map]
 static CPU_PROFILE_EVENTS: PerfEventArray<RawCpuProfileEvent> = PerfEventArray::new(0);
+#[cfg(feature = "ring-buffer")]
+#[map]
+static CPU_PROFILE_EVENTS: RingBuf = RingBuf::with_byte_size(DEFAULT_RING_BUFFER_BYTES, 0);
 
+#[cfg(feature = "perf-buffer")]
 #[map]
 static DNS_EVENTS: PerfEventArray<RawDnsEvent> = PerfEventArray::new(0);
+#[cfg(feature = "ring-buffer")]
+#[map]
+static DNS_EVENTS: RingBuf = RingBuf::with_byte_size(DEFAULT_RING_BUFFER_BYTES, 0);
 
+#[cfg(feature = "perf-buffer")]
 #[map]
 static HTTP_REQUEST_EVENTS: PerfEventByteArray = PerfEventByteArray::new(0);
+#[cfg(feature = "ring-buffer")]
+#[map]
+static HTTP_REQUEST_EVENTS: RingBuf = RingBuf::with_byte_size(DEFAULT_RING_BUFFER_BYTES, 0);
 
 #[map]
 static HTTP_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
     PerCpuArray::with_max_entries(HTTP_DIAGNOSTIC_COUNTERS_LEN, 0);
 
+#[cfg(feature = "perf-buffer")]
 #[map]
 static PROTOCOL_DATA_EVENTS: PerfEventArray<RawProtocolDataEvent> = PerfEventArray::new(0);
+#[cfg(feature = "ring-buffer")]
+#[map]
+static PROTOCOL_DATA_EVENTS: RingBuf = RingBuf::with_byte_size(DEFAULT_RING_BUFFER_BYTES, 0);
 
 #[map]
 static PROTOCOL_DATA_EVENT_SCRATCH: PerCpuArray<RawProtocolDataEvent> =
@@ -733,8 +785,12 @@ static PENDING_ACCEPTS: HashMap<u64, PendingAccept> =
 static PENDING_HTTP_READS: HashMap<u64, PendingHttpRead> =
     HashMap::with_max_entries(4096, HASH_MAP_NO_PREALLOC);
 
+#[cfg(feature = "perf-buffer")]
 #[map]
 static TLS_DATA_EVENTS: PerfEventArray<RawProtocolDataEvent> = PerfEventArray::new(0);
+#[cfg(feature = "ring-buffer")]
+#[map]
+static TLS_DATA_EVENTS: RingBuf = RingBuf::with_byte_size(DEFAULT_RING_BUFFER_BYTES, 0);
 
 #[map]
 static TLS_DATA_EVENT_SCRATCH: PerCpuArray<RawProtocolDataEvent> =
@@ -761,6 +817,49 @@ static PENDING_TLS_IO: HashMap<u64, PendingTlsIo> =
 #[map]
 static TLS_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
     PerCpuArray::with_max_entries(TLS_DIAGNOSTIC_COUNTERS_LEN, 0);
+
+/// Per-source producer failures for the selected kernel-to-userspace event
+/// transport. Perf-event losses are surfaced directly to userspace by Aya;
+/// ring-buffer reservation failures are surfaced only to the eBPF producer,
+/// so every failed output increments the corresponding per-CPU slot here.
+#[cfg(feature = "ring-buffer")]
+#[map]
+static EVENT_TRANSPORT_LOSSES: PerCpuArray<u64> =
+    PerCpuArray::with_max_entries(EVENT_TRANSPORT_LOSSES_LEN, 0);
+
+#[cfg(feature = "ring-buffer")]
+#[inline(always)]
+fn record_transport_loss(index: u32) {
+    if let Some(counter) = EVENT_TRANSPORT_LOSSES.get_ptr_mut(index) {
+        unsafe {
+            *counter = (*counter).wrapping_add(1);
+        }
+    }
+}
+
+#[cfg(feature = "ring-buffer")]
+#[inline(always)]
+fn output_ring_event<T: ?Sized>(map: &RingBuf, event: &T) -> Result<(), i32> {
+    map.output::<T>(event, 0)
+}
+
+#[cfg(feature = "perf-buffer")]
+macro_rules! output_event {
+    ($map:ident, $loss_index:expr, $ctx:expr, $event:expr) => {{
+        let _ = $loss_index;
+        $map.output($ctx, $event, 0);
+    }};
+}
+
+#[cfg(feature = "ring-buffer")]
+macro_rules! output_event {
+    ($map:ident, $loss_index:expr, $ctx:expr, $event:expr) => {{
+        let _ = $ctx;
+        if output_ring_event(&$map, $event).is_err() {
+            record_transport_loss($loss_index);
+        }
+    }};
+}
 
 // Capture-filter control word held in CAPTURE_FILTER_CONTROL[0]. Userspace
 // keeps this in lock-step with the `[capture_filter]` config; the kernel never
@@ -1470,7 +1569,7 @@ fn try_tracepoint_exec_common(
     let _ = read_exec_filename(&ctx, &mut event.executable, filename_offset);
     let _ = read_exec_arguments(&ctx, event, argv_offset);
 
-    EXEC_EVENTS.output(&ctx, &*event, 0);
+    output_event!(EXEC_EVENTS, TRANSPORT_LOSS_EXEC, &ctx, &*event);
     Ok(0)
 }
 
@@ -1496,7 +1595,7 @@ fn try_tracepoint_process_exec(ctx: TracePointContext) -> Result<u32, i64> {
     event.executable = [0; EXECUTABLE_LEN];
     event.arguments = [[0; ARG_LEN]; MAX_ARGS];
 
-    EXEC_EVENTS.output(&ctx, &*event, 0);
+    output_event!(EXEC_EVENTS, TRANSPORT_LOSS_EXEC, &ctx, &*event);
     Ok(0)
 }
 
@@ -1517,7 +1616,7 @@ fn try_tracepoint_process_exit(ctx: TracePointContext) -> Result<u32, i64> {
     }
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
 
-    EXIT_EVENTS.output(&ctx, &*event, 0);
+    output_event!(EXIT_EVENTS, TRANSPORT_LOSS_EXIT, &ctx, &*event);
     Ok(0)
 }
 
@@ -1575,7 +1674,7 @@ fn try_tracepoint_tcp_set_state(ctx: &TracePointContext) -> Result<u32, i64> {
     event.local_port = unsafe { ctx.read_at::<u16>(24) }.map_err(|err| err as i64)?;
     event.remote_port = unsafe { ctx.read_at::<u16>(26) }.map_err(|err| err as i64)?;
     read_tcp_tuple_addrs(ctx, family, 32, 36, 40, 56, event)?;
-    TCP_STAT_EVENTS.output(ctx, &*event, 0);
+    output_event!(TCP_STAT_EVENTS, TRANSPORT_LOSS_TCP_STAT, ctx, &*event);
     Ok(0)
 }
 
@@ -1592,7 +1691,7 @@ fn try_tracepoint_tcp_retransmit(ctx: &TracePointContext) -> Result<u32, i64> {
     event.local_port = unsafe { ctx.read_at::<u16>(28) }.map_err(|err| err as i64)?;
     event.remote_port = unsafe { ctx.read_at::<u16>(30) }.map_err(|err| err as i64)?;
     read_tcp_tuple_addrs(ctx, family, 34, 38, 42, 58, event)?;
-    TCP_STAT_EVENTS.output(ctx, &*event, 0);
+    output_event!(TCP_STAT_EVENTS, TRANSPORT_LOSS_TCP_STAT, ctx, &*event);
     Ok(0)
 }
 
@@ -1621,7 +1720,7 @@ fn try_tracepoint_tcp_reset(ctx: &TracePointContext, direction: u32) -> Result<u
         event.local_addr_v6 = unsafe { ctx.read_at::<[u8; 16]>(40) }.map_err(|err| err as i64)?;
         event.remote_addr_v6 = unsafe { ctx.read_at::<[u8; 16]>(68) }.map_err(|err| err as i64)?;
     }
-    TCP_STAT_EVENTS.output(ctx, &*event, 0);
+    output_event!(TCP_STAT_EVENTS, TRANSPORT_LOSS_TCP_STAT, ctx, &*event);
     Ok(0)
 }
 
@@ -1744,7 +1843,7 @@ fn emit_cpu_profile_event(ctx: &PerfEventContext, event: &mut RawCpuProfileEvent
             CPU_PROFILE_PROGS.tail_call(ctx, 1);
         }
     }
-    CPU_PROFILE_EVENTS.output(ctx, &*event, 0);
+    output_event!(CPU_PROFILE_EVENTS, TRANSPORT_LOSS_CPU_PROFILE, ctx, &*event);
 }
 
 #[perf_event]
@@ -1770,7 +1869,12 @@ fn try_cpu_profile_py_find(ctx: PerfEventContext) -> Result<u32, i64> {
         &mut *ptr
     };
     let Some(info) = (unsafe { PY_PROC_INFO.get(&event.pid) }) else {
-        CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+        output_event!(
+            CPU_PROFILE_EVENTS,
+            TRANSPORT_LOSS_CPU_PROFILE,
+            &ctx,
+            &*event
+        );
         return Ok(0);
     };
 
@@ -1854,7 +1958,12 @@ fn try_cpu_profile_py_find(ctx: PerfEventContext) -> Result<u32, i64> {
 
     if found == 0 {
         event.py_stop = stop;
-        CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+        output_event!(
+            CPU_PROFILE_EVENTS,
+            TRANSPORT_LOSS_CPU_PROFILE,
+            &ctx,
+            &*event
+        );
         return Ok(0);
     }
     state.py_tstate = found;
@@ -1862,12 +1971,22 @@ fn try_cpu_profile_py_find(ctx: PerfEventContext) -> Result<u32, i64> {
     // Resolve the innermost interpreter frame up front so the walker
     // rounds only chain frame-to-frame.
     let Some(info) = (unsafe { PY_PROC_INFO.get(&event.pid) }) else {
-        CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+        output_event!(
+            CPU_PROFILE_EVENTS,
+            TRANSPORT_LOSS_CPU_PROFILE,
+            &ctx,
+            &*event
+        );
         return Ok(0);
     };
     let Some(cframe) = read_user_u64(found.wrapping_add(u64::from(info.tstate_cframe))) else {
         event.py_stop = PY_STOP_READ_FAULT;
-        CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+        output_event!(
+            CPU_PROFILE_EVENTS,
+            TRANSPORT_LOSS_CPU_PROFILE,
+            &ctx,
+            &*event
+        );
         return Ok(0);
     };
     let frame = if cframe == 0 {
@@ -1877,14 +1996,24 @@ fn try_cpu_profile_py_find(ctx: PerfEventContext) -> Result<u32, i64> {
             Some(frame) => frame,
             None => {
                 event.py_stop = PY_STOP_READ_FAULT;
-                CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+                output_event!(
+                    CPU_PROFILE_EVENTS,
+                    TRANSPORT_LOSS_CPU_PROFILE,
+                    &ctx,
+                    &*event
+                );
                 return Ok(0);
             }
         }
     };
     if frame == 0 {
         event.py_stop = PY_STOP_COMPLETE;
-        CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+        output_event!(
+            CPU_PROFILE_EVENTS,
+            TRANSPORT_LOSS_CPU_PROFILE,
+            &ctx,
+            &*event
+        );
         return Ok(0);
     }
     state.py_frame = frame;
@@ -1894,7 +2023,12 @@ fn try_cpu_profile_py_find(ctx: PerfEventContext) -> Result<u32, i64> {
     }
     // Tail call failed; emit without python frames, accounted.
     event.py_stop = PY_STOP_READ_FAULT;
-    CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+    output_event!(
+        CPU_PROFILE_EVENTS,
+        TRANSPORT_LOSS_CPU_PROFILE,
+        &ctx,
+        &*event
+    );
     Ok(0)
 }
 
@@ -1921,7 +2055,12 @@ fn try_cpu_profile_py_walk(ctx: PerfEventContext) -> Result<u32, i64> {
         &mut *ptr
     };
     let Some(info) = (unsafe { PY_PROC_INFO.get(&event.pid) }) else {
-        CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+        output_event!(
+            CPU_PROFILE_EVENTS,
+            TRANSPORT_LOSS_CPU_PROFILE,
+            &ctx,
+            &*event
+        );
         return Ok(0);
     };
     let info = *info;
@@ -1973,7 +2112,12 @@ fn try_cpu_profile_py_walk(ctx: PerfEventContext) -> Result<u32, i64> {
         }
     }
     event.py_stop = stop;
-    CPU_PROFILE_EVENTS.output(&ctx, &*event, 0);
+    output_event!(
+        CPU_PROFILE_EVENTS,
+        TRANSPORT_LOSS_CPU_PROFILE,
+        &ctx,
+        &*event
+    );
     Ok(0)
 }
 
@@ -2617,7 +2761,7 @@ fn emit_tls_data(
         event.payload_offset = offset;
         event.payload_len = chunk_len as u32;
         record_tls_diagnostic(TLS_DIAG_OUTPUT_ATTEMPT);
-        TLS_DATA_EVENTS.output(ctx, &*event, 0);
+        output_event!(TLS_DATA_EVENTS, TRANSPORT_LOSS_TLS, ctx, &*event);
         emitted = true;
         segment += 1;
     }
@@ -2724,12 +2868,12 @@ fn try_tracepoint_connect_exit(ctx: TracePointContext) -> Result<u32, i64> {
     if retval < 0 && retval != NEG_EINPROGRESS {
         event.event_type = NETWORK_EVENT_FAILURE;
         event.errno = (-retval) as i32;
-        NETWORK_EVENTS.output(&ctx, &*event, 0);
+        output_event!(NETWORK_EVENTS, TRANSPORT_LOSS_NETWORK, &ctx, &*event);
         return Ok(0);
     }
 
     event.event_type = NETWORK_EVENT_OPEN;
-    NETWORK_EVENTS.output(&ctx, &*event, 0);
+    output_event!(NETWORK_EVENTS, TRANSPORT_LOSS_NETWORK, &ctx, &*event);
 
     let key = ConnectionKey {
         tgid: pending.pid,
@@ -2787,7 +2931,7 @@ fn try_tracepoint_close_enter(ctx: TracePointContext) -> Result<u32, i64> {
     event.event_type = NETWORK_EVENT_CLOSE;
     event.timestamp_unix_nanos = now;
     event.duration_nanos = now - pending.started_at_nanos;
-    NETWORK_EVENTS.output(&ctx, &*event, 0);
+    output_event!(NETWORK_EVENTS, TRANSPORT_LOSS_NETWORK, &ctx, &*event);
     Ok(0)
 }
 
@@ -3647,7 +3791,7 @@ fn try_tracepoint_protocol_iovec_emit(ctx: &TracePointContext) -> Result<u32, i6
             return Ok(0);
         }
         record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
-        PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
+        output_event!(PROTOCOL_DATA_EVENTS, TRANSPORT_LOSS_PROTOCOL, ctx, &*event);
         emitted = true;
         offset = offset.saturating_add(captured);
         if u64::from(captured) != slot_len {
@@ -3940,7 +4084,7 @@ fn output_protocol_payload_segments(
         event.payload_offset = offset;
         event.payload_len = chunk_len as u32;
         record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
-        PROTOCOL_DATA_EVENTS.output(ctx, &*event, 0);
+        output_event!(PROTOCOL_DATA_EVENTS, TRANSPORT_LOSS_PROTOCOL, ctx, &*event);
         emitted = true;
         segment += 1;
     }
@@ -4063,7 +4207,7 @@ fn emit_dns_send_event(
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     copy_dns_packet(buffer, len, event)?;
-    DNS_EVENTS.output(ctx, &*event, 0);
+    output_event!(DNS_EVENTS, TRANSPORT_LOSS_DNS, ctx, &*event);
     Ok(0)
 }
 
@@ -4098,7 +4242,7 @@ fn emit_dns_connected_send_event(
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     copy_dns_packet(buffer, len, event)?;
-    DNS_EVENTS.output(ctx, &*event, 0);
+    output_event!(DNS_EVENTS, TRANSPORT_LOSS_DNS, ctx, &*event);
     Ok(0)
 }
 
@@ -4240,7 +4384,7 @@ fn try_tracepoint_dns_recvfrom_exit(ctx: &TracePointContext) -> Result<u32, i64>
     }
 
     copy_dns_packet(pending.buffer_ptr as *const u8, retval as u64, event)?;
-    DNS_EVENTS.output(ctx, &*event, 0);
+    output_event!(DNS_EVENTS, TRANSPORT_LOSS_DNS, ctx, &*event);
     Ok(0)
 }
 
@@ -4435,7 +4579,7 @@ fn output_http_request_event(ctx: &TracePointContext, event: &RawHttpRequestEven
             output_len.min(core::mem::size_of::<RawHttpRequestEvent>()),
         )
     };
-    HTTP_REQUEST_EVENTS.output(ctx, bytes, 0);
+    output_event!(HTTP_REQUEST_EVENTS, TRANSPORT_LOSS_HTTP, ctx, bytes);
 }
 
 fn http_request_event_scratch() -> Result<&'static mut RawHttpRequestEvent, i64> {

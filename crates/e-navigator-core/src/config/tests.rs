@@ -128,6 +128,79 @@ fn source_supervisor_shutdown_timeout_is_bounded() {
 }
 
 #[test]
+fn ebpf_transport_defaults_are_bounded_and_automatic() {
+    let config = RuntimeConfig::default();
+
+    assert_eq!(config.ebpf.event_transport, EbpfEventTransport::Auto);
+    assert_eq!(config.ebpf.ring_buffer_bytes, 256 * 1024);
+    assert!(config.ebpf.validate().is_ok());
+}
+
+#[test]
+fn ebpf_transport_parses_every_explicit_mode() {
+    for (value, expected) in [
+        ("auto", EbpfEventTransport::Auto),
+        ("ring_buffer", EbpfEventTransport::RingBuffer),
+        ("perf_buffer", EbpfEventTransport::PerfBuffer),
+    ] {
+        let config = toml::from_str::<RuntimeConfig>(&format!(
+            "[ebpf]\nevent_transport = \"{value}\"\nring_buffer_bytes = 262144\n"
+        ))
+        .expect("eBPF transport mode parses");
+
+        assert_eq!(config.ebpf.event_transport, expected);
+        assert!(config.validate().is_ok());
+    }
+}
+
+#[test]
+fn ebpf_ring_buffer_capacity_is_strictly_bounded() {
+    for (bytes, expected) in [
+        (
+            EbpfConfig::MIN_RING_BUFFER_BYTES - 1,
+            format!(
+                "ebpf.ring_buffer_bytes must be greater than or equal to {}",
+                EbpfConfig::MIN_RING_BUFFER_BYTES
+            ),
+        ),
+        (
+            EbpfConfig::MAX_RING_BUFFER_BYTES + 1,
+            format!(
+                "ebpf.ring_buffer_bytes must be less than or equal to {}",
+                EbpfConfig::MAX_RING_BUFFER_BYTES
+            ),
+        ),
+        (
+            EbpfConfig::MIN_RING_BUFFER_BYTES + 1,
+            "ebpf.ring_buffer_bytes must be a power of two".to_string(),
+        ),
+    ] {
+        assert_invalid(
+            RuntimeConfig {
+                ebpf: EbpfConfig {
+                    ring_buffer_bytes: bytes,
+                    ..EbpfConfig::default()
+                },
+                ..RuntimeConfig::default()
+            },
+            expected,
+        );
+    }
+}
+
+#[test]
+fn ebpf_config_rejects_unknown_fields() {
+    assert_toml_rejects_unknown_field(
+        r#"
+        [ebpf]
+        event_transport = "auto"
+        ring_buffer_byte = 262144
+        "#,
+        "ring_buffer_byte",
+    );
+}
+
+#[test]
 fn known_modules_include_opt_in_dns_runtime_source_without_default_runtime_claim() {
     let config = RuntimeConfig::default();
 

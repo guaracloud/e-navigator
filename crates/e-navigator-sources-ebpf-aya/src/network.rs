@@ -360,31 +360,35 @@ fn now_unix_nanos() -> u64 {
 #[cfg(target_os = "linux")]
 mod platform {
     use crate::diagnostics::{DiagnosticSampleDecision, SourceDiagnostics};
-    use crate::perf_sample::perf_sample_bytes;
     use crate::reader_shutdown::ReaderShutdown;
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
-    use aya::{
-        Ebpf, EbpfLoader, include_bytes_aligned,
-        maps::perf::{PerfEvent, PerfEventArray},
-        programs::TracePoint,
-        util::online_cpus,
-    };
-    use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Source};
+    use aya::{Ebpf, programs::TracePoint};
+    use e_navigator_core::{CoreError, CoreResult, EbpfConfig, ModuleKind, ModuleMetadata, Source};
     use e_navigator_signals::{ContainerContext, KubernetesContext, SignalEnvelope, SignalPayload};
     use std::{path::PathBuf, sync::Arc};
     use tokio::{sync::mpsc, task::JoinHandle};
-    use tracing::{debug, info, warn};
+    use tracing::{debug, info};
 
     #[derive(Debug, Default)]
     pub struct AyaNetworkSource {
         host: Option<String>,
         procfs_root: PathBuf,
+        ebpf: EbpfConfig,
     }
 
     impl AyaNetworkSource {
         pub fn new(host: Option<String>, procfs_root: PathBuf) -> Self {
-            Self { host, procfs_root }
+            Self {
+                host,
+                procfs_root,
+                ebpf: EbpfConfig::default(),
+            }
+        }
+
+        pub fn with_ebpf_config(mut self, ebpf: EbpfConfig) -> Self {
+            self.ebpf = ebpf;
+            self
         }
     }
 
@@ -399,18 +403,15 @@ mod platform {
             let shutdown = ReaderShutdown::new();
             let mut reader_handles = Vec::new();
             let diagnostics = SourceDiagnostics::from_env();
-            let telemetry = Arc::new(SourceTelemetry::new("source.aya_network"));
-            let mut loader = EbpfLoader::new();
-            crate::ebpf_maps::constrain_unrelated_maps(
-                &mut loader,
+            let (mut ebpf, transport) = crate::event_transport::load_ebpf(
+                &self.ebpf,
                 crate::ebpf_maps::SourceMapProfile::Network,
-            );
-            let mut ebpf = loader
-                .load(include_bytes_aligned!(concat!(
-                    env!("OUT_DIR"),
-                    "/e-navigator-ebpf-programs"
-                )))
-                .map_err(module_error)?;
+                "source.aya_network",
+            )?;
+            let telemetry = Arc::new(SourceTelemetry::new_with_transport(
+                "source.aya_network",
+                transport.kind.as_str(),
+            ));
 
             attach_tracepoint(
                 &mut ebpf,
@@ -538,152 +539,99 @@ mod platform {
                 reader_handles.push(handle);
             }
 
-            let mut tcp_stat_array =
-                PerfEventArray::try_from(ebpf.take_map("TCP_STAT_EVENTS").ok_or_else(|| {
-                    CoreError::ModuleFailed {
-                        module: "source.aya_network".to_string(),
-                        message: "missing TCP_STAT_EVENTS map".to_string(),
-                    }
-                })?)
-                .map_err(module_error)?;
-
-            let mut perf_array =
-                PerfEventArray::try_from(ebpf.take_map("NETWORK_EVENTS").ok_or_else(|| {
-                    CoreError::ModuleFailed {
-                        module: "source.aya_network".to_string(),
-                        message: "missing NETWORK_EVENTS map".to_string(),
-                    }
-                })?)
-                .map_err(module_error)?;
-
-            let cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
-            for cpu_id in cpus {
-                let mut buffer = perf_array
-                    .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
-                    .map_err(module_error)?;
-                let cpu_tx = tx.clone();
-                let host = self.host.clone();
-                let procfs_root = self.procfs_root.clone();
-                let reader_shutdown = shutdown.clone();
-                let diagnostics = diagnostics.clone();
-                let telemetry = telemetry.clone();
-
-                reader_handles.push(tokio::task::spawn_blocking(move || {
-                    let mut closed = false;
-
-                    while !reader_shutdown.is_stopped() {
-                        if crate::perf_reader::wait_for_events(
-                            &buffer,
-                            "source.aya_network",
-                            cpu_id,
-                        ) != Some(true)
-                        {
-                            continue;
-                        }
-                        buffer.for_each(|event| {
-                            if closed {
-                                return;
-                            }
-
-                            match event {
-                                PerfEvent::Sample { head, tail } => {
-                                    let bytes = perf_sample_bytes(head, tail);
-                                    if let Some(signal) =
-                                        super::raw_network_to_signal_with_clock_and_procfs(
-                                            bytes.as_ref(),
-                                            host.clone(),
-                                            super::now_unix_nanos(),
-                                            &procfs_root,
-                                        )
-                                    {
-                                        telemetry.record_decoded_sample();
-                                        let diagnostic_decision =
-                                            log_signal_diagnostic(&diagnostics, &signal);
-                                        telemetry.record_diagnostic_decision(diagnostic_decision);
-                                        if cpu_tx.blocking_send(signal).is_err() {
-                                            telemetry.record_send_failure();
-                                            closed = true;
-                                        } else {
-                                            telemetry.record_sent_signal();
-                                        }
-                                    } else {
-                                        telemetry.record_invalid_sample();
-                                    }
-                                }
-                                PerfEvent::Lost { count } => {
-                                    telemetry.record_lost_perf_events(count);
-                                    warn!(count, "lost network perf events");
-                                }
-                            }
-                            telemetry.maybe_log_summary();
-                        });
-
-                        if closed {
-                            return;
-                        }
-                    }
-                }));
+            let tcp_stat_events = crate::event_transport::take_event_map(
+                &mut ebpf,
+                "TCP_STAT_EVENTS",
+                transport,
+                "source.aya_network",
+            )?;
+            let network_events = crate::event_transport::take_event_map(
+                &mut ebpf,
+                "NETWORK_EVENTS",
+                transport,
+                "source.aya_network",
+            )?;
+            if let Some(handle) = crate::event_transport::spawn_transport_loss_reader(
+                &mut ebpf,
+                crate::ebpf_maps::SourceMapProfile::Network,
+                transport,
+                "source.aya_network",
+                shutdown.clone(),
+                telemetry.clone(),
+            )? {
+                reader_handles.push(handle);
             }
 
-            let tcp_cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
-            for cpu_id in tcp_cpus {
-                let mut buffer = tcp_stat_array
-                    .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
-                    .map_err(module_error)?;
-                let cpu_tx = tx.clone();
-                let host = self.host.clone();
-                let procfs_root = self.procfs_root.clone();
-                let reader_shutdown = shutdown.clone();
-                let telemetry = telemetry.clone();
-
-                reader_handles.push(tokio::task::spawn_blocking(move || {
-                    let mut closed = false;
-                    while !reader_shutdown.is_stopped() {
-                        if crate::perf_reader::wait_for_events(
-                            &buffer,
-                            "source.aya_network",
-                            cpu_id,
-                        ) != Some(true)
-                        {
-                            continue;
-                        }
-                        buffer.for_each(|event| {
-                            if closed {
-                                return;
-                            }
-                            match event {
-                                PerfEvent::Sample { head, tail } => {
-                                    let bytes = perf_sample_bytes(head, tail);
-                                    if let Some(signal) = super::raw_tcp_stat_to_signal_with_procfs(
-                                        bytes.as_ref(),
-                                        host.clone(),
-                                        super::now_unix_nanos(),
-                                        &procfs_root,
-                                    ) {
-                                        telemetry.record_decoded_sample();
-                                        if cpu_tx.blocking_send(signal).is_err() {
-                                            telemetry.record_send_failure();
-                                            closed = true;
-                                        } else {
-                                            telemetry.record_sent_signal();
-                                        }
-                                    } else {
-                                        telemetry.record_invalid_sample();
-                                    }
-                                }
-                                PerfEvent::Lost { count } => {
-                                    telemetry.record_lost_perf_events(count);
-                                    warn!(count, "lost tcp stat perf events");
-                                }
-                            }
-                            telemetry.maybe_log_summary();
-                        });
-                        if closed {
-                            return;
+            reader_handles.extend(crate::event_transport::spawn_event_readers(
+                network_events,
+                "source.aya_network",
+                "network",
+                super::PERF_BUFFER_PAGE_COUNT,
+                shutdown.clone(),
+                telemetry.clone(),
+                || {
+                    let cpu_tx = tx.clone();
+                    let host = self.host.clone();
+                    let procfs_root = self.procfs_root.clone();
+                    let diagnostics = diagnostics.clone();
+                    let telemetry = telemetry.clone();
+                    move |bytes| {
+                        let Some(signal) = super::raw_network_to_signal_with_clock_and_procfs(
+                            bytes,
+                            host.clone(),
+                            super::now_unix_nanos(),
+                            &procfs_root,
+                        ) else {
+                            telemetry.record_invalid_sample();
+                            return true;
+                        };
+                        telemetry.record_decoded_sample();
+                        let decision = log_signal_diagnostic(&diagnostics, &signal);
+                        telemetry.record_diagnostic_decision(decision);
+                        if cpu_tx.blocking_send(signal).is_err() {
+                            telemetry.record_send_failure();
+                            false
+                        } else {
+                            telemetry.record_sent_signal();
+                            true
                         }
                     }
-                }));
-            }
+                },
+            )?);
+
+            reader_handles.extend(crate::event_transport::spawn_event_readers(
+                tcp_stat_events,
+                "source.aya_network",
+                "tcp_stat",
+                super::PERF_BUFFER_PAGE_COUNT,
+                shutdown.clone(),
+                telemetry.clone(),
+                || {
+                    let cpu_tx = tx.clone();
+                    let host = self.host.clone();
+                    let procfs_root = self.procfs_root.clone();
+                    let telemetry = telemetry.clone();
+                    move |bytes| {
+                        let Some(signal) = super::raw_tcp_stat_to_signal_with_procfs(
+                            bytes,
+                            host.clone(),
+                            super::now_unix_nanos(),
+                            &procfs_root,
+                        ) else {
+                            telemetry.record_invalid_sample();
+                            return true;
+                        };
+                        telemetry.record_decoded_sample();
+                        if cpu_tx.blocking_send(signal).is_err() {
+                            telemetry.record_send_failure();
+                            false
+                        } else {
+                            telemetry.record_sent_signal();
+                            true
+                        }
+                    }
+                },
+            )?);
 
             if diagnostics.enabled() {
                 info!(
@@ -962,7 +910,7 @@ mod platform {
 #[cfg(not(target_os = "linux"))]
 mod platform {
     use async_trait::async_trait;
-    use e_navigator_core::{CoreError, CoreResult, ModuleKind, ModuleMetadata, Source};
+    use e_navigator_core::{CoreError, CoreResult, EbpfConfig, ModuleKind, ModuleMetadata, Source};
     use e_navigator_signals::SignalEnvelope;
     use tokio::sync::mpsc;
 
@@ -970,6 +918,7 @@ mod platform {
     pub struct AyaNetworkSource {
         host: Option<String>,
         _procfs_root: std::path::PathBuf,
+        _ebpf: EbpfConfig,
     }
 
     impl AyaNetworkSource {
@@ -977,7 +926,13 @@ mod platform {
             Self {
                 host,
                 _procfs_root: procfs_root,
+                _ebpf: EbpfConfig::default(),
             }
+        }
+
+        pub fn with_ebpf_config(mut self, ebpf: EbpfConfig) -> Self {
+            self._ebpf = ebpf;
+            self
         }
     }
 

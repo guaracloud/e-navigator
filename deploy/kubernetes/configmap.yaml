@@ -14,6 +14,11 @@ data:
     failure_policy = "isolate"
     shutdown_timeout_millis = 10000
 
+    [ebpf]
+    # Prefer BPF ring buffers and retain a kernel-gated perf fallback.
+    event_transport = "auto"
+    ring_buffer_bytes = 262144
+
     [argv_capture]
     # Disabled by default because argv often contains credentials, tokens, or customer data.
     enabled = false

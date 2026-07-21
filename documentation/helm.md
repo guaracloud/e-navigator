@@ -50,6 +50,10 @@ config:
     failure_policy = "isolate"
     shutdown_timeout_millis = 10000
 
+    [ebpf]
+    event_transport = "auto"
+    ring_buffer_bytes = 262144
+
     [argv_capture]
     enabled = false
 
@@ -67,6 +71,13 @@ Top-level runtime bounds are validated before startup:
 `source_supervisor.shutdown_timeout_millis` must be greater than zero and at
 most 300,000. The chart selects `isolate`; the Rust config default remains
 `fail_fast` for backward compatibility.
+`ebpf.event_transport` accepts `auto`, `ring_buffer`, or `perf_buffer`.
+`auto` selects the ring buffer after a successful kernel feature probe and
+falls back to the separately packaged perf-buffer object only when the kernel
+reports the map type unsupported. Probe errors fail source startup instead of
+silently weakening the requested posture. `ebpf.ring_buffer_bytes` must be a
+power of two from 4,096 through 16,777,216 bytes and a multiple of the runtime
+kernel page size.
 `runtime_security.kubernetes_api_endpoints` must contain at most 32 entries.
 Filesystem path settings under `attribution`, `attribution.kubernetes`, and
 `resource_source` must be at most 4,096 bytes.

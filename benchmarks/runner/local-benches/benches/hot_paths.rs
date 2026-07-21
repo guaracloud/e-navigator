@@ -42,9 +42,10 @@ use e_navigator_sinks::{
     format_otel_trace_record, format_pprof_profile, format_profile_record, serialize_signal_line,
 };
 use e_navigator_sources_ebpf_aya::{
-    bench_inline_sample, bench_perf_sample_into_owned, bench_source_telemetry_summary_checks,
-    cpu_profile::fuzz_decode_raw_cpu_profile_event, exec::fuzz_decode_raw_exec_event,
-    network::fuzz_decode_raw_network_event, protocol::fuzz_decode_raw_protocol_data_event,
+    bench_inline_sample, bench_perf_sample_into_owned, bench_ring_sample_handoff,
+    bench_source_telemetry_summary_checks, cpu_profile::fuzz_decode_raw_cpu_profile_event,
+    exec::fuzz_decode_raw_exec_event, network::fuzz_decode_raw_network_event,
+    protocol::fuzz_decode_raw_protocol_data_event,
 };
 use e_navigator_sources_host::{
     parse_cpu_stat, parse_diskstats, parse_loadavg, parse_meminfo, parse_process_stat,
@@ -64,6 +65,12 @@ fn bench_reader_sample_handoff(c: &mut Criterion) {
     });
     c.bench_function("reader_handoff/inline_sample", |b| {
         b.iter(|| bench_inline_sample(black_box(&head), black_box(&[])))
+    });
+    c.bench_function("event_transport/perf_buffer_inline_copy", |b| {
+        b.iter(|| bench_inline_sample(black_box(&head), black_box(&[])))
+    });
+    c.bench_function("event_transport/ring_buffer_borrowed_record", |b| {
+        b.iter(|| bench_ring_sample_handoff(black_box(&head)))
     });
 }
 

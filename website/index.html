@@ -105,6 +105,9 @@
             CPU profiles, and turns resource, trace, and security observations
             into bounded native E-Navigator signals. An optional capture filter
             scopes which workloads are probed by Kubernetes namespace and label.
+            Supported kernels use BPF ring buffers with explicit producer-loss
+            accounting; a separately built perf-event path remains for older
+            kernels and strict diagnostics.
           </p>
         </div>
         <div class="capability-grid">
@@ -127,6 +130,11 @@
             <span class="capability-kicker">Scope control</span>
             <h3>Namespace and label capture filter</h3>
             <p>Opt-in cgroup-id filtering probes only the workloads you choose; excluded workloads pay near-zero per-syscall cost.</p>
+          </article>
+          <article class="capability">
+            <span class="capability-kicker">Kernel transport</span>
+            <h3>RingBuf with fail-closed fallback</h3>
+            <p>Feature-probed RingBuf delivery and the old-kernel perf path expose one aggregate loss surface without claiming an unmeasured speedup.</p>
           </article>
           <article class="capability capability-wide">
             <span class="capability-kicker">Boundaries</span>

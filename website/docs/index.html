@@ -264,6 +264,14 @@ cargo run --locked -p e-navigator-cli -- \
               capabilities, resources, rollout, services, and probes. Keep
               those two layers consistent.
             </p>
+            <p>
+              The <code>[ebpf]</code> section defaults to
+              <code>event_transport = "auto"</code>. A successful feature probe
+              selects RingBuf; only a positive unsupported result selects the
+              separately packaged perf-event object. Probe errors fail source
+              startup. Ring capacity is explicitly bounded and every transport
+              exposes native loss accounting.
+            </p>
             <div class="comparison-table" role="table" aria-label="Configuration boundaries">
               <div role="row">
                 <strong role="columnheader">Runtime TOML</strong>
@@ -311,7 +319,7 @@ cargo run --locked -p e-navigator-cli -- \
               <li>Confirm the workload controller and Pod watch are fresh.</li>
               <li>Produce one known event for each enabled family.</li>
               <li>Confirm the intended sink and backend accept it.</li>
-              <li>Confirm perf loss, send failures, queue drops, invalid records, and rejections stay at zero.</li>
+              <li>Confirm aggregate transport loss, perf loss, RingBuf reservation failures, send failures, queue drops, invalid records, and rejections stay at zero.</li>
               <li>Record CPU, resident memory, throughput, and latency against the no-agent baseline.</li>
             </ul>
             <h3>Failure isolation</h3>

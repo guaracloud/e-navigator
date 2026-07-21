@@ -80,6 +80,21 @@ for file in "$tmp_dir/chart-e-navigator.toml" "$tmp_dir/static-e-navigator.toml"
   done
 done
 
+for file in \
+  "$tmp_dir/chart-e-navigator.toml" \
+  "$tmp_dir/guara-production.toml" \
+  "$tmp_dir/static-e-navigator.toml"; do
+  for expected in \
+    '[ebpf]' \
+    'event_transport = "auto"' \
+    'ring_buffer_bytes = 262144'; do
+    if ! grep -Fq "$expected" "$file"; then
+      printf '%s is missing packaged eBPF transport contract: %s\n' "$file" "$expected" >&2
+      exit 1
+    fi
+  done
+done
+
 for expected in \
   'namespace_include = ["proj-*"]' \
   'label_in = { "guara.cloud/tier" = ["starter", "pro", "business", "enterprise"] }' \
