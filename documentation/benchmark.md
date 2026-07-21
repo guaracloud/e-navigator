@@ -531,3 +531,31 @@ RingBuf record. That is an isolated userspace handoff result, not live agent
 overhead. Full method, raw run values, variance, image identity, and cleanup
 scope are recorded in the
 [`event-transport proof report`](proof/event-transport-20260721/report.md).
+
+## Network Kernel-Hook A/B (Homelab, 2026-07-21)
+
+The scalar network read/write hook evaluation used a pinned Python workload on
+`homelab-01` with one loopback TCP connection and exact 256-byte
+`os.write`/`os.read` round trips. RingBuf and the network-only module profile
+were held constant. Three 90-second repetitions per arm were counterbalanced as
+`none/tracepoint/fexit`, `fexit/none/tracepoint`, and
+`tracepoint/fexit/none`.
+
+| Arm | Operations/s mean +/- sd | Mean latency us +/- sd | Agent CPU m +/- sd | Agent RSS MiB +/- sd |
+| --- | ---: | ---: | ---: | ---: |
+| no benchmark agent | 39,452.230 +/- 230.731 | 23.467 +/- 0.133 | n/a | n/a |
+| tracepoint | 33,965.449 +/- 1,344.217 | 27.378 +/- 1.053 | 13.965 +/- 1.827 | 20.611 +/- 1.058 |
+| fexit | 36,672.691 +/- 148.847 | 25.267 +/- 0.080 | 13.984 +/- 2.770 | 34.000 +/- 1.000 |
+
+The predeclared adoption gate required exact byte parity, zero loss, at least
+5% more throughput than tracepoints, and no more than 2% worse mean latency.
+Fexit passed: +7.970576% operations/s and -7.710353% mean latency. It remained
+-7.045329% below the no-agent arm and used about 13.4 MiB more summed two-pod
+RSS than tracepoints. Every enabled arm emitted exactly one matching close
+signal with `operations * 256` bytes in both directions and reported zero
+transport loss.
+
+This is a narrow scalar read/write result, not a mixed-workload, vectored-I/O,
+`send*`/`recv*`, lower-memory, production, or whole-stack overhead claim. Full
+method, normalized run values, image identity, and cleanup scope are recorded
+in the [`kernel-hook proof report`](proof/kernel-hook-20260721/report.md).

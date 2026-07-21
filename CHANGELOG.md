@@ -12,11 +12,26 @@ All notable changes to E-Navigator are documented here. The format follows
   capable kernels, a separately built perf-event fallback for older kernels,
   bounded ring sizing, producer-loss accounting, native transport metrics,
   and explicit A/B benchmark hooks.
+- Add strict BTF-backed fexit selection for scalar network `read(2)` and
+  `write(2)` accounting, with forced diagnostics, a positively unsupported
+  tracepoint fallback, a guarded integrity workload, and counterbalanced
+  homelab analysis.
+
+### Performance
+
+- Measure fexit at 7.971% more 256-byte TCP round trips per second and 7.710%
+  lower mean latency than syscall tracepoints across three counterbalanced
+  90-second homelab runs per arm. Keep the claim scoped to this scalar
+  read/write workload: fexit remained 7.045% below no-agent throughput and used
+  about 13.4 MiB more summed two-pod RSS than tracepoints.
 
 ### Compatibility
 
 - Preserve the raw event ABI and retain `perf_buffer` as a strict diagnostic
   mode while making `auto` the packaged default.
+- Preserve syscall tracepoints for network read/write accounting on kernels
+  that positively lack tracing-program, kernel-BTF, or target-function support;
+  indeterminate capability, verifier, load, and attach failures remain fatal.
 
 ## [0.1.2] - 2026-07-20
 

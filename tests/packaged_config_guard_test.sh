@@ -87,7 +87,8 @@ for file in \
   for expected in \
     '[ebpf]' \
     'event_transport = "auto"' \
-    'ring_buffer_bytes = 262144'; do
+    'ring_buffer_bytes = 262144' \
+    'network_io_hook = "auto"'; do
     if ! grep -Fq "$expected" "$file"; then
       printf '%s is missing packaged eBPF transport contract: %s\n' "$file" "$expected" >&2
       exit 1

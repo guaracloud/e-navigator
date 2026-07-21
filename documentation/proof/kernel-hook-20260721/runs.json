@@ -1,0 +1,1339 @@
+{
+  "aggregate": {
+    "adoption_decision": {
+      "adopt_fexit": true,
+      "correctness_gate_passed": true,
+      "measured_win_gate_passed": true,
+      "predeclared_max_mean_latency_regression_percent": 2.0,
+      "predeclared_throughput_win_percent": 5.0
+    },
+    "deltas_percent": {
+      "fexit_vs_none_throughput": -7.045329,
+      "fexit_vs_tracepoint_agent_cpu": 0.137044,
+      "fexit_vs_tracepoint_mean_latency": -7.710353,
+      "fexit_vs_tracepoint_throughput": 7.970576,
+      "tracepoint_vs_none_throughput": -13.907405
+    },
+    "fexit": {
+      "agent_total_cpu_m_run_means": {
+        "max": 16.684211,
+        "mean": 13.983953,
+        "p95": 16.684211,
+        "samples": 3,
+        "stdev": 2.769527
+      },
+      "agent_total_memory_mib_run_means": {
+        "max": 35.0,
+        "mean": 34.0,
+        "p95": 35.0,
+        "samples": 3,
+        "stdev": 1.0
+      },
+      "latency_mean_us": {
+        "max": 25.347185,
+        "mean": 25.267402,
+        "p95": 25.347185,
+        "samples": 3,
+        "stdev": 0.079642
+      },
+      "latency_p95_upper_bound_us": {
+        "max": 50.0,
+        "mean": 50.0,
+        "p95": 50.0,
+        "samples": 3,
+        "stdev": 0.0
+      },
+      "load_cpu_m_run_means": {
+        "max": 928.9375,
+        "mean": 923.05,
+        "p95": 928.9375,
+        "samples": 3,
+        "stdev": 9.735671
+      },
+      "runs": 3,
+      "throughput_operations_per_second": {
+        "max": 36823.126,
+        "mean": 36672.690667,
+        "p95": 36823.126,
+        "samples": 3,
+        "stdev": 148.846781
+      }
+    },
+    "none": {
+      "agent_total_cpu_m_run_means": {
+        "max": null,
+        "mean": null,
+        "p95": null,
+        "samples": 0,
+        "stdev": null
+      },
+      "agent_total_memory_mib_run_means": {
+        "max": null,
+        "mean": null,
+        "p95": null,
+        "samples": 0,
+        "stdev": null
+      },
+      "latency_mean_us": {
+        "max": 23.613528,
+        "mean": 23.46711,
+        "p95": 23.613528,
+        "samples": 3,
+        "stdev": 0.132786
+      },
+      "latency_p95_upper_bound_us": {
+        "max": 50.0,
+        "mean": 50.0,
+        "p95": 50.0,
+        "samples": 3,
+        "stdev": 0.0
+      },
+      "load_cpu_m_run_means": {
+        "max": 946.8,
+        "mean": 926.861905,
+        "p95": 946.8,
+        "samples": 3,
+        "stdev": 17.271366
+      },
+      "runs": 3,
+      "throughput_operations_per_second": {
+        "max": 39689.07,
+        "mean": 39452.23,
+        "p95": 39689.07,
+        "samples": 3,
+        "stdev": 230.730735
+      }
+    },
+    "tracepoint": {
+      "agent_total_cpu_m_run_means": {
+        "max": 15.5,
+        "mean": 13.964815,
+        "p95": 15.5,
+        "samples": 3,
+        "stdev": 1.826759
+      },
+      "agent_total_memory_mib_run_means": {
+        "max": 21.833333,
+        "mean": 20.611111,
+        "p95": 21.833333,
+        "samples": 3,
+        "stdev": 1.058475
+      },
+      "latency_mean_us": {
+        "max": 28.594189,
+        "mean": 27.378371,
+        "p95": 28.594189,
+        "samples": 3,
+        "stdev": 1.053062
+      },
+      "latency_p95_upper_bound_us": {
+        "max": 50.0,
+        "mean": 50.0,
+        "p95": 50.0,
+        "samples": 3,
+        "stdev": 0.0
+      },
+      "load_cpu_m_run_means": {
+        "max": 999.785714,
+        "mean": 940.690476,
+        "p95": 999.785714,
+        "samples": 3,
+        "stdev": 51.257669
+      },
+      "runs": 3,
+      "throughput_operations_per_second": {
+        "max": 34788.937,
+        "mean": 33965.448667,
+        "p95": 34788.937,
+        "samples": 3,
+        "stdev": 1344.217197
+      }
+    }
+  },
+  "results_root": "benchmarks/results/gap2-kernel-hook-ab-20260721",
+  "runs": [
+    {
+      "agent_evidence": {
+        "configured_hook": "fexit",
+        "exact_close_count": 1,
+        "hook_selections": [
+          "fexit",
+          "fexit"
+        ],
+        "loss_counters": {
+          "lost_perf_events_total": 0,
+          "lost_transport_events_total": 0,
+          "ring_buffer_reservation_failures_total": 0
+        },
+        "matching_close_count": 1,
+        "zero_loss": true
+      },
+      "mode": "fexit",
+      "node_resources": {
+        "homelab-01": {
+          "cpu_m": {
+            "max": 2622.0,
+            "mean": 2002.05,
+            "p95": 2622.0,
+            "samples": 20,
+            "stdev": 574.115015
+          },
+          "memory_mib": {
+            "max": 21680.0,
+            "mean": 21494.6,
+            "p95": 21680.0,
+            "samples": 20,
+            "stdev": 127.592443
+          }
+        },
+        "homelab-02": {
+          "cpu_m": {
+            "max": 537.0,
+            "mean": 496.5,
+            "p95": 537.0,
+            "samples": 20,
+            "stdev": 21.775167
+          },
+          "memory_mib": {
+            "max": 6837.0,
+            "mean": 6835.9,
+            "p95": 6837.0,
+            "samples": 20,
+            "stdev": 0.640723
+          }
+        }
+      },
+      "pod_resources": {
+        "agent_total_cpu_m": {
+          "max": 12.0,
+          "mean": 11.15,
+          "p95": 12.0,
+          "samples": 20,
+          "stdev": 0.366348
+        },
+        "agent_total_memory_mib": {
+          "max": 34.0,
+          "mean": 34.0,
+          "p95": 34.0,
+          "samples": 20,
+          "stdev": 0.0
+        },
+        "agent_workload_node_cpu_m": {
+          "max": 8.0,
+          "mean": 7.0,
+          "p95": 8.0,
+          "samples": 20,
+          "stdev": 0.561951
+        },
+        "expected_agent_pods": 2,
+        "incomplete_agent_samples_excluded": 0,
+        "load_cpu_m": {
+          "max": 1000.0,
+          "mean": 928.9375,
+          "p95": 1000.0,
+          "samples": 16,
+          "stdev": 149.324018
+        },
+        "load_memory_mib": {
+          "max": 7.0,
+          "mean": 7.0,
+          "p95": 7.0,
+          "samples": 16,
+          "stdev": 0.0
+        }
+      },
+      "repetition": 1,
+      "workload": {
+        "bytes_received": 841547264,
+        "bytes_sent": 841547264,
+        "client_fd": 5,
+        "discovery_wait_seconds": 5,
+        "duration_seconds": 90,
+        "elapsed_seconds": 90.00001,
+        "histogram_bounds_us": [
+          10,
+          20,
+          50,
+          100,
+          200,
+          500,
+          1000,
+          2000,
+          5000,
+          10000,
+          50000
+        ],
+        "histogram_counts": [
+          0,
+          4,
+          3263454,
+          21211,
+          842,
+          311,
+          301,
+          468,
+          667,
+          36,
+          0
+        ],
+        "latency_max_us": 8192.949,
+        "latency_mean_us": 25.347185,
+        "latency_p50_upper_bound_us": 50,
+        "latency_p95_upper_bound_us": 50,
+        "latency_p99_upper_bound_us": 50,
+        "operations": 3287294,
+        "payload_bytes": 256,
+        "payload_sha256": "5bc31b283cef0072274e97d74916552954c935794536cab632641e5ea071379d",
+        "schema": "e-navigator.kernel-hook-workload.v1",
+        "server_port": 40059,
+        "throughput_operations_per_second": 36525.485
+      }
+    },
+    {
+      "agent_evidence": {
+        "configured_hook": "fexit",
+        "exact_close_count": 1,
+        "hook_selections": [
+          "fexit",
+          "fexit"
+        ],
+        "loss_counters": {
+          "lost_perf_events_total": 0,
+          "lost_transport_events_total": 0,
+          "ring_buffer_reservation_failures_total": 0
+        },
+        "matching_close_count": 1,
+        "zero_loss": true
+      },
+      "mode": "fexit",
+      "node_resources": {
+        "homelab-01": {
+          "cpu_m": {
+            "max": 2343.0,
+            "mean": 1942.2,
+            "p95": 2343.0,
+            "samples": 20,
+            "stdev": 420.250001
+          },
+          "memory_mib": {
+            "max": 21701.0,
+            "mean": 20924.85,
+            "p95": 21694.0,
+            "samples": 20,
+            "stdev": 570.719885
+          }
+        },
+        "homelab-02": {
+          "cpu_m": {
+            "max": 847.0,
+            "mean": 543.7,
+            "p95": 847.0,
+            "samples": 20,
+            "stdev": 143.200669
+          },
+          "memory_mib": {
+            "max": 6861.0,
+            "mean": 6843.45,
+            "p95": 6861.0,
+            "samples": 20,
+            "stdev": 11.740506
+          }
+        }
+      },
+      "pod_resources": {
+        "agent_total_cpu_m": {
+          "max": 45.0,
+          "mean": 16.684211,
+          "p95": 45.0,
+          "samples": 19,
+          "stdev": 12.618561
+        },
+        "agent_total_memory_mib": {
+          "max": 35.0,
+          "mean": 35.0,
+          "p95": 35.0,
+          "samples": 19,
+          "stdev": 0.0
+        },
+        "agent_workload_node_cpu_m": {
+          "max": 26.0,
+          "mean": 10.157895,
+          "p95": 26.0,
+          "samples": 19,
+          "stdev": 7.057409
+        },
+        "expected_agent_pods": 2,
+        "incomplete_agent_samples_excluded": 0,
+        "load_cpu_m": {
+          "max": 1000.0,
+          "mean": 928.4,
+          "p95": 1000.0,
+          "samples": 15,
+          "stdev": 146.673983
+        },
+        "load_memory_mib": {
+          "max": 7.0,
+          "mean": 7.0,
+          "p95": 7.0,
+          "samples": 15,
+          "stdev": 0.0
+        }
+      },
+      "repetition": 2,
+      "workload": {
+        "bytes_received": 844864512,
+        "bytes_sent": 844864512,
+        "client_fd": 5,
+        "discovery_wait_seconds": 5,
+        "duration_seconds": 90,
+        "elapsed_seconds": 90.000014,
+        "histogram_bounds_us": [
+          10,
+          20,
+          50,
+          100,
+          200,
+          500,
+          1000,
+          2000,
+          5000,
+          10000,
+          50000
+        ],
+        "histogram_counts": [
+          0,
+          3,
+          3278909,
+          18901,
+          739,
+          275,
+          291,
+          443,
+          673,
+          18,
+          0
+        ],
+        "latency_max_us": 8120.36,
+        "latency_mean_us": 25.26712,
+        "latency_p50_upper_bound_us": 50,
+        "latency_p95_upper_bound_us": 50,
+        "latency_p99_upper_bound_us": 50,
+        "operations": 3300252,
+        "payload_bytes": 256,
+        "payload_sha256": "5bc31b283cef0072274e97d74916552954c935794536cab632641e5ea071379d",
+        "schema": "e-navigator.kernel-hook-workload.v1",
+        "server_port": 41973,
+        "throughput_operations_per_second": 36669.461
+      }
+    },
+    {
+      "agent_evidence": {
+        "configured_hook": "fexit",
+        "exact_close_count": 1,
+        "hook_selections": [
+          "fexit",
+          "fexit"
+        ],
+        "loss_counters": {
+          "lost_perf_events_total": 0,
+          "lost_transport_events_total": 0,
+          "ring_buffer_reservation_failures_total": 0
+        },
+        "matching_close_count": 1,
+        "zero_loss": true
+      },
+      "mode": "fexit",
+      "node_resources": {
+        "homelab-01": {
+          "cpu_m": {
+            "max": 2687.0,
+            "mean": 2072.45,
+            "p95": 2687.0,
+            "samples": 20,
+            "stdev": 483.53136
+          },
+          "memory_mib": {
+            "max": 21324.0,
+            "mean": 21148.15,
+            "p95": 21324.0,
+            "samples": 20,
+            "stdev": 117.280265
+          }
+        },
+        "homelab-02": {
+          "cpu_m": {
+            "max": 966.0,
+            "mean": 582.95,
+            "p95": 966.0,
+            "samples": 20,
+            "stdev": 170.82015
+          },
+          "memory_mib": {
+            "max": 6823.0,
+            "mean": 6802.45,
+            "p95": 6823.0,
+            "samples": 20,
+            "stdev": 15.408388
+          }
+        }
+      },
+      "pod_resources": {
+        "agent_total_cpu_m": {
+          "max": 28.0,
+          "mean": 14.117647,
+          "p95": 28.0,
+          "samples": 17,
+          "stdev": 6.632141
+        },
+        "agent_total_memory_mib": {
+          "max": 33.0,
+          "mean": 33.0,
+          "p95": 33.0,
+          "samples": 17,
+          "stdev": 0.0
+        },
+        "agent_workload_node_cpu_m": {
+          "max": 8.0,
+          "mean": 7.294118,
+          "p95": 8.0,
+          "samples": 17,
+          "stdev": 0.469668
+        },
+        "expected_agent_pods": 2,
+        "incomplete_agent_samples_excluded": 0,
+        "load_cpu_m": {
+          "max": 1000.0,
+          "mean": 911.8125,
+          "p95": 1000.0,
+          "samples": 16,
+          "stdev": 185.971402
+        },
+        "load_memory_mib": {
+          "max": 7.0,
+          "mean": 7.0,
+          "p95": 7.0,
+          "samples": 16,
+          "stdev": 0.0
+        }
+      },
+      "repetition": 3,
+      "workload": {
+        "bytes_received": 848404992,
+        "bytes_sent": 848404992,
+        "client_fd": 5,
+        "discovery_wait_seconds": 5,
+        "duration_seconds": 90,
+        "elapsed_seconds": 90.000018,
+        "histogram_bounds_us": [
+          10,
+          20,
+          50,
+          100,
+          200,
+          500,
+          1000,
+          2000,
+          5000,
+          10000,
+          50000
+        ],
+        "histogram_counts": [
+          0,
+          50,
+          3290468,
+          21069,
+          739,
+          271,
+          303,
+          405,
+          733,
+          44,
+          0
+        ],
+        "latency_max_us": 8275.196,
+        "latency_mean_us": 25.187901,
+        "latency_p50_upper_bound_us": 50,
+        "latency_p95_upper_bound_us": 50,
+        "latency_p99_upper_bound_us": 50,
+        "operations": 3314082,
+        "payload_bytes": 256,
+        "payload_sha256": "5bc31b283cef0072274e97d74916552954c935794536cab632641e5ea071379d",
+        "schema": "e-navigator.kernel-hook-workload.v1",
+        "server_port": 42957,
+        "throughput_operations_per_second": 36823.126
+      }
+    },
+    {
+      "agent_evidence": null,
+      "mode": "none",
+      "node_resources": {
+        "homelab-01": {
+          "cpu_m": {
+            "max": 2618.0,
+            "mean": 2054.05,
+            "p95": 2618.0,
+            "samples": 20,
+            "stdev": 528.268719
+          },
+          "memory_mib": {
+            "max": 21288.0,
+            "mean": 21167.25,
+            "p95": 21288.0,
+            "samples": 20,
+            "stdev": 129.810337
+          }
+        },
+        "homelab-02": {
+          "cpu_m": {
+            "max": 723.0,
+            "mean": 533.85,
+            "p95": 723.0,
+            "samples": 20,
+            "stdev": 102.315958
+          },
+          "memory_mib": {
+            "max": 6811.0,
+            "mean": 6773.9,
+            "p95": 6811.0,
+            "samples": 20,
+            "stdev": 35.310502
+          }
+        }
+      },
+      "pod_resources": {
+        "agent_total_cpu_m": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "agent_total_memory_mib": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "agent_workload_node_cpu_m": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "expected_agent_pods": 0,
+        "incomplete_agent_samples_excluded": 0,
+        "load_cpu_m": {
+          "max": 998.0,
+          "mean": 917.285714,
+          "p95": 998.0,
+          "samples": 14,
+          "stdev": 158.404754
+        },
+        "load_memory_mib": {
+          "max": 7.0,
+          "mean": 7.0,
+          "p95": 7.0,
+          "samples": 14,
+          "stdev": 0.0
+        }
+      },
+      "repetition": 1,
+      "workload": {
+        "bytes_received": 903816448,
+        "bytes_sent": 903816448,
+        "client_fd": 5,
+        "discovery_wait_seconds": 5,
+        "duration_seconds": 90,
+        "elapsed_seconds": 90.000017,
+        "histogram_bounds_us": [
+          10,
+          20,
+          50,
+          100,
+          200,
+          500,
+          1000,
+          2000,
+          5000,
+          10000,
+          50000
+        ],
+        "histogram_counts": [
+          0,
+          11529,
+          3502524,
+          14400,
+          750,
+          388,
+          323,
+          355,
+          258,
+          6,
+          0
+        ],
+        "latency_max_us": 6130.439,
+        "latency_mean_us": 23.613528,
+        "latency_p50_upper_bound_us": 50,
+        "latency_p95_upper_bound_us": 50,
+        "latency_p99_upper_bound_us": 50,
+        "operations": 3530533,
+        "payload_bytes": 256,
+        "payload_sha256": "5bc31b283cef0072274e97d74916552954c935794536cab632641e5ea071379d",
+        "schema": "e-navigator.kernel-hook-workload.v1",
+        "server_port": 34257,
+        "throughput_operations_per_second": 39228.137
+      }
+    },
+    {
+      "agent_evidence": null,
+      "mode": "none",
+      "node_resources": {
+        "homelab-01": {
+          "cpu_m": {
+            "max": 2762.0,
+            "mean": 2136.0,
+            "p95": 2762.0,
+            "samples": 20,
+            "stdev": 255.083268
+          },
+          "memory_mib": {
+            "max": 20554.0,
+            "mean": 20487.5,
+            "p95": 20554.0,
+            "samples": 20,
+            "stdev": 63.415505
+          }
+        },
+        "homelab-02": {
+          "cpu_m": {
+            "max": 542.0,
+            "mean": 475.85,
+            "p95": 542.0,
+            "samples": 20,
+            "stdev": 41.756531
+          },
+          "memory_mib": {
+            "max": 6833.0,
+            "mean": 6812.85,
+            "p95": 6833.0,
+            "samples": 20,
+            "stdev": 13.0274
+          }
+        }
+      },
+      "pod_resources": {
+        "agent_total_cpu_m": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "agent_total_memory_mib": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "agent_workload_node_cpu_m": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "expected_agent_pods": 0,
+        "incomplete_agent_samples_excluded": 1,
+        "load_cpu_m": {
+          "max": 998.0,
+          "mean": 946.8,
+          "p95": 998.0,
+          "samples": 15,
+          "stdev": 103.409173
+        },
+        "load_memory_mib": {
+          "max": 7.0,
+          "mean": 7.0,
+          "p95": 7.0,
+          "samples": 15,
+          "stdev": 0.0
+        }
+      },
+      "repetition": 2,
+      "workload": {
+        "bytes_received": 914436352,
+        "bytes_sent": 914436352,
+        "client_fd": 5,
+        "discovery_wait_seconds": 5,
+        "duration_seconds": 90,
+        "elapsed_seconds": 90.000017,
+        "histogram_bounds_us": [
+          10,
+          20,
+          50,
+          100,
+          200,
+          500,
+          1000,
+          2000,
+          5000,
+          10000,
+          50000
+        ],
+        "histogram_counts": [
+          0,
+          11669,
+          3543259,
+          15200,
+          736,
+          321,
+          324,
+          316,
+          186,
+          6,
+          0
+        ],
+        "latency_max_us": 7565.687,
+        "latency_mean_us": 23.354489,
+        "latency_p50_upper_bound_us": 50,
+        "latency_p95_upper_bound_us": 50,
+        "latency_p99_upper_bound_us": 50,
+        "operations": 3572017,
+        "payload_bytes": 256,
+        "payload_sha256": "5bc31b283cef0072274e97d74916552954c935794536cab632641e5ea071379d",
+        "schema": "e-navigator.kernel-hook-workload.v1",
+        "server_port": 37507,
+        "throughput_operations_per_second": 39689.07
+      }
+    },
+    {
+      "agent_evidence": null,
+      "mode": "none",
+      "node_resources": {
+        "homelab-01": {
+          "cpu_m": {
+            "max": 2279.0,
+            "mean": 2061.5,
+            "p95": 2279.0,
+            "samples": 20,
+            "stdev": 349.906529
+          },
+          "memory_mib": {
+            "max": 21152.0,
+            "mean": 21117.65,
+            "p95": 21152.0,
+            "samples": 20,
+            "stdev": 34.94699
+          }
+        },
+        "homelab-02": {
+          "cpu_m": {
+            "max": 739.0,
+            "mean": 494.95,
+            "p95": 739.0,
+            "samples": 20,
+            "stdev": 108.291748
+          },
+          "memory_mib": {
+            "max": 6796.0,
+            "mean": 6776.3,
+            "p95": 6796.0,
+            "samples": 20,
+            "stdev": 9.021028
+          }
+        }
+      },
+      "pod_resources": {
+        "agent_total_cpu_m": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "agent_total_memory_mib": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "agent_workload_node_cpu_m": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "expected_agent_pods": 0,
+        "incomplete_agent_samples_excluded": 1,
+        "load_cpu_m": {
+          "max": 998.0,
+          "mean": 916.5,
+          "p95": 998.0,
+          "samples": 16,
+          "stdev": 172.905369
+        },
+        "load_memory_mib": {
+          "max": 7.0,
+          "mean": 7.0,
+          "p95": 7.0,
+          "samples": 16,
+          "stdev": 0.0
+        }
+      },
+      "repetition": 3,
+      "workload": {
+        "bytes_received": 908685824,
+        "bytes_sent": 908685824,
+        "client_fd": 5,
+        "discovery_wait_seconds": 5,
+        "duration_seconds": 90,
+        "elapsed_seconds": 90.000014,
+        "histogram_bounds_us": [
+          10,
+          20,
+          50,
+          100,
+          200,
+          500,
+          1000,
+          2000,
+          5000,
+          10000,
+          50000
+        ],
+        "histogram_counts": [
+          0,
+          98559,
+          3434681,
+          14385,
+          722,
+          303,
+          304,
+          338,
+          253,
+          9,
+          0
+        ],
+        "latency_max_us": 6420.531,
+        "latency_mean_us": 23.433312,
+        "latency_p50_upper_bound_us": 50,
+        "latency_p95_upper_bound_us": 50,
+        "latency_p99_upper_bound_us": 50,
+        "operations": 3549554,
+        "payload_bytes": 256,
+        "payload_sha256": "5bc31b283cef0072274e97d74916552954c935794536cab632641e5ea071379d",
+        "schema": "e-navigator.kernel-hook-workload.v1",
+        "server_port": 33133,
+        "throughput_operations_per_second": 39439.483
+      }
+    },
+    {
+      "agent_evidence": {
+        "configured_hook": "tracepoint",
+        "exact_close_count": 1,
+        "hook_selections": [],
+        "loss_counters": {
+          "lost_perf_events_total": 0,
+          "lost_transport_events_total": 0,
+          "ring_buffer_reservation_failures_total": 0
+        },
+        "matching_close_count": 1,
+        "zero_loss": true
+      },
+      "mode": "tracepoint",
+      "node_resources": {
+        "homelab-01": {
+          "cpu_m": {
+            "max": 2488.0,
+            "mean": 1934.75,
+            "p95": 2488.0,
+            "samples": 20,
+            "stdev": 495.100508
+          },
+          "memory_mib": {
+            "max": 21370.0,
+            "mean": 21305.8,
+            "p95": 21370.0,
+            "samples": 20,
+            "stdev": 38.71026
+          }
+        },
+        "homelab-02": {
+          "cpu_m": {
+            "max": 653.0,
+            "mean": 524.25,
+            "p95": 653.0,
+            "samples": 20,
+            "stdev": 66.840639
+          },
+          "memory_mib": {
+            "max": 6833.0,
+            "mean": 6828.35,
+            "p95": 6833.0,
+            "samples": 20,
+            "stdev": 7.754625
+          }
+        }
+      },
+      "pod_resources": {
+        "agent_total_cpu_m": {
+          "max": 41.0,
+          "mean": 14.45,
+          "p95": 41.0,
+          "samples": 20,
+          "stdev": 9.092941
+        },
+        "agent_total_memory_mib": {
+          "max": 20.0,
+          "mean": 20.0,
+          "p95": 20.0,
+          "samples": 20,
+          "stdev": 0.0
+        },
+        "agent_workload_node_cpu_m": {
+          "max": 21.0,
+          "mean": 8.85,
+          "p95": 21.0,
+          "samples": 20,
+          "stdev": 4.183615
+        },
+        "expected_agent_pods": 2,
+        "incomplete_agent_samples_excluded": 0,
+        "load_cpu_m": {
+          "max": 1000.0,
+          "mean": 999.785714,
+          "p95": 1000.0,
+          "samples": 14,
+          "stdev": 0.425815
+        },
+        "load_memory_mib": {
+          "max": 8.0,
+          "mean": 7.785714,
+          "p95": 8.0,
+          "samples": 14,
+          "stdev": 0.425815
+        }
+      },
+      "repetition": 1,
+      "workload": {
+        "bytes_received": 801537280,
+        "bytes_sent": 801537280,
+        "client_fd": 5,
+        "discovery_wait_seconds": 5,
+        "duration_seconds": 90,
+        "elapsed_seconds": 90.00002,
+        "histogram_bounds_us": [
+          10,
+          20,
+          50,
+          100,
+          200,
+          500,
+          1000,
+          2000,
+          5000,
+          10000,
+          50000
+        ],
+        "histogram_counts": [
+          0,
+          2,
+          3108844,
+          19546,
+          735,
+          247,
+          176,
+          297,
+          948,
+          210,
+          0
+        ],
+        "latency_max_us": 9263.873,
+        "latency_mean_us": 26.75375,
+        "latency_p50_upper_bound_us": 50,
+        "latency_p95_upper_bound_us": 50,
+        "latency_p99_upper_bound_us": 50,
+        "operations": 3131005,
+        "payload_bytes": 256,
+        "payload_sha256": "5bc31b283cef0072274e97d74916552954c935794536cab632641e5ea071379d",
+        "schema": "e-navigator.kernel-hook-workload.v1",
+        "server_port": 45337,
+        "throughput_operations_per_second": 34788.937
+      }
+    },
+    {
+      "agent_evidence": {
+        "configured_hook": "tracepoint",
+        "exact_close_count": 1,
+        "hook_selections": [],
+        "loss_counters": {
+          "lost_perf_events_total": 0,
+          "lost_transport_events_total": 0,
+          "ring_buffer_reservation_failures_total": 0
+        },
+        "matching_close_count": 1,
+        "zero_loss": true
+      },
+      "mode": "tracepoint",
+      "node_resources": {
+        "homelab-01": {
+          "cpu_m": {
+            "max": 5353.0,
+            "mean": 2873.8,
+            "p95": 5353.0,
+            "samples": 20,
+            "stdev": 1541.395356
+          },
+          "memory_mib": {
+            "max": 20446.0,
+            "mean": 20319.05,
+            "p95": 20405.0,
+            "samples": 20,
+            "stdev": 92.104903
+          }
+        },
+        "homelab-02": {
+          "cpu_m": {
+            "max": 594.0,
+            "mean": 503.95,
+            "p95": 594.0,
+            "samples": 20,
+            "stdev": 54.279467
+          },
+          "memory_mib": {
+            "max": 6809.0,
+            "mean": 6804.1,
+            "p95": 6809.0,
+            "samples": 20,
+            "stdev": 5.128866
+          }
+        }
+      },
+      "pod_resources": {
+        "agent_total_cpu_m": {
+          "max": 13.0,
+          "mean": 11.944444,
+          "p95": 13.0,
+          "samples": 18,
+          "stdev": 0.639137
+        },
+        "agent_total_memory_mib": {
+          "max": 22.0,
+          "mean": 21.833333,
+          "p95": 22.0,
+          "samples": 18,
+          "stdev": 0.383482
+        },
+        "agent_workload_node_cpu_m": {
+          "max": 9.0,
+          "mean": 7.611111,
+          "p95": 9.0,
+          "samples": 18,
+          "stdev": 0.777544
+        },
+        "expected_agent_pods": 2,
+        "incomplete_agent_samples_excluded": 0,
+        "load_cpu_m": {
+          "max": 1001.0,
+          "mean": 914.0,
+          "p95": 1001.0,
+          "samples": 14,
+          "stdev": 164.778173
+        },
+        "load_memory_mib": {
+          "max": 7.0,
+          "mean": 7.0,
+          "p95": 7.0,
+          "samples": 14,
+          "stdev": 0.0
+        }
+      },
+      "repetition": 2,
+      "workload": {
+        "bytes_received": 746824704,
+        "bytes_sent": 746824704,
+        "client_fd": 5,
+        "discovery_wait_seconds": 5,
+        "duration_seconds": 90,
+        "elapsed_seconds": 90.000002,
+        "histogram_bounds_us": [
+          10,
+          20,
+          50,
+          100,
+          200,
+          500,
+          1000,
+          2000,
+          5000,
+          10000,
+          50000
+        ],
+        "histogram_counts": [
+          0,
+          0,
+          2851889,
+          60766,
+          2325,
+          702,
+          335,
+          349,
+          824,
+          94,
+          0
+        ],
+        "latency_max_us": 8527.715,
+        "latency_mean_us": 28.594189,
+        "latency_p50_upper_bound_us": 50,
+        "latency_p95_upper_bound_us": 50,
+        "latency_p99_upper_bound_us": 100,
+        "operations": 2917284,
+        "payload_bytes": 256,
+        "payload_sha256": "5bc31b283cef0072274e97d74916552954c935794536cab632641e5ea071379d",
+        "schema": "e-navigator.kernel-hook-workload.v1",
+        "server_port": 41191,
+        "throughput_operations_per_second": 32414.266
+      }
+    },
+    {
+      "agent_evidence": {
+        "configured_hook": "tracepoint",
+        "exact_close_count": 1,
+        "hook_selections": [],
+        "loss_counters": {
+          "lost_perf_events_total": 0,
+          "lost_transport_events_total": 0,
+          "ring_buffer_reservation_failures_total": 0
+        },
+        "matching_close_count": 1,
+        "zero_loss": true
+      },
+      "mode": "tracepoint",
+      "node_resources": {
+        "homelab-01": {
+          "cpu_m": {
+            "max": 2318.0,
+            "mean": 1997.55,
+            "p95": 2318.0,
+            "samples": 20,
+            "stdev": 422.793651
+          },
+          "memory_mib": {
+            "max": 21191.0,
+            "mean": 21163.55,
+            "p95": 21191.0,
+            "samples": 20,
+            "stdev": 25.299209
+          }
+        },
+        "homelab-02": {
+          "cpu_m": {
+            "max": 894.0,
+            "mean": 573.6,
+            "p95": 894.0,
+            "samples": 20,
+            "stdev": 140.416823
+          },
+          "memory_mib": {
+            "max": 6864.0,
+            "mean": 6833.35,
+            "p95": 6864.0,
+            "samples": 20,
+            "stdev": 26.324443
+          }
+        }
+      },
+      "pod_resources": {
+        "agent_total_cpu_m": {
+          "max": 37.0,
+          "mean": 15.5,
+          "p95": 37.0,
+          "samples": 18,
+          "stdev": 9.90098
+        },
+        "agent_total_memory_mib": {
+          "max": 20.0,
+          "mean": 20.0,
+          "p95": 20.0,
+          "samples": 18,
+          "stdev": 0.0
+        },
+        "agent_workload_node_cpu_m": {
+          "max": 20.0,
+          "mean": 9.333333,
+          "p95": 20.0,
+          "samples": 18,
+          "stdev": 4.922936
+        },
+        "expected_agent_pods": 2,
+        "incomplete_agent_samples_excluded": 0,
+        "load_cpu_m": {
+          "max": 1000.0,
+          "mean": 908.285714,
+          "p95": 1000.0,
+          "samples": 14,
+          "stdev": 181.16564
+        },
+        "load_memory_mib": {
+          "max": 7.0,
+          "mean": 7.0,
+          "p95": 7.0,
+          "samples": 14,
+          "stdev": 0.0
+        }
+      },
+      "repetition": 3,
+      "workload": {
+        "bytes_received": 799330048,
+        "bytes_sent": 799330048,
+        "client_fd": 5,
+        "discovery_wait_seconds": 5,
+        "duration_seconds": 90,
+        "elapsed_seconds": 90.000003,
+        "histogram_bounds_us": [
+          10,
+          20,
+          50,
+          100,
+          200,
+          500,
+          1000,
+          2000,
+          5000,
+          10000,
+          50000
+        ],
+        "histogram_counts": [
+          0,
+          1,
+          3098245,
+          21500,
+          770,
+          223,
+          229,
+          399,
+          912,
+          104,
+          0
+        ],
+        "latency_max_us": 8890.254,
+        "latency_mean_us": 26.787174,
+        "latency_p50_upper_bound_us": 50,
+        "latency_p95_upper_bound_us": 50,
+        "latency_p99_upper_bound_us": 50,
+        "operations": 3122383,
+        "payload_bytes": 256,
+        "payload_sha256": "5bc31b283cef0072274e97d74916552954c935794536cab632641e5ea071379d",
+        "schema": "e-navigator.kernel-hook-workload.v1",
+        "server_port": 35007,
+        "throughput_operations_per_second": 34693.143
+      }
+    }
+  ],
+  "schema": "e-navigator.kernel-hook-analysis.v1"
+}

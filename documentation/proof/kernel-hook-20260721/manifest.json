@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "run_id": "kernel-hook-20260721",
+  "decision": "adopt-btf-fexit-with-strict-tracepoint-fallback",
+  "proof_level": "homelab",
+  "started_at_utc": "2026-07-21T22:49:33Z",
+  "ended_at_utc": "2026-07-21T23:27:23Z",
+  "repository": {
+    "branch": "codex/ring-buffer-transport",
+    "base_commit": "a44f4d2dbe8d8eb6490a14e351dbf74118745c09",
+    "pushed": false,
+    "released": false
+  },
+  "cluster": {
+    "context": "homelab",
+    "server": "https://192.168.50.132:6443",
+    "kubernetes": "v1.30.4+k3s1",
+    "nodes": ["homelab-01", "homelab-02"],
+    "os": "NixOS 24.05",
+    "architecture": "linux/amd64",
+    "kernel": "6.6.68",
+    "runtime": "containerd 1.7.20-k3s1"
+  },
+  "image": {
+    "reference": "docker.io/library/e-navigator:gap2-20260721",
+    "manifest_sha256": "5e45d737caad848c06b77acd94ab0465b738369cebd7ddb505f0786653e03c18",
+    "oci_archive_sha256": "ae15190c16ed5444720d680e4a9a5d913c4aecb6aac146e3add7220dc8d3c06d",
+    "distribution": "loaded directly into both homelab containerd stores; never pushed"
+  },
+  "conformance_image": {
+    "reference": "docker.io/library/e-navigator:gap2-final-20260721",
+    "manifest_sha256": "6567f508245eb3fe97bf5670ca80e05a76077041f8ab4c7b5b5f80ba9b587679",
+    "oci_archive_sha256": "374e38395932835728bf94fdab0eada5c991bb2aca9fd49375acd52025a3bb68",
+    "distribution": "loaded directly into both homelab containerd stores; never pushed"
+  },
+  "method": {
+    "arms": ["no benchmark agent", "forced tracepoint", "forced fexit"],
+    "orders": [
+      ["none", "tracepoint", "fexit"],
+      ["fexit", "none", "tracepoint"],
+      ["tracepoint", "fexit", "none"]
+    ],
+    "repetitions_per_arm": 3,
+    "seconds_per_run": 90,
+    "payload_bytes": 256,
+    "enabled_aya_sources": ["network"]
+  },
+  "results": {
+    "fexit_loaded_on_all_nodes": true,
+    "exact_byte_accounting_all_agent_runs": true,
+    "transport_loss_observed": false,
+    "fexit_vs_tracepoint_throughput_percent": 7.970576,
+    "fexit_vs_tracepoint_mean_latency_percent": -7.710353,
+    "fexit_vs_tracepoint_agent_cpu_percent": 0.137044,
+    "fexit_vs_tracepoint_agent_rss_percent": 64.959570,
+    "fexit_vs_no_agent_throughput_percent": -7.045329,
+    "final_auto_selected_fexit_on_all_nodes": true,
+    "final_forced_tracepoint_selected_on_all_nodes": true,
+    "final_conformance_exact_byte_accounting": true,
+    "final_conformance_transport_loss_observed": false,
+    "old_kernel_fallback_runtime_proven": false,
+    "full_quality_passed": true
+  },
+  "cleanup": {
+    "benchmark_release_removed": true,
+    "benchmark_workloads_removed": true,
+    "standing_argocd_application_restored": true,
+    "standing_daemonset_ready": true,
+    "imported_image_removed": true,
+    "benchmark_namespace_removed": true,
+    "production_context_touched": false
+  },
+  "artifacts": ["manifest.json", "report.md", "runs.json", "SHA256SUMS"]
+}

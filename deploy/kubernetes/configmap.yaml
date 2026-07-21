@@ -18,6 +18,9 @@ data:
     # Prefer BPF ring buffers and retain a kernel-gated perf fallback.
     event_transport = "auto"
     ring_buffer_bytes = 262144
+    # Prefer BTF fexit for scalar network read/write accounting when the
+    # kernel preflight succeeds; otherwise retain syscall tracepoints.
+    network_io_hook = "auto"
 
     [argv_capture]
     # Disabled by default because argv often contains credentials, tokens, or customer data.

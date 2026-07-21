@@ -16,6 +16,7 @@ mod ebpf_maps;
 mod event_transport;
 pub mod exec;
 pub mod http;
+mod kernel_hook;
 pub mod network;
 #[cfg(target_os = "linux")]
 mod perf_reader;

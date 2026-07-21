@@ -40,6 +40,10 @@ config:
     # kernel positively reports that ring-buffer maps are unsupported.
     event_transport = "auto"
     ring_buffer_bytes = 262144
+    # Prefer BTF-backed fexit hooks for network read/write accounting only
+    # when the kernel capability probe succeeds. Forced modes are intended for
+    # compatibility control and measured A/B validation.
+    network_io_hook = "auto"
 
     [argv_capture]
     # Disabled by default because argv often contains credentials, tokens, or customer data.

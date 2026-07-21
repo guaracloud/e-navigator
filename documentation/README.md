@@ -50,6 +50,7 @@ operational documentation. Start with the path that matches your goal.
 - [ADR 0004, independent export pipelines](adr/0004-independent-export-pipelines.md)
 - [ADR 0005, shared Kubernetes workload controller](adr/0005-shared-kubernetes-workload-controller.md)
 - [ADR 0006, dual ring-buffer and perf-buffer event transport](adr/0006-dual-ring-perf-event-transport.md)
+- [ADR 0007, BTF fexit network byte accounting](adr/0007-btf-fexit-network-accounting.md)
 
 ## Source-Of-Truth Rules
 

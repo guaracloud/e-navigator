@@ -133,7 +133,24 @@ fn ebpf_transport_defaults_are_bounded_and_automatic() {
 
     assert_eq!(config.ebpf.event_transport, EbpfEventTransport::Auto);
     assert_eq!(config.ebpf.ring_buffer_bytes, 256 * 1024);
+    assert_eq!(config.ebpf.network_io_hook, EbpfNetworkIoHook::Auto);
     assert!(config.ebpf.validate().is_ok());
+}
+
+#[test]
+fn ebpf_network_io_hook_parses_every_explicit_mode() {
+    for (value, expected) in [
+        ("auto", EbpfNetworkIoHook::Auto),
+        ("fexit", EbpfNetworkIoHook::Fexit),
+        ("tracepoint", EbpfNetworkIoHook::Tracepoint),
+    ] {
+        let config =
+            toml::from_str::<RuntimeConfig>(&format!("[ebpf]\nnetwork_io_hook = \"{value}\"\n"))
+                .expect("eBPF network I/O hook mode parses");
+
+        assert_eq!(config.ebpf.network_io_hook, expected);
+        assert!(config.validate().is_ok());
+    }
 }
 
 #[test]

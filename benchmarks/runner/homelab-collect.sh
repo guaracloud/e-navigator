@@ -22,9 +22,11 @@ cleanup_workload_requested="${E_NAVIGATOR_HOMELAB_CLEANUP_WORKLOAD:-$cleanup_all
 uninstall_release_requested="${E_NAVIGATOR_HOMELAB_UNINSTALL_RELEASE:-$cleanup_all_requested}"
 workload_wait_timeout="${E_NAVIGATOR_HOMELAB_WORKLOAD_WAIT_TIMEOUT:-300s}"
 event_transport="${E_NAVIGATOR_HOMELAB_EVENT_TRANSPORT:-}"
+network_io_hook="${E_NAVIGATOR_HOMELAB_NETWORK_IO_HOOK:-}"
 disable_json_stdout="${E_NAVIGATOR_HOMELAB_DISABLE_JSON_STDOUT:-0}"
 agent_mode="${E_NAVIGATOR_HOMELAB_AGENT_MODE:-enabled}"
 workload_template="${E_NAVIGATOR_HOMELAB_WORKLOAD_TEMPLATE:-benchmarks/k8s/workload.yaml}"
+config_template="${E_NAVIGATOR_HOMELAB_CONFIG_TEMPLATE:-}"
 workload_duration_seconds="${E_NAVIGATOR_HOMELAB_WORKLOAD_DURATION_SECONDS:-120}"
 
 if [ "${E_NAVIGATOR_HOMELAB_CONFIRM:-0}" != "1" ]; then
@@ -46,6 +48,15 @@ case "$event_transport" in
   *)
     printf 'E_NAVIGATOR_HOMELAB_EVENT_TRANSPORT must be auto, ring_buffer, or perf_buffer; got: %s\n' \
       "$event_transport" >&2
+    exit 2
+    ;;
+esac
+
+case "$network_io_hook" in
+  ""|auto|fexit|tracepoint) ;;
+  *)
+    printf 'E_NAVIGATOR_HOMELAB_NETWORK_IO_HOOK must be auto, fexit, or tracepoint; got: %s\n' \
+      "$network_io_hook" >&2
     exit 2
     ;;
 esac
@@ -87,6 +98,11 @@ fi
 
 if [ ! -f "$workload_template" ]; then
   printf 'homelab workload template does not exist: %s\n' "$workload_template" >&2
+  exit 2
+fi
+
+if [ -n "$config_template" ] && [ ! -f "$config_template" ]; then
+  printf 'homelab config template does not exist: %s\n' "$config_template" >&2
   exit 2
 fi
 
@@ -134,12 +150,16 @@ run_required_capture() {
 write_runtime_config() {
   local output="$1"
 
-  awk '
-    $0 == "  toml: |" { in_config = 1; next }
-    in_config && $0 == "" { print ""; next }
-    in_config && substr($0, 1, 4) == "    " { print substr($0, 5); next }
-    in_config { exit }
-  ' charts/e-navigator/values.yaml >"$output"
+  if [ -n "$config_template" ]; then
+    cp "$config_template" "$output"
+  else
+    awk '
+      $0 == "  toml: |" { in_config = 1; next }
+      in_config && $0 == "" { print ""; next }
+      in_config && substr($0, 1, 4) == "    " { print substr($0, 5); next }
+      in_config { exit }
+    ' charts/e-navigator/values.yaml >"$output"
+  fi
 
   if [ "${E_NAVIGATOR_HOMELAB_ENABLE_PROMETHEUS_HTTP:-0}" = "1" ]; then
     perl -0pi -e '
@@ -152,6 +172,12 @@ write_runtime_config() {
     auto) perl -0pi -e 's/event_transport = "[^"]+"/event_transport = "auto"/' "$output" ;;
     ring_buffer) perl -0pi -e 's/event_transport = "[^"]+"/event_transport = "ring_buffer"/' "$output" ;;
     perf_buffer) perl -0pi -e 's/event_transport = "[^"]+"/event_transport = "perf_buffer"/' "$output" ;;
+  esac
+
+  case "$network_io_hook" in
+    auto) perl -0pi -e 's/network_io_hook = "[^"]+"/network_io_hook = "auto"/' "$output" ;;
+    fexit) perl -0pi -e 's/network_io_hook = "[^"]+"/network_io_hook = "fexit"/' "$output" ;;
+    tracepoint) perl -0pi -e 's/network_io_hook = "[^"]+"/network_io_hook = "tracepoint"/' "$output" ;;
   esac
 
 
@@ -185,6 +211,7 @@ Image substitution: ${image_substitution}
 Pull secret configured: ${pull_secret_configured}
 Prometheus HTTP opt-in: ${E_NAVIGATOR_HOMELAB_ENABLE_PROMETHEUS_HTTP:-0}
 Event transport override: ${event_transport:-none}
+Network I/O hook override: ${network_io_hook:-none}
 JSON stdout disabled: ${disable_json_stdout}
 Agent mode: ${agent_mode}
 ServiceMonitor opt-in: ${E_NAVIGATOR_HOMELAB_ENABLE_SERVICE_MONITOR:-0}
@@ -194,6 +221,7 @@ Cleanup workload requested: ${cleanup_workload_requested}
 Uninstall release requested: ${uninstall_release_requested}
 Workload wait timeout: ${workload_wait_timeout}
 Workload template: ${workload_template}
+Config template: ${config_template:-chart default}
 Workload duration seconds: ${workload_duration_seconds}
 EOF
 }
@@ -511,7 +539,9 @@ if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ] && [ "$agent_mode" = "enabled" ];
   fi
 
   if [ "${E_NAVIGATOR_HOMELAB_ENABLE_PROMETHEUS_HTTP:-0}" = "1" ] || \
-    [ -n "$event_transport" ] || [ "$disable_json_stdout" = "1" ]; then
+    [ -n "$config_template" ] || [ -n "$event_transport" ] || \
+    [ -n "$network_io_hook" ] || \
+    [ "$disable_json_stdout" = "1" ]; then
     runtime_config="$results_dir/runtime-config.toml"
     write_runtime_config "$runtime_config"
     cp "$runtime_config" "$results_dir/prometheus-http-runtime-config.toml"
