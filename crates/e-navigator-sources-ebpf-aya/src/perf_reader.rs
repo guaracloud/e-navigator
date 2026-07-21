@@ -30,6 +30,21 @@ pub(crate) fn wait_for_events<T: AsFd>(
     source: &'static str,
     cpu_id: u32,
 ) -> Option<bool> {
+    wait_for_readiness(buffer, source, Some(cpu_id), true)
+}
+
+/// Waits for a shared ring buffer without adding the perf reader's coalescing
+/// delay. Ring-buffer notifications already coalesce while the consumer lags.
+pub(crate) fn wait_for_ring_events<T: AsFd>(buffer: &T, source: &'static str) -> Option<bool> {
+    wait_for_readiness(buffer, source, None, false)
+}
+
+fn wait_for_readiness<T: AsFd>(
+    buffer: &T,
+    source: &'static str,
+    cpu_id: Option<u32>,
+    coalesce: bool,
+) -> Option<bool> {
     let mut descriptors = [PollFd::new(buffer, PollFlags::IN)];
     loop {
         match poll(&mut descriptors, Some(&SHUTDOWN_CHECK_TIMEOUT)) {
@@ -37,19 +52,21 @@ pub(crate) fn wait_for_events<T: AsFd>(
             Ok(_) => {
                 let events = descriptors[0].revents();
                 if events.intersects(PollFlags::ERR | PollFlags::HUP | PollFlags::NVAL) {
-                    warn!(source, cpu_id, ?events, "perf reader readiness failed");
+                    warn!(source, ?cpu_id, ?events, "event reader readiness failed");
                     std::thread::sleep(POLL_ERROR_BACKOFF);
                     return None;
                 }
                 if events.contains(PollFlags::IN) {
-                    std::thread::sleep(ACTIVE_COALESCE_DELAY);
+                    if coalesce {
+                        std::thread::sleep(ACTIVE_COALESCE_DELAY);
+                    }
                     return Some(true);
                 }
                 return Some(false);
             }
             Err(Errno::INTR) => continue,
             Err(err) => {
-                warn!(source, cpu_id, error = %err, "perf reader poll failed");
+                warn!(source, ?cpu_id, error = %err, "event reader poll failed");
                 std::thread::sleep(POLL_ERROR_BACKOFF);
                 return None;
             }

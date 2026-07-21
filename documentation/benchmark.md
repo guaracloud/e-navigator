@@ -503,3 +503,31 @@ is a shared VM and this is a single-run local smoke A/B; the direction and
 rough magnitude are consistent with the ~−43% cost of capturing this workload
 recorded in the overhead baseline above, but the exact percentage is not a
 production figure.
+
+## BPF Event Transport A/B (Homelab, 2026-07-21)
+
+The RingBuf migration used the guarded homelab collector with a dedicated
+connection-heavy HTTP workload, exec churn, two Linux 6.6 nodes, and only the
+exec/network Aya source slice enabled. Three 180-second repetitions per arm
+were counterbalanced as `none/perf/ring`, `ring/none/perf`, and
+`perf/ring/none`. The no-agent arm means no E-Navigator benchmark release; the
+homelab's unrelated background observability stack remained constant.
+
+| Arm | Requests/s mean +/- sd | Mean latency ms +/- sd | Agent CPU m +/- sd | Agent RSS MiB +/- sd |
+| --- | ---: | ---: | ---: | ---: |
+| no benchmark agent | 41.955000 +/- 0.000000 | 95.316655 +/- 1.789863 | n/a | n/a |
+| perf | 42.073667 +/- 0.205537 | 94.424151 +/- 2.806871 | 83.991533 +/- 3.585834 | 65.544861 +/- 0.039762 |
+| ring | 41.837000 +/- 0.410496 | 95.799402 +/- 3.191258 | 93.570370 +/- 1.468405 | 62.630423 +/- 0.677374 |
+
+RingBuf versus perf was -0.562506% requests/s, +1.456461% mean latency,
++11.404527% agent CPU across two pods, and -4.446478% agent RSS. Both paths
+reported zero transport loss for the enabled sources. The coarse p95/p99
+histogram, short windows, shared-node background activity, and small failure
+counts prevent a comparative performance claim.
+
+A focused 30-sample Criterion run measured the contiguous 368-byte handoff at
+669.42-670.44 ps for the perf inline copy and 297.04-316.02 ps for the borrowed
+RingBuf record. That is an isolated userspace handoff result, not live agent
+overhead. Full method, raw run values, variance, image identity, and cleanup
+scope are recorded in the
+[`event-transport proof report`](proof/event-transport-20260721/report.md).

@@ -14,7 +14,16 @@ kept for focused diagnostics, and the synthetic fixture remains available for
 non-privileged testing. Runtime config validates known module names, duplicate
 modules, bounded queues, source-supervisor policy and shutdown bounds, derived
 signal fan-out, source limits, generator limits, and sink settings before the
-runner starts.
+runner starts. On Linux 5.8 or newer, a positive kernel feature probe selects
+BPF ring buffers for kernel-to-userspace event delivery. Older kernels use a
+separately built perf-event object only when the probe positively reports that
+ring-buffer maps are unsupported.
+
+### Kernel Event Transport
+
+| Control | Default | Capability |
+| --- | --- | --- |
+| `[ebpf]` | `event_transport = "auto"`, `ring_buffer_bytes = 262144` | Selects one of two embedded eBPF objects before load: shared RingBuf event maps on supported kernels or per-CPU perf-event arrays on kernels that positively report RingBuf unsupported. Forced `ring_buffer` and `perf_buffer` modes support strict diagnostics and A/B runs. Ring capacity is a power of two from 4 KiB through 16 MiB and must match the runtime page size. Native per-source metrics identify the active transport and account for aggregate loss, perf lost records, and RingBuf producer reservation failures. Probe errors fail source startup rather than silently falling back. |
 
 ### Source Capabilities
 
@@ -79,6 +88,7 @@ runner starts.
 | Area | Current state | Evidence level | Still missing |
 | --- | --- | --- | --- |
 | Static pipeline runtime | Implemented `Source -> Processor -> Generator -> Sink` runtime with registered modules and strict runtime config schema validation | Cargo tests, synthetic CLI, Docker smoke, and unknown-field config tests | runtime plugin loading is not planned |
+| BPF event transport | Dual-object RingBuf/perf implementation with strict `auto`, forced RingBuf, and forced perf selection, bounded ring capacity, and per-source loss accounting | selection/config/map-ownership tests, dual Linux eBPF build, Criterion handoff coverage, and a three-run counterbalanced homelab A/B proving forced RingBuf and perf for exec/network with zero observed transport loss | old-kernel runtime fallback proof, all-family RingBuf runtime matrix, production soak, and any lower-overhead claim |
 | JSON signal envelopes | Implemented versioned newline-delimited JSON output | Cargo tests, golden signal coverage, Docker smoke | storage and UI |
 | Process exec source | Implemented Aya exec/exit source | raw decode tests and guarded homelab observations | reduced-capability/non-root eBPF proof |
 | TCP network source | Implemented TCP connection observations plus retransmit, reset (send/receive), and state-transition observations and counters | raw decode/fuzz tests, generator aggregation tests, and a local OrbStack live run capturing resets and state transitions | live retransmit induction, full per-connection state machine tracking, production overhead baselines |

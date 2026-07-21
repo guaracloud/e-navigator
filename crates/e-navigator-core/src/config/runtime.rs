@@ -4,10 +4,11 @@ use std::collections::BTreeSet;
 use super::modules::{default_modules, is_known_module_name, known_module_names};
 use super::{
     ArgvCaptureConfig, AttributionConfig, CaptureFilterConfig, ConfigError, ConfigResult,
-    CpuProfileSourceConfig, DnsMetricsConfig, DnsSourceConfig, HttpSourceConfig, JsonStdoutConfig,
-    ModuleConfig, NetworkMetricsConfig, OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig,
-    ProtocolSourceConfig, RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig,
-    RuntimeSecurityConfig, SourceSupervisorConfig, TlsSourceConfig, TraceCorrelationConfig,
+    CpuProfileSourceConfig, DnsMetricsConfig, DnsSourceConfig, EbpfConfig, HttpSourceConfig,
+    JsonStdoutConfig, ModuleConfig, NetworkMetricsConfig, OtlpHttpConfig, ProfilingConfig,
+    PrometheusHttpConfig, ProtocolSourceConfig, RequestCorrelationConfig, ResourceMetricsConfig,
+    ResourceSourceConfig, RuntimeSecurityConfig, SourceSupervisorConfig, TlsSourceConfig,
+    TraceCorrelationConfig,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,6 +24,8 @@ pub struct RuntimeConfig {
     pub max_derived_signal_depth: usize,
     #[serde(default)]
     pub source_supervisor: SourceSupervisorConfig,
+    #[serde(default)]
+    pub ebpf: EbpfConfig,
     #[serde(default = "default_modules")]
     pub modules: Vec<ModuleConfig>,
     #[serde(default)]
@@ -73,6 +76,7 @@ impl Default for RuntimeConfig {
             max_derived_signals_per_input: default_max_derived_signals_per_input(),
             max_derived_signal_depth: default_max_derived_signal_depth(),
             source_supervisor: SourceSupervisorConfig::default(),
+            ebpf: EbpfConfig::default(),
             modules: default_modules(),
             argv_capture: ArgvCaptureConfig::default(),
             attribution: AttributionConfig::default(),
@@ -194,6 +198,7 @@ impl RuntimeConfig {
         self.validate_modules()?;
 
         self.source_supervisor.validate()?;
+        self.ebpf.validate()?;
         self.argv_capture.validate()?;
         self.attribution.validate()?;
         self.capture_filter.validate()?;

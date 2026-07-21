@@ -6,6 +6,18 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Add a dual eBPF event transport with automatic ring-buffer selection on
+  capable kernels, a separately built perf-event fallback for older kernels,
+  bounded ring sizing, producer-loss accounting, native transport metrics,
+  and explicit A/B benchmark hooks.
+
+### Compatibility
+
+- Preserve the raw event ABI and retain `perf_buffer` as a strict diagnostic
+  mode while making `auto` the packaged default.
+
 ## [0.1.2] - 2026-07-20
 
 ### Added

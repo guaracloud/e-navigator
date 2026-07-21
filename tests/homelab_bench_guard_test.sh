@@ -30,6 +30,11 @@ if ! grep -q 'E_NAVIGATOR_HOMELAB_IMAGE_PULL_SECRET' benchmarks/runner/homelab-c
   exit 1
 fi
 
+if ! grep -q 'E_NAVIGATOR_HOMELAB_IMAGE_PULL_POLICY' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector does not expose E_NAVIGATOR_HOMELAB_IMAGE_PULL_POLICY\n' >&2
+  exit 1
+fi
+
 if ! grep -Fq 'imagePullSecrets[0].name=$image_pull_secret' benchmarks/runner/homelab-collect.sh; then
   printf 'homelab collector does not pass imagePullSecrets to Helm\n' >&2
   exit 1
@@ -40,9 +45,19 @@ if ! grep -q 'E_NAVIGATOR_HOMELAB_ENABLE_PROMETHEUS_HTTP' benchmarks/runner/home
   exit 1
 fi
 
+if ! grep -q 'E_NAVIGATOR_HOMELAB_DISABLE_JSON_STDOUT' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector does not expose E_NAVIGATOR_HOMELAB_DISABLE_JSON_STDOUT\n' >&2
+  exit 1
+fi
+
+if ! grep -q 'E_NAVIGATOR_HOMELAB_AGENT_MODE' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector does not expose a no-agent baseline mode\n' >&2
+  exit 1
+fi
+
 if ! grep -Fq -- '--set-file' benchmarks/runner/homelab-collect.sh ||
-  ! grep -Fq 'config.toml=$prometheus_runtime_config' benchmarks/runner/homelab-collect.sh; then
-  printf 'homelab collector does not pass an explicit Prometheus runtime config to Helm\n' >&2
+  ! grep -Fq 'config.toml=$runtime_config' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector does not pass an explicit runtime config to Helm\n' >&2
   exit 1
 fi
 
@@ -51,10 +66,17 @@ if ! grep -Fq 'in_config && $0 == "" { print ""; next }' benchmarks/runner/homel
   exit 1
 fi
 
-if ! grep -Fq 'current context must be exactly staging' benchmarks/runner/homelab-collect.sh; then
-  printf 'homelab collector does not hard-stop unless current context is staging\n' >&2
+if ! grep -Fq 'target context must be exactly homelab' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector does not hard-stop unless the target context is homelab\n' >&2
   exit 1
 fi
+
+for transport in auto ring_buffer perf_buffer; do
+  if ! grep -Fq "$transport" benchmarks/runner/homelab-collect.sh; then
+    printf 'homelab collector does not accept event transport mode: %s\n' "$transport" >&2
+    exit 1
+  fi
+done
 
 if ! grep -Fq 'operator: Exists' benchmarks/k8s/workload.yaml; then
   printf 'homelab workload template must tolerate homelab control-plane taints for symmetric proof scheduling\n' >&2
@@ -68,6 +90,16 @@ fi
 
 if ! grep -q 'E_NAVIGATOR_HOMELAB_WORKLOAD_WAIT_TIMEOUT' benchmarks/runner/homelab-collect.sh; then
   printf 'homelab collector must expose a bounded workload wait timeout\n' >&2
+  exit 1
+fi
+
+if ! grep -q 'E_NAVIGATOR_HOMELAB_WORKLOAD_TEMPLATE' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector must expose an explicit workload template\n' >&2
+  exit 1
+fi
+
+if ! grep -q 'E_NAVIGATOR_HOMELAB_WORKLOAD_DURATION_SECONDS' benchmarks/runner/homelab-collect.sh; then
+  printf 'homelab collector must expose a bounded workload duration\n' >&2
   exit 1
 fi
 
@@ -118,16 +150,20 @@ rollout_line="$(grep -n 'run_capture rollout' benchmarks/runner/homelab-collect.
 workload_apply_line="$(grep -n 'workload-apply' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
 workload_wait_line="$(grep -n 'wait --for=condition=complete "job/${workload_name}"' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
 workload_capture_line="$(grep -n 'capture_workload_artifacts' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
+top_capture_line="$(grep -n 'capture_top_samples &' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
 service_capture_line="$(grep -n 'capture_service_surfaces' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
 prometheus_capture_line="$(grep -n 'capture_prometheus_http_endpoints' benchmarks/runner/homelab-collect.sh | tail -1 | cut -d: -f1)"
 if [ -z "$rollout_line" ] ||
   [ -z "$workload_apply_line" ] ||
   [ -z "$workload_wait_line" ] ||
   [ -z "$workload_capture_line" ] ||
+  [ -z "$top_capture_line" ] ||
   [ -z "$service_capture_line" ] ||
   [ -z "$prometheus_capture_line" ] ||
   [ "$rollout_line" -ge "$workload_apply_line" ] ||
   [ "$workload_apply_line" -ge "$workload_wait_line" ] ||
+  [ "$workload_apply_line" -ge "$top_capture_line" ] ||
+  [ "$top_capture_line" -ge "$workload_wait_line" ] ||
   [ "$workload_wait_line" -ge "$workload_capture_line" ] ||
   [ "$workload_capture_line" -ge "$service_capture_line" ] ||
   [ "$rollout_line" -ge "$prometheus_capture_line" ]; then
@@ -168,6 +204,8 @@ for expected in \
   '/readyz' \
   '/metrics' \
   'E_NAVIGATOR_HOMELAB_PROMETHEUS_URL' \
+  'E_NAVIGATOR_HOMELAB_EVENT_TRANSPORT' \
+  'runtime-config.toml' \
   'prometheus-api-targets' \
   'prometheus-api-query-up' \
   'prometheus-api-series' \
@@ -175,6 +213,7 @@ for expected in \
   '/api/v1/query' \
   '/api/v1/series' \
   'top-pods-10-samples' \
+  'top-nodes-10-samples' \
   'capability-decode' \
   '/proc/1/status' \
   '/proc/1/mounts'

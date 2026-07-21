@@ -1248,15 +1248,14 @@ mod platform {
         PyProcInfoAbi, UnwindMapSink, UnwindModuleSpan, UnwindProcMappings, UnwindRowAbi,
         UnwindTableManager,
     };
-    use crate::perf_sample::perf_sample_bytes;
     use crate::reader_shutdown::ReaderShutdown;
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
-        Ebpf, EbpfLoader, include_bytes_aligned,
+        Ebpf,
         maps::{
             Array as AyaArray, HashMap as AyaHashMap, MapData, ProgramArray as AyaProgramArray,
-            perf::{PerfEvent as PerfBufferEvent, PerfEventArray},
+            perf::PerfEvent as PerfBufferEvent,
         },
         programs::perf_event::{
             PerfEvent, PerfEventConfig, PerfEventScope, SamplePolicy, SoftwareEvent,
@@ -1264,8 +1263,8 @@ mod platform {
         util::online_cpus,
     };
     use e_navigator_core::{
-        CoreError, CoreResult, CpuProfileBackpressure, CpuProfileSourceConfig, ModuleKind,
-        ModuleMetadata, Source,
+        CoreError, CoreResult, CpuProfileBackpressure, CpuProfileSourceConfig, EbpfConfig,
+        ModuleKind, ModuleMetadata, Source,
     };
     use e_navigator_signals::SignalEnvelope;
     use tokio::{sync::mpsc, task::JoinHandle};
@@ -1276,6 +1275,7 @@ mod platform {
         host: Option<String>,
         procfs_root: std::path::PathBuf,
         config: CpuProfileSourceConfig,
+        ebpf: EbpfConfig,
     }
 
     impl AyaCpuProfileSource {
@@ -1288,7 +1288,13 @@ mod platform {
                 host,
                 procfs_root,
                 config,
+                ebpf: EbpfConfig::default(),
             }
+        }
+
+        pub fn with_ebpf_config(mut self, ebpf: EbpfConfig) -> Self {
+            self.ebpf = ebpf;
+            self
         }
     }
 
@@ -1302,19 +1308,16 @@ mod platform {
             bump_memlock_rlimit();
             let shutdown = ReaderShutdown::new();
             let mut reader_handles = Vec::new();
-            let telemetry = SourceTelemetry::new("source.aya_cpu_profile");
             let drop_counters = std::sync::Arc::new(super::CpuProfileDropCounters::default());
-            let mut loader = EbpfLoader::new();
-            crate::ebpf_maps::constrain_unrelated_maps(
-                &mut loader,
+            let (mut ebpf, transport) = crate::event_transport::load_ebpf(
+                &self.ebpf,
                 crate::ebpf_maps::SourceMapProfile::CpuProfile,
-            );
-            let mut ebpf = loader
-                .load(include_bytes_aligned!(concat!(
-                    env!("OUT_DIR"),
-                    "/e-navigator-ebpf-programs"
-                )))
-                .map_err(module_error)?;
+                "source.aya_cpu_profile",
+            )?;
+            let telemetry = std::sync::Arc::new(SourceTelemetry::new_with_transport(
+                "source.aya_cpu_profile",
+                transport.kind.as_str(),
+            ));
             populate_frame_limit(&mut ebpf, &self.config)?;
             populate_pid_namespace(&mut ebpf, &self.procfs_root);
             if self.config.dwarf_unwind {
@@ -1372,14 +1375,27 @@ mod platform {
                 },
             )?;
 
-            let mut perf_array =
-                PerfEventArray::try_from(ebpf.take_map("CPU_PROFILE_EVENTS").ok_or_else(|| {
-                    CoreError::ModuleFailed {
-                        module: "source.aya_cpu_profile".to_string(),
-                        message: "missing CPU_PROFILE_EVENTS map".to_string(),
+            let profile_events = crate::event_transport::take_event_map(
+                &mut ebpf,
+                "CPU_PROFILE_EVENTS",
+                transport,
+                "source.aya_cpu_profile",
+            )?;
+            if let Some(handle) = crate::event_transport::spawn_transport_loss_reader(
+                &mut ebpf,
+                crate::ebpf_maps::SourceMapProfile::CpuProfile,
+                transport,
+                "source.aya_cpu_profile",
+                shutdown.clone(),
+                telemetry.clone(),
+            )? {
+                reader_handles.push(tokio::spawn(async move {
+                    if let Err(err) = handle.await {
+                        warn!(error = %err, "ring-buffer loss reader failed");
                     }
-                })?)
-                .map_err(module_error)?;
+                    ReaderExit::Stopped
+                }));
+            }
 
             let perf_pages = cpu_profile_perf_pages(
                 self.config.sample_frequency_hz,
@@ -1392,105 +1408,181 @@ mod platform {
             // processes; sized generously above any realistic on-CPU
             // working set on one node.
             let hot_pids = std::sync::Arc::new(crate::cpu_unwind::HotPidTracker::new(4096));
-            for cpu_id in active_cpus {
-                let mut buffer = perf_array
-                    .open(cpu_id, Some(perf_pages))
-                    .map_err(module_error)?;
-                let cpu_tx = tx.clone();
-                let host = self.host.clone();
-                let config = self.config.clone();
-                let backpressure = config.backpressure;
-                let reader_shutdown = shutdown.clone();
-                let drop_counters = drop_counters.clone();
-                let mut resolver = super::ProcfsSymbolizer::with_shared_symbols(
-                    self.procfs_root.clone(),
-                    config.resolve_symbol_names,
-                    shared_symbols.clone(),
-                );
-                let symbolize = config.symbolize;
-                let reader_hot_pids = hot_pids.clone();
+            match profile_events {
+                crate::event_transport::EventMap::Perf(mut perf_array) => {
+                    for cpu_id in active_cpus {
+                        let mut buffer = perf_array
+                            .open(cpu_id, Some(perf_pages))
+                            .map_err(module_error)?;
+                        let cpu_tx = tx.clone();
+                        let host = self.host.clone();
+                        let config = self.config.clone();
+                        let backpressure = config.backpressure;
+                        let reader_shutdown = shutdown.clone();
+                        let drop_counters = drop_counters.clone();
+                        let telemetry = telemetry.clone();
+                        let mut resolver = super::ProcfsSymbolizer::with_shared_symbols(
+                            self.procfs_root.clone(),
+                            config.resolve_symbol_names,
+                            shared_symbols.clone(),
+                        );
+                        let symbolize = config.symbolize;
+                        let reader_hot_pids = hot_pids.clone();
 
-                reader_handles.push(tokio::task::spawn_blocking(move || {
-                    while !reader_shutdown.is_stopped() {
-                        if crate::perf_reader::wait_for_events(
-                            &buffer,
-                            "source.aya_cpu_profile",
-                            cpu_id,
-                        ) != Some(true)
-                        {
-                            continue;
-                        }
-                        let mut accepted = 0_usize;
-                        let mut exit = ReaderExit::Stopped;
-                        buffer.for_each(|event| {
-                            if matches!(exit, ReaderExit::BackpressureStop)
-                                || accepted >= config.max_samples_per_batch
-                            {
-                                return;
-                            }
-
-                            match event {
-                                PerfBufferEvent::Sample { head, tail } => {
-                                    let bytes = perf_sample_bytes(head, tail);
-                                    let decoded = if symbolize {
-                                        raw_cpu_profile_to_signal(
-                                            bytes.as_ref(),
-                                            host.clone(),
-                                            &config,
-                                            &mut resolver,
-                                        )
-                                    } else {
-                                        raw_cpu_profile_to_signal(
-                                            bytes.as_ref(),
-                                            host.clone(),
-                                            &config,
-                                            &mut super::RawAddressResolver,
-                                        )
-                                    };
-                                    let Some(decoded) = decoded else {
+                        reader_handles.push(tokio::task::spawn_blocking(move || {
+                            while !reader_shutdown.is_stopped() {
+                                if crate::perf_reader::wait_for_events(
+                                    &buffer,
+                                    "source.aya_cpu_profile",
+                                    cpu_id,
+                                ) != Some(true)
+                                {
+                                    continue;
+                                }
+                                let mut accepted = 0_usize;
+                                let mut exit = ReaderExit::Stopped;
+                                buffer.for_each(|event| {
+                                    if matches!(exit, ReaderExit::BackpressureStop)
+                                        || accepted >= config.max_samples_per_batch
+                                    {
                                         return;
-                                    };
-                                    reader_hot_pids.record(decoded.pid);
-                                    if decoded.capture_truncated {
-                                        drop_counters.record_truncated_stack();
                                     }
-                                    if decoded.pid_unverified {
-                                        drop_counters.record_pid_unverified_sample();
-                                    }
-                                    if decoded.dwarf_incomplete {
-                                        drop_counters.record_dwarf_incomplete_sample();
-                                    }
-                                    if decoded.py_incomplete {
-                                        drop_counters.record_py_incomplete_sample();
-                                    }
-                                    let signal = decoded.signal;
-                                    accepted += 1;
-                                    if !send_with_backpressure(&cpu_tx, signal, backpressure) {
-                                        if matches!(
-                                            backpressure,
-                                            CpuProfileBackpressure::StopSource
-                                        ) {
-                                            reader_shutdown.stop();
-                                            exit = ReaderExit::BackpressureStop;
-                                        } else {
-                                            drop_counters.record_backpressure_drop();
-                                            warn!("dropped cpu profile sample due to backpressure");
+
+                                    match event {
+                                        PerfBufferEvent::Sample { head, tail } => {
+                                            let bytes =
+                                                crate::perf_sample::perf_sample_bytes(head, tail);
+                                            let decoded = if symbolize {
+                                                raw_cpu_profile_to_signal(
+                                                    bytes.as_ref(),
+                                                    host.clone(),
+                                                    &config,
+                                                    &mut resolver,
+                                                )
+                                            } else {
+                                                raw_cpu_profile_to_signal(
+                                                    bytes.as_ref(),
+                                                    host.clone(),
+                                                    &config,
+                                                    &mut super::RawAddressResolver,
+                                                )
+                                            };
+                                            let Some(decoded) = decoded else {
+                                                telemetry.record_invalid_sample();
+                                                return;
+                                            };
+                                            telemetry.record_decoded_sample();
+                                            reader_hot_pids.record(decoded.pid);
+                                            record_profile_degradation(&decoded, &drop_counters);
+                                            accepted += 1;
+                                            if send_with_backpressure(
+                                                &cpu_tx,
+                                                decoded.signal,
+                                                backpressure,
+                                            ) {
+                                                telemetry.record_sent_signal();
+                                            } else if matches!(
+                                                backpressure,
+                                                CpuProfileBackpressure::StopSource
+                                            ) {
+                                                telemetry.record_send_failure();
+                                                reader_shutdown.stop();
+                                                exit = ReaderExit::BackpressureStop;
+                                            } else {
+                                                telemetry.record_send_failure();
+                                                drop_counters.record_backpressure_drop();
+                                                warn!(
+                                                    "dropped cpu profile sample due to backpressure"
+                                                );
+                                            }
+                                        }
+                                        PerfBufferEvent::Lost { count } => {
+                                            telemetry.record_lost_perf_events(count);
+                                            drop_counters.record_lost_perf_events(count);
+                                            warn!(count, "lost cpu profile perf events");
                                         }
                                     }
-                                }
-                                PerfBufferEvent::Lost { count } => {
-                                    drop_counters.record_lost_perf_events(count);
-                                    warn!(count, "lost cpu profile perf events");
+                                    telemetry.maybe_log_summary();
+                                });
+
+                                if matches!(exit, ReaderExit::BackpressureStop) {
+                                    return ReaderExit::BackpressureStop;
                                 }
                             }
-                        });
-
-                        if matches!(exit, ReaderExit::BackpressureStop) {
-                            return ReaderExit::BackpressureStop;
-                        }
+                            ReaderExit::Stopped
+                        }));
                     }
-                    ReaderExit::Stopped
-                }));
+                }
+                crate::event_transport::EventMap::Ring(mut ring) => {
+                    let cpu_tx = tx.clone();
+                    let host = self.host.clone();
+                    let config = self.config.clone();
+                    let backpressure = config.backpressure;
+                    let reader_shutdown = shutdown.clone();
+                    let drop_counters = drop_counters.clone();
+                    let telemetry = telemetry.clone();
+                    let mut resolver = super::ProcfsSymbolizer::with_shared_symbols(
+                        self.procfs_root.clone(),
+                        config.resolve_symbol_names,
+                        shared_symbols.clone(),
+                    );
+                    let symbolize = config.symbolize;
+                    let reader_hot_pids = hot_pids.clone();
+                    reader_handles.push(tokio::task::spawn_blocking(move || {
+                        while !reader_shutdown.is_stopped() {
+                            if crate::perf_reader::wait_for_ring_events(
+                                &ring,
+                                "source.aya_cpu_profile",
+                            ) != Some(true)
+                            {
+                                continue;
+                            }
+                            let mut accepted = 0_usize;
+                            while accepted < config.max_samples_per_batch {
+                                let Some(item) = ring.next() else {
+                                    break;
+                                };
+                                let decoded = if symbolize {
+                                    raw_cpu_profile_to_signal(
+                                        &item,
+                                        host.clone(),
+                                        &config,
+                                        &mut resolver,
+                                    )
+                                } else {
+                                    raw_cpu_profile_to_signal(
+                                        &item,
+                                        host.clone(),
+                                        &config,
+                                        &mut super::RawAddressResolver,
+                                    )
+                                };
+                                let Some(decoded) = decoded else {
+                                    telemetry.record_invalid_sample();
+                                    continue;
+                                };
+                                telemetry.record_decoded_sample();
+                                reader_hot_pids.record(decoded.pid);
+                                record_profile_degradation(&decoded, &drop_counters);
+                                accepted += 1;
+                                if send_with_backpressure(&cpu_tx, decoded.signal, backpressure) {
+                                    telemetry.record_sent_signal();
+                                } else if matches!(backpressure, CpuProfileBackpressure::StopSource)
+                                {
+                                    telemetry.record_send_failure();
+                                    reader_shutdown.stop();
+                                    return ReaderExit::BackpressureStop;
+                                } else {
+                                    telemetry.record_send_failure();
+                                    drop_counters.record_backpressure_drop();
+                                    warn!("dropped cpu profile sample due to backpressure");
+                                }
+                                telemetry.maybe_log_summary();
+                            }
+                        }
+                        ReaderExit::Stopped
+                    }));
+                }
             }
 
             if self.config.dwarf_unwind {
@@ -1615,6 +1707,24 @@ mod platform {
     enum ReaderExit {
         Stopped,
         BackpressureStop,
+    }
+
+    fn record_profile_degradation(
+        decoded: &super::DecodedCpuProfileSample,
+        counters: &super::CpuProfileDropCounters,
+    ) {
+        if decoded.capture_truncated {
+            counters.record_truncated_stack();
+        }
+        if decoded.pid_unverified {
+            counters.record_pid_unverified_sample();
+        }
+        if decoded.dwarf_incomplete {
+            counters.record_dwarf_incomplete_sample();
+        }
+        if decoded.py_incomplete {
+            counters.record_py_incomplete_sample();
+        }
     }
 
     async fn join_reader_handles(handles: Vec<JoinHandle<ReaderExit>>) -> CoreResult<()> {
@@ -1826,7 +1936,8 @@ mod platform {
 mod platform {
     use async_trait::async_trait;
     use e_navigator_core::{
-        CoreError, CoreResult, CpuProfileSourceConfig, ModuleKind, ModuleMetadata, Source,
+        CoreError, CoreResult, CpuProfileSourceConfig, EbpfConfig, ModuleKind, ModuleMetadata,
+        Source,
     };
     use e_navigator_signals::SignalEnvelope;
     use tokio::sync::mpsc;
@@ -1836,6 +1947,7 @@ mod platform {
         host: Option<String>,
         _procfs_root: std::path::PathBuf,
         _config: CpuProfileSourceConfig,
+        _ebpf: EbpfConfig,
     }
 
     impl AyaCpuProfileSource {
@@ -1848,7 +1960,13 @@ mod platform {
                 host,
                 _procfs_root: procfs_root,
                 _config: config,
+                _ebpf: EbpfConfig::default(),
             }
+        }
+
+        pub fn with_ebpf_config(mut self, ebpf: EbpfConfig) -> Self {
+            self._ebpf = ebpf;
+            self
         }
     }
 

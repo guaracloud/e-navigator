@@ -27,6 +27,12 @@ pub(crate) struct InlineSample {
 }
 
 impl InlineSample {
+    /// Copies one contiguous transport record into the fixed inline buffer.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        Self::from_perf(bytes, &[])
+    }
+
     /// Copies a (possibly ring-wrapped) perf sample into an inline
     /// buffer. Returns `None` when the sample is larger than the buffer,
     /// so an oversized sample is dropped with accounting rather than

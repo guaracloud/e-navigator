@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "run_id": "event-transport-20260721",
+  "context": "homelab",
+  "duration_seconds_per_run": 180,
+  "sample_interval_seconds": 5,
+  "arms": ["none", "perf_buffer", "ring_buffer"],
+  "orders": [
+    ["none", "perf_buffer", "ring_buffer"],
+    ["ring_buffer", "none", "perf_buffer"],
+    ["perf_buffer", "ring_buffer", "none"]
+  ],
+  "runs": [
+    {"arm":"none","repetition":1,"created_at_utc":"2026-07-21T21:03:17Z","requests":7552,"failures":0,"requests_per_second":41.955,"latency_mean_ms":96.746306,"latency_p50_upper_bound_ms":5,"latency_p95_upper_bound_ms":2000,"latency_p99_upper_bound_ms":2000,"latency_max_ms":1235.593824,"node_01_cpu_m":1133.944444,"node_01_memory_mib":16711.194444,"node_02_cpu_m":479.805556,"node_02_memory_mib":6598.527778},
+    {"arm":"none","repetition":2,"created_at_utc":"2026-07-21T21:18:54Z","requests":7552,"failures":0,"requests_per_second":41.955,"latency_mean_ms":95.894379,"latency_p50_upper_bound_ms":5,"latency_p95_upper_bound_ms":2000,"latency_p99_upper_bound_ms":2000,"latency_max_ms":1247.203430,"node_01_cpu_m":1090.916667,"node_01_memory_mib":16651.944444,"node_02_cpu_m":467.916667,"node_02_memory_mib":6569.750000},
+    {"arm":"none","repetition":3,"created_at_utc":"2026-07-21T21:34:20Z","requests":7552,"failures":0,"requests_per_second":41.955,"latency_mean_ms":93.309280,"latency_p50_upper_bound_ms":5,"latency_p95_upper_bound_ms":2000,"latency_p99_upper_bound_ms":2000,"latency_max_ms":1230.781559,"node_01_cpu_m":1127.972222,"node_01_memory_mib":16697.777778,"node_02_cpu_m":454.944444,"node_02_memory_mib":6683.805556},
+    {"arm":"perf_buffer","repetition":1,"created_at_utc":"2026-07-21T21:07:08Z","requests":7552,"failures":6,"requests_per_second":41.955,"latency_mean_ms":91.900305,"latency_p50_upper_bound_ms":5,"latency_p95_upper_bound_ms":2000,"latency_p99_upper_bound_ms":2000,"latency_max_ms":2020.440999,"agent_cpu_m":87.588235,"agent_memory_mib":65.558824,"node_01_cpu_m":1237.250000,"node_01_memory_mib":16818.750000,"node_02_cpu_m":488.000000,"node_02_memory_mib":6723.583333},
+    {"arm":"perf_buffer","repetition":2,"created_at_utc":"2026-07-21T21:22:54Z","requests":7552,"failures":7,"requests_per_second":41.955,"latency_mean_ms":97.447090,"latency_p50_upper_bound_ms":5,"latency_p95_upper_bound_ms":2000,"latency_p99_upper_bound_ms":2000,"latency_max_ms":3010.098549,"agent_cpu_m":80.416667,"agent_memory_mib":65.500000,"node_01_cpu_m":1233.000000,"node_01_memory_mib":16736.222222,"node_02_cpu_m":490.055556,"node_02_memory_mib":6649.750000},
+    {"arm":"perf_buffer","repetition":3,"created_at_utc":"2026-07-21T21:26:47Z","requests":7616,"failures":0,"requests_per_second":42.311,"latency_mean_ms":93.925059,"latency_p50_upper_bound_ms":5,"latency_p95_upper_bound_ms":2000,"latency_p99_upper_bound_ms":2000,"latency_max_ms":1230.235009,"agent_cpu_m":83.969697,"agent_memory_mib":65.575758,"node_01_cpu_m":1205.472222,"node_01_memory_mib":16735.944444,"node_02_cpu_m":502.861111,"node_02_memory_mib":6637.500000},
+    {"arm":"ring_buffer","repetition":1,"created_at_utc":"2026-07-21T21:11:10Z","requests":7616,"failures":6,"requests_per_second":42.311,"latency_mean_ms":94.890096,"latency_p50_upper_bound_ms":5,"latency_p95_upper_bound_ms":2000,"latency_p99_upper_bound_ms":2000,"latency_max_ms":2309.219128,"agent_cpu_m":94.222222,"agent_memory_mib":63.388889,"node_01_cpu_m":1251.722222,"node_01_memory_mib":16672.305556,"node_02_cpu_m":512.972222,"node_02_memory_mib":6678.361111},
+    {"arm":"ring_buffer","repetition":2,"created_at_utc":"2026-07-21T21:15:14Z","requests":7488,"failures":12,"requests_per_second":41.600,"latency_mean_ms":99.346627,"latency_p50_upper_bound_ms":5,"latency_p95_upper_bound_ms":2000,"latency_p99_upper_bound_ms":2000,"latency_max_ms":2931.390924,"agent_cpu_m":91.888889,"agent_memory_mib":62.416667,"node_01_cpu_m":1253.388889,"node_01_memory_mib":16671.555556,"node_02_cpu_m":507.305556,"node_02_memory_mib":6635.694444},
+    {"arm":"ring_buffer","repetition":3,"created_at_utc":"2026-07-21T21:30:40Z","requests":7488,"failures":1,"requests_per_second":41.600,"latency_mean_ms":93.161484,"latency_p50_upper_bound_ms":5,"latency_p95_upper_bound_ms":2000,"latency_p99_upper_bound_ms":2000,"latency_max_ms":2030.820427,"agent_cpu_m":94.600000,"agent_memory_mib":62.085714,"node_01_cpu_m":1236.388889,"node_01_memory_mib":16794.055556,"node_02_cpu_m":495.444444,"node_02_memory_mib":6683.472222}
+  ],
+  "aggregate": {
+    "none": {"requests_per_second_mean":41.955000,"requests_per_second_stdev":0.000000,"latency_mean_ms_mean":95.316655,"latency_mean_ms_stdev":1.789863,"failures_mean":0.000000,"failures_stdev":0.000000},
+    "perf_buffer": {"requests_per_second_mean":42.073667,"requests_per_second_stdev":0.205537,"latency_mean_ms_mean":94.424151,"latency_mean_ms_stdev":2.806871,"failures_mean":4.333333,"failures_stdev":3.785939,"agent_cpu_m_mean":83.991533,"agent_cpu_m_stdev":3.585834,"agent_memory_mib_mean":65.544861,"agent_memory_mib_stdev":0.039762},
+    "ring_buffer": {"requests_per_second_mean":41.837000,"requests_per_second_stdev":0.410496,"latency_mean_ms_mean":95.799402,"latency_mean_ms_stdev":3.191258,"failures_mean":6.333333,"failures_stdev":5.507571,"agent_cpu_m_mean":93.570370,"agent_cpu_m_stdev":1.468405,"agent_memory_mib_mean":62.630423,"agent_memory_mib_stdev":0.677374}
+  },
+  "ring_vs_perf_percent": {
+    "requests_per_second": -0.562506,
+    "latency_mean_ms": 1.456461,
+    "agent_cpu_m": 11.404527,
+    "agent_memory_mib": -4.446478
+  },
+  "transport_loss": {
+    "sources": ["source.aya_exec", "source.aya_network"],
+    "perf_buffer_all_runs": 0,
+    "ring_buffer_all_runs": 0,
+    "ring_buffer_reservation_failures_all_runs": 0,
+    "evidence_scope": "both pods in captured log streams; one service-selected pod in each Prometheus snapshot"
+  }
+}

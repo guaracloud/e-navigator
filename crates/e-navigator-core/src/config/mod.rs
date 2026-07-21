@@ -4,6 +4,7 @@ mod capture_filter;
 mod cpu_profile;
 mod dns_metrics;
 mod dns_source;
+mod ebpf;
 mod error;
 mod http_source;
 mod json_stdout;
@@ -28,6 +29,7 @@ pub use capture_filter::{CaptureFilterConfig, CapturePosture, WorkloadSelectorCo
 pub use cpu_profile::{CpuProfileBackpressure, CpuProfileSourceConfig};
 pub use dns_metrics::DnsMetricsConfig;
 pub use dns_source::DnsSourceConfig;
+pub use ebpf::{EbpfConfig, EbpfEventTransport};
 pub use error::{ConfigError, ConfigErrorKind, ConfigResult};
 pub use http_source::HttpSourceConfig;
 pub use json_stdout::{JsonStdoutConfig, JsonStdoutMode};

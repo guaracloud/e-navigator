@@ -17,15 +17,18 @@ pub(crate) struct SourceTelemetry {
     last_summary: Mutex<SourceTelemetrySnapshot>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct SourceCounters {
+    event_transport: &'static str,
     initialized: AtomicU64,
     decoded_samples: AtomicU64,
     filtered_samples: AtomicU64,
     invalid_samples: AtomicU64,
     sent_signals: AtomicU64,
     send_failures: AtomicU64,
+    lost_transport_events: AtomicU64,
     lost_perf_events: AtomicU64,
+    ring_buffer_reservation_failures: AtomicU64,
     diagnostic_matches: AtomicU64,
     diagnostic_filtered: AtomicU64,
     diagnostic_exhausted: AtomicU64,
@@ -38,16 +41,46 @@ struct SourceCounters {
     optional_capacity_rejections: AtomicU64,
 }
 
+impl SourceCounters {
+    fn new(event_transport: &'static str) -> Self {
+        Self {
+            event_transport,
+            initialized: AtomicU64::new(0),
+            decoded_samples: AtomicU64::new(0),
+            filtered_samples: AtomicU64::new(0),
+            invalid_samples: AtomicU64::new(0),
+            sent_signals: AtomicU64::new(0),
+            send_failures: AtomicU64::new(0),
+            lost_transport_events: AtomicU64::new(0),
+            lost_perf_events: AtomicU64::new(0),
+            ring_buffer_reservation_failures: AtomicU64::new(0),
+            diagnostic_matches: AtomicU64::new(0),
+            diagnostic_filtered: AtomicU64::new(0),
+            diagnostic_exhausted: AtomicU64::new(0),
+            optional_targets_discovered: AtomicU64::new(0),
+            optional_targets_ready: AtomicU64::new(0),
+            optional_targets_unsupported: AtomicU64::new(0),
+            optional_probe_attachments: AtomicU64::new(0),
+            optional_attachment_failures: AtomicU64::new(0),
+            optional_rescans: AtomicU64::new(0),
+            optional_capacity_rejections: AtomicU64::new(0),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourceTelemetrySnapshot {
     pub source: &'static str,
+    pub event_transport: &'static str,
     pub initialized: bool,
     pub decoded_samples: u64,
     pub filtered_samples: u64,
     pub invalid_samples: u64,
     pub sent_signals: u64,
     pub send_failures: u64,
+    pub lost_transport_events: u64,
     pub lost_perf_events: u64,
+    pub ring_buffer_reservation_failures: u64,
     pub diagnostic_matches: u64,
     pub diagnostic_filtered: u64,
     pub diagnostic_exhausted: u64,
@@ -67,15 +100,33 @@ static SOURCE_COUNTERS: OnceLock<Mutex<BTreeMap<&'static str, Arc<SourceCounters
 impl SourceTelemetry {
     pub(crate) const DEFAULT_SUMMARY_INTERVAL: Duration = Duration::from_secs(10);
 
+    #[cfg(feature = "fuzzing")]
     pub(crate) fn new(source: &'static str) -> Self {
-        Self::with_summary_interval(source, Self::DEFAULT_SUMMARY_INTERVAL)
+        Self::with_transport_and_summary_interval(source, "unknown", Self::DEFAULT_SUMMARY_INTERVAL)
     }
 
+    pub(crate) fn new_with_transport(source: &'static str, event_transport: &'static str) -> Self {
+        Self::with_transport_and_summary_interval(
+            source,
+            event_transport,
+            Self::DEFAULT_SUMMARY_INTERVAL,
+        )
+    }
+
+    #[cfg(test)]
     fn with_summary_interval(source: &'static str, summary_interval: Duration) -> Self {
+        Self::with_transport_and_summary_interval(source, "unknown", summary_interval)
+    }
+
+    fn with_transport_and_summary_interval(
+        source: &'static str,
+        event_transport: &'static str,
+        summary_interval: Duration,
+    ) -> Self {
         let summary_interval_nanos = u64::try_from(summary_interval.as_nanos())
             .unwrap_or(u64::MAX)
             .max(1);
-        let counters = Arc::new(SourceCounters::default());
+        let counters = Arc::new(SourceCounters::new(event_transport));
         SOURCE_COUNTERS
             .get_or_init(|| Mutex::new(BTreeMap::new()))
             .lock()
@@ -123,7 +174,19 @@ impl SourceTelemetry {
 
     pub(crate) fn record_lost_perf_events(&self, count: u64) {
         self.counters
+            .lost_transport_events
+            .fetch_add(count, Ordering::Relaxed);
+        self.counters
             .lost_perf_events
+            .fetch_add(count, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_ring_buffer_reservation_failures(&self, count: u64) {
+        self.counters
+            .lost_transport_events
+            .fetch_add(count, Ordering::Relaxed);
+        self.counters
+            .ring_buffer_reservation_failures
             .fetch_add(count, Ordering::Relaxed);
     }
 
@@ -205,13 +268,16 @@ impl SourceTelemetry {
         info!(
             target: "e_navigator_sources_ebpf_aya::source_telemetry",
             source = self.source,
+            event_transport = snapshot.event_transport,
             initialized = snapshot.initialized,
             decoded_samples = snapshot.decoded_samples,
             filtered_samples = snapshot.filtered_samples,
             invalid_samples = snapshot.invalid_samples,
             sent_signals = snapshot.sent_signals,
             send_failures = snapshot.send_failures,
+            lost_transport_events = snapshot.lost_transport_events,
             lost_perf_events = snapshot.lost_perf_events,
+            ring_buffer_reservation_failures = snapshot.ring_buffer_reservation_failures,
             diagnostic_matches = snapshot.diagnostic_matches,
             diagnostic_filtered = snapshot.diagnostic_filtered,
             diagnostic_exhausted = snapshot.diagnostic_exhausted,
@@ -285,13 +351,18 @@ pub fn source_telemetry_snapshots() -> Vec<SourceTelemetrySnapshot> {
 fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceTelemetrySnapshot {
     SourceTelemetrySnapshot {
         source,
+        event_transport: counters.event_transport,
         initialized: counters.initialized.load(Ordering::Relaxed) != 0,
         decoded_samples: counters.decoded_samples.load(Ordering::Relaxed),
         filtered_samples: counters.filtered_samples.load(Ordering::Relaxed),
         invalid_samples: counters.invalid_samples.load(Ordering::Relaxed),
         sent_signals: counters.sent_signals.load(Ordering::Relaxed),
         send_failures: counters.send_failures.load(Ordering::Relaxed),
+        lost_transport_events: counters.lost_transport_events.load(Ordering::Relaxed),
         lost_perf_events: counters.lost_perf_events.load(Ordering::Relaxed),
+        ring_buffer_reservation_failures: counters
+            .ring_buffer_reservation_failures
+            .load(Ordering::Relaxed),
         diagnostic_matches: counters.diagnostic_matches.load(Ordering::Relaxed),
         diagnostic_filtered: counters.diagnostic_filtered.load(Ordering::Relaxed),
         diagnostic_exhausted: counters.diagnostic_exhausted.load(Ordering::Relaxed),
@@ -315,13 +386,16 @@ impl SourceTelemetrySnapshot {
     const fn empty(source: &'static str) -> Self {
         Self {
             source,
+            event_transport: "unknown",
             initialized: false,
             decoded_samples: 0,
             filtered_samples: 0,
             invalid_samples: 0,
             sent_signals: 0,
             send_failures: 0,
+            lost_transport_events: 0,
             lost_perf_events: 0,
+            ring_buffer_reservation_failures: 0,
             diagnostic_matches: 0,
             diagnostic_filtered: 0,
             diagnostic_exhausted: 0,
@@ -338,6 +412,7 @@ impl SourceTelemetrySnapshot {
     fn delta_since(self, previous: Self) -> Self {
         Self {
             source: self.source,
+            event_transport: self.event_transport,
             initialized: self.initialized,
             decoded_samples: self
                 .decoded_samples
@@ -350,9 +425,15 @@ impl SourceTelemetrySnapshot {
                 .saturating_sub(previous.invalid_samples),
             sent_signals: self.sent_signals.saturating_sub(previous.sent_signals),
             send_failures: self.send_failures.saturating_sub(previous.send_failures),
+            lost_transport_events: self
+                .lost_transport_events
+                .saturating_sub(previous.lost_transport_events),
             lost_perf_events: self
                 .lost_perf_events
                 .saturating_sub(previous.lost_perf_events),
+            ring_buffer_reservation_failures: self
+                .ring_buffer_reservation_failures
+                .saturating_sub(previous.ring_buffer_reservation_failures),
             diagnostic_matches: self
                 .diagnostic_matches
                 .saturating_sub(previous.diagnostic_matches),
@@ -392,7 +473,9 @@ impl SourceTelemetrySnapshot {
             && self.invalid_samples == 0
             && self.sent_signals == 0
             && self.send_failures == 0
+            && self.lost_transport_events == 0
             && self.lost_perf_events == 0
+            && self.ring_buffer_reservation_failures == 0
             && self.diagnostic_matches == 0
             && self.diagnostic_filtered == 0
             && self.diagnostic_exhausted == 0
@@ -447,6 +530,7 @@ mod tests {
         telemetry.record_sent_signal();
         telemetry.record_send_failure();
         telemetry.record_lost_perf_events(3);
+        telemetry.record_ring_buffer_reservation_failures(2);
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Matched);
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Filtered);
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Exhausted);
@@ -459,7 +543,9 @@ mod tests {
         assert_eq!(snapshot.invalid_samples, 1);
         assert_eq!(snapshot.sent_signals, 1);
         assert_eq!(snapshot.send_failures, 1);
+        assert_eq!(snapshot.lost_transport_events, 5);
         assert_eq!(snapshot.lost_perf_events, 3);
+        assert_eq!(snapshot.ring_buffer_reservation_failures, 2);
         assert_eq!(snapshot.diagnostic_matches, 1);
         assert_eq!(snapshot.diagnostic_filtered, 1);
         assert_eq!(snapshot.diagnostic_exhausted, 1);
@@ -468,9 +554,13 @@ mod tests {
         assert_eq!(first_delta.decoded_samples, 1);
         assert_eq!(first_delta.filtered_samples, 1);
         assert_eq!(first_delta.lost_perf_events, 3);
+        assert_eq!(first_delta.lost_transport_events, 5);
+        assert_eq!(first_delta.ring_buffer_reservation_failures, 2);
         let empty_delta = telemetry.take_summary_delta();
         assert_eq!(empty_delta.decoded_samples, 0);
         assert_eq!(empty_delta.lost_perf_events, 0);
+        assert_eq!(empty_delta.lost_transport_events, 0);
+        assert_eq!(empty_delta.ring_buffer_reservation_failures, 0);
 
         let cumulative = telemetry.snapshot_for_test();
         assert_eq!(cumulative.decoded_samples, 1);

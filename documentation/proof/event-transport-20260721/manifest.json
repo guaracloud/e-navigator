@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "run_id": "event-transport-20260721",
+  "decision": "runtime-proven-without-overhead-win",
+  "proof_level": "local-and-homelab",
+  "started_at_utc": "2026-07-21T21:03:17Z",
+  "ended_at_utc": "2026-07-21T21:37:20Z",
+  "repository": {
+    "branch": "codex/ring-buffer-transport",
+    "base_commit": "8f91c6e088dd073c89164968703c1eeb72082e0d",
+    "runtime_patch_sha256": "cafa0ef722ecf5a106f9fe3e79a9460bda1a2312e89ac9652ee1672e7c50bd5c",
+    "pushed": false,
+    "released": false
+  },
+  "cluster": {
+    "context": "homelab",
+    "server": "https://192.168.50.132:6443",
+    "kubernetes": "v1.30.4+k3s1",
+    "nodes": ["homelab-01", "homelab-02"],
+    "os": "NixOS 24.05",
+    "architecture": "linux/amd64",
+    "kernel": "6.6.68",
+    "runtime": "containerd 1.7.20-k3s1"
+  },
+  "image": {
+    "reference": "docker.io/library/e-navigator:gap1-20260721",
+    "manifest_sha256": "dfea79f89390ed4f306243dedc6f4aecc53c4bb921481bd9ab41e1a930c85035",
+    "oci_archive_sha256": "9602a8c2e760caedf7d5f7708c0ab343ca85196c79612f744959ee0b93fd438d",
+    "distribution": "loaded directly into both homelab containerd stores; never pushed"
+  },
+  "method": {
+    "arms": ["no benchmark agent", "forced perf buffer", "forced ring buffer"],
+    "repetitions_per_arm": 3,
+    "seconds_per_run": 180,
+    "counterbalanced": true,
+    "enabled_aya_sources": ["exec", "network"]
+  },
+  "results": {
+    "ring_loaded_on_all_nodes": true,
+    "perf_loaded_on_all_nodes": true,
+    "transport_loss_observed": false,
+    "ring_overhead_win_claimed": false,
+    "older_kernel_fallback_runtime_proven": false,
+    "full_quality_passed": true
+  },
+  "cleanup": {
+    "benchmark_release_removed": true,
+    "benchmark_workloads_removed": true,
+    "standing_argocd_application_restored": true,
+    "standing_daemonset_ready": true,
+    "imported_image_removed": true,
+    "benchmark_namespace_removed": true,
+    "production_context_touched": false
+  },
+  "artifacts": ["manifest.json", "report.md", "runs.json", "SHA256SUMS"]
+}

@@ -821,21 +821,16 @@ fn now_unix_nanos() -> u64 {
 #[cfg(target_os = "linux")]
 mod platform {
     use crate::diagnostics::{DiagnosticSampleDecision, SourceDiagnostics};
-    use crate::perf_sample::perf_sample_bytes;
     use crate::reader_shutdown::ReaderShutdown;
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
-        Ebpf, EbpfLoader, include_bytes_aligned,
-        maps::{
-            MapData, PerCpuArray,
-            perf::{PerfEvent, PerfEventArray},
-        },
+        Ebpf,
+        maps::{MapData, PerCpuArray},
         programs::TracePoint,
-        util::online_cpus,
     };
     use e_navigator_core::{
-        CoreError, CoreResult, HttpSourceConfig, ModuleKind, ModuleMetadata, Source,
+        CoreError, CoreResult, EbpfConfig, HttpSourceConfig, ModuleKind, ModuleMetadata, Source,
     };
     use e_navigator_protocol::ProtocolExtractionConfig;
     use e_navigator_signals::{SignalEnvelope, SignalPayload};
@@ -852,6 +847,7 @@ mod platform {
         procfs_root: PathBuf,
         protocol_config: ProtocolExtractionConfig,
         inbound_enabled: bool,
+        ebpf: EbpfConfig,
     }
 
     impl AyaHttpSource {
@@ -862,7 +858,13 @@ mod platform {
                 procfs_root,
                 protocol_config: protocol_config(config),
                 inbound_enabled,
+                ebpf: EbpfConfig::default(),
             }
+        }
+
+        pub fn with_ebpf_config(mut self, ebpf: EbpfConfig) -> Self {
+            self.ebpf = ebpf;
+            self
         }
     }
 
@@ -877,20 +879,19 @@ mod platform {
             let shutdown = ReaderShutdown::new();
             let mut reader_handles = Vec::new();
             let diagnostics = SourceDiagnostics::from_env();
-            let telemetry = Arc::new(SourceTelemetry::new("source.aya_http"));
-            let diagnostics_enabled = u8::from(diagnostics.enabled());
-            let mut loader = EbpfLoader::new();
-            loader.override_global("SOURCE_DIAGNOSTICS_ENABLED", &diagnostics_enabled, true);
-            crate::ebpf_maps::constrain_unrelated_maps(
-                &mut loader,
+            let diagnostics_enabled: &'static u8 = if diagnostics.enabled() { &1 } else { &0 };
+            let (mut ebpf, transport) = crate::event_transport::load_ebpf_with(
+                &self.ebpf,
                 crate::ebpf_maps::SourceMapProfile::Http,
-            );
-            let mut ebpf = loader
-                .load(include_bytes_aligned!(concat!(
-                    env!("OUT_DIR"),
-                    "/e-navigator-ebpf-programs"
-                )))
-                .map_err(module_error)?;
+                "source.aya_http",
+                |loader| {
+                    loader.override_global("SOURCE_DIAGNOSTICS_ENABLED", diagnostics_enabled, true);
+                },
+            )?;
+            let telemetry = Arc::new(SourceTelemetry::new_with_transport(
+                "source.aya_http",
+                transport.kind.as_str(),
+            ));
 
             attach_tracepoint(
                 &mut ebpf,
@@ -1021,16 +1022,23 @@ mod platform {
                 reader_handles.push(handle);
             }
 
-            let mut perf_array = PerfEventArray::try_from(
-                ebpf.take_map("HTTP_REQUEST_EVENTS")
-                    .ok_or_else(|| CoreError::ModuleFailed {
-                        module: "source.aya_http".to_string(),
-                        message: "missing HTTP_REQUEST_EVENTS map".to_string(),
-                    })?,
-            )
-            .map_err(module_error)?;
+            let http_events = crate::event_transport::take_event_map(
+                &mut ebpf,
+                "HTTP_REQUEST_EVENTS",
+                transport,
+                "source.aya_http",
+            )?;
+            if let Some(handle) = crate::event_transport::spawn_transport_loss_reader(
+                &mut ebpf,
+                crate::ebpf_maps::SourceMapProfile::Http,
+                transport,
+                "source.aya_http",
+                shutdown.clone(),
+                telemetry.clone(),
+            )? {
+                reader_handles.push(handle);
+            }
 
-            let cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
             let reassembler = Arc::new(Mutex::new(super::HttpRequestReassembler::new(
                 super::MAX_HTTP_REASSEMBLY_STREAMS,
                 self.protocol_config.max_header_bytes,
@@ -1038,143 +1046,89 @@ mod platform {
             let container_cache = Arc::new(Mutex::new(crate::procfs::ContainerContextCache::new(
                 super::MAX_HTTP_CONTAINER_CACHE_ENTRIES,
             )));
-            for cpu_id in cpus {
-                let mut buffer = perf_array
-                    .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
-                    .map_err(module_error)?;
-                let cpu_tx = tx.clone();
-                let host = self.host.clone();
-                let procfs_root = self.procfs_root.clone();
-                let protocol_config = self.protocol_config;
-                let reader_shutdown = shutdown.clone();
-                let diagnostics = diagnostics.clone();
-                let telemetry = telemetry.clone();
-                let reassembler = reassembler.clone();
-                let container_cache = container_cache.clone();
+            reader_handles.extend(crate::event_transport::spawn_event_readers(
+                http_events,
+                "source.aya_http",
+                "http_request",
+                super::PERF_BUFFER_PAGE_COUNT,
+                shutdown.clone(),
+                telemetry.clone(),
+                || {
+                    let cpu_tx = tx.clone();
+                    let host = self.host.clone();
+                    let procfs_root = self.procfs_root.clone();
+                    let protocol_config = self.protocol_config;
+                    let diagnostics = diagnostics.clone();
+                    let telemetry = telemetry.clone();
+                    let reassembler = reassembler.clone();
+                    let container_cache = container_cache.clone();
+                    move |bytes| {
+                        let observed_unix_nanos = super::now_unix_nanos();
+                        let decoded = super::decode_raw_http_event(bytes).and_then(|raw| {
+                            super::compact_raw_http_request(&raw).map(|captured| {
+                                let outcome = reassembler
+                                    .lock()
+                                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                    .push(&raw, &captured, observed_unix_nanos, &protocol_config);
+                                (raw, outcome)
+                            })
+                        });
 
-                reader_handles.push(tokio::task::spawn_blocking(move || {
-                    let mut closed = false;
-
-                    while !reader_shutdown.is_stopped() {
-                        if crate::perf_reader::wait_for_events(
-                            &buffer,
-                            "source.aya_http",
-                            cpu_id,
-                        ) != Some(true)
-                        {
-                            continue;
-                        }
-                        buffer.for_each(|event| {
-                            if closed {
-                                return;
-                            }
-
-                            match event {
-                                PerfEvent::Sample { head, tail } => {
-                                    let bytes = perf_sample_bytes(head, tail);
-                                    let observed_unix_nanos = super::now_unix_nanos();
-                                    let decoded = super::decode_raw_http_event(&bytes).and_then(
-                                        |raw| {
-                                            super::compact_raw_http_request(&raw).map(|captured| {
-                                            let outcome = reassembler
-                                                .lock()
-                                                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                                                .push(
-                                                    &raw,
-                                                    &captured,
-                                                    observed_unix_nanos,
-                                                    &protocol_config,
-                                                );
-                                            (raw, outcome)
-                                            })
-                                        },
+                        let mut keep_reading = true;
+                        match decoded {
+                            Err(err) => record_invalid(&telemetry, &diagnostics, err),
+                            Ok((raw, outcome)) => {
+                                if outcome.evicted_streams > 0 {
+                                    telemetry.record_invalid_sample();
+                                    warn!(
+                                        evicted_streams = outcome.evicted_streams,
+                                        max_streams = super::MAX_HTTP_REASSEMBLY_STREAMS,
+                                        "bounded HTTP reassembly evicted connection state"
                                     );
-
-                                    match decoded {
+                                }
+                                for err in outcome.errors {
+                                    record_invalid(&telemetry, &diagnostics, err);
+                                }
+                                let container = (!outcome.requests.is_empty())
+                                    .then(|| {
+                                        container_cache
+                                            .lock()
+                                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                            .resolve(&procfs_root, raw.pid, raw.cgroup_id)
+                                    })
+                                    .flatten();
+                                for request in outcome.requests {
+                                    match super::raw_http_request_parts_to_signal_with_container(
+                                        &raw,
+                                        &request,
+                                        host.clone(),
+                                        observed_unix_nanos,
+                                        container.clone(),
+                                        &protocol_config,
+                                    ) {
+                                        Ok(signal) => {
+                                            telemetry.record_decoded_sample();
+                                            let decision =
+                                                log_signal_diagnostic(&diagnostics, &signal);
+                                            telemetry.record_diagnostic_decision(decision);
+                                            if cpu_tx.blocking_send(signal).is_err() {
+                                                telemetry.record_send_failure();
+                                                keep_reading = false;
+                                                break;
+                                            }
+                                            telemetry.record_sent_signal();
+                                        }
                                         Err(err) => {
                                             record_invalid(&telemetry, &diagnostics, err);
                                         }
-                                        Ok((raw, outcome)) => {
-                                            if outcome.evicted_streams > 0 {
-                                                telemetry.record_invalid_sample();
-                                                warn!(
-                                                    evicted_streams = outcome.evicted_streams,
-                                                    max_streams = super::MAX_HTTP_REASSEMBLY_STREAMS,
-                                                    "bounded HTTP reassembly evicted connection state"
-                                                );
-                                            }
-                                            for err in outcome.errors {
-                                                record_invalid(&telemetry, &diagnostics, err);
-                                            }
-                                            let container = (!outcome.requests.is_empty())
-                                                .then(|| {
-                                                    container_cache
-                                                        .lock()
-                                                        .unwrap_or_else(|poisoned| {
-                                                            poisoned.into_inner()
-                                                        })
-                                                        .resolve(
-                                                            &procfs_root,
-                                                            raw.pid,
-                                                            raw.cgroup_id,
-                                                        )
-                                                })
-                                                .flatten();
-                                            for request in outcome.requests {
-                                                match super::raw_http_request_parts_to_signal_with_container(
-                                                    &raw,
-                                                    &request,
-                                                    host.clone(),
-                                                    observed_unix_nanos,
-                                                    container.clone(),
-                                                    &protocol_config,
-                                                ) {
-                                                    Ok(signal) => {
-                                                        telemetry.record_decoded_sample();
-                                                        let diagnostic_decision =
-                                                            log_signal_diagnostic(
-                                                                &diagnostics,
-                                                                &signal,
-                                                            );
-                                                        telemetry.record_diagnostic_decision(
-                                                            diagnostic_decision,
-                                                        );
-                                                        if cpu_tx
-                                                            .blocking_send(signal)
-                                                            .is_err()
-                                                        {
-                                                            telemetry.record_send_failure();
-                                                            closed = true;
-                                                            break;
-                                                        }
-                                                        telemetry.record_sent_signal();
-                                                    }
-                                                    Err(err) => {
-                                                        record_invalid(
-                                                            &telemetry,
-                                                            &diagnostics,
-                                                            err,
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                        }
                                     }
                                 }
-                                PerfEvent::Lost { count } => {
-                                    telemetry.record_lost_perf_events(count);
-                                    warn!(count, "lost http request perf events");
-                                }
                             }
-                            telemetry.maybe_log_summary();
-                        });
-
-                        if closed {
-                            return;
                         }
+                        keep_reading
                     }
-                }));
-            }
+                },
+            )?);
 
             if diagnostics.enabled() {
                 info!(
@@ -1406,7 +1360,7 @@ mod platform {
 mod platform {
     use async_trait::async_trait;
     use e_navigator_core::{
-        CoreError, CoreResult, HttpSourceConfig, ModuleKind, ModuleMetadata, Source,
+        CoreError, CoreResult, EbpfConfig, HttpSourceConfig, ModuleKind, ModuleMetadata, Source,
     };
     use e_navigator_signals::SignalEnvelope;
     use tokio::sync::mpsc;
@@ -1416,6 +1370,7 @@ mod platform {
         host: Option<String>,
         _procfs_root: std::path::PathBuf,
         _config: HttpSourceConfig,
+        _ebpf: EbpfConfig,
     }
 
     impl AyaHttpSource {
@@ -1428,7 +1383,13 @@ mod platform {
                 host,
                 _procfs_root: procfs_root,
                 _config: config,
+                _ebpf: EbpfConfig::default(),
             }
+        }
+
+        pub fn with_ebpf_config(mut self, ebpf: EbpfConfig) -> Self {
+            self._ebpf = ebpf;
+            self
         }
     }
 

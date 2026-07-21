@@ -125,6 +125,14 @@ E-Navigator does not currently claim:
   migration, including flow-attribution warning proof;
 - production collector/backend compatibility beyond recorded local or
   namespace-local Collector proof;
+- a RingBuf performance win over the perf-event transport (the 2026-07-21
+  homelab A/B proved both transports for the enabled exec/network slice with
+  zero observed transport loss, but RingBuf measured 0.56% lower application
+  throughput, 1.46% higher mean latency, 11.40% higher two-pod agent CPU, and
+  4.45% lower two-pod RSS in three short runs; the application movements were
+  within noisy run variance and do not support a win claim);
+- runtime proof of the automatic perf fallback on an old kernel (the selection
+  matrix is unit-tested, but both homelab nodes support RingBuf on Linux 6.6);
 - reduced overhead versus another observability stack;
 - reduced-privilege or non-root eBPF operation;
 - complete attribution for every host process, packet, profile sample, or

@@ -37,11 +37,14 @@ pub(crate) fn build_registry(
 
     match source {
         SourceMode::Unified | SourceMode::AyaExec if config.module_enabled("source.aya_exec") => {
-            registry = registry.with_source(Box::new(AyaExecSource::new(
-                host.clone(),
-                config.argv_capture.clone(),
-                config.attribution.procfs_root.clone(),
-            )));
+            registry = registry.with_source(Box::new(
+                AyaExecSource::new(
+                    host.clone(),
+                    config.argv_capture.clone(),
+                    config.attribution.procfs_root.clone(),
+                )
+                .with_ebpf_config(config.ebpf.clone()),
+            ));
         }
         SourceMode::Synthetic if config.module_enabled("source.synthetic_exec") => {
             registry = registry.with_source(Box::new(SyntheticExecSource { host: host.clone() }));
@@ -52,50 +55,62 @@ pub(crate) fn build_registry(
     if matches!(source, SourceMode::Unified | SourceMode::AyaExec)
         && config.module_enabled("source.aya_network")
     {
-        registry = registry.with_source(Box::new(AyaNetworkSource::new(
-            host.clone(),
-            config.attribution.procfs_root.clone(),
-        )));
+        registry = registry.with_source(Box::new(
+            AyaNetworkSource::new(host.clone(), config.attribution.procfs_root.clone())
+                .with_ebpf_config(config.ebpf.clone()),
+        ));
     }
 
     if matches!(source, SourceMode::Unified | SourceMode::AyaExec)
         && config.module_enabled("source.aya_dns")
     {
-        registry = registry.with_source(Box::new(AyaDnsSource::new(
-            host.clone(),
-            config.attribution.procfs_root.clone(),
-            config.dns_source.clone(),
-        )));
+        registry = registry.with_source(Box::new(
+            AyaDnsSource::new(
+                host.clone(),
+                config.attribution.procfs_root.clone(),
+                config.dns_source.clone(),
+            )
+            .with_ebpf_config(config.ebpf.clone()),
+        ));
     }
 
     if matches!(source, SourceMode::Unified | SourceMode::AyaExec)
         && config.module_enabled("source.aya_http")
     {
-        registry = registry.with_source(Box::new(AyaHttpSource::new(
-            host.clone(),
-            config.attribution.procfs_root.clone(),
-            config.http_source.clone(),
-        )));
+        registry = registry.with_source(Box::new(
+            AyaHttpSource::new(
+                host.clone(),
+                config.attribution.procfs_root.clone(),
+                config.http_source.clone(),
+            )
+            .with_ebpf_config(config.ebpf.clone()),
+        ));
     }
 
     if matches!(source, SourceMode::Unified | SourceMode::AyaExec)
         && config.module_enabled("source.aya_protocol")
     {
-        registry = registry.with_source(Box::new(AyaProtocolSource::new(
-            host.clone(),
-            config.attribution.procfs_root.clone(),
-            config.protocol_source.clone(),
-        )));
+        registry = registry.with_source(Box::new(
+            AyaProtocolSource::new(
+                host.clone(),
+                config.attribution.procfs_root.clone(),
+                config.protocol_source.clone(),
+            )
+            .with_ebpf_config(config.ebpf.clone()),
+        ));
     }
 
     if matches!(source, SourceMode::Unified | SourceMode::AyaExec)
         && config.module_enabled("source.aya_tls")
     {
-        registry = registry.with_source(Box::new(AyaTlsSource::new(
-            host.clone(),
-            config.attribution.procfs_root.clone(),
-            config.tls_source.clone(),
-        )));
+        registry = registry.with_source(Box::new(
+            AyaTlsSource::new(
+                host.clone(),
+                config.attribution.procfs_root.clone(),
+                config.tls_source.clone(),
+            )
+            .with_ebpf_config(config.ebpf.clone()),
+        ));
     }
 
     if matches!(source, SourceMode::Unified | SourceMode::AyaExec)
@@ -111,11 +126,14 @@ pub(crate) fn build_registry(
         && config.cpu_profile_source.enabled
         && config.module_enabled("source.aya_cpu_profile")
     {
-        registry = registry.with_source(Box::new(AyaCpuProfileSource::new(
-            host.clone(),
-            config.attribution.procfs_root.clone(),
-            config.cpu_profile_source.clone(),
-        )));
+        registry = registry.with_source(Box::new(
+            AyaCpuProfileSource::new(
+                host.clone(),
+                config.attribution.procfs_root.clone(),
+                config.cpu_profile_source.clone(),
+            )
+            .with_ebpf_config(config.ebpf.clone()),
+        ));
     }
 
     if config.module_enabled("processor.container_attribution") {
@@ -244,7 +262,7 @@ fn aya_source_telemetry_lines(
                 labels: labels.clone(),
                 value: value.to_string(),
             };
-            [
+            let mut lines = vec![
                 metric(
                     "e_navigator_ebpf_source_initialized",
                     u64::from(snapshot.initialized),
@@ -270,8 +288,16 @@ fn aya_source_telemetry_lines(
                     snapshot.send_failures,
                 ),
                 metric(
+                    "e_navigator_ebpf_source_lost_transport_events_total",
+                    snapshot.lost_transport_events,
+                ),
+                metric(
                     "e_navigator_ebpf_source_lost_perf_events_total",
                     snapshot.lost_perf_events,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_ring_buffer_reservation_failures_total",
+                    snapshot.ring_buffer_reservation_failures,
                 ),
                 metric(
                     "e_navigator_ebpf_source_diagnostic_matches_total",
@@ -313,7 +339,19 @@ fn aya_source_telemetry_lines(
                     "e_navigator_ebpf_source_optional_capacity_rejections_total",
                     snapshot.optional_capacity_rejections,
                 ),
-            ]
+            ];
+            lines.push(PrometheusMetricLine {
+                name: "e_navigator_ebpf_source_event_transport".to_string(),
+                labels: std::collections::BTreeMap::from([
+                    ("source".to_string(), snapshot.source.to_string()),
+                    (
+                        "transport".to_string(),
+                        snapshot.event_transport.to_string(),
+                    ),
+                ]),
+                value: "1".to_string(),
+            });
+            lines
         })
         .collect()
 }
@@ -598,13 +636,16 @@ mod tests {
         let lines = aya_source_telemetry_lines(
             [e_navigator_sources_ebpf_aya::SourceTelemetrySnapshot {
                 source: "source.aya_exec",
+                event_transport: "ring_buffer",
                 initialized: true,
                 decoded_samples: 3,
                 filtered_samples: 5,
                 invalid_samples: 1,
                 sent_signals: 2,
                 send_failures: 1,
+                lost_transport_events: 6,
                 lost_perf_events: 4,
+                ring_buffer_reservation_failures: 2,
                 diagnostic_matches: 1,
                 diagnostic_filtered: 1,
                 diagnostic_exhausted: 0,
@@ -619,7 +660,7 @@ mod tests {
             .into_iter(),
         );
 
-        assert_eq!(lines.len(), 17);
+        assert_eq!(lines.len(), 20);
         assert!(
             lines.iter().all(
                 |line| line.labels.get("source").map(String::as_str) == Some("source.aya_exec")
@@ -627,6 +668,17 @@ mod tests {
         );
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_lost_perf_events_total" && line.value == "4"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_lost_transport_events_total" && line.value == "6"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_ring_buffer_reservation_failures_total"
+                && line.value == "2"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_event_transport"
+                && line.labels.get("transport").map(String::as_str) == Some("ring_buffer")
         }));
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_filtered_samples_total" && line.value == "5"

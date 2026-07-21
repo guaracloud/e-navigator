@@ -13,6 +13,7 @@ pub mod dns;
 mod ebpf_capture_policy;
 #[cfg(target_os = "linux")]
 mod ebpf_maps;
+mod event_transport;
 pub mod exec;
 pub mod http;
 pub mod network;
@@ -20,6 +21,8 @@ pub mod network;
 mod perf_reader;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 mod perf_sample;
+#[cfg(feature = "fuzzing")]
+pub use event_transport::bench_ring_sample_handoff;
 #[cfg(feature = "fuzzing")]
 pub use perf_sample::{bench_inline_sample, bench_perf_sample_into_owned};
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]

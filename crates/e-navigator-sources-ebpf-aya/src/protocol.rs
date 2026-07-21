@@ -1866,17 +1866,16 @@ mod platform {
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
     use aya::{
-        Ebpf, EbpfLoader, include_bytes_aligned,
+        Ebpf,
         maps::{
             Array as AyaArray, HashMap as AyaHashMap, MapData, PerCpuArray,
-            ProgramArray as AyaProgramArray,
-            perf::{PerfEvent, PerfEventArray},
+            ProgramArray as AyaProgramArray, perf::PerfEvent,
         },
         programs::TracePoint,
         util::online_cpus,
     };
     use e_navigator_core::{
-        CoreError, CoreResult, ModuleKind, ModuleMetadata, ProtocolSourceConfig, Source,
+        CoreError, CoreResult, EbpfConfig, ModuleKind, ModuleMetadata, ProtocolSourceConfig, Source,
     };
     use e_navigator_signals::{SignalEnvelope, SignalPayload};
     use std::{path::PathBuf, sync::Arc};
@@ -1909,6 +1908,7 @@ mod platform {
         host: Option<String>,
         procfs_root: PathBuf,
         config: ProtocolSourceConfig,
+        ebpf: EbpfConfig,
     }
 
     impl AyaProtocolSource {
@@ -1921,7 +1921,13 @@ mod platform {
                 host,
                 procfs_root,
                 config,
+                ebpf: EbpfConfig::default(),
             }
+        }
+
+        pub fn with_ebpf_config(mut self, ebpf: EbpfConfig) -> Self {
+            self.ebpf = ebpf;
+            self
         }
     }
 
@@ -1951,20 +1957,19 @@ mod platform {
             let shutdown = ReaderShutdown::new();
             let mut reader_handles = Vec::new();
             let diagnostics = SourceDiagnostics::from_env();
-            let telemetry = Arc::new(SourceTelemetry::new("source.aya_protocol"));
-            let diagnostics_enabled = u8::from(diagnostics.enabled());
-            let mut loader = EbpfLoader::new();
-            loader.override_global("SOURCE_DIAGNOSTICS_ENABLED", &diagnostics_enabled, true);
-            crate::ebpf_maps::constrain_unrelated_maps(
-                &mut loader,
+            let diagnostics_enabled: &'static u8 = if diagnostics.enabled() { &1 } else { &0 };
+            let (mut ebpf, transport) = crate::event_transport::load_ebpf_with(
+                &self.ebpf,
                 crate::ebpf_maps::SourceMapProfile::Protocol,
-            );
-            let mut ebpf = loader
-                .load(include_bytes_aligned!(concat!(
-                    env!("OUT_DIR"),
-                    "/e-navigator-ebpf-programs"
-                )))
-                .map_err(module_error)?;
+                "source.aya_protocol",
+                |loader| {
+                    loader.override_global("SOURCE_DIAGNOSTICS_ENABLED", diagnostics_enabled, true);
+                },
+            )?;
+            let telemetry = Arc::new(SourceTelemetry::new_with_transport(
+                "source.aya_protocol",
+                transport.kind.as_str(),
+            ));
 
             populate_capture_ports(&mut ebpf, &self.config)?;
             populate_capture_limit(&mut ebpf, &self.config)?;
@@ -2131,94 +2136,141 @@ mod platform {
                 reader_handles.push(handle);
             }
 
-            let mut perf_array = PerfEventArray::try_from(
-                ebpf.take_map("PROTOCOL_DATA_EVENTS")
-                    .ok_or_else(|| CoreError::ModuleFailed {
-                        module: "source.aya_protocol".to_string(),
-                        message: "missing PROTOCOL_DATA_EVENTS map".to_string(),
-                    })?,
-            )
-            .map_err(module_error)?;
+            let protocol_events = crate::event_transport::take_event_map(
+                &mut ebpf,
+                "PROTOCOL_DATA_EVENTS",
+                transport,
+                "source.aya_protocol",
+            )?;
+            if let Some(handle) = crate::event_transport::spawn_transport_loss_reader(
+                &mut ebpf,
+                crate::ebpf_maps::SourceMapProfile::Protocol,
+                transport,
+                "source.aya_protocol",
+                shutdown.clone(),
+                telemetry.clone(),
+            )? {
+                reader_handles.push(handle);
+            }
 
             // Reassembly is stateful per connection while perf samples arrive
             // per CPU, so all readers feed a single decoder task.
-            let cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
-            let reader_count = cpus.len();
             let (sample_tx, mut sample_rx) =
                 mpsc::channel::<super::ProtocolPerfMessage>(super::RAW_SAMPLE_CHANNEL_CAPACITY);
+            let reader_count = match protocol_events {
+                crate::event_transport::EventMap::Perf(mut perf_array) => {
+                    let cpus = online_cpus().map_err(|(_, err)| module_error(err))?;
+                    let reader_count = cpus.len();
+                    for (reader_index, cpu_id) in cpus.into_iter().enumerate() {
+                        let mut buffer = perf_array
+                            .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
+                            .map_err(module_error)?;
+                        let reader_shutdown = shutdown.clone();
+                        let telemetry = telemetry.clone();
+                        let sample_tx = sample_tx.clone();
 
-            for (reader_index, cpu_id) in cpus.into_iter().enumerate() {
-                let mut buffer = perf_array
-                    .open(cpu_id, Some(super::PERF_BUFFER_PAGE_COUNT))
-                    .map_err(module_error)?;
-                let reader_shutdown = shutdown.clone();
-                let telemetry = telemetry.clone();
-                let sample_tx = sample_tx.clone();
-
-                reader_handles.push(tokio::task::spawn_blocking(move || {
-                    let mut closed = false;
-
-                    while !reader_shutdown.is_stopped() {
-                        let Some(readable) = crate::perf_reader::wait_for_events(
-                            &buffer,
-                            "source.aya_protocol",
-                            cpu_id,
-                        ) else {
-                            continue;
-                        };
-                        // Take the watermark before draining. Every event
-                        // older than this point was already available to the
-                        // ring consumer and is sent before the watermark.
-                        let poll_started_monotonic_nanos = monotonic_nanos();
-                        if readable {
-                            buffer.for_each(|event| {
+                        reader_handles.push(tokio::task::spawn_blocking(move || {
+                            let mut closed = false;
+                            while !reader_shutdown.is_stopped() {
+                                let Some(readable) = crate::perf_reader::wait_for_events(
+                                    &buffer,
+                                    "source.aya_protocol",
+                                    cpu_id,
+                                ) else {
+                                    continue;
+                                };
+                                let poll_started_monotonic_nanos = monotonic_nanos();
+                                if readable {
+                                    buffer.for_each(|event| {
+                                        if closed {
+                                            return;
+                                        }
+                                        match event {
+                                            PerfEvent::Sample { head, tail } => {
+                                                let Some(sample) =
+                                                    InlineSample::from_perf(head, tail)
+                                                else {
+                                                    telemetry.record_lost_perf_events(1);
+                                                    return;
+                                                };
+                                                if sample_tx
+                                                    .blocking_send(
+                                                        super::ProtocolPerfMessage::Sample(sample),
+                                                    )
+                                                    .is_err()
+                                                {
+                                                    closed = true;
+                                                }
+                                            }
+                                            PerfEvent::Lost { count } => {
+                                                telemetry.record_lost_perf_events(count);
+                                                warn!(count, "lost protocol data perf events");
+                                            }
+                                        }
+                                    });
+                                }
                                 if closed {
                                     return;
                                 }
-
-                                match event {
-                                    PerfEvent::Sample { head, tail } => {
-                                        // Copy into a fixed inline buffer so the
-                                        // hand-off to the decoder needs no
-                                        // per-event heap allocation. Oversized
-                                        // samples are dropped with accounting.
-                                        let Some(sample) = InlineSample::from_perf(head, tail)
-                                        else {
-                                            telemetry.record_lost_perf_events(1);
-                                            return;
-                                        };
-                                        if sample_tx
-                                            .blocking_send(super::ProtocolPerfMessage::Sample(
-                                                sample,
-                                            ))
-                                            .is_err()
-                                        {
-                                            closed = true;
-                                        }
-                                    }
-                                    PerfEvent::Lost { count } => {
-                                        telemetry.record_lost_perf_events(count);
-                                        warn!(count, "lost protocol data perf events");
+                                if sample_tx
+                                    .blocking_send(super::ProtocolPerfMessage::Watermark {
+                                        reader_index,
+                                        timestamp_monotonic_nanos: poll_started_monotonic_nanos,
+                                    })
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                            }
+                        }));
+                    }
+                    reader_count
+                }
+                crate::event_transport::EventMap::Ring(mut ring) => {
+                    let reader_shutdown = shutdown.clone();
+                    let telemetry = telemetry.clone();
+                    let sample_tx = sample_tx.clone();
+                    reader_handles.push(tokio::task::spawn_blocking(move || {
+                        while !reader_shutdown.is_stopped() {
+                            let Some(readable) = crate::perf_reader::wait_for_ring_events(
+                                &ring,
+                                "source.aya_protocol",
+                            ) else {
+                                continue;
+                            };
+                            let poll_started_monotonic_nanos = monotonic_nanos();
+                            if readable {
+                                while let Some(item) = ring.next() {
+                                    let Some(sample) = InlineSample::from_bytes(&item) else {
+                                        telemetry.record_invalid_sample();
+                                        warn!(
+                                            size = item.len(),
+                                            "oversized protocol ring-buffer event"
+                                        );
+                                        continue;
+                                    };
+                                    if sample_tx
+                                        .blocking_send(super::ProtocolPerfMessage::Sample(sample))
+                                        .is_err()
+                                    {
+                                        return;
                                     }
                                 }
-                            });
+                            }
+                            if sample_tx
+                                .blocking_send(super::ProtocolPerfMessage::Watermark {
+                                    reader_index: 0,
+                                    timestamp_monotonic_nanos: poll_started_monotonic_nanos,
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
                         }
-
-                        if closed {
-                            return;
-                        }
-                        if sample_tx
-                            .blocking_send(super::ProtocolPerfMessage::Watermark {
-                                reader_index,
-                                timestamp_monotonic_nanos: poll_started_monotonic_nanos,
-                            })
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                }));
-            }
+                    }));
+                    1
+                }
+            };
             drop(sample_tx);
 
             let decoder_host = self.host.clone();
@@ -2655,7 +2707,7 @@ mod platform {
 mod platform {
     use async_trait::async_trait;
     use e_navigator_core::{
-        CoreError, CoreResult, ModuleKind, ModuleMetadata, ProtocolSourceConfig, Source,
+        CoreError, CoreResult, EbpfConfig, ModuleKind, ModuleMetadata, ProtocolSourceConfig, Source,
     };
     use e_navigator_signals::SignalEnvelope;
     use tokio::sync::mpsc;
@@ -2665,6 +2717,7 @@ mod platform {
         host: Option<String>,
         _procfs_root: std::path::PathBuf,
         _config: ProtocolSourceConfig,
+        _ebpf: EbpfConfig,
     }
 
     impl AyaProtocolSource {
@@ -2677,7 +2730,13 @@ mod platform {
                 host,
                 _procfs_root: procfs_root,
                 _config: config,
+                _ebpf: EbpfConfig::default(),
             }
+        }
+
+        pub fn with_ebpf_config(mut self, ebpf: EbpfConfig) -> Self {
+            self._ebpf = ebpf;
+            self
         }
     }
 
