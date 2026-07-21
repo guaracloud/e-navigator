@@ -78,6 +78,18 @@ for transport in auto ring_buffer perf_buffer; do
   fi
 done
 
+if ! grep -q 'E_NAVIGATOR_HOMELAB_NETWORK_IO_HOOK' benchmarks/runner/homelab-collect.sh; then
+  echo "collector must expose the guarded network I/O hook override" >&2
+  exit 1
+fi
+
+for hook in auto fexit tracepoint; do
+  if ! grep -Fq "$hook" benchmarks/runner/homelab-collect.sh; then
+    echo "collector must validate network I/O hook mode: $hook" >&2
+    exit 1
+  fi
+done
+
 if ! grep -Fq 'operator: Exists' benchmarks/k8s/workload.yaml; then
   printf 'homelab workload template must tolerate homelab control-plane taints for symmetric proof scheduling\n' >&2
   exit 1
@@ -95,6 +107,16 @@ fi
 
 if ! grep -q 'E_NAVIGATOR_HOMELAB_WORKLOAD_TEMPLATE' benchmarks/runner/homelab-collect.sh; then
   printf 'homelab collector must expose an explicit workload template\n' >&2
+  exit 1
+fi
+
+if ! grep -q 'E_NAVIGATOR_HOMELAB_CONFIG_TEMPLATE' benchmarks/runner/homelab-collect.sh; then
+  echo "collector must expose a validated config-template override" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'homelab config template does not exist' benchmarks/runner/homelab-collect.sh; then
+  echo "collector must reject a missing config-template override" >&2
   exit 1
 fi
 

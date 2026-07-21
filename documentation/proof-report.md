@@ -197,6 +197,26 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   removed and the standing Argo CD application returned Synced/Healthy with its
   original digest-pinned DaemonSet 2/2 Ready.
 
+- BTF fexit network byte-accounting proof (2026-07-21, homelab k3s v1.30,
+  kernel 6.6.68, amd64, two NixOS nodes). Three counterbalanced 90-second runs
+  each compared no benchmark agent, forced syscall tracepoints, and forced
+  `ksys_read`/`ksys_write` fexit while holding RingBuf and the one-source agent
+  profile constant. A pinned Python workload issued exact 256-byte
+  `os.write`/`os.read` round trips over one tracked TCP connection. Every
+  enabled run emitted exactly one matching close event whose sent and received
+  totals equaled the workload total, and all six reported zero transport loss.
+  Fexit versus tracepoints measured +7.971% operations/s and -7.710% mean
+  latency, passing the predeclared +5% throughput and at-most +2% latency gates.
+  Fexit remained -7.045% operations/s versus no agent, kept two-pod agent CPU
+  effectively unchanged, and increased summed RSS from 20.611 to 34.000 MiB.
+  This proves and motivates the narrow scalar read/write hook selection; it is
+  not a mixed-workload, lower-memory, old-kernel-fallback, production, or
+  universal overhead claim. The numeric artifact and exact boundaries are in
+  `documentation/proof/kernel-hook-20260721/`. The local image was loaded
+  directly into homelab containerd and never pushed. Disposable resources were
+  removed, and the standing Argo CD application returned Synced/Healthy with
+  its original digest-pinned DaemonSet 2/2 Ready.
+
 - Capture-filter verifier-load and OrbStack live scoping proof (2026-07-07,
   OrbStack Docker plus its in-VM Kubernetes v1.34, arm64). The cgroup capture
   filter's in-kernel fast-path check verifier-loaded on every modified program:

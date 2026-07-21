@@ -12,6 +12,7 @@ shutdown_timeout_millis = 10000
 [ebpf]
 event_transport = "auto"
 ring_buffer_bytes = 262144
+network_io_hook = "auto"
 
 [argv_capture]
 enabled = false

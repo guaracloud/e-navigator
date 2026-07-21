@@ -107,7 +107,9 @@
             scopes which workloads are probed by Kubernetes namespace and label.
             Supported kernels use BPF ring buffers with explicit producer-loss
             accounting; a separately built perf-event path remains for older
-            kernels and strict diagnostics.
+            kernels and strict diagnostics. BTF-capable kernels also use
+            preflighted fexit hooks for scalar network read/write accounting,
+            with syscall tracepoints retained as the strict compatibility path.
           </p>
         </div>
         <div class="capability-grid">
@@ -136,10 +138,15 @@
             <h3>RingBuf with fail-closed fallback</h3>
             <p>Feature-probed RingBuf delivery and the old-kernel perf path expose one aggregate loss surface without claiming an unmeasured speedup.</p>
           </article>
+          <article class="capability">
+            <span class="capability-kicker">Kernel hooks</span>
+            <h3>Measured BTF fexit fast path</h3>
+            <p>Scalar network read/write accounting uses preflighted fexit where supported; a homelab A/B measured 7.971% more operations per second than tracepoints for that narrow workload.</p>
+          </article>
           <article class="capability capability-wide">
             <span class="capability-kicker">Boundaries</span>
             <h3>No hidden production claims</h3>
-            <p>Storage, UI, runtime pprof upload, broad collector compatibility, reduced privilege, and reduced overhead stay non-claims until directly proven.</p>
+            <p>Storage, UI, runtime pprof upload, broad collector compatibility, reduced privilege, and whole-stack overhead stay non-claims until directly proven.</p>
           </article>
         </div>
       </section>

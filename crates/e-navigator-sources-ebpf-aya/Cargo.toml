@@ -44,6 +44,7 @@ tracing = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { workspace = true }
+aya-obj = { workspace = true }
 libc = { workspace = true }
 object = { workspace = true }
 rustix = { workspace = true }

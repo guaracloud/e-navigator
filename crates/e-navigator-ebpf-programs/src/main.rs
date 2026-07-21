@@ -28,9 +28,9 @@ use aya_ebpf::{
             bpf_task_pt_regs,
         },
     },
-    macros::{map, perf_event, tracepoint, uprobe, uretprobe},
+    macros::{fexit, map, perf_event, tracepoint, uprobe, uretprobe},
     maps::{Array, HashMap, LruHashMap, PerCpuArray, ProgramArray},
-    programs::{PerfEventContext, ProbeContext, RetProbeContext, TracePointContext},
+    programs::{FExitContext, PerfEventContext, ProbeContext, RetProbeContext, TracePointContext},
 };
 use capture_policy::{CAPTURE_FILTER_DISABLED, capture_allowed, listener_metadata_allowed};
 use dns_peer::is_dns_ipv4_peer;
@@ -1277,6 +1277,27 @@ pub fn tracepoint_write_enter(ctx: TracePointContext) -> u32 {
 #[tracepoint]
 pub fn tracepoint_write_exit(ctx: TracePointContext) -> u32 {
     match try_tracepoint_network_io_exit(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+/// BTF-backed network byte accounting for `ksys_read`. The fourth fexit
+/// context slot is the target function's return value after its three
+/// arguments. Keeping this path independent of `bpf_get_func_ret` preserves
+/// the Linux 5.5 fexit compatibility floor.
+#[fexit]
+pub fn fexit_ksys_read(ctx: FExitContext) -> u32 {
+    match try_fexit_network_io(&ctx, NETWORK_IO_READ) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+/// BTF-backed network byte accounting for `ksys_write`.
+#[fexit]
+pub fn fexit_ksys_write(ctx: FExitContext) -> u32 {
+    match try_fexit_network_io(&ctx, NETWORK_IO_WRITE) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
@@ -3037,6 +3058,22 @@ fn try_tracepoint_network_io_exit(ctx: &TracePointContext) -> Result<u32, i64> {
         None => return Ok(0),
     };
     PENDING_NETWORK_IO.remove(&pid_tgid).ok();
+    complete_network_io(pending, retval)
+}
+
+fn try_fexit_network_io(ctx: &FExitContext, direction: u32) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let fd = ctx.arg::<u32>(0) as i32;
+    let retval = ctx.arg::<i64>(3);
+    let pending = PendingNetworkIo {
+        tgid: (pid_tgid >> 32) as u32,
+        fd,
+        direction,
+    };
+    complete_network_io(pending, retval)
+}
+
+fn complete_network_io(pending: PendingNetworkIo, retval: i64) -> Result<u32, i64> {
     if retval <= 0 {
         return Ok(0);
     }

@@ -363,7 +363,10 @@ mod platform {
     use crate::reader_shutdown::ReaderShutdown;
     use crate::source_telemetry::SourceTelemetry;
     use async_trait::async_trait;
-    use aya::{Ebpf, programs::TracePoint};
+    use aya::{
+        Btf, Ebpf,
+        programs::{FExit, TracePoint},
+    };
     use e_navigator_core::{CoreError, CoreResult, EbpfConfig, ModuleKind, ModuleMetadata, Source};
     use e_navigator_signals::{ContainerContext, KubernetesContext, SignalEnvelope, SignalPayload};
     use std::{path::PathBuf, sync::Arc};
@@ -403,6 +406,8 @@ mod platform {
             let shutdown = ReaderShutdown::new();
             let mut reader_handles = Vec::new();
             let diagnostics = SourceDiagnostics::from_env();
+            let network_io_hook =
+                crate::kernel_hook::resolve_network_io_hook(self.ebpf.network_io_hook)?;
             let (mut ebpf, transport) = crate::event_transport::load_ebpf(
                 &self.ebpf,
                 crate::ebpf_maps::SourceMapProfile::Network,
@@ -431,30 +436,7 @@ mod platform {
                 "syscalls",
                 "sys_enter_close",
             )?;
-            attach_tracepoint(
-                &mut ebpf,
-                "tracepoint_read_enter",
-                "syscalls",
-                "sys_enter_read",
-            )?;
-            attach_tracepoint(
-                &mut ebpf,
-                "tracepoint_read_exit",
-                "syscalls",
-                "sys_exit_read",
-            )?;
-            attach_tracepoint(
-                &mut ebpf,
-                "tracepoint_write_enter",
-                "syscalls",
-                "sys_enter_write",
-            )?;
-            attach_tracepoint(
-                &mut ebpf,
-                "tracepoint_write_exit",
-                "syscalls",
-                "sys_exit_write",
-            )?;
+            attach_network_io_hooks(&mut ebpf, network_io_hook)?;
             attach_tracepoint(
                 &mut ebpf,
                 "tracepoint_sendto_enter",
@@ -859,6 +841,55 @@ mod platform {
         kubernetes
             .as_ref()
             .and_then(|kubernetes| kubernetes.container_name.as_deref())
+    }
+
+    fn attach_network_io_hooks(
+        ebpf: &mut Ebpf,
+        resolved: crate::kernel_hook::ResolvedNetworkIoHook,
+    ) -> CoreResult<()> {
+        match resolved.kind {
+            crate::kernel_hook::NetworkIoHookKind::Fexit => {
+                let btf = resolved
+                    .btf
+                    .as_ref()
+                    .ok_or_else(|| CoreError::ModuleFailed {
+                        module: "source.aya_network".to_string(),
+                        message: "fexit was selected without loaded kernel BTF".to_string(),
+                    })?;
+                attach_fexit(ebpf, "fexit_ksys_read", "ksys_read", btf)?;
+                attach_fexit(ebpf, "fexit_ksys_write", "ksys_write", btf)?;
+            }
+            crate::kernel_hook::NetworkIoHookKind::Tracepoint => {
+                for (program, event) in [
+                    ("tracepoint_read_enter", "sys_enter_read"),
+                    ("tracepoint_read_exit", "sys_exit_read"),
+                    ("tracepoint_write_enter", "sys_enter_write"),
+                    ("tracepoint_write_exit", "sys_exit_write"),
+                ] {
+                    attach_tracepoint(ebpf, program, "syscalls", event)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn attach_fexit(
+        ebpf: &mut Ebpf,
+        program_name: &'static str,
+        target: &'static str,
+        btf: &Btf,
+    ) -> CoreResult<()> {
+        let program: &mut FExit = ebpf
+            .program_mut(program_name)
+            .ok_or_else(|| CoreError::ModuleFailed {
+                module: "source.aya_network".to_string(),
+                message: format!("missing {program_name} program"),
+            })?
+            .try_into()
+            .map_err(module_error)?;
+        program.load(target, btf).map_err(module_error)?;
+        program.attach().map_err(module_error)?;
+        Ok(())
     }
 
     fn attach_tracepoint(

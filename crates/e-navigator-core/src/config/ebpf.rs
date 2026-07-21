@@ -18,6 +18,24 @@ pub enum EbpfEventTransport {
     PerfBuffer,
 }
 
+/// Kernel hook requested for the network source's `read(2)` and `write(2)`
+/// byte accounting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EbpfNetworkIoHook {
+    /// Prefer BTF-backed fexit hooks when the kernel positively supports the
+    /// tracing program type and both required function targets. Otherwise use
+    /// syscall tracepoints.
+    #[default]
+    Auto,
+    /// Require BTF-backed fexit hooks and fail source startup when they are not
+    /// positively supported.
+    Fexit,
+    /// Require the stable syscall-tracepoint implementation. This remains
+    /// available for compatibility and controlled A/B measurements.
+    Tracepoint,
+}
+
 /// Shared eBPF loader and event-transport limits.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,6 +44,8 @@ pub struct EbpfConfig {
     pub event_transport: EbpfEventTransport,
     #[serde(default = "default_ring_buffer_bytes")]
     pub ring_buffer_bytes: u32,
+    #[serde(default)]
+    pub network_io_hook: EbpfNetworkIoHook,
 }
 
 impl Default for EbpfConfig {
@@ -33,6 +53,7 @@ impl Default for EbpfConfig {
         Self {
             event_transport: EbpfEventTransport::Auto,
             ring_buffer_bytes: default_ring_buffer_bytes(),
+            network_io_hook: EbpfNetworkIoHook::Auto,
         }
     }
 }

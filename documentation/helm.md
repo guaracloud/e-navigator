@@ -53,6 +53,7 @@ config:
     [ebpf]
     event_transport = "auto"
     ring_buffer_bytes = 262144
+    network_io_hook = "auto"
 
     [argv_capture]
     enabled = false
@@ -78,6 +79,13 @@ reports the map type unsupported. Probe errors fail source startup instead of
 silently weakening the requested posture. `ebpf.ring_buffer_bytes` must be a
 power of two from 4,096 through 16,777,216 bytes and a multiple of the runtime
 kernel page size.
+`ebpf.network_io_hook` accepts `auto`, `fexit`, or `tracepoint`. `auto`
+selects BTF-backed `ksys_read`/`ksys_write` fexit hooks only after the kernel
+tracing-program, BTF-file, and target-function preflight succeeds. A positively
+unsupported tracing type, absent BTF file, or absent target uses the retained
+syscall tracepoints with a warning. Probe, permission, malformed-BTF, verifier,
+load, and attachment errors fail source startup. Forced `fexit` is strict;
+forced `tracepoint` skips the fexit probe.
 `runtime_security.kubernetes_api_endpoints` must contain at most 32 entries.
 Filesystem path settings under `attribution`, `attribution.kubernetes`, and
 `resource_source` must be at most 4,096 bytes.

@@ -272,6 +272,15 @@ cargo run --locked -p e-navigator-cli -- \
               startup. Ring capacity is explicitly bounded and every transport
               exposes native loss accounting.
             </p>
+            <p>
+              The same section defaults to
+              <code>network_io_hook = "auto"</code>. It selects BTF-backed
+              <code>ksys_read</code>/<code>ksys_write</code> fexit only after
+              tracing-program, kernel-BTF, and target-function preflight.
+              Positively unsupported kernels retain syscall tracepoints;
+              indeterminate probe, verifier, load, and attach failures stop the
+              source instead of silently weakening it.
+            </p>
             <div class="comparison-table" role="table" aria-label="Configuration boundaries">
               <div role="row">
                 <strong role="columnheader">Runtime TOML</strong>
@@ -354,6 +363,14 @@ cargo run --locked -p e-navigator-cli -- \
               Do not collapse these tiers into one number. Record commands,
               versions, warmup, sample count, confidence intervals, workload,
               node, and cleanup state.
+            </p>
+            <p>
+              The July 21 homelab kernel-hook A/B is one such narrow result:
+              BTF fexit measured 7.971% more scalar TCP read/write operations
+              per second and 7.710% lower mean latency than syscall tracepoints,
+              while remaining 7.045% below no-agent throughput and using about
+              13.4 MiB more summed two-pod RSS. It is not a mixed-workload or
+              whole-stack overhead claim.
             </p>
             <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/benchmark.md">Read the complete benchmark methodology</a>
           </div>

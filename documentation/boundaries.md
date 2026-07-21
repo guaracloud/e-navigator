@@ -133,6 +133,16 @@ E-Navigator does not currently claim:
   within noisy run variance and do not support a win claim);
 - runtime proof of the automatic perf fallback on an old kernel (the selection
   matrix is unit-tested, but both homelab nodes support RingBuf on Linux 6.6);
+- runtime proof of the automatic network-hook fallback on a kernel without
+  tracing programs, kernel BTF, or the required `ksys_read`/`ksys_write`
+  targets (the selection matrix is unit-tested, but both homelab nodes used
+  Linux 6.6.68 with the complete BTF surface);
+- a universal lower-overhead or lower-memory fexit claim (the 2026-07-21
+  homelab A/B covered one scalar `os.read`/`os.write` TCP loop: fexit measured
+  7.971% more operations/s and 7.710% lower mean latency than tracepoints, but
+  still 7.045% lower throughput than no agent and used about 13.4 MiB more
+  summed two-pod RSS. Vectored I/O, `send*`/`recv*`, other sources, mixed
+  workloads, and production were not measured);
 - reduced overhead versus another observability stack;
 - reduced-privilege or non-root eBPF operation;
 - complete attribution for every host process, packet, profile sample, or

@@ -1,0 +1,67 @@
+log_level = "info"
+queue_capacity = 8192
+
+[source_supervisor]
+failure_policy = "isolate"
+shutdown_timeout_millis = 10000
+
+[ebpf]
+event_transport = "ring_buffer"
+ring_buffer_bytes = 262144
+network_io_hook = "auto"
+
+[attribution]
+procfs_root = "/host/proc"
+cgroup_root = "/host/cgroup"
+
+[attribution.kubernetes]
+enabled = true
+token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+ca_cert_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+namespace_allowlist = []
+namespace_denylist = []
+node_name_allowlist = []
+node_name_denylist = []
+pod_label_selector = {}
+pod_label_exclude_selector = {}
+
+[capture_filter]
+enabled = true
+default_posture = "deny"
+unknown_cgroup = "deny"
+namespace_include = ["e-navigator-bench"]
+
+[network_metrics]
+max_metric_keys = 4096
+max_active_connections = 8192
+
+[json_stdout]
+mode = "all"
+
+[prometheus_http]
+enabled = false
+bind_address = "0.0.0.0"
+port = 9090
+max_metric_lines = 4096
+metrics_enabled = true
+profiles_enabled = false
+
+[[modules]]
+name = "source.aya_network"
+enabled = true
+
+[[modules]]
+name = "processor.container_attribution"
+enabled = true
+
+[[modules]]
+name = "generator.network_metrics"
+enabled = true
+
+[[modules]]
+name = "sink.json_stdout"
+enabled = true
+
+[[modules]]
+name = "sink.prometheus_http"
+enabled = false

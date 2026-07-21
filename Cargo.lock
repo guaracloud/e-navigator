@@ -602,6 +602,7 @@ dependencies = [
  "async-trait",
  "aya",
  "aya-build",
+ "aya-obj",
  "e-navigator-core",
  "e-navigator-profiling",
  "e-navigator-protocol",
