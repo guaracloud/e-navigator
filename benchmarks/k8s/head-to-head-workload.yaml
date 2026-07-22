@@ -1,0 +1,645 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: head-to-head-http
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: head-to-head-http
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: head-to-head-http
+        app.kubernetes.io/part-of: e-navigator-head-to-head
+        e-navigator.dev/component: http
+        e-navigator.dev/disposable: "true"
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: homelab-02
+      tolerations:
+        - operator: Exists
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: workload
+          image: docker.io/library/e-navigator-head-to-head:gap9-amd64
+          imagePullPolicy: Never
+          args: ["http"]
+          ports:
+            - name: http
+              containerPort: 18080
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: head-to-head-http
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  selector:
+    app.kubernetes.io/name: head-to-head-http
+  ports:
+    - name: http
+      port: 18080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: head-to-head-grpc
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: head-to-head-grpc
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: head-to-head-grpc
+        app.kubernetes.io/part-of: e-navigator-head-to-head
+        e-navigator.dev/component: grpc
+        e-navigator.dev/disposable: "true"
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: homelab-02
+      tolerations:
+        - operator: Exists
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: workload
+          image: docker.io/library/e-navigator-head-to-head:gap9-amd64
+          imagePullPolicy: Never
+          args: ["grpc"]
+          ports:
+            - name: grpc
+              containerPort: 50051
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            periodSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: head-to-head-grpc
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  selector:
+    app.kubernetes.io/name: head-to-head-grpc
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: head-to-head-redis-proxy
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: head-to-head-redis-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: head-to-head-redis-proxy
+        app.kubernetes.io/part-of: e-navigator-head-to-head
+        e-navigator.dev/component: redis
+        e-navigator.dev/disposable: "true"
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: homelab-02
+      tolerations:
+        - operator: Exists
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: workload
+          image: docker.io/library/e-navigator-head-to-head:gap9-amd64
+          imagePullPolicy: Never
+          args: ["redis-proxy"]
+          ports:
+            - name: proxy
+              containerPort: 16379
+          readinessProbe:
+            tcpSocket:
+              port: proxy
+            periodSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: head-to-head-redis-proxy
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  selector:
+    app.kubernetes.io/name: head-to-head-redis-proxy
+  ports:
+    - name: proxy
+      port: 16379
+      targetPort: proxy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: head-to-head-postgres-proxy
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: head-to-head-postgres-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: head-to-head-postgres-proxy
+        app.kubernetes.io/part-of: e-navigator-head-to-head
+        e-navigator.dev/component: postgres
+        e-navigator.dev/disposable: "true"
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: homelab-02
+      tolerations:
+        - operator: Exists
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: workload
+          image: docker.io/library/e-navigator-head-to-head:gap9-amd64
+          imagePullPolicy: Never
+          args: ["postgres-proxy"]
+          ports:
+            - name: proxy
+              containerPort: 15432
+          readinessProbe:
+            tcpSocket:
+              port: proxy
+            periodSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: head-to-head-postgres-proxy
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  selector:
+    app.kubernetes.io/name: head-to-head-postgres-proxy
+  ports:
+    - name: proxy
+      port: 15432
+      targetPort: proxy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: head-to-head-python-cpu
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: head-to-head-python-cpu
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: head-to-head-python-cpu
+        app.kubernetes.io/part-of: e-navigator-head-to-head
+        e-navigator.dev/component: python-cpu
+        e-navigator.dev/disposable: "true"
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: homelab-02
+      tolerations:
+        - operator: Exists
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: workload
+          image: docker.io/library/e-navigator-head-to-head:gap9-amd64
+          imagePullPolicy: Never
+          args: ["python-cpu"]
+          ports:
+            - name: cpu
+              containerPort: 19090
+          readinessProbe:
+            tcpSocket:
+              port: cpu
+            periodSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 500m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: head-to-head-python-cpu
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  selector:
+    app.kubernetes.io/name: head-to-head-python-cpu
+  ports:
+    - name: cpu
+      port: 19090
+      targetPort: cpu
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: head-to-head-redis
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: head-to-head-redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: head-to-head-redis
+        app.kubernetes.io/part-of: e-navigator-head-to-head
+        e-navigator.dev/component: backend
+        e-navigator.dev/disposable: "true"
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: homelab-02
+      tolerations:
+        - operator: Exists
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: docker.io/library/redis@sha256:c22af04bb576503bf16b3e34a1fd2fd82de0f765afd866d2e380145e0af30d78
+          imagePullPolicy: IfNotPresent
+          args: ["redis-server", "--save", "", "--appendonly", "no", "--protected-mode", "no"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: head-to-head-redis
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  selector:
+    app.kubernetes.io/name: head-to-head-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: head-to-head-postgres
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: head-to-head-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: head-to-head-postgres
+        app.kubernetes.io/part-of: e-navigator-head-to-head
+        e-navigator.dev/component: backend
+        e-navigator.dev/disposable: "true"
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: homelab-02
+      tolerations:
+        - operator: Exists
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: docker.io/library/postgres@sha256:cc9f4143a8d2fa8cf3749d0cb4d26ecf2d53a77a2ac807e9ebd67ae22426221a
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_HOST_AUTH_METHOD
+              value: trust
+            - name: POSTGRES_USER
+              value: bench
+            - name: POSTGRES_DB
+              value: bench
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "bench", "-d", "bench"]
+            periodSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: head-to-head-postgres
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  selector:
+    app.kubernetes.io/name: head-to-head-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: head-to-head-otlp-sink
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: head-to-head-otlp-sink
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: head-to-head-otlp-sink
+        app.kubernetes.io/part-of: e-navigator-head-to-head
+        e-navigator.dev/component: otlp-sink
+        e-navigator.dev/disposable: "true"
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: homelab-01
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: sink
+          image: docker.io/library/e-navigator-head-to-head:gap9-amd64
+          imagePullPolicy: Never
+          args: ["otlp-sink"]
+          ports:
+            - name: otlp-http
+              containerPort: 4318
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: otlp-http
+            periodSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: head-to-head-otlp-sink
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  selector:
+    app.kubernetes.io/name: head-to-head-otlp-sink
+  ports:
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: head-to-head-load-template
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: head-to-head-load
+        app.kubernetes.io/part-of: e-navigator-head-to-head
+        e-navigator.dev/disposable: "true"
+        e-navigator.dev/load-generator: "true"
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 420
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: head-to-head-load
+            app.kubernetes.io/part-of: e-navigator-head-to-head
+            e-navigator.dev/component: load-generator
+            e-navigator.dev/disposable: "true"
+            e-navigator.dev/load-generator: "true"
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          nodeSelector:
+            kubernetes.io/hostname: homelab-01
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: load
+              image: docker.io/library/e-navigator-head-to-head:gap9-amd64
+              imagePullPolicy: Never
+              args: ["load"]
+              env:
+                - name: NODE_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: spec.nodeName
+                - name: HEAD2HEAD_WARMUP_SECONDS
+                  value: "15"
+                - name: HEAD2HEAD_DURATION_SECONDS
+                  value: "45"
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: "1"
+                  memory: 128Mi
+                limits:
+                  cpu: "4"
+                  memory: 512Mi

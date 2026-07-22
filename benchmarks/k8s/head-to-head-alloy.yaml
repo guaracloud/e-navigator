@@ -1,0 +1,227 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: head-to-head-alloy
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: e-navigator-head-to-head-alloy
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: e-navigator-head-to-head-alloy
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: e-navigator-head-to-head-alloy
+subjects:
+  - kind: ServiceAccount
+    name: head-to-head-alloy
+    namespace: e-navigator-bench
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: head-to-head-alloy
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+data:
+  config.alloy: |
+    logging {
+      level = "info"
+    }
+
+    discovery.kubernetes "local_pods" {
+      role = "pod"
+      selectors {
+        role  = "pod"
+        field = "spec.nodeName=" + sys.env("NODE_NAME")
+      }
+    }
+
+    discovery.relabel "head_to_head" {
+      targets = discovery.kubernetes.local_pods.targets
+
+      rule {
+        action        = "drop"
+        regex         = "Succeeded|Failed"
+        source_labels = ["__meta_kubernetes_pod_phase"]
+      }
+
+      rule {
+        action        = "keep"
+        regex         = "e-navigator-bench"
+        source_labels = ["__meta_kubernetes_namespace"]
+      }
+
+      rule {
+        action        = "keep"
+        regex         = "http|grpc|redis|postgres|python-cpu"
+        source_labels = ["__meta_kubernetes_pod_label_e_navigator_dev_component"]
+      }
+
+      rule {
+        action        = "replace"
+        source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+        target_label  = "service_name"
+      }
+
+      rule {
+        action        = "replace"
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+
+      rule {
+        action        = "replace"
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+
+      rule {
+        action        = "replace"
+        source_labels = ["__meta_kubernetes_pod_node_name"]
+        target_label  = "node"
+      }
+
+      rule {
+        action        = "replace"
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+    }
+
+    pyroscope.ebpf "head_to_head" {
+      targets          = discovery.relabel.head_to_head.output
+      forward_to       = [pyroscope.write.endpoint.receiver]
+      sample_rate      = 10
+      collect_interval = "15s"
+      python_enabled   = true
+    }
+
+    pyroscope.write "endpoint" {
+      endpoint {
+        url = "http://pyroscope.e-navigator-system.svc.cluster.local:4040"
+      }
+    }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: head-to-head-alloy
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/name: head-to-head-alloy
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/collector: alloy
+    e-navigator.dev/disposable: "true"
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: head-to-head-alloy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: head-to-head-alloy
+        app.kubernetes.io/part-of: e-navigator-head-to-head
+        e-navigator.dev/collector: alloy
+        e-navigator.dev/disposable: "true"
+    spec:
+      hostPID: true
+      serviceAccountName: head-to-head-alloy
+      nodeSelector:
+        kubernetes.io/hostname: homelab-02
+        kubernetes.io/os: linux
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: alloy
+          image: docker.io/grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308
+          imagePullPolicy: IfNotPresent
+          args:
+            - run
+            - /etc/alloy/config.alloy
+            - --storage.path=/tmp/alloy
+            - --server.http.listen-addr=0.0.0.0:12345
+            - --server.http.ui-path-prefix=/
+            - --stability.level=generally-available
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: http
+              containerPort: 12345
+          securityContext:
+            privileged: true
+            runAsUser: 0
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+              readOnly: true
+            - name: tracing
+              mountPath: /sys/kernel/tracing
+              readOnly: true
+            - name: symbol-cache
+              mountPath: /tmp/symb-cache
+            - name: storage
+              mountPath: /tmp/alloy
+      volumes:
+        - name: config
+          configMap:
+            name: head-to-head-alloy
+        - name: tracing
+          hostPath:
+            path: /sys/kernel/tracing
+            type: Directory
+        - name: symbol-cache
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: storage
+          emptyDir:
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: head-to-head-alloy
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/name: head-to-head-alloy
+    app.kubernetes.io/part-of: e-navigator-head-to-head
+    e-navigator.dev/disposable: "true"
+spec:
+  selector:
+    app.kubernetes.io/name: head-to-head-alloy
+  ports:
+    - name: http
+      port: 12345
+      targetPort: http

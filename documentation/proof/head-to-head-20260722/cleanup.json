@@ -1,0 +1,37 @@
+{
+  "schema": "e-navigator.head-to-head-cleanup.v1",
+  "verified_at_utc": "2026-07-22T11:15:36Z",
+  "cluster": "homelab",
+  "namespace": "e-navigator-bench",
+  "namespaced_disposable_resource_count": 0,
+  "cluster_scoped_disposable_resource_count": 0,
+  "removed_image_references": {
+    "homelab-01": [
+      "docker.io/library/e-navigator:gap9-head-to-head-amd64",
+      "docker.io/library/e-navigator-head-to-head:gap9-amd64"
+    ],
+    "homelab-02": [
+      "docker.io/library/e-navigator:gap9-head-to-head-amd64",
+      "docker.io/library/e-navigator-head-to-head:gap9-amd64"
+    ],
+    "local_docker": [
+      "docker.io/library/e-navigator:gap9-head-to-head-amd64",
+      "docker.io/library/e-navigator-head-to-head:gap9-amd64"
+    ]
+  },
+  "standing_argocd_application": {
+    "sync": "Synced",
+    "health": "Healthy",
+    "automated": {
+      "prune": true,
+      "selfHeal": true
+    }
+  },
+  "standing_daemonset": {
+    "desired": 2,
+    "ready": 2,
+    "available": 2,
+    "image": "ghcr.io/guaracloud/e-navigator@sha256:62402d21b9cb02d59d63365c7e3716ffa0980bfea42d070b43fed618703a7df9"
+  },
+  "production_context_touched": false
+}

@@ -46,6 +46,8 @@ run tests/reduced_privilege_guard_test.sh
 run env PYTHONDONTWRITEBYTECODE=1 python3 tests/reduced_privilege_analysis_test.py
 run tests/bootstrap_window_guard_test.sh
 run env PYTHONDONTWRITEBYTECODE=1 python3 tests/bootstrap_window_analysis_test.py
+run tests/head_to_head_guard_test.sh
+run env PYTHONDONTWRITEBYTECODE=1 python3 tests/head_to_head_analysis_test.py
 
 if [ "${E_NAVIGATOR_SKIP_SUPPLY_CHAIN:-0}" != "1" ]; then
   require_tool cargo-deny

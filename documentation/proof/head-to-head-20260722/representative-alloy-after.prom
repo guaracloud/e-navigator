@@ -1,0 +1,536 @@
+# HELP agent_elf_info_cache_hits_total Number of cache hits for ELF information
+# TYPE agent_elf_info_cache_hits_total counter
+agent_elf_info_cache_hits_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 261
+# HELP agent_elf_info_cache_misses_total Number of cache misses for ELF information
+# TYPE agent_elf_info_cache_misses_total counter
+agent_elf_info_cache_misses_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 66
+# HELP agent_hashmap_pid_page_to_mapping_info_size Current size of the hash map pid_page_to_mapping_info
+# TYPE agent_hashmap_pid_page_to_mapping_info_size gauge
+agent_hashmap_pid_page_to_mapping_info_size{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 1192
+# HELP agent_max_proc_parse_us_micros_total Max /proc/PID/maps parse time for a single collection interval, in microseconds
+# TYPE agent_max_proc_parse_us_micros_total counter
+agent_max_proc_parse_us_micros_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 16405
+# HELP agent_num_exe_id_loaded_to_ebpf The number of executables loaded to eBPF maps
+# TYPE agent_num_exe_id_loaded_to_ebpf gauge
+agent_num_exe_id_loaded_to_ebpf{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 66
+# HELP agent_num_generic_pid_total Number of generic PID events (report_events)
+# TYPE agent_num_generic_pid_total counter
+agent_num_generic_pid_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 231
+# HELP agent_num_proc_attempts_total Number of /proc/PID/maps process attempts
+# TYPE agent_num_proc_attempts_total counter
+agent_num_proc_attempts_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 6
+# HELP agent_python_addr_to_code_object_add_total Number of added cache elements for Python AddrToCodeObject
+# TYPE agent_python_addr_to_code_object_add_total counter
+agent_python_addr_to_code_object_add_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 113
+# HELP agent_python_addr_to_code_object_hits_total Number of cache hits for Python AddrToCodeObject
+# TYPE agent_python_addr_to_code_object_hits_total counter
+agent_python_addr_to_code_object_hits_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 65
+# HELP agent_python_addr_to_code_object_misses_total Number of cache misses for Python AddrToCodeObject
+# TYPE agent_python_addr_to_code_object_misses_total counter
+agent_python_addr_to_code_object_misses_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 113
+# HELP agent_python_symbolization_successes_total Number of successfully symbolized python frames
+# TYPE agent_python_symbolization_successes_total counter
+agent_python_symbolization_successes_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 178
+# HELP agent_stack_delta_extraction_success_total Number of times the stack delta provider succeeded to extract stack deltas
+# TYPE agent_stack_delta_extraction_success_total counter
+agent_stack_delta_extraction_success_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 66
+# HELP agent_stack_delta_pages_size Current size of the stack delta pages hash map
+# TYPE agent_stack_delta_pages_size gauge
+agent_stack_delta_pages_size{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 480
+# HELP agent_time_proc_parse_micros_total Total /proc/PID/maps parse time for a single collection interval, in microseconds
+# TYPE agent_time_proc_parse_micros_total counter
+agent_time_proc_parse_micros_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 28325
+# HELP agent_trace_cache_hits_total Number of cache hits in tracehandler trace cache by UM hash
+# TYPE agent_trace_cache_hits_total counter
+agent_trace_cache_hits_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 2467
+# HELP agent_trace_cache_misses_total Number of cache misses in tracehandler trace cache by UM hash
+# TYPE agent_trace_cache_misses_total counter
+agent_trace_cache_misses_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 178
+# HELP agent_unwind_info_array_size Current size of the unwind info array
+# TYPE agent_unwind_info_array_size gauge
+agent_unwind_info_array_size{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 1417
+# HELP alloy_build_info A metric with a constant '1' value labeled by version, revision, branch, goversion from which alloy was built, and the goos and goarch for the build.
+# TYPE alloy_build_info gauge
+alloy_build_info{branch="HEAD",goarch="amd64",goos="linux",goversion="go1.26.5",revision="a435563",tags="gore2regex,netgo,embedalloyui,promtail_journal_enabled",version="v1.18.0"} 1
+# HELP alloy_component_controller_evaluating Tracks if the controller is currently in the middle of a graph evaluation
+# TYPE alloy_component_controller_evaluating gauge
+alloy_component_controller_evaluating{controller_id="",controller_path="/"} 0
+alloy_component_controller_evaluating{controller_id="remotecfg",controller_path="/"} 0
+# HELP alloy_component_controller_running_components Total number of running components.
+# TYPE alloy_component_controller_running_components gauge
+alloy_component_controller_running_components{controller_id="",controller_path="/",health_type="healthy"} 4
+# HELP alloy_component_dependencies_wait_seconds Time spent by components waiting to be evaluated after their dependency is updated.
+# TYPE alloy_component_dependencies_wait_seconds histogram
+alloy_component_dependencies_wait_seconds_bucket{controller_id="",controller_path="/",le="0.005"} 4
+alloy_component_dependencies_wait_seconds_bucket{controller_id="",controller_path="/",le="0.025"} 4
+alloy_component_dependencies_wait_seconds_bucket{controller_id="",controller_path="/",le="0.1"} 4
+alloy_component_dependencies_wait_seconds_bucket{controller_id="",controller_path="/",le="0.5"} 4
+alloy_component_dependencies_wait_seconds_bucket{controller_id="",controller_path="/",le="1"} 4
+alloy_component_dependencies_wait_seconds_bucket{controller_id="",controller_path="/",le="5"} 4
+alloy_component_dependencies_wait_seconds_bucket{controller_id="",controller_path="/",le="10"} 4
+alloy_component_dependencies_wait_seconds_bucket{controller_id="",controller_path="/",le="30"} 4
+alloy_component_dependencies_wait_seconds_bucket{controller_id="",controller_path="/",le="60"} 4
+alloy_component_dependencies_wait_seconds_bucket{controller_id="",controller_path="/",le="120"} 4
+alloy_component_dependencies_wait_seconds_bucket{controller_id="",controller_path="/",le="300"} 4
+alloy_component_dependencies_wait_seconds_bucket{controller_id="",controller_path="/",le="600"} 4
+alloy_component_dependencies_wait_seconds_bucket{controller_id="",controller_path="/",le="+Inf"} 4
+alloy_component_dependencies_wait_seconds_sum{controller_id="",controller_path="/"} 0.005372203999999999
+alloy_component_dependencies_wait_seconds_count{controller_id="",controller_path="/"} 4
+alloy_component_dependencies_wait_seconds_bucket{controller_id="remotecfg",controller_path="/",le="0.005"} 0
+alloy_component_dependencies_wait_seconds_bucket{controller_id="remotecfg",controller_path="/",le="0.025"} 0
+alloy_component_dependencies_wait_seconds_bucket{controller_id="remotecfg",controller_path="/",le="0.1"} 0
+alloy_component_dependencies_wait_seconds_bucket{controller_id="remotecfg",controller_path="/",le="0.5"} 0
+alloy_component_dependencies_wait_seconds_bucket{controller_id="remotecfg",controller_path="/",le="1"} 0
+alloy_component_dependencies_wait_seconds_bucket{controller_id="remotecfg",controller_path="/",le="5"} 0
+alloy_component_dependencies_wait_seconds_bucket{controller_id="remotecfg",controller_path="/",le="10"} 0
+alloy_component_dependencies_wait_seconds_bucket{controller_id="remotecfg",controller_path="/",le="30"} 0
+alloy_component_dependencies_wait_seconds_bucket{controller_id="remotecfg",controller_path="/",le="60"} 0
+alloy_component_dependencies_wait_seconds_bucket{controller_id="remotecfg",controller_path="/",le="120"} 0
+alloy_component_dependencies_wait_seconds_bucket{controller_id="remotecfg",controller_path="/",le="300"} 0
+alloy_component_dependencies_wait_seconds_bucket{controller_id="remotecfg",controller_path="/",le="600"} 0
+alloy_component_dependencies_wait_seconds_bucket{controller_id="remotecfg",controller_path="/",le="+Inf"} 0
+alloy_component_dependencies_wait_seconds_sum{controller_id="remotecfg",controller_path="/"} 0
+alloy_component_dependencies_wait_seconds_count{controller_id="remotecfg",controller_path="/"} 0
+# HELP alloy_component_evaluation_queue_size Tracks the number of components waiting to be evaluated in the worker pool
+# TYPE alloy_component_evaluation_queue_size gauge
+alloy_component_evaluation_queue_size{controller_id="",controller_path="/"} 1
+alloy_component_evaluation_queue_size{controller_id="remotecfg",controller_path="/"} 0
+# HELP alloy_component_evaluation_seconds Time spent performing component evaluation
+# TYPE alloy_component_evaluation_seconds histogram
+alloy_component_evaluation_seconds_bucket{controller_id="",controller_path="/",le="0.005"} 4
+alloy_component_evaluation_seconds_bucket{controller_id="",controller_path="/",le="0.025"} 4
+alloy_component_evaluation_seconds_bucket{controller_id="",controller_path="/",le="0.1"} 4
+alloy_component_evaluation_seconds_bucket{controller_id="",controller_path="/",le="0.5"} 4
+alloy_component_evaluation_seconds_bucket{controller_id="",controller_path="/",le="1"} 4
+alloy_component_evaluation_seconds_bucket{controller_id="",controller_path="/",le="5"} 4
+alloy_component_evaluation_seconds_bucket{controller_id="",controller_path="/",le="10"} 4
+alloy_component_evaluation_seconds_bucket{controller_id="",controller_path="/",le="30"} 4
+alloy_component_evaluation_seconds_bucket{controller_id="",controller_path="/",le="60"} 4
+alloy_component_evaluation_seconds_bucket{controller_id="",controller_path="/",le="120"} 4
+alloy_component_evaluation_seconds_bucket{controller_id="",controller_path="/",le="300"} 4
+alloy_component_evaluation_seconds_bucket{controller_id="",controller_path="/",le="600"} 4
+alloy_component_evaluation_seconds_bucket{controller_id="",controller_path="/",le="+Inf"} 4
+alloy_component_evaluation_seconds_sum{controller_id="",controller_path="/"} 0.001275734
+alloy_component_evaluation_seconds_count{controller_id="",controller_path="/"} 4
+alloy_component_evaluation_seconds_bucket{controller_id="remotecfg",controller_path="/",le="0.005"} 0
+alloy_component_evaluation_seconds_bucket{controller_id="remotecfg",controller_path="/",le="0.025"} 0
+alloy_component_evaluation_seconds_bucket{controller_id="remotecfg",controller_path="/",le="0.1"} 0
+alloy_component_evaluation_seconds_bucket{controller_id="remotecfg",controller_path="/",le="0.5"} 0
+alloy_component_evaluation_seconds_bucket{controller_id="remotecfg",controller_path="/",le="1"} 0
+alloy_component_evaluation_seconds_bucket{controller_id="remotecfg",controller_path="/",le="5"} 0
+alloy_component_evaluation_seconds_bucket{controller_id="remotecfg",controller_path="/",le="10"} 0
+alloy_component_evaluation_seconds_bucket{controller_id="remotecfg",controller_path="/",le="30"} 0
+alloy_component_evaluation_seconds_bucket{controller_id="remotecfg",controller_path="/",le="60"} 0
+alloy_component_evaluation_seconds_bucket{controller_id="remotecfg",controller_path="/",le="120"} 0
+alloy_component_evaluation_seconds_bucket{controller_id="remotecfg",controller_path="/",le="300"} 0
+alloy_component_evaluation_seconds_bucket{controller_id="remotecfg",controller_path="/",le="600"} 0
+alloy_component_evaluation_seconds_bucket{controller_id="remotecfg",controller_path="/",le="+Inf"} 0
+alloy_component_evaluation_seconds_sum{controller_id="remotecfg",controller_path="/"} 0
+alloy_component_evaluation_seconds_count{controller_id="remotecfg",controller_path="/"} 0
+# HELP alloy_component_graph_connection Indicates that two components are connected in the graph
+# TYPE alloy_component_graph_connection gauge
+alloy_component_graph_connection{controller_id="",controller_path="/",from="discovery.kubernetes.local_pods",to="discovery.relabel.head_to_head"} 1
+alloy_component_graph_connection{controller_id="",controller_path="/",from="discovery.relabel.head_to_head",to="pyroscope.ebpf.head_to_head"} 1
+alloy_component_graph_connection{controller_id="",controller_path="/",from="pyroscope.ebpf.head_to_head",to="pyroscope.write.endpoint"} 1
+# HELP alloy_config_hash Hash of the currently active config file.
+# TYPE alloy_config_hash gauge
+alloy_config_hash{cluster_name="",sha256="86e750f2a531a82cdda4f79697f9368335f366ac64e2e1bc8bfd30539138f973"} 1
+# HELP alloy_config_last_load_success_timestamp_seconds Timestamp of the last successful configuration load.
+# TYPE alloy_config_last_load_success_timestamp_seconds gauge
+alloy_config_last_load_success_timestamp_seconds 1.784714925871266e+09
+# HELP alloy_config_last_load_successful Config loaded successfully.
+# TYPE alloy_config_last_load_successful gauge
+alloy_config_last_load_successful 1
+# HELP alloy_config_load_failures_total Configuration load failures.
+# TYPE alloy_config_load_failures_total counter
+alloy_config_load_failures_total 0
+# HELP alloy_labelstore_global_ids_count Total number of global ids.
+# TYPE alloy_labelstore_global_ids_count gauge
+alloy_labelstore_global_ids_count 0
+# HELP alloy_labelstore_last_stale_check_timestamp Last time stale check was ran expressed in unix timestamp.
+# TYPE alloy_labelstore_last_stale_check_timestamp gauge
+alloy_labelstore_last_stale_check_timestamp 0
+# HELP alloy_resources_machine_rx_bytes_total Total bytes, host-wide, received across all network interfaces.
+# TYPE alloy_resources_machine_rx_bytes_total counter
+alloy_resources_machine_rx_bytes_total 266726
+# HELP alloy_resources_machine_tx_bytes_total Total bytes, host-wide, sent across all given network interface.
+# TYPE alloy_resources_machine_tx_bytes_total counter
+alloy_resources_machine_tx_bytes_total 191386
+# HELP alloy_resources_process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE alloy_resources_process_cpu_seconds_total counter
+alloy_resources_process_cpu_seconds_total 3.95
+# HELP alloy_resources_process_resident_memory_bytes Current resident memory size in bytes.
+# TYPE alloy_resources_process_resident_memory_bytes gauge
+alloy_resources_process_resident_memory_bytes 3.1250432e+08
+# HELP alloy_resources_process_start_time_seconds Start time of the process since Unix epoch in seconds.
+# TYPE alloy_resources_process_start_time_seconds gauge
+alloy_resources_process_start_time_seconds 1.784714925e+09
+# HELP alloy_resources_process_virtual_memory_bytes Current virtual memory size in bytes.
+# TYPE alloy_resources_process_virtual_memory_bytes gauge
+alloy_resources_process_virtual_memory_bytes 7.408975872e+09
+# HELP bpf_errors_empty_stack_total Number of times unwind_stop is called without a trace
+# TYPE bpf_errors_empty_stack_total counter
+bpf_errors_empty_stack_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 1
+# HELP bpf_interpreter_calls_total Number of calls to interpreter unwinding in dispatch_interpreters()
+# TYPE bpf_interpreter_calls_total counter
+bpf_interpreter_calls_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 275
+# HELP bpf_native_attempts_total Unwind attempts since the previous check
+# TYPE bpf_native_attempts_total counter
+bpf_native_attempts_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 1722
+# HELP bpf_native_errors_wrong_text_section_total Number of failures to find the text section in get_text_section()
+# TYPE bpf_native_errors_wrong_text_section_total counter
+bpf_native_errors_wrong_text_section_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 1
+# HELP bpf_native_frames_total Unwound frames since the previous check
+# TYPE bpf_native_frames_total counter
+bpf_native_frames_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 1714
+# HELP bpf_native_stack_delta_stop_total Number of stop stack deltas in the native unwinder (success)
+# TYPE bpf_native_stack_delta_stop_total counter
+bpf_native_stack_delta_stop_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 8
+# HELP bpf_num_proc_exit_total Number of exit PID events (report_events)
+# TYPE bpf_num_proc_exit_total counter
+bpf_num_proc_exit_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 65
+# HELP bpf_num_proc_new_total Number of new PID events (report_events)
+# TYPE bpf_num_proc_new_total counter
+bpf_num_proc_new_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 204
+# HELP bpf_num_unknown_pc_total Number of unknown PC events (report_events)
+# TYPE bpf_num_unknown_pc_total counter
+bpf_num_unknown_pc_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 1
+# HELP bpf_python_attempts_total Number of attempted python unwinds
+# TYPE bpf_python_attempts_total counter
+bpf_python_attempts_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 275
+# HELP bpf_python_frames_total Number of unwound python frames
+# TYPE bpf_python_frames_total counter
+bpf_python_frames_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",otel_scope_name="pyroscope.ebpf",otel_scope_schema_url="",otel_scope_version=""} 2645
+# HELP deprecated_flags_inuse_total The number of deprecated flags currently set.
+# TYPE deprecated_flags_inuse_total counter
+deprecated_flags_inuse_total 0
+# HELP go_gc_duration_seconds A summary of the wall-time pause (stop-the-world) duration in garbage collection cycles.
+# TYPE go_gc_duration_seconds summary
+go_gc_duration_seconds{quantile="0"} 4.5811e-05
+go_gc_duration_seconds{quantile="0.25"} 6.273e-05
+go_gc_duration_seconds{quantile="0.5"} 0.000173947
+go_gc_duration_seconds{quantile="0.75"} 0.000213218
+go_gc_duration_seconds{quantile="1"} 0.000237939
+go_gc_duration_seconds_sum 0.001882507
+go_gc_duration_seconds_count 14
+# HELP go_gc_gogc_percent Heap size target percentage configured by the user, otherwise 100. This value is set by the GOGC environment variable, and the runtime/debug.SetGCPercent function. Sourced from /gc/gogc:percent.
+# TYPE go_gc_gogc_percent gauge
+go_gc_gogc_percent 100
+# HELP go_gc_gomemlimit_bytes Go runtime memory limit configured by the user, otherwise math.MaxInt64. This value is set by the GOMEMLIMIT environment variable, and the runtime/debug.SetMemoryLimit function. Sourced from /gc/gomemlimit:bytes.
+# TYPE go_gc_gomemlimit_bytes gauge
+go_gc_gomemlimit_bytes 1.932735283e+09
+# HELP go_goroutines Number of goroutines that currently exist.
+# TYPE go_goroutines gauge
+go_goroutines 108
+# HELP go_info Information about the Go environment.
+# TYPE go_info gauge
+go_info{version="go1.26.5"} 1
+# HELP go_memstats_alloc_bytes Number of bytes allocated in heap and currently in use. Equals to /memory/classes/heap/objects:bytes.
+# TYPE go_memstats_alloc_bytes gauge
+go_memstats_alloc_bytes 4.2168216e+07
+# HELP go_memstats_alloc_bytes_total Total number of bytes allocated in heap until now, even if released already. Equals to /gc/heap/allocs:bytes.
+# TYPE go_memstats_alloc_bytes_total counter
+go_memstats_alloc_bytes_total 2.93777272e+08
+# HELP go_memstats_buck_hash_sys_bytes Number of bytes used by the profiling bucket hash table. Equals to /memory/classes/profiling/buckets:bytes.
+# TYPE go_memstats_buck_hash_sys_bytes gauge
+go_memstats_buck_hash_sys_bytes 1.596282e+06
+# HELP go_memstats_frees_total Total number of heap objects frees. Equals to /gc/heap/frees:objects + /gc/heap/tiny/allocs:objects.
+# TYPE go_memstats_frees_total counter
+go_memstats_frees_total 660517
+# HELP go_memstats_gc_sys_bytes Number of bytes used for garbage collection system metadata. Equals to /memory/classes/metadata/other:bytes.
+# TYPE go_memstats_gc_sys_bytes gauge
+go_memstats_gc_sys_bytes 5.179664e+06
+# HELP go_memstats_heap_alloc_bytes Number of heap bytes allocated and currently in use, same as go_memstats_alloc_bytes. Equals to /memory/classes/heap/objects:bytes.
+# TYPE go_memstats_heap_alloc_bytes gauge
+go_memstats_heap_alloc_bytes 4.2168216e+07
+# HELP go_memstats_heap_idle_bytes Number of heap bytes waiting to be used. Equals to /memory/classes/heap/released:bytes + /memory/classes/heap/free:bytes.
+# TYPE go_memstats_heap_idle_bytes gauge
+go_memstats_heap_idle_bytes 6.541312e+07
+# HELP go_memstats_heap_inuse_bytes Number of heap bytes that are in use. Equals to /memory/classes/heap/objects:bytes + /memory/classes/heap/unused:bytes
+# TYPE go_memstats_heap_inuse_bytes gauge
+go_memstats_heap_inuse_bytes 5.074944e+07
+# HELP go_memstats_heap_objects Number of currently allocated objects. Equals to /gc/heap/objects:objects.
+# TYPE go_memstats_heap_objects gauge
+go_memstats_heap_objects 140671
+# HELP go_memstats_heap_released_bytes Number of heap bytes released to OS. Equals to /memory/classes/heap/released:bytes.
+# TYPE go_memstats_heap_released_bytes gauge
+go_memstats_heap_released_bytes 1.7514496e+07
+# HELP go_memstats_heap_sys_bytes Number of heap bytes obtained from system. Equals to /memory/classes/heap/objects:bytes + /memory/classes/heap/unused:bytes + /memory/classes/heap/released:bytes + /memory/classes/heap/free:bytes.
+# TYPE go_memstats_heap_sys_bytes gauge
+go_memstats_heap_sys_bytes 1.1616256e+08
+# HELP go_memstats_last_gc_time_seconds Number of seconds since 1970 of last garbage collection.
+# TYPE go_memstats_last_gc_time_seconds gauge
+go_memstats_last_gc_time_seconds 1.7847150213118858e+09
+# HELP go_memstats_mallocs_total Total number of heap objects allocated, both live and gc-ed. Semantically a counter version for go_memstats_heap_objects gauge. Equals to /gc/heap/allocs:objects + /gc/heap/tiny/allocs:objects.
+# TYPE go_memstats_mallocs_total counter
+go_memstats_mallocs_total 801188
+# HELP go_memstats_mcache_inuse_bytes Number of bytes in use by mcache structures. Equals to /memory/classes/metadata/mcache/inuse:bytes.
+# TYPE go_memstats_mcache_inuse_bytes gauge
+go_memstats_mcache_inuse_bytes 4592
+# HELP go_memstats_mcache_sys_bytes Number of bytes used for mcache structures obtained from system. Equals to /memory/classes/metadata/mcache/inuse:bytes + /memory/classes/metadata/mcache/free:bytes.
+# TYPE go_memstats_mcache_sys_bytes gauge
+go_memstats_mcache_sys_bytes 16072
+# HELP go_memstats_mspan_inuse_bytes Number of bytes in use by mspan structures. Equals to /memory/classes/metadata/mspan/inuse:bytes.
+# TYPE go_memstats_mspan_inuse_bytes gauge
+go_memstats_mspan_inuse_bytes 482240
+# HELP go_memstats_mspan_sys_bytes Number of bytes used for mspan structures obtained from system. Equals to /memory/classes/metadata/mspan/inuse:bytes + /memory/classes/metadata/mspan/free:bytes.
+# TYPE go_memstats_mspan_sys_bytes gauge
+go_memstats_mspan_sys_bytes 734400
+# HELP go_memstats_next_gc_bytes Number of heap bytes when next garbage collection will take place. Equals to /gc/heap/goal:bytes.
+# TYPE go_memstats_next_gc_bytes gauge
+go_memstats_next_gc_bytes 8.6581314e+07
+# HELP go_memstats_other_sys_bytes Number of bytes used for other system allocations. Equals to /memory/classes/other:bytes.
+# TYPE go_memstats_other_sys_bytes gauge
+go_memstats_other_sys_bytes 778518
+# HELP go_memstats_stack_inuse_bytes Number of bytes obtained from system for stack allocator in non-CGO environments. Equals to /memory/classes/heap/stacks:bytes.
+# TYPE go_memstats_stack_inuse_bytes gauge
+go_memstats_stack_inuse_bytes 1.277952e+06
+# HELP go_memstats_stack_sys_bytes Number of bytes obtained from system for stack allocator. Equals to /memory/classes/heap/stacks:bytes + /memory/classes/os-stacks:bytes.
+# TYPE go_memstats_stack_sys_bytes gauge
+go_memstats_stack_sys_bytes 1.277952e+06
+# HELP go_memstats_sys_bytes Number of bytes obtained from system. Equals to /memory/classes/total:byte.
+# TYPE go_memstats_sys_bytes gauge
+go_memstats_sys_bytes 1.25745448e+08
+# HELP go_sched_gomaxprocs_threads The current runtime.GOMAXPROCS setting, or the number of operating system threads that can execute user-level Go code simultaneously. Sourced from /sched/gomaxprocs:threads.
+# TYPE go_sched_gomaxprocs_threads gauge
+go_sched_gomaxprocs_threads 2
+# HELP go_threads Number of OS threads created.
+# TYPE go_threads gauge
+go_threads 18
+# HELP loki_experimental_features_in_use_total The number of experimental features in use.
+# TYPE loki_experimental_features_in_use_total counter
+loki_experimental_features_in_use_total 0
+# HELP net_conntrack_dialer_conn_attempted_total Total number of connections attempted by the given dialer a given name.
+# TYPE net_conntrack_dialer_conn_attempted_total counter
+net_conntrack_dialer_conn_attempted_total{dialer_name=""} 5
+# HELP net_conntrack_dialer_conn_closed_total Total number of connections closed which originated from the dialer of a given name.
+# TYPE net_conntrack_dialer_conn_closed_total counter
+net_conntrack_dialer_conn_closed_total{dialer_name=""} 0
+# HELP net_conntrack_dialer_conn_established_total Total number of connections successfully established by the given dialer a given name.
+# TYPE net_conntrack_dialer_conn_established_total counter
+net_conntrack_dialer_conn_established_total{dialer_name=""} 5
+# HELP net_conntrack_dialer_conn_failed_total Total number of connections failed to dial by the dialer a given name.
+# TYPE net_conntrack_dialer_conn_failed_total counter
+net_conntrack_dialer_conn_failed_total{dialer_name="",reason="refused"} 0
+net_conntrack_dialer_conn_failed_total{dialer_name="",reason="resolution"} 0
+net_conntrack_dialer_conn_failed_total{dialer_name="",reason="timeout"} 0
+net_conntrack_dialer_conn_failed_total{dialer_name="",reason="unknown"} 0
+# HELP postgres_exporter_config_last_reload_success_timestamp_seconds Timestamp of the last successful configuration reload.
+# TYPE postgres_exporter_config_last_reload_success_timestamp_seconds gauge
+postgres_exporter_config_last_reload_success_timestamp_seconds 0
+# HELP postgres_exporter_config_last_reload_successful Postgres exporter config loaded successfully.
+# TYPE postgres_exporter_config_last_reload_successful gauge
+postgres_exporter_config_last_reload_successful 0
+# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE process_cpu_seconds_total counter
+process_cpu_seconds_total 3.95
+# HELP process_max_fds Maximum number of open file descriptors.
+# TYPE process_max_fds gauge
+process_max_fds 1.048576e+06
+# HELP process_network_receive_bytes_total Number of bytes received by the process over the network.
+# TYPE process_network_receive_bytes_total counter
+process_network_receive_bytes_total 264600
+# HELP process_network_transmit_bytes_total Number of bytes sent by the process over the network.
+# TYPE process_network_transmit_bytes_total counter
+process_network_transmit_bytes_total 188644
+# HELP process_open_fds Number of open file descriptors.
+# TYPE process_open_fds gauge
+process_open_fds 107
+# HELP process_resident_memory_bytes Resident memory size in bytes.
+# TYPE process_resident_memory_bytes gauge
+process_resident_memory_bytes 3.1250432e+08
+# HELP process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE process_start_time_seconds gauge
+process_start_time_seconds 1.78471492517e+09
+# HELP process_virtual_memory_bytes Virtual memory size in bytes.
+# TYPE process_virtual_memory_bytes gauge
+process_virtual_memory_bytes 7.408975872e+09
+# HELP process_virtual_memory_max_bytes Maximum amount of virtual memory available in bytes.
+# TYPE process_virtual_memory_max_bytes gauge
+process_virtual_memory_max_bytes 1.8446744073709552e+19
+# HELP prometheus_remote_storage_exemplars_in_total Exemplars in to remote storage, compare to exemplars out for queue managers. Deprecated, check prometheus_wal_watcher_records_read_total and prometheus_remote_storage_exemplars_dropped_total
+# TYPE prometheus_remote_storage_exemplars_in_total counter
+prometheus_remote_storage_exemplars_in_total 0
+# HELP prometheus_remote_storage_histograms_in_total HistogramSamples in to remote storage, compare to histograms out for queue managers. Deprecated, check prometheus_wal_watcher_records_read_total and prometheus_remote_storage_histograms_dropped_total
+# TYPE prometheus_remote_storage_histograms_in_total counter
+prometheus_remote_storage_histograms_in_total 0
+# HELP prometheus_remote_storage_samples_in_total Samples in to remote storage, compare to samples out for queue managers. Deprecated, check prometheus_wal_watcher_records_read_total and prometheus_remote_storage_samples_dropped_total
+# TYPE prometheus_remote_storage_samples_in_total counter
+prometheus_remote_storage_samples_in_total 0
+# HELP prometheus_remote_storage_string_interner_zero_reference_releases_total The number of times release has been called for strings that are not interned.
+# TYPE prometheus_remote_storage_string_interner_zero_reference_releases_total counter
+prometheus_remote_storage_string_interner_zero_reference_releases_total 0
+# HELP prometheus_sd_kubernetes_events_total The number of Kubernetes events handled.
+# TYPE prometheus_sd_kubernetes_events_total counter
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="add",role="endpoints"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="add",role="endpointslice"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="add",role="ingress"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="add",role="node"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="add",role="pod"} 20
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="add",role="service"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="delete",role="endpoints"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="delete",role="endpointslice"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="delete",role="ingress"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="delete",role="node"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="delete",role="pod"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="delete",role="service"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="update",role="endpoints"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="update",role="endpointslice"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="update",role="ingress"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="update",role="node"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="update",role="pod"} 0
+prometheus_sd_kubernetes_events_total{component_id="discovery.kubernetes.local_pods",component_path="/",event="update",role="service"} 0
+# HELP prometheus_sd_kubernetes_failures_total The number of failed WATCH/LIST requests.
+# TYPE prometheus_sd_kubernetes_failures_total counter
+prometheus_sd_kubernetes_failures_total{component_id="discovery.kubernetes.local_pods",component_path="/"} 0
+# HELP prometheus_template_text_expansion_failures_total The total number of template text expansion failures.
+# TYPE prometheus_template_text_expansion_failures_total counter
+prometheus_template_text_expansion_failures_total 0
+# HELP prometheus_template_text_expansions_total The total number of template text expansions.
+# TYPE prometheus_template_text_expansions_total counter
+prometheus_template_text_expansions_total 0
+# HELP prometheus_treecache_watcher_goroutines The current number of watcher goroutines.
+# TYPE prometheus_treecache_watcher_goroutines gauge
+prometheus_treecache_watcher_goroutines 0
+# HELP prometheus_treecache_zookeeper_failures_total The total number of ZooKeeper failures.
+# TYPE prometheus_treecache_zookeeper_failures_total counter
+prometheus_treecache_zookeeper_failures_total 0
+# HELP pyroscope_ebpf_active_targets Current number of active targets being tracked by the ebpf component
+# TYPE pyroscope_ebpf_active_targets gauge
+pyroscope_ebpf_active_targets{component_id="pyroscope.ebpf.head_to_head",component_path="/"} 5
+# HELP pyroscope_ebpf_debug_info_upload_bytes_total Total number of bytes uploaded to the debug info endpoint
+# TYPE pyroscope_ebpf_debug_info_upload_bytes_total counter
+pyroscope_ebpf_debug_info_upload_bytes_total{component_id="pyroscope.write.endpoint",component_path="/"} 0
+# HELP pyroscope_ebpf_pprof_bytes_total Total number of pprof profiles collected by the ebpf component
+# TYPE pyroscope_ebpf_pprof_bytes_total counter
+pyroscope_ebpf_pprof_bytes_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-grpc"} 18262
+pyroscope_ebpf_pprof_bytes_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-http"} 5932
+pyroscope_ebpf_pprof_bytes_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-postgres-proxy"} 4443
+pyroscope_ebpf_pprof_bytes_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-python-cpu"} 5788
+pyroscope_ebpf_pprof_bytes_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-redis-proxy"} 7323
+# HELP pyroscope_ebpf_pprof_samples_total Total number of pprof profiles collected by the ebpf component
+# TYPE pyroscope_ebpf_pprof_samples_total counter
+pyroscope_ebpf_pprof_samples_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-grpc"} 18262
+pyroscope_ebpf_pprof_samples_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-http"} 5932
+pyroscope_ebpf_pprof_samples_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-postgres-proxy"} 4443
+pyroscope_ebpf_pprof_samples_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-python-cpu"} 5788
+pyroscope_ebpf_pprof_samples_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-redis-proxy"} 7323
+# HELP pyroscope_ebpf_pprofs_dropped_total Total number of pprof profiles dropped by the ebpf component
+# TYPE pyroscope_ebpf_pprofs_dropped_total counter
+pyroscope_ebpf_pprofs_dropped_total{component_id="pyroscope.ebpf.head_to_head",component_path="/"} 0
+# HELP pyroscope_ebpf_pprofs_total Total number of pprof profiles collected by the ebpf component
+# TYPE pyroscope_ebpf_pprofs_total counter
+pyroscope_ebpf_pprofs_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-grpc"} 5
+pyroscope_ebpf_pprofs_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-http"} 3
+pyroscope_ebpf_pprofs_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-postgres-proxy"} 2
+pyroscope_ebpf_pprofs_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-python-cpu"} 5
+pyroscope_ebpf_pprofs_total{component_id="pyroscope.ebpf.head_to_head",component_path="/",service_name="head-to-head-redis-proxy"} 4
+# HELP pyroscope_ebpf_profiling_sessions_failing_total Total number of profiling sessions failed to complete by the ebpf component
+# TYPE pyroscope_ebpf_profiling_sessions_failing_total counter
+pyroscope_ebpf_profiling_sessions_failing_total{component_id="pyroscope.ebpf.head_to_head",component_path="/"} 0
+# HELP pyroscope_ebpf_profiling_sessions_total Total number of profiling sessions started by the ebpf component
+# TYPE pyroscope_ebpf_profiling_sessions_total counter
+pyroscope_ebpf_profiling_sessions_total{component_id="pyroscope.ebpf.head_to_head",component_path="/"} 1
+# HELP pyroscope_fanout_latency Write latency for sending to pyroscope profiles
+# TYPE pyroscope_fanout_latency histogram
+pyroscope_fanout_latency_bucket{component_id="pyroscope.ebpf.head_to_head",component_path="/",le="0.005"} 14
+pyroscope_fanout_latency_bucket{component_id="pyroscope.ebpf.head_to_head",component_path="/",le="0.01"} 14
+pyroscope_fanout_latency_bucket{component_id="pyroscope.ebpf.head_to_head",component_path="/",le="0.025"} 14
+pyroscope_fanout_latency_bucket{component_id="pyroscope.ebpf.head_to_head",component_path="/",le="0.05"} 19
+pyroscope_fanout_latency_bucket{component_id="pyroscope.ebpf.head_to_head",component_path="/",le="0.1"} 19
+pyroscope_fanout_latency_bucket{component_id="pyroscope.ebpf.head_to_head",component_path="/",le="0.25"} 19
+pyroscope_fanout_latency_bucket{component_id="pyroscope.ebpf.head_to_head",component_path="/",le="0.5"} 19
+pyroscope_fanout_latency_bucket{component_id="pyroscope.ebpf.head_to_head",component_path="/",le="1"} 19
+pyroscope_fanout_latency_bucket{component_id="pyroscope.ebpf.head_to_head",component_path="/",le="2.5"} 19
+pyroscope_fanout_latency_bucket{component_id="pyroscope.ebpf.head_to_head",component_path="/",le="5"} 19
+pyroscope_fanout_latency_bucket{component_id="pyroscope.ebpf.head_to_head",component_path="/",le="10"} 19
+pyroscope_fanout_latency_bucket{component_id="pyroscope.ebpf.head_to_head",component_path="/",le="+Inf"} 19
+pyroscope_fanout_latency_sum{component_id="pyroscope.ebpf.head_to_head",component_path="/"} 0.16006810700000004
+pyroscope_fanout_latency_count{component_id="pyroscope.ebpf.head_to_head",component_path="/"} 19
+# HELP pyroscope_forwarded_entries_total Total number of samples sent to downstream components.
+# TYPE pyroscope_forwarded_entries_total counter
+pyroscope_forwarded_entries_total{component_id="pyroscope.ebpf.head_to_head",component_path="/"} 19
+# HELP pyroscope_write_latency Write latency for sending profiles to pyroscope
+# TYPE pyroscope_write_latency histogram
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="-",type="push_total",le="0.005"} 14
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="-",type="push_total",le="0.01"} 14
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="-",type="push_total",le="0.025"} 14
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="-",type="push_total",le="0.05"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="-",type="push_total",le="0.1"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="-",type="push_total",le="0.25"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="-",type="push_total",le="0.5"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="-",type="push_total",le="1"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="-",type="push_total",le="2.5"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="-",type="push_total",le="5"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="-",type="push_total",le="10"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="-",type="push_total",le="+Inf"} 19
+pyroscope_write_latency_sum{component_id="pyroscope.write.endpoint",component_path="/",endpoint="-",type="push_total"} 0.15950791600000003
+pyroscope_write_latency_count{component_id="pyroscope.write.endpoint",component_path="/",endpoint="-",type="push_total"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_downstream",le="0.005"} 14
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_downstream",le="0.01"} 14
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_downstream",le="0.025"} 14
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_downstream",le="0.05"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_downstream",le="0.1"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_downstream",le="0.25"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_downstream",le="0.5"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_downstream",le="1"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_downstream",le="2.5"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_downstream",le="5"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_downstream",le="10"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_downstream",le="+Inf"} 19
+pyroscope_write_latency_sum{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_downstream"} 0.158364837
+pyroscope_write_latency_count{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_downstream"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_endpoint",le="0.005"} 14
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_endpoint",le="0.01"} 14
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_endpoint",le="0.025"} 14
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_endpoint",le="0.05"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_endpoint",le="0.1"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_endpoint",le="0.25"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_endpoint",le="0.5"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_endpoint",le="1"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_endpoint",le="2.5"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_endpoint",le="5"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_endpoint",le="10"} 19
+pyroscope_write_latency_bucket{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_endpoint",le="+Inf"} 19
+pyroscope_write_latency_sum{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_endpoint"} 0.15860998900000003
+pyroscope_write_latency_count{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040",type="push_endpoint"} 19
+# HELP pyroscope_write_sent_bytes_total Total number of compressed bytes sent to Pyroscope.
+# TYPE pyroscope_write_sent_bytes_total counter
+pyroscope_write_sent_bytes_total{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040"} 41748
+# HELP pyroscope_write_sent_profiles_total Total number of profiles sent to Pyroscope.
+# TYPE pyroscope_write_sent_profiles_total counter
+pyroscope_write_sent_profiles_total{component_id="pyroscope.write.endpoint",component_path="/",endpoint="http://pyroscope.e-navigator-system.svc.cluster.local:4040"} 19
+# HELP remotecfg_hash Hash of the currently active remote configuration.
+# TYPE remotecfg_hash gauge
+remotecfg_hash{hash=""} 1
+# HELP remotecfg_last_load_not_modified Remote config not modified since last fetch
+# TYPE remotecfg_last_load_not_modified gauge
+remotecfg_last_load_not_modified 0
+# HELP remotecfg_last_load_success_timestamp_seconds Timestamp of the last successful remote configuration load
+# TYPE remotecfg_last_load_success_timestamp_seconds gauge
+remotecfg_last_load_success_timestamp_seconds 0
+# HELP remotecfg_last_load_successful Remote config loaded successfully
+# TYPE remotecfg_last_load_successful gauge
+remotecfg_last_load_successful 0
+# HELP remotecfg_load_attempts_total Attempts to load remote configuration
+# TYPE remotecfg_load_attempts_total counter
+remotecfg_load_attempts_total 0
+# HELP remotecfg_load_failures_total Remote configuration load failures
+# TYPE remotecfg_load_failures_total counter
+remotecfg_load_failures_total 0
+# HELP remotecfg_request_duration_seconds Duration of remote configuration requests.
+# TYPE remotecfg_request_duration_seconds histogram
+remotecfg_request_duration_seconds_bucket{le="0.005"} 0
+remotecfg_request_duration_seconds_bucket{le="0.01"} 0
+remotecfg_request_duration_seconds_bucket{le="0.025"} 0
+remotecfg_request_duration_seconds_bucket{le="0.05"} 0
+remotecfg_request_duration_seconds_bucket{le="0.1"} 0
+remotecfg_request_duration_seconds_bucket{le="0.25"} 0
+remotecfg_request_duration_seconds_bucket{le="0.5"} 0
+remotecfg_request_duration_seconds_bucket{le="1"} 0
+remotecfg_request_duration_seconds_bucket{le="2.5"} 0
+remotecfg_request_duration_seconds_bucket{le="5"} 0
+remotecfg_request_duration_seconds_bucket{le="10"} 0
+remotecfg_request_duration_seconds_bucket{le="+Inf"} 0
+remotecfg_request_duration_seconds_sum 0
+remotecfg_request_duration_seconds_count 0

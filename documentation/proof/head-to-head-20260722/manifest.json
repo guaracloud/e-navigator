@@ -1,0 +1,161 @@
+{
+  "schema": "e-navigator.head-to-head-proof-manifest.v1",
+  "date": "2026-07-22",
+  "started_at_utc": "2026-07-22T09:49:03Z",
+  "ended_at_utc": "2026-07-22T10:52:55Z",
+  "cluster": {
+    "context": "homelab",
+    "kubernetes": "k3s v1.30.4+k3s1",
+    "nodes": {
+      "homelab-01": {
+        "operating_system": "NixOS 24.05 (Uakari)",
+        "kernel": "6.6.68",
+        "architecture": "amd64",
+        "container_runtime": "containerd 1.7.20-k3s1",
+        "cpu_capacity": 16,
+        "memory_capacity_kib": 32245544
+      },
+      "homelab-02": {
+        "operating_system": "NixOS 24.05 (Uakari)",
+        "kernel": "6.6.68",
+        "architecture": "amd64",
+        "container_runtime": "containerd 1.7.20-k3s1",
+        "cpu_capacity": 4,
+        "memory_capacity_kib": 16116304
+      }
+    },
+    "server_node": "homelab-02",
+    "load_node": "homelab-01"
+  },
+  "candidate": {
+    "source_commit": "a30ed28a654d5566040c1e860898224996159064",
+    "image": "docker.io/library/e-navigator:gap9-head-to-head-amd64",
+    "local_index_digest": "sha256:8201c7def131e42f3e43ed83a5fbb740e3b5795d03253f7df536cc9f85a9bac3",
+    "runtime_image_id": "sha256:f3e543e47b4fee2c906ad61fe1d88c1301644e63e249c3a6a48e6cdbe048db78",
+    "platform": "linux/amd64",
+    "distribution": "loaded directly into both homelab containerd stores; never pushed"
+  },
+  "workload": {
+    "image": "docker.io/library/e-navigator-head-to-head:gap9-amd64",
+    "local_index_digest": "sha256:7fbd65f7d34680eaabaf730f568c8967a3c8ef018dca1e8d1b93b047c49f672f",
+    "runtime_image_id": "sha256:d630d323d2387b27627e1b1ded6b93e85296bb28538478182f08cf46a5a18c18",
+    "python": "3.13.11",
+    "redis_image": "docker.io/library/redis@sha256:c22af04bb576503bf16b3e34a1fd2fd82de0f765afd866d2e380145e0af30d78",
+    "postgres_image": "docker.io/library/postgres@sha256:cc9f4143a8d2fa8cf3749d0cb4d26ecf2d53a77a2ac807e9ebd67ae22426221a"
+  },
+  "comparison": {
+    "beyla": {
+      "version": "3.28.0",
+      "image": "docker.io/grafana/beyla@sha256:133b8d66190f21e20365d9972e1621513ea5e44518fb71e1c3e0180c64815566",
+      "runtime_image_id": "docker.io/grafana/beyla@sha256:133b8d66190f21e20365d9972e1621513ea5e44518fb71e1c3e0180c64815566",
+      "helm_chart_version": "1.16.10",
+      "helm_chart_sha256": "f404a525451c1b36ab0a8a98560e20fc4af70f59016518d414ce5fed367855e2"
+    },
+    "alloy": {
+      "version": "1.18.0",
+      "image": "docker.io/grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308",
+      "runtime_image_id": "docker.io/grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308"
+    }
+  },
+  "image_bundle": {
+    "bytes": 97184768,
+    "sha256": "3577702bc611fabf210cc5986423c91274cfbf2c5f00e1c85251b99a832abf7e",
+    "homelab_01_verified": true,
+    "homelab_02_verified": true
+  },
+  "method": {
+    "namespace": "e-navigator-bench",
+    "conditions": [
+      "no benchmark agent",
+      "Grafana Beyla plus Alloy profiles",
+      "E-Navigator"
+    ],
+    "cumulative_stages": [
+      "http",
+      "grpc",
+      "redis",
+      "postgres",
+      "profile"
+    ],
+    "repetitions": 3,
+    "validated_runs": 33,
+    "warmup_seconds": 15,
+    "measurement_seconds": 45,
+    "resource_measurement_start_offset_seconds": 15,
+    "resource_cpu_rate_window_seconds": 60,
+    "prometheus_step_seconds": 15,
+    "profile_frequency_hz": 10,
+    "workload_rates_per_second": {
+      "http": 100,
+      "grpc": 80,
+      "redis": 160,
+      "postgres": 50,
+      "python_cpu": 8
+    },
+    "workload_concurrency": {
+      "http": 8,
+      "grpc": 8,
+      "redis": 8,
+      "postgres": 5,
+      "python_cpu": 2
+    },
+    "node_resource_definition": "sum of container CPU usage and container working-set memory grouped by node",
+    "agent_resource_definition": "sum of collector container CPU usage and RSS",
+    "off_cpu_and_lock_profiles_enabled": false
+  },
+  "execution": {
+    "counterbalanced": true,
+    "resumed": true,
+    "discarded_incomplete_attempts": 1,
+    "interruption_reason": "the initial 30-second CPU rate query returned one sample for an incomplete Beyla PostgreSQL arm",
+    "resume_action": "changed every CPU query to a 60-second rate window, re-queried eight retained arms from Prometheus history, reran the incomplete arm, and applied the same formula to all 33 accepted runs",
+    "validated_run_order_artifact": "validated-run-order.log",
+    "executed_input_checksums_artifact": "executed-input-sha256.txt",
+    "post_run_hardening": "bounded analyzer inputs and proof projections, bounded workload fixture inputs, a 120-second disposable-Pod cleanup wait, and removal of one trailing blank line from each TOML source config; these changes did not alter parsed config semantics or recorded workload and metric values",
+    "curation_analyzer_sha256": "52aabcb3ef04c30a9a402aa7488ca67c027a58a3136df7b878605167ae81c61a",
+    "finalized_harness_sha256": "7591c00a029325bc120a6fad68f70c131b76f3313af752e07e0888820841e201",
+    "finalized_workload_fixture_sha256": "d9c6f76ce5be6e54d9ca3e8bf4298abd2f7cf5afeee2a0e3e8a4f531f942b706",
+    "finalized_config_sha256": {
+      "benchmarks/config/head-to-head-grpc.toml": "95aeb5faa282ea6ccf445cdb3acee82118a281cbc159bd976193d7980d599e34",
+      "benchmarks/config/head-to-head-http.toml": "bae022d6385a03982bec98cb20d1234ad9ddc3b4aa5dee300df4b811c581ca6a",
+      "benchmarks/config/head-to-head-postgres.toml": "b9d8a434a43422aad9da0ed92971b2163de7ebd4b43196caed8fa5d76ae31b5f",
+      "benchmarks/config/head-to-head-profile.toml": "b7f628ab6226f43d35f5f7cb4077f081b80422161915d7838af9289fe1ec1e0c",
+      "benchmarks/config/head-to-head-redis.toml": "98209e21f9b009bea6f039989d7aa4309867c50c2ee2f0e75ff46c4060df9f90"
+    }
+  },
+  "results": {
+    "integrity_verdict": "pass",
+    "lower_agent_overhead_claim": "rejected",
+    "warmup_successes": 197010,
+    "measured_successes": 591030,
+    "workload_errors": 0,
+    "e_navigator_agent_cpu_change_vs_beyla_alloy_percent": 43.601071,
+    "e_navigator_agent_rss_change_vs_beyla_alloy_percent": 31.903883,
+    "e_navigator_hard_loss_total_final_stage": 0,
+    "beyla_internal_hard_errors_final_stage": 0,
+    "beyla_grpc_unaccounted_operations_final_stage": 17,
+    "alloy_profiles_collected": 55,
+    "alloy_profiles_forwarded": 55,
+    "alloy_profiles_dropped": 0,
+    "alloy_failing_sessions": 0,
+    "alloy_empty_stack_errors": 1,
+    "alloy_wrong_text_section_errors": 1
+  },
+  "validation": {
+    "scripts_quality_sh": "pass",
+    "skipped_gates": []
+  },
+  "cleanup": {
+    "benchmark_namespace_disposable_resources_absent": true,
+    "benchmark_cluster_scoped_resources_absent": true,
+    "candidate_image_references_removed_from_both_nodes": true,
+    "candidate_image_references_removed_locally": true,
+    "standing_argocd_application": "Synced/Healthy",
+    "standing_argocd_prune": true,
+    "standing_argocd_self_heal": true,
+    "standing_daemonset_ready": "2/2",
+    "standing_daemonset_image": "ghcr.io/guaracloud/e-navigator@sha256:62402d21b9cb02d59d63365c7e3716ffa0980bfea42d070b43fed618703a7df9",
+    "production_context_touched": false
+  },
+  "raw_artifact_root": "benchmarks/results/head-to-head-proof"
+}

@@ -1,0 +1,237 @@
+# HELP beyla_bpf_map_entries_total Total number of entries in the BPF maps
+# TYPE beyla_bpf_map_entries_total gauge
+beyla_bpf_map_entries_total{map_id="79955",map_name="PROCESS_LISTENE",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="79974",map_name="LISTENER_ENDPOI",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80042",map_name="LISTENER_ENDPOI",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80048",map_name="PROCESS_LISTENE",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80078",map_name="PROCESS_LISTENE",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80084",map_name="LISTENER_ENDPOI",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80115",map_name="PROCESS_LISTENE",map_type="LRUHash"} 4
+beyla_bpf_map_entries_total{map_id="80119",map_name="LISTENER_ENDPOI",map_type="LRUHash"} 4
+beyla_bpf_map_entries_total{map_id="80176",map_name="PROCESS_LISTENE",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80187",map_name="LISTENER_ENDPOI",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80234",map_name="LISTENER_ENDPOI",map_type="LRUHash"} 4
+beyla_bpf_map_entries_total{map_id="80256",map_name="PROCESS_LISTENE",map_type="LRUHash"} 60
+beyla_bpf_map_entries_total{map_id="80311",map_name="PROCESS_LISTENE",map_type="LRUHash"} 60
+beyla_bpf_map_entries_total{map_id="80331",map_name="LISTENER_ENDPOI",map_type="LRUHash"} 4
+beyla_bpf_map_entries_total{map_id="80466",map_name="reported_pids",map_type="LRUHash"} 22
+beyla_bpf_map_entries_total{map_id="80527",map_name="java_tasks",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80528",map_name="ssl_to_conn",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80529",map_name="ongoing_tcp_req",map_type="LRUHash"} 5
+beyla_bpf_map_entries_total{map_id="80530",map_name="jvm_heap_summar",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80531",map_name="fd_to_connectio",map_type="LRUHash"} 33
+beyla_bpf_map_entries_total{map_id="80532",map_name="unreadable_buff",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80533",map_name="java_vt_threads",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80534",map_name="connection_trac",map_type="LRUHash"} 40
+beyla_bpf_map_entries_total{map_id="80535",map_name="server_traces",map_type="LRUHash"} 3
+beyla_bpf_map_entries_total{map_id="80537",map_name="filter_ports",map_type="LRUHash"} 5
+beyla_bpf_map_entries_total{map_id="80539",map_name="ongoing_gorouti",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80540",map_name="python_task_sta",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80541",map_name="pid_cache",map_type="LRUHash"} 1
+beyla_bpf_map_entries_total{map_id="80542",map_name="fd_map",map_type="LRUHash"} 302
+beyla_bpf_map_entries_total{map_id="80543",map_name="python_context_",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80544",map_name="active_ssl_conn",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80545",map_name="nodejs_fd_map",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80546",map_name="handled_by_go_c",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80548",map_name="active_unix_soc",map_type="LRUHash"} 3
+beyla_bpf_map_entries_total{map_id="80549",map_name="incoming_trace_",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80550",map_name="sock_pids",map_type="LRUHash"} 101
+beyla_bpf_map_entries_total{map_id="80551",map_name="puma_worker_tas",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80552",map_name="cp_support_conn",map_type="LRUHash"} 50
+beyla_bpf_map_entries_total{map_id="80553",map_name="trace_map",map_type="LRUHash"} 3
+beyla_bpf_map_entries_total{map_id="80554",map_name="ongoing_http",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80555",map_name="python_thread_s",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80556",map_name="server_traces_a",map_type="LRUHash"} 49
+beyla_bpf_map_entries_total{map_id="80557",map_name="sock_filter_buf",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80558",map_name="active_ssl_writ",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80559",map_name="jvm_mem_pool_sa",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80560",map_name="puma_task_conne",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80561",map_name="clone_map",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80562",map_name="ongoing_server_",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80563",map_name="go_trace_map",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80564",map_name="outgoing_trace_",map_type="LRUHash"} 7
+beyla_bpf_map_entries_total{map_id="80565",map_name="active_ssl_read",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80566",map_name="msg_buffers",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80568",map_name="obi_usdt_ip_to_",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80569",map_name="nginx_upstream",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80579",map_name="traces_ctx_v1",map_type="LRUHash"} 1
+beyla_bpf_map_entries_total{map_id="80581",map_name="ongoing_http2_c",map_type="LRUHash"} 2
+beyla_bpf_map_entries_total{map_id="80582",map_name="mysql_state",map_type="LRUHash"} 30
+beyla_bpf_map_entries_total{map_id="80583",map_name="protocol_cache",map_type="LRUHash"} 10
+beyla_bpf_map_entries_total{map_id="80584",map_name="kafka_state",map_type="LRUHash"} 48
+beyla_bpf_map_entries_total{map_id="80585",map_name="kafka_ongoing_r",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80586",map_name="listening_ports",map_type="LRUHash"} 35
+beyla_bpf_map_entries_total{map_id="80587",map_name="active_accept_a",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80588",map_name="active_connect_",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80589",map_name="active_send_arg",map_type="LRUHash"} 3
+beyla_bpf_map_entries_total{map_id="80590",map_name="active_send_soc",map_type="LRUHash"} 5
+beyla_bpf_map_entries_total{map_id="80591",map_name="active_recv_arg",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80592",map_name="pid_tid_to_conn",map_type="LRUHash"} 9
+beyla_bpf_map_entries_total{map_id="80597",map_name="upstream_init_a",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80599",map_name="ongoing_http2_g",map_type="LRUHash"} 12
+beyla_bpf_map_entries_total{map_id="80604",map_name="tcp_connection_",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80606",map_name="ssl_to_pid_tid",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80607",map_name="go_offsets_map",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80608",map_name="ongoing_client_",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80609",map_name="ongoing_grpc_op",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80610",map_name="ongoing_grpc_tr",map_type="LRUHash"} 0
+beyla_bpf_map_entries_total{map_id="80611",map_name="ongoing_sql_que",map_type="LRUHash"} 0
+# HELP beyla_bpf_map_max_entries_total Maximum number of entries in the BPF maps
+# TYPE beyla_bpf_map_max_entries_total gauge
+beyla_bpf_map_max_entries_total{map_id="79955",map_name="PROCESS_LISTENE",map_type="LRUHash"} 1
+beyla_bpf_map_max_entries_total{map_id="79974",map_name="LISTENER_ENDPOI",map_type="LRUHash"} 1
+beyla_bpf_map_max_entries_total{map_id="80042",map_name="LISTENER_ENDPOI",map_type="LRUHash"} 1
+beyla_bpf_map_max_entries_total{map_id="80048",map_name="PROCESS_LISTENE",map_type="LRUHash"} 1
+beyla_bpf_map_max_entries_total{map_id="80078",map_name="PROCESS_LISTENE",map_type="LRUHash"} 1
+beyla_bpf_map_max_entries_total{map_id="80084",map_name="LISTENER_ENDPOI",map_type="LRUHash"} 1
+beyla_bpf_map_max_entries_total{map_id="80115",map_name="PROCESS_LISTENE",map_type="LRUHash"} 4096
+beyla_bpf_map_max_entries_total{map_id="80119",map_name="LISTENER_ENDPOI",map_type="LRUHash"} 4096
+beyla_bpf_map_max_entries_total{map_id="80176",map_name="PROCESS_LISTENE",map_type="LRUHash"} 1
+beyla_bpf_map_max_entries_total{map_id="80187",map_name="LISTENER_ENDPOI",map_type="LRUHash"} 1
+beyla_bpf_map_max_entries_total{map_id="80234",map_name="LISTENER_ENDPOI",map_type="LRUHash"} 4096
+beyla_bpf_map_max_entries_total{map_id="80256",map_name="PROCESS_LISTENE",map_type="LRUHash"} 4096
+beyla_bpf_map_max_entries_total{map_id="80311",map_name="PROCESS_LISTENE",map_type="LRUHash"} 4096
+beyla_bpf_map_max_entries_total{map_id="80331",map_name="LISTENER_ENDPOI",map_type="LRUHash"} 4096
+beyla_bpf_map_max_entries_total{map_id="80466",map_name="reported_pids",map_type="LRUHash"} 65536
+beyla_bpf_map_max_entries_total{map_id="80527",map_name="java_tasks",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80528",map_name="ssl_to_conn",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80529",map_name="ongoing_tcp_req",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80530",map_name="jvm_heap_summar",map_type="LRUHash"} 4096
+beyla_bpf_map_max_entries_total{map_id="80531",map_name="fd_to_connectio",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80532",map_name="unreadable_buff",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80533",map_name="java_vt_threads",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80534",map_name="connection_trac",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80535",map_name="server_traces",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80537",map_name="filter_ports",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80539",map_name="ongoing_gorouti",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80540",map_name="python_task_sta",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80541",map_name="pid_cache",map_type="LRUHash"} 3001
+beyla_bpf_map_max_entries_total{map_id="80542",map_name="fd_map",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80543",map_name="python_context_",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80544",map_name="active_ssl_conn",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80545",map_name="nodejs_fd_map",map_type="LRUHash"} 1000
+beyla_bpf_map_max_entries_total{map_id="80546",map_name="handled_by_go_c",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80548",map_name="active_unix_soc",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80549",map_name="incoming_trace_",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80550",map_name="sock_pids",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80551",map_name="puma_worker_tas",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80552",map_name="cp_support_conn",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80553",map_name="trace_map",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80554",map_name="ongoing_http",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80555",map_name="python_thread_s",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80556",map_name="server_traces_a",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80557",map_name="sock_filter_buf",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80558",map_name="active_ssl_writ",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80559",map_name="jvm_mem_pool_sa",map_type="LRUHash"} 4096
+beyla_bpf_map_max_entries_total{map_id="80560",map_name="puma_task_conne",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80561",map_name="clone_map",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80562",map_name="ongoing_server_",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80563",map_name="go_trace_map",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80564",map_name="outgoing_trace_",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80565",map_name="active_ssl_read",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80566",map_name="msg_buffers",map_type="LRUHash"} 1000
+beyla_bpf_map_max_entries_total{map_id="80568",map_name="obi_usdt_ip_to_",map_type="LRUHash"} 1024
+beyla_bpf_map_max_entries_total{map_id="80569",map_name="nginx_upstream",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80579",map_name="traces_ctx_v1",map_type="LRUHash"} 1
+beyla_bpf_map_max_entries_total{map_id="80581",map_name="ongoing_http2_c",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80582",map_name="mysql_state",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80583",map_name="protocol_cache",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80584",map_name="kafka_state",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80585",map_name="kafka_ongoing_r",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80586",map_name="listening_ports",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80587",map_name="active_accept_a",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80588",map_name="active_connect_",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80589",map_name="active_send_arg",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80590",map_name="active_send_soc",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80591",map_name="active_recv_arg",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80592",map_name="pid_tid_to_conn",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80597",map_name="upstream_init_a",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80599",map_name="ongoing_http2_g",map_type="LRUHash"} 30000
+beyla_bpf_map_max_entries_total{map_id="80604",map_name="tcp_connection_",map_type="LRUHash"} 1024
+beyla_bpf_map_max_entries_total{map_id="80606",map_name="ssl_to_pid_tid",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80607",map_name="go_offsets_map",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80608",map_name="ongoing_client_",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80609",map_name="ongoing_grpc_op",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80610",map_name="ongoing_grpc_tr",map_type="LRUHash"} 10000
+beyla_bpf_map_max_entries_total{map_id="80611",map_name="ongoing_sql_que",map_type="LRUHash"} 10000
+# HELP beyla_bpf_network_ignored_packets_total How many network packets have been internally ignored due to collisions in the internal eBPF cache
+# TYPE beyla_bpf_network_ignored_packets_total counter
+beyla_bpf_network_ignored_packets_total 0
+# HELP beyla_bpf_network_packets_total How many network packets have been internally accounted
+# TYPE beyla_bpf_network_packets_total counter
+beyla_bpf_network_packets_total 0
+# HELP beyla_bpf_probe_executions_total Total number of BPF probe executions
+# TYPE beyla_bpf_probe_executions_total counter
+beyla_bpf_probe_executions_total{probe_id="967200",probe_name="kprobe__kallsyms",probe_type="Kprobe"} 1
+beyla_bpf_probe_executions_total{probe_id="967214",probe_name="obi_kprobe_sock_recvmsg",probe_type="Kprobe"} 169
+beyla_bpf_probe_executions_total{probe_id="967218",probe_name="obi_kprobe_tcp_cleanup_rbuf",probe_type="Kprobe"} 116
+beyla_bpf_probe_executions_total{probe_id="967222",probe_name="obi_kprobe_tcp_recvmsg",probe_type="Kprobe"} 116
+beyla_bpf_probe_executions_total{probe_id="967223",probe_name="obi_kprobe_tcp_sendmsg",probe_type="Kprobe"} 93
+beyla_bpf_probe_executions_total{probe_id="967225",probe_name="obi_kprobe_unix_stream_recvmsg",probe_type="Kprobe"} 48
+beyla_bpf_probe_executions_total{probe_id="967226",probe_name="obi_kprobe_unix_stream_sendmsg",probe_type="Kprobe"} 39
+beyla_bpf_probe_executions_total{probe_id="967227",probe_name="obi_kretprobe_sock_recvmsg",probe_type="Kprobe"} 170
+beyla_bpf_probe_executions_total{probe_id="967231",probe_name="obi_kretprobe_tcp_recvmsg",probe_type="Kprobe"} 116
+beyla_bpf_probe_executions_total{probe_id="967232",probe_name="obi_kretprobe_tcp_sendmsg",probe_type="Kprobe"} 94
+beyla_bpf_probe_executions_total{probe_id="967233",probe_name="obi_kretprobe_unix_stream_recvmsg",probe_type="Kprobe"} 48
+beyla_bpf_probe_executions_total{probe_id="967234",probe_name="obi_kretprobe_unix_stream_sendmsg",probe_type="Kprobe"} 39
+# HELP beyla_bpf_probe_latency_seconds_total Total latency of the BPF probes in seconds
+# TYPE beyla_bpf_probe_latency_seconds_total counter
+beyla_bpf_probe_latency_seconds_total{probe_id="967200",probe_name="kprobe__kallsyms",probe_type="Kprobe"} 1.22e-05
+beyla_bpf_probe_latency_seconds_total{probe_id="967214",probe_name="obi_kprobe_sock_recvmsg",probe_type="Kprobe"} 0.000553538
+beyla_bpf_probe_latency_seconds_total{probe_id="967218",probe_name="obi_kprobe_tcp_cleanup_rbuf",probe_type="Kprobe"} 0.000867136
+beyla_bpf_probe_latency_seconds_total{probe_id="967222",probe_name="obi_kprobe_tcp_recvmsg",probe_type="Kprobe"} 0.00016198999999999999
+beyla_bpf_probe_latency_seconds_total{probe_id="967223",probe_name="obi_kprobe_tcp_sendmsg",probe_type="Kprobe"} 0.000808543
+beyla_bpf_probe_latency_seconds_total{probe_id="967225",probe_name="obi_kprobe_unix_stream_recvmsg",probe_type="Kprobe"} 9.8069e-05
+beyla_bpf_probe_latency_seconds_total{probe_id="967226",probe_name="obi_kprobe_unix_stream_sendmsg",probe_type="Kprobe"} 0.00043555799999999995
+beyla_bpf_probe_latency_seconds_total{probe_id="967227",probe_name="obi_kretprobe_sock_recvmsg",probe_type="Kprobe"} 0.000173395
+beyla_bpf_probe_latency_seconds_total{probe_id="967231",probe_name="obi_kretprobe_tcp_recvmsg",probe_type="Kprobe"} 0.000152413
+beyla_bpf_probe_latency_seconds_total{probe_id="967232",probe_name="obi_kretprobe_tcp_sendmsg",probe_type="Kprobe"} 0.000198402
+beyla_bpf_probe_latency_seconds_total{probe_id="967233",probe_name="obi_kretprobe_unix_stream_recvmsg",probe_type="Kprobe"} 0.000162861
+beyla_bpf_probe_latency_seconds_total{probe_id="967234",probe_name="obi_kretprobe_unix_stream_sendmsg",probe_type="Kprobe"} 6.9846e-05
+# HELP beyla_ebpf_tracer_flushes Length of the groups of traces flushed from the eBPF tracer to the next pipeline stage
+# TYPE beyla_ebpf_tracer_flushes histogram
+beyla_ebpf_tracer_flushes_bucket{le="0"} 0
+beyla_ebpf_tracer_flushes_bucket{le="10"} 2
+beyla_ebpf_tracer_flushes_bucket{le="20"} 3
+beyla_ebpf_tracer_flushes_bucket{le="40"} 3
+beyla_ebpf_tracer_flushes_bucket{le="80"} 3
+beyla_ebpf_tracer_flushes_bucket{le="160"} 237
+beyla_ebpf_tracer_flushes_bucket{le="320"} 237
+beyla_ebpf_tracer_flushes_bucket{le="+Inf"} 237
+beyla_ebpf_tracer_flushes_sum 23416
+beyla_ebpf_tracer_flushes_count 237
+# HELP beyla_instrumented_processes Total number of instrumented processes by process name
+# TYPE beyla_instrumented_processes gauge
+beyla_instrumented_processes{process_name="python3.13"} 5
+# HELP beyla_internal_build_info A metric with a constant '1' value labeled by version, revision, branch, goversion, goos and goarch during build.
+# TYPE beyla_internal_build_info gauge
+beyla_internal_build_info{goarch="amd64",goos="linux",goversion="go1.25.11",revision="9b16e14",version="v3.28.0"} 1
+# HELP beyla_kube_cache_forward_lag_seconds How long, in seconds, it takes since a Kubernetes event happens until it is forwarded to the subscribers
+# TYPE beyla_kube_cache_forward_lag_seconds histogram
+beyla_kube_cache_forward_lag_seconds_bucket{le="0.5"} 4
+beyla_kube_cache_forward_lag_seconds_bucket{le="1"} 6
+beyla_kube_cache_forward_lag_seconds_bucket{le="2"} 6
+beyla_kube_cache_forward_lag_seconds_bucket{le="4"} 6
+beyla_kube_cache_forward_lag_seconds_bucket{le="8"} 6
+beyla_kube_cache_forward_lag_seconds_bucket{le="16"} 6
+beyla_kube_cache_forward_lag_seconds_bucket{le="32"} 6
+beyla_kube_cache_forward_lag_seconds_bucket{le="64"} 6
+beyla_kube_cache_forward_lag_seconds_bucket{le="128"} 6
+beyla_kube_cache_forward_lag_seconds_bucket{le="256"} 6
+beyla_kube_cache_forward_lag_seconds_bucket{le="+Inf"} 6
+beyla_kube_cache_forward_lag_seconds_sum 3.052198898
+beyla_kube_cache_forward_lag_seconds_count 6
+# HELP beyla_otel_metric_exports_total Length of the metric batches submitted to the remote OTEL collector
+# TYPE beyla_otel_metric_exports_total counter
+beyla_otel_metric_exports_total 0
+# HELP beyla_otel_trace_exports_total Length of the trace batches submitted to the remote OTEL collector
+# TYPE beyla_otel_trace_exports_total counter
+beyla_otel_trace_exports_total 23425
+# HELP beyla_prometheus_http_requests_total Requests towards the Prometheus Scrape endpoint
+# TYPE beyla_prometheus_http_requests_total counter
+beyla_prometheus_http_requests_total{path="/internal/metrics",port="9090"} 3
+beyla_prometheus_http_requests_total{path="/metrics",port="9090"} 4
+# HELP promhttp_metric_handler_errors_total Total number of internal errors encountered by the promhttp metric handler.
+# TYPE promhttp_metric_handler_errors_total counter
+promhttp_metric_handler_errors_total{cause="encoding"} 0
+promhttp_metric_handler_errors_total{cause="gathering"} 0

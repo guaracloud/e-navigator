@@ -1,0 +1,10 @@
+grpcio==1.82.1 \
+    --hash=sha256:c40d94ba820329cc191981bc22fa6f6eed0799c6d921f3c6709521d59d4a2fd7
+psycopg==3.3.4 \
+    --hash=sha256:b6bbc25ccf05c8fad3b061d9db2ef0909a555171b84b07f29458a447253d679a
+psycopg-binary==3.3.4 \
+    --hash=sha256:c677c4ad433cb7150c8cd304a0769ae3bcfbe5ea0676eb53faa7b1443b16d0d3
+redis==8.0.1 \
+    --hash=sha256:47daa35a058c23468d6437f17a8c76882cb316b838ef763036af99b96cedd743
+typing-extensions==4.16.0 \
+    --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8

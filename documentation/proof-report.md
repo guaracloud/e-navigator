@@ -340,6 +340,30 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   updates, sustained churn, production behavior, or every runtime and cgroup
   driver.
 
+- Full-stack head-to-head proof (2026-07-22, homelab k3s v1.30, kernel
+  6.6.68, amd64, two NixOS nodes). Three no-agent repetitions and three
+  repetitions for each cumulative HTTP, gRPC, Redis, PostgreSQL, and 10 Hz
+  CPU-profile stage of pinned Beyla 3.28.0 plus Alloy 1.18.0 and E-Navigator
+  produced 33 validated runs. The same five fixed-rate services, nodes,
+  workload image, load generator, 15-second warmup, and 45-second measurement
+  were used throughout. All 591,030 measured operations succeeded. The final
+  E-Navigator arm measured 117.353 +/- 6.010 millicores and 180.881 +/- 5.079
+  MiB RSS, versus 81.721 +/- 5.618 millicores and 137.131 +/- 4.680 MiB for
+  Beyla plus Alloy. E-Navigator therefore measured 43.601071% more agent CPU
+  and 31.903883% more agent RSS in this comparison. Its final runs enqueued and
+  sent 68,622 traces and 567 profiles with zero hard loss. Beyla left 17 of
+  14,400 final-stage gRPC operations unaccounted. Alloy collected and
+  forwarded 55 profiles with zero drops and failing sessions, while recording
+  one empty-stack and one wrong-text-section diagnostic. Curated per-run,
+  variance, raw metric, image, interruption, and cleanup evidence is in
+  `documentation/proof/head-to-head-20260722/`. Candidate images and disposable
+  resources were removed, and the standing Argo CD application returned
+  Synced/Healthy with its DaemonSet 2/2 Ready. This is a valid negative
+  performance finding: it rejects a lower-overhead or lower-memory claim. It
+  does not prove saturation capacity, statistical superiority, total host
+  utilization, sustained or production behavior, or universal workload
+  results.
+
 - Capture-filter verifier-load and OrbStack live scoping proof (2026-07-07,
   OrbStack Docker plus its in-VM Kubernetes v1.34, arm64). The cgroup capture
   filter's in-kernel fast-path check verifier-loaded on every modified program:
@@ -713,10 +737,12 @@ These areas remain explicitly partial:
   walks, selected periodic samples and sessions, three homelab repetitions of
   bounded scheduler off-CPU and futex-wait profiles, local pprof rendering, and
   direct OTLP Profiles ingest/query against a disposable Pyroscope `1.20.3`
-  container are proven. Wakeup cause, lock ownership, non-futex synchronization,
-  allocations, automatic JIT-map production, reliable JIT unwind, every
-  workload/runtime shape, production storage/retention, and homelab
-  direct-Pyroscope delivery are not proven.
+  container are proven. The final head-to-head arm also recorded 567 periodic
+  profiles accepted by the standing homelab Pyroscope endpoint with zero
+  worker loss or rejection. Wakeup cause, lock ownership, non-futex
+  synchronization, allocations, automatic JIT-map production, reliable JIT
+  unwind, every workload/runtime shape, production storage/retention, and
+  homelab stored-profile query behavior are not proven.
 - **Exporter infrastructure:** local and namespace-local proof exists, but broad
   production backend/collector compatibility and longer live soaks are not
   proven.

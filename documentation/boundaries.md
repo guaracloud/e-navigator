@@ -30,9 +30,11 @@ E-Navigator does not currently claim:
 
 - production observability backend behavior;
 - trace storage, profile storage, flamegraph UI, dashboards, or query UI;
-- production or homelab proof of direct profile delivery (the generic OTLP
-  Profiles HTTP sink is locally proven against Pyroscope `1.20.3`; storage,
-  retention, and query service behavior remain backend responsibilities);
+- production profile-delivery behavior or homelab stored-profile query proof
+  (the generic OTLP Profiles HTTP sink is locally ingest/query proven against
+  Pyroscope `1.20.3`, and the 2026-07-22 final-stack homelab arm recorded 567
+  profiles accepted by the standing Pyroscope endpoint with zero worker loss
+  or rejection. That arm did not query storage or validate retention);
 - complete production HTTP/gRPC/browser protocol coverage (bounded HTTP/1,
   HTTP/2/HPACK, gRPC, extension-free WebSocket metadata, and gRPC-Web metadata
   capture are implemented. WebSocket and gRPC-Web have focused homelab proof,
@@ -185,7 +187,15 @@ E-Navigator does not currently claim:
   arm measured 2.049% lower busy-loop throughput than no agent with all three
   modes enabled, but it did not cover mixed services, higher rates, backend
   delivery, JVM/V8, production, or a dedicated node);
-- reduced overhead versus another observability stack;
+- lower overhead or lower memory versus another observability stack (the
+  2026-07-22 33-run homelab comparison measured E-Navigator at 43.601071% more
+  agent CPU and 31.903883% more agent RSS than pinned Beyla plus Alloy in the
+  final cumulative HTTP, gRPC, Redis, PostgreSQL, and 10 Hz CPU-profile arm);
+- universal application-latency or node-resource conclusions from that
+  head-to-head result. The driver used fixed offered rates rather than a
+  saturation search, only three shared-cluster repetitions were run, and the
+  node series are summed container CPU and working-set memory rather than
+  total host utilization;
 - rootless eBPF operation, or a universal reduced-capability claim across
   kernels and security policies (the opt-in reduced profile is runtime proven
   only on the Linux 6.6.68 homelab. Core Aya sources used `BPF` and `PERFMON`,
@@ -233,3 +243,7 @@ success.
 Local Criterion benchmarks are hot-path hygiene and regression tools. They are
 not live overhead proof. Runtime overhead claims require a controlled baseline,
 resource samples, comparable workload shape, and recorded runtime evidence.
+The 2026-07-22 head-to-head campaign provides that evidence only for its pinned
+two-node homelab, workload, versions, rates, cumulative stages, and short
+windows. Its PASS verdict means the evidence matrix passed integrity gates. It
+does not mean E-Navigator outperformed the comparison stack.
