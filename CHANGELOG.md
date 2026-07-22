@@ -96,6 +96,12 @@ All notable changes to E-Navigator are documented here. The format follows
   claimed capture surface. HTTP/3 remains incompatible with the current TCP
   payload architecture and is guarded by a real negative-control workload.
 
+### Removed
+
+- Remove current documentation and validation references to the intentionally
+  deleted Guara-specific production values overlay. The generic chart defaults
+  and reduced-privilege overlay remain validated release surfaces.
+
 ## [0.1.2] - 2026-07-20
 
 ### Added

@@ -370,37 +370,7 @@ without it, otherwise identical metric attributes can collide during remote
 write. Treat the mirrored keys as bounded identity, not arbitrary label
 promotion.
 
-### Guara standalone replacement preset
-
-`charts/e-navigator/values-guara-production.yaml` is the opinionated Guara
-replacement overlay. It keeps the existing Alloy OTLP HTTP receiver for
-metrics and traces, sends profiles directly to the pinned Pyroscope server,
-enables all real sources in one `unified` process, profiles at 10 Hz, and
-enforces the production source policy:
-
-```text
-namespace = proj-*
-AND guara.cloud/tier IN (starter, pro, business, enterprise)
-AND guara.cloud/catalog-slug DOES NOT EXIST
-```
-
-The overlay also excludes exporter/collector processes and build-pool nodes,
-enables health probes and the Prometheus scrape surface, and uses a 150m CPU /
-384 MiB memory request with a 2 CPU / 960 MiB hard ceiling. It deliberately
-does not choose an image version. Render or install only with a digest verified
-from the release manifest:
-
-```sh
-helm template e-navigator charts/e-navigator \
-  --values charts/e-navigator/values-guara-production.yaml \
-  --set image.digest=sha256:<verified-release-digest>
-```
-
-The compatibility port lists are explicit and conservative. In particular,
-TLS application classification remains port-based: HTTP/1, WebSocket, and
-gRPC-Web share the HTTP/1 port list, which uses 443 here, while h2 uses 8443 in
-this preset. Do not claim same-port ALPN discrimination until the TLS source
-implements and validates it.
+### Export deployment guidance
 
 If a family-specific endpoint is omitted, that enabled family uses
 `otlp_http.endpoint`. Disabled families do not require an endpoint and do not
@@ -412,17 +382,14 @@ OTLP export never performs collector I/O on the shared signal path. Metrics,
 traces, and profiles use separate bounded workers with size-or-time batching.
 `compression = "gzip"` compresses the protobuf body on Tokio's blocking pool
 and sends the required `Content-Encoding: gzip`; `"none"` preserves the
-uncompressed OTLP/HTTP body. The Guara production preset enables gzip for all
-three family workers.
+uncompressed OTLP/HTTP body.
 Metric sums are cumulative, and repeated cumulative updates for the same
 resource/data-point identity are coalesced to the latest window within each
 export batch. Across batches, the metrics worker retains only the latest point
 for each receiver millisecond and flushes that point when the series advances,
 the configured interval expires, or shutdown begins. Pending series are bound
 by the configured queue capacity. This prevents duplicate receiver timestamps
-without leaving the terminal cumulative value stale. The Guara preset uses a
-4,096-record batch, a one-second flush interval, and a bounded 8,192-record
-queue.
+without leaving the terminal cumulative value stale.
 Queue overflow, invalid trace identity, exhausted export batches, and open
 circuit drops are exposed through the live Prometheus endpoint using fixed
 `e_navigator_export_*` names and the bounded `signal_family` label. These

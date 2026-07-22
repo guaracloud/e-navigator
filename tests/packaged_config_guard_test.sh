@@ -30,7 +30,6 @@ known_modules=(
 
 config_files=(
   "charts/e-navigator/values.yaml"
-  "charts/e-navigator/values-guara-production.yaml"
   "deploy/kubernetes/configmap.yaml"
 )
 
@@ -54,13 +53,6 @@ awk '
 ' charts/e-navigator/values.yaml >"$tmp_dir/chart-e-navigator.toml"
 
 awk '
-  $0 == "  toml: |" { in_config = 1; next }
-  in_config && $0 == "" { print ""; next }
-  in_config && substr($0, 1, 4) == "    " { print substr($0, 5); next }
-  in_config { exit }
-' charts/e-navigator/values-guara-production.yaml >"$tmp_dir/guara-production.toml"
-
-awk '
   $0 == "  e-navigator.toml: |" { in_config = 1; next }
   in_config && $0 == "" { print ""; next }
   in_config && substr($0, 1, 4) == "    " { print substr($0, 5); next }
@@ -68,7 +60,6 @@ awk '
 ' deploy/kubernetes/configmap.yaml >"$tmp_dir/static-e-navigator.toml"
 
 test -s "$tmp_dir/chart-e-navigator.toml"
-test -s "$tmp_dir/guara-production.toml"
 test -s "$tmp_dir/static-e-navigator.toml"
 
 for file in "$tmp_dir/chart-e-navigator.toml" "$tmp_dir/static-e-navigator.toml"; do
@@ -82,7 +73,6 @@ done
 
 for file in \
   "$tmp_dir/chart-e-navigator.toml" \
-  "$tmp_dir/guara-production.toml" \
   "$tmp_dir/static-e-navigator.toml"; do
   for expected in \
     '[ebpf]' \
@@ -96,26 +86,9 @@ for file in \
   done
 done
 
-for expected in \
-  'namespace_include = ["proj-*"]' \
-  'label_in = { "guara.cloud/tier" = ["starter", "pro", "business", "enterprise"] }' \
-  'label_not_exists = ["guara.cloud/catalog-slug"]' \
-  'sample_frequency_hz = 10' \
-  'metrics_endpoint = "http://alloy.guara-observability.svc.cluster.local:4318/v1/metrics"' \
-  'traces_endpoint = "http://alloy.guara-observability.svc.cluster.local:4318/v1/traces"' \
-  'profiles_endpoint = "http://pyroscope.guara-observability.svc.cluster.local:4040/v1development/profiles"'; do
-  if ! grep -Fq "$expected" "$tmp_dir/guara-production.toml"; then
-    printf 'Guara production config is missing exact contract: %s\n' "$expected" >&2
-    exit 1
-  fi
-done
-
 cargo run --quiet --locked -p e-navigator-cli -- \
   --validate-config \
   --config "$tmp_dir/chart-e-navigator.toml"
-cargo run --quiet --locked -p e-navigator-cli -- \
-  --validate-config \
-  --config "$tmp_dir/guara-production.toml"
 cargo run --quiet --locked -p e-navigator-cli -- \
   --validate-config \
   --config "$tmp_dir/static-e-navigator.toml"
