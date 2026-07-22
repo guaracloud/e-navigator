@@ -34,14 +34,16 @@ before installation:
 enabled = true
 default_posture = "deny"
 unknown_cgroup = "deny"
+discovery_mode = "event_driven"
 namespace_include = ["payments", "checkout"]
 label_in = { "observability.e-navigator.dev/enabled" = ["true"] }
 process_exclude = ["*-exporter", "otelcol*", "alloy*", "e-navigator*"]
 ```
 
 An allowlist posture minimizes unintended collection and work, but it can
-briefly miss a newly started workload until Kubernetes identity and cgroup
-state reconcile. Read the policy tradeoff in [Helm install](helm.md).
+briefly miss a newly started workload until Kubernetes identity and
+event-driven cgroup state reconcile. The periodic scan remains a loss-recovery
+boundary. Read the policy tradeoff in [Helm install](helm.md).
 
 ## 3. Start With The Base Profile
 

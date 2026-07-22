@@ -13,6 +13,28 @@ pub enum CapturePosture {
     Deny,
 }
 
+/// How the userspace capture-filter controller discovers cgroup changes.
+///
+/// `EventDriven` watches the unified cgroup tree and retains a periodic
+/// reconciliation as a loss-recovery boundary. `Polling` preserves the
+/// legacy two-second scan cadence for compatibility diagnostics and measured
+/// A/B comparisons.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CgroupDiscoveryMode {
+    #[default]
+    EventDriven,
+    Polling,
+}
+
+impl CgroupDiscoveryMode {
+    /// Whether filesystem and Kubernetes watch changes may wake an immediate
+    /// cgroup reconciliation.
+    pub fn is_event_driven(self) -> bool {
+        matches!(self, Self::EventDriven)
+    }
+}
+
 impl CapturePosture {
     /// Whether this posture captures (probes) the workload.
     pub fn captures(self) -> bool {
@@ -58,6 +80,11 @@ pub struct CaptureFilterConfig {
     /// window, host processes, Kubernetes API unavailable).
     #[serde(default = "default_capture_filter_unknown_cgroup")]
     pub unknown_cgroup: CapturePosture,
+    /// Cgroup discovery strategy. Event-driven discovery is the default;
+    /// polling exists for compatibility diagnostics and reproducible A/B
+    /// measurements.
+    #[serde(default)]
+    pub discovery_mode: CgroupDiscoveryMode,
     /// Namespaces to include (exact or `*`/`?` glob). Empty disables the
     /// namespace include gate.
     #[serde(default)]
@@ -138,6 +165,7 @@ impl Default for CaptureFilterConfig {
             enabled: default_capture_filter_enabled(),
             default_posture: default_capture_filter_default_posture(),
             unknown_cgroup: default_capture_filter_unknown_cgroup(),
+            discovery_mode: CgroupDiscoveryMode::default(),
             namespace_include: Vec::new(),
             namespace_exclude: Vec::new(),
             label_include: BTreeMap::new(),

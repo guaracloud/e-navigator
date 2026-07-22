@@ -38,6 +38,7 @@ pod_label_exclude_selector = {}
 enabled = true
 default_posture = "deny"
 unknown_cgroup = "deny"
+discovery_mode = "event_driven"
 namespace_include = ["replace-me"]
 process_exclude = ["*-exporter", "otelcol*", "alloy*", "e-navigator*"]
 

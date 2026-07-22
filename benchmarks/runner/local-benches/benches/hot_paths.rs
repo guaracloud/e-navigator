@@ -1621,6 +1621,16 @@ fn bench_capture_filter(c: &mut Criterion) {
     c.bench_function("capture_filter/map_diff_full_churn", |b| {
         b.iter(|| black_box(primed.plan(black_box(&empty))))
     });
+
+    c.bench_function("capture_filter/refresh_coalescer_64_events", |b| {
+        b.iter(|| {
+            black_box(
+                e_navigator_sources_ebpf_aya::capture_filter::bench_refresh_coalescer(black_box(
+                    64,
+                )),
+            )
+        })
+    });
 }
 
 criterion_group!(

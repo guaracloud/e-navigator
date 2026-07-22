@@ -502,6 +502,18 @@ impl NativeTelemetrySource for WorkloadControllerTelemetrySource {
             )]),
             value: "1".to_string(),
         };
+        let discovery_info = PrometheusMetricLine {
+            name: "e_navigator_capture_filter_discovery_info".to_string(),
+            labels: std::collections::BTreeMap::from([(
+                "mode".to_string(),
+                match snapshot.discovery_mode {
+                    e_navigator_core::CgroupDiscoveryMode::EventDriven => "event_driven",
+                    e_navigator_core::CgroupDiscoveryMode::Polling => "polling",
+                }
+                .to_string(),
+            )]),
+            value: "1".to_string(),
+        };
         vec![
             metric(
                 "e_navigator_kubernetes_controller_ready",
@@ -568,6 +580,61 @@ impl NativeTelemetrySource for WorkloadControllerTelemetrySource {
             metric(
                 "e_navigator_capture_filter_fail_closed_total",
                 snapshot.capture_filter_fail_closed_total,
+            ),
+            discovery_info,
+            metric(
+                "e_navigator_capture_filter_discovery_notifications_total",
+                snapshot.discovery_notifications_total,
+            ),
+            metric(
+                "e_navigator_capture_filter_discovery_coalesced_total",
+                snapshot.discovery_coalesced_total,
+            ),
+            metric(
+                "e_navigator_capture_filter_event_reconciliations_total",
+                snapshot.event_reconciliations_total,
+            ),
+            metric(
+                "e_navigator_capture_filter_fallback_reconciliations_total",
+                snapshot.fallback_reconciliations_total,
+            ),
+            metric(
+                "e_navigator_capture_filter_inotify_events_total",
+                snapshot.inotify_events_total,
+            ),
+            metric(
+                "e_navigator_capture_filter_inotify_watches",
+                snapshot.inotify_watches,
+            ),
+            metric(
+                "e_navigator_capture_filter_inotify_watch_limit_drops_total",
+                snapshot.inotify_watch_limit_drops_total,
+            ),
+            metric(
+                "e_navigator_capture_filter_inotify_failures_total",
+                snapshot.inotify_failures_total,
+            ),
+            metric(
+                "e_navigator_capture_filter_inotify_queue_overflows_total",
+                snapshot.inotify_queue_overflows_total,
+            ),
+            metric(
+                "e_navigator_capture_filter_bootstrap_window_observations_total",
+                snapshot.bootstrap_window_observations_total,
+            ),
+            PrometheusMetricLine {
+                name: "e_navigator_capture_filter_bootstrap_window_seconds_sum".to_string(),
+                labels: std::collections::BTreeMap::new(),
+                value: format!("{:.9}", snapshot.bootstrap_window_nanos_total as f64 / 1e9),
+            },
+            PrometheusMetricLine {
+                name: "e_navigator_capture_filter_bootstrap_window_seconds_max".to_string(),
+                labels: std::collections::BTreeMap::new(),
+                value: format!("{:.9}", snapshot.bootstrap_window_nanos_max as f64 / 1e9),
+            },
+            metric(
+                "e_navigator_capture_filter_map_apply_failures_total",
+                snapshot.map_apply_failures_total,
             ),
         ]
     }
@@ -705,9 +772,14 @@ mod tests {
         assert!(names.contains(&"e_navigator_capture_filter_cgroup_hierarchy_info"));
         assert!(names.contains(&"e_navigator_capture_filter_cgroup_v2_compatible"));
         assert!(names.contains(&"e_navigator_capture_filter_fail_closed_total"));
+        assert!(names.contains(&"e_navigator_capture_filter_discovery_info"));
+        assert!(names.contains(&"e_navigator_capture_filter_inotify_queue_overflows_total"));
+        assert!(names.contains(&"e_navigator_capture_filter_bootstrap_window_seconds_max"));
+        assert!(names.contains(&"e_navigator_capture_filter_map_apply_failures_total"));
         assert!(lines.iter().all(|line| {
             line.labels.is_empty()
-                || (line.name == "e_navigator_capture_filter_cgroup_hierarchy_info"
+                || ((line.name == "e_navigator_capture_filter_cgroup_hierarchy_info"
+                    || line.name == "e_navigator_capture_filter_discovery_info")
                     && line.labels.len() == 1
                     && line.labels.contains_key("mode"))
         }));

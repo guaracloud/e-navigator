@@ -314,8 +314,14 @@ cargo run --locked -p e-navigator-cli -- \
               Attribution selectors limit retained metadata. The capture filter
               decides which workload cgroups are probed. They are separate
               policies. Capture filtering requires a directly mounted unified
-              cgroup v2 root; legacy and hybrid modes force deny before Aya
-              programs attach.
+              cgroup v2 root. Event-driven mode uses bounded inotify watches to
+              wake reconciliation and keeps a 2-second polling recovery path.
+              Both discovery modes preserve the configured unknown-cgroup
+              posture. Legacy and hybrid modes force deny before Aya programs
+              attach. Five homelab runs per mode measured a 0.463 ms
+              event-driven median versus 1,148.131 ms with polling for the
+              scoped new-Pod exec workload; this is not an instant-update or
+              production claim.
             </aside>
             <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/helm.md">Open every validated setting</a>
           </div>

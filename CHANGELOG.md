@@ -41,6 +41,10 @@ All notable changes to E-Navigator are documented here. The format follows
   ten homelab arms proving core Aya sources under `BPF` and `PERFMON`, Go TLS
   and cross-UID CPU symbolization with `SYS_PTRACE`, and host resources with no
   effective capabilities on Linux 6.6.68.
+- Add event-driven cgroup-tree discovery for the capture filter, with bounded
+  inotify watches, one-slot notification coalescing, overflow-triggered state
+  rebuilds, a polling compatibility mode, immediate per-source map wakeups,
+  and native residual-window accounting.
 
 ### Performance
 
@@ -57,6 +61,10 @@ All notable changes to E-Navigator are documented here. The format follows
   with `source.aya_protocol` versus 19.862091 without a benchmark agent, a
   0.049345% difference across three paced 30-second homelab runs. Keep this as
   transparent correctness context, not a general overhead claim.
+- Measure the capture-filter new-Pod exec window at 0.463 ms median and
+  0.487 ms p95 with event-driven discovery, versus 1,148.131 ms median and
+  1,216.842 ms p95 with 2-second polling across five counterbalanced homelab
+  runs per mode. Keep the result scoped to the Linux 6.6.68 test workload.
 
 ### Compatibility
 

@@ -48,7 +48,9 @@ E-Navigator runs as one node-local agent with a statically registered
   metrics, traces, and profiles through independent bounded OTLP workers.
 - An optional Kubernetes-aware capture filter avoids probing excluded workload
   cgroups at the connection boundary on unified cgroup v2 nodes. Legacy and
-  hybrid layouts are detected and forced to deny rather than guessed.
+  hybrid layouts are detected and forced to deny rather than guessed. Bounded
+  inotify discovery reduces new-Pod convergence time while retaining the
+  configured unknown posture and a periodic loss-recovery scan.
 - An opt-in Helm profile removes `SYS_ADMIN` on the proven Linux 6.6.68
   homelab posture, using `BPF`, `PERFMON`, and `SYS_PTRACE` while retaining UID
   0 and explicit rootless and cross-kernel boundaries.

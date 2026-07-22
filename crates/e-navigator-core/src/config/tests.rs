@@ -3131,6 +3131,10 @@ fn capture_filter_defaults_are_valid_and_inactive() {
     assert!(!config.capture_filter.is_active());
     assert_eq!(config.capture_filter.default_posture, CapturePosture::Allow);
     assert_eq!(config.capture_filter.unknown_cgroup, CapturePosture::Allow);
+    assert_eq!(
+        config.capture_filter.discovery_mode,
+        CgroupDiscoveryMode::EventDriven
+    );
 }
 
 #[test]
@@ -3142,6 +3146,7 @@ fn capture_filter_parses_postures_from_toml() {
         enabled = true
         default_posture = "deny"
         unknown_cgroup = "deny"
+        discovery_mode = "polling"
         namespace_include = ["proj-*"]
 
         [[modules]]
@@ -3152,6 +3157,10 @@ fn capture_filter_parses_postures_from_toml() {
     assert!(config.capture_filter.enabled);
     assert_eq!(config.capture_filter.default_posture, CapturePosture::Deny);
     assert_eq!(config.capture_filter.unknown_cgroup, CapturePosture::Deny);
+    assert_eq!(
+        config.capture_filter.discovery_mode,
+        CgroupDiscoveryMode::Polling
+    );
     assert_eq!(
         config.capture_filter.namespace_include,
         vec!["proj-*".to_string()]
@@ -3237,6 +3246,27 @@ fn capture_filter_rejects_invalid_posture() {
     assert!(
         err.to_string().contains("unknown variant") || err.to_string().contains("maybe"),
         "error {err:?} should reject the invalid posture"
+    );
+}
+
+#[test]
+fn capture_filter_rejects_invalid_discovery_mode() {
+    let toml = r#"
+        queue_capacity = 64
+
+        [capture_filter]
+        enabled = true
+        discovery_mode = "fanotify"
+
+        [[modules]]
+        name = "source.synthetic_exec"
+        enabled = true
+    "#;
+    let err = toml::from_str::<RuntimeConfig>(toml)
+        .expect_err("invalid discovery mode should be rejected");
+    assert!(
+        err.to_string().contains("unknown variant") || err.to_string().contains("fanotify"),
+        "error {err:?} should reject the invalid discovery mode"
     );
 }
 

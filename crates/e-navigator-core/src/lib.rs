@@ -10,8 +10,8 @@ pub mod pipeline;
 
 pub use capture_filter::{CaptureDecision, CaptureFilterPolicy, glob_match};
 pub use config::{
-    ArgvCaptureConfig, AttributionConfig, CaptureFilterConfig, CapturePosture, ConfigError,
-    ConfigErrorKind, ConfigResult, CpuProfileBackpressure, CpuProfileSourceConfig,
+    ArgvCaptureConfig, AttributionConfig, CaptureFilterConfig, CapturePosture, CgroupDiscoveryMode,
+    ConfigError, ConfigErrorKind, ConfigResult, CpuProfileBackpressure, CpuProfileSourceConfig,
     DnsMetricsConfig, DnsSourceConfig, EbpfConfig, EbpfEventTransport, EbpfNetworkIoHook,
     HttpSourceConfig, JsonStdoutConfig, JsonStdoutMode, KNOWN_MODULES, KnownModule,
     KubernetesAttributionConfig, ModuleConfig, NetworkEndpointConfig, NetworkMetricsConfig,

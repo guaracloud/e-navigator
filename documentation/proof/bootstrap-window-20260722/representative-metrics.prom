@@ -1,0 +1,14 @@
+# event-r1, workload node
+e_navigator_capture_filter_discovery_info{mode="event_driven"} 1
+e_navigator_capture_filter_inotify_events_total 6
+e_navigator_capture_filter_inotify_failures_total 0
+e_navigator_capture_filter_inotify_queue_overflows_total 0
+e_navigator_capture_filter_inotify_watch_limit_drops_total 0
+e_navigator_capture_filter_bootstrap_window_seconds_max 0.036428383
+e_navigator_capture_filter_map_apply_failures_total 0
+
+# polling-r1, maximum across both agent pods
+e_navigator_capture_filter_discovery_info{mode="polling"} 1
+e_navigator_capture_filter_inotify_events_total 0
+e_navigator_capture_filter_bootstrap_window_seconds_max 2.001756931
+e_navigator_capture_filter_map_apply_failures_total 0

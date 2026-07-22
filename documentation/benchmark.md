@@ -674,3 +674,39 @@ not counterbalanced performance trials, and the short no-agent results support
 no overhead comparison. Full methodology, image identity, native totals, and
 cleanup state are in the
 [`reduced-privilege proof report`](proof/reduced-privilege-20260722/report.md).
+
+## Capture-Filter Bootstrap Window (Homelab, 2026-07-22)
+
+The guarded campaign compared the preserved 2-second polling mode with
+bounded event-driven inotify discovery. A non-root Python workload was pinned
+to `homelab-01`, recorded its start timestamp, then immediately executed a
+unique probe path every 10 milliseconds for six seconds. The allowlist used
+`unknown_cgroup = "deny"`. One no-agent control and five repetitions per agent
+mode were run; agent order alternated polling/event and event/polling.
+
+| Mode | First-signal window median, ms | P95, ms | Mean, ms | Standard deviation, ms |
+| --- | ---: | ---: | ---: | ---: |
+| 2-second polling | 1148.131 | 1216.842 | 1109.394 | 105.194 |
+| Event driven | 0.463 | 0.487 | 0.464 | 0.016 |
+
+Event-driven discovery reduced the median observed window by 1147.667 ms, or
+99.959648%, and improved p95. The five event-driven values ranged from 0.443
+to 0.487 ms; polling ranged from 987.286 to 1216.842 ms. Event-driven runs
+captured 521 or 522 workload signals, while polling runs captured 416 to 436
+because initial probes followed the deny posture.
+
+Native accounting across the five event-driven runs recorded 120 discovery
+notifications, 116 event reconciliations, and 30 inotify events. Every agent
+run reported zero inotify failures, queue overflows, watch-limit drops,
+map-application failures, transport loss, perf loss, RingBuf reservation
+failures, and userspace send failures. The no-agent control completed 523
+probes without a workload failure.
+
+This is a new-Pod exec result on one shared Linux 6.6.68 k3s cluster. It does
+not prove instant policy changes, every runtime/cgroup driver, sustained churn,
+production behavior, or a whole-agent overhead reduction. Full per-run values,
+image identity, method, and cleanup state are in the
+[`bootstrap-window proof report`](proof/bootstrap-window-20260722/report.md).
+
+A focused local Criterion run measured one-slot coalescing of 64 notifications
+at 53.112 to 53.664 ns. That is local hot-path hygiene, not live overhead.

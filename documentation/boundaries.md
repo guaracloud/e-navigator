@@ -118,13 +118,17 @@ E-Navigator does not currently claim:
 - instant capture-scope changes for newly started workloads (the optional
   `[capture_filter]` cgroup-id capture filter cannot decide a pod that
   userspace has not yet discovered; a new pod's cgroup id is absent from the
-  eBPF membership map until the next controller refresh. Pod identity arrives
-  through a Kubernetes watch while the local cgroup tree is scanned every ~2s, so there is a bootstrap
-  window of roughly a few seconds during which the pod follows the configured
-  `unknown_cgroup` posture: under an allowlist posture that is a brief coverage
-  gap for new included pods, and under a denylist posture a brief capture leak
-  for new excluded pods, minimized by resolving the pod UID directly from the
-  cgroup path but not eliminated);
+  eBPF membership map until controller discovery and source map application
+  finish. The default event-driven mode uses a bounded recursive inotify watch
+  tree plus Kubernetes watch notifications and immediate source wakeups. A
+  2-second scan remains the loss-recovery boundary, and diagnostic `polling`
+  mode preserves the old behavior. Both modes keep the configured
+  `unknown_cgroup` posture: under an allowlist it creates a temporary coverage
+  gap, and under a denylist it creates a temporary capture leak. Five
+  counterbalanced Linux 6.6.68 homelab runs measured a 0.463 ms median and
+  0.487 ms p95 event-driven first-signal window, versus 1,148.131 ms and
+  1,216.842 ms for polling. That scoped result is not an instant-update,
+  production, sustained-churn, or every-runtime claim);
 - cgroup-based capture filtering of softirq TCP-stat observations (the
   `tcp_set_state`, `tcp_retransmit_skb`, and `tcp_send_reset`/`receive_reset`
   tracepoints run in softirq/interrupt context where `bpf_get_current_cgroup_id`

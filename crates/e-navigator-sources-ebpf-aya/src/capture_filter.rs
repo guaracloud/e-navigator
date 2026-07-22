@@ -1,9 +1,9 @@
 //! Userspace control plane for the Kubernetes-aware capture filter.
 //!
-//! One shared `CaptureFilterController`, spawned once by the CLI, polls the
-//! node: it scans the cgroup filesystem for container cgroups and fetches one
-//! bounded Kubernetes workload snapshot (node-scoped by default, optionally
-//! cluster-wide with local Pods retained first). It resolves each
+//! One shared `CaptureFilterController`, spawned once by the CLI, watches the
+//! unified cgroup filesystem and performs a periodic loss-recovery scan while
+//! fetching one bounded Kubernetes workload snapshot (node-scoped by default,
+//! optionally cluster-wide with local Pods retained first). It resolves each
 //! observed cgroup to a pod, evaluates the operator's policy, and publishes a
 //! desired `{cgroup_id -> verdict}` map. Because every eBPF source loads its
 //! own program object (and therefore its own copy of the filter map), the
@@ -15,20 +15,22 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{
-    Arc, Mutex, OnceLock,
-    atomic::{AtomicU64, Ordering},
+    Arc, Condvar, Mutex, OnceLock,
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use e_navigator_core::capture_filter::{
     CAPTURE_FILTER_MAP_CAPACITY, CgroupObservation, DesiredFilterMap, RawEndpointSlice,
     RawNodePodIndex, RawPod, RawService, build_desired_filter_map,
 };
-use e_navigator_core::{CaptureFilterConfig, CaptureFilterPolicy, KubernetesAttributionConfig};
+use e_navigator_core::{
+    CaptureFilterConfig, CaptureFilterPolicy, CgroupDiscoveryMode, KubernetesAttributionConfig,
+};
 use tracing::{debug, error, info, warn};
 
-/// Cadence of the local cgroup scan (cheap, no API traffic).
+/// Cadence of the loss-recovery cgroup scan (cheap, no API traffic).
 const SCAN_TICK: Duration = Duration::from_secs(2);
 const WATCH_RETRY_INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const WATCH_RETRY_MAX_BACKOFF: Duration = Duration::from_secs(30);
@@ -141,6 +143,7 @@ fn control_word(config: &CaptureFilterConfig) -> u32 {
 struct PublishedState {
     generation: u64,
     desired: Arc<DesiredFilterMap>,
+    bootstrap_started_at: Option<Instant>,
     pod_generation: u64,
     raw_pods: Arc<Vec<RawPod>>,
     raw_services: Arc<Vec<RawService>>,
@@ -152,7 +155,12 @@ struct PublishedState {
 pub(crate) struct CaptureFilterController {
     control_word: u32,
     cgroup_hierarchy_mode: CgroupHierarchyMode,
+    discovery_mode: CgroupDiscoveryMode,
     state: Mutex<PublishedState>,
+    state_changed: Condvar,
+    refresh_pending: AtomicBool,
+    refresh_started_at: Mutex<Option<Instant>>,
+    refresh_notify: tokio::sync::Notify,
     telemetry: WorkloadControllerTelemetry,
 }
 
@@ -161,6 +169,7 @@ impl CaptureFilterController {
         control_word: u32,
         cgroup_hierarchy_mode: CgroupHierarchyMode,
         capture_filter_fail_closed: bool,
+        discovery_mode: CgroupDiscoveryMode,
     ) -> Self {
         let telemetry = WorkloadControllerTelemetry::default();
         if capture_filter_fail_closed {
@@ -171,7 +180,12 @@ impl CaptureFilterController {
         Self {
             control_word,
             cgroup_hierarchy_mode,
+            discovery_mode,
             state: Mutex::new(PublishedState::default()),
+            state_changed: Condvar::new(),
+            refresh_pending: AtomicBool::new(false),
+            refresh_started_at: Mutex::new(None),
+            refresh_notify: tokio::sync::Notify::new(),
             telemetry,
         }
     }
@@ -182,16 +196,20 @@ impl CaptureFilterController {
 
     /// The current generation and desired map. Consumed by the Linux applier
     /// and unit tests.
-    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
-    pub(crate) fn current(&self) -> (u64, Arc<DesiredFilterMap>) {
+    #[cfg(test)]
+    pub(crate) fn current(&self) -> (u64, Arc<DesiredFilterMap>, Option<Instant>) {
         let state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        (state.generation, state.desired.clone())
+        (
+            state.generation,
+            state.desired.clone(),
+            state.bootstrap_started_at,
+        )
     }
 
-    fn publish(&self, desired: DesiredFilterMap) -> bool {
+    fn publish(&self, desired: DesiredFilterMap, bootstrap_started_at: Instant) -> bool {
         let mut state = self
             .state
             .lock()
@@ -201,7 +219,93 @@ impl CaptureFilterController {
         }
         state.generation = state.generation.wrapping_add(1);
         state.desired = Arc::new(desired);
+        state.bootstrap_started_at = Some(bootstrap_started_at);
+        self.state_changed.notify_all();
         true
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn wait_for_change(
+        &self,
+        last_generation: Option<u64>,
+        timeout: Duration,
+    ) -> (u64, Arc<DesiredFilterMap>, Option<Instant>) {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (state, _) = self
+            .state_changed
+            .wait_timeout_while(state, timeout, |state| {
+                last_generation == Some(state.generation)
+            })
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (
+            state.generation,
+            state.desired.clone(),
+            state.bootstrap_started_at,
+        )
+    }
+
+    fn enqueue_refresh(&self) {
+        if !self.discovery_mode.is_event_driven() {
+            return;
+        }
+        self.telemetry
+            .discovery_notifications
+            .fetch_add(1, Ordering::Relaxed);
+        let mut started_at = self
+            .refresh_started_at
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if mark_refresh_pending(&self.refresh_pending) {
+            self.telemetry
+                .discovery_coalesced
+                .fetch_add(1, Ordering::Relaxed);
+        } else {
+            *started_at = Some(Instant::now());
+            self.refresh_notify.notify_one();
+        }
+    }
+
+    fn take_pending_refresh(&self) -> Option<Instant> {
+        let mut started_at = self
+            .refresh_started_at
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if take_refresh_pending(&self.refresh_pending) {
+            Some(started_at.take().unwrap_or_else(Instant::now))
+        } else {
+            None
+        }
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn record_bootstrap_window(&self, started_at: Instant) {
+        let nanos = u64::try_from(started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.telemetry
+            .bootstrap_window_observations
+            .fetch_add(1, Ordering::Relaxed);
+        let _ = self.telemetry.bootstrap_window_nanos_total.fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |current| Some(current.saturating_add(nanos)),
+        );
+        self.telemetry
+            .bootstrap_window_nanos_max
+            .fetch_max(nanos, Ordering::Relaxed);
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn record_map_apply(&self, started_at: Option<Instant>, failures: u64) {
+        if failures > 0 {
+            self.telemetry
+                .map_apply_failures
+                .fetch_add(failures, Ordering::Relaxed);
+        }
+        if let Some(started_at) = started_at {
+            self.record_bootstrap_window(started_at);
+        }
     }
 
     fn publish_snapshot(&self, snapshot: RawPodSnapshot) {
@@ -231,6 +335,8 @@ impl CaptureFilterController {
                 .map_or(0, |duration| duration.as_secs()),
             Ordering::Relaxed,
         );
+        drop(state);
+        self.enqueue_refresh();
     }
 
     fn mark_resource_relist_success(&self) {
@@ -285,6 +391,44 @@ impl CaptureFilterController {
                 .telemetry
                 .capture_filter_fail_closed
                 .load(Ordering::Relaxed),
+            discovery_mode: self.discovery_mode,
+            discovery_notifications_total: self
+                .telemetry
+                .discovery_notifications
+                .load(Ordering::Relaxed),
+            discovery_coalesced_total: self.telemetry.discovery_coalesced.load(Ordering::Relaxed),
+            event_reconciliations_total: self
+                .telemetry
+                .event_reconciliations
+                .load(Ordering::Relaxed),
+            fallback_reconciliations_total: self
+                .telemetry
+                .fallback_reconciliations
+                .load(Ordering::Relaxed),
+            inotify_events_total: self.telemetry.inotify_events.load(Ordering::Relaxed),
+            inotify_watches: self.telemetry.inotify_watches.load(Ordering::Relaxed),
+            inotify_watch_limit_drops_total: self
+                .telemetry
+                .inotify_watch_limit_drops
+                .load(Ordering::Relaxed),
+            inotify_failures_total: self.telemetry.inotify_failures.load(Ordering::Relaxed),
+            inotify_queue_overflows_total: self
+                .telemetry
+                .inotify_queue_overflows
+                .load(Ordering::Relaxed),
+            bootstrap_window_observations_total: self
+                .telemetry
+                .bootstrap_window_observations
+                .load(Ordering::Relaxed),
+            bootstrap_window_nanos_total: self
+                .telemetry
+                .bootstrap_window_nanos_total
+                .load(Ordering::Relaxed),
+            bootstrap_window_nanos_max: self
+                .telemetry
+                .bootstrap_window_nanos_max
+                .load(Ordering::Relaxed),
+            map_apply_failures_total: self.telemetry.map_apply_failures.load(Ordering::Relaxed),
             last_success_unix_seconds: self
                 .telemetry
                 .last_success_unix_seconds
@@ -295,6 +439,26 @@ impl CaptureFilterController {
                 .load(Ordering::Relaxed),
         }
     }
+}
+
+fn mark_refresh_pending(pending: &AtomicBool) -> bool {
+    pending.swap(true, Ordering::AcqRel)
+}
+
+fn take_refresh_pending(pending: &AtomicBool) -> bool {
+    pending.swap(false, Ordering::AcqRel)
+}
+
+/// Exercise the bounded one-slot refresh coalescer without filesystem I/O.
+#[cfg(feature = "fuzzing")]
+pub fn bench_refresh_coalescer(notification_count: usize) -> u64 {
+    let pending = AtomicBool::new(false);
+    let mut coalesced = 0u64;
+    for _ in 0..notification_count {
+        coalesced = coalesced.saturating_add(u64::from(mark_refresh_pending(&pending)));
+    }
+    let _ = take_refresh_pending(&pending);
+    coalesced
 }
 
 #[derive(Debug, Default)]
@@ -312,6 +476,19 @@ struct WorkloadControllerTelemetry {
     denied_cgroups: AtomicU64,
     unresolved_cgroups: AtomicU64,
     capture_filter_fail_closed: AtomicU64,
+    discovery_notifications: AtomicU64,
+    discovery_coalesced: AtomicU64,
+    event_reconciliations: AtomicU64,
+    fallback_reconciliations: AtomicU64,
+    inotify_events: AtomicU64,
+    inotify_watches: AtomicU64,
+    inotify_watch_limit_drops: AtomicU64,
+    inotify_failures: AtomicU64,
+    inotify_queue_overflows: AtomicU64,
+    bootstrap_window_observations: AtomicU64,
+    bootstrap_window_nanos_total: AtomicU64,
+    bootstrap_window_nanos_max: AtomicU64,
+    map_apply_failures: AtomicU64,
     last_success_unix_seconds: AtomicU64,
     last_resource_relist_unix_seconds: AtomicU64,
 }
@@ -332,6 +509,20 @@ pub struct WorkloadControllerTelemetrySnapshot {
     pub unresolved_cgroups: u64,
     pub cgroup_hierarchy_mode: CgroupHierarchyMode,
     pub capture_filter_fail_closed_total: u64,
+    pub discovery_mode: CgroupDiscoveryMode,
+    pub discovery_notifications_total: u64,
+    pub discovery_coalesced_total: u64,
+    pub event_reconciliations_total: u64,
+    pub fallback_reconciliations_total: u64,
+    pub inotify_events_total: u64,
+    pub inotify_watches: u64,
+    pub inotify_watch_limit_drops_total: u64,
+    pub inotify_failures_total: u64,
+    pub inotify_queue_overflows_total: u64,
+    pub bootstrap_window_observations_total: u64,
+    pub bootstrap_window_nanos_total: u64,
+    pub bootstrap_window_nanos_max: u64,
+    pub map_apply_failures_total: u64,
     pub last_success_unix_seconds: u64,
     pub last_resource_relist_unix_seconds: u64,
 }
@@ -379,6 +570,7 @@ fn build_shared(
         effective_control_word,
         cgroup_hierarchy_mode,
         capture_filter_fail_closed,
+        capture_filter.discovery_mode,
     ));
 
     if capture_filter_fail_closed {
@@ -417,12 +609,17 @@ fn build_shared(
         spawn_watch_loop(controller.clone(), fetcher);
     }
     if cgroup_hierarchy_mode.capture_filter_compatible() {
-        spawn_poll_loop(controller.clone(), policy, cgroup_root, procfs_root);
+        spawn_reconcile_loop(controller.clone(), policy, cgroup_root.clone(), procfs_root);
+        #[cfg(target_os = "linux")]
+        if capture_filter.discovery_mode.is_event_driven() {
+            discovery::spawn(controller.clone(), cgroup_root);
+        }
     }
     info!(
         control_word = controller.control_word(),
         capture_filter_enabled = capture_filter.enabled,
         cgroup_hierarchy_mode = cgroup_hierarchy_mode.as_str(),
+        discovery_mode = ?capture_filter.discovery_mode,
         capture_filter_fail_closed,
         "shared Kubernetes workload controller active"
     );
@@ -505,14 +702,14 @@ pub fn shared_telemetry() -> Option<WorkloadControllerTelemetrySnapshot> {
     shared().map(|controller| controller.telemetry())
 }
 
-fn spawn_poll_loop(
+fn spawn_reconcile_loop(
     controller: Arc<CaptureFilterController>,
     policy: CaptureFilterPolicy,
     cgroup_root: PathBuf,
     procfs_root: PathBuf,
 ) {
     tokio::spawn(async move {
-        run_poll_loop(controller, policy, cgroup_root, procfs_root).await;
+        run_reconcile_loop(controller, policy, cgroup_root, procfs_root).await;
     });
 }
 
@@ -577,7 +774,14 @@ async fn run_watch_loop(controller: Arc<CaptureFilterController>, fetcher: Arc<d
     }
 }
 
-async fn run_poll_loop(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RefreshReason {
+    Initial,
+    Event,
+    Fallback,
+}
+
+async fn run_reconcile_loop(
     controller: Arc<CaptureFilterController>,
     policy: CaptureFilterPolicy,
     cgroup_root: PathBuf,
@@ -586,6 +790,13 @@ async fn run_poll_loop(
     let mut index = RawNodePodIndex::default();
     let mut pod_generation = 0_u64;
     let inspect_process_names = policy.requires_process_identity();
+    let mut fallback = tokio::time::interval(SCAN_TICK);
+    fallback.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Consume the interval's immediate first tick. The explicit initial
+    // reconciliation below owns startup accounting.
+    fallback.tick().await;
+    let mut reason = RefreshReason::Initial;
+    let mut bootstrap_started_at = Instant::now();
 
     loop {
         let observations = scan_cgroups(&cgroup_root, &procfs_root, inspect_process_names).await;
@@ -616,9 +827,44 @@ async fn run_poll_loop(
             denied = desired.denied_count(),
             "capture filter refresh"
         );
-        controller.publish(desired);
+        controller.publish(desired, bootstrap_started_at);
 
-        tokio::time::sleep(SCAN_TICK).await;
+        match reason {
+            RefreshReason::Initial => {}
+            RefreshReason::Event => {
+                controller
+                    .telemetry
+                    .event_reconciliations
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            RefreshReason::Fallback => {
+                controller
+                    .telemetry
+                    .fallback_reconciliations
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        // A polling fallback has no kernel creation timestamp. Retain the
+        // previous reconciliation completion as a conservative upper bound
+        // for the residual window instead of silently reporting only scan
+        // execution time.
+        let fallback_window_started_at = Instant::now();
+        (reason, bootstrap_started_at) = loop {
+            if let Some(started_at) = controller.take_pending_refresh() {
+                break (RefreshReason::Event, started_at);
+            }
+            tokio::select! {
+                _ = controller.refresh_notify.notified() => {
+                    if let Some(started_at) = controller.take_pending_refresh() {
+                        break (RefreshReason::Event, started_at);
+                    }
+                }
+                _ = fallback.tick() => {
+                    break (RefreshReason::Fallback, fallback_window_started_at);
+                }
+            }
+        };
     }
 }
 
@@ -735,6 +981,8 @@ use in_cluster::{apply_watch_line, parse_raw_pod_snapshot, parse_raw_pods};
 
 #[cfg(target_os = "linux")]
 mod apply;
+#[cfg(target_os = "linux")]
+mod discovery;
 #[cfg(target_os = "linux")]
 pub(crate) use apply::{attach_capture_filter, seed_capture_filter_control};
 

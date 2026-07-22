@@ -54,7 +54,10 @@ or chart rendering:
   config validation and posture parsing; a privacy invariant test asserting only
   cgroup ids and 0/1 verdict bytes reach the kernel-bound map (no namespace or
   label strings); `capture_filter_glob` and `capture_filter_cgroup_path` fuzz
-  targets; bounded unified-v2, legacy-v1, hybrid, and unavailable hierarchy
+  targets; bounded event-driven discovery configuration, one-slot refresh
+  coalescing, immediate source-map wakeups, recursive Linux inotify watch
+  limits, watcher rebuild rules, and native discovery/residual-window/failure
+  metrics; bounded unified-v2, legacy-v1, hybrid, and unavailable hierarchy
   detection; forced-deny control-word tests for unsupported roots; fixed native
   hierarchy/compatibility/fail-closed metrics; and Criterion rule-eval (~9-12ns), whole-node desired-build (~11.8us
   for 300 cgroups), and map-diff (~3.4us steady, ~555ns churn) benchmarks;
@@ -319,6 +322,23 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   application returned Synced/Healthy with its DaemonSet 2/2 Ready. This
   proves the scoped Linux 6.6.68 capability posture, not rootless operation,
   every kernel or security policy, production, or lower overhead.
+
+- Capture-filter bootstrap-window proof (2026-07-22, homelab k3s v1.30,
+  kernel 6.6.68, amd64, two NixOS nodes). One no-agent control and five
+  counterbalanced repetitions per agent mode ran a non-root probe workload
+  under `unknown_cgroup = "deny"`. The first workload-correlated exec window
+  measured 1,148.131 ms median and 1,216.842 ms p95 with the preserved
+  2-second polling mode, versus 0.463 ms median and 0.487 ms p95 with bounded
+  inotify discovery. That is a 99.959648% median reduction. Across every agent
+  run, inotify failures, queue overflows, watch-limit drops, map-application
+  failures, transport loss, perf loss, RingBuf reservation failures, and send
+  failures were zero. Curated evidence is in
+  `documentation/proof/bootstrap-window-20260722/`. The benchmark release and
+  workload were removed, the namespace was empty, and the standing Argo CD
+  application returned Synced/Healthy with its DaemonSet 2/2 Ready. This
+  proves the scoped new-Pod exec window on this cluster, not instantaneous
+  updates, sustained churn, production behavior, or every runtime and cgroup
+  driver.
 
 - Capture-filter verifier-load and OrbStack live scoping proof (2026-07-07,
   OrbStack Docker plus its in-VM Kubernetes v1.34, arm64). The cgroup capture
