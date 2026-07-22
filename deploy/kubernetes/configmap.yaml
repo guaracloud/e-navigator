@@ -28,6 +28,11 @@ data:
     max_args = 8
     max_bytes = 512
 
+    [capture_filter]
+    enabled = false
+    # Event-driven inotify discovery retains a two-second loss-recovery scan.
+    discovery_mode = "event_driven"
+
     [attribution]
     procfs_root = "/host/proc"
 

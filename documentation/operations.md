@@ -41,6 +41,8 @@ labels. Monitor these categories:
 - decoded, invalid, sent, send-failure, and perf-loss totals;
 - Kubernetes controller readiness, watch freshness, relists, failures, and
   unresolved cgroups;
+- cgroup discovery mode, inotify failures or overflows, residual bootstrap
+  window, and map-application failures;
 - OTLP queue depth, drops, retries, response classification, circuit state,
   sent records, and request latency;
 - profile dropped samples and profiling warning counts.

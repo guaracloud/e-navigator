@@ -17,10 +17,10 @@ use tracing::{info, warn};
 
 use super::{CaptureFilterController, shared};
 
-/// How often the applier reconciles its map against the shared desired state.
+/// Loss-recovery and shutdown-check cadence. Desired-map publications wake
+/// every source applier immediately through the shared controller condvar.
 const APPLY_TICK: Duration = Duration::from_secs(1);
-/// Emit the accounting summary every this many ticks (30s at a 1s tick).
-const ACCOUNTING_LOG_EVERY: u32 = 30;
+const ACCOUNTING_LOG_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Seed the fail-open/fail-closed control word before any source program is
 /// attached. Sources with high-frequency global hooks must call this before
@@ -99,23 +99,23 @@ fn run_applier(
 ) {
     let mut mirror = FilterMapMirror::new();
     let mut last_generation: Option<u64> = None;
-    let mut ticks_since_log = 0u32;
+    let mut last_accounting = std::time::Instant::now();
 
     while !is_stopped() {
-        std::thread::sleep(APPLY_TICK);
+        let (generation, desired, bootstrap_started_at) =
+            controller.wait_for_change(last_generation, APPLY_TICK);
         if is_stopped() {
             break;
         }
 
-        let (generation, desired) = controller.current();
         if last_generation != Some(generation) {
             last_generation = Some(generation);
-            apply_diff(module, &mut filter, &mut mirror, &desired);
+            let failures = apply_diff(module, &mut filter, &mut mirror, &desired);
+            controller.record_map_apply(bootstrap_started_at, failures);
         }
 
-        ticks_since_log = ticks_since_log.saturating_add(1);
-        if ticks_since_log >= ACCOUNTING_LOG_EVERY {
-            ticks_since_log = 0;
+        if last_accounting.elapsed() >= ACCOUNTING_LOG_INTERVAL {
+            last_accounting = std::time::Instant::now();
             log_accounting(module, &desired, &dropped, mirror.len());
         }
     }
@@ -126,32 +126,40 @@ fn apply_diff(
     filter: &mut AyaHashMap<MapData, u64, u8>,
     mirror: &mut FilterMapMirror,
     desired: &DesiredFilterMap,
-) {
+) -> u64 {
     let diff = mirror.plan(desired);
+    let mut failures = 0u64;
     for (cgroup_id, byte) in diff.upserts {
         match filter.insert(cgroup_id, byte, 0) {
             Ok(()) => mirror.record_upsert(cgroup_id, byte),
-            Err(err) => warn!(
-                target: "e_navigator_sources_ebpf_aya::capture_filter",
-                source = module,
-                cgroup_id,
-                error = %err,
-                "capture filter map insert failed"
-            ),
+            Err(err) => {
+                failures = failures.saturating_add(1);
+                warn!(
+                    target: "e_navigator_sources_ebpf_aya::capture_filter",
+                    source = module,
+                    cgroup_id,
+                    error = %err,
+                    "capture filter map insert failed"
+                );
+            }
         }
     }
     for cgroup_id in diff.removals {
         match filter.remove(&cgroup_id) {
             Ok(()) => mirror.record_removal(cgroup_id),
-            Err(err) => warn!(
-                target: "e_navigator_sources_ebpf_aya::capture_filter",
-                source = module,
-                cgroup_id,
-                error = %err,
-                "capture filter map remove failed"
-            ),
+            Err(err) => {
+                failures = failures.saturating_add(1);
+                warn!(
+                    target: "e_navigator_sources_ebpf_aya::capture_filter",
+                    source = module,
+                    cgroup_id,
+                    error = %err,
+                    "capture filter map remove failed"
+                );
+            }
         }
     }
+    failures
 }
 
 /// Never silent: report how many cgroups are allowed/denied and how many events

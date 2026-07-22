@@ -220,6 +220,7 @@ enabled = true
 # yet be resolved to a pod (bootstrap window, host processes, API unavailable).
 default_posture = "deny"   # "allow" or "deny"
 unknown_cgroup = "deny"    # "allow" or "deny"
+discovery_mode = "event_driven" # "event_driven" or diagnostic "polling"
 # Namespaces support exact names and `*`/`?` globs. Precedence: exclude wins,
 # then the include gate, then default_posture.
 namespace_include = ["proj-*"]
@@ -243,16 +244,21 @@ label_exists = ["observability.e-navigator.dev/include"]
 ```
 
 An allowlist posture (`default_posture`/`unknown_cgroup = "deny"` with
-`namespace_include`) leaves a brief coverage gap for a newly started included
-pod; a denylist posture (`"allow"` with `namespace_exclude`) leaves a brief
-capture leak for a newly started excluded pod. Pod identity arrives through the
-watch; both windows are bounded mainly by the two-second local cgroup scan and
-are minimized by resolving the pod UID from the cgroup path. Capture-filter namespace pattern and
-label selector lists each accept at most 128 and 64 entries respectively; set
-selectors accept at most 64 values per key and OR selectors at most 32 groups.
-Each entry must be non-empty, free of whitespace and control characters, and at
-most 253 bytes. Exclude namespace/label groups and process/container exclusions
-always win before the include gate.
+`namespace_include`) leaves a residual coverage gap for a newly started
+included pod; a denylist posture (`"allow"` with `namespace_exclude`) leaves a
+residual capture leak for a newly started excluded pod. The default
+`event_driven` mode wakes reconciliation from both the Pod watch and bounded
+inotify watches on the unified cgroup tree, then wakes every source map applier
+when desired state changes. At most 16,384 directories are watched, refreshes
+coalesce into one pending slot, and a two-second fallback scan guarantees
+convergence after queue overflow or watcher failure. `polling` preserves the
+previous scan-only behavior for compatibility diagnosis and measured A/B work.
+Neither mode changes `unknown_cgroup` semantics. Capture-filter namespace
+pattern and label selector lists each accept at most 128 and 64 entries
+respectively; set selectors accept at most 64 values per key and OR selectors
+at most 32 groups. Each entry must be non-empty, free of whitespace and control
+characters, and at most 253 bytes. Exclude namespace/label groups and
+process/container exclusions always win before the include gate.
 
 Host resource sampling validates its scan bounds before runtime:
 `resource_source.sample_interval_millis` must be greater than zero and at most
@@ -477,6 +483,18 @@ Also alert when `e_navigator_capture_filter_cgroup_v2_compatible == 0` or on any
 increase in `e_navigator_capture_filter_fail_closed_total`. The hierarchy info
 metric distinguishes legacy v1, hybrid, unavailable, and not-yet-checked state;
 none is partial coverage when the filter is enabled.
+
+For event-driven discovery, alert on any increase in
+`e_navigator_capture_filter_inotify_failures_total`,
+`e_navigator_capture_filter_inotify_queue_overflows_total`,
+`e_navigator_capture_filter_inotify_watch_limit_drops_total`, or
+`e_navigator_capture_filter_map_apply_failures_total`. Track
+`e_navigator_capture_filter_bootstrap_window_seconds_sum` divided by
+`e_navigator_capture_filter_bootstrap_window_observations_total`, plus
+`e_navigator_capture_filter_bootstrap_window_seconds_max`, as residual
+control-plane window indicators. They measure notification or conservative
+fallback boundary through each source map application, not the complete
+workload-visible window.
 
 For the source supervisor, alert when a configured
 `e_navigator_source_running{source="..."}` series remains zero while the agent

@@ -1,0 +1,28 @@
+{
+  "schema": "e-navigator.bootstrap-window-runs.v1",
+  "no_agent": {"run":"none-r1","attempts":523,"failures":0,"uid":65532},
+  "runs": [
+    {"run":"polling-r1","window_millis":1186.847863,"correlated_signals":418,"attempts":521,"residual_max_seconds":2.001756931},
+    {"run":"event-r1","window_millis":0.462468,"correlated_signals":522,"attempts":522,"inotify_events":6,"residual_max_seconds":0.036428383},
+    {"run":"event-r2","window_millis":0.442680,"correlated_signals":522,"attempts":522,"inotify_events":6,"residual_max_seconds":0.038044224},
+    {"run":"polling-r2","window_millis":1148.130590,"correlated_signals":422,"attempts":522,"residual_max_seconds":2.000831991},
+    {"run":"polling-r3","window_millis":1216.842484,"correlated_signals":416,"attempts":522,"residual_max_seconds":2.000614243},
+    {"run":"event-r3","window_millis":0.463290,"correlated_signals":521,"attempts":521,"inotify_events":6,"residual_max_seconds":0.027896126},
+    {"run":"event-r4","window_millis":0.464081,"correlated_signals":522,"attempts":522,"inotify_events":6,"residual_max_seconds":0.038805710},
+    {"run":"polling-r4","window_millis":1007.865323,"correlated_signals":434,"attempts":522,"residual_max_seconds":2.001829601},
+    {"run":"polling-r5","window_millis":987.285865,"correlated_signals":436,"attempts":522,"residual_max_seconds":2.000897160},
+    {"run":"event-r5","window_millis":0.486875,"correlated_signals":521,"attempts":521,"inotify_events":6,"residual_max_seconds":0.039589536}
+  ],
+  "all_agent_runs": {
+    "ready_pods_per_run": 2,
+    "workload_failures": 0,
+    "inotify_failures": 0,
+    "inotify_queue_overflows": 0,
+    "inotify_watch_limit_drops": 0,
+    "map_apply_failures": 0,
+    "exec_transport_loss": 0,
+    "exec_perf_loss": 0,
+    "exec_ring_reservation_failures": 0,
+    "exec_send_failures": 0
+  }
+}

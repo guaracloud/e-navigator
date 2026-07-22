@@ -1,0 +1,22 @@
+{
+  "schema": "e-navigator.bootstrap-window-analysis.v1",
+  "verdict": "pass",
+  "window_millis": {
+    "polling": {"samples":5,"min":987.285865,"mean":1109.394425,"median":1148.130590,"p95":1216.842484,"max":1216.842484,"stdev":105.194189},
+    "event_driven": {"samples":5,"min":0.442680,"mean":0.463879,"median":0.463290,"p95":0.486875,"max":0.486875,"stdev":0.015657}
+  },
+  "median_reduction_millis": 1147.667300,
+  "median_reduction_percent": 99.959648,
+  "aggregate_native_accounting": {
+    "event_notifications": 120,
+    "event_reconciliations": 116,
+    "inotify_events": 30,
+    "inotify_failures": 0,
+    "inotify_queue_overflows": 0,
+    "inotify_watch_limit_drops": 0,
+    "map_apply_failures": 0,
+    "exec_transport_loss": 0,
+    "exec_ring_reservation_failures": 0,
+    "exec_send_failures": 0
+  }
+}

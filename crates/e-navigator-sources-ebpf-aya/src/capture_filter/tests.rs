@@ -1,5 +1,6 @@
 use super::*;
 use e_navigator_core::CapturePosture;
+use proptest::prelude::*;
 use std::collections::BTreeMap;
 
 const CID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -102,8 +103,12 @@ fn unsupported_cgroup_hierarchies_override_allow_to_fail_closed() {
         (CONTROL_UNKNOWN_CAPTURE, false)
     );
 
-    let controller =
-        CaptureFilterController::new(CONTROL_UNKNOWN_DROP, CgroupHierarchyMode::LegacyV1, true);
+    let controller = CaptureFilterController::new(
+        CONTROL_UNKNOWN_DROP,
+        CgroupHierarchyMode::LegacyV1,
+        true,
+        CgroupDiscoveryMode::EventDriven,
+    );
     let telemetry = controller.telemetry();
     assert_eq!(
         telemetry.cgroup_hierarchy_mode,
@@ -446,11 +451,15 @@ fn scan_cgroups_discovers_pod_and_container_tokens() {
 
 #[test]
 fn controller_publish_increments_only_for_changed_desired_state() {
-    let controller =
-        CaptureFilterController::new(CONTROL_UNKNOWN_DROP, CgroupHierarchyMode::UnifiedV2, false);
-    let (generation0, _) = controller.current();
+    let controller = CaptureFilterController::new(
+        CONTROL_UNKNOWN_DROP,
+        CgroupHierarchyMode::UnifiedV2,
+        false,
+        CgroupDiscoveryMode::EventDriven,
+    );
+    let (generation0, _, _) = controller.current();
 
-    assert!(!controller.publish(DesiredFilterMap::default()));
+    assert!(!controller.publish(DesiredFilterMap::default(), Instant::now()));
     assert_eq!(controller.current().0, generation0);
 
     let policy = CaptureFilterPolicy::from_config(&CaptureFilterConfig {
@@ -486,18 +495,22 @@ fn controller_publish_increments_only_for_changed_desired_state() {
         1,
     );
 
-    assert!(controller.publish(desired.clone()));
-    let (generation1, _) = controller.current();
+    assert!(controller.publish(desired.clone(), Instant::now()));
+    let (generation1, _, _) = controller.current();
     assert_ne!(generation0, generation1);
-    assert!(!controller.publish(desired));
+    assert!(!controller.publish(desired, Instant::now()));
     assert_eq!(controller.current().0, generation1);
     assert_eq!(controller.control_word(), CONTROL_UNKNOWN_DROP);
 }
 
 #[test]
 fn controller_publishes_raw_pods_for_shared_attribution() {
-    let controller =
-        CaptureFilterController::new(CONTROL_UNKNOWN_DROP, CgroupHierarchyMode::UnifiedV2, false);
+    let controller = CaptureFilterController::new(
+        CONTROL_UNKNOWN_DROP,
+        CgroupHierarchyMode::UnifiedV2,
+        false,
+        CgroupDiscoveryMode::EventDriven,
+    );
     controller.mark_resource_relist_success();
     controller.publish_snapshot(RawPodSnapshot {
         resource_version: "1".to_string(),
@@ -527,6 +540,83 @@ fn controller_publishes_raw_pods_for_shared_attribution() {
     assert_eq!(telemetry.pod_count, 1);
     assert!(telemetry.last_success_unix_seconds > 0);
     assert!(telemetry.last_resource_relist_unix_seconds > 0);
+}
+
+#[test]
+fn event_driven_refreshes_coalesce_and_polling_ignores_notifications() {
+    let event_driven = CaptureFilterController::new(
+        CONTROL_UNKNOWN_DROP,
+        CgroupHierarchyMode::UnifiedV2,
+        false,
+        CgroupDiscoveryMode::EventDriven,
+    );
+    event_driven.enqueue_refresh();
+    event_driven.enqueue_refresh();
+    assert!(event_driven.take_pending_refresh().is_some());
+    assert!(event_driven.take_pending_refresh().is_none());
+    let telemetry = event_driven.telemetry();
+    assert_eq!(telemetry.discovery_notifications_total, 2);
+    assert_eq!(telemetry.discovery_coalesced_total, 1);
+
+    let polling = CaptureFilterController::new(
+        CONTROL_UNKNOWN_DROP,
+        CgroupHierarchyMode::UnifiedV2,
+        false,
+        CgroupDiscoveryMode::Polling,
+    );
+    polling.enqueue_refresh();
+    assert!(polling.take_pending_refresh().is_none());
+    assert_eq!(polling.telemetry().discovery_notifications_total, 0);
+}
+
+#[test]
+fn desired_map_publication_wakes_a_waiting_applier() {
+    let controller = Arc::new(CaptureFilterController::new(
+        CONTROL_UNKNOWN_DROP,
+        CgroupHierarchyMode::UnifiedV2,
+        false,
+        CgroupDiscoveryMode::EventDriven,
+    ));
+    let waiting = Arc::clone(&controller);
+    let waiter =
+        std::thread::spawn(move || waiting.wait_for_change(Some(0), Duration::from_secs(1)));
+    std::thread::sleep(Duration::from_millis(10));
+
+    let policy = CaptureFilterPolicy::from_config(&CaptureFilterConfig {
+        enabled: true,
+        default_posture: CapturePosture::Allow,
+        ..Default::default()
+    });
+    let index = RawNodePodIndex::from_pods(
+        [RawPod {
+            namespace: "proj".to_string(),
+            pod_name: "api".to_string(),
+            pod_uid: Some(UID.to_string()),
+            node_name: None,
+            pod_ip: None,
+            workload_name: None,
+            workload_type: None,
+            container_ids: Vec::new(),
+            container_names: BTreeMap::new(),
+            labels: BTreeMap::new(),
+        }],
+        1,
+    );
+    let desired = build_desired_filter_map(
+        &[CgroupObservation::from_cgroup_path(
+            41,
+            &format!("/kubepods-pod{}.slice", UID.replace('-', "_")),
+        )],
+        &index,
+        &policy,
+        1,
+    );
+    let started_at = Instant::now();
+    assert!(controller.publish(desired, started_at));
+
+    let (generation, _desired, published_started_at) = waiter.join().expect("waiter joins");
+    assert_eq!(generation, 1);
+    assert_eq!(published_started_at, Some(started_at));
 }
 
 #[test]
@@ -588,4 +678,22 @@ fn scan_cgroups_skips_process_procfs_without_process_rules() {
 
     assert!(container.process_names.is_empty());
     std::fs::remove_dir_all(&fixture).expect("cleanup");
+}
+
+proptest! {
+    #[test]
+    fn refresh_gate_matches_a_one_slot_queue(operations in prop::collection::vec(any::<bool>(), 0..1_024)) {
+        let pending = AtomicBool::new(false);
+        let mut model_pending = false;
+
+        for offer in operations {
+            if offer {
+                prop_assert_eq!(mark_refresh_pending(&pending), model_pending);
+                model_pending = true;
+            } else {
+                prop_assert_eq!(take_refresh_pending(&pending), model_pending);
+                model_pending = false;
+            }
+        }
+    }
 }

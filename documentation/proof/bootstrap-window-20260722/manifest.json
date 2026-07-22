@@ -1,0 +1,48 @@
+{
+  "schema": "e-navigator.bootstrap-window-proof-manifest.v1",
+  "date": "2026-07-22",
+  "started_at_utc": "2026-07-22T08:22:59.684998Z",
+  "ended_at_utc": "2026-07-22T08:29:18.011925Z",
+  "cluster": {
+    "context": "homelab",
+    "kubernetes": "k3s v1.30.4+k3s1",
+    "nodes": ["homelab-01", "homelab-02"],
+    "kernel": "Linux 6.6.68",
+    "architecture": "amd64",
+    "container_runtime": "containerd 1.7.20-k3s1"
+  },
+  "candidate": {
+    "source_commit": "46b05a4dbfcb26c7be240ce9ada0cbc4f1ba0d71",
+    "runtime_patch_sha256": "63539e7aa252909cfdb69d4605adb04a720b51a69dfd99da11d003d849d6e0a3",
+    "image": "docker.io/library/e-navigator:gap8-bootstrap-amd64",
+    "digest": "sha256:527f9095919f310b04c0c0b68f20cacdaeffdc3f3c78ecd729fd4754e0cb48a1",
+    "oci_archive_sha256": "06a77e09cdc5d820fcb3af15a04ee5062abc046c37ec96b588d6cbb28b00af86",
+    "platform": "linux/amd64",
+    "distribution": "loaded directly into both homelab containerd stores; never pushed"
+  },
+  "method": {
+    "namespace": "e-navigator-bench",
+    "workload_node": "homelab-01",
+    "arms": ["no benchmark agent", "polling", "event driven"],
+    "repetitions_per_agent_arm": 5,
+    "seconds_per_run": 6,
+    "counterbalanced": true,
+    "enabled_sources": ["source.aya_exec"],
+    "unknown_cgroup": "deny",
+    "workload_uid": 65532
+  },
+  "results": {
+    "verdict": "pass",
+    "event_median_better": true,
+    "event_p95_better": true,
+    "all_native_failure_and_loss_gates_zero": true
+  },
+  "cleanup": {
+    "benchmark_namespace_empty": true,
+    "helm_release_absent": true,
+    "standing_argocd_application": "Synced/Healthy",
+    "standing_daemonset_ready": "2/2",
+    "production_context_touched": false
+  },
+  "raw_artifact_root": "benchmarks/results/bootstrap-window-proof"
+}

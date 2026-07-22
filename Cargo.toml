@@ -54,6 +54,7 @@ clap = { version = "4", features = ["derive", "env"] }
 criterion = "0.5"
 flate2 = "1"
 iced-x86 = { version = "1.21", default-features = false, features = ["decoder", "std"] }
+inotify = "0.11.4"
 libc = "0.2"
 object = { version = "0.39", default-features = false, features = ["elf", "read_core", "std"] }
 serde = { version = "1", features = ["derive"] }
