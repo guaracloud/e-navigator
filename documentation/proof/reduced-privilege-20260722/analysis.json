@@ -1,0 +1,25 @@
+{
+  "schema": "e-navigator.reduced-privilege-proof.v1",
+  "correctness_gate_passed": true,
+  "arms": [
+    {"arm":"none","agent":false,"workload_operations_each":661,"workload_uid":65532},
+    {"arm":"exec","capabilities":["CAP_BPF","CAP_PERFMON"],"matching_signals":776,"matching_kinds":["exec"]},
+    {"arm":"network","capabilities":["CAP_BPF","CAP_PERFMON"],"matching_signals":500,"matching_kinds":["network_connection_close","network_connection_open"]},
+    {"arm":"dns","capabilities":["CAP_BPF","CAP_PERFMON"],"matching_signals":6058,"matching_kinds":["dns_query","dns_response"]},
+    {"arm":"http","capabilities":["CAP_BPF","CAP_PERFMON"],"matching_signals":1502,"matching_kinds":["protocol_request_observation"]},
+    {"arm":"protocol","capabilities":["CAP_BPF","CAP_PERFMON"],"matching_signals":1544,"matching_kinds":["protocol_request_observation"],"protocol":"redis"},
+    {"arm":"cpu-profile","capabilities":["CAP_BPF","CAP_PERFMON","CAP_SYS_PTRACE"],"matching_signals":1,"matching_kinds":["profile_sample_observation"],"workload_process":"non-root python"},
+    {"arm":"host-resource","capabilities":[],"matching_signals":7788,"matching_kinds":["node_cpu_observation","node_memory_observation","process_resource_observation"]},
+    {"arm":"tls-none","agent":false,"requests":4000,"succeeded":4000,"failed":0},
+    {"arm":"tls","capabilities":["CAP_BPF","CAP_PERFMON","CAP_SYS_PTRACE"],"matching_signals":7988,"matching_kinds":["protocol_request_observation"],"protocol":"http","requests":4000,"succeeded":4000,"failed":0}
+  ],
+  "aya_native_totals": [
+    {"arm":"exec","decoded":7435,"sent":7435,"transport_loss":0,"reservation_failures":0,"send_failures":0},
+    {"arm":"network","decoded":75647,"sent":75647,"transport_loss":0,"reservation_failures":0,"send_failures":0},
+    {"arm":"dns","decoded":16472,"sent":16472,"transport_loss":0,"reservation_failures":0,"send_failures":0},
+    {"arm":"http","decoded":3647,"sent":3647,"transport_loss":0,"reservation_failures":0,"send_failures":0},
+    {"arm":"protocol","decoded":3088,"sent":1544,"transport_loss":0,"reservation_failures":0,"send_failures":0},
+    {"arm":"cpu-profile","decoded":14567,"sent":14567,"transport_loss":0,"reservation_failures":0,"send_failures":0},
+    {"arm":"tls","decoded":16072,"sent":8027,"transport_loss":0,"reservation_failures":0,"send_failures":0}
+  ]
+}

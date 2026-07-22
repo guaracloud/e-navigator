@@ -300,6 +300,26 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   `documentation/proof/cgroup-hierarchy-20260722/`. Disposable resources were
   removed and the standing Argo CD application remained Synced/Healthy.
 
+- Reduced-privilege proof (2026-07-22, homelab k3s v1.30, kernel 6.6.68,
+  amd64, two NixOS nodes). Ten guarded arms covered no-agent controls and one
+  source at a time. Exec, network, DNS, cleartext HTTP, and Redis ran with only
+  `BPF` and `PERFMON`; Go TLS and cross-UID CPU symbolization added
+  `SYS_PTRACE`; host resources ran with no effective capabilities. Every
+  agent arm had two ready pods, zero restarts, `NoNewPrivs: 1`, `Seccomp: 2`,
+  and the exact expected capability set. The analyzer tied positive evidence
+  to the workload: 776 `/bin/true` execs, 500 workload-port network lifecycle
+  signals, 6,058 unique-name DNS signals, 1,502 cleartext `/proof` requests,
+  1,544 Redis observations, one strict non-root Python sample with resolved
+  Python symbols, 7,788 required-kind host-resource observations, and 7,988 Go
+  TLS `/proof` observations. Every Aya arm reported zero transport loss,
+  RingBuf reservation failure, and send failure. The Go no-agent and TLS arms
+  each completed 4,000 of 4,000 requests. Curated evidence is in
+  `documentation/proof/reduced-privilege-20260722/`. The benchmark release and
+  workload were removed, the namespace was empty, and the standing Argo CD
+  application returned Synced/Healthy with its DaemonSet 2/2 Ready. This
+  proves the scoped Linux 6.6.68 capability posture, not rootless operation,
+  every kernel or security policy, production, or lower overhead.
+
 - Capture-filter verifier-load and OrbStack live scoping proof (2026-07-07,
   OrbStack Docker plus its in-VM Kubernetes v1.34, arm64). The cgroup capture
   filter's in-kernel fast-path check verifier-loaded on every modified program:
@@ -680,9 +700,11 @@ These areas remain explicitly partial:
 - **Exporter infrastructure:** local and namespace-local proof exists, but broad
   production backend/collector compatibility and longer live soaks are not
   proven.
-- **Resource and privilege posture:** selected resource samples and seccomp
-  slices are proven, but reduced overhead, reduced capabilities, and non-root
-  eBPF operation are not proven.
+- **Resource and privilege posture:** the source-specific reduced capability
+  sets, exact seccomp/no-new-privileges state, and zero-capability host-resource
+  slice are proven on the Linux 6.6.68 homelab. Rootless operation, other
+  kernels and security policies, production rollout, and reduced overhead are
+  not proven.
 
 ## Blocked Or Version-Boundary Findings
 

@@ -27,6 +27,7 @@ disable_json_stdout="${E_NAVIGATOR_HOMELAB_DISABLE_JSON_STDOUT:-0}"
 agent_mode="${E_NAVIGATOR_HOMELAB_AGENT_MODE:-enabled}"
 workload_template="${E_NAVIGATOR_HOMELAB_WORKLOAD_TEMPLATE:-benchmarks/k8s/workload.yaml}"
 config_template="${E_NAVIGATOR_HOMELAB_CONFIG_TEMPLATE:-}"
+values_file="${E_NAVIGATOR_HOMELAB_VALUES_FILE:-}"
 workload_duration_seconds="${E_NAVIGATOR_HOMELAB_WORKLOAD_DURATION_SECONDS:-120}"
 
 if [ "${E_NAVIGATOR_HOMELAB_CONFIRM:-0}" != "1" ]; then
@@ -103,6 +104,10 @@ fi
 
 if [ -n "$config_template" ] && [ ! -f "$config_template" ]; then
   printf 'homelab config template does not exist: %s\n' "$config_template" >&2
+  exit 2
+fi
+if [ -n "$values_file" ] && [ ! -f "$values_file" ]; then
+  printf 'homelab values file does not exist: %s\n' "$values_file" >&2
   exit 2
 fi
 
@@ -222,6 +227,7 @@ Uninstall release requested: ${uninstall_release_requested}
 Workload wait timeout: ${workload_wait_timeout}
 Workload template: ${workload_template}
 Config template: ${config_template:-chart default}
+Values file: ${values_file:-chart default}
 Workload duration seconds: ${workload_duration_seconds}
 EOF
 }
@@ -552,6 +558,9 @@ EOF
 }
 
 render_args=(--namespace "$namespace" --set namespace.create=false --set namespace.name="$namespace")
+if [ -n "$values_file" ]; then
+  render_args+=(--values "$values_file")
+fi
 write_run_metadata
 write_workload_manifest
 
@@ -566,6 +575,9 @@ if [ "${E_NAVIGATOR_HOMELAB_APPLY:-0}" = "1" ] && [ "$agent_mode" = "enabled" ];
     --set resources.requests.memory=128Mi
     --set resources.limits.memory=512Mi
   )
+  if [ -n "$values_file" ]; then
+    helm_args+=(--values "$values_file")
+  fi
   if [ -n "$image_pull_secret" ]; then
     helm_args+=(--set "imagePullSecrets[0].name=$image_pull_secret")
   fi

@@ -36,6 +36,11 @@ All notable changes to E-Navigator are documented here. The format follows
   explicit cgroup v1 and hybrid non-claim, pre-attachment forced deny on
   unsupported layouts, fixed native diagnostics, and guarded homelab proof of
   the real v2 and legacy-fixture paths.
+- Add an opt-in reduced-privilege Helm profile, strict security-context schema,
+  source-specific capability overlays, a resumable guarded proof harness, and
+  ten homelab arms proving core Aya sources under `BPF` and `PERFMON`, Go TLS
+  and cross-UID CPU symbolization with `SYS_PTRACE`, and host resources with no
+  effective capabilities on Linux 6.6.68.
 
 ### Performance
 

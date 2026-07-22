@@ -23,6 +23,7 @@ only when their matching evidence exists.
 | Try the pipeline without Linux privileges | [Five-minute local start](#five-minute-local-start) |
 | Deploy a narrow, low-overhead production baseline | [Production performance golden path](documentation/golden-path.md) |
 | Configure the complete Helm surface | [Helm install](documentation/helm.md) |
+| Deploy the proven Linux 6.6 reduced-capability profile | [Reduced privilege profile](documentation/helm.md#use-the-reduced-privilege-profile) |
 | Understand capture, derivation, and export | [Architecture](documentation/architecture.md) |
 | Operate and troubleshoot a deployment | [Operations](documentation/operations.md) |
 | Verify a release before rollout | [Release verification](documentation/release-verification.md) |
@@ -48,6 +49,9 @@ E-Navigator runs as one node-local agent with a statically registered
 - An optional Kubernetes-aware capture filter avoids probing excluded workload
   cgroups at the connection boundary on unified cgroup v2 nodes. Legacy and
   hybrid layouts are detected and forced to deny rather than guessed.
+- An opt-in Helm profile removes `SYS_ADMIN` on the proven Linux 6.6.68
+  homelab posture, using `BPF`, `PERFMON`, and `SYS_PTRACE` while retaining UID
+  0 and explicit rootless and cross-kernel boundaries.
 
 Detailed implementation and proof status lives in
 [capabilities](documentation/capabilities.md). Unsupported libraries,

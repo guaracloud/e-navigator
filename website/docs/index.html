@@ -199,6 +199,12 @@ cargo run --locked -p e-navigator-cli -- \
               rendering or installing. Inspect the ConfigMap, capabilities,
               RBAC, resource bounds, update strategy, and digest.
             </p>
+            <p>
+              On a target matching the proven Linux 6.6 posture, add
+              <code>--values charts/e-navigator/values-reduced-privilege.yaml</code>
+              to remove <code>SYS_ADMIN</code>. The profile remains UID 0 and
+              is not a rootless or universal-kernel claim.
+            </p>
             <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/golden-path.md">Read the exhaustive golden path</a>
           </div>
         </section>

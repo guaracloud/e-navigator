@@ -1,0 +1,19 @@
+# Modern-kernel profile proven on Linux 6.6.68. CAP_BPF and CAP_PERFMON
+# replace the legacy CAP_SYS_ADMIN umbrella. CAP_SYS_PTRACE is retained for
+# TLS target discovery and full cross-process CPU symbolization. Keep the
+# default values profile for kernels older than 5.8 or unproven runtimes.
+securityContext:
+  privileged: false
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  seccompProfile:
+    type: RuntimeDefault
+  runAsUser: 0
+  runAsNonRoot: false
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - BPF
+      - PERFMON
+      - SYS_PTRACE

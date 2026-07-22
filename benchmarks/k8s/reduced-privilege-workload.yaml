@@ -1,0 +1,146 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: e-navigator-bench-workload
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/name: e-navigator-bench-workload
+    app.kubernetes.io/component: reduced-privilege-load
+    app.kubernetes.io/part-of: e-navigator-validation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 240 # Replaced by the guarded collector.
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: e-navigator-bench-workload
+        app.kubernetes.io/component: reduced-privilege-load
+        app.kubernetes.io/part-of: e-navigator-validation
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: homelab-01
+      tolerations:
+        - operator: Exists
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: python311-reduced-load
+          image: docker.io/library/python@sha256:5c34b355088846dddc8afb7442c20b9433dccdc8d66192dc52c616adeaa106a3
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DURATION_SECONDS
+              value: "120" # Replaced by the guarded collector.
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          command: ["python", "-u", "-c"]
+          args:
+            - |
+              import http.client
+              import json
+              import os
+              import socket
+              import socketserver
+              import subprocess
+              import threading
+              import time
+              from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+              duration = int(os.environ["DURATION_SECONDS"])
+              counts = {"cpu_batches": 0, "dns": 0, "exec": 0, "http": 0, "redis": 0}
+              stop = threading.Event()
+
+              class HttpHandler(BaseHTTPRequestHandler):
+                  def do_GET(self):
+                      body = b'{"proof":"reduced-privilege"}\n'
+                      self.send_response(200)
+                      self.send_header("Content-Type", "application/json")
+                      self.send_header("Content-Length", str(len(body)))
+                      self.end_headers()
+                      self.wfile.write(body)
+
+                  def log_message(self, _format, *_args):
+                      return
+
+              class RedisHandler(socketserver.BaseRequestHandler):
+                  def handle(self):
+                      self.request.settimeout(2)
+                      request = self.request.recv(1024)
+                      if request.startswith(b"*1\r\n$4\r\nPING\r\n"):
+                          self.request.sendall(b"+PONG\r\n")
+
+              class ReusableTcpServer(socketserver.ThreadingTCPServer):
+                  allow_reuse_address = True
+                  daemon_threads = True
+
+              http_server = ThreadingHTTPServer(("127.0.0.1", 18080), HttpHandler)
+              redis_server = ReusableTcpServer(("127.0.0.1", 16379), RedisHandler)
+              threading.Thread(target=http_server.serve_forever, daemon=True).start()
+              threading.Thread(target=redis_server.serve_forever, daemon=True).start()
+
+              # Keep the non-root process alive long enough for every source
+              # to observe the same deterministic workload shape.
+              time.sleep(5)
+              started = time.monotonic()
+              deadline = started + duration
+              checksum = 1
+              iteration = 0
+              while time.monotonic() < deadline:
+                  iteration += 1
+                  try:
+                      subprocess.run(["/bin/true"], check=True, timeout=2)
+                      counts["exec"] += 1
+                  except Exception:
+                      pass
+                  try:
+                      socket.getaddrinfo(
+                          f"reduced-{iteration}.invalid.e-navigator.local", 443
+                      )
+                  except socket.gaierror:
+                      counts["dns"] += 1
+                  try:
+                      connection = http.client.HTTPConnection("127.0.0.1", 18080, timeout=2)
+                      connection.request("GET", "/proof")
+                      response = connection.getresponse()
+                      response.read()
+                      if response.status == 200:
+                          counts["http"] += 1
+                      connection.close()
+                  except Exception:
+                      pass
+                  try:
+                      with socket.create_connection(("127.0.0.1", 16379), timeout=2) as client:
+                          client.sendall(b"*1\r\n$4\r\nPING\r\n")
+                          if client.recv(64).startswith(b"+PONG"):
+                              counts["redis"] += 1
+                  except Exception:
+                      pass
+                  for inner in range(120000):
+                      checksum = ((checksum * 1664525) + 1013904223 + inner) & 0xFFFFFFFF
+                  counts["cpu_batches"] += 1
+
+              stop.set()
+              http_server.shutdown()
+              redis_server.shutdown()
+              elapsed = time.monotonic() - started
+              print(json.dumps({
+                  "schema": "e-navigator.reduced-privilege-workload.v1",
+                  "uid": os.getuid(),
+                  "duration_seconds": duration,
+                  "elapsed_seconds": round(elapsed, 6),
+                  "checksum": checksum,
+                  **counts,
+              }, sort_keys=True))
+              if not all(counts.values()):
+                  raise SystemExit(f"one or more workload families produced no operations: {counts}")
+          resources:
+            requests:
+              cpu: 150m
+              memory: 48Mi
+            limits:
+              cpu: "1"
+              memory: 192Mi

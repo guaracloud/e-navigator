@@ -1,0 +1,44 @@
+{
+  "schema": "e-navigator.reduced-privilege-proof-manifest.v1",
+  "date": "2026-07-22",
+  "cluster": {
+    "context": "homelab",
+    "kubernetes": "k3s v1.30.4+k3s1",
+    "nodes": ["homelab-01", "homelab-02"],
+    "kernel": "Linux 6.6.68",
+    "container_runtime": "containerd 1.7.20-k3s1"
+  },
+  "candidate": {
+    "source_commit": "9300f439da870134164627a734995e3db548280c",
+    "image": "docker.io/library/e-navigator:gap7-reduced-amd64",
+    "digest": "sha256:c43f285a9229c154eabc7753c1ccb760bb52fc7697e4ccf2a913c59c543cea9c",
+    "platform": "linux/amd64"
+  },
+  "go_tls_workload": {
+    "image": "docker.io/library/e-navigator-go-tls:gap3-20260721",
+    "digest": "sha256:cdbac536bf58ee4f4c0177d4180d6be11084a331f4f5cb915d89f54c9e5bf87c",
+    "go_version": "go1.26.4"
+  },
+  "namespace": "e-navigator-bench",
+  "arms": [
+    "none",
+    "exec",
+    "network",
+    "dns",
+    "http",
+    "protocol",
+    "cpu-profile",
+    "host-resource",
+    "tls-none",
+    "tls"
+  ],
+  "duration_seconds_per_general_workload_arm": 30,
+  "correctness_gate_passed": true,
+  "cleanup": {
+    "benchmark_namespace_empty": true,
+    "helm_release_absent": true,
+    "standing_argocd_application": "Synced/Healthy",
+    "standing_daemonset_ready": "2/2"
+  },
+  "raw_artifact_root": "benchmarks/results/reduced-privilege-proof"
+}

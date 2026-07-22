@@ -1,0 +1,11 @@
+securityContext:
+  privileged: false
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  seccompProfile:
+    type: RuntimeDefault
+  runAsUser: 0
+  runAsNonRoot: false
+  capabilities:
+    drop: [ALL]
+    add: []

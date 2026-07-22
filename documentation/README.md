@@ -55,6 +55,7 @@ operational documentation. Start with the path that matches your goal.
 - [ADR 0009, bounded event-driven profiling](adr/0009-event-driven-profiling.md)
 - [ADR 0010, bounded browser protocols and HTTP/3 boundary](adr/0010-browser-protocol-boundaries.md)
 - [ADR 0011, cgroup v1 capture filter boundary](adr/0011-cgroup-v1-capture-filter-boundary.md)
+- [ADR 0012, reduced privilege on proven modern kernels](adr/0012-reduced-privilege-modern-kernels.md)
 
 ## Source-Of-Truth Rules
 

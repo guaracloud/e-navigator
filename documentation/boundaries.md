@@ -182,7 +182,12 @@ E-Navigator does not currently claim:
   modes enabled, but it did not cover mixed services, higher rates, backend
   delivery, JVM/V8, production, or a dedicated node);
 - reduced overhead versus another observability stack;
-- reduced-privilege or non-root eBPF operation;
+- rootless eBPF operation, or a universal reduced-capability claim across
+  kernels and security policies (the opt-in reduced profile is runtime proven
+  only on the Linux 6.6.68 homelab. Core Aya sources used `BPF` and `PERFMON`,
+  Go TLS and cross-UID CPU symbolization added `SYS_PTRACE`, and host resources
+  used no capabilities. Other kernels, LSMs, seccomp profiles, and optional TLS
+  target permissions require their own proof);
 - complete attribution for every host process, packet, profile sample, or
   runtime security finding.
 
@@ -211,10 +216,13 @@ redacted by exporting deterministic fingerprints instead of the raw values.
 
 ## Operational Boundaries
 
-The current Kubernetes posture still depends on privileged eBPF capabilities for
-the live Aya sources. Do not present the chart as reduced-privilege or non-root
-until that exact configuration has been implemented and proven on a capable
-cluster.
+The compatibility chart profile retains broad capabilities for unproven
+kernels. The opt-in reduced profile removes `SYS_ADMIN` and is proven only on
+the Linux 6.6.68 homelab with UID 0, `RuntimeDefault` seccomp, and no privilege
+escalation. Do not present it as rootless, universally portable, production
+proven, or sufficient for every cross-UID OpenSSL/GnuTLS filesystem layout.
+Treat optional-target permission failures as coverage loss, not partial
+success.
 
 ## Benchmark Boundaries
 
