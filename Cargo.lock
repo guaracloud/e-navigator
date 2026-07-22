@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-cli"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -471,7 +471,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-core"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "async-trait",
  "serde",
@@ -482,14 +482,14 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-ebpf-programs"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "aya-ebpf",
 ]
 
 [[package]]
 name = "e-navigator-generators"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "async-trait",
  "e-navigator-core",
@@ -501,7 +501,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-local-benches"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "criterion",
  "e-navigator-core",
@@ -521,7 +521,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-processors"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "async-trait",
  "e-navigator-core",
@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-profiling"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "e-navigator-signals",
  "proptest",
@@ -547,7 +547,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-protocol"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "base64",
  "e-navigator-signals",
@@ -556,7 +556,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-runner"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "async-trait",
  "e-navigator-core",
@@ -569,7 +569,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-signals"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "e-navigator-core",
  "proptest",
@@ -579,7 +579,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-sinks"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-sources-ebpf-aya"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -625,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-sources-host"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "async-trait",
  "e-navigator-core",

@@ -388,13 +388,13 @@ cargo run --locked -p e-navigator-cli -- \
               whole-stack overhead claim.
             </p>
             <p>
-              The corrected July 22 full-stack campaign completed 33 isolated
-              runs with HTTP, gRPC, Redis, PostgreSQL, and CPU-bound Python.
-              In the final cumulative profile arm, optimized E-Navigator
-              measured 28.066163% more agent CPU and 64.079030% less agent RSS
-              than pinned Beyla plus Alloy. The dual CPU and memory target is
-              a negative finding, so E-Navigator makes no claim that it beats
-              the comparison stack on both resources.
+              The July 22 full-stack campaign completed 33 isolated runs, but
+              its comparison is invalidated. The Redis backend connection
+              predated collector attachment, E-Navigator missed that family,
+              and the aggregate signal gate did not detect the omission. A
+              corrected workload and cumulative per-stage protocol floor are
+              prepared, but no replacement CPU, RSS, allocation, throughput,
+              or latency result is claimed yet.
             </p>
             <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/benchmark.md">Read the complete benchmark methodology</a>
           </div>

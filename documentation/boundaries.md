@@ -189,11 +189,10 @@ E-Navigator does not currently claim:
   arm measured 2.049% lower busy-loop throughput than no agent with all three
   modes enabled, but it did not cover mixed services, higher rates, backend
   delivery, JVM/V8, production, or a dedicated node);
-- lower CPU and memory versus another observability stack at the same time
-  (the corrected 2026-07-22 33-run homelab comparison measured optimized
-  E-Navigator at 28.066163% more agent CPU and 64.079030% less agent RSS than
-  pinned Beyla plus Alloy in the final cumulative HTTP, gRPC, Redis,
-  PostgreSQL, and 10 Hz CPU-profile arm);
+- lower CPU or memory versus another observability stack (the 2026-07-22
+  33-run homelab comparison is invalidated because the Redis backend
+  connection predated collector attachment and E-Navigator missed that signal
+  family; a corrected comparison has not yet run);
 - universal application-latency or node-resource conclusions from that
   head-to-head result. The driver used fixed offered rates rather than a
   saturation search, only three shared-cluster repetitions were run, and the

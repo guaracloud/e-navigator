@@ -8,6 +8,7 @@ use e_navigator_signals::{
 };
 use std::{
     collections::{HashSet, VecDeque},
+    fmt,
     hash::Hash,
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -127,13 +128,15 @@ impl RequestCorrelationGenerator {
             return Ok(Vec::new());
         }
 
-        let fingerprint = RequestFingerprint::from_request(request, &trace_context);
+        let peer_fingerprint = PeerFingerprint::from_request(request);
+        let fingerprint =
+            RequestFingerprint::from_request(request, &trace_context, peer_fingerprint);
         if !self.mark_request_seen(fingerprint)? {
             return Ok(Vec::new());
         }
 
         if self.generate_trace_ids && trace_context.trace_id.is_none() {
-            let (trace_id, span_id) = generated_trace_identity(request);
+            let (trace_id, span_id) = generated_trace_identity(request, peer_fingerprint);
             trace_context.trace_id = Some(trace_id);
             trace_context.span_id = Some(span_id);
             trace_context.generated = true;
@@ -144,7 +147,7 @@ impl RequestCorrelationGenerator {
             && !trace_context.generated
             && let Some(remote_parent_span_id) = trace_context.span_id.clone()
         {
-            let (_, server_span_id) = generated_trace_identity(request);
+            let (_, server_span_id) = generated_trace_identity(request, peer_fingerprint);
             trace_context.span_id = Some(server_span_id);
             parent_span_id = Some(remote_parent_span_id);
         }
@@ -343,13 +346,14 @@ struct RequestFingerprint {
     method: Option<String>,
     status_code: Option<u16>,
     request_target_hash: Option<u64>,
-    peer_key: String,
+    peer: PeerFingerprint,
 }
 
 impl RequestFingerprint {
     fn from_request(
         request: &ProtocolRequestObservation,
         trace_context: &RequestTraceContext,
+        peer: PeerFingerprint,
     ) -> Self {
         Self {
             protocol: request.protocol,
@@ -367,8 +371,63 @@ impl RequestFingerprint {
             method: request.method.as_deref().map(bounded_fingerprint_value),
             status_code: request.status_code,
             request_target_hash: request_target_fingerprint(&request.attributes),
-            peer_key: peer_key(request),
+            peer,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum PeerFingerprint {
+    Unknown,
+    Domain { hash: u64, port: Option<u16> },
+    Address { hash: u64, port: Option<u16> },
+}
+
+impl PeerFingerprint {
+    fn from_request(request: &ProtocolRequestObservation) -> Self {
+        let Some(peer) = &request.peer else {
+            return Self::Unknown;
+        };
+        if let Some(domain) = &peer.domain {
+            return Self::Domain {
+                hash: stable_hash64(domain.as_bytes()),
+                port: peer.port,
+            };
+        }
+        if let Some(address) = &peer.address {
+            return Self::Address {
+                hash: stable_hash64(address.as_bytes()),
+                port: peer.port,
+            };
+        }
+        Self::Unknown
+    }
+}
+
+impl fmt::Display for PeerFingerprint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unknown => formatter.write_str("unknown-peer"),
+            Self::Domain { hash, port } => {
+                write_peer_fingerprint(formatter, "domain", *hash, *port)
+            }
+            Self::Address { hash, port } => {
+                write_peer_fingerprint(formatter, "address", *hash, *port)
+            }
+        }
+    }
+}
+
+fn write_peer_fingerprint(
+    formatter: &mut fmt::Formatter<'_>,
+    kind: &str,
+    hash: u64,
+    port: Option<u16>,
+) -> fmt::Result {
+    write!(formatter, "{kind}:{hash:016x}:")?;
+    match port {
+        Some(port) => write!(formatter, "{port}"),
+        None => formatter.write_str("unknown"),
     }
 }
 
@@ -433,7 +492,10 @@ fn trace_context(request: &ProtocolRequestObservation) -> RequestTraceContext {
     }
 }
 
-fn generated_trace_identity(request: &ProtocolRequestObservation) -> (String, String) {
+fn generated_trace_identity(
+    request: &ProtocolRequestObservation,
+    peer: PeerFingerprint,
+) -> (String, String) {
     let pid = request
         .process
         .as_ref()
@@ -461,30 +523,25 @@ fn generated_trace_identity(request: &ProtocolRequestObservation) -> (String, St
         method_hash,
         target_hash,
         request.status_code.unwrap_or_default(),
-        peer_key(request),
+        peer,
     );
-    let first = nonzero_hash(stable_hash64_with_seed(
-        material.as_bytes(),
-        0x9e37_79b9_7f4a_7c15,
-    ));
-    let second = nonzero_hash(stable_hash64_with_seed(
-        material.as_bytes(),
-        0xd1b5_4a32_d192_ed03,
-    ));
-    let span = nonzero_hash(stable_hash64_with_seed(
-        material.as_bytes(),
-        0x94d0_49bb_1331_11eb,
-    ));
+    let [first, second, span] = generated_identity_hashes(material.as_bytes()).map(nonzero_hash);
     (format!("{first:016x}{second:016x}"), format!("{span:016x}"))
 }
 
-fn stable_hash64_with_seed(bytes: &[u8], seed: u64) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ seed;
+fn generated_identity_hashes(bytes: &[u8]) -> [u64; 3] {
+    let mut hashes = [
+        0xcbf2_9ce4_8422_2325_u64 ^ 0x9e37_79b9_7f4a_7c15,
+        0xcbf2_9ce4_8422_2325_u64 ^ 0xd1b5_4a32_d192_ed03,
+        0xcbf2_9ce4_8422_2325_u64 ^ 0x94d0_49bb_1331_11eb,
+    ];
     for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        for hash in &mut hashes {
+            *hash ^= u64::from(*byte);
+            *hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
     }
-    hash
+    hashes
 }
 
 fn nonzero_hash(hash: u64) -> u64 {
@@ -604,31 +661,6 @@ fn is_lower_hex(value: &str) -> bool {
 
 fn is_all_zero(value: &str) -> bool {
     value.bytes().all(|byte| byte == b'0')
-}
-
-fn peer_key(request: &ProtocolRequestObservation) -> String {
-    let Some(peer) = &request.peer else {
-        return "unknown-peer".to_string();
-    };
-    if let Some(domain) = &peer.domain {
-        return format!(
-            "domain:{:016x}:{}",
-            stable_hash64(domain.as_bytes()),
-            peer.port
-                .map(|port| port.to_string())
-                .unwrap_or_else(|| "unknown".to_string())
-        );
-    }
-    if let Some(address) = &peer.address {
-        return format!(
-            "address:{:016x}:{}",
-            stable_hash64(address.as_bytes()),
-            peer.port
-                .map(|port| port.to_string())
-                .unwrap_or_else(|| "unknown".to_string())
-        );
-    }
-    "unknown-peer".to_string()
 }
 
 fn stable_hash64(bytes: &[u8]) -> u64 {

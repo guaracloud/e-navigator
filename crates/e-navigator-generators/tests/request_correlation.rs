@@ -795,6 +795,14 @@ async fn generated_trace_identity_is_deterministic_and_can_be_disabled() {
         first_span.and_then(|span| span.span_id.as_deref()),
         second_span.and_then(|span| span.span_id.as_deref())
     );
+    assert_eq!(
+        first_span.and_then(|span| span.trace_id.as_deref()),
+        Some("edf27b056899f132c9fd0fe09cc69e94")
+    );
+    assert_eq!(
+        first_span.and_then(|span| span.span_id.as_deref()),
+        Some("0aac6efc75573cfc")
+    );
 
     let disabled = RequestCorrelationGenerator::with_options(8, 8, false);
     let outputs = observe(&disabled, &signal).await;

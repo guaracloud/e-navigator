@@ -109,9 +109,10 @@ stability, or a universal comparison with every Beyla and Alloy configuration.
 
 The first complete result was invalidated after the parent `root-app`
 self-healing path was found to bypass the intended standing-agent suspension.
-Its values remain diagnostic history, not comparison evidence. The corrected
-campaign reran all 33 arms under the stronger isolation contract. Optimized
-E-Navigator measured 28.066163% more agent CPU and 64.079030% less agent RSS
-than Beyla plus Alloy. The scoped memory goal passes, while the goal of beating
-the comparison stack on both CPU and memory is a NO-GO. Exact evidence is in
-`documentation/proof/optimization-20260722/report.md`.
+A second 33-arm campaign fixed isolation but is also invalidated: its Redis
+backend connection predated collector attachment, E-Navigator missed the
+Redis family, and the aggregate signal gate did not detect the omission. Both
+captures remain diagnostic history, not comparison evidence. The replacement
+contract creates observed backend connections after attachment and requires a
+cumulative per-stage protocol signal floor. Exact invalidation evidence is in
+`documentation/proof/optimization-20260722/ERRATUM.md`.

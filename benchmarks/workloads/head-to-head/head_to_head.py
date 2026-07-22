@@ -187,11 +187,16 @@ async def wait_for_redis() -> redis_async.Redis:
 
 
 async def redis_proxy_connection(
-    client: redis_async.Redis,
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
 ) -> None:
+    client: redis_async.Redis | None = None
     try:
+        # Establish observed backend connections after each collector arm has
+        # started. A process-wide connection created during workload bootstrap
+        # predates eBPF attachment and makes Redis completeness depend on stale
+        # socket state rather than the fixed offered workload.
+        client = await wait_for_redis()
         while line := await reader.readline():
             sequence = int(line.strip())
             value = await client.incr(f"head-to-head:{sequence % 128}")
@@ -200,15 +205,18 @@ async def redis_proxy_connection(
     except (ConnectionError, ValueError, RedisError):
         pass
     finally:
+        if client is not None:
+            await client.aclose()
         writer.close()
         await writer.wait_closed()
 
 
 async def run_redis_proxy() -> None:
     set_process_name("enav-redis")
-    client = await wait_for_redis()
+    probe = await wait_for_redis()
+    await probe.aclose()
     server = await asyncio.start_server(
-        lambda reader, writer: redis_proxy_connection(client, reader, writer),
+        redis_proxy_connection,
         "0.0.0.0",
         16379,
         backlog=4096,
@@ -218,7 +226,8 @@ async def run_redis_proxy() -> None:
         async with server:
             await server.serve_forever()
     finally:
-        await client.aclose()
+        server.close()
+        await server.wait_closed()
 
 
 async def connect_postgres() -> psycopg.AsyncConnection[Any]:

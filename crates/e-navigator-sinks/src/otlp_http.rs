@@ -293,18 +293,7 @@ impl OtlpHttpSink {
     }
 
     fn accepts_signal(&self, signal: &SignalEnvelope) -> bool {
-        (self.config.traces_enabled
-            && matches!(
-                &signal.payload,
-                SignalPayload::TraceSpanObservation(_)
-                    | SignalPayload::ServiceInteractionSpanObservation(_)
-                    | SignalPayload::TraceServicePathObservation(_)
-                    | SignalPayload::TraceCorrelationWarning(_)
-                    | SignalPayload::RequestSpanObservation(_)
-                    | SignalPayload::RequestCorrelationWarning(_)
-                    | SignalPayload::NetworkFlowWarning(_)
-                    | SignalPayload::ProfilingWarningObservation(_)
-            ))
+        (self.config.traces_enabled && is_trace_signal(signal))
             || (self.config.metrics_enabled
                 && matches!(
                     &signal.payload,
@@ -321,14 +310,22 @@ impl OtlpHttpSink {
     }
 
     fn write_signal(&self, signal: &SignalEnvelope) -> CoreResult<()> {
-        if self.config.traces_enabled
-            && let Some(record) = format_otel_trace_record(signal)
-            && let Some(exporter) = &self.trace_exporter
-        {
+        if self.config.traces_enabled && is_trace_signal(signal) {
+            // Warning and service-path observations carry no trace identity,
+            // so OTLP cannot encode them as spans. Preserve the existing
+            // no-op behavior without constructing resource and attribute maps
+            // that validation would immediately discard.
+            if !signal_declares_trace_identity(signal) {
+                return Ok(());
+            }
+            let Some(record) = format_otel_trace_record(signal) else {
+                return Ok(());
+            };
+            let Some(exporter) = &self.trace_exporter else {
+                return Ok(());
+            };
             if !trace_record_has_valid_ids(&record) {
-                if signal_declares_trace_identity(signal) {
-                    self.invalid_trace_records.fetch_add(1, Ordering::Relaxed);
-                }
+                self.invalid_trace_records.fetch_add(1, Ordering::Relaxed);
                 return Ok(());
             }
 
@@ -358,6 +355,20 @@ impl OtlpHttpSink {
 
         Ok(())
     }
+}
+
+fn is_trace_signal(signal: &SignalEnvelope) -> bool {
+    matches!(
+        &signal.payload,
+        SignalPayload::TraceSpanObservation(_)
+            | SignalPayload::ServiceInteractionSpanObservation(_)
+            | SignalPayload::TraceServicePathObservation(_)
+            | SignalPayload::TraceCorrelationWarning(_)
+            | SignalPayload::RequestSpanObservation(_)
+            | SignalPayload::RequestCorrelationWarning(_)
+            | SignalPayload::NetworkFlowWarning(_)
+            | SignalPayload::ProfilingWarningObservation(_)
+    )
 }
 
 fn validate_worker_tuning(config: &OtlpHttpConfig) -> Result<(), String> {

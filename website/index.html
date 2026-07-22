@@ -76,7 +76,7 @@
             <li>Static Rust pipeline</li>
             <li>eBPF sources</li>
             <li>Versioned signals</li>
-            <li>Public preview 0.2.0-rc.1</li>
+            <li>Public preview 0.2.0-rc.2</li>
           </ul>
         </div>
 
@@ -210,16 +210,16 @@
         </div>
         <div class="metric-layout">
           <article class="metric metric-primary">
-            <span class="metric-value">33</span>
-            <span class="metric-label">matched homelab runs</span>
+            <span class="metric-value">5</span>
+            <span class="metric-label">cumulative workload stages</span>
           </article>
           <article class="metric">
-            <span class="metric-value">+28.07%</span>
-            <span class="metric-label">optimized agent CPU versus Beyla plus Alloy</span>
+            <span class="metric-value">3x</span>
+            <span class="metric-label">required repetitions per comparison arm</span>
           </article>
           <article class="metric">
-            <span class="metric-value">-64.08%</span>
-            <span class="metric-label">optimized agent RSS versus Beyla plus Alloy</span>
+            <span class="metric-value">0</span>
+            <span class="metric-label">tolerated hard-loss counters</span>
           </article>
         </div>
         <a class="text-link" href="./docs/#performance">Read performance methodology</a>
@@ -249,7 +249,7 @@
             <div class="command-code">
               <button class="copy-button" type="button">Copy</button>
               <pre><code>helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
-  --version 0.2.0-rc.1 \
+  --version 0.2.0-rc.2 \
   --namespace e-navigator-system \
   --create-namespace</code></pre>
             </div>
@@ -261,7 +261,7 @@
             </div>
             <div class="command-code">
               <button class="copy-button" type="button">Copy</button>
-              <pre><code>gh release download v0.2.0-rc.1 --repo guaracloud/e-navigator --dir e-navigator-release
+              <pre><code>gh release download v0.2.0-rc.2 --repo guaracloud/e-navigator --dir e-navigator-release
 jq -r '.images[0].reference' e-navigator-release/release-manifest.json</code></pre>
             </div>
           </article>

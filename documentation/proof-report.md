@@ -340,30 +340,21 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   updates, sustained churn, production behavior, or every runtime and cgroup
   driver.
 
-- Corrected full-stack optimization proof (2026-07-22, homelab k3s v1.30,
-  kernel 6.6.68, amd64, two NixOS nodes). The harness suspended both the parent
-  and child Argo CD applications, removed the standing E-Navigator DaemonSet,
-  and passed 67 absence assertions across the initial state and all 33 arms.
-  Three no-agent repetitions and three repetitions for each cumulative HTTP,
-  gRPC, Redis, PostgreSQL, and 10 Hz CPU-profile stage used identical pinned
-  workloads and collectors. All 591,030 measured operations succeeded. The
-  final optimized E-Navigator arm measured 97.150478 +/- 4.096372 millicores
-  and 46.288628 +/- 2.594171 MiB RSS, versus 75.859599 +/- 6.058294 millicores
-  and 128.862413 +/- 7.335634 MiB for Beyla plus Alloy. E-Navigator therefore
-  measured 28.066163% more agent CPU and 64.079030% less agent RSS. It decoded
-  110,830 source samples and sent 69,482 source signals with zero hard loss.
-  Allocation diagnostics reduced its libc allocation calls 33.670202% and
-  requested bytes 25.164751% from the clean baseline, but remained above the
-  combined Go-stack counters under a stated cross-runtime caveat. The scoped
-  memory claim passes; the goal of beating the comparison stack on both CPU
-  and memory is a NO-GO. Curated method, variance, optimization, tradeoff,
-  rejected-candidate, image, and cleanup evidence is in
-  `documentation/proof/optimization-20260722/`. The earlier
-  `documentation/proof/head-to-head-20260722/` capture is explicitly
-  invalidated for comparative claims because its parent GitOps application
-  was not suspended. This result does not prove saturation capacity,
-  statistical superiority, total host utilization, sustained or production
-  behavior, or universal workload results.
+- Invalidated full-stack optimization campaign (2026-07-22, homelab k3s
+  v1.30, kernel 6.6.68, amd64, two NixOS nodes). The harness correctly
+  suspended both parent and child Argo CD applications, but the workload
+  created its Redis backend connection before collector attachment. All three
+  E-Navigator Redis arms therefore sent only the 10,800 cumulative HTTP and
+  gRPC signals, below the 20,400 successful protocol-operation floor. The
+  aggregate signal gate did not catch the missing family. CPU, RSS,
+  allocations, throughput, and latency from the 33-run campaign are historical
+  diagnostics and support no comparison claim. The immutable artifacts and
+  detailed invalidation are in
+  `documentation/proof/optimization-20260722/ERRATUM.md`. A corrected workload,
+  per-stage protocol completeness gate, local optimizations, and private
+  baseline/candidate images are prepared in
+  `documentation/proof/optimization-20260722-campaign2/`. The replacement
+  homelab run remains pending explicit deployment authorization.
 
 - Capture-filter verifier-load and OrbStack live scoping proof (2026-07-07,
   OrbStack Docker plus its in-VM Kubernetes v1.34, arm64). The cgroup capture
