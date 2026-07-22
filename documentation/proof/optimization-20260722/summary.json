@@ -1,0 +1,190 @@
+{
+  "schema": "e-navigator.optimization-campaign-summary.v1",
+  "date": "2026-07-22",
+  "verdict": {
+    "evidence_integrity": "pass",
+    "memory_goal": "pass",
+    "cpu_goal": "fail",
+    "dual_cpu_and_memory_goal": "no-go",
+    "correctness_and_signal_contract": "pass"
+  },
+  "source": {
+    "base_commit": "3e60321f74fbd9c9e6d394d7e86d8a5f17c936e0",
+    "runtime_and_harness_patch_sha256": "174fca358dbb3328f7b168d9f6a4fc3f6923ac8a46343269a01395f093339a36",
+    "pushed": false
+  },
+  "environment": {
+    "context": "homelab",
+    "kubernetes": "v1.30.4+k3s1",
+    "kernel": "6.6.68",
+    "architecture": "amd64",
+    "nodes": 2,
+    "server_node": "homelab-02",
+    "load_node": "homelab-01",
+    "beyla_image": "docker.io/grafana/beyla@sha256:133b8d66190f21e20365d9972e1621513ea5e44518fb71e1c3e0180c64815566",
+    "alloy_image": "docker.io/grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308",
+    "e_navigator_local_digest": "sha256:09dbb50f309d34431572a57f4dfdaaf7161d8cd3b8024b263642b00041688bb9",
+    "e_navigator_runtime_image_id": "sha256:cc1a3a6921e518c0cdca6d57bec92c77615a71d310e07694ec518dd8723d1e6b",
+    "workload_local_digest": "sha256:b8d60b8d7bdc48fefb449220ccd91518c9f89b5888d2940b9dfa3ad7bb485182",
+    "workload_runtime_image_id": "sha256:ec413d0edc90d2ce1e1201be68ad3cca9de1d7ab0f01d56b36f6f28ed5835f96"
+  },
+  "isolation": {
+    "root_argocd_automation_suspended": true,
+    "child_argocd_automation_suspended": true,
+    "standing_daemonset_deleted": true,
+    "absence_assertions": 67,
+    "absence_assertion_failures": 0,
+    "historical_capture_status": "invalidated_for_comparative_claims"
+  },
+  "head_to_head": {
+    "runs": 33,
+    "repetitions": 3,
+    "warmup_seconds": 15,
+    "measurement_seconds": 45,
+    "warmup_successes": 197010,
+    "measured_successes": 591030,
+    "workload_errors": 0,
+    "final_stack": {
+      "beyla_alloy_cpu_millicores_mean": 75.859599,
+      "beyla_alloy_cpu_millicores_stdev": 6.058294,
+      "e_navigator_cpu_millicores_mean": 97.150478,
+      "e_navigator_cpu_millicores_stdev": 4.096372,
+      "e_navigator_cpu_change_percent": 28.066163,
+      "beyla_alloy_rss_mib_mean": 128.862413,
+      "beyla_alloy_rss_mib_stdev": 7.335634,
+      "e_navigator_rss_mib_mean": 46.288628,
+      "e_navigator_rss_mib_stdev": 2.594171,
+      "e_navigator_rss_change_percent": -64.07903
+    },
+    "stages": {
+      "http": {
+        "beyla_cpu_millicores": 27.898294,
+        "e_navigator_cpu_millicores": 32.438155,
+        "beyla_rss_mib": 25.511719,
+        "e_navigator_rss_mib": 11.029948
+      },
+      "grpc": {
+        "beyla_cpu_millicores": 34.747475,
+        "e_navigator_cpu_millicores": 63.77012,
+        "beyla_rss_mib": 27.834201,
+        "e_navigator_rss_mib": 18.043837
+      },
+      "redis": {
+        "beyla_cpu_millicores": 41.558824,
+        "e_navigator_cpu_millicores": 69.372705,
+        "beyla_rss_mib": 25.292101,
+        "e_navigator_rss_mib": 18.467882
+      },
+      "postgres": {
+        "beyla_cpu_millicores": 45.5086,
+        "e_navigator_cpu_millicores": 91.127337,
+        "beyla_rss_mib": 24.538628,
+        "e_navigator_rss_mib": 21.107639
+      },
+      "profile": {
+        "beyla_alloy_cpu_millicores": 75.859599,
+        "e_navigator_cpu_millicores": 97.150478,
+        "beyla_alloy_rss_mib": 128.862413,
+        "e_navigator_rss_mib": 46.288628
+      }
+    },
+    "e_navigator_signals": {
+      "source_samples_decoded": 110830,
+      "source_signals_sent": 69482,
+      "traces_enqueued": 68621,
+      "traces_sent": 68624,
+      "profiles_enqueued": 860,
+      "profiles_sent": 861,
+      "hard_loss_total": 0
+    },
+    "comparison_signals": {
+      "beyla_final_grpc_expected": 14400,
+      "beyla_final_grpc_observed": 14374,
+      "beyla_final_grpc_unaccounted_percent": 0.180556,
+      "alloy_profiles_collected": 38,
+      "alloy_profiles_forwarded": 38,
+      "alloy_profiles_dropped": 0,
+      "alloy_failing_sessions": 0
+    }
+  },
+  "allocations": {
+    "window_seconds": 45,
+    "e_navigator_measurement_layer": "libc_entry_requested_size",
+    "clean_baseline": {
+      "calls": 8509242,
+      "requested_bytes": 925090490
+    },
+    "optimized_final": {
+      "calls": 5644163,
+      "requested_bytes": 692293775
+    },
+    "baseline_to_final": {
+      "calls_change_percent": -33.670202,
+      "requested_bytes_change_percent": -25.164751
+    },
+    "beyla_alloy_combined": {
+      "calls": 2318494,
+      "requested_bytes": 289159190
+    },
+    "final_vs_beyla_alloy": {
+      "calls_change_percent": 143.440915,
+      "requested_bytes_change_percent": 139.416141,
+      "cross_runtime_semantic_caveat": true
+    }
+  },
+  "retained_measurements": {
+    "unwind_rss_change_percent": -71.273941,
+    "request_correlation_unique_at_capacity_change_percent": -7.3448,
+    "gzip_cpu_time_change_percent": -78.420071,
+    "gzip_fixture_size_change_percent": 96.80341,
+    "live_compressed_bytes_per_trace_change_percent": 16.790281,
+    "thin_lto_cpu_per_decoded_sample_change_percent": -10.414687,
+    "thin_lto_cpu_per_sent_signal_change_percent": -5.857104,
+    "sensitive_attribute_filter_change_percent": -15.396,
+    "release_binary_size_before_bytes": 19440560,
+    "release_binary_size_after_bytes": 15802424,
+    "release_binary_size_change_percent": -18.714152
+  },
+  "rejected_measurements": {
+    "generated_identity_streaming_cpu_per_decoded_change_percent": 2.292453,
+    "generated_identity_streaming_cpu_per_sent_change_percent": 2.600975,
+    "reverted": true
+  },
+  "final_perf": {
+    "duration_seconds": 60,
+    "frequency_hz": 199,
+    "samples": 2366,
+    "lost_samples": 0,
+    "approximate_event_cycles": 9775535530,
+    "top_self_percent": {
+      "malloc": 5.76,
+      "free": 2.78,
+      "aya_http_source": 2.96,
+      "gzip": 2.17,
+      "btree_map_insert": 2.06,
+      "siphash_write": 1.24,
+      "cgroup_scan": 1.22,
+      "trace_attribute_formatting": 1.22,
+      "request_correlation_outputs": 1.18
+    }
+  },
+  "validation": {
+    "scripts_quality_sh": "pass",
+    "skip_variables_set": false,
+    "skipped_gates": []
+  },
+  "cleanup": {
+    "benchmark_namespaced_resources": 0,
+    "benchmark_cluster_scoped_resources": 0,
+    "candidate_image_references_removed_from_both_nodes": true,
+    "campaign_images_removed_from_local_docker": true,
+    "root_application_sync": "Synced",
+    "root_application_health": "Healthy",
+    "child_application_sync": "Synced",
+    "child_application_health": "Healthy",
+    "standing_daemonset_ready": 2,
+    "standing_daemonset_desired": 2,
+    "production_context_touched": false,
+    "persistent_deployment_performed": false
+  }
+}

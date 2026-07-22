@@ -5,7 +5,7 @@ use e_navigator_signals::{
     ProtocolKind, RequestCorrelationWarning, RequestSpanObservation,
     ServiceInteractionSpanObservation, SignalEnvelope, SignalPayload, TraceAttribute,
     TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext,
-    TraceServicePathObservation, TraceSpanObservation,
+    TraceServicePathObservation, TraceSpanObservation, is_sensitive_profiling_attribute_key,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -14,6 +14,14 @@ const MAX_FORMATTED_TRACE_ATTRIBUTES: usize = 16;
 const MAX_TRACE_ATTRIBUTE_KEY_BYTES: usize = 128;
 const MAX_TRACE_ATTRIBUTE_VALUE_BYTES: usize = 256;
 const PROTOCOL_CAPTURE_ROLE_ATTRIBUTE: &str = "e.navigator.protocol.capture.role";
+const SENSITIVE_TRACE_ATTRIBUTE_KEY_PARTS: [&str; 6] = [
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "authorization",
+    "cookie",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -875,17 +883,16 @@ fn trace_attribute_allowed(
         return false;
     }
 
-    let key = attribute.key.to_ascii_lowercase();
-    ![
-        "password",
-        "passwd",
-        "secret",
-        "token",
-        "authorization",
-        "cookie",
-    ]
-    .iter()
-    .any(|sensitive| key.contains(sensitive))
+    !SENSITIVE_TRACE_ATTRIBUTE_KEY_PARTS
+        .iter()
+        .any(|sensitive| contains_ascii_case_insensitive(&attribute.key, sensitive))
+}
+
+fn contains_ascii_case_insensitive(value: &str, needle: &str) -> bool {
+    value
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 fn profiling_attribute_allowed(
@@ -900,20 +907,7 @@ fn profiling_attribute_allowed(
         return false;
     }
 
-    let key = attribute.key.to_ascii_lowercase();
-    ![
-        "password",
-        "passwd",
-        "secret",
-        "token",
-        "authorization",
-        "cookie",
-        "api_key",
-        "apikey",
-        "credential",
-    ]
-    .iter()
-    .any(|sensitive| key.contains(sensitive))
+    !is_sensitive_profiling_attribute_key(&attribute.key)
 }
 
 fn protocol_name(protocol: NetworkProtocol) -> &'static str {

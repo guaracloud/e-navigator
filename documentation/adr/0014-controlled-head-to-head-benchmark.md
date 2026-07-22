@@ -58,6 +58,11 @@ Use a guarded, homelab-only, cumulative campaign with these properties:
   sessions.
 - Report undercounts, overcounts, and low-level profiler diagnostics even when
   the hard gates pass. A PASS verdict is evidence-integrity success only.
+- Suspend automation on both the `root-app` parent and the child `e-navigator`
+  Argo CD application before deleting the standing DaemonSet. Assert that both
+  applications remain suspended and that the standing DaemonSet is absent
+  before and after every measured arm. Restore the exact recorded policies and
+  verify both applications are `Synced` and `Healthy` during cleanup.
 
 The workload image pins Python and Python dependencies by digest and hash.
 Redis and PostgreSQL images are digest-pinned. The comparison pins Beyla
@@ -69,10 +74,11 @@ and the
 
 The harness refuses to run unless the Kubernetes context is exactly
 `homelab`, the namespace is exactly `e-navigator-bench`, and
-`E_NAVIGATOR_HOMELAB_CONFIRM=1` is present. It suspends the standing
-E-Navigator Argo CD automation and DaemonSet before the comparison, then
-restores their recorded state. Candidate images are loaded directly into the
-two homelab containerd stores and are never pushed.
+`E_NAVIGATOR_HOMELAB_CONFIRM=1` is present. It suspends both the root and
+standing E-Navigator Argo CD automation layers and deletes the standing
+DaemonSet before the comparison, then restores their recorded state. Candidate
+images are loaded directly into the two homelab containerd stores and are never
+pushed.
 
 ## Evidence Artifact Policy
 
@@ -101,7 +107,11 @@ homelab and workload. It cannot establish production overhead, broad workload
 superiority, total host utilization, backend storage cost, long-duration
 stability, or a universal comparison with every Beyla and Alloy configuration.
 
-The first complete result measured higher E-Navigator agent CPU and RSS than
-Beyla plus Alloy. That result is retained as a negative performance finding.
-It blocks a reduced-overhead or reduced-memory claim and gives future work a
-reproducible baseline.
+The first complete result was invalidated after the parent `root-app`
+self-healing path was found to bypass the intended standing-agent suspension.
+Its values remain diagnostic history, not comparison evidence. The corrected
+campaign reran all 33 arms under the stronger isolation contract. Optimized
+E-Navigator measured 28.066163% more agent CPU and 64.079030% less agent RSS
+than Beyla plus Alloy. The scoped memory goal passes, while the goal of beating
+the comparison stack on both CPU and memory is a NO-GO. Exact evidence is in
+`documentation/proof/optimization-20260722/report.md`.

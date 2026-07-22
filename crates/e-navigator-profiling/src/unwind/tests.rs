@@ -270,6 +270,22 @@ fn adjacent_fdes_keep_the_second_fdes_entry_row() {
 }
 
 #[test]
+fn bounded_parse_never_retains_more_rows_than_the_consumer_can_store() {
+    let mut eh = x86_64_cie(&[0x0c, 0x07, 0x08, 0x90, 0x01]);
+    for index in 0..16 {
+        push_fde(&mut eh, FUNC + index * 0x20, 0x10, &[0x41, 0x0e, 0x10]);
+    }
+    let image = build_elf(&eh, EM_X86_64);
+
+    let table = ElfUnwindTable::parse_bounded(&image, 7);
+
+    assert_eq!(table.len(), 7);
+    assert!(table.truncated());
+    assert!(table.lookup(FUNC).is_some());
+    assert!(ElfUnwindTable::parse_bounded(&image, 0).is_empty());
+}
+
+#[test]
 fn malformed_images_yield_empty_tables_without_panicking() {
     assert!(ElfUnwindTable::parse(&[]).is_empty());
     assert!(ElfUnwindTable::parse(&[0x7f, b'E', b'L', b'F']).is_empty());

@@ -202,49 +202,113 @@ pub(crate) mod py312 {
     pub(crate) const UNICODE_STATE: u64 = 32;
 }
 
-/// Bounded, thread-safe set of pids the sampler has recently observed
-/// on-CPU. Reader threads record every sampled pid; the unwind manager
-/// snapshots it each refresh to prioritize building tables for the
-/// processes actually being profiled.
+/// Bounded, thread-safe recency set of pids the sampler has observed on-CPU.
+/// Reader threads refresh a pid's sequence on every sample. New pids evict the
+/// least recently sampled pid at capacity, so an old, still-alive process
+/// cannot permanently prevent a new workload from receiving unwind coverage.
 #[cfg(any(target_os = "linux", test))]
 #[derive(Debug)]
 pub(crate) struct HotPidTracker {
-    inner: std::sync::Mutex<std::collections::BTreeSet<u32>>,
+    inner: std::sync::Mutex<HotPidState>,
     capacity: usize,
+    membership_revision: std::sync::atomic::AtomicU64,
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Default)]
+struct HotPidState {
+    sequence: u64,
+    last_seen: std::collections::BTreeMap<u32, u64>,
 }
 
 #[cfg(any(target_os = "linux", test))]
 impl HotPidTracker {
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
-            inner: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+            inner: std::sync::Mutex::new(HotPidState::default()),
             capacity: capacity.max(1),
+            membership_revision: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
-    /// Records a sampled pid. Bounded: once full, new pids are dropped
-    /// until the manager prunes exited processes, so a burst of
-    /// short-lived pids cannot grow this without limit.
+    /// Records a sampled pid and evicts the least-recently sampled entry when
+    /// a new pid arrives at capacity.
     pub(crate) fn record(&self, pid: u32) {
         if pid == 0 {
             return;
         }
-        if let Ok(mut set) = self.inner.lock()
-            && (set.len() < self.capacity || set.contains(&pid))
-        {
-            set.insert(pid);
+        if let Ok(mut state) = self.inner.lock() {
+            let is_new = !state.last_seen.contains_key(&pid);
+            state.sequence = state.sequence.wrapping_add(1);
+            if state.sequence == 0 {
+                // Impossibly rare in practice, but keep ordering valid across
+                // wraparound instead of allowing old entries to look newest.
+                let mut ordered = state
+                    .last_seen
+                    .iter()
+                    .map(|(pid, sequence)| (*pid, *sequence))
+                    .collect::<Vec<_>>();
+                ordered.sort_unstable_by_key(|(pid, sequence)| (*sequence, *pid));
+                for (index, (pid, _)) in ordered.into_iter().enumerate() {
+                    state.last_seen.insert(pid, index as u64 + 1);
+                }
+                state.sequence = state.last_seen.len() as u64 + 1;
+            }
+            if !state.last_seen.contains_key(&pid)
+                && state.last_seen.len() >= self.capacity
+                && let Some(stale) = state
+                    .last_seen
+                    .iter()
+                    .min_by_key(|(pid, sequence)| (**sequence, **pid))
+                    .map(|(pid, _)| *pid)
+            {
+                state.last_seen.remove(&stale);
+            }
+            let sequence = state.sequence;
+            state.last_seen.insert(pid, sequence);
+            if is_new {
+                self.membership_revision
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn snapshot(&self) -> std::collections::BTreeSet<u32> {
-        self.inner.lock().map(|set| set.clone()).unwrap_or_default()
+        self.inner
+            .lock()
+            .map(|state| state.last_seen.keys().copied().collect())
+            .unwrap_or_default()
+    }
+
+    fn ordered_snapshot(&self) -> Vec<u32> {
+        let Ok(state) = self.inner.lock() else {
+            return Vec::new();
+        };
+        let mut entries = state
+            .last_seen
+            .iter()
+            .map(|(pid, sequence)| (*pid, *sequence))
+            .collect::<Vec<_>>();
+        entries.sort_unstable_by_key(|(pid, sequence)| (std::cmp::Reverse(*sequence), *pid));
+        entries.into_iter().map(|(pid, _)| pid).collect()
+    }
+
+    pub(crate) fn membership_revision(&self) -> u64 {
+        self.membership_revision
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Drops pids that no longer exist so the bounded set tracks live,
     /// recently-sampled processes rather than accumulating dead ones.
     pub(crate) fn retain_alive(&self, alive: &std::collections::BTreeSet<u32>) {
-        if let Ok(mut set) = self.inner.lock() {
-            set.retain(|pid| alive.contains(pid));
+        if let Ok(mut state) = self.inner.lock() {
+            let previous_len = state.last_seen.len();
+            state.last_seen.retain(|pid, _| alive.contains(pid));
+            if state.last_seen.len() != previous_len {
+                self.membership_revision
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     }
 }
@@ -276,6 +340,9 @@ pub(crate) struct UnwindRefreshStats {
     pub python_registered: usize,
     pub python_unsupported_version: usize,
     pub modules_skipped_size: usize,
+    pub tracked_processes: usize,
+    pub cached_modules: usize,
+    pub cached_rows: usize,
 }
 
 /// Per-module handle returned to the process-mapping builder.
@@ -309,6 +376,7 @@ pub(crate) struct UnwindTableManager {
     row_pool: u32,
     row_cursor: u32,
     next_module_id: u32,
+    cached_rows: usize,
     /// (st_dev, st_ino) -> parsed module rows; `None` records a file
     /// that has no usable table so it is not re-parsed every pass.
     parsed: std::collections::BTreeMap<(u64, u64), Option<ParsedModule>>,
@@ -350,6 +418,7 @@ impl UnwindTableManager {
             row_pool: UNWIND_ROW_POOL,
             row_cursor: 0,
             next_module_id: 0,
+            cached_rows: 0,
             parsed: std::collections::BTreeMap::new(),
             assigned: std::collections::BTreeMap::new(),
             last_written: std::collections::BTreeMap::new(),
@@ -392,16 +461,13 @@ impl UnwindTableManager {
         let Ok(entries) = std::fs::read_dir(&self.procfs_root) else {
             return stats;
         };
-        let mut pids: Vec<u32> = entries
+        let alive: std::collections::BTreeSet<u32> = entries
             .filter_map(|entry| entry.ok())
             .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
             .collect();
-        let alive: std::collections::BTreeSet<u32> = pids.iter().copied().collect();
         hot_pids.retain_alive(&alive);
-        let hot = hot_pids.snapshot();
-        // Sampled processes first (in pid order), then everything else;
-        // within each group pid order keeps the pass deterministic.
-        pids.sort_unstable_by_key(|pid| (!hot.contains(pid), *pid));
+        let mut pids = hot_pids.ordered_snapshot();
+        stats.tracked_processes = pids.len();
         if pids.len() > self.max_processes {
             stats.processes_skipped_limit = pids.len() - self.max_processes;
             pids.truncate(self.max_processes);
@@ -431,6 +497,12 @@ impl UnwindTableManager {
         }
         self.registered_pids = seen_pids;
         self.registered_py_pids = seen_py_pids;
+        stats.cached_modules = self
+            .parsed
+            .values()
+            .filter(|module| module.is_some())
+            .count();
+        stats.cached_rows = self.cached_rows;
         stats
     }
 
@@ -597,7 +669,21 @@ impl UnwindTableManager {
         let key = module_key(&metadata);
 
         if !self.parsed.contains_key(&key) {
-            let parsed = self.parse_module(&file_path, stats);
+            if self.parsed.len() >= UNWIND_MAX_MODULES {
+                stats.modules_skipped_module_budget += 1;
+                return None;
+            }
+            let cache_rows_remaining = (self.row_pool as usize).saturating_sub(self.cached_rows);
+            let map_rows_remaining = (self.row_pool - self.row_cursor) as usize;
+            let row_limit = cache_rows_remaining.min(map_rows_remaining);
+            if row_limit == 0 {
+                stats.modules_skipped_row_budget += 1;
+                return None;
+            }
+            let parsed = self.parse_module(&file_path, row_limit, stats);
+            if let Some(module) = parsed.as_ref() {
+                self.cached_rows = self.cached_rows.saturating_add(module.rows.len());
+            }
             self.parsed.insert(key, parsed);
         }
         // Scalars copied out so the immutable borrow of `parsed` ends
@@ -657,14 +743,11 @@ impl UnwindTableManager {
     fn parse_module(
         &mut self,
         file_path: &std::path::Path,
+        max_rows: usize,
         stats: &mut UnwindRefreshStats,
     ) -> Option<ParsedModule> {
-        if self.parsed.len() >= UNWIND_MAX_MODULES {
-            stats.modules_skipped_module_budget += 1;
-            return None;
-        }
         let image = std::fs::read(file_path).ok()?;
-        let table = ElfUnwindTable::parse(&image);
+        let table = ElfUnwindTable::parse_bounded(&image, max_rows);
         if table.is_empty() {
             stats.modules_without_tables += 1;
             return None;

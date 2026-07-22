@@ -463,7 +463,7 @@ fn signal_declares_trace_identity(signal: &SignalEnvelope) -> bool {
 
 async fn shutdown_exporter<T>(exporter: Option<&AsyncProtobufExporter<T>>) -> CoreResult<()>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Send + Sync + 'static,
 {
     match exporter {
         Some(exporter) => exporter.shutdown().await,
@@ -525,7 +525,7 @@ fn build_exporter<T>(
     telemetry_registry: &NativeTelemetryRegistry,
 ) -> CoreResult<AsyncProtobufExporter<T>>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Send + Sync + 'static,
 {
     let exporter = HttpProtobufExporter::new(config, encode_batch)
         .map(|exporter| {
@@ -583,7 +583,7 @@ fn decode_trace_export_response(body: &[u8]) -> Result<ExportResponseAck, crate:
 
 impl<T> AsyncProtobufExporter<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Send + Sync + 'static,
 {
     fn spawn(
         exporter: HttpProtobufExporter<T>,
@@ -1186,7 +1186,7 @@ async fn run_export_worker<T>(
     tuning: ExportWorkerTuning,
     family: &'static str,
 ) where
-    T: Clone + Send + Sync + 'static,
+    T: Send + Sync + 'static,
 {
     let mut queued = 0_usize;
     let mut flush_deadline = None;
@@ -1290,7 +1290,7 @@ async fn flush_worker_batch<T>(
     consecutive_failures: &mut usize,
     circuit_open_until: &mut Option<Instant>,
 ) where
-    T: Clone + Sync,
+    T: Sync,
 {
     if *queued == 0 {
         return;

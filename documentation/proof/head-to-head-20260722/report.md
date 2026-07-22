@@ -2,7 +2,17 @@
 
 Date: 2026-07-22
 
-Result: PASS for evidence integrity. NO-GO for a lower-agent-overhead claim.
+Result: INVALIDATED for comparative claims.
+
+> This historical capture did not fully isolate the standing installation.
+> The executed harness suspended automation on the child `e-navigator` Argo CD
+> application, but left the automated `root-app` parent able to restore that
+> child and recreate `e-navigator-agent` during benchmark arms. The workload,
+> signal, CPU, RSS, and latency values below are retained as diagnostic history
+> only. They must not support a Beyla plus Alloy comparison or a product claim.
+> The corrected harness suspends both applications, deletes the standing
+> DaemonSet, and asserts its absence before and after every arm. See the
+> [corrected optimization campaign](../optimization-20260722/report.md).
 
 ## Scope
 
@@ -13,11 +23,11 @@ services remained active for every arm. The same fixed-rate load generator,
 nodes, Linux 6.6.68 kernel, workload image, warmup, and measurement duration
 were used throughout.
 
-The complete 33-run matrix passed its workload, topology, image, resource,
-signal, loss, and run-order gates. The final E-Navigator stack measured
-43.601071% more agent CPU and 31.903883% more agent RSS than Beyla plus Alloy.
-This evidence therefore rejects a lower-overhead or lower-memory claim for
-E-Navigator on this workload.
+The complete 33-run matrix passed the gates implemented at that time, but those
+gates did not check the parent Argo application or standing DaemonSet absence.
+The recorded final E-Navigator stack measured 43.601071% more agent CPU and
+31.903883% more agent RSS than Beyla plus Alloy. Those values are invalid for
+comparative claims because the isolation contract was not enforced.
 
 ## Environment And Inputs
 

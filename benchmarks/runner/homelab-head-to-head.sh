@@ -7,6 +7,8 @@ cd "$repo_root"
 context="${E_NAVIGATOR_HOMELAB_CONTEXT:-homelab}"
 namespace="${E_NAVIGATOR_HOMELAB_NAMESPACE:-e-navigator-bench}"
 results_root="${E_NAVIGATOR_HEAD_TO_HEAD_RESULTS_DIR:-benchmarks/results/head-to-head-proof}"
+run_mode="${E_NAVIGATOR_HEAD_TO_HEAD_RUN_MODE:-proof}"
+diagnostic_collector="${E_NAVIGATOR_HEAD_TO_HEAD_DIAGNOSTIC_COLLECTOR:-e-navigator}"
 repetitions="${E_NAVIGATOR_HEAD_TO_HEAD_REPETITIONS:-3}"
 warmup_seconds="${E_NAVIGATOR_HEAD_TO_HEAD_WARMUP_SECONDS:-15}"
 duration_seconds="${E_NAVIGATOR_HEAD_TO_HEAD_DURATION_SECONDS:-45}"
@@ -19,6 +21,7 @@ beyla_chart_version="1.16.10"
 beyla_chart_sha256="f404a525451c1b36ab0a8a98560e20fc4af70f59016518d414ce5fed367855e2"
 beyla_release="head-to-head-beyla"
 e_navigator_release="head-to-head-enav"
+root_app="root-app"
 standing_app="e-navigator"
 standing_namespace="e-navigator-system"
 standing_daemonset="e-navigator-agent"
@@ -26,6 +29,7 @@ prometheus_local_port="${E_NAVIGATOR_HEAD_TO_HEAD_PROMETHEUS_PORT:-29090}"
 sink_local_port="${E_NAVIGATOR_HEAD_TO_HEAD_SINK_PORT:-24318}"
 prometheus_pid=""
 sink_pid=""
+root_suspended=0
 standing_suspended=0
 workload_applied=0
 
@@ -45,10 +49,28 @@ for numeric in "$repetitions" "$warmup_seconds" "$duration_seconds" "$attach_set
       ;;
   esac
 done
-if [ "$repetitions" -ne 3 ]; then
-  printf 'head-to-head proof requires exactly three repetitions\n' >&2
-  exit 2
-fi
+case "$run_mode" in
+  proof)
+    if [ "$repetitions" -ne 3 ]; then
+      printf 'head-to-head proof requires exactly three repetitions\n' >&2
+      exit 2
+    fi
+    ;;
+  profile-diagnostic)
+    if [ "$repetitions" -ne 1 ]; then
+      printf 'head-to-head profile diagnostic requires exactly one repetition\n' >&2
+      exit 2
+    fi
+    if [ "$diagnostic_collector" != "e-navigator" ] && [ "$diagnostic_collector" != "beyla" ]; then
+      printf 'profile diagnostic collector must be e-navigator or beyla\n' >&2
+      exit 2
+    fi
+    ;;
+  *)
+    printf 'E_NAVIGATOR_HEAD_TO_HEAD_RUN_MODE must be proof or profile-diagnostic\n' >&2
+    exit 2
+    ;;
+esac
 if [ "$warmup_seconds" -lt 5 ] || [ "$warmup_seconds" -gt 120 ]; then
   printf 'head-to-head warmup must be between 5 and 120 seconds\n' >&2
   exit 2
@@ -98,8 +120,22 @@ cleanup_collectors() {
     -l e-navigator.dev/collector --ignore-not-found=true --wait=true >/dev/null 2>&1 || true
 }
 
+capture_with_retry() {
+  local output="$1"
+  shift
+  for _attempt in $(seq 1 10); do
+    if "$@" >"${output}.tmp" 2>&1; then
+      mv "${output}.tmp" "$output"
+      return 0
+    fi
+    sleep 2
+  done
+  mv "${output}.tmp" "$output"
+  return 1
+}
+
 restore_environment() {
-  local status="$?"
+  local status="${1-$?}"
   local restore_status=0
   local restore_patch
   set +e
@@ -150,6 +186,30 @@ restore_environment() {
       restore_status=1
     fi
   fi
+  if [ "$root_suspended" = "1" ]; then
+    restore_patch="$(jq -c '{spec:{syncPolicy:{automated:.spec.syncPolicy.automated}}}' \
+      "$results_root/pre-root-argocd-application.json")"
+    kubectl --context "$context" -n argocd patch application "$root_app" \
+      --type=merge -p "$restore_patch" \
+      >"$results_root/restore-root-argocd-automation.txt" 2>&1 || restore_status=1
+    for _attempt in $(seq 1 60); do
+      kubectl --context "$context" -n argocd get application "$root_app" -o json \
+        >"$results_root/post-root-argocd-application.json" 2>&1 || true
+      if [ "$(jq -r '.status.sync.status // ""' "$results_root/post-root-argocd-application.json" 2>/dev/null)" = "Synced" ] &&
+        [ "$(jq -r '.status.health.status // ""' "$results_root/post-root-argocd-application.json" 2>/dev/null)" = "Healthy" ]; then
+        break
+      fi
+      sleep 2
+    done
+    if [ "$restore_status" -eq 0 ] && {
+      [ "$(jq -r '.spec.syncPolicy.automated.prune' "$results_root/post-root-argocd-application.json")" != "true" ] ||
+      [ "$(jq -r '.spec.syncPolicy.automated.selfHeal' "$results_root/post-root-argocd-application.json")" != "true" ] ||
+      [ "$(jq -r '.status.sync.status' "$results_root/post-root-argocd-application.json")" != "Synced" ] ||
+      [ "$(jq -r '.status.health.status' "$results_root/post-root-argocd-application.json")" != "Healthy" ];
+    }; then
+      restore_status=1
+    fi
+  fi
   for _attempt in $(seq 1 120); do
     if [ -z "$(kubectl --context "$context" -n "$namespace" get pods \
       -l e-navigator.dev/disposable=true -o name 2>/dev/null)" ]; then
@@ -157,12 +217,13 @@ restore_environment() {
     fi
     sleep 1
   done
-  kubectl --context "$context" -n "$namespace" get all,configmap,serviceaccount,role,rolebinding \
-    -l e-navigator.dev/disposable=true -o name \
-    >"$results_root/post-cleanup-namespaced-resources.txt" 2>&1 || restore_status=1
-  kubectl --context "$context" get clusterrole,clusterrolebinding \
-    -l app.kubernetes.io/part-of=e-navigator-head-to-head -o name \
-    >"$results_root/post-cleanup-cluster-resources.txt" 2>&1 || restore_status=1
+  capture_with_retry "$results_root/post-cleanup-namespaced-resources.txt" \
+    kubectl --context "$context" -n "$namespace" \
+    get all,configmap,serviceaccount,role,rolebinding \
+    -l e-navigator.dev/disposable=true -o name || restore_status=1
+  capture_with_retry "$results_root/post-cleanup-cluster-resources.txt" \
+    kubectl --context "$context" get clusterrole,clusterrolebinding \
+    -l app.kubernetes.io/part-of=e-navigator-head-to-head -o name || restore_status=1
   if [ -s "$results_root/post-cleanup-namespaced-resources.txt" ] ||
     [ -s "$results_root/post-cleanup-cluster-resources.txt" ]; then
     restore_status=1
@@ -172,7 +233,35 @@ restore_environment() {
   fi
   return "$restore_status"
 }
-trap restore_environment EXIT INT TERM
+
+handle_signal() {
+  local status="$1"
+  trap - EXIT INT TERM
+  restore_environment "$status"
+  exit "$status"
+}
+
+trap 'restore_environment $?' EXIT
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
+
+assert_standing_suspended() {
+  if [ "$(kubectl --context "$context" -n argocd get application "$root_app" \
+    -o jsonpath='{.spec.syncPolicy.automated}')" != "" ]; then
+    printf 'root Argo CD automation resumed during the head-to-head run\n' >&2
+    return 1
+  fi
+  if [ "$(kubectl --context "$context" -n argocd get application "$standing_app" \
+    -o jsonpath='{.spec.syncPolicy.automated}')" != "" ]; then
+    printf 'standing E-Navigator automation resumed during the head-to-head run\n' >&2
+    return 1
+  fi
+  if kubectl --context "$context" -n "$standing_namespace" get daemonset \
+    "$standing_daemonset" >/dev/null 2>&1; then
+    printf 'standing E-Navigator DaemonSet reappeared during the head-to-head run\n' >&2
+    return 1
+  fi
+}
 
 wait_for_http() {
   local url="$1"
@@ -405,6 +494,7 @@ run_arm() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$run_name" \
     >>"$results_root/run-order.log"
   deploy_collector "$collector" "$stage" "$run_dir"
+  assert_standing_suspended >"$run_dir/standing-isolation-before.txt"
   kubectl --context "$context" -n "$namespace" get pods -o json \
     >"$run_dir/pods-before.json"
   capture_collector_metrics "$collector" "$stage" before "$run_dir"
@@ -436,6 +526,7 @@ run_arm() {
   kubectl --context "$context" -n "$namespace" wait --for=condition=complete \
     "job/$job_name" --timeout="$((warmup_seconds + duration_seconds + 180))s" \
     >"$run_dir/job-wait.txt"
+  assert_standing_suspended >"$run_dir/standing-isolation-after.txt"
   kubectl --context "$context" -n "$namespace" logs "job/$job_name" \
     >"$run_dir/workload.log"
   sed -n 's/^.*HEAD2HEAD_RESULT //p' "$run_dir/workload.log" \
@@ -471,6 +562,8 @@ run_arm() {
 }
 
 kubectl --context "$context" get namespace kube-system >/dev/null
+kubectl --context "$context" -n argocd get application "$root_app" -o json \
+  >"$results_root/pre-root-argocd-application.json"
 kubectl --context "$context" -n argocd get application "$standing_app" -o json \
   >"$results_root/pre-argocd-application.json"
 kubectl --context "$context" -n "$standing_namespace" get daemonset "$standing_daemonset" -o json \
@@ -499,29 +592,42 @@ if [ "$(jq -r '.spec.syncPolicy.automated.prune' "$results_root/pre-argocd-appli
   printf 'standing Argo CD automation is not the expected prune+selfHeal posture\n' >&2
   exit 2
 fi
+if [ "$(jq -r '.spec.syncPolicy.automated.prune' "$results_root/pre-root-argocd-application.json")" != "true" ] ||
+  [ "$(jq -r '.spec.syncPolicy.automated.selfHeal' "$results_root/pre-root-argocd-application.json")" != "true" ]; then
+  printf 'root Argo CD automation is not the expected prune+selfHeal posture\n' >&2
+  exit 2
+fi
 if [ -n "$(kubectl --context "$context" -n "$namespace" get all \
   -l app.kubernetes.io/part-of=e-navigator-head-to-head -o name)" ]; then
   printf 'head-to-head resources already exist in benchmark namespace\n' >&2
   exit 2
 fi
 
+kubectl --context "$context" -n argocd patch application "$root_app" --type=json \
+  -p='[{"op":"remove","path":"/spec/syncPolicy/automated"}]' \
+  >"$results_root/suspend-root-argocd-automation.txt"
+root_suspended=1
 kubectl --context "$context" -n argocd patch application "$standing_app" --type=json \
   -p='[{"op":"remove","path":"/spec/syncPolicy/automated"}]' \
   >"$results_root/suspend-argocd-automation.txt"
 standing_suspended=1
 kubectl --context "$context" -n "$standing_namespace" delete daemonset "$standing_daemonset" \
   --wait=true >"$results_root/suspend-standing-daemonset.txt"
+sleep 10
+assert_standing_suspended >"$results_root/standing-isolation-initial.txt"
 
 mkdir -p "$results_root/inputs"
-if [ ! -s "$results_root/inputs/beyla-${beyla_chart_version}.tgz" ]; then
-  helm pull grafana/beyla --version "$beyla_chart_version" \
-    --destination "$results_root/inputs"
-fi
-shasum -a 256 "$results_root/inputs/beyla-${beyla_chart_version}.tgz" \
-  >"$results_root/inputs/beyla-chart.sha256"
-if [ "$(awk '{print $1}' "$results_root/inputs/beyla-chart.sha256")" != "$beyla_chart_sha256" ]; then
-  printf 'Beyla chart checksum did not match the pinned input\n' >&2
-  exit 2
+if [ "$run_mode" = "proof" ] || [ "$diagnostic_collector" = "beyla" ]; then
+  if [ ! -s "$results_root/inputs/beyla-${beyla_chart_version}.tgz" ]; then
+    helm pull grafana/beyla --version "$beyla_chart_version" \
+      --destination "$results_root/inputs"
+  fi
+  shasum -a 256 "$results_root/inputs/beyla-${beyla_chart_version}.tgz" \
+    >"$results_root/inputs/beyla-chart.sha256"
+  if [ "$(awk '{print $1}' "$results_root/inputs/beyla-chart.sha256")" != "$beyla_chart_sha256" ]; then
+    printf 'Beyla chart checksum did not match the pinned input\n' >&2
+    exit 2
+  fi
 fi
 
 default_workload_image='docker.io/library/e-navigator-head-to-head:gap9-amd64'
@@ -544,50 +650,56 @@ start_port_forwards
 curl --silent --show-error --fail \
   "http://127.0.0.1:$sink_local_port/stats" >"$results_root/initial-otlp-sink.json"
 
-run_arm none none 1
-run_arm beyla http 1
-run_arm e-navigator http 1
-run_arm e-navigator grpc 1
-run_arm beyla grpc 1
-run_arm beyla redis 1
-run_arm e-navigator redis 1
-run_arm e-navigator postgres 1
-run_arm beyla postgres 1
-run_arm beyla profile 1
-run_arm e-navigator profile 1
+if [ "$run_mode" = "profile-diagnostic" ]; then
+  run_arm "$diagnostic_collector" profile 1
+  printf 'DIAGNOSTIC ONLY: one %s profile arm; not head-to-head proof\n' \
+    "$diagnostic_collector" | tee "$results_root/summary.txt"
+else
+  run_arm none none 1
+  run_arm beyla http 1
+  run_arm e-navigator http 1
+  run_arm e-navigator grpc 1
+  run_arm beyla grpc 1
+  run_arm beyla redis 1
+  run_arm e-navigator redis 1
+  run_arm e-navigator postgres 1
+  run_arm beyla postgres 1
+  run_arm beyla profile 1
+  run_arm e-navigator profile 1
 
-run_arm e-navigator profile 2
-run_arm beyla profile 2
-run_arm beyla postgres 2
-run_arm e-navigator postgres 2
-run_arm e-navigator redis 2
-run_arm beyla redis 2
-run_arm beyla grpc 2
-run_arm e-navigator grpc 2
-run_arm e-navigator http 2
-run_arm beyla http 2
-run_arm none none 2
+  run_arm e-navigator profile 2
+  run_arm beyla profile 2
+  run_arm beyla postgres 2
+  run_arm e-navigator postgres 2
+  run_arm e-navigator redis 2
+  run_arm beyla redis 2
+  run_arm beyla grpc 2
+  run_arm e-navigator grpc 2
+  run_arm e-navigator http 2
+  run_arm beyla http 2
+  run_arm none none 2
 
-run_arm beyla postgres 3
-run_arm e-navigator postgres 3
-run_arm beyla http 3
-run_arm e-navigator http 3
-run_arm none none 3
-run_arm e-navigator profile 3
-run_arm beyla profile 3
-run_arm e-navigator redis 3
-run_arm beyla redis 3
-run_arm e-navigator grpc 3
-run_arm beyla grpc 3
+  run_arm beyla postgres 3
+  run_arm e-navigator postgres 3
+  run_arm beyla http 3
+  run_arm e-navigator http 3
+  run_arm none none 3
+  run_arm e-navigator profile 3
+  run_arm beyla profile 3
+  run_arm e-navigator redis 3
+  run_arm beyla redis 3
+  run_arm e-navigator grpc 3
+  run_arm beyla grpc 3
 
-python3 benchmarks/runner/analyze-head-to-head.py aggregate "$results_root" \
-  >"$results_root/analysis.json"
-jq -r '
-  "PASS: 33 matched runs; final E-Navigator vs Beyla+Alloy CPU " +
-  (.final_stack_comparison.e_navigator_agent_cpu_change_vs_beyla_alloy_percent | tostring) +
-  "% and RSS " +
-  (.final_stack_comparison.e_navigator_agent_rss_change_vs_beyla_alloy_percent | tostring) + "%"
-' "$results_root/analysis.json" | tee "$results_root/summary.txt"
+  python3 benchmarks/runner/analyze-head-to-head.py aggregate "$results_root" \
+    >"$results_root/analysis.json"
+  jq -r '
+    "PASS: 33 matched runs; final E-Navigator vs Beyla+Alloy CPU " +
+    (.final_stack_comparison.e_navigator_agent_cpu_change_vs_beyla_alloy_percent | tostring) +
+    "% and RSS " +
+    (.final_stack_comparison.e_navigator_agent_rss_change_vs_beyla_alloy_percent | tostring) + "%"
+  ' "$results_root/analysis.json" | tee "$results_root/summary.txt"
+fi
 
 trap - EXIT INT TERM
-restore_environment
+restore_environment 0

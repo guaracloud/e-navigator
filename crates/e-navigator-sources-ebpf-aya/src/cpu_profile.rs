@@ -1525,11 +1525,12 @@ mod platform {
             );
             let shared_symbols =
                 std::sync::Arc::new(std::sync::Mutex::new(super::SharedSymbolTables::default()));
-            // Tracks pids the sampler observes on-CPU so the unwind
-            // manager prioritizes their tables over idle system
-            // processes; sized generously above any realistic on-CPU
-            // working set on one node.
-            let hot_pids = std::sync::Arc::new(crate::cpu_unwind::HotPidTracker::new(4096));
+            // Track only as many recently sampled pids as the unwind manager
+            // can cover. Recency eviction lets newly active workloads replace
+            // old, still-alive processes without scanning unrelated host pids.
+            let hot_pids = std::sync::Arc::new(crate::cpu_unwind::HotPidTracker::new(
+                self.config.max_unwind_processes,
+            ));
             match profile_events {
                 crate::event_transport::EventMap::Perf(mut perf_array) => {
                     for cpu_id in active_cpus {
@@ -1716,8 +1717,8 @@ mod platform {
                 );
                 let refresher_hot_pids = hot_pids.clone();
                 reader_handles.push(tokio::task::spawn_blocking(move || {
-                    // Populate immediately, then re-scan on the same
-                    // cadence as the TLS library rescan.
+                    // Populate immediately, then refresh on new sampled pids
+                    // or the same periodic cadence as TLS library discovery.
                     loop {
                         let stats = manager.refresh(&mut sink, &refresher_hot_pids);
                         debug!(?stats, "dwarf unwind table refresh");
@@ -1733,9 +1734,13 @@ mod platform {
                                  back to frame-pointer unwinding"
                             );
                         }
+                        let membership_revision = refresher_hot_pids.membership_revision();
                         for _ in 0..150 {
                             if refresher_shutdown.is_stopped() {
                                 return ReaderExit::Stopped;
+                            }
+                            if refresher_hot_pids.membership_revision() != membership_revision {
+                                break;
                             }
                             std::thread::sleep(std::time::Duration::from_millis(100));
                         }

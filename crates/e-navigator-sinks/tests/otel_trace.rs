@@ -51,6 +51,10 @@ fn formats_trace_span_observation_as_stable_internal_trace_record() {
                     value: "sensitive".to_string(),
                 },
                 TraceAttribute {
+                    key: "X-AuthOriZation-Hint".to_string(),
+                    value: "also-sensitive".to_string(),
+                },
+                TraceAttribute {
                     key: "custom.too_large".to_string(),
                     value: "x".repeat(257),
                 },
@@ -76,6 +80,7 @@ fn formats_trace_span_observation_as_stable_internal_trace_record() {
     assert_eq!(record.attributes["trace.correlation.confidence"], "high");
     assert_eq!(record.attributes["net.transport"], "tcp");
     assert!(!record.attributes.contains_key("auth.token"));
+    assert!(!record.attributes.contains_key("X-AuthOriZation-Hint"));
     assert!(!record.attributes.contains_key("custom.too_large"));
     assert_eq!(record.attributes["server.address"], "203.0.113.10");
     assert_eq!(record.attributes["server.port"], 443);
