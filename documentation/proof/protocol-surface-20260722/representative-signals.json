@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "curation": "Volatile pid, cgroup, container, pod, peer, timestamp, and generated identity fields were omitted from captured signals. Application payload bytes were not present in the originals.",
+  "signals": [
+    {
+      "source": "source.aya_protocol",
+      "kind": "protocol_request_observation",
+      "host": "homelab-01",
+      "payload": {
+        "protocol": "websocket",
+        "role": "client",
+        "method": "handshake",
+        "status_code": 101,
+        "kubernetes": {
+          "namespace": "e-navigator-bench",
+          "container_name": "protocol-surface",
+          "node_name": "homelab-01"
+        },
+        "attributes": [
+          {"key": "http.request.method", "value": "GET"},
+          {"key": "url.path", "value": "/websocket-proof"},
+          {"key": "network.protocol.name", "value": "websocket"},
+          {"key": "websocket.version", "value": "13"},
+          {"key": "http.response.status_code", "value": "101"}
+        ]
+      }
+    },
+    {
+      "source": "source.aya_protocol",
+      "kind": "protocol_request_observation",
+      "host": "homelab-01",
+      "payload": {
+        "protocol": "websocket",
+        "role": "client",
+        "method": "text",
+        "kubernetes": {
+          "namespace": "e-navigator-bench",
+          "container_name": "protocol-surface",
+          "node_name": "homelab-01"
+        },
+        "attributes": [
+          {"key": "network.protocol.name", "value": "websocket"},
+          {"key": "websocket.frame.direction", "value": "server_to_client"},
+          {"key": "websocket.frame.opcode", "value": "text"},
+          {"key": "websocket.frame.fin", "value": "true"},
+          {"key": "websocket.frame.masked", "value": "false"},
+          {"key": "websocket.frame.payload_length", "value": "17"},
+          {"key": "websocket.frame.capture_complete", "value": "true"}
+        ]
+      }
+    },
+    {
+      "source": "source.aya_protocol",
+      "kind": "protocol_request_observation",
+      "host": "homelab-01",
+      "payload": {
+        "protocol": "grpc",
+        "role": "client",
+        "method": "Call",
+        "status_code": 0,
+        "kubernetes": {
+          "namespace": "e-navigator-bench",
+          "container_name": "protocol-surface",
+          "node_name": "homelab-01"
+        },
+        "attributes": [
+          {"key": "rpc.system", "value": "grpc"},
+          {"key": "rpc.service", "value": "proof.Echo"},
+          {"key": "rpc.method", "value": "Call"},
+          {"key": "rpc.grpc.transport", "value": "grpc_web"},
+          {"key": "rpc.grpc.web.mode", "value": "binary"},
+          {"key": "rpc.grpc.web.message_count", "value": "1"},
+          {"key": "rpc.grpc.web.compressed_message_count", "value": "0"},
+          {"key": "http.request.method", "value": "POST"},
+          {"key": "url.path", "value": "/proof.Echo/Call"},
+          {"key": "rpc.grpc.status_code", "value": "0"},
+          {"key": "http.response.status_code", "value": "200"}
+        ]
+      }
+    }
+  ]
+}

@@ -11,6 +11,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+base64 = { workspace = true }
 e-navigator-signals = { path = "../e-navigator-signals" }
 
 [dev-dependencies]

@@ -7,6 +7,11 @@
 //! tails, frames larger than the reassembly bound, and desynchronized
 //! streams are counted and skipped, never guessed.
 
+use crate::websocket::{
+    WebSocketDirection, WebSocketFrameBoundary, is_websocket_upgrade_response,
+    websocket_frame_boundary,
+};
+
 const MAX_FRAME_LENGTH_DIGITS: usize = 10;
 const MAX_REDIS_BOUNDARY_ITEMS: usize = 1024;
 
@@ -15,6 +20,7 @@ const MAX_REDIS_BOUNDARY_ITEMS: usize = 1024;
 pub enum StreamProtocol {
     Http1,
     Http2,
+    WebSocket,
     Kafka,
     Mongodb,
     Mysql,
@@ -61,6 +67,12 @@ pub enum FrameBoundary {
     NeedMoreBytes,
     /// The frame spans `total_len` bytes from the buffer start.
     Frame { total_len: usize },
+    /// The frame completes the current protocol and switches subsequent
+    /// bytes on this direction to `protocol`.
+    ProtocolSwitch {
+        total_len: usize,
+        protocol: StreamProtocol,
+    },
     /// The buffered bytes cannot start a valid frame for this protocol.
     Invalid,
 }
@@ -70,6 +82,12 @@ pub enum FrameBoundary {
 pub enum StreamFrame {
     /// A fully reassembled frame ready for a per-message parser.
     Complete(Vec<u8>),
+    /// A complete transition frame, followed by frames for `protocol` when
+    /// they were coalesced in the same captured chunk.
+    ProtocolSwitch {
+        frame: Vec<u8>,
+        protocol: StreamProtocol,
+    },
     /// A frame whose length is known but whose body could not be captured
     /// within bounds; only the available prefix is provided.
     Truncated { prefix: Vec<u8>, declared_len: u64 },
@@ -117,6 +135,19 @@ impl ProtocolStreamDecoder {
 
     pub fn protocol(&self) -> StreamProtocol {
         self.protocol
+    }
+
+    /// Rebinds this direction to a new protocol. Any partial old-protocol
+    /// bytes are explicitly counted as dropped rather than reinterpreted.
+    pub fn switch_protocol(&mut self, protocol: StreamProtocol) {
+        if self.protocol == protocol {
+            return;
+        }
+        self.stats.dropped_buffer_bytes += self.buffer.len() as u64;
+        self.buffer.clear();
+        self.pending_skip = 0;
+        self.resync = false;
+        self.protocol = protocol;
     }
 
     pub fn stats(&self) -> StreamDecodeStats {
@@ -227,7 +258,29 @@ impl ProtocolStreamDecoder {
                         return;
                     }
                 }
+                FrameBoundary::ProtocolSwitch {
+                    total_len,
+                    protocol,
+                } if total_len <= self.buffer.len() - consumed => {
+                    let frame_end = consumed + total_len;
+                    frames.push(StreamFrame::ProtocolSwitch {
+                        frame: self.buffer[consumed..frame_end].to_vec(),
+                        protocol,
+                    });
+                    consumed = frame_end;
+                    self.protocol = protocol;
+                    self.stats.complete_frames += 1;
+                    if consumed == self.buffer.len() && gap == 0 {
+                        self.buffer.clear();
+                        return;
+                    }
+                }
                 FrameBoundary::Frame { total_len } => {
+                    self.discard_buffer_prefix(consumed);
+                    self.finish_partial_frame(total_len, gap, frames);
+                    return;
+                }
+                FrameBoundary::ProtocolSwitch { total_len, .. } => {
                     self.discard_buffer_prefix(consumed);
                     self.finish_partial_frame(total_len, gap, frames);
                     return;
@@ -340,13 +393,38 @@ pub fn frame_boundary(
             http1_boundary(bytes, max_frame_bytes, true)
         }
         (StreamProtocol::Http1, StreamDirection::Response) => {
-            http1_boundary(bytes, max_frame_bytes, false)
+            let boundary = http1_boundary(bytes, max_frame_bytes, false);
+            if let FrameBoundary::Frame { total_len } = boundary
+                && total_len <= bytes.len()
+                && is_websocket_upgrade_response(&bytes[..total_len], max_frame_bytes)
+                    .is_ok_and(|upgrade| upgrade)
+            {
+                FrameBoundary::ProtocolSwitch {
+                    total_len,
+                    protocol: StreamProtocol::WebSocket,
+                }
+            } else {
+                boundary
+            }
         }
         (StreamProtocol::Http2, StreamDirection::Request) => {
             http2_boundary(bytes, max_frame_bytes, true)
         }
         (StreamProtocol::Http2, StreamDirection::Response) => {
             http2_boundary(bytes, max_frame_bytes, false)
+        }
+        (StreamProtocol::WebSocket, direction) => {
+            let direction = match direction {
+                StreamDirection::Request => WebSocketDirection::ClientToServer,
+                StreamDirection::Response => WebSocketDirection::ServerToClient,
+            };
+            match websocket_frame_boundary(bytes, direction, max_frame_bytes) {
+                Ok(WebSocketFrameBoundary::NeedMoreBytes) => FrameBoundary::NeedMoreBytes,
+                Ok(WebSocketFrameBoundary::Frame { total_len }) => {
+                    FrameBoundary::Frame { total_len }
+                }
+                Err(_) => FrameBoundary::Invalid,
+            }
         }
         (StreamProtocol::Kafka, _) => kafka_boundary(bytes, max_frame_bytes),
         (StreamProtocol::Mongodb, _) => mongodb_boundary(bytes, max_frame_bytes),
@@ -1563,6 +1641,46 @@ mod tests {
                 total_len: head_len
             },
         );
+    }
+
+    #[test]
+    fn websocket_upgrade_switches_before_coalesced_server_frame() {
+        let response = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
+        let websocket = [0x81, 0x02, b'o', b'k'];
+        let mut chunk = response.to_vec();
+        chunk.extend_from_slice(&websocket);
+        let limits = StreamDecodeLimits {
+            max_buffered_bytes: 4096,
+            max_frame_bytes: 4096,
+            max_frames_per_chunk: 8,
+        };
+        let mut decoder =
+            ProtocolStreamDecoder::new(StreamProtocol::Http1, StreamDirection::Response, limits);
+        let mut frames = Vec::new();
+        decoder.push_chunk(&chunk, chunk.len() as u64, &mut frames);
+        assert_eq!(
+            frames,
+            vec![
+                StreamFrame::ProtocolSwitch {
+                    frame: response.to_vec(),
+                    protocol: StreamProtocol::WebSocket,
+                },
+                StreamFrame::Complete(websocket.to_vec()),
+            ]
+        );
+        assert_eq!(decoder.protocol(), StreamProtocol::WebSocket);
+        assert_eq!(decoder.stats().complete_frames, 2);
+    }
+
+    #[test]
+    fn explicit_protocol_switch_counts_discarded_partial_bytes() {
+        let mut decoder = decoder(StreamProtocol::Http1);
+        let mut frames = Vec::new();
+        decoder.push_chunk(b"GET /partial", 12, &mut frames);
+        decoder.switch_protocol(StreamProtocol::WebSocket);
+        assert_eq!(decoder.protocol(), StreamProtocol::WebSocket);
+        assert_eq!(decoder.buffered_bytes(), 0);
+        assert_eq!(decoder.stats().dropped_buffer_bytes, 12);
     }
 
     #[test]

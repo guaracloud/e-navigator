@@ -499,6 +499,7 @@ fn request_span_name(protocol: ProtocolKind) -> &'static str {
         ProtocolKind::Nats => "nats message",
         ProtocolKind::Postgresql => "postgresql query",
         ProtocolKind::Redis => "redis command",
+        ProtocolKind::Websocket => "websocket frame",
         ProtocolKind::Unknown => "protocol request",
         _ => "protocol request",
     }

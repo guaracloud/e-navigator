@@ -608,6 +608,7 @@ mod platform {
                     reader_count,
                     crate::protocol::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
                 );
+                let mut last_protocol_surface_counts = [0_u64; 4];
 
                 let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
@@ -616,6 +617,14 @@ mod platform {
                     signals.clear();
                     let result =
                         registry.handle_event(sample.as_bytes(), now_unix_nanos(), &mut signals);
+                    let protocol_surface_counts = registry.counters().protocol_surface_counts();
+                    let protocol_surface_deltas = std::array::from_fn(|index| {
+                        protocol_surface_counts[index]
+                            .saturating_sub(last_protocol_surface_counts[index])
+                    });
+                    last_protocol_surface_counts = protocol_surface_counts;
+                    decoder_telemetry
+                        .record_protocol_surface_counter_deltas(protocol_surface_deltas);
                     let diagnostic_decision = log_tls_sample_diagnostic(
                         &decoder_diagnostics,
                         sample.as_bytes(),
@@ -1160,6 +1169,10 @@ mod platform {
             orphan_responses = counters.orphan_responses,
             unparsed_responses = counters.unparsed_responses,
             segment_gaps = counters.segment_gaps,
+            websocket_upgrades = counters.websocket_upgrades,
+            websocket_frames = counters.websocket_frames,
+            websocket_transition_rejections = counters.websocket_transition_rejections,
+            grpc_web_requests = counters.grpc_web_requests,
             "source diagnostic TLS sample processed"
         );
         DiagnosticSampleDecision::Matched
@@ -1404,6 +1417,7 @@ mod tests {
             remote_addr_v6: [0; 16],
             local_addr_v6: [0; 16],
             timestamp_unix_nanos,
+            connection_started_at_nanos: 100,
             payload_len: 0,
             payload_total_len: 0,
             payload_offset: 0,

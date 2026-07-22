@@ -33,10 +33,23 @@ E-Navigator does not currently claim:
 - production or homelab proof of direct profile delivery (the generic OTLP
   Profiles HTTP sink is locally proven against Pyroscope `1.20.3`; storage,
   retention, and query service behavior remain backend responsibilities);
-- complete production HTTP/gRPC protocol coverage (bounded HTTP/1 and
-  HTTP/2/HPACK request capture with request/response matching is implemented
-  and locally proven for Redis and HTTP/2; HTTP/2 CONTINUATION reassembly is
-  not covered);
+- complete production HTTP/gRPC/browser protocol coverage (bounded HTTP/1,
+  HTTP/2/HPACK, gRPC, extension-free WebSocket metadata, and gRPC-Web metadata
+  capture are implemented. WebSocket and gRPC-Web have focused homelab proof,
+  but the full protocol matrix, TLS combinations, sustained load, and
+  production traffic remain outside the claim);
+- HTTP/3 or generic QUIC semantic capture. The current payload source observes
+  configured TCP connections, while HTTP/3 runs over QUIC/UDP and protects its
+  HEADERS and DATA semantics. A real aioquic exchange in the homelab proof is a
+  negative control and correctly produces no HTTP/3 or QUIC semantic signal;
+- WebSocket extensions, compressed frames, reconstruction of fragmented
+  application messages, or payload export. The parser validates only
+  extension-free RFC 6455 framing, emits frame opcode/direction/length/control
+  metadata, and rejects invalid transitions or RSV use with native accounting;
+- gRPC-Web protobuf decoding, browser CORS behavior, or full duplex streaming.
+  The parser accepts bounded binary and base64-text HTTP/1 envelopes, records
+  RPC method/message counts and trailer status, and exports no application
+  bytes;
 - live Kafka protocol capture proof (capture, reassembly, and request/response
   matching are implemented and unit-tested; only Redis and HTTP/2 are live
   proven);

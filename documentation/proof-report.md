@@ -120,6 +120,13 @@ or chart rendering:
   declared frame-length bounds,
   bounded response-status token validation, and build-checked parser fuzz
   coverage;
+- extension-free RFC 6455 upgrade validation and metadata-only frame parsing,
+  including directional masking, reserved-bit/opcode/minimal-length/control
+  limits, known-truncated payload prefixes, coalesced HTTP 101 transitions, and
+  fd-reuse isolation by kernel connection generation; plus bounded binary and
+  base64-text gRPC-Web envelope parsing with chunk removal, padded segment and
+  trailer-order validation, a 64-frame cap, trailer status, and no protobuf or
+  application payload export;
 - network, DNS, resource, dependency, request, trace, profiling, and runtime
   security generator behavior, including synthetic protocol request/error-span
   flow, deterministic service path keys, precise duplicate flow suppression with
@@ -171,8 +178,9 @@ or chart rendering:
   canonical label overwrite protection, and sensitive/canonical metadata
   attribute filtering;
 - local Criterion hot-path benchmark harness compile coverage for host parsers,
-  raw Aya decode harnesses, traceparent, HTTP, gRPC, Kafka, MongoDB, MySQL,
-  NATS, PostgreSQL, and Redis protocol parsers, Kubernetes metadata cache
+  raw Aya decode harnesses, traceparent, HTTP, gRPC, WebSocket, gRPC-Web,
+  Kafka, MongoDB, MySQL, NATS, PostgreSQL, and Redis protocol parsers,
+  Kubernetes metadata cache
   construction, generators, and sink formatters;
 - dedicated fuzz-target build checking through `scripts/fuzz_check.sh`, now
   wired into the local quality gate;
@@ -257,6 +265,24 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   is in `documentation/proof/profiling-breadth-20260722/`. Disposable
   workloads, release, loader, and images were removed; the standing Argo CD
   application returned Synced/Healthy with its original DaemonSet 2/2 Ready.
+
+- Browser-protocol proof (2026-07-22, homelab k3s v1.30, kernel 6.6.68,
+  amd64, two NixOS nodes). Three counterbalanced 30-second pairs compared a
+  clean no-agent arm with an agent enabling only `source.aya_protocol` and
+  RingBuf. Every workload run completed 298 extension-free WebSocket exchanges,
+  298 binary-request/text-response gRPC-Web exchanges, and three real aioquic
+  HTTP/3 exchanges without a failure. Each protocol run emitted exactly 298
+  WebSocket handshakes, 596 metadata-only frames, and 298 gRPC-Web status-zero
+  observations. Native counters matched those counts exactly, transition
+  rejections and transport loss remained zero, payload secret markers were
+  absent, and the real HTTP/3 traffic produced zero HTTP/3 or QUIC semantic
+  observations. The source measured 19.852290 operations/s versus 19.862091
+  without an agent, a 0.049345% difference under a pacing-dominated workload;
+  this is correctness and non-claim evidence, not a general overhead result.
+  Curated artifacts are in
+  `documentation/proof/protocol-surface-20260722/`. Both local-only images were
+  removed from the nodes, disposable resources were removed, and the standing
+  Argo CD application returned Synced/Healthy with its DaemonSet 2/2 Ready.
 
 - Capture-filter verifier-load and OrbStack live scoping proof (2026-07-07,
   OrbStack Docker plus its in-VM Kubernetes v1.34, arm64). The cgroup capture

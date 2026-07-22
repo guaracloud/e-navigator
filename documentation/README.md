@@ -53,6 +53,7 @@ operational documentation. Start with the path that matches your goal.
 - [ADR 0007, BTF fexit network byte accounting](adr/0007-btf-fexit-network-accounting.md)
 - [ADR 0008, Go crypto/tls uprobes](adr/0008-go-crypto-tls-uprobes.md)
 - [ADR 0009, bounded event-driven profiling](adr/0009-event-driven-profiling.md)
+- [ADR 0010, bounded browser protocols and HTTP/3 boundary](adr/0010-browser-protocol-boundaries.md)
 
 ## Source-Of-Truth Rules
 

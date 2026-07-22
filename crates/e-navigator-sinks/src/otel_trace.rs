@@ -934,6 +934,7 @@ fn protocol_kind_name(protocol: ProtocolKind) -> &'static str {
         ProtocolKind::Nats => "nats",
         ProtocolKind::Postgresql => "postgresql",
         ProtocolKind::Redis => "redis",
+        ProtocolKind::Websocket => "websocket",
         ProtocolKind::Unknown => "unknown",
         _ => "other",
     }

@@ -55,6 +55,10 @@ struct SourceCounters {
     profile_below_min_duration: AtomicU64,
     profile_rate_limited: AtomicU64,
     profile_output_attempts: AtomicU64,
+    protocol_websocket_upgrades: AtomicU64,
+    protocol_websocket_frames: AtomicU64,
+    protocol_websocket_transition_rejections: AtomicU64,
+    protocol_grpc_web_requests: AtomicU64,
 }
 
 impl SourceCounters {
@@ -96,6 +100,10 @@ impl SourceCounters {
             profile_below_min_duration: AtomicU64::new(0),
             profile_rate_limited: AtomicU64::new(0),
             profile_output_attempts: AtomicU64::new(0),
+            protocol_websocket_upgrades: AtomicU64::new(0),
+            protocol_websocket_frames: AtomicU64::new(0),
+            protocol_websocket_transition_rejections: AtomicU64::new(0),
+            protocol_grpc_web_requests: AtomicU64::new(0),
         }
     }
 }
@@ -139,6 +147,10 @@ pub struct SourceTelemetrySnapshot {
     pub profile_below_min_duration: u64,
     pub profile_rate_limited: u64,
     pub profile_output_attempts: u64,
+    pub protocol_websocket_upgrades: u64,
+    pub protocol_websocket_frames: u64,
+    pub protocol_websocket_transition_rejections: u64,
+    pub protocol_grpc_web_requests: u64,
 }
 
 static SOURCE_COUNTERS: OnceLock<Mutex<BTreeMap<&'static str, Arc<SourceCounters>>>> =
@@ -338,6 +350,20 @@ impl SourceTelemetry {
         }
     }
 
+    pub(crate) fn record_protocol_surface_counter_deltas(&self, deltas: [u64; 4]) {
+        for (counter, delta) in [
+            &self.counters.protocol_websocket_upgrades,
+            &self.counters.protocol_websocket_frames,
+            &self.counters.protocol_websocket_transition_rejections,
+            &self.counters.protocol_grpc_web_requests,
+        ]
+        .into_iter()
+        .zip(deltas)
+        {
+            counter.fetch_add(delta, Ordering::Relaxed);
+        }
+    }
+
     pub(crate) fn maybe_log_summary(&self) {
         let elapsed_nanos = u64::try_from(self.started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
         if !self.try_claim_summary(elapsed_nanos) {
@@ -388,6 +414,10 @@ impl SourceTelemetry {
             profile_below_min_duration = snapshot.profile_below_min_duration,
             profile_rate_limited = snapshot.profile_rate_limited,
             profile_output_attempts = snapshot.profile_output_attempts,
+            protocol_websocket_upgrades = snapshot.protocol_websocket_upgrades,
+            protocol_websocket_frames = snapshot.protocol_websocket_frames,
+            protocol_websocket_transition_rejections = snapshot.protocol_websocket_transition_rejections,
+            protocol_grpc_web_requests = snapshot.protocol_grpc_web_requests,
             "source telemetry summary"
         );
     }
@@ -499,6 +529,12 @@ fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceT
         profile_below_min_duration: counters.profile_below_min_duration.load(Ordering::Relaxed),
         profile_rate_limited: counters.profile_rate_limited.load(Ordering::Relaxed),
         profile_output_attempts: counters.profile_output_attempts.load(Ordering::Relaxed),
+        protocol_websocket_upgrades: counters.protocol_websocket_upgrades.load(Ordering::Relaxed),
+        protocol_websocket_frames: counters.protocol_websocket_frames.load(Ordering::Relaxed),
+        protocol_websocket_transition_rejections: counters
+            .protocol_websocket_transition_rejections
+            .load(Ordering::Relaxed),
+        protocol_grpc_web_requests: counters.protocol_grpc_web_requests.load(Ordering::Relaxed),
     }
 }
 
@@ -542,6 +578,10 @@ impl SourceTelemetrySnapshot {
             profile_below_min_duration: 0,
             profile_rate_limited: 0,
             profile_output_attempts: 0,
+            protocol_websocket_upgrades: 0,
+            protocol_websocket_frames: 0,
+            protocol_websocket_transition_rejections: 0,
+            protocol_grpc_web_requests: 0,
         }
     }
 
@@ -642,6 +682,18 @@ impl SourceTelemetrySnapshot {
             profile_output_attempts: self
                 .profile_output_attempts
                 .saturating_sub(previous.profile_output_attempts),
+            protocol_websocket_upgrades: self
+                .protocol_websocket_upgrades
+                .saturating_sub(previous.protocol_websocket_upgrades),
+            protocol_websocket_frames: self
+                .protocol_websocket_frames
+                .saturating_sub(previous.protocol_websocket_frames),
+            protocol_websocket_transition_rejections: self
+                .protocol_websocket_transition_rejections
+                .saturating_sub(previous.protocol_websocket_transition_rejections),
+            protocol_grpc_web_requests: self
+                .protocol_grpc_web_requests
+                .saturating_sub(previous.protocol_grpc_web_requests),
         }
     }
 
@@ -680,6 +732,10 @@ impl SourceTelemetrySnapshot {
             && self.profile_below_min_duration == 0
             && self.profile_rate_limited == 0
             && self.profile_output_attempts == 0
+            && self.protocol_websocket_upgrades == 0
+            && self.protocol_websocket_frames == 0
+            && self.protocol_websocket_transition_rejections == 0
+            && self.protocol_grpc_web_requests == 0
     }
 }
 
@@ -730,6 +786,7 @@ mod tests {
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Exhausted);
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Disabled);
         telemetry.record_profile_counter_deltas([8, 1, 2, 3, 4, 5, 6]);
+        telemetry.record_protocol_surface_counter_deltas([9, 10, 1, 11]);
 
         let snapshot = telemetry.snapshot_for_test();
         assert!(snapshot.initialized);
@@ -751,6 +808,10 @@ mod tests {
         assert_eq!(snapshot.profile_below_min_duration, 4);
         assert_eq!(snapshot.profile_rate_limited, 5);
         assert_eq!(snapshot.profile_output_attempts, 6);
+        assert_eq!(snapshot.protocol_websocket_upgrades, 9);
+        assert_eq!(snapshot.protocol_websocket_frames, 10);
+        assert_eq!(snapshot.protocol_websocket_transition_rejections, 1);
+        assert_eq!(snapshot.protocol_grpc_web_requests, 11);
 
         let first_delta = telemetry.take_summary_delta();
         assert_eq!(first_delta.decoded_samples, 1);

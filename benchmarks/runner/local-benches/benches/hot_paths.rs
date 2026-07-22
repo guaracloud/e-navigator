@@ -18,6 +18,7 @@ use e_navigator_profiling::model::{
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
     grpc::{parse_grpc_request_headers, parse_grpc_response_trailers},
+    grpc_web::{parse_grpc_web_request, parse_grpc_web_response},
     http::{parse_http_request, parse_http_response},
     kafka::{parse_kafka_api_versions_response, parse_kafka_produce_response, parse_kafka_request},
     mongodb::{parse_mongodb_message, parse_mongodb_response},
@@ -26,6 +27,10 @@ use e_navigator_protocol::{
     postgres::{parse_postgres_message, parse_postgres_response},
     redis::{parse_redis_command, parse_redis_response},
     trace_context::parse_traceparent,
+    websocket::{
+        WebSocketDirection, is_websocket_upgrade_request, parse_websocket_frame,
+        websocket_frame_boundary,
+    },
 };
 use e_navigator_signals::{
     ContainerContext, DnsQueryEvent, DnsQueryType, DnsResponseCode, DnsResponseEvent, ExecEvent,
@@ -258,6 +263,26 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     let postgres_response = b"C\0\0\0\x0fINSERT 0 1\0";
     let redis = b"*2\r\n$3\r\nGET\r\n$16\r\ncustomer:pii:123\r\n";
     let redis_response = b"+OK password-reset-complete\r\n";
+    let websocket_upgrade = b"GET /chat HTTP/1.1\r\nHost: example.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+    let mut websocket_frame = vec![0x82, 126, 0x04, 0x00];
+    websocket_frame.extend(std::iter::repeat_n(0x5a, 1024));
+    let grpc_web_message = [0, 0, 0, 0, 3, 1, 2, 3];
+    let mut grpc_web_request = format!(
+        "POST /bench.Echo/Call HTTP/1.1\r\nContent-Type: application/grpc-web+proto\r\nContent-Length: {}\r\n\r\n",
+        grpc_web_message.len()
+    )
+    .into_bytes();
+    grpc_web_request.extend_from_slice(&grpc_web_message);
+    let grpc_web_trailer = b"grpc-status: 0\r\n";
+    let mut grpc_web_response_body = vec![0x80];
+    grpc_web_response_body.extend_from_slice(&(grpc_web_trailer.len() as u32).to_be_bytes());
+    grpc_web_response_body.extend_from_slice(grpc_web_trailer);
+    let mut grpc_web_response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/grpc-web+proto\r\nContent-Length: {}\r\n\r\n",
+        grpc_web_response_body.len()
+    )
+    .into_bytes();
+    grpc_web_response.extend_from_slice(&grpc_web_response_body);
     let protocol_config = ProtocolExtractionConfig::default();
     let profile_fixture = r#"{
         "timestamp_unix_nanos": 1000,
@@ -317,6 +342,36 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     });
     c.bench_function("protocol/grpc_response_trailers_parse", |b| {
         b.iter(|| parse_grpc_response_trailers(black_box(grpc_trailers), &protocol_config).unwrap())
+    });
+    c.bench_function("protocol/websocket_upgrade_detect", |b| {
+        b.iter(|| is_websocket_upgrade_request(black_box(websocket_upgrade), 8192).unwrap())
+    });
+    c.bench_function("protocol/websocket_frame_boundary_1k", |b| {
+        b.iter(|| {
+            websocket_frame_boundary(
+                black_box(&websocket_frame),
+                WebSocketDirection::ServerToClient,
+                64 * 1024,
+            )
+            .unwrap()
+        })
+    });
+    c.bench_function("protocol/websocket_frame_metadata_1k", |b| {
+        b.iter(|| {
+            parse_websocket_frame(
+                black_box(&websocket_frame),
+                WebSocketDirection::ServerToClient,
+                64 * 1024,
+                true,
+            )
+            .unwrap()
+        })
+    });
+    c.bench_function("protocol/grpc_web_binary_request_parse", |b| {
+        b.iter(|| parse_grpc_web_request(black_box(&grpc_web_request), &protocol_config).unwrap())
+    });
+    c.bench_function("protocol/grpc_web_binary_response_parse", |b| {
+        b.iter(|| parse_grpc_web_response(black_box(&grpc_web_response), &protocol_config).unwrap())
     });
     c.bench_function("protocol/kafka_request_parse", |b| {
         b.iter(|| parse_kafka_request(black_box(kafka), &protocol_config).unwrap())

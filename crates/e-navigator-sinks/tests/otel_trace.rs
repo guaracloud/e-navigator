@@ -927,6 +927,50 @@ fn formats_grpc_request_span_with_protocol_name() {
 }
 
 #[test]
+fn formats_websocket_request_span_with_protocol_name_and_metadata() {
+    let signal = SignalEnvelope::request_span_observation(
+        "generator.request_correlation",
+        Some("node-a".to_string()),
+        RequestSpanObservation {
+            name: "websocket frame".to_string(),
+            protocol: ProtocolKind::Websocket,
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(1_500),
+            duration_nanos: Some(500),
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::Medium,
+            service_name: Some("websocket-client".to_string()),
+            method: Some("text".to_string()),
+            status_code: None,
+            process: Some(network_process()),
+            container: Some(container_context()),
+            kubernetes: Some(kubernetes_context()),
+            peer: Some(trace_peer_context()),
+            attributes: vec![
+                TraceAttribute {
+                    key: "websocket.frame.opcode".to_string(),
+                    value: "1".to_string(),
+                },
+                TraceAttribute {
+                    key: "websocket.frame.payload_length".to_string(),
+                    value: "18".to_string(),
+                },
+            ],
+        },
+    );
+
+    let record = format_otel_trace_record(&signal).expect("WebSocket request span formats");
+
+    assert_eq!(record.name, "websocket frame");
+    assert_eq!(record.attributes["network.protocol.name"], "websocket");
+    assert_eq!(record.attributes["websocket.frame.opcode"], "1");
+    assert_eq!(record.attributes["websocket.frame.payload_length"], "18");
+}
+
+#[test]
 fn formats_postgresql_request_span_with_protocol_name() {
     let signal = SignalEnvelope::request_span_observation(
         "generator.request_correlation",

@@ -592,3 +592,36 @@ for on-CPU, 1.573 microseconds for off-CPU, and 1.935 microseconds for
 futex-wait samples. The raw event fuzz target executed 1,344,282 inputs in 21
 seconds without a failure. Those local numbers are decoder hygiene, not kernel
 or whole-agent overhead.
+
+## Browser Protocol Surface A/B (Homelab, 2026-07-22)
+
+The browser-protocol campaign used a pinned Python workload with an
+extension-free raw WebSocket exchange, binary-request/text-response gRPC-Web,
+and a real aioquic HTTP/3 exchange as a negative control. Three 30-second
+repetitions compared no benchmark agent with an agent enabling only
+`source.aya_protocol` on both Linux 6.6.68 nodes. Run order was counterbalanced
+as `none/protocol`, `protocol/none`, and `none/protocol`.
+
+| Arm | Operations/s mean +/- sd | Iteration p95 ms mean +/- sd | Agent CPU m mean +/- sd | Agent memory MiB mean +/- sd |
+| --- | ---: | ---: | ---: | ---: |
+| no benchmark agent | 19.862091 +/- 0.002021 | 0.858090 +/- 0.018113 | n/a | n/a |
+| protocol source | 19.852290 +/- 0.006286 | 0.938343 +/- 0.022766 | 39.386905 +/- 13.970088 | 23.345238 +/- 0.135212 |
+
+The protocol arm measured 0.049345% fewer operations per second. Every protocol
+run recorded exact semantic/native parity at 298 WebSocket upgrades, 596
+WebSocket frames, and 298 gRPC-Web requests, with zero transition rejections,
+zero transport loss, and zero false HTTP/3 or QUIC semantic observations.
+
+The 100 ms pacing interval dominated application throughput, each arm lasted
+only 30 seconds, and the two shared nodes retained unrelated background work.
+The p95 iteration latency mean was 9.35% higher with the source, but this
+campaign was designed for correctness and a negative protocol boundary. It
+does not support a general or production overhead claim. Exact normalized
+values, semantic/native counter gates, image identity, and cleanup scope are in
+the [`browser-protocol proof report`](proof/protocol-surface-20260722/report.md).
+
+A focused local Criterion run measured WebSocket upgrade detection at 339.92
+to 346.98 ns, 1 KiB frame boundary and metadata handling at 3.1090 to 4.1909
+ns, gRPC-Web request parsing at 1.1899 to 1.2784 microseconds, and response
+parsing at 841.88 to 852.95 ns. Both dedicated fuzz targets ran for 20 seconds
+without a failure. These are parser hygiene results, not live overhead proof.

@@ -5,6 +5,7 @@ use e_navigator_core::ProtocolSourceConfig;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
+    grpc_web::{parse_grpc_web_request, parse_grpc_web_response},
     http::{parse_http_request, parse_http_response},
     http2::{
         HTTP2_FLAG_END_STREAM, HTTP2_FRAME_TYPE_CONTINUATION, HTTP2_FRAME_TYPE_HEADERS,
@@ -20,6 +21,7 @@ use e_navigator_protocol::{
     stream::{
         ProtocolStreamDecoder, StreamDecodeLimits, StreamDirection, StreamFrame, StreamProtocol,
     },
+    websocket::{WebSocketDirection, is_websocket_upgrade_request, parse_websocket_frame},
 };
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_signals::{
@@ -107,6 +109,7 @@ pub(crate) struct RawProtocolDataEvent {
     pub remote_addr_v6: [u8; 16],
     pub local_addr_v6: [u8; 16],
     pub timestamp_unix_nanos: u64,
+    pub connection_started_at_nanos: u64,
     pub payload_len: u32,
     pub payload_total_len: u32,
     pub payload_offset: u32,
@@ -393,6 +396,22 @@ pub(crate) struct ProtocolRegistryCounters {
     pub unmatched_expired: u64,
     pub unmatched_evicted: u64,
     pub segment_gaps: u64,
+    pub websocket_upgrades: u64,
+    pub websocket_frames: u64,
+    pub websocket_transition_rejections: u64,
+    pub grpc_web_requests: u64,
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+impl ProtocolRegistryCounters {
+    pub(crate) fn protocol_surface_counts(self) -> [u64; 4] {
+        [
+            self.websocket_upgrades,
+            self.websocket_frames,
+            self.websocket_transition_rejections,
+            self.grpc_web_requests,
+        ]
+    }
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -418,6 +437,7 @@ struct ObservationContext {
     local_addr_v4: u32,
     remote_addr_v6: [u8; 16],
     local_addr_v6: [u8; 16],
+    connection_started_at_nanos: u64,
     command: [u8; 16],
     container: Option<ContainerContext>,
 }
@@ -442,6 +462,7 @@ impl ObservationContext {
             local_addr_v4: raw.local_addr_v4,
             remote_addr_v6: raw.remote_addr_v6,
             local_addr_v6: raw.local_addr_v6,
+            connection_started_at_nanos: raw.connection_started_at_nanos,
             command: raw.command,
             container: crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid),
         }
@@ -459,6 +480,7 @@ impl ObservationContext {
             && self.local_addr_v4 == raw.local_addr_v4
             && self.remote_addr_v6 == raw.remote_addr_v6
             && self.local_addr_v6 == raw.local_addr_v6
+            && self.connection_started_at_nanos == raw.connection_started_at_nanos
     }
 }
 
@@ -862,6 +884,19 @@ fn handle_request_frames(
     signals: &mut Vec<SignalEnvelope>,
 ) {
     for frame in frames {
+        if stream.protocol == StreamProtocol::WebSocket {
+            emit_websocket_observation(
+                frame,
+                WebSocketDirection::ClientToServer,
+                stream,
+                extraction,
+                host,
+                counters,
+                observed_unix_nanos,
+                signals,
+            );
+            continue;
+        }
         let (parsed, frame_bytes) = match frame {
             StreamFrame::Complete(frame_bytes) => {
                 match parse_request_frame(stream.protocol, frame_bytes, extraction) {
@@ -882,7 +917,19 @@ fn handle_request_frames(
                     Some(prefix.as_slice()),
                 )
             }
+            StreamFrame::ProtocolSwitch { .. } => {
+                counters.unparsed_frames += 1;
+                continue;
+            }
         };
+
+        if parsed.protocol == ProtocolKind::Grpc
+            && parsed.attributes.iter().any(|attribute| {
+                attribute.key == "rpc.grpc.transport" && attribute.value == "grpc_web"
+            })
+        {
+            counters.grpc_web_requests += 1;
+        }
 
         if stream.protocol == StreamProtocol::Nats {
             signals.push(build_observation(
@@ -942,7 +989,7 @@ enum ResponseAction {
 fn response_action(protocol: StreamProtocol, frame: &[u8]) -> ResponseAction {
     match protocol {
         // HTTP/2 uses stream-id matching, never the FIFO queue.
-        StreamProtocol::Http2 => ResponseAction::Ignore,
+        StreamProtocol::Http2 | StreamProtocol::WebSocket => ResponseAction::Ignore,
         // HTTP/1 is strict request/response over one connection; each framed
         // response completes exactly the oldest in-flight request.
         StreamProtocol::Http1
@@ -984,12 +1031,80 @@ fn handle_response_frames(
     signals: &mut Vec<SignalEnvelope>,
 ) {
     for frame in frames {
+        if let StreamFrame::ProtocolSwitch {
+            frame: transition_frame,
+            protocol: StreamProtocol::WebSocket,
+        } = frame
+        {
+            let valid_upgrade = stream
+                .in_flight
+                .front()
+                .is_some_and(|entry| entry.parsed.websocket_upgrade);
+            if !valid_upgrade || stream.protocol != StreamProtocol::Http1 {
+                counters.websocket_transition_rejections += 1;
+                stream
+                    .response_decoder
+                    .switch_protocol(StreamProtocol::Http1);
+                continue;
+            }
+
+            let Some(entry) = stream.in_flight.pop_front() else {
+                counters.websocket_transition_rejections += 1;
+                stream
+                    .response_decoder
+                    .switch_protocol(StreamProtocol::Http1);
+                continue;
+            };
+            let mut parsed = entry.parsed;
+            match parse_http1_response_frame(transition_frame, extraction) {
+                Ok(response) => {
+                    counters.matched_responses += 1;
+                    parsed.status_code = response.signal_status_code;
+                    merge_response_attributes(&mut parsed, &response, extraction.max_attributes);
+                }
+                Err(reason) => {
+                    counters.unparsed_responses += 1;
+                    parsed.warning.get_or_insert_with(|| reason.to_string());
+                }
+            }
+            signals.push(build_observation(
+                host.clone(),
+                &stream.context,
+                parsed,
+                entry.started_unix_nanos,
+                Some(observed_unix_nanos),
+            ));
+            stream.protocol = StreamProtocol::WebSocket;
+            stream
+                .request_decoder
+                .switch_protocol(StreamProtocol::WebSocket);
+            counters.websocket_upgrades += 1;
+            continue;
+        }
+        if matches!(frame, StreamFrame::ProtocolSwitch { .. }) {
+            counters.websocket_transition_rejections += 1;
+            continue;
+        }
+        if stream.protocol == StreamProtocol::WebSocket {
+            emit_websocket_observation(
+                frame,
+                WebSocketDirection::ServerToClient,
+                stream,
+                extraction,
+                host,
+                counters,
+                observed_unix_nanos,
+                signals,
+            );
+            continue;
+        }
         let (frame_bytes, truncated) = match frame {
             StreamFrame::Complete(frame_bytes) => (frame_bytes.as_slice(), false),
             StreamFrame::Truncated { prefix, .. } => {
                 counters.truncated_frames += 1;
                 (prefix.as_slice(), true)
             }
+            StreamFrame::ProtocolSwitch { .. } => continue,
         };
 
         let action = response_action(stream.protocol, frame_bytes);
@@ -1031,18 +1146,11 @@ fn handle_response_frames(
             match &response {
                 Ok(response) => {
                     counters.matched_responses += 1;
-                    for attribute in &response.attributes {
-                        if parsed.attributes.len() >= extraction.max_attributes {
-                            break;
-                        }
-                        if !parsed
-                            .attributes
-                            .iter()
-                            .any(|existing| existing.key == attribute.key)
-                        {
-                            parsed.attributes.push(attribute.clone());
-                        }
+                    if let Some(protocol) = response.protocol {
+                        parsed.protocol = protocol;
                     }
+                    parsed.status_code = response.signal_status_code;
+                    merge_response_attributes(&mut parsed, response, extraction.max_attributes);
                 }
                 Err(reason) => {
                     counters.unparsed_responses += 1;
@@ -1058,6 +1166,166 @@ fn handle_response_frames(
             ));
         }
     }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn merge_response_attributes(
+    parsed: &mut ParsedRequestFrame,
+    response: &ParsedResponseFrame,
+    max_attributes: usize,
+) {
+    for attribute in &response.attributes {
+        if parsed.attributes.len() >= max_attributes {
+            break;
+        }
+        if !parsed
+            .attributes
+            .iter()
+            .any(|existing| existing.key == attribute.key)
+        {
+            parsed.attributes.push(attribute.clone());
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[allow(clippy::too_many_arguments)]
+fn emit_websocket_observation(
+    frame: &StreamFrame,
+    direction: WebSocketDirection,
+    stream: &ConnectionStream,
+    extraction: &ProtocolExtractionConfig,
+    host: &Option<String>,
+    counters: &mut ProtocolRegistryCounters,
+    observed_unix_nanos: u64,
+    signals: &mut Vec<SignalEnvelope>,
+) {
+    let (bytes, capture_complete) = match frame {
+        StreamFrame::Complete(bytes) => (bytes.as_slice(), true),
+        StreamFrame::Truncated { prefix, .. } => {
+            counters.truncated_frames += 1;
+            (prefix.as_slice(), false)
+        }
+        StreamFrame::ProtocolSwitch { .. } => return,
+    };
+    let metadata = match parse_websocket_frame(
+        bytes,
+        direction,
+        StreamDecodeLimits::default().max_frame_bytes,
+        capture_complete,
+    ) {
+        Ok(metadata) => metadata,
+        Err(_) => {
+            counters.unparsed_frames += 1;
+            let warning = if capture_complete {
+                "unparsed_websocket_frame"
+            } else {
+                "truncated_websocket_frame_header"
+            };
+            signals.push(build_observation(
+                host.clone(),
+                &stream.context,
+                ParsedRequestFrame {
+                    protocol: ProtocolKind::Websocket,
+                    operation: None,
+                    status_code: None,
+                    trace_id: None,
+                    span_id: None,
+                    warning: Some(warning.to_string()),
+                    attributes: Vec::new(),
+                    websocket_upgrade: false,
+                },
+                observed_unix_nanos,
+                None,
+            ));
+            return;
+        }
+    };
+
+    let mut attributes = Vec::new();
+    push_unique_attribute(
+        &mut attributes,
+        extraction.max_attributes,
+        "network.protocol.name",
+        "websocket",
+    );
+    push_unique_attribute(
+        &mut attributes,
+        extraction.max_attributes,
+        "websocket.frame.direction",
+        match direction {
+            WebSocketDirection::ClientToServer => "client_to_server",
+            WebSocketDirection::ServerToClient => "server_to_client",
+        },
+    );
+    push_unique_attribute(
+        &mut attributes,
+        extraction.max_attributes,
+        "websocket.frame.opcode",
+        metadata.opcode.name(),
+    );
+    push_unique_attribute(
+        &mut attributes,
+        extraction.max_attributes,
+        "websocket.frame.fin",
+        if metadata.fin { "true" } else { "false" },
+    );
+    push_unique_attribute(
+        &mut attributes,
+        extraction.max_attributes,
+        "websocket.frame.masked",
+        if metadata.masked { "true" } else { "false" },
+    );
+    push_unique_attribute(
+        &mut attributes,
+        extraction.max_attributes,
+        "websocket.frame.payload_length",
+        &metadata.payload_len.to_string(),
+    );
+    push_unique_attribute(
+        &mut attributes,
+        extraction.max_attributes,
+        "websocket.frame.capture_complete",
+        if metadata.capture_complete {
+            "true"
+        } else {
+            "false"
+        },
+    );
+    counters.websocket_frames += 1;
+    signals.push(build_observation(
+        host.clone(),
+        &stream.context,
+        ParsedRequestFrame {
+            protocol: ProtocolKind::Websocket,
+            operation: Some(metadata.opcode.name().to_string()),
+            status_code: None,
+            trace_id: None,
+            span_id: None,
+            warning: (!capture_complete).then(|| "truncated_websocket_frame".to_string()),
+            attributes,
+            websocket_upgrade: false,
+        },
+        observed_unix_nanos,
+        None,
+    ));
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn push_unique_attribute(
+    attributes: &mut Vec<TraceAttribute>,
+    max_attributes: usize,
+    key: &str,
+    value: &str,
+) {
+    if attributes.len() >= max_attributes || attributes.iter().any(|attribute| attribute.key == key)
+    {
+        return;
+    }
+    attributes.push(TraceAttribute {
+        key: key.to_string(),
+        value: value.to_string(),
+    });
 }
 
 /// Processes reassembled HTTP/2 frames for one direction. Requests are
@@ -1081,6 +1349,10 @@ fn handle_http2_frames(
             StreamFrame::Truncated { prefix, .. } => {
                 counters.truncated_frames += 1;
                 (prefix.as_slice(), true)
+            }
+            StreamFrame::ProtocolSwitch { .. } => {
+                counters.unparsed_frames += 1;
+                continue;
             }
         };
         // The client connection preface is not a frame.
@@ -1161,6 +1433,7 @@ fn handle_http2_frames(
                     Ok(parsed) => ParsedRequestFrame {
                         protocol: parsed.protocol,
                         operation: parsed.method,
+                        status_code: None,
                         trace_id: parsed
                             .trace_context
                             .as_ref()
@@ -1171,16 +1444,19 @@ fn handle_http2_frames(
                             .map(|context| context.span_id.clone()),
                         warning: parsed.warning,
                         attributes: parsed.attributes,
+                        websocket_upgrade: false,
                     },
                     Err(_) => {
                         counters.unparsed_frames += 1;
                         ParsedRequestFrame {
                             protocol: ProtocolKind::Http,
                             operation: None,
+                            status_code: None,
                             trace_id: None,
                             span_id: None,
                             warning: Some("unparsed_request_frame".to_string()),
                             attributes: Vec::new(),
+                            websocket_upgrade: false,
                         }
                     }
                 }
@@ -1188,6 +1464,7 @@ fn handle_http2_frames(
                 ParsedRequestFrame {
                     protocol: ProtocolKind::Http,
                     operation: None,
+                    status_code: None,
                     trace_id: None,
                     span_id: None,
                     warning: Some(
@@ -1199,6 +1476,7 @@ fn handle_http2_frames(
                         .to_string(),
                     ),
                     attributes: Vec::new(),
+                    websocket_upgrade: false,
                 }
             };
             if http2.streams.len() >= MAX_IN_FLIGHT_REQUESTS
@@ -1364,10 +1642,12 @@ fn placeholder_request(protocol: StreamProtocol, warning: &str) -> ParsedRequest
     ParsedRequestFrame {
         protocol: protocol_kind(protocol),
         operation: None,
+        status_code: None,
         trace_id: None,
         span_id: None,
         warning: Some(warning.to_string()),
         attributes: Vec::new(),
+        websocket_upgrade: false,
     }
 }
 
@@ -1376,6 +1656,7 @@ fn protocol_kind(protocol: StreamProtocol) -> ProtocolKind {
     match protocol {
         StreamProtocol::Http1 => ProtocolKind::Http,
         StreamProtocol::Http2 => ProtocolKind::Http,
+        StreamProtocol::WebSocket => ProtocolKind::Websocket,
         StreamProtocol::Kafka => ProtocolKind::Kafka,
         StreamProtocol::Mongodb => ProtocolKind::Mongodb,
         StreamProtocol::Mysql => ProtocolKind::Mysql,
@@ -1442,7 +1723,7 @@ fn build_observation(
             },
             service_name: Some(process.command.clone()),
             method: parsed.operation,
-            status_code: None,
+            status_code: parsed.status_code,
             process: Some(process),
             container,
             kubernetes: None,
@@ -1457,10 +1738,12 @@ fn build_observation(
 pub(crate) struct ParsedRequestFrame {
     protocol: ProtocolKind,
     operation: Option<String>,
+    status_code: Option<u16>,
     trace_id: Option<String>,
     span_id: Option<String>,
     warning: Option<String>,
     attributes: Vec<TraceAttribute>,
+    websocket_upgrade: bool,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -1470,10 +1753,95 @@ fn parse_request_frame(
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedRequestFrame, &'static str> {
     match protocol {
-        StreamProtocol::Http1 => parse_http_request(frame, config)
+        StreamProtocol::Http1 => parse_http1_request_frame(frame, config),
+        StreamProtocol::Http2 => Err("http2_handled_separately"),
+        StreamProtocol::WebSocket => Err("websocket_handled_separately"),
+        StreamProtocol::Kafka => parse_kafka_request(frame, config)
             .map(|parsed| ParsedRequestFrame {
                 protocol: parsed.protocol,
+                operation: parsed.operation,
+                status_code: None,
+                trace_id: None,
+                span_id: None,
+                warning: parsed.warning,
+                attributes: parsed.attributes,
+                websocket_upgrade: false,
+            })
+            .map_err(|_| "kafka_request"),
+        StreamProtocol::Mongodb => parse_mongodb_message(frame, config)
+            .map(|parsed| ParsedRequestFrame {
+                protocol: parsed.protocol,
+                operation: parsed.operation,
+                status_code: None,
+                trace_id: None,
+                span_id: None,
+                warning: parsed.warning,
+                attributes: parsed.attributes,
+                websocket_upgrade: false,
+            })
+            .map_err(|_| "mongodb_message"),
+        StreamProtocol::Mysql => parse_mysql_command(frame, config)
+            .map(|parsed| ParsedRequestFrame {
+                protocol: parsed.protocol,
+                operation: parsed.operation,
+                status_code: None,
+                trace_id: None,
+                span_id: None,
+                warning: parsed.warning,
+                attributes: parsed.attributes,
+                websocket_upgrade: false,
+            })
+            .map_err(|_| "mysql_command"),
+        StreamProtocol::Nats => parse_nats_command(frame, config)
+            .map(|parsed| ParsedRequestFrame {
+                protocol: parsed.protocol,
+                operation: parsed.operation,
+                status_code: None,
+                trace_id: None,
+                span_id: None,
+                warning: parsed.warning,
+                attributes: parsed.attributes,
+                websocket_upgrade: false,
+            })
+            .map_err(|_| "nats_command"),
+        StreamProtocol::Postgresql => parse_postgres_message(frame, config)
+            .map(|parsed| ParsedRequestFrame {
+                protocol: parsed.protocol,
+                operation: parsed.operation,
+                status_code: None,
+                trace_id: None,
+                span_id: None,
+                warning: parsed.warning,
+                attributes: parsed.attributes,
+                websocket_upgrade: false,
+            })
+            .map_err(|_| "postgres_message"),
+        StreamProtocol::Redis => parse_redis_command(frame, config)
+            .map(|parsed| ParsedRequestFrame {
+                protocol: parsed.protocol,
+                operation: parsed.command,
+                status_code: None,
+                trace_id: None,
+                span_id: None,
+                warning: parsed.warning,
+                attributes: parsed.attributes,
+                websocket_upgrade: false,
+            })
+            .map_err(|_| "redis_command"),
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn parse_http1_request_frame(
+    frame: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedRequestFrame, &'static str> {
+    match parse_grpc_web_request(frame, config) {
+        Ok(Some(parsed)) => {
+            return Ok(ParsedRequestFrame {
+                protocol: parsed.protocol,
                 operation: parsed.method,
+                status_code: None,
                 trace_id: parsed
                     .trace_context
                     .as_ref()
@@ -1484,76 +1852,63 @@ fn parse_request_frame(
                     .map(|context| context.span_id.clone()),
                 warning: parsed.warning,
                 attributes: parsed.attributes,
-            })
-            .map_err(|_| "http1_request"),
-        StreamProtocol::Http2 => Err("http2_handled_separately"),
-        StreamProtocol::Kafka => parse_kafka_request(frame, config)
-            .map(|parsed| ParsedRequestFrame {
-                protocol: parsed.protocol,
-                operation: parsed.operation,
-                trace_id: None,
-                span_id: None,
-                warning: parsed.warning,
-                attributes: parsed.attributes,
-            })
-            .map_err(|_| "kafka_request"),
-        StreamProtocol::Mongodb => parse_mongodb_message(frame, config)
-            .map(|parsed| ParsedRequestFrame {
-                protocol: parsed.protocol,
-                operation: parsed.operation,
-                trace_id: None,
-                span_id: None,
-                warning: parsed.warning,
-                attributes: parsed.attributes,
-            })
-            .map_err(|_| "mongodb_message"),
-        StreamProtocol::Mysql => parse_mysql_command(frame, config)
-            .map(|parsed| ParsedRequestFrame {
-                protocol: parsed.protocol,
-                operation: parsed.operation,
-                trace_id: None,
-                span_id: None,
-                warning: parsed.warning,
-                attributes: parsed.attributes,
-            })
-            .map_err(|_| "mysql_command"),
-        StreamProtocol::Nats => parse_nats_command(frame, config)
-            .map(|parsed| ParsedRequestFrame {
-                protocol: parsed.protocol,
-                operation: parsed.operation,
-                trace_id: None,
-                span_id: None,
-                warning: parsed.warning,
-                attributes: parsed.attributes,
-            })
-            .map_err(|_| "nats_command"),
-        StreamProtocol::Postgresql => parse_postgres_message(frame, config)
-            .map(|parsed| ParsedRequestFrame {
-                protocol: parsed.protocol,
-                operation: parsed.operation,
-                trace_id: None,
-                span_id: None,
-                warning: parsed.warning,
-                attributes: parsed.attributes,
-            })
-            .map_err(|_| "postgres_message"),
-        StreamProtocol::Redis => parse_redis_command(frame, config)
-            .map(|parsed| ParsedRequestFrame {
-                protocol: parsed.protocol,
-                operation: parsed.command,
-                trace_id: None,
-                span_id: None,
-                warning: parsed.warning,
-                attributes: parsed.attributes,
-            })
-            .map_err(|_| "redis_command"),
+                websocket_upgrade: false,
+            });
+        }
+        Ok(None) => {}
+        Err(_) => return Err("grpc_web_request"),
     }
+
+    let websocket_upgrade = is_websocket_upgrade_request(frame, config.max_header_bytes)
+        .map_err(|_| "websocket_upgrade_request")?;
+    let parsed = parse_http_request(frame, config).map_err(|_| "http1_request")?;
+    let mut attributes = parsed.attributes;
+    if websocket_upgrade {
+        push_unique_attribute(
+            &mut attributes,
+            config.max_attributes,
+            "network.protocol.name",
+            "websocket",
+        );
+        push_unique_attribute(
+            &mut attributes,
+            config.max_attributes,
+            "websocket.version",
+            "13",
+        );
+    }
+    Ok(ParsedRequestFrame {
+        protocol: if websocket_upgrade {
+            ProtocolKind::Websocket
+        } else {
+            parsed.protocol
+        },
+        operation: if websocket_upgrade {
+            Some("handshake".to_string())
+        } else {
+            parsed.method
+        },
+        status_code: None,
+        trace_id: parsed
+            .trace_context
+            .as_ref()
+            .map(|context| context.trace_id.clone()),
+        span_id: parsed
+            .trace_context
+            .as_ref()
+            .map(|context| context.span_id.clone()),
+        warning: parsed.warning,
+        attributes,
+        websocket_upgrade,
+    })
 }
 
 /// Uniform response summary derived from the per-protocol response parsers.
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedResponseFrame {
+    protocol: Option<ProtocolKind>,
+    signal_status_code: Option<u16>,
     status_code: Option<String>,
     error_type: Option<String>,
     attributes: Vec<TraceAttribute>,
@@ -1568,17 +1923,14 @@ fn parse_response_frame(
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedResponseFrame, &'static str> {
     match protocol {
-        StreamProtocol::Http1 => parse_http_response(frame, config)
-            .map(|parsed| ParsedResponseFrame {
-                status_code: Some(parsed.status_code.to_string()),
-                error_type: None,
-                attributes: parsed.attributes,
-            })
-            .map_err(|_| "http1_response"),
+        StreamProtocol::Http1 => parse_http1_response_frame(frame, config),
         StreamProtocol::Http2 => Err("http2_handled_separately"),
+        StreamProtocol::WebSocket => Err("websocket_handled_separately"),
         StreamProtocol::Kafka => {
             parse_kafka_response_for_api_key(kafka_api_key, kafka_api_version, frame, config)
                 .map(|parsed| ParsedResponseFrame {
+                    protocol: None,
+                    signal_status_code: None,
                     status_code: Some(parsed.status_code),
                     error_type: parsed.error_type,
                     attributes: parsed.attributes,
@@ -1587,6 +1939,8 @@ fn parse_response_frame(
         }
         StreamProtocol::Mongodb => parse_mongodb_response(frame, config)
             .map(|parsed| ParsedResponseFrame {
+                protocol: None,
+                signal_status_code: None,
                 status_code: Some(parsed.status_code),
                 error_type: parsed.error_type,
                 attributes: parsed.attributes,
@@ -1594,6 +1948,8 @@ fn parse_response_frame(
             .map_err(|_| "mongodb_response"),
         StreamProtocol::Mysql => parse_mysql_response(frame, config)
             .map(|parsed| ParsedResponseFrame {
+                protocol: None,
+                signal_status_code: None,
                 status_code: Some(parsed.status_code),
                 error_type: parsed.error_type,
                 attributes: parsed.attributes,
@@ -1602,6 +1958,8 @@ fn parse_response_frame(
         StreamProtocol::Nats => Err("nats_response_unmatched"),
         StreamProtocol::Postgresql => parse_postgres_response(frame, config)
             .map(|parsed| ParsedResponseFrame {
+                protocol: None,
+                signal_status_code: None,
                 status_code: Some(parsed.status_code),
                 error_type: parsed.error_type,
                 attributes: parsed.attributes,
@@ -1609,12 +1967,43 @@ fn parse_response_frame(
             .map_err(|_| "postgres_response"),
         StreamProtocol::Redis => parse_redis_response(frame, config)
             .map(|parsed| ParsedResponseFrame {
+                protocol: None,
+                signal_status_code: None,
                 status_code: parsed.status_code,
                 error_type: parsed.error_type,
                 attributes: parsed.attributes,
             })
             .map_err(|_| "redis_response"),
     }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn parse_http1_response_frame(
+    frame: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedResponseFrame, &'static str> {
+    match parse_grpc_web_response(frame, config) {
+        Ok(Some(parsed)) => {
+            return Ok(ParsedResponseFrame {
+                protocol: Some(parsed.protocol),
+                signal_status_code: Some(parsed.status_code),
+                status_code: Some(parsed.status_code.to_string()),
+                error_type: None,
+                attributes: parsed.attributes,
+            });
+        }
+        Ok(None) => {}
+        Err(_) => return Err("grpc_web_response"),
+    }
+    parse_http_response(frame, config)
+        .map(|parsed| ParsedResponseFrame {
+            protocol: None,
+            signal_status_code: Some(parsed.status_code),
+            status_code: Some(parsed.status_code.to_string()),
+            error_type: None,
+            attributes: parsed.attributes,
+        })
+        .map_err(|_| "http1_response")
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -2290,6 +2679,7 @@ mod platform {
                     reader_count,
                     super::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
                 );
+                let mut last_protocol_surface_counts = [0_u64; 4];
 
                 let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
@@ -2297,11 +2687,20 @@ mod platform {
                     }
 
                     signals.clear();
-                    match registry.handle_event(
+                    let result = registry.handle_event(
                         sample.as_bytes(),
                         super::now_unix_nanos(),
                         &mut signals,
-                    ) {
+                    );
+                    let protocol_surface_counts = registry.counters().protocol_surface_counts();
+                    let protocol_surface_deltas = std::array::from_fn(|index| {
+                        protocol_surface_counts[index]
+                            .saturating_sub(last_protocol_surface_counts[index])
+                    });
+                    last_protocol_surface_counts = protocol_surface_counts;
+                    decoder_telemetry
+                        .record_protocol_surface_counter_deltas(protocol_surface_deltas);
+                    match result {
                         Ok(()) => {
                             decoder_telemetry.record_decoded_sample();
                             for signal in signals.drain(..) {
@@ -2791,6 +3190,7 @@ mod tests {
             remote_addr_v6: [0; 16],
             local_addr_v6: [0; 16],
             timestamp_unix_nanos: 1_000,
+            connection_started_at_nanos: 100,
             payload_len: payload.len() as u32,
             payload_total_len: total_len,
             payload_offset: 0,
@@ -2820,6 +3220,18 @@ mod tests {
             Some("test-host".to_string()),
             std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
             &ProtocolSourceConfig::default(),
+        )
+    }
+
+    fn http_registry(port: u16) -> ProtocolStreamRegistry {
+        let config = ProtocolSourceConfig {
+            http1_ports: vec![port],
+            ..ProtocolSourceConfig::default()
+        };
+        ProtocolStreamRegistry::new(
+            Some("test-host".to_string()),
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
         )
     }
 
@@ -2931,6 +3343,167 @@ mod tests {
         let serialized = serde_json::to_string(&signals[0]).expect("signal serializes");
         assert!(!serialized.contains("secret-key"));
         assert!(!serialized.contains("hello"));
+    }
+
+    #[test]
+    fn websocket_upgrade_and_coalesced_frames_emit_metadata_only() {
+        let mut registry = http_registry(8080);
+        let request = b"GET /chat HTTP/1.1\r\nHost: example.test\r\nUpgrade: websocket\r\nConnection: keep-alive, Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(8080, request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let response = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
+        let server_frame = [0x81, 0x06, b's', b'e', b'c', b'r', b'e', b't'];
+        let mut response_and_frame = response.to_vec();
+        response_and_frame.extend_from_slice(&server_frame);
+        let signals = handle_at(
+            &mut registry,
+            &response_event(8080, &response_and_frame),
+            7_000,
+        );
+
+        assert_eq!(signals.len(), 2);
+        let handshake = observation(&signals[0]);
+        assert_eq!(handshake.protocol, ProtocolKind::Websocket);
+        assert_eq!(handshake.method.as_deref(), Some("handshake"));
+        assert_eq!(handshake.status_code, Some(101));
+        let frame = observation(&signals[1]);
+        assert_eq!(frame.protocol, ProtocolKind::Websocket);
+        assert_eq!(frame.method.as_deref(), Some("text"));
+        assert!(frame.attributes.iter().any(|attribute| {
+            attribute.key == "websocket.frame.payload_length" && attribute.value == "6"
+        }));
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        assert!(!serialized.contains("secret"));
+        assert_eq!(registry.counters().websocket_upgrades, 1);
+        assert_eq!(registry.counters().websocket_frames, 1);
+
+        let masked_client_frame = [0x89, 0x80, 1, 2, 3, 4];
+        let client_signals = handle_at(
+            &mut registry,
+            &raw_event(8080, &masked_client_frame, masked_client_frame.len() as u32),
+            8_000,
+        );
+        assert_eq!(client_signals.len(), 1);
+        assert_eq!(
+            observation(&client_signals[0]).method.as_deref(),
+            Some("ping")
+        );
+        assert_eq!(registry.counters().websocket_frames, 2);
+    }
+
+    #[test]
+    fn grpc_web_binary_request_matches_text_response_status() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        let mut registry = http_registry(8081);
+        let message = [
+            0, 0, 0, 0, 11, b's', b'e', b'c', b'r', b'e', b't', b'-', b'b', b'o', b'd', b'y',
+        ];
+        let mut request = format!(
+            "POST /demo.Echo/Call HTTP/1.1\r\nHost: example.test\r\nContent-Type: application/grpc-web+proto\r\nContent-Length: {}\r\n\r\n",
+            message.len()
+        )
+        .into_bytes();
+        request.extend_from_slice(&message);
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(8081, &request, request.len() as u32),
+                10_000,
+            )
+            .is_empty()
+        );
+
+        let trailer_payload = b"grpc-status: 0\r\n";
+        let mut response_body = vec![0, 0, 0, 0, 2, b'o', b'k', 0x80];
+        response_body.extend_from_slice(&(trailer_payload.len() as u32).to_be_bytes());
+        response_body.extend_from_slice(trailer_payload);
+        let encoded = STANDARD.encode(response_body);
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/grpc-web-text+proto\r\nContent-Length: {}\r\n\r\n",
+            encoded.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(encoded.as_bytes());
+        let signals = handle_at(&mut registry, &response_event(8081, &response), 12_500);
+
+        assert_eq!(signals.len(), 1);
+        let rpc = observation(&signals[0]);
+        assert_eq!(rpc.protocol, ProtocolKind::Grpc);
+        assert_eq!(rpc.method.as_deref(), Some("Call"));
+        assert_eq!(rpc.status_code, Some(0));
+        assert_eq!(rpc.duration_nanos, Some(2_500));
+        assert!(rpc.attributes.iter().any(|attribute| {
+            attribute.key == "rpc.grpc.transport" && attribute.value == "grpc_web"
+        }));
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        assert!(!serialized.contains("secret-body"));
+        assert_eq!(registry.counters().grpc_web_requests, 1);
+    }
+
+    #[test]
+    fn connection_generation_prevents_websocket_state_leaking_across_fd_reuse() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        let mut registry = http_registry(8082);
+        let websocket_request = b"GET /websocket-proof HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(8082, websocket_request, websocket_request.len() as u32),
+                1_000,
+            )
+            .is_empty()
+        );
+        let websocket_response = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
+        assert_eq!(
+            handle_at(
+                &mut registry,
+                &response_event(8082, websocket_response),
+                2_000,
+            )
+            .len(),
+            1
+        );
+
+        let message = b"\x00\x00\x00\x00\x12client-secret-blue";
+        let mut request = format!(
+            "POST /proof.Echo/Call HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/grpc-web+proto\r\nContent-Length: {}\r\n\r\n",
+            message.len()
+        )
+        .into_bytes();
+        request.extend_from_slice(message);
+        let mut request_event = raw_event(8082, &request, request.len() as u32);
+        request_event.connection_started_at_nanos = 200;
+        assert!(handle_at(&mut registry, &request_event, 3_000).is_empty());
+
+        let trailer = b"grpc-status: 0\r\n";
+        let mut body = vec![0, 0, 0, 0, 2, b'o', b'k', 0x80];
+        body.extend_from_slice(&(trailer.len() as u32).to_be_bytes());
+        body.extend_from_slice(trailer);
+        let encoded = STANDARD.encode(body);
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/grpc-web-text+proto\r\nContent-Length: {}\r\n\r\n",
+            encoded.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(encoded.as_bytes());
+        let mut response_event = response_event(8082, &response);
+        response_event.connection_started_at_nanos = 200;
+        let signals = handle_at(&mut registry, &response_event, 4_000);
+
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).protocol, ProtocolKind::Grpc);
+        assert_eq!(observation(&signals[0]).status_code, Some(0));
+        assert_eq!(registry.counters().evicted_connections, 1);
+        assert_eq!(registry.counters().grpc_web_requests, 1);
     }
 
     #[test]

@@ -1,0 +1,618 @@
+{
+  "aggregate": {
+    "correctness_gate_passed": true,
+    "none": {
+      "agent_total_cpu_m_run_means": {
+        "max": null,
+        "mean": null,
+        "p95": null,
+        "samples": 0,
+        "stdev": null
+      },
+      "agent_total_memory_mib_run_means": {
+        "max": null,
+        "mean": null,
+        "p95": null,
+        "samples": 0,
+        "stdev": null
+      },
+      "iteration_latency_p95_ms": {
+        "max": 0.871696,
+        "mean": 0.85809,
+        "p95": 0.871696,
+        "samples": 3,
+        "stdev": 0.018113
+      },
+      "operations_per_second": {
+        "max": 19.864421,
+        "mean": 19.862091,
+        "p95": 19.864421,
+        "samples": 3,
+        "stdev": 0.002021
+      },
+      "runs": 3
+    },
+    "protocol": {
+      "agent_total_cpu_m_run_means": {
+        "max": 53.875,
+        "mean": 39.386905,
+        "p95": 53.875,
+        "samples": 3,
+        "stdev": 13.970088
+      },
+      "agent_total_memory_mib_run_means": {
+        "max": 23.5,
+        "mean": 23.345238,
+        "p95": 23.5,
+        "samples": 3,
+        "stdev": 0.135212
+      },
+      "iteration_latency_p95_ms": {
+        "max": 0.964524,
+        "mean": 0.938343,
+        "p95": 0.964524,
+        "samples": 3,
+        "stdev": 0.022766
+      },
+      "operations_per_second": {
+        "max": 19.857804,
+        "mean": 19.85229,
+        "p95": 19.857804,
+        "samples": 3,
+        "stdev": 0.006286
+      },
+      "runs": 3
+    },
+    "protocol_vs_no_agent_operations_delta_percent": -0.049345
+  },
+  "results_root": "benchmarks/results/protocol-surface-proof",
+  "runs": [
+    {
+      "agent_pods": [],
+      "mode": "none",
+      "pod_resources": {
+        "agent_samples": 0,
+        "agent_total_cpu_m": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "agent_total_memory_mib": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "workload_cpu_m": {
+          "max": 5.0,
+          "mean": 5.0,
+          "p95": 5.0,
+          "samples": 3,
+          "stdev": 0.0
+        },
+        "workload_memory_mib": {
+          "max": 23.0,
+          "mean": 23.0,
+          "p95": 23.0,
+          "samples": 3,
+          "stdev": 0.0
+        }
+      },
+      "protocol_evidence": null,
+      "repetition": 1,
+      "workload": {
+        "discovery_wait_seconds": 10,
+        "duration_seconds": 30,
+        "elapsed_seconds": 30.008494,
+        "failures": 0,
+        "grpc_web_successes": 298,
+        "http3_alpn": "h3",
+        "http3_successes": 3,
+        "iteration_latency_ms": {
+          "p50": 0.57428,
+          "p95": 0.837531,
+          "p99": 0.957459
+        },
+        "operations_per_second": 19.861043,
+        "round_pause_milliseconds": 100,
+        "schema": "e-navigator.protocol-surface-workload.v1",
+        "server_failures": [],
+        "websocket_successes": 298
+      }
+    },
+    {
+      "agent_pods": [],
+      "mode": "none",
+      "pod_resources": {
+        "agent_samples": 0,
+        "agent_total_cpu_m": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "agent_total_memory_mib": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "workload_cpu_m": {
+          "max": 7.0,
+          "mean": 5.0,
+          "p95": 7.0,
+          "samples": 4,
+          "stdev": 2.309401
+        },
+        "workload_memory_mib": {
+          "max": 23.0,
+          "mean": 23.0,
+          "p95": 23.0,
+          "samples": 4,
+          "stdev": 0.0
+        }
+      },
+      "protocol_evidence": null,
+      "repetition": 2,
+      "workload": {
+        "discovery_wait_seconds": 10,
+        "duration_seconds": 30,
+        "elapsed_seconds": 30.003391,
+        "failures": 0,
+        "grpc_web_successes": 298,
+        "http3_alpn": "h3",
+        "http3_successes": 3,
+        "iteration_latency_ms": {
+          "p50": 0.5627,
+          "p95": 0.865044,
+          "p99": 1.051009
+        },
+        "operations_per_second": 19.864421,
+        "round_pause_milliseconds": 100,
+        "schema": "e-navigator.protocol-surface-workload.v1",
+        "server_failures": [],
+        "websocket_successes": 298
+      }
+    },
+    {
+      "agent_pods": [],
+      "mode": "none",
+      "pod_resources": {
+        "agent_samples": 0,
+        "agent_total_cpu_m": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "agent_total_memory_mib": {
+          "max": null,
+          "mean": null,
+          "p95": null,
+          "samples": 0,
+          "stdev": null
+        },
+        "workload_cpu_m": {
+          "max": 22.0,
+          "mean": 16.0,
+          "p95": 22.0,
+          "samples": 5,
+          "stdev": 8.215838
+        },
+        "workload_memory_mib": {
+          "max": 23.0,
+          "mean": 23.0,
+          "p95": 23.0,
+          "samples": 5,
+          "stdev": 0.0
+        }
+      },
+      "protocol_evidence": null,
+      "repetition": 3,
+      "workload": {
+        "discovery_wait_seconds": 10,
+        "duration_seconds": 30,
+        "elapsed_seconds": 30.008847,
+        "failures": 0,
+        "grpc_web_successes": 298,
+        "http3_alpn": "h3",
+        "http3_successes": 3,
+        "iteration_latency_ms": {
+          "p50": 0.558009,
+          "p95": 0.871696,
+          "p99": 1.635006
+        },
+        "operations_per_second": 19.860809,
+        "round_pause_milliseconds": 100,
+        "schema": "e-navigator.protocol-surface-workload.v1",
+        "server_failures": [],
+        "websocket_successes": 298
+      }
+    },
+    {
+      "agent_pods": [
+        "e-navigator-bench-4bh2t",
+        "e-navigator-bench-btf8w"
+      ],
+      "mode": "protocol",
+      "pod_resources": {
+        "agent_samples": 6,
+        "agent_total_cpu_m": {
+          "max": 39.0,
+          "mean": 26.0,
+          "p95": 39.0,
+          "samples": 6,
+          "stdev": 14.240786
+        },
+        "agent_total_memory_mib": {
+          "max": 24.0,
+          "mean": 23.5,
+          "p95": 24.0,
+          "samples": 6,
+          "stdev": 0.547723
+        },
+        "workload_cpu_m": {
+          "max": 6.0,
+          "mean": 6.0,
+          "p95": 6.0,
+          "samples": 3,
+          "stdev": 0.0
+        },
+        "workload_memory_mib": {
+          "max": 23.0,
+          "mean": 23.0,
+          "p95": 23.0,
+          "samples": 3,
+          "stdev": 0.0
+        }
+      },
+      "protocol_evidence": {
+        "grpc_status_zero_observations": 298,
+        "grpc_web_observations": 298,
+        "http3_semantic_observations": 0,
+        "metric_files": [
+          "prometheus-http-metrics-e-navigator-bench-4bh2t.txt",
+          "prometheus-http-metrics-e-navigator-bench-btf8w.txt"
+        ],
+        "metrics": {
+          "e_navigator_ebpf_source_decoded_samples_total": 1490,
+          "e_navigator_ebpf_source_diagnostic_exhausted_total": 0,
+          "e_navigator_ebpf_source_diagnostic_filtered_total": 0,
+          "e_navigator_ebpf_source_diagnostic_matches_total": 0,
+          "e_navigator_ebpf_source_event_transport": 2,
+          "e_navigator_ebpf_source_filtered_samples_total": 0,
+          "e_navigator_ebpf_source_go_tls_entries_total": 0,
+          "e_navigator_ebpf_source_go_tls_exits_total": 0,
+          "e_navigator_ebpf_source_go_tls_fd_resolution_failures_total": 0,
+          "e_navigator_ebpf_source_go_tls_fd_resolutions_total": 0,
+          "e_navigator_ebpf_source_go_tls_layout_misses_total": 0,
+          "e_navigator_ebpf_source_go_tls_output_attempts_total": 0,
+          "e_navigator_ebpf_source_go_tls_pending_misses_total": 0,
+          "e_navigator_ebpf_source_go_tls_state_replacements_total": 0,
+          "e_navigator_ebpf_source_go_tls_state_update_failures_total": 0,
+          "e_navigator_ebpf_source_initialized": 2,
+          "e_navigator_ebpf_source_invalid_samples_total": 0,
+          "e_navigator_ebpf_source_lost_perf_events_total": 0,
+          "e_navigator_ebpf_source_lost_transport_events_total": 0,
+          "e_navigator_ebpf_source_optional_attachment_failures_total": 0,
+          "e_navigator_ebpf_source_optional_capacity_rejections_total": 0,
+          "e_navigator_ebpf_source_optional_probe_attachments_total": 0,
+          "e_navigator_ebpf_source_optional_rescans_total": 0,
+          "e_navigator_ebpf_source_optional_targets_discovered_total": 0,
+          "e_navigator_ebpf_source_optional_targets_ready_total": 0,
+          "e_navigator_ebpf_source_optional_targets_unsupported_total": 0,
+          "e_navigator_ebpf_source_profile_below_min_duration_total": 0,
+          "e_navigator_ebpf_source_profile_capture_failures_total": 0,
+          "e_navigator_ebpf_source_profile_events_total": 0,
+          "e_navigator_ebpf_source_profile_output_attempts_total": 0,
+          "e_navigator_ebpf_source_profile_pending_misses_total": 0,
+          "e_navigator_ebpf_source_profile_rate_limited_total": 0,
+          "e_navigator_ebpf_source_profile_state_replacements_total": 0,
+          "e_navigator_ebpf_source_protocol_grpc_web_requests_total": 298,
+          "e_navigator_ebpf_source_protocol_websocket_frames_total": 596,
+          "e_navigator_ebpf_source_protocol_websocket_transition_rejections_total": 0,
+          "e_navigator_ebpf_source_protocol_websocket_upgrades_total": 298,
+          "e_navigator_ebpf_source_ring_buffer_reservation_failures_total": 0,
+          "e_navigator_ebpf_source_send_failures_total": 0,
+          "e_navigator_ebpf_source_sent_signals_total": 1192
+        },
+        "native_grpc_web_requests": 298,
+        "native_websocket_frames": 596,
+        "native_websocket_transition_rejections": 0,
+        "native_websocket_upgrades": 298,
+        "observed_methods": [
+          "Call",
+          "handshake",
+          "ping",
+          "text"
+        ],
+        "observed_namespaces": [
+          "e-navigator-bench"
+        ],
+        "websocket_frames": 596,
+        "websocket_handshakes": 298,
+        "websocket_observations": 894,
+        "zero_transport_loss": true
+      },
+      "repetition": 1,
+      "workload": {
+        "discovery_wait_seconds": 10,
+        "duration_seconds": 30,
+        "elapsed_seconds": 30.032081,
+        "failures": 0,
+        "grpc_web_successes": 298,
+        "http3_alpn": "h3",
+        "http3_successes": 3,
+        "iteration_latency_ms": {
+          "p50": 0.653945,
+          "p95": 0.964524,
+          "p99": 1.09536
+        },
+        "operations_per_second": 19.845445,
+        "round_pause_milliseconds": 100,
+        "schema": "e-navigator.protocol-surface-workload.v1",
+        "server_failures": [],
+        "websocket_successes": 298
+      }
+    },
+    {
+      "agent_pods": [
+        "e-navigator-bench-4tth2",
+        "e-navigator-bench-cr6nk"
+      ],
+      "mode": "protocol",
+      "pod_resources": {
+        "agent_samples": 8,
+        "agent_total_cpu_m": {
+          "max": 92.0,
+          "mean": 53.875,
+          "p95": 92.0,
+          "samples": 8,
+          "stdev": 33.926128
+        },
+        "agent_total_memory_mib": {
+          "max": 24.0,
+          "mean": 23.25,
+          "p95": 24.0,
+          "samples": 8,
+          "stdev": 0.46291
+        },
+        "workload_cpu_m": {
+          "max": 26.0,
+          "mean": 18.8,
+          "p95": 26.0,
+          "samples": 5,
+          "stdev": 9.859006
+        },
+        "workload_memory_mib": {
+          "max": 23.0,
+          "mean": 23.0,
+          "p95": 23.0,
+          "samples": 5,
+          "stdev": 0.0
+        }
+      },
+      "protocol_evidence": {
+        "grpc_status_zero_observations": 298,
+        "grpc_web_observations": 298,
+        "http3_semantic_observations": 0,
+        "metric_files": [
+          "prometheus-http-metrics-e-navigator-bench-4tth2.txt",
+          "prometheus-http-metrics-e-navigator-bench-cr6nk.txt"
+        ],
+        "metrics": {
+          "e_navigator_ebpf_source_decoded_samples_total": 1490,
+          "e_navigator_ebpf_source_diagnostic_exhausted_total": 0,
+          "e_navigator_ebpf_source_diagnostic_filtered_total": 0,
+          "e_navigator_ebpf_source_diagnostic_matches_total": 0,
+          "e_navigator_ebpf_source_event_transport": 2,
+          "e_navigator_ebpf_source_filtered_samples_total": 0,
+          "e_navigator_ebpf_source_go_tls_entries_total": 0,
+          "e_navigator_ebpf_source_go_tls_exits_total": 0,
+          "e_navigator_ebpf_source_go_tls_fd_resolution_failures_total": 0,
+          "e_navigator_ebpf_source_go_tls_fd_resolutions_total": 0,
+          "e_navigator_ebpf_source_go_tls_layout_misses_total": 0,
+          "e_navigator_ebpf_source_go_tls_output_attempts_total": 0,
+          "e_navigator_ebpf_source_go_tls_pending_misses_total": 0,
+          "e_navigator_ebpf_source_go_tls_state_replacements_total": 0,
+          "e_navigator_ebpf_source_go_tls_state_update_failures_total": 0,
+          "e_navigator_ebpf_source_initialized": 2,
+          "e_navigator_ebpf_source_invalid_samples_total": 0,
+          "e_navigator_ebpf_source_lost_perf_events_total": 0,
+          "e_navigator_ebpf_source_lost_transport_events_total": 0,
+          "e_navigator_ebpf_source_optional_attachment_failures_total": 0,
+          "e_navigator_ebpf_source_optional_capacity_rejections_total": 0,
+          "e_navigator_ebpf_source_optional_probe_attachments_total": 0,
+          "e_navigator_ebpf_source_optional_rescans_total": 0,
+          "e_navigator_ebpf_source_optional_targets_discovered_total": 0,
+          "e_navigator_ebpf_source_optional_targets_ready_total": 0,
+          "e_navigator_ebpf_source_optional_targets_unsupported_total": 0,
+          "e_navigator_ebpf_source_profile_below_min_duration_total": 0,
+          "e_navigator_ebpf_source_profile_capture_failures_total": 0,
+          "e_navigator_ebpf_source_profile_events_total": 0,
+          "e_navigator_ebpf_source_profile_output_attempts_total": 0,
+          "e_navigator_ebpf_source_profile_pending_misses_total": 0,
+          "e_navigator_ebpf_source_profile_rate_limited_total": 0,
+          "e_navigator_ebpf_source_profile_state_replacements_total": 0,
+          "e_navigator_ebpf_source_protocol_grpc_web_requests_total": 298,
+          "e_navigator_ebpf_source_protocol_websocket_frames_total": 596,
+          "e_navigator_ebpf_source_protocol_websocket_transition_rejections_total": 0,
+          "e_navigator_ebpf_source_protocol_websocket_upgrades_total": 298,
+          "e_navigator_ebpf_source_ring_buffer_reservation_failures_total": 0,
+          "e_navigator_ebpf_source_send_failures_total": 0,
+          "e_navigator_ebpf_source_sent_signals_total": 1192
+        },
+        "native_grpc_web_requests": 298,
+        "native_websocket_frames": 596,
+        "native_websocket_transition_rejections": 0,
+        "native_websocket_upgrades": 298,
+        "observed_methods": [
+          "Call",
+          "handshake",
+          "ping",
+          "text"
+        ],
+        "observed_namespaces": [
+          "e-navigator-bench"
+        ],
+        "websocket_frames": 596,
+        "websocket_handshakes": 298,
+        "websocket_observations": 894,
+        "zero_transport_loss": true
+      },
+      "repetition": 2,
+      "workload": {
+        "discovery_wait_seconds": 10,
+        "duration_seconds": 30,
+        "elapsed_seconds": 30.013389,
+        "failures": 0,
+        "grpc_web_successes": 298,
+        "http3_alpn": "h3",
+        "http3_successes": 3,
+        "iteration_latency_ms": {
+          "p50": 0.576682,
+          "p95": 0.923203,
+          "p99": 1.002194
+        },
+        "operations_per_second": 19.857804,
+        "round_pause_milliseconds": 100,
+        "schema": "e-navigator.protocol-surface-workload.v1",
+        "server_failures": [],
+        "websocket_successes": 298
+      }
+    },
+    {
+      "agent_pods": [
+        "e-navigator-bench-22rvj",
+        "e-navigator-bench-fkvqz"
+      ],
+      "mode": "protocol",
+      "pod_resources": {
+        "agent_samples": 7,
+        "agent_total_cpu_m": {
+          "max": 72.0,
+          "mean": 38.285714,
+          "p95": 72.0,
+          "samples": 7,
+          "stdev": 31.547394
+        },
+        "agent_total_memory_mib": {
+          "max": 24.0,
+          "mean": 23.285714,
+          "p95": 24.0,
+          "samples": 7,
+          "stdev": 0.48795
+        },
+        "workload_cpu_m": {
+          "max": 25.0,
+          "mean": 25.0,
+          "p95": 25.0,
+          "samples": 4,
+          "stdev": 0.0
+        },
+        "workload_memory_mib": {
+          "max": 23.0,
+          "mean": 23.0,
+          "p95": 23.0,
+          "samples": 4,
+          "stdev": 0.0
+        }
+      },
+      "protocol_evidence": {
+        "grpc_status_zero_observations": 298,
+        "grpc_web_observations": 298,
+        "http3_semantic_observations": 0,
+        "metric_files": [
+          "prometheus-http-metrics-e-navigator-bench-22rvj.txt",
+          "prometheus-http-metrics-e-navigator-bench-fkvqz.txt"
+        ],
+        "metrics": {
+          "e_navigator_ebpf_source_decoded_samples_total": 1490,
+          "e_navigator_ebpf_source_diagnostic_exhausted_total": 0,
+          "e_navigator_ebpf_source_diagnostic_filtered_total": 0,
+          "e_navigator_ebpf_source_diagnostic_matches_total": 0,
+          "e_navigator_ebpf_source_event_transport": 2,
+          "e_navigator_ebpf_source_filtered_samples_total": 0,
+          "e_navigator_ebpf_source_go_tls_entries_total": 0,
+          "e_navigator_ebpf_source_go_tls_exits_total": 0,
+          "e_navigator_ebpf_source_go_tls_fd_resolution_failures_total": 0,
+          "e_navigator_ebpf_source_go_tls_fd_resolutions_total": 0,
+          "e_navigator_ebpf_source_go_tls_layout_misses_total": 0,
+          "e_navigator_ebpf_source_go_tls_output_attempts_total": 0,
+          "e_navigator_ebpf_source_go_tls_pending_misses_total": 0,
+          "e_navigator_ebpf_source_go_tls_state_replacements_total": 0,
+          "e_navigator_ebpf_source_go_tls_state_update_failures_total": 0,
+          "e_navigator_ebpf_source_initialized": 2,
+          "e_navigator_ebpf_source_invalid_samples_total": 0,
+          "e_navigator_ebpf_source_lost_perf_events_total": 0,
+          "e_navigator_ebpf_source_lost_transport_events_total": 0,
+          "e_navigator_ebpf_source_optional_attachment_failures_total": 0,
+          "e_navigator_ebpf_source_optional_capacity_rejections_total": 0,
+          "e_navigator_ebpf_source_optional_probe_attachments_total": 0,
+          "e_navigator_ebpf_source_optional_rescans_total": 0,
+          "e_navigator_ebpf_source_optional_targets_discovered_total": 0,
+          "e_navigator_ebpf_source_optional_targets_ready_total": 0,
+          "e_navigator_ebpf_source_optional_targets_unsupported_total": 0,
+          "e_navigator_ebpf_source_profile_below_min_duration_total": 0,
+          "e_navigator_ebpf_source_profile_capture_failures_total": 0,
+          "e_navigator_ebpf_source_profile_events_total": 0,
+          "e_navigator_ebpf_source_profile_output_attempts_total": 0,
+          "e_navigator_ebpf_source_profile_pending_misses_total": 0,
+          "e_navigator_ebpf_source_profile_rate_limited_total": 0,
+          "e_navigator_ebpf_source_profile_state_replacements_total": 0,
+          "e_navigator_ebpf_source_protocol_grpc_web_requests_total": 298,
+          "e_navigator_ebpf_source_protocol_websocket_frames_total": 596,
+          "e_navigator_ebpf_source_protocol_websocket_transition_rejections_total": 0,
+          "e_navigator_ebpf_source_protocol_websocket_upgrades_total": 298,
+          "e_navigator_ebpf_source_ring_buffer_reservation_failures_total": 0,
+          "e_navigator_ebpf_source_send_failures_total": 0,
+          "e_navigator_ebpf_source_sent_signals_total": 1192
+        },
+        "native_grpc_web_requests": 298,
+        "native_websocket_frames": 596,
+        "native_websocket_transition_rejections": 0,
+        "native_websocket_upgrades": 298,
+        "observed_methods": [
+          "Call",
+          "handshake",
+          "ping",
+          "text"
+        ],
+        "observed_namespaces": [
+          "e-navigator-bench"
+        ],
+        "websocket_frames": 596,
+        "websocket_handshakes": 298,
+        "websocket_observations": 894,
+        "zero_transport_loss": true
+      },
+      "repetition": 3,
+      "workload": {
+        "discovery_wait_seconds": 10,
+        "duration_seconds": 30,
+        "elapsed_seconds": 30.019711,
+        "failures": 0,
+        "grpc_web_successes": 298,
+        "http3_alpn": "h3",
+        "http3_successes": 3,
+        "iteration_latency_ms": {
+          "p50": 0.625128,
+          "p95": 0.927303,
+          "p99": 1.067828
+        },
+        "operations_per_second": 19.853622,
+        "round_pause_milliseconds": 100,
+        "schema": "e-navigator.protocol-surface-workload.v1",
+        "server_failures": [],
+        "websocket_successes": 298
+      }
+    }
+  ],
+  "schema": "e-navigator.protocol-surface-analysis.v1"
+}

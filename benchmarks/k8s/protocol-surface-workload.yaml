@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: e-navigator-bench-workload
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/name: e-navigator-bench-workload
+    app.kubernetes.io/component: protocol-surface
+    app.kubernetes.io/part-of: e-navigator-validation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 240 # Replaced by the guarded collector.
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: e-navigator-bench-workload
+        app.kubernetes.io/component: protocol-surface
+        app.kubernetes.io/part-of: e-navigator-validation
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: homelab-01
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: protocol-surface
+          image: docker.io/library/e-navigator-protocol-surface:gap5-20260722
+          imagePullPolicy: Never
+          env:
+            - name: DURATION_SECONDS
+              value: "120" # Replaced by the guarded collector.
+            - name: ROUND_PAUSE_MILLISECONDS
+              value: "100"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi

@@ -55,4 +55,5 @@ anyhow = { workspace = true }
 aya-build = { workspace = true }
 
 [dev-dependencies]
+base64 = { workspace = true }
 proptest = { workspace = true }
