@@ -241,6 +241,17 @@ const TLS_DIAG_COPY_EMPTY: u32 = 7;
 const TLS_DIAG_OUTPUT_ATTEMPT: u32 = 8;
 const TLS_DIAG_SET_FD: u32 = 9;
 const TLS_DIAGNOSTIC_COUNTERS_LEN: u32 = 10;
+const GO_TLS_COUNTER_ENTRY: u32 = 0;
+const GO_TLS_COUNTER_EXIT: u32 = 1;
+const GO_TLS_COUNTER_LAYOUT_MISS: u32 = 2;
+const GO_TLS_COUNTER_PENDING_MISS: u32 = 3;
+const GO_TLS_COUNTER_STATE_UPDATE_FAILURE: u32 = 4;
+const GO_TLS_COUNTER_FD_RESOLVED: u32 = 5;
+const GO_TLS_COUNTER_FD_UNRESOLVED: u32 = 6;
+const GO_TLS_COUNTER_OUTPUT_ATTEMPT: u32 = 7;
+const GO_TLS_COUNTER_STATE_REPLACED: u32 = 8;
+const GO_TLS_COUNTERS_LEN: u32 = 9;
+const GO_TLS_MAX_FD: i64 = 1_048_575;
 const TRANSPORT_LOSS_EXEC: u32 = 0;
 const TRANSPORT_LOSS_EXIT: u32 = 1;
 const TRANSPORT_LOSS_NETWORK: u32 = 2;
@@ -478,6 +489,34 @@ pub struct PendingTlsIo {
     pub count_ptr: u64,
     pub direction: u32,
     pub reserved: u32,
+}
+
+/// Version-gated private Go runtime layout populated by userspace for each
+/// capture-ready process. Map absence disables Go ABI reads fail-closed.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GoTlsProcessLayout {
+    pub sysfd_offset: u32,
+    pub reserved: u32,
+}
+
+/// Goroutine identity, rather than OS thread identity, keeps entry/return
+/// correlation valid when the Go scheduler migrates work between threads.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GoTlsIoKey {
+    pub tgid: u32,
+    pub direction: u32,
+    pub goroutine: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PendingGoTlsIo {
+    pub buffer_ptr: u64,
+    pub requested_len: u64,
+    pub fd: i32,
+    pub direction: u32,
 }
 
 #[repr(C)]
@@ -813,6 +852,17 @@ static PENDING_TLS_SET_FD: HashMap<u64, PendingTlsSetFd> =
 #[map]
 static PENDING_TLS_IO: HashMap<u64, PendingTlsIo> =
     HashMap::with_max_entries(8192, HASH_MAP_NO_PREALLOC);
+
+#[map]
+static GO_TLS_PROCESS_LAYOUTS: LruHashMap<u32, GoTlsProcessLayout> =
+    LruHashMap::with_max_entries(4096, 0);
+
+#[map]
+static PENDING_GO_TLS_IO: LruHashMap<GoTlsIoKey, PendingGoTlsIo> =
+    LruHashMap::with_max_entries(8192, 0);
+
+#[map]
+static GO_TLS_COUNTERS: PerCpuArray<u64> = PerCpuArray::with_max_entries(GO_TLS_COUNTERS_LEN, 0);
 
 #[map]
 static TLS_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
@@ -1552,6 +1602,41 @@ pub fn uprobe_gnutls_transport_set_int2(ctx: ProbeContext) -> u32 {
 #[uprobe]
 pub fn uprobe_gnutls_deinit(ctx: ProbeContext) -> u32 {
     tls_remove_handle(&ctx)
+}
+
+// Go ABIInternal entry/return sites for crypto/tls.(*Conn).Read. Return sites
+// are ordinary uprobes attached to each decoded RET instruction because a Go
+// goroutine can migrate between OS threads while the call is in flight.
+#[uprobe]
+pub fn uprobe_go_tls_read_enter(ctx: ProbeContext) -> u32 {
+    go_tls_io_enter(&ctx, NETWORK_IO_READ)
+}
+
+#[uprobe]
+pub fn uprobe_go_tls_read_exit(ctx: ProbeContext) -> u32 {
+    go_tls_io_exit(&ctx, NETWORK_IO_READ)
+}
+
+#[uprobe]
+pub fn uprobe_go_tls_write_enter(ctx: ProbeContext) -> u32 {
+    go_tls_io_enter(&ctx, NETWORK_IO_WRITE)
+}
+
+#[uprobe]
+pub fn uprobe_go_tls_write_exit(ctx: ProbeContext) -> u32 {
+    go_tls_io_exit(&ctx, NETWORK_IO_WRITE)
+}
+
+// The nested netFD method exposes the concrete socket descriptor without
+// guessing the dynamic concrete type stored in tls.Conn's net.Conn interface.
+#[uprobe]
+pub fn uprobe_go_netfd_read_enter(ctx: ProbeContext) -> u32 {
+    go_tls_netfd_enter(&ctx, NETWORK_IO_READ)
+}
+
+#[uprobe]
+pub fn uprobe_go_netfd_write_enter(ctx: ProbeContext) -> u32 {
+    go_tls_netfd_enter(&ctx, NETWORK_IO_WRITE)
 }
 
 fn try_tracepoint_execve(ctx: TracePointContext) -> Result<u32, i64> {
@@ -2444,6 +2529,161 @@ fn record_tls_diagnostic(stage: u32) {
 }
 
 #[inline(always)]
+fn record_go_tls_counter(stage: u32) {
+    if let Some(counter) = GO_TLS_COUNTERS.get_ptr_mut(stage) {
+        unsafe {
+            *counter = (*counter).wrapping_add(1);
+        }
+    }
+}
+
+#[cfg(bpf_target_arch = "x86_64")]
+#[inline(always)]
+fn go_abi_registers(ctx: &ProbeContext) -> Option<(u64, u64, u64, u64)> {
+    if ctx.regs.is_null() {
+        return None;
+    }
+    // SAFETY: Aya passes the kernel-owned `pt_regs` context for this uprobe.
+    // The x86_64 binding is a C-layout register frame; no userspace pointer is
+    // dereferenced here. R14 is Go's fixed goroutine register and RAX/RBX/RCX
+    // are the first three ABIInternal integer argument/result registers.
+    let regs = unsafe { &*ctx.regs };
+    Some((regs.r14, regs.rax, regs.rbx, regs.rcx))
+}
+
+#[cfg(not(bpf_target_arch = "x86_64"))]
+#[inline(always)]
+fn go_abi_registers(ctx: &ProbeContext) -> Option<(u64, u64, u64, u64)> {
+    let _ = ctx;
+    None
+}
+
+#[inline(always)]
+fn go_tls_key(tgid: u32, direction: u32, goroutine: u64) -> GoTlsIoKey {
+    GoTlsIoKey {
+        tgid,
+        direction,
+        goroutine,
+    }
+}
+
+fn go_tls_io_enter(ctx: &ProbeContext, direction: u32) -> u32 {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let tgid = (pid_tgid >> 32) as u32;
+    if unsafe { GO_TLS_PROCESS_LAYOUTS.get(&tgid) }.is_none() {
+        record_go_tls_counter(GO_TLS_COUNTER_LAYOUT_MISS);
+        return 0;
+    }
+    let Some((goroutine, _receiver, buffer, requested_len)) = go_abi_registers(ctx) else {
+        record_go_tls_counter(GO_TLS_COUNTER_LAYOUT_MISS);
+        return 0;
+    };
+    if goroutine == 0 || buffer == 0 || requested_len == 0 {
+        return 0;
+    }
+    record_go_tls_counter(GO_TLS_COUNTER_ENTRY);
+    let key = go_tls_key(tgid, direction, goroutine);
+    if unsafe { PENDING_GO_TLS_IO.get(&key) }.is_some() {
+        record_go_tls_counter(GO_TLS_COUNTER_STATE_REPLACED);
+    }
+    let pending = PendingGoTlsIo {
+        buffer_ptr: buffer,
+        requested_len,
+        fd: -1,
+        direction,
+    };
+    if PENDING_GO_TLS_IO.insert(&key, &pending, 0).is_err() {
+        record_go_tls_counter(GO_TLS_COUNTER_STATE_UPDATE_FAILURE);
+    }
+    0
+}
+
+fn go_tls_netfd_enter(ctx: &ProbeContext, direction: u32) -> u32 {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let tgid = (pid_tgid >> 32) as u32;
+    let Some((goroutine, netfd, _buffer, _len)) = go_abi_registers(ctx) else {
+        return 0;
+    };
+    if goroutine == 0 || netfd == 0 {
+        return 0;
+    }
+    let key = go_tls_key(tgid, direction, goroutine);
+    let mut pending = match unsafe { PENDING_GO_TLS_IO.get(&key) } {
+        Some(value) => *value,
+        None => return 0,
+    };
+    if pending.fd >= 0 {
+        return 0;
+    }
+    let layout = match unsafe { GO_TLS_PROCESS_LAYOUTS.get(&tgid) } {
+        Some(value) => *value,
+        None => {
+            record_go_tls_counter(GO_TLS_COUNTER_LAYOUT_MISS);
+            return 0;
+        }
+    };
+    let sysfd_address = netfd.wrapping_add(u64::from(layout.sysfd_offset));
+    let fd = match unsafe { bpf_probe_read_user::<i64>(sysfd_address as *const i64) } {
+        Ok(value) if (0..=GO_TLS_MAX_FD).contains(&value) => value as i32,
+        _ => {
+            record_go_tls_counter(GO_TLS_COUNTER_FD_UNRESOLVED);
+            return 0;
+        }
+    };
+    if tls_connection_for_fd(fd).is_none() {
+        record_go_tls_counter(GO_TLS_COUNTER_FD_UNRESOLVED);
+        return 0;
+    }
+    pending.fd = fd;
+    if PENDING_GO_TLS_IO.insert(&key, &pending, 0).is_err() {
+        record_go_tls_counter(GO_TLS_COUNTER_STATE_UPDATE_FAILURE);
+        return 0;
+    }
+    record_go_tls_counter(GO_TLS_COUNTER_FD_RESOLVED);
+    0
+}
+
+fn go_tls_io_exit(ctx: &ProbeContext, direction: u32) -> u32 {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let tgid = (pid_tgid >> 32) as u32;
+    let Some((goroutine, returned_len, _error_type, _error_data)) = go_abi_registers(ctx) else {
+        return 0;
+    };
+    let key = go_tls_key(tgid, direction, goroutine);
+    let pending = match unsafe { PENDING_GO_TLS_IO.get(&key) } {
+        Some(value) => *value,
+        None => {
+            record_go_tls_counter(GO_TLS_COUNTER_PENDING_MISS);
+            return 0;
+        }
+    };
+    PENDING_GO_TLS_IO.remove(&key).ok();
+    record_go_tls_counter(GO_TLS_COUNTER_EXIT);
+    if pending.direction != direction
+        || pending.fd < 0
+        || returned_len == 0
+        || returned_len as i64 <= 0
+    {
+        if pending.fd < 0 {
+            record_go_tls_counter(GO_TLS_COUNTER_FD_UNRESOLVED);
+        }
+        return 0;
+    }
+    let length = returned_len.min(pending.requested_len);
+    match emit_tls_data_for_fd(
+        ctx,
+        pending.fd,
+        direction,
+        pending.buffer_ptr as *const u8,
+        length,
+        true,
+    ) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[inline(always)]
 fn tls_capture_limit() -> u32 {
     let configured = TLS_CAPTURE_LIMIT
         .get(0)
@@ -2689,6 +2929,12 @@ fn tls_connection_for_handle(handle: u64, direction: u32) -> Option<PendingConne
         record_tls_diagnostic(TLS_DIAG_FD_UNRESOLVED);
         return None;
     }
+    tls_connection_for_fd(fd)
+}
+
+fn tls_connection_for_fd(fd: i32) -> Option<PendingConnect> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let tgid = (pid_tgid >> 32) as u32;
     let key = ConnectionKey { tgid, fd };
     let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
         Some(value) => *value,
@@ -2714,8 +2960,8 @@ fn tls_connection_for_handle(handle: u64, direction: u32) -> Option<PendingConne
 }
 
 #[inline(always)]
-fn emit_tls_data(
-    ctx: &RetProbeContext,
+fn emit_tls_data<C: EbpfContext>(
+    ctx: &C,
     handle: u64,
     direction: u32,
     buffer: *const u8,
@@ -2725,7 +2971,34 @@ fn emit_tls_data(
         Some(value) => value,
         None => return Ok(0),
     };
+    emit_tls_data_for_connection(ctx, connection, direction, buffer, len, false)
+}
 
+#[inline(always)]
+fn emit_tls_data_for_fd<C: EbpfContext>(
+    ctx: &C,
+    fd: i32,
+    direction: u32,
+    buffer: *const u8,
+    len: u64,
+    go_tls: bool,
+) -> Result<u32, i64> {
+    let connection = match tls_connection_for_fd(fd) {
+        Some(value) => value,
+        None => return Ok(0),
+    };
+    emit_tls_data_for_connection(ctx, connection, direction, buffer, len, go_tls)
+}
+
+#[inline(always)]
+fn emit_tls_data_for_connection<C: EbpfContext>(
+    ctx: &C,
+    connection: PendingConnect,
+    direction: u32,
+    buffer: *const u8,
+    len: u64,
+    go_tls: bool,
+) -> Result<u32, i64> {
     let event = tls_data_event_scratch()?;
     event.pid = connection.pid;
     event.uid = connection.uid;
@@ -2782,6 +3055,9 @@ fn emit_tls_data(
         event.payload_offset = offset;
         event.payload_len = chunk_len as u32;
         record_tls_diagnostic(TLS_DIAG_OUTPUT_ATTEMPT);
+        if go_tls {
+            record_go_tls_counter(GO_TLS_COUNTER_OUTPUT_ATTEMPT);
+        }
         output_event!(TLS_DATA_EVENTS, TRANSPORT_LOSS_TLS, ctx, &*event);
         emitted = true;
         segment += 1;

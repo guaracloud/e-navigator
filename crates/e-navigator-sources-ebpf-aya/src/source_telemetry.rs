@@ -39,6 +39,15 @@ struct SourceCounters {
     optional_attachment_failures: AtomicU64,
     optional_rescans: AtomicU64,
     optional_capacity_rejections: AtomicU64,
+    go_tls_entries: AtomicU64,
+    go_tls_exits: AtomicU64,
+    go_tls_layout_misses: AtomicU64,
+    go_tls_pending_misses: AtomicU64,
+    go_tls_state_update_failures: AtomicU64,
+    go_tls_fd_resolutions: AtomicU64,
+    go_tls_fd_resolution_failures: AtomicU64,
+    go_tls_output_attempts: AtomicU64,
+    go_tls_state_replacements: AtomicU64,
 }
 
 impl SourceCounters {
@@ -64,6 +73,15 @@ impl SourceCounters {
             optional_attachment_failures: AtomicU64::new(0),
             optional_rescans: AtomicU64::new(0),
             optional_capacity_rejections: AtomicU64::new(0),
+            go_tls_entries: AtomicU64::new(0),
+            go_tls_exits: AtomicU64::new(0),
+            go_tls_layout_misses: AtomicU64::new(0),
+            go_tls_pending_misses: AtomicU64::new(0),
+            go_tls_state_update_failures: AtomicU64::new(0),
+            go_tls_fd_resolutions: AtomicU64::new(0),
+            go_tls_fd_resolution_failures: AtomicU64::new(0),
+            go_tls_output_attempts: AtomicU64::new(0),
+            go_tls_state_replacements: AtomicU64::new(0),
         }
     }
 }
@@ -91,6 +109,15 @@ pub struct SourceTelemetrySnapshot {
     pub optional_attachment_failures: u64,
     pub optional_rescans: u64,
     pub optional_capacity_rejections: u64,
+    pub go_tls_entries: u64,
+    pub go_tls_exits: u64,
+    pub go_tls_layout_misses: u64,
+    pub go_tls_pending_misses: u64,
+    pub go_tls_state_update_failures: u64,
+    pub go_tls_fd_resolutions: u64,
+    pub go_tls_fd_resolution_failures: u64,
+    pub go_tls_output_attempts: u64,
+    pub go_tls_state_replacements: u64,
 }
 
 static SOURCE_COUNTERS: OnceLock<Mutex<BTreeMap<&'static str, Arc<SourceCounters>>>> =
@@ -254,6 +281,25 @@ impl SourceTelemetry {
             .fetch_add(u64::try_from(count).unwrap_or(u64::MAX), Ordering::Relaxed);
     }
 
+    pub(crate) fn record_go_tls_counter_deltas(&self, deltas: [u64; 9]) {
+        for (counter, delta) in [
+            &self.counters.go_tls_entries,
+            &self.counters.go_tls_exits,
+            &self.counters.go_tls_layout_misses,
+            &self.counters.go_tls_pending_misses,
+            &self.counters.go_tls_state_update_failures,
+            &self.counters.go_tls_fd_resolutions,
+            &self.counters.go_tls_fd_resolution_failures,
+            &self.counters.go_tls_output_attempts,
+            &self.counters.go_tls_state_replacements,
+        ]
+        .into_iter()
+        .zip(deltas)
+        {
+            counter.fetch_add(delta, Ordering::Relaxed);
+        }
+    }
+
     pub(crate) fn maybe_log_summary(&self) {
         let elapsed_nanos = u64::try_from(self.started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
         if !self.try_claim_summary(elapsed_nanos) {
@@ -288,6 +334,15 @@ impl SourceTelemetry {
             optional_attachment_failures = snapshot.optional_attachment_failures,
             optional_rescans = snapshot.optional_rescans,
             optional_capacity_rejections = snapshot.optional_capacity_rejections,
+            go_tls_entries = snapshot.go_tls_entries,
+            go_tls_exits = snapshot.go_tls_exits,
+            go_tls_layout_misses = snapshot.go_tls_layout_misses,
+            go_tls_pending_misses = snapshot.go_tls_pending_misses,
+            go_tls_state_update_failures = snapshot.go_tls_state_update_failures,
+            go_tls_fd_resolutions = snapshot.go_tls_fd_resolutions,
+            go_tls_fd_resolution_failures = snapshot.go_tls_fd_resolution_failures,
+            go_tls_output_attempts = snapshot.go_tls_output_attempts,
+            go_tls_state_replacements = snapshot.go_tls_state_replacements,
             "source telemetry summary"
         );
     }
@@ -379,6 +434,19 @@ fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceT
         optional_capacity_rejections: counters
             .optional_capacity_rejections
             .load(Ordering::Relaxed),
+        go_tls_entries: counters.go_tls_entries.load(Ordering::Relaxed),
+        go_tls_exits: counters.go_tls_exits.load(Ordering::Relaxed),
+        go_tls_layout_misses: counters.go_tls_layout_misses.load(Ordering::Relaxed),
+        go_tls_pending_misses: counters.go_tls_pending_misses.load(Ordering::Relaxed),
+        go_tls_state_update_failures: counters
+            .go_tls_state_update_failures
+            .load(Ordering::Relaxed),
+        go_tls_fd_resolutions: counters.go_tls_fd_resolutions.load(Ordering::Relaxed),
+        go_tls_fd_resolution_failures: counters
+            .go_tls_fd_resolution_failures
+            .load(Ordering::Relaxed),
+        go_tls_output_attempts: counters.go_tls_output_attempts.load(Ordering::Relaxed),
+        go_tls_state_replacements: counters.go_tls_state_replacements.load(Ordering::Relaxed),
     }
 }
 
@@ -406,6 +474,15 @@ impl SourceTelemetrySnapshot {
             optional_attachment_failures: 0,
             optional_rescans: 0,
             optional_capacity_rejections: 0,
+            go_tls_entries: 0,
+            go_tls_exits: 0,
+            go_tls_layout_misses: 0,
+            go_tls_pending_misses: 0,
+            go_tls_state_update_failures: 0,
+            go_tls_fd_resolutions: 0,
+            go_tls_fd_resolution_failures: 0,
+            go_tls_output_attempts: 0,
+            go_tls_state_replacements: 0,
         }
     }
 
@@ -464,6 +541,29 @@ impl SourceTelemetrySnapshot {
             optional_capacity_rejections: self
                 .optional_capacity_rejections
                 .saturating_sub(previous.optional_capacity_rejections),
+            go_tls_entries: self.go_tls_entries.saturating_sub(previous.go_tls_entries),
+            go_tls_exits: self.go_tls_exits.saturating_sub(previous.go_tls_exits),
+            go_tls_layout_misses: self
+                .go_tls_layout_misses
+                .saturating_sub(previous.go_tls_layout_misses),
+            go_tls_pending_misses: self
+                .go_tls_pending_misses
+                .saturating_sub(previous.go_tls_pending_misses),
+            go_tls_state_update_failures: self
+                .go_tls_state_update_failures
+                .saturating_sub(previous.go_tls_state_update_failures),
+            go_tls_fd_resolutions: self
+                .go_tls_fd_resolutions
+                .saturating_sub(previous.go_tls_fd_resolutions),
+            go_tls_fd_resolution_failures: self
+                .go_tls_fd_resolution_failures
+                .saturating_sub(previous.go_tls_fd_resolution_failures),
+            go_tls_output_attempts: self
+                .go_tls_output_attempts
+                .saturating_sub(previous.go_tls_output_attempts),
+            go_tls_state_replacements: self
+                .go_tls_state_replacements
+                .saturating_sub(previous.go_tls_state_replacements),
         }
     }
 
@@ -486,6 +586,15 @@ impl SourceTelemetrySnapshot {
             && self.optional_attachment_failures == 0
             && self.optional_rescans == 0
             && self.optional_capacity_rejections == 0
+            && self.go_tls_entries == 0
+            && self.go_tls_exits == 0
+            && self.go_tls_layout_misses == 0
+            && self.go_tls_pending_misses == 0
+            && self.go_tls_state_update_failures == 0
+            && self.go_tls_fd_resolutions == 0
+            && self.go_tls_fd_resolution_failures == 0
+            && self.go_tls_output_attempts == 0
+            && self.go_tls_state_replacements == 0
     }
 }
 

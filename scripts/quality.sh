@@ -36,6 +36,10 @@ run tests/dns_connected_udp_guard_test.sh
 run tests/http_request_capture_guard_test.sh
 run tests/event_transport_guard_test.sh
 run env PYTHONDONTWRITEBYTECODE=1 python3 tests/event_transport_analysis_test.py
+run tests/kernel_hook_bench_guard_test.sh
+run env PYTHONDONTWRITEBYTECODE=1 python3 tests/kernel_hook_analysis_test.py
+run tests/go_tls_bench_guard_test.sh
+run env PYTHONDONTWRITEBYTECODE=1 python3 tests/go_tls_analysis_test.py
 
 if [ "${E_NAVIGATOR_SKIP_SUPPLY_CHAIN:-0}" != "1" ]; then
   require_tool cargo-deny

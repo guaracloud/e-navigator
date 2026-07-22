@@ -16,6 +16,10 @@ All notable changes to E-Navigator are documented here. The format follows
   `write(2)` accounting, with forced diagnostics, a positively unsupported
   tracepoint fallback, a guarded integrity workload, and counterbalanced
   homelab analysis.
+- Add bounded, version-gated Go `crypto/tls` plaintext capture for unstripped
+  Linux/amd64 Go 1.24 through 1.26 executables, with exact static-symbol and
+  return-site preflight, goroutine-safe correlation, transactional attachment,
+  native blind-spot counters, and stripped-binary rejection.
 
 ### Performance
 
@@ -32,6 +36,9 @@ All notable changes to E-Navigator are documented here. The format follows
 - Preserve syscall tracepoints for network read/write accounting on kernels
   that positively lack tracing-program, kernel-BTF, or target-function support;
   indeterminate capability, verifier, load, and attach failures remain fatal.
+- Keep unsupported Go versions, prereleases, stripped binaries, malformed or
+  ambiguous symbols, and non-amd64 Go ABIs fail-closed. Go 1.26.4 has homelab
+  runtime proof; Go 1.24 and 1.25 remain test-only compatibility claims.
 
 ## [0.1.2] - 2026-07-20
 

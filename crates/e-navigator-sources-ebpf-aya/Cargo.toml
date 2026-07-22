@@ -36,6 +36,7 @@ e-navigator-core = { path = "../e-navigator-core" }
 e-navigator-protocol = { path = "../e-navigator-protocol" }
 e-navigator-profiling = { path = "../e-navigator-profiling" }
 e-navigator-signals = { path = "../e-navigator-signals" }
+iced-x86 = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -52,3 +53,6 @@ rustix = { workspace = true }
 [build-dependencies]
 anyhow = { workspace = true }
 aya-build = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
