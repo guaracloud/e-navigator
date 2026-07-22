@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "run_id": "profiling-breadth-20260722",
+  "decision": "support-bounded-off-cpu-futex-and-cpython-311-profiling",
+  "proof_level": "homelab",
+  "started_at_utc": "2026-07-22T03:15:53Z",
+  "ended_at_utc": "2026-07-22T03:25:07Z",
+  "repository": {
+    "branch": "codex/ring-buffer-transport",
+    "base_commit": "9641cd1a8811b6fe995c2380e7931af4b9829b44",
+    "pushed": false,
+    "released": false
+  },
+  "cluster": {
+    "context": "homelab",
+    "server": "https://192.168.50.132:6443",
+    "kubernetes": "v1.30.4+k3s1",
+    "nodes": ["homelab-01", "homelab-02"],
+    "os": "NixOS 24.05",
+    "architecture": "linux/amd64",
+    "kernel": "6.6.68",
+    "runtime": "containerd 1.7.20-k3s1"
+  },
+  "agent_image": {
+    "reference": "docker.io/library/e-navigator:gap4-dev-amd64",
+    "manifest_sha256": "70067da54bd490aba8ca335baea20dd99aac9609917057cc73623f1a2737730e",
+    "distribution": "loaded directly into both homelab containerd stores; never pushed"
+  },
+  "workload_image": {
+    "reference": "docker.io/library/python@sha256:5c34b355088846dddc8afb7442c20b9433dccdc8d66192dc52c616adeaa106a3",
+    "python_version": "3.11.15"
+  },
+  "method": {
+    "arms": ["no benchmark agent", "profiling source"],
+    "orders": [["none", "profiling"], ["profiling", "none"], ["none", "profiling"]],
+    "repetitions_per_arm": 3,
+    "duration_seconds": 60,
+    "discovery_wait_seconds": 10,
+    "event_transport": "ring_buffer",
+    "sample_frequency_hz": 11,
+    "off_cpu_min_duration_micros": 1000,
+    "lock_min_duration_micros": 500,
+    "max_off_cpu_events_per_second_per_cpu": 4,
+    "max_lock_events_per_second_per_cpu": 4,
+    "enabled_aya_sources": ["cpu_profile"],
+    "workload_node": "homelab-01"
+  },
+  "results": {
+    "correctness_gate_passed": true,
+    "no_agent_inventory_clean": true,
+    "cpython_3_11_named_frames_all_profile_runs": true,
+    "on_cpu_off_cpu_and_futex_samples_all_profile_runs": true,
+    "weighted_event_samples_well_formed": true,
+    "pprof_nonempty_all_profile_runs": true,
+    "transport_or_state_loss_observed": false,
+    "profiling_vs_no_agent_busy_rate_delta_percent": -2.049453,
+    "performance_claim_scope": "one pinned CPython workload on a shared homelab"
+  },
+  "local_validation": {
+    "raw_profile_fuzz_executions": 1344282,
+    "raw_profile_fuzz_seconds": 21,
+    "criterion_median_microseconds": {
+      "on_cpu": 1.6066,
+      "off_cpu": 1.5727,
+      "futex_wait": 1.9345
+    },
+    "full_quality_passed": true
+  },
+  "cleanup": {
+    "benchmark_release_removed": true,
+    "benchmark_workloads_removed": true,
+    "standing_argocd_application_restored": true,
+    "standing_daemonset_ready": true,
+    "imported_images_removed": true,
+    "loader_daemonset_removed": true,
+    "benchmark_namespace_retained_empty": true,
+    "production_context_touched": false
+  },
+  "artifacts": [
+    "manifest.json",
+    "report.md",
+    "representative-samples.json",
+    "runs.json",
+    "SHA256SUMS"
+  ]
+}

@@ -541,6 +541,97 @@ fn pprof_profile_sample_encodes_stack_values_and_safe_labels() {
 }
 
 #[test]
+fn event_driven_profile_weight_is_preserved_in_pprof_and_otel() {
+    let mut signal = profile_sample_signal(Some("node-a"), None, None);
+    if let e_navigator_signals::SignalPayload::ProfileSampleObservation(sample) =
+        &mut signal.payload
+    {
+        sample.profiling_kind = ProfilingKind::Lock;
+        sample.sample_count = 1;
+        sample.sampling_period_nanos = None;
+        sample.stack_frames = vec![ProfilingFrame {
+            symbol: Some("pthread_mutex_lock".to_string()),
+            module: Some("libc.so.6".to_string()),
+            file: None,
+            line: None,
+            module_offset: Some(0x1234),
+        }];
+        sample.attributes = vec![
+            attr("profiling.sample.mode", "futex_wait"),
+            attr("profiling.sample.weight_nanos", "7000000"),
+        ];
+    }
+
+    let bytes = format_pprof_profile(&signal).expect("weighted pprof formats");
+    let profile = pprof::Profile::decode(bytes.as_slice()).expect("pprof decodes");
+    assert_eq!(profile.sample[0].value, vec![7_000_000]);
+    assert_eq!(profile.period, 0);
+    assert_eq!(profile.period_type, None);
+    assert!(profile.string_table.contains(&"lock".to_string()));
+
+    let otel = format_otel_profile_record(&signal).expect("weighted OTEL profile formats");
+    assert_eq!(otel.profile_kind, "lock");
+    assert_eq!(otel.duration_nanos, 7_000_000);
+    assert_eq!(otel.sampling_period_nanos, None);
+}
+
+#[test]
+fn mixed_pprof_batch_keeps_kind_specific_values_without_a_false_period() {
+    let mut cpu = profile_sample_signal(Some("node-a"), None, None);
+    if let e_navigator_signals::SignalPayload::ProfileSampleObservation(sample) = &mut cpu.payload {
+        sample.stack_frames = vec![ProfilingFrame {
+            symbol: Some("cpu_work".to_string()),
+            module: Some("app".to_string()),
+            file: None,
+            line: None,
+            module_offset: Some(0x10),
+        }];
+        sample.attributes = vec![attr("profiling.sample.mode", "on_cpu")];
+    }
+
+    let mut lock = profile_sample_signal(Some("node-a"), None, None);
+    if let e_navigator_signals::SignalPayload::ProfileSampleObservation(sample) = &mut lock.payload
+    {
+        sample.profiling_kind = ProfilingKind::Lock;
+        sample.sampling_period_nanos = None;
+        sample.stack_frames = vec![ProfilingFrame {
+            symbol: Some("futex_wait".to_string()),
+            module: Some("libc.so.6".to_string()),
+            file: None,
+            line: None,
+            module_offset: Some(0x20),
+        }];
+        sample.attributes = vec![
+            attr("profiling.sample.mode", "futex_wait"),
+            attr("profiling.sample.weight_nanos", "7000000"),
+        ];
+    }
+
+    let bytes = format_pprof_profile_batch(&[&cpu, &lock]).expect("mixed pprof formats");
+    let profile = pprof::Profile::decode(bytes.as_slice()).expect("pprof decodes");
+    let sample_types = profile
+        .sample_type
+        .iter()
+        .map(|value_type| string_table_value(&profile, value_type.r#type))
+        .collect::<Vec<_>>();
+
+    assert_eq!(sample_types, vec![Some("cpu"), Some("lock")]);
+    assert_eq!(profile.sample[0].value, vec![10_000_000, 0]);
+    assert_eq!(profile.sample[1].value, vec![0, 7_000_000]);
+    assert!(profile.sample.iter().all(|sample| sample.value.len() == 2));
+    assert_eq!(profile.period, 0);
+    assert_eq!(profile.period_type, None);
+    assert_eq!(
+        sample_label_value(&profile, 0, "profiling.sample.mode"),
+        Some("on_cpu")
+    );
+    assert_eq!(
+        sample_label_value(&profile, 1, "profiling.sample.mode"),
+        Some("futex_wait")
+    );
+}
+
+#[test]
 fn pprof_profile_bounds_canonical_label_values() {
     const MAX_LABEL_BYTES: usize = 256;
 
@@ -1062,7 +1153,15 @@ fn kubernetes(pod_uid: &str) -> KubernetesContext {
 }
 
 fn label_value<'a>(profile: &'a pprof::Profile, key: &str) -> Option<&'a str> {
-    let sample = profile.sample.first()?;
+    sample_label_value(profile, 0, key)
+}
+
+fn sample_label_value<'a>(
+    profile: &'a pprof::Profile,
+    sample_index: usize,
+    key: &str,
+) -> Option<&'a str> {
+    let sample = profile.sample.get(sample_index)?;
     sample.label.iter().find_map(|label| {
         let label_key = string_table_value(profile, label.key)?;
         if label_key == key {

@@ -2388,6 +2388,20 @@ fn cpu_profile_source_defaults_are_bounded_and_disabled() {
         "source.aya_cpu_profile"
     );
     assert_eq!(config.cpu_profile_source.sample_frequency_hz, 49);
+    assert!(!config.cpu_profile_source.off_cpu_enabled);
+    assert!(!config.cpu_profile_source.lock_enabled);
+    assert_eq!(config.cpu_profile_source.off_cpu_min_duration_micros, 1_000);
+    assert_eq!(config.cpu_profile_source.lock_min_duration_micros, 1_000);
+    assert_eq!(
+        config
+            .cpu_profile_source
+            .max_off_cpu_events_per_second_per_cpu,
+        64
+    );
+    assert_eq!(
+        config.cpu_profile_source.max_lock_events_per_second_per_cpu,
+        64
+    );
     assert_eq!(config.cpu_profile_source.max_active_targets, 128);
     assert_eq!(config.cpu_profile_source.max_frames_per_sample, 64);
     assert_eq!(config.cpu_profile_source.max_samples_per_batch, 64);
@@ -2417,6 +2431,71 @@ fn cpu_profile_source_validates_zero_and_oversized_limits() {
             CpuProfileSourceConfig::MAX_SAMPLE_FREQUENCY_HZ
         ),
     );
+
+    for (field, config) in [
+        (
+            "cpu_profile_source.off_cpu_min_duration_micros",
+            CpuProfileSourceConfig {
+                off_cpu_min_duration_micros: 0,
+                ..CpuProfileSourceConfig::default()
+            },
+        ),
+        (
+            "cpu_profile_source.lock_min_duration_micros",
+            CpuProfileSourceConfig {
+                lock_min_duration_micros: CpuProfileSourceConfig::MAX_EVENT_MIN_DURATION_MICROS + 1,
+                ..CpuProfileSourceConfig::default()
+            },
+        ),
+    ] {
+        assert_invalid(
+            RuntimeConfig {
+                modules: cpu_profile_modules(),
+                cpu_profile_source: CpuProfileSourceConfig {
+                    enabled: true,
+                    ..config
+                },
+                ..RuntimeConfig::default()
+            },
+            format!(
+                "{field} must be between 1 and {}",
+                CpuProfileSourceConfig::MAX_EVENT_MIN_DURATION_MICROS
+            ),
+        );
+    }
+
+    for (field, config) in [
+        (
+            "cpu_profile_source.max_off_cpu_events_per_second_per_cpu",
+            CpuProfileSourceConfig {
+                max_off_cpu_events_per_second_per_cpu: 0,
+                ..CpuProfileSourceConfig::default()
+            },
+        ),
+        (
+            "cpu_profile_source.max_lock_events_per_second_per_cpu",
+            CpuProfileSourceConfig {
+                max_lock_events_per_second_per_cpu: CpuProfileSourceConfig::MAX_EVENT_RATE_PER_CPU
+                    + 1,
+                ..CpuProfileSourceConfig::default()
+            },
+        ),
+    ] {
+        assert_invalid(
+            RuntimeConfig {
+                modules: cpu_profile_modules(),
+                cpu_profile_source: CpuProfileSourceConfig {
+                    enabled: true,
+                    ..config
+                },
+                ..RuntimeConfig::default()
+            },
+            format!(
+                "{field} must be between 1 and {}",
+                CpuProfileSourceConfig::MAX_EVENT_RATE_PER_CPU
+            ),
+        );
+    }
 
     assert_invalid(
         RuntimeConfig {

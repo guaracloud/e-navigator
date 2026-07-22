@@ -93,6 +93,12 @@ config:
     enabled = false
     module_name = "source.aya_cpu_profile"
     sample_frequency_hz = 49
+    off_cpu_enabled = false
+    lock_enabled = false
+    off_cpu_min_duration_micros = 1000
+    lock_min_duration_micros = 1000
+    max_off_cpu_events_per_second_per_cpu = 64
+    max_lock_events_per_second_per_cpu = 64
     max_active_targets = 128
     max_frames_per_sample = 64
     max_samples_per_batch = 64

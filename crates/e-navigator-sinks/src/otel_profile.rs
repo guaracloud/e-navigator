@@ -46,6 +46,7 @@ pub fn format_otel_profile_record(signal: &SignalEnvelope) -> Option<OtelProfile
 
 fn sample_record(signal: &SignalEnvelope, sample: &ProfileSampleObservation) -> OtelProfileRecord {
     let profile_id = sample_profile_id(signal, sample);
+    let event_weight_nanos = profiling_weight_nanos(&sample.attributes);
     let mut attributes = BTreeMap::new();
     attributes.insert(
         "profile.stack.id".to_string(),
@@ -65,8 +66,12 @@ fn sample_record(signal: &SignalEnvelope, sample: &ProfileSampleObservation) -> 
         sample_count: sample.sample_count,
         dropped_sample_count: 0,
         timestamp_unix_nanos: sample.timestamp_unix_nanos,
-        duration_nanos: 0,
-        sampling_period_nanos: sample.sampling_period_nanos,
+        duration_nanos: event_weight_nanos.unwrap_or(0),
+        sampling_period_nanos: if event_weight_nanos.is_none() {
+            sample.sampling_period_nanos
+        } else {
+            None
+        },
         resource: resource_attributes(
             signal,
             sample.process.as_ref(),
@@ -81,6 +86,16 @@ fn sample_record(signal: &SignalEnvelope, sample: &ProfileSampleObservation) -> 
             .map(bounded_stack_frame)
             .collect(),
     }
+}
+
+fn profiling_weight_nanos(attributes: &[ProfilingAttribute]) -> Option<u64> {
+    attributes
+        .iter()
+        .find(|attribute| attribute.key == "profiling.sample.weight_nanos")?
+        .value
+        .parse::<u64>()
+        .ok()
+        .filter(|weight| *weight > 0)
 }
 
 fn sample_profile_id(signal: &SignalEnvelope, sample: &ProfileSampleObservation) -> String {

@@ -1,0 +1,120 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: e-navigator-bench-workload
+  namespace: e-navigator-bench
+  labels:
+    app.kubernetes.io/name: e-navigator-bench-workload
+    app.kubernetes.io/component: profiling-load
+    app.kubernetes.io/part-of: e-navigator-validation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 240 # Replaced by the guarded collector.
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: e-navigator-bench-workload
+        app.kubernetes.io/component: profiling-load
+        app.kubernetes.io/part-of: e-navigator-validation
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: homelab-01
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: python311-profile-load
+          image: docker.io/library/python@sha256:5c34b355088846dddc8afb7442c20b9433dccdc8d66192dc52c616adeaa106a3
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DURATION_SECONDS
+              value: "120" # Replaced by the guarded collector.
+          command: ["python", "-u", "-c"]
+          args:
+            - |
+              import json
+              import os
+              import sys
+              import threading
+              import time
+
+              duration = int(os.environ["DURATION_SECONDS"])
+              discovery_wait_seconds = 10
+              stop = threading.Event()
+              mutex = threading.Lock()
+              counters = {"busy_batches": 0, "lock_acquisitions": 0, "sleeps": 0}
+
+              def lock_holder():
+                  while not stop.is_set():
+                      with mutex:
+                          time.sleep(0.004)
+                      time.sleep(0.001)
+
+              def lock_contender():
+                  local = 0
+                  while not stop.is_set():
+                      with mutex:
+                          local += 1
+                      time.sleep(0.0002)
+                  counters["lock_acquisitions"] += local
+
+              def sleeper():
+                  local = 0
+                  while not stop.wait(0.012):
+                      local += 1
+                  counters["sleeps"] += local
+
+              def profile_leaf(seed):
+                  value = seed
+                  for index in range(2500):
+                      value = ((value * 1664525) + 1013904223 + index) & 0xFFFFFFFF
+                  return value
+
+              def profile_level_four(seed):
+                  return profile_leaf(seed)
+
+              def profile_level_three(seed):
+                  return profile_level_four(seed)
+
+              def profile_level_two(seed):
+                  return profile_level_three(seed)
+
+              def profile_level_one(seed):
+                  return profile_level_two(seed)
+
+              workers = [threading.Thread(target=lock_holder, name="lock-holder")]
+              workers += [threading.Thread(target=lock_contender, name=f"lock-waiter-{i}") for i in range(3)]
+              workers += [threading.Thread(target=sleeper, name=f"offcpu-sleeper-{i}") for i in range(2)]
+              for worker in workers:
+                  worker.start()
+
+              time.sleep(discovery_wait_seconds)
+              started = time.monotonic()
+              deadline = started + duration
+              seed = 1
+              while time.monotonic() < deadline:
+                  seed = profile_level_one(seed)
+                  counters["busy_batches"] += 1
+
+              stop.set()
+              for worker in workers:
+                  worker.join(timeout=5)
+                  if worker.is_alive():
+                      raise RuntimeError(f"worker did not stop: {worker.name}")
+              elapsed = time.monotonic() - started
+              print(json.dumps({
+                  "schema": "e-navigator.profiling-breadth-workload.v1",
+                  "python_version": sys.version.split()[0],
+                  "duration_seconds": duration,
+                  "discovery_wait_seconds": discovery_wait_seconds,
+                  "elapsed_seconds": round(elapsed, 6),
+                  **counters,
+                  "checksum": seed,
+              }, sort_keys=True))
+          resources:
+            requests:
+              cpu: 250m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 192Mi

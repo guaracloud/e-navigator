@@ -1,0 +1,82 @@
+{
+  "schema": "e-navigator.profiling-breadth-representative-samples.v1",
+  "source_run": "profiling-r1",
+  "curation": "Exact observed profile fields with ephemeral pid, pod uid, container id, and controller labels omitted.",
+  "samples": [
+    {
+      "schema_version": 1,
+      "kind": "profile_sample_observation",
+      "source": "source.aya_cpu_profile",
+      "host": "homelab-01",
+      "profiling_kind": "cpu",
+      "sample_count": 1,
+      "sampling_period_nanos": 90909090,
+      "process_command": "python",
+      "kubernetes_namespace": "e-navigator-bench",
+      "stack_frames": [
+        "profile_leaf",
+        "profile_level_four",
+        "profile_level_three",
+        "profile_level_two",
+        "profile_level_one",
+        "<module>",
+        "_PyObject_Free",
+        "_PyEval_EvalFrameDefault",
+        "_PyEval_Vector",
+        "PyEval_EvalCode",
+        "run_eval_code_obj",
+        "run_mod",
+        "PyRun_StringFlags",
+        "PyRun_SimpleStringFlags",
+        "Py_RunMain",
+        "Py_BytesMain",
+        "__libc_start_main",
+        "_start"
+      ],
+      "attributes": {
+        "profiling.sample.frequency_hz": "11",
+        "profiling.sample.mode": "on_cpu",
+        "profiling.source": "aya_perf_event",
+        "profiling.stack.dwarf_stop": "complete",
+        "profiling.stack.py_frames": "6",
+        "profiling.stack.py_stop": "complete",
+        "profiling.stack.unwind": "dwarf"
+      }
+    },
+    {
+      "schema_version": 1,
+      "kind": "profile_sample_observation",
+      "source": "source.aya_cpu_profile",
+      "host": "homelab-01",
+      "profiling_kind": "cpu",
+      "sample_count": 1,
+      "sampling_period_nanos": null,
+      "process_command": "python",
+      "kubernetes_namespace": "e-navigator-bench",
+      "attributes": {
+        "profiling.sample.mode": "off_cpu",
+        "profiling.sample.weight_nanos": "5050076",
+        "profiling.source": "aya_sched_switch",
+        "profiling.stack.unwind": "fp"
+      }
+    },
+    {
+      "schema_version": 1,
+      "kind": "profile_sample_observation",
+      "source": "source.aya_cpu_profile",
+      "host": "homelab-01",
+      "profiling_kind": "lock",
+      "sample_count": 1,
+      "sampling_period_nanos": null,
+      "process_command": "python",
+      "kubernetes_namespace": "e-navigator-bench",
+      "attributes": {
+        "profiling.lock.result": "-110",
+        "profiling.sample.mode": "futex_wait",
+        "profiling.sample.weight_nanos": "5061988",
+        "profiling.source": "aya_futex",
+        "profiling.stack.unwind": "fp"
+      }
+    }
+  ]
+}

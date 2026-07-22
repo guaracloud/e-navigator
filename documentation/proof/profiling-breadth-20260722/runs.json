@@ -1,0 +1,183 @@
+{
+  "schema": "e-navigator.profiling-breadth-proof.v1",
+  "aggregate": {
+    "correctness_gate_passed": true,
+    "none": {
+      "runs": 3,
+      "busy_batches_per_second": {
+        "mean": 4753.099042,
+        "stdev": 56.078099,
+        "p95": 4792.720844,
+        "max": 4792.720844
+      }
+    },
+    "profiling": {
+      "runs": 3,
+      "busy_batches_per_second": {
+        "mean": 4655.686524,
+        "stdev": 33.739187,
+        "p95": 4682.553505,
+        "max": 4682.553505
+      },
+      "agent_total_cpu_m_run_means": {
+        "mean": 78.161905,
+        "stdev": 13.174654,
+        "p95": 90.5,
+        "max": 90.5
+      },
+      "agent_total_memory_mib_run_means": {
+        "mean": 205.860714,
+        "stdev": 5.262501,
+        "p95": 211.125,
+        "max": 211.125
+      }
+    },
+    "profiling_vs_no_agent_busy_rate_delta_percent": -2.049453
+  },
+  "runs": [
+    {
+      "mode": "none",
+      "repetition": 1,
+      "workload": {
+        "python_version": "3.11.15",
+        "busy_batches": 281342,
+        "busy_batches_per_second": 4688.933459,
+        "lock_acquisitions": 39586,
+        "sleeps": 7594,
+        "elapsed_seconds": 60.001278
+      },
+      "agent_samples": 0
+    },
+    {
+      "mode": "none",
+      "repetition": 2,
+      "workload": {
+        "python_version": "3.11.15",
+        "busy_batches": 286665,
+        "busy_batches_per_second": 4777.642822,
+        "lock_acquisitions": 39004,
+        "sleeps": 7600,
+        "elapsed_seconds": 60.001346
+      },
+      "agent_samples": 0
+    },
+    {
+      "mode": "none",
+      "repetition": 3,
+      "workload": {
+        "python_version": "3.11.15",
+        "busy_batches": 287565,
+        "busy_batches_per_second": 4792.720844,
+        "lock_acquisitions": 39196,
+        "sleeps": 7609,
+        "elapsed_seconds": 60.000365
+      },
+      "agent_samples": 0
+    },
+    {
+      "mode": "profiling",
+      "repetition": 1,
+      "workload": {
+        "python_version": "3.11.15",
+        "busy_batches": 277072,
+        "busy_batches_per_second": 4617.820335,
+        "lock_acquisitions": 38510,
+        "sleeps": 8597,
+        "elapsed_seconds": 60.000602
+      },
+      "agent": {"cpu_m_mean": 79.7, "memory_mib_mean": 200.6, "samples": 10},
+      "profile": {
+        "sample_counts": {"on_cpu": 77, "off_cpu": 349, "futex_wait": 342},
+        "weighted_nanos": {"off_cpu": 2257326353, "futex_wait": 2245696348},
+        "python_named_samples": 76,
+        "python_frame_names": ["profile_leaf", "profile_level_four", "profile_level_one", "profile_level_three", "profile_level_two"],
+        "observed_namespaces": ["e-navigator-bench"],
+        "observed_commands": ["python"],
+        "capture_failure_rate_percent": 0.004865743,
+        "pprof_nonempty": true,
+        "metrics": {
+          "profile_events_total": 267174,
+          "profile_output_attempts_total": 6927,
+          "profile_capture_failures_total": 13,
+          "profile_rate_limited_total": 122130,
+          "profile_below_min_duration_total": 138104,
+          "profile_state_replacements_total": 0,
+          "profile_pending_misses_total": 0,
+          "lost_transport_events_total": 0,
+          "lost_perf_events_total": 0,
+          "ring_buffer_reservation_failures_total": 0
+        }
+      }
+    },
+    {
+      "mode": "profiling",
+      "repetition": 2,
+      "workload": {
+        "python_version": "3.11.15",
+        "busy_batches": 280960,
+        "busy_batches_per_second": 4682.553505,
+        "lock_acquisitions": 38242,
+        "sleeps": 8554,
+        "elapsed_seconds": 60.00145
+      },
+      "agent": {"cpu_m_mean": 64.285714, "memory_mib_mean": 205.857143, "samples": 7},
+      "profile": {
+        "sample_counts": {"on_cpu": 19, "off_cpu": 80, "futex_wait": 78},
+        "weighted_nanos": {"off_cpu": 556668556, "futex_wait": 547862773},
+        "python_named_samples": 18,
+        "python_frame_names": ["profile_leaf", "profile_level_four", "profile_level_one", "profile_level_three", "profile_level_two"],
+        "observed_namespaces": ["e-navigator-bench"],
+        "observed_commands": ["python"],
+        "capture_failure_rate_percent": 0.004165688,
+        "pprof_nonempty": true,
+        "metrics": {
+          "profile_events_total": 264062,
+          "profile_output_attempts_total": 6803,
+          "profile_capture_failures_total": 11,
+          "profile_rate_limited_total": 121468,
+          "profile_below_min_duration_total": 135780,
+          "profile_state_replacements_total": 0,
+          "profile_pending_misses_total": 0,
+          "lost_transport_events_total": 0,
+          "lost_perf_events_total": 0,
+          "ring_buffer_reservation_failures_total": 0
+        }
+      }
+    },
+    {
+      "mode": "profiling",
+      "repetition": 3,
+      "workload": {
+        "python_version": "3.11.15",
+        "busy_batches": 280004,
+        "busy_batches_per_second": 4666.685733,
+        "lock_acquisitions": 38530,
+        "sleeps": 8611,
+        "elapsed_seconds": 60.000612
+      },
+      "agent": {"cpu_m_mean": 90.5, "memory_mib_mean": 211.125, "samples": 8},
+      "profile": {
+        "sample_counts": {"on_cpu": 204, "off_cpu": 939, "futex_wait": 923},
+        "weighted_nanos": {"off_cpu": 6046592598, "futex_wait": 6181678095},
+        "python_named_samples": 201,
+        "python_frame_names": ["profile_leaf", "profile_level_four", "profile_level_one", "profile_level_three", "profile_level_two"],
+        "observed_namespaces": ["e-navigator-bench"],
+        "observed_commands": ["python"],
+        "capture_failure_rate_percent": 0.004522909,
+        "pprof_nonempty": true,
+        "metrics": {
+          "profile_events_total": 265316,
+          "profile_output_attempts_total": 7026,
+          "profile_capture_failures_total": 12,
+          "profile_rate_limited_total": 120940,
+          "profile_below_min_duration_total": 137338,
+          "profile_state_replacements_total": 0,
+          "profile_pending_misses_total": 0,
+          "lost_transport_events_total": 0,
+          "lost_perf_events_total": 0,
+          "ring_buffer_reservation_failures_total": 0
+        }
+      }
+    }
+  ]
+}

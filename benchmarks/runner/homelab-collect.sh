@@ -373,9 +373,40 @@ capture_prometheus_http_endpoints() {
   capture_prometheus_http_path prometheus-http-healthz /healthz
   capture_prometheus_http_path prometheus-http-readyz /readyz
   capture_prometheus_http_path prometheus-http-metrics /metrics
+  capture_prometheus_http_path prometheus-http-pprof-profile /debug/pprof/profile
 
   kill "$port_forward_pid" >/dev/null 2>&1 || true
   wait "$port_forward_pid" >/dev/null 2>&1 || true
+}
+
+capture_prometheus_pod_endpoints() {
+  local local_port="${E_NAVIGATOR_HOMELAB_PROMETHEUS_POD_LOCAL_PORT:-19092}"
+  local pod_list="$results_dir/prometheus-http-pod-names.txt"
+  "${kubectl_cmd[@]}" -n "$namespace" get pods -l app.kubernetes.io/name=e-navigator \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' >"$pod_list" 2>/dev/null || true
+
+  while IFS= read -r pod; do
+    [ -n "$pod" ] || continue
+    local port_forward_log="$results_dir/prometheus-http-port-forward-${pod}.txt"
+    printf '\n==> prometheus-http-port-forward-%s\n' "$pod" | tee -a "$results_dir/commands.txt"
+    printf 'kubectl --context %q -n %q port-forward pod/%q %q:9090\n' \
+      "$context" "$namespace" "$pod" "$local_port" | tee -a "$results_dir/commands.txt"
+    "${kubectl_cmd[@]}" -n "$namespace" port-forward "pod/${pod}" "${local_port}:9090" \
+      >"$port_forward_log" 2>&1 &
+    local port_forward_pid="$!"
+    sleep 2
+
+    printf '\n==> prometheus-http-metrics-%s\n' "$pod" | tee -a "$results_dir/commands.txt"
+    curl -sS -i --max-time 5 "http://127.0.0.1:${local_port}/metrics" \
+      >"$results_dir/prometheus-http-metrics-${pod}.txt" 2>&1 || true
+    printf '\n==> prometheus-http-pprof-profile-%s\n' "$pod" | tee -a "$results_dir/commands.txt"
+    curl -sS --max-time 5 -D "$results_dir/prometheus-http-pprof-profile-${pod}-headers.txt" \
+      -o "$results_dir/prometheus-http-pprof-profile-${pod}.pb" \
+      "http://127.0.0.1:${local_port}/debug/pprof/profile" || true
+
+    kill "$port_forward_pid" >/dev/null 2>&1 || true
+    wait "$port_forward_pid" >/dev/null 2>&1 || true
+  done <"$pod_list"
 }
 
 sanitize_url_for_log() {
@@ -488,6 +519,7 @@ itself; inspect the referenced evidence before updating documentation.
 - Prometheus monitor resources: \`monitoring-api-resources.txt\`, \`servicemonitors.txt\`, \`podmonitors.txt\`
 - Prometheus runtime config, when enabled: \`prometheus-http-runtime-config.toml\`
 - Prometheus HTTP endpoint checks: \`prometheus-http-port-forward.txt\`, \`prometheus-http-healthz.txt\`, \`prometheus-http-readyz.txt\`, \`prometheus-http-metrics.txt\`, or \`prometheus-http-skipped.txt\`
+- Per-agent Prometheus/profile checks: \`prometheus-http-pod-names.txt\`, \`prometheus-http-metrics-<pod>.txt\`, \`prometheus-http-pprof-profile-<pod>-headers.txt\`, and \`prometheus-http-pprof-profile-<pod>.pb\`
 - Prometheus API checks: \`prometheus-api-targets.txt\`, \`prometheus-api-query-up.txt\`, \`prometheus-api-query-e-navigator.txt\`, \`prometheus-api-series.txt\`, \`prometheus-api-port-forward.txt\`, or \`prometheus-api-skipped.txt\`
 - Logs: \`logs.txt\`
 - Events: \`events.txt\`
@@ -598,6 +630,7 @@ run_capture daemonset-yaml "${kubectl_cmd[@]}" -n "$namespace" get daemonset "$r
 run_capture configmap-yaml "${kubectl_cmd[@]}" -n "$namespace" get configmap "${release}-config" -o yaml
 capture_service_surfaces
 capture_prometheus_http_endpoints
+capture_prometheus_pod_endpoints
 capture_prometheus_api_queries
 run_capture pod-json "${kubectl_cmd[@]}" -n "$namespace" get pods -o json
 run_capture logs "${kubectl_cmd[@]}" -n "$namespace" logs -l app.kubernetes.io/name=e-navigator --all-containers --tail="${E_NAVIGATOR_HOMELAB_LOG_TAIL:-2000}" --prefix

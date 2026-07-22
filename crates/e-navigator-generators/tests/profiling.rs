@@ -47,6 +47,41 @@ async fn synthetic_cpu_sample_generates_profiling_window() {
 }
 
 #[tokio::test]
+async fn event_driven_weights_are_summed_without_becoming_sample_counts() {
+    let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
+    let mut first = sample_signal(1_500_000_000, Some(context()));
+    let mut second = sample_signal(1_500_000_001, Some(context()));
+    for (signal, weight) in [(&mut first, 5_000_000_u64), (&mut second, 7_000_000)] {
+        if let SignalPayload::ProfileSampleObservation(sample) = &mut signal.payload {
+            sample.profiling_kind = ProfilingKind::Lock;
+            sample.sample_count = 1;
+            sample.sampling_period_nanos = None;
+            sample.attributes.push(ProfilingAttribute {
+                key: "profiling.sample.weight_nanos".to_string(),
+                value: weight.to_string(),
+            });
+        }
+    }
+
+    assert_eq!(observe(&generator, &first).await.len(), 1);
+    let outputs = observe(&generator, &second).await;
+    let SignalPayload::ProfilingSessionObservation(window) = &outputs[0].payload else {
+        panic!("expected profiling session");
+    };
+    assert_eq!(window.profiling_kind, ProfilingKind::Lock);
+    assert_eq!(window.observed_sample_count, 2);
+    assert!(window.attributes.iter().any(|attribute| {
+        attribute.key == "profiling.session.total_weight_nanos" && attribute.value == "12000000"
+    }));
+    assert!(
+        window
+            .attributes
+            .iter()
+            .all(|attribute| attribute.key != "profiling.sample.weight_nanos")
+    );
+}
+
+#[tokio::test]
 async fn missing_attribution_emits_structured_warning() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let outputs = observe(&generator, &sample_signal(1_500_000_000, None)).await;

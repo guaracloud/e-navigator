@@ -2,7 +2,7 @@ use e_navigator_signals::{
     ProfileSampleObservation, ProfilingAttribute, SignalEnvelope, SignalPayload,
 };
 use prost::Message;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_ATTRIBUTES: usize = 16;
 const MAX_KEY_BYTES: usize = 64;
@@ -54,19 +54,24 @@ struct PprofBuilder {
     locations: Vec<Location>,
     location_ids: BTreeMap<(u64, u64, u64), u64>,
     samples: Vec<Sample>,
-    profile_kind: Option<&'static str>,
-    period_nanos: u64,
+    sample_kinds: Vec<&'static str>,
+    profile_kinds: BTreeSet<&'static str>,
+    periodic_periods_nanos: BTreeSet<u64>,
+    has_event_weight: bool,
     time_nanos: u64,
 }
 
 impl PprofBuilder {
     fn add_sample(&mut self, signal: &SignalEnvelope, sample: &ProfileSampleObservation) {
-        if self.profile_kind.is_none() {
-            self.profile_kind = Some(profile_kind_name(sample.profiling_kind));
-        }
+        let profile_kind = profile_kind_name(sample.profiling_kind);
+        self.profile_kinds.insert(profile_kind);
+        self.sample_kinds.push(profile_kind);
+        let weight_nanos = profiling_weight_nanos(&sample.attributes);
         let period = sample.sampling_period_nanos.unwrap_or(1);
-        if self.period_nanos == 0 {
-            self.period_nanos = period;
+        if weight_nanos.is_some() {
+            self.has_event_weight = true;
+        } else {
+            self.periodic_periods_nanos.insert(period);
         }
         self.time_nanos = self.time_nanos.max(sample.timestamp_unix_nanos);
 
@@ -76,7 +81,7 @@ impl PprofBuilder {
             .take(MAX_PPROF_STACK_FRAMES)
             .map(|frame| self.location_id(frame))
             .collect::<Vec<_>>();
-        let value = sample.sample_count.saturating_mul(period);
+        let value = weight_nanos.unwrap_or_else(|| sample.sample_count.saturating_mul(period));
         let label = self.labels(signal, sample);
         self.samples.push(Sample {
             location_id: location_ids,
@@ -222,16 +227,46 @@ impl PprofBuilder {
     }
 
     fn finish(mut self) -> Profile {
-        let profile_kind = self.profile_kind.unwrap_or("unknown");
         let unit = "nanoseconds";
-        let kind_index = self.table.index(profile_kind);
         let unit_index = self.table.index(unit);
-        let period = self.period_nanos.max(1);
-        Profile {
-            sample_type: vec![ValueType {
-                r#type: kind_index,
+        let profile_kinds = self.profile_kinds.into_iter().collect::<Vec<_>>();
+        let kind_indices = profile_kinds
+            .iter()
+            .enumerate()
+            .map(|(index, kind)| (*kind, index))
+            .collect::<BTreeMap<_, _>>();
+        for (sample, sample_kind) in self.samples.iter_mut().zip(self.sample_kinds) {
+            let value = sample.value.first().copied().unwrap_or_default();
+            sample.value = vec![0; profile_kinds.len()];
+            if let Some(index) = kind_indices.get(sample_kind) {
+                sample.value[*index] = value;
+            }
+        }
+        let sample_type = profile_kinds
+            .iter()
+            .map(|profile_kind| ValueType {
+                r#type: self.table.index(profile_kind),
                 unit: unit_index,
-            }],
+            })
+            .collect::<Vec<_>>();
+        let periodic_profile = !self.has_event_weight
+            && profile_kinds.len() == 1
+            && self.periodic_periods_nanos.len() == 1;
+        let period_type = if periodic_profile {
+            sample_type.first().cloned()
+        } else {
+            None
+        };
+        let period = if periodic_profile {
+            self.periodic_periods_nanos
+                .first()
+                .copied()
+                .unwrap_or_default()
+        } else {
+            0
+        };
+        Profile {
+            sample_type,
             sample: self.samples,
             mapping: self.mappings,
             location: self.locations,
@@ -241,15 +276,22 @@ impl PprofBuilder {
             keep_frames: 0,
             time_nanos: u64_to_i64_saturating(self.time_nanos),
             duration_nanos: 0,
-            period_type: Some(ValueType {
-                r#type: kind_index,
-                unit: unit_index,
-            }),
+            period_type,
             period: u64_to_i64_saturating(period),
             comment: Vec::new(),
             default_sample_type: 0,
         }
     }
+}
+
+fn profiling_weight_nanos(attributes: &[ProfilingAttribute]) -> Option<u64> {
+    attributes
+        .iter()
+        .find(|attribute| attribute.key == "profiling.sample.weight_nanos")?
+        .value
+        .parse::<u64>()
+        .ok()
+        .filter(|weight| *weight > 0)
 }
 
 fn insert_label(labels: &mut BTreeMap<String, String>, key: &'static str, value: &str) {

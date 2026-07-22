@@ -479,6 +479,7 @@ struct WindowState {
     correlation_kind: e_navigator_signals::ProfilingCorrelationKind,
     confidence: ProfilingConfidence,
     sampling_period_nanos: Option<u64>,
+    total_weight_nanos: u64,
     process: Option<e_navigator_signals::NetworkProcessIdentity>,
     container: Option<e_navigator_signals::ContainerContext>,
     kubernetes: Option<e_navigator_signals::KubernetesContext>,
@@ -511,6 +512,7 @@ impl WindowState {
             correlation_kind: sample.correlation_kind,
             confidence: sample.confidence,
             sampling_period_nanos: sample.sampling_period_nanos,
+            total_weight_nanos: profiling_weight_nanos(&sample.attributes).unwrap_or(0),
             process: sample.process.clone(),
             container: sample.container.clone(),
             kubernetes: sample.kubernetes.clone(),
@@ -532,6 +534,9 @@ impl WindowState {
         self.dropped_sample_count = self
             .dropped_sample_count
             .saturating_add(dropped_sample_count);
+        self.total_weight_nanos = self
+            .total_weight_nanos
+            .saturating_add(profiling_weight_nanos(&sample.attributes).unwrap_or(0));
 
         let stack_id = bounded_stack_id(&sample.stack_id);
         if self.stack_ids.contains(&stack_id) || self.stack_ids.len() < max_stack_ids_per_window {
@@ -555,6 +560,18 @@ impl WindowState {
     }
 
     fn to_signal(&self, host: Option<String>) -> SignalEnvelope {
+        let mut attributes = self.attributes.clone();
+        attributes.retain(|attribute| attribute.key != "profiling.sample.weight_nanos");
+        if self.total_weight_nanos > 0 {
+            if attributes.len() >= MAX_PROFILE_ATTRIBUTES {
+                attributes.pop();
+            }
+            attributes.push(ProfilingAttribute {
+                key: "profiling.session.total_weight_nanos".to_string(),
+                value: self.total_weight_nanos.to_string(),
+            });
+            attributes.sort();
+        }
         SignalEnvelope::profiling_session_observation(
             "generator.profiling",
             host,
@@ -572,10 +589,20 @@ impl WindowState {
                 container: self.container.clone(),
                 kubernetes: self.kubernetes.clone(),
                 source: self.source.clone(),
-                attributes: self.attributes.clone(),
+                attributes,
             },
         )
     }
+}
+
+fn profiling_weight_nanos(attributes: &[ProfilingAttribute]) -> Option<u64> {
+    attributes
+        .iter()
+        .find(|attribute| attribute.key == "profiling.sample.weight_nanos")?
+        .value
+        .parse::<u64>()
+        .ok()
+        .filter(|weight| *weight > 0)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -590,6 +617,7 @@ struct SampleFingerprint {
     thread_id: Option<u64>,
     sample_count: u64,
     sampling_period_nanos: Option<u64>,
+    weight_nanos: Option<u64>,
     container_id: Option<String>,
     pod_uid: Option<String>,
 }
@@ -607,6 +635,7 @@ impl SampleFingerprint {
             thread_id: sample.thread_id,
             sample_count: sample.sample_count,
             sampling_period_nanos: sample.sampling_period_nanos,
+            weight_nanos: profiling_weight_nanos(&sample.attributes),
             container_id: sample
                 .container
                 .as_ref()

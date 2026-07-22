@@ -48,6 +48,13 @@ struct SourceCounters {
     go_tls_fd_resolution_failures: AtomicU64,
     go_tls_output_attempts: AtomicU64,
     go_tls_state_replacements: AtomicU64,
+    profile_events: AtomicU64,
+    profile_capture_failures: AtomicU64,
+    profile_state_replacements: AtomicU64,
+    profile_pending_misses: AtomicU64,
+    profile_below_min_duration: AtomicU64,
+    profile_rate_limited: AtomicU64,
+    profile_output_attempts: AtomicU64,
 }
 
 impl SourceCounters {
@@ -82,6 +89,13 @@ impl SourceCounters {
             go_tls_fd_resolution_failures: AtomicU64::new(0),
             go_tls_output_attempts: AtomicU64::new(0),
             go_tls_state_replacements: AtomicU64::new(0),
+            profile_events: AtomicU64::new(0),
+            profile_capture_failures: AtomicU64::new(0),
+            profile_state_replacements: AtomicU64::new(0),
+            profile_pending_misses: AtomicU64::new(0),
+            profile_below_min_duration: AtomicU64::new(0),
+            profile_rate_limited: AtomicU64::new(0),
+            profile_output_attempts: AtomicU64::new(0),
         }
     }
 }
@@ -118,6 +132,13 @@ pub struct SourceTelemetrySnapshot {
     pub go_tls_fd_resolution_failures: u64,
     pub go_tls_output_attempts: u64,
     pub go_tls_state_replacements: u64,
+    pub profile_events: u64,
+    pub profile_capture_failures: u64,
+    pub profile_state_replacements: u64,
+    pub profile_pending_misses: u64,
+    pub profile_below_min_duration: u64,
+    pub profile_rate_limited: u64,
+    pub profile_output_attempts: u64,
 }
 
 static SOURCE_COUNTERS: OnceLock<Mutex<BTreeMap<&'static str, Arc<SourceCounters>>>> =
@@ -300,6 +321,23 @@ impl SourceTelemetry {
         }
     }
 
+    pub(crate) fn record_profile_counter_deltas(&self, deltas: [u64; 7]) {
+        for (counter, delta) in [
+            &self.counters.profile_events,
+            &self.counters.profile_capture_failures,
+            &self.counters.profile_state_replacements,
+            &self.counters.profile_pending_misses,
+            &self.counters.profile_below_min_duration,
+            &self.counters.profile_rate_limited,
+            &self.counters.profile_output_attempts,
+        ]
+        .into_iter()
+        .zip(deltas)
+        {
+            counter.fetch_add(delta, Ordering::Relaxed);
+        }
+    }
+
     pub(crate) fn maybe_log_summary(&self) {
         let elapsed_nanos = u64::try_from(self.started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
         if !self.try_claim_summary(elapsed_nanos) {
@@ -343,6 +381,13 @@ impl SourceTelemetry {
             go_tls_fd_resolution_failures = snapshot.go_tls_fd_resolution_failures,
             go_tls_output_attempts = snapshot.go_tls_output_attempts,
             go_tls_state_replacements = snapshot.go_tls_state_replacements,
+            profile_events = snapshot.profile_events,
+            profile_capture_failures = snapshot.profile_capture_failures,
+            profile_state_replacements = snapshot.profile_state_replacements,
+            profile_pending_misses = snapshot.profile_pending_misses,
+            profile_below_min_duration = snapshot.profile_below_min_duration,
+            profile_rate_limited = snapshot.profile_rate_limited,
+            profile_output_attempts = snapshot.profile_output_attempts,
             "source telemetry summary"
         );
     }
@@ -447,6 +492,13 @@ fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceT
             .load(Ordering::Relaxed),
         go_tls_output_attempts: counters.go_tls_output_attempts.load(Ordering::Relaxed),
         go_tls_state_replacements: counters.go_tls_state_replacements.load(Ordering::Relaxed),
+        profile_events: counters.profile_events.load(Ordering::Relaxed),
+        profile_capture_failures: counters.profile_capture_failures.load(Ordering::Relaxed),
+        profile_state_replacements: counters.profile_state_replacements.load(Ordering::Relaxed),
+        profile_pending_misses: counters.profile_pending_misses.load(Ordering::Relaxed),
+        profile_below_min_duration: counters.profile_below_min_duration.load(Ordering::Relaxed),
+        profile_rate_limited: counters.profile_rate_limited.load(Ordering::Relaxed),
+        profile_output_attempts: counters.profile_output_attempts.load(Ordering::Relaxed),
     }
 }
 
@@ -483,6 +535,13 @@ impl SourceTelemetrySnapshot {
             go_tls_fd_resolution_failures: 0,
             go_tls_output_attempts: 0,
             go_tls_state_replacements: 0,
+            profile_events: 0,
+            profile_capture_failures: 0,
+            profile_state_replacements: 0,
+            profile_pending_misses: 0,
+            profile_below_min_duration: 0,
+            profile_rate_limited: 0,
+            profile_output_attempts: 0,
         }
     }
 
@@ -564,6 +623,25 @@ impl SourceTelemetrySnapshot {
             go_tls_state_replacements: self
                 .go_tls_state_replacements
                 .saturating_sub(previous.go_tls_state_replacements),
+            profile_events: self.profile_events.saturating_sub(previous.profile_events),
+            profile_capture_failures: self
+                .profile_capture_failures
+                .saturating_sub(previous.profile_capture_failures),
+            profile_state_replacements: self
+                .profile_state_replacements
+                .saturating_sub(previous.profile_state_replacements),
+            profile_pending_misses: self
+                .profile_pending_misses
+                .saturating_sub(previous.profile_pending_misses),
+            profile_below_min_duration: self
+                .profile_below_min_duration
+                .saturating_sub(previous.profile_below_min_duration),
+            profile_rate_limited: self
+                .profile_rate_limited
+                .saturating_sub(previous.profile_rate_limited),
+            profile_output_attempts: self
+                .profile_output_attempts
+                .saturating_sub(previous.profile_output_attempts),
         }
     }
 
@@ -595,6 +673,13 @@ impl SourceTelemetrySnapshot {
             && self.go_tls_fd_resolution_failures == 0
             && self.go_tls_output_attempts == 0
             && self.go_tls_state_replacements == 0
+            && self.profile_events == 0
+            && self.profile_capture_failures == 0
+            && self.profile_state_replacements == 0
+            && self.profile_pending_misses == 0
+            && self.profile_below_min_duration == 0
+            && self.profile_rate_limited == 0
+            && self.profile_output_attempts == 0
     }
 }
 
@@ -644,6 +729,7 @@ mod tests {
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Filtered);
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Exhausted);
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Disabled);
+        telemetry.record_profile_counter_deltas([8, 1, 2, 3, 4, 5, 6]);
 
         let snapshot = telemetry.snapshot_for_test();
         assert!(snapshot.initialized);
@@ -658,6 +744,13 @@ mod tests {
         assert_eq!(snapshot.diagnostic_matches, 1);
         assert_eq!(snapshot.diagnostic_filtered, 1);
         assert_eq!(snapshot.diagnostic_exhausted, 1);
+        assert_eq!(snapshot.profile_events, 8);
+        assert_eq!(snapshot.profile_capture_failures, 1);
+        assert_eq!(snapshot.profile_state_replacements, 2);
+        assert_eq!(snapshot.profile_pending_misses, 3);
+        assert_eq!(snapshot.profile_below_min_duration, 4);
+        assert_eq!(snapshot.profile_rate_limited, 5);
+        assert_eq!(snapshot.profile_output_attempts, 6);
 
         let first_delta = telemetry.take_summary_delta();
         assert_eq!(first_delta.decoded_samples, 1);

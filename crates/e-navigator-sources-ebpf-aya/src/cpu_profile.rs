@@ -21,6 +21,9 @@ pub(crate) const RAW_CPU_PROFILE_MAX_FRAMES: usize = 128;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_PY_MAX_FRAMES: usize = 64;
 
+#[cfg(target_os = "linux")]
+const PROFILE_DIAGNOSTIC_COUNTERS_LEN: usize = 16;
+
 /// The in-kernel capture buffer was filled to the configured frame limit,
 /// so the sampled stack may continue past the deepest captured frame.
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -38,6 +41,16 @@ pub(crate) const RAW_CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED: u32 = 2;
 /// reason.
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_CPU_PROFILE_FLAG_DWARF: u32 = 4;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_PROFILE_KIND_CPU: u32 = 1;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_PROFILE_KIND_LOCK: u32 = 3;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_PROFILE_MODE_ON_CPU: u32 = 1;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_PROFILE_MODE_OFF_CPU: u32 = 2;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_PROFILE_MODE_FUTEX_WAIT: u32 = 3;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_UNWIND_STOP_SHIFT: u32 = 8;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -77,6 +90,11 @@ pub(crate) struct RawCpuProfileEvent {
     pub command: [u8; 16],
     pub frame_count: u32,
     pub flags: u32,
+    pub profile_kind: u32,
+    pub profile_mode: u32,
+    pub profile_status: i32,
+    pub reserved: u32,
+    pub weight_nanos: u64,
     pub instruction_pointers: [u64; RAW_CPU_PROFILE_MAX_FRAMES],
     pub py_frame_count: u32,
     pub py_stop: u32,
@@ -655,9 +673,25 @@ fn raw_cpu_profile_to_signal_with_clock(
     }
 
     let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawCpuProfileEvent>()) };
-    if raw.sample_count == 0 {
+    if raw.sample_count == 0 || raw.reserved != 0 {
         return None;
     }
+    let (profiling_kind, profile_mode, profile_source, event_weight_nanos) =
+        match (raw.profile_kind, raw.profile_mode, raw.weight_nanos) {
+            (RAW_PROFILE_KIND_CPU, RAW_PROFILE_MODE_ON_CPU, 0) => {
+                (ProfilingKind::Cpu, "on_cpu", "aya_perf_event", None)
+            }
+            (RAW_PROFILE_KIND_CPU, RAW_PROFILE_MODE_OFF_CPU, weight) if weight > 0 => (
+                ProfilingKind::Cpu,
+                "off_cpu",
+                "aya_sched_switch",
+                Some(weight),
+            ),
+            (RAW_PROFILE_KIND_LOCK, RAW_PROFILE_MODE_FUTEX_WAIT, weight) if weight > 0 => {
+                (ProfilingKind::Lock, "futex_wait", "aya_futex", Some(weight))
+            }
+            _ => return None,
+        };
     let capture_truncated = raw.flags & RAW_CPU_PROFILE_FLAG_TRUNCATED != 0;
     let command = bytes_to_string(&raw.command);
     // An untranslated pid may belong to an unrelated same-numbered process
@@ -729,11 +763,13 @@ fn raw_cpu_profile_to_signal_with_clock(
         .count();
     let sample = RawProfileSample {
         timestamp_unix_nanos,
-        profiling_kind: ProfilingKind::Cpu,
+        profiling_kind,
         correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
         confidence: ProfilingConfidence::Medium,
         sample_count: raw.sample_count,
-        sampling_period_nanos: Some(sample_period_nanos(config.sample_frequency_hz)),
+        sampling_period_nanos: event_weight_nanos
+            .is_none()
+            .then(|| sample_period_nanos(config.sample_frequency_hz)),
         stack_frames,
         process: Some(NetworkProcessIdentity {
             pid: raw.pid,
@@ -748,16 +784,31 @@ fn raw_cpu_profile_to_signal_with_clock(
         thread_id: (raw.tid != 0).then_some(u64::from(raw.tid)),
         thread_name: None,
         attributes: {
-            let mut attributes = vec![
-                ProfilingAttribute {
+            let mut attributes = vec![ProfilingAttribute {
+                key: "profiling.source".to_string(),
+                value: profile_source.to_string(),
+            }];
+            attributes.push(ProfilingAttribute {
+                key: "profiling.sample.mode".to_string(),
+                value: profile_mode.to_string(),
+            });
+            if let Some(weight_nanos) = event_weight_nanos {
+                attributes.push(ProfilingAttribute {
+                    key: "profiling.sample.weight_nanos".to_string(),
+                    value: weight_nanos.to_string(),
+                });
+            } else {
+                attributes.push(ProfilingAttribute {
                     key: "profiling.sample.frequency_hz".to_string(),
                     value: config.sample_frequency_hz.to_string(),
-                },
-                ProfilingAttribute {
-                    key: "profiling.source".to_string(),
-                    value: "aya_perf_event".to_string(),
-                },
-            ];
+                });
+            }
+            if raw.profile_mode == RAW_PROFILE_MODE_FUTEX_WAIT {
+                attributes.push(ProfilingAttribute {
+                    key: "profiling.lock.result".to_string(),
+                    value: raw.profile_status.to_string(),
+                });
+            }
             if capture_truncated {
                 attributes.push(ProfilingAttribute {
                     key: "profiling.stack.capture_truncated".to_string(),
@@ -906,6 +957,37 @@ fn bounded_cpu_targets(cpus: &[u32], max_active_targets: usize) -> Vec<u32> {
         .copied()
         .take(max_active_targets)
         .collect::<Vec<_>>()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn tracepoint_field_layout(contents: &str, field_name: &str) -> Option<(usize, usize)> {
+    for line in contents.lines() {
+        let fields = line.split(';').map(str::trim).collect::<Vec<_>>();
+        let Some(declaration) = fields
+            .first()
+            .and_then(|field| field.strip_prefix("field:"))
+            .map(str::trim)
+        else {
+            continue;
+        };
+        if declaration.split_whitespace().last() != Some(field_name) {
+            continue;
+        }
+        let offset = fields
+            .iter()
+            .find_map(|field| field.strip_prefix("offset:"))?
+            .trim()
+            .parse()
+            .ok()?;
+        let size = fields
+            .iter()
+            .find_map(|field| field.strip_prefix("size:"))?
+            .trim()
+            .parse()
+            .ok()?;
+        return Some((offset, size));
+    }
+    None
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -1242,7 +1324,7 @@ fn bytes_to_string(bytes: &[u8]) -> String {
 mod platform {
     use super::{
         bounded_cpu_targets, cpu_profile_perf_pages, raw_cpu_profile_to_signal,
-        send_with_backpressure,
+        send_with_backpressure, tracepoint_field_layout,
     };
     use crate::cpu_unwind::{
         PyProcInfoAbi, UnwindMapSink, UnwindModuleSpan, UnwindProcMappings, UnwindRowAbi,
@@ -1254,9 +1336,10 @@ mod platform {
     use aya::{
         Ebpf,
         maps::{
-            Array as AyaArray, HashMap as AyaHashMap, MapData, ProgramArray as AyaProgramArray,
-            perf::PerfEvent as PerfBufferEvent,
+            Array as AyaArray, HashMap as AyaHashMap, MapData, PerCpuArray,
+            ProgramArray as AyaProgramArray, perf::PerfEvent as PerfBufferEvent,
         },
+        programs::TracePoint,
         programs::perf_event::{
             PerfEvent, PerfEventConfig, PerfEventScope, SamplePolicy, SoftwareEvent,
         },
@@ -1267,8 +1350,9 @@ mod platform {
         ModuleKind, ModuleMetadata, Source,
     };
     use e_navigator_signals::SignalEnvelope;
+    use std::io::Read;
     use tokio::{sync::mpsc, task::JoinHandle};
-    use tracing::{debug, warn};
+    use tracing::{debug, info, warn};
 
     #[derive(Debug, Clone)]
     pub struct AyaCpuProfileSource {
@@ -1318,8 +1402,16 @@ mod platform {
                 "source.aya_cpu_profile",
                 transport.kind.as_str(),
             ));
+            // sched_switch and raw_syscalls are node-wide, very hot hooks.
+            // Seed the configured unknown-cgroup posture before attaching any
+            // of them so bootstrap follows policy rather than defaulting open.
+            crate::capture_filter::seed_capture_filter_control(
+                &mut ebpf,
+                "source.aya_cpu_profile",
+            )?;
             populate_frame_limit(&mut ebpf, &self.config)?;
             populate_pid_namespace(&mut ebpf, &self.procfs_root);
+            populate_profile_capture_config(&mut ebpf, &self.config)?;
             if self.config.dwarf_unwind {
                 setup_dwarf_unwinder(&mut ebpf)?;
             }
@@ -1362,6 +1454,43 @@ mod platform {
                         true,
                     )
                     .map_err(module_error)?;
+            }
+
+            if self.config.off_cpu_enabled {
+                validate_sched_switch_layout()?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_profile_sched_switch",
+                    "sched",
+                    "sched_switch",
+                )?;
+            }
+            if self.config.lock_enabled {
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_profile_futex_enter",
+                    "raw_syscalls",
+                    "sys_enter",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_profile_futex_exit",
+                    "raw_syscalls",
+                    "sys_exit",
+                )?;
+            }
+            if self.config.off_cpu_enabled || self.config.lock_enabled {
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_profile_process_exit",
+                    "sched",
+                    "sched_process_exit",
+                )?;
+                reader_handles.push(spawn_profile_counter_reader(
+                    &mut ebpf,
+                    shutdown.clone(),
+                    telemetry.clone(),
+                )?);
             }
 
             // This source's reader handles carry a different exit type, so the
@@ -1764,6 +1893,219 @@ mod platform {
         Ok(())
     }
 
+    fn populate_profile_capture_config(
+        ebpf: &mut Ebpf,
+        config: &CpuProfileSourceConfig,
+    ) -> CoreResult<()> {
+        let map =
+            ebpf.map_mut("PROFILE_CAPTURE_CONFIG")
+                .ok_or_else(|| CoreError::ModuleFailed {
+                    module: "source.aya_cpu_profile".to_string(),
+                    message: "missing PROFILE_CAPTURE_CONFIG map".to_string(),
+                })?;
+        let mut values: AyaArray<&mut MapData, u64> =
+            AyaArray::try_from(map).map_err(module_error)?;
+        let futex_syscall = if config.lock_enabled {
+            futex_syscall_number()?
+        } else {
+            0
+        };
+        let configured = [
+            u64::from(config.off_cpu_enabled),
+            u64::from(config.lock_enabled),
+            config.off_cpu_min_duration_micros.saturating_mul(1_000),
+            config.lock_min_duration_micros.saturating_mul(1_000),
+            u64::from(config.max_off_cpu_events_per_second_per_cpu),
+            u64::from(config.max_lock_events_per_second_per_cpu),
+            futex_syscall,
+        ];
+        for (index, value) in configured.into_iter().enumerate() {
+            values
+                .set(u32::try_from(index).unwrap_or(u32::MAX), value, 0)
+                .map_err(module_error)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn futex_syscall_number() -> CoreResult<u64> {
+        Ok(202)
+    }
+
+    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+    fn futex_syscall_number() -> CoreResult<u64> {
+        Ok(98)
+    }
+
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "riscv64"
+    )))]
+    fn futex_syscall_number() -> CoreResult<u64> {
+        Err(CoreError::ModuleFailed {
+            module: "source.aya_cpu_profile".to_string(),
+            message: format!(
+                "lock profiling does not define the futex syscall for architecture {}",
+                std::env::consts::ARCH
+            ),
+        })
+    }
+
+    fn validate_sched_switch_layout() -> CoreResult<()> {
+        const MAX_TRACEPOINT_FORMAT_BYTES: u64 = 64 * 1024;
+        let candidates = [
+            "/sys/kernel/tracing/events/sched/sched_switch/format",
+            "/sys/kernel/debug/tracing/events/sched/sched_switch/format",
+        ];
+        let mut read_error = None;
+        for path in candidates {
+            match read_bounded_utf8(path, MAX_TRACEPOINT_FORMAT_BYTES) {
+                Ok(contents) => {
+                    let layout = tracepoint_field_layout(&contents, "next_pid");
+                    if layout == Some((56, 4)) {
+                        return Ok(());
+                    }
+                    return Err(CoreError::ModuleFailed {
+                        module: "source.aya_cpu_profile".to_string(),
+                        message: format!(
+                            "sched_switch next_pid layout must be offset 56 size 4, observed {layout:?} in {path}"
+                        ),
+                    });
+                }
+                Err(error) => read_error = Some(format!("{path}: {error}")),
+            }
+        }
+        Err(CoreError::ModuleFailed {
+            module: "source.aya_cpu_profile".to_string(),
+            message: format!(
+                "off-CPU profiling requires a readable sched_switch tracefs format: {}",
+                read_error.unwrap_or_else(|| "no tracefs candidates".to_string())
+            ),
+        })
+    }
+
+    fn read_bounded_utf8(path: &str, max_bytes: u64) -> Result<String, String> {
+        let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+        let mut bytes = Vec::new();
+        file.take(max_bytes.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        if bytes.len() as u64 > max_bytes {
+            return Err(format!("input exceeds {max_bytes} bytes"));
+        }
+        String::from_utf8(bytes).map_err(|error| error.to_string())
+    }
+
+    fn attach_tracepoint(
+        ebpf: &mut Ebpf,
+        program_name: &'static str,
+        category: &'static str,
+        name: &'static str,
+    ) -> CoreResult<()> {
+        let program: &mut TracePoint = ebpf
+            .program_mut(program_name)
+            .ok_or_else(|| CoreError::ModuleFailed {
+                module: "source.aya_cpu_profile".to_string(),
+                message: format!("missing {program_name} program"),
+            })?
+            .try_into()
+            .map_err(module_error)?;
+        program.load().map_err(module_error)?;
+        program.attach(category, name).map_err(module_error)?;
+        Ok(())
+    }
+
+    fn spawn_profile_counter_reader(
+        ebpf: &mut Ebpf,
+        shutdown: ReaderShutdown,
+        telemetry: std::sync::Arc<SourceTelemetry>,
+    ) -> CoreResult<JoinHandle<ReaderExit>> {
+        let counters = PerCpuArray::try_from(
+            ebpf.take_map("PROFILE_DIAGNOSTIC_COUNTERS")
+                .ok_or_else(|| CoreError::ModuleFailed {
+                    module: "source.aya_cpu_profile".to_string(),
+                    message: "missing PROFILE_DIAGNOSTIC_COUNTERS map".to_string(),
+                })?,
+        )
+        .map_err(module_error)?;
+        Ok(tokio::task::spawn_blocking(move || {
+            let mut previous = [0_u64; super::PROFILE_DIAGNOSTIC_COUNTERS_LEN];
+            while !shutdown.is_stopped() {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                record_profile_counter_delta(&counters, &telemetry, &mut previous);
+            }
+            record_profile_counter_delta(&counters, &telemetry, &mut previous);
+            ReaderExit::Stopped
+        }))
+    }
+
+    fn record_profile_counter_delta(
+        counters: &PerCpuArray<MapData, u64>,
+        telemetry: &SourceTelemetry,
+        previous: &mut [u64; super::PROFILE_DIAGNOSTIC_COUNTERS_LEN],
+    ) {
+        let mut current = [0_u64; super::PROFILE_DIAGNOSTIC_COUNTERS_LEN];
+        for (index, total) in current.iter_mut().enumerate() {
+            let Ok(index) = u32::try_from(index) else {
+                return;
+            };
+            let values = match counters.get(&index, 0) {
+                Ok(values) => values,
+                Err(error) => {
+                    warn!(counter_index = index, error = %error, "failed to read profiling coverage counter");
+                    return;
+                }
+            };
+            *total = values
+                .iter()
+                .fold(0_u64, |sum, value| sum.wrapping_add(*value));
+        }
+        let mut deltas = [0_u64; super::PROFILE_DIAGNOSTIC_COUNTERS_LEN];
+        for ((delta, current), previous) in deltas.iter_mut().zip(current).zip(previous.iter_mut())
+        {
+            *delta = current.wrapping_sub(*previous);
+            *previous = current;
+        }
+        if deltas.iter().all(|delta| *delta == 0) {
+            return;
+        }
+        telemetry.record_profile_counter_deltas([
+            deltas[0].saturating_add(deltas[8]),
+            deltas[1]
+                .saturating_add(deltas[6])
+                .saturating_add(deltas[9])
+                .saturating_add(deltas[14]),
+            deltas[2].saturating_add(deltas[10]),
+            deltas[3].saturating_add(deltas[11]),
+            deltas[4].saturating_add(deltas[12]),
+            deltas[5].saturating_add(deltas[13]),
+            deltas[7].saturating_add(deltas[15]),
+        ]);
+        info!(
+            target: "e_navigator_sources_ebpf_aya::source_telemetry",
+            source = "source.aya_cpu_profile",
+            off_cpu_entries = deltas[0],
+            off_cpu_update_failures = deltas[1],
+            off_cpu_replacements = deltas[2],
+            off_cpu_misses = deltas[3],
+            off_cpu_below_min = deltas[4],
+            off_cpu_rate_limited = deltas[5],
+            off_cpu_stack_failures = deltas[6],
+            off_cpu_outputs = deltas[7],
+            lock_entries = deltas[8],
+            lock_update_failures = deltas[9],
+            lock_replacements = deltas[10],
+            lock_misses = deltas[11],
+            lock_below_min = deltas[12],
+            lock_rate_limited = deltas[13],
+            lock_stack_failures = deltas[14],
+            lock_outputs = deltas[15],
+            "profiling capture counters"
+        );
+        telemetry.maybe_log_summary();
+    }
+
     /// Loads the tail-called DWARF unwind program and registers it in
     /// the program array the sampler jumps through.
     fn setup_dwarf_unwinder(ebpf: &mut Ebpf) -> CoreResult<()> {
@@ -1997,6 +2339,36 @@ mod tests {
     use e_navigator_signals::{
         ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind, SignalPayload,
     };
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn arbitrary_profile_discriminants_only_accept_supported_weight_semantics(
+            kind in any::<u32>(),
+            mode in any::<u32>(),
+            weight in any::<u64>(),
+            reserved in any::<u32>(),
+        ) {
+            let mut raw = event_driven_raw(kind, mode, weight, 0);
+            raw.reserved = reserved;
+            let accepted = raw_cpu_profile_to_signal_with_clock(
+                raw_as_bytes(&raw),
+                None,
+                &source_config(),
+                10_000,
+                &mut RawAddressResolver,
+            ).is_some();
+            let supported = reserved == 0 && matches!(
+                (kind, mode, weight),
+                (RAW_PROFILE_KIND_CPU, RAW_PROFILE_MODE_ON_CPU, 0)
+                    | (RAW_PROFILE_KIND_CPU, RAW_PROFILE_MODE_OFF_CPU, 1..)
+                    | (RAW_PROFILE_KIND_LOCK, RAW_PROFILE_MODE_FUTEX_WAIT, 1..)
+            );
+            prop_assert_eq!(accepted, supported);
+        }
+    }
 
     #[test]
     fn decodes_valid_observed_cpu_sample() {
@@ -2010,6 +2382,11 @@ mod tests {
             command: fixed_command("api"),
             frame_count: 2,
             flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0xabc, 0xdef, 0, 0]),
             py_frame_count: 0,
             py_stop: 0,
@@ -2059,6 +2436,98 @@ mod tests {
     }
 
     #[test]
+    fn decodes_weighted_off_cpu_and_lock_profiles() {
+        for (raw, expected_kind, expected_mode, expected_source) in [
+            (
+                event_driven_raw(RAW_PROFILE_KIND_CPU, RAW_PROFILE_MODE_OFF_CPU, 5_000_000, 0),
+                ProfilingKind::Cpu,
+                "off_cpu",
+                "aya_sched_switch",
+            ),
+            (
+                event_driven_raw(
+                    RAW_PROFILE_KIND_LOCK,
+                    RAW_PROFILE_MODE_FUTEX_WAIT,
+                    7_000_000,
+                    -11,
+                ),
+                ProfilingKind::Lock,
+                "futex_wait",
+                "aya_futex",
+            ),
+        ] {
+            let signal = raw_cpu_profile_to_signal_with_clock(
+                raw_as_bytes(&raw),
+                None,
+                &source_config(),
+                10_000,
+                &mut RawAddressResolver,
+            )
+            .expect("event-driven profile decodes")
+            .signal;
+            let SignalPayload::ProfileSampleObservation(sample) = signal.payload else {
+                panic!("expected profile sample");
+            };
+            assert_eq!(sample.profiling_kind, expected_kind);
+            assert_eq!(sample.sample_count, 1);
+            assert_eq!(sample.sampling_period_nanos, None);
+            assert!(sample.attributes.iter().any(|attribute| {
+                attribute.key == "profiling.sample.mode" && attribute.value == expected_mode
+            }));
+            assert!(sample.attributes.iter().any(|attribute| {
+                attribute.key == "profiling.source" && attribute.value == expected_source
+            }));
+            assert!(sample.attributes.iter().any(|attribute| {
+                attribute.key == "profiling.sample.weight_nanos"
+                    && attribute.value == raw.weight_nanos.to_string()
+            }));
+        }
+    }
+
+    #[test]
+    fn event_driven_profile_abi_fails_closed_on_invalid_discriminants() {
+        let raw = event_driven_raw(RAW_PROFILE_KIND_CPU, RAW_PROFILE_MODE_OFF_CPU, 5_000_000, 0);
+        let invalid = [
+            RawCpuProfileEvent {
+                weight_nanos: 0,
+                ..raw
+            },
+            RawCpuProfileEvent {
+                profile_mode: 99,
+                ..raw
+            },
+            RawCpuProfileEvent { reserved: 1, ..raw },
+            RawCpuProfileEvent {
+                profile_kind: RAW_PROFILE_KIND_LOCK,
+                ..raw
+            },
+        ];
+        for candidate in invalid {
+            assert!(
+                raw_cpu_profile_to_signal_with_clock(
+                    raw_as_bytes(&candidate),
+                    None,
+                    &source_config(),
+                    10_000,
+                    &mut RawAddressResolver,
+                )
+                .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn sched_switch_layout_parser_requires_exact_named_field_metadata() {
+        let format = "name: sched_switch\n\tfield:pid_t prev_pid; offset:24; size:4; signed:1;\n\tfield:pid_t next_pid; offset:56; size:4; signed:1;\n";
+        assert_eq!(tracepoint_field_layout(format, "next_pid"), Some((56, 4)));
+        assert_eq!(tracepoint_field_layout(format, "missing"), None);
+        assert_eq!(
+            tracepoint_field_layout("field:pid_t next_pid; offset:64; size:4;", "next_pid"),
+            Some((64, 4))
+        );
+    }
+
+    #[test]
     fn missing_stack_remains_empty_without_inventing_frames() {
         let raw = RawCpuProfileEvent {
             pid: 42,
@@ -2070,6 +2539,11 @@ mod tests {
             command: fixed_command("api"),
             frame_count: 0,
             flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
@@ -2106,6 +2580,11 @@ mod tests {
             command: fixed_command("api"),
             frame_count: RAW_CPU_PROFILE_MAX_FRAMES as u32,
             flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0x1, 0x2, 0x3, 0x4]),
             py_frame_count: 0,
             py_stop: 0,
@@ -2235,6 +2714,11 @@ mod tests {
             command: fixed_command("node"),
             frame_count: 2,
             flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0x1000, 0x2000]),
             py_frame_count: 0,
             py_stop: 0,
@@ -2288,6 +2772,11 @@ mod tests {
             command: fixed_command("app"),
             frame_count: 1,
             flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: {
                 let mut pointers = [0_u64; RAW_CPU_PROFILE_MAX_FRAMES];
                 pointers[0] = 0x55f000000500;
@@ -2389,6 +2878,11 @@ mod tests {
             command: fixed_command("api"),
             frame_count: 1,
             flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0xabc, 0, 0, 0]),
             py_frame_count: 0,
             py_stop: 0,
@@ -2419,6 +2913,11 @@ mod tests {
             command: fixed_command("api"),
             frame_count: 2,
             flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0xabc, 0xdef, 0, 0]),
             py_frame_count: 0,
             py_stop: 0,
@@ -2459,6 +2958,11 @@ mod tests {
             command: fixed_command("api"),
             frame_count: 0,
             flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
@@ -2490,6 +2994,11 @@ mod tests {
             command: fixed_command("api"),
             frame_count: 0,
             flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
@@ -2532,6 +3041,11 @@ mod tests {
             command: fixed_command("api"),
             frame_count: 0,
             flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
@@ -2574,6 +3088,11 @@ mod tests {
             command: fixed_command("api"),
             frame_count: 4,
             flags: RAW_CPU_PROFILE_FLAG_TRUNCATED,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0x1, 0x2, 0x3, 0x4]),
             py_frame_count: 0,
             py_stop: 0,
@@ -2609,6 +3128,11 @@ mod tests {
             command: fixed_command("api"),
             frame_count: 2,
             flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0x1, 0x2]),
             py_frame_count: 0,
             py_stop: 0,
@@ -2700,6 +3224,11 @@ mod tests {
             command: fixed_command("api"),
             frame_count: 1,
             flags: RAW_CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0xabc]),
             py_frame_count: 0,
             py_stop: 0,
@@ -2744,6 +3273,11 @@ mod tests {
             command: fixed_command("api"),
             frame_count: 1,
             flags: RAW_CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0xabc]),
             py_frame_count: 0,
             py_stop: 0,
@@ -2824,6 +3358,11 @@ mod tests {
             command: fixed_command("api"),
             frame_count: 3,
             flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0x1000, 0x2000, 0x3000]),
             py_frame_count: 0,
             py_stop: 0,
@@ -2858,6 +3397,11 @@ mod tests {
             command: fixed_command("api"),
             frame_count: 1,
             flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0xabc]),
             py_frame_count: 0,
             py_stop: 0,
@@ -2964,6 +3508,11 @@ mod tests {
             command: fixed_command("python3"),
             frame_count: 1,
             flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0xabc]),
             py_frame_count: 0,
             py_stop: 0,
@@ -3143,13 +3692,41 @@ mod tests {
 
     #[test]
     fn raw_cpu_profile_event_layout_size_matches_ebpf_abi() {
-        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 1608);
+        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 1632);
     }
 
     fn padded_pointers(values: &[u64]) -> [u64; RAW_CPU_PROFILE_MAX_FRAMES] {
         let mut pointers = [0_u64; RAW_CPU_PROFILE_MAX_FRAMES];
         pointers[..values.len()].copy_from_slice(values);
         pointers
+    }
+
+    fn event_driven_raw(
+        profile_kind: u32,
+        profile_mode: u32,
+        weight_nanos: u64,
+        profile_status: i32,
+    ) -> RawCpuProfileEvent {
+        RawCpuProfileEvent {
+            pid: 42,
+            tid: 43,
+            uid: 1000,
+            cgroup_id: 7,
+            sample_count: 1,
+            timestamp_unix_nanos: 0,
+            command: fixed_command("worker"),
+            frame_count: 2,
+            flags: 0,
+            profile_kind,
+            profile_mode,
+            profile_status,
+            reserved: 0,
+            weight_nanos,
+            instruction_pointers: padded_pointers(&[0xabc, 0xdef]),
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
+        }
     }
 
     fn source_config() -> CpuProfileSourceConfig {

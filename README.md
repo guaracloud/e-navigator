@@ -35,7 +35,8 @@ E-Navigator runs as one node-local agent with a statically registered
 
 - Sources observe process execution and exit, TCP lifecycle and statistics,
   host resources, DNS, HTTP, supported application protocols, TLS plaintext at
-  supported userspace library boundaries, and CPU profile samples.
+  supported userspace library boundaries, plus periodic CPU, scheduler
+  off-CPU, and futex-wait lock profile samples.
 - Processors attach process, container, Kubernetes, owner, and service context
   only when the evidence supports it.
 - Generators derive bounded resource and network metrics, dependency edges,

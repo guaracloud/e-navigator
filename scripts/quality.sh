@@ -40,6 +40,8 @@ run tests/kernel_hook_bench_guard_test.sh
 run env PYTHONDONTWRITEBYTECODE=1 python3 tests/kernel_hook_analysis_test.py
 run tests/go_tls_bench_guard_test.sh
 run env PYTHONDONTWRITEBYTECODE=1 python3 tests/go_tls_analysis_test.py
+run tests/profiling_breadth_bench_guard_test.sh
+run env PYTHONDONTWRITEBYTECODE=1 python3 tests/profiling_breadth_analysis_test.py
 
 if [ "${E_NAVIGATOR_SKIP_SUPPLY_CHAIN:-0}" != "1" ]; then
   require_tool cargo-deny

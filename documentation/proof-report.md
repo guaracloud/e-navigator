@@ -72,7 +72,8 @@ or chart rendering:
   parsing, including cgroup container-ID extraction that requires
   container/Kubernetes cgroup markers rather than unrelated 64-hex substrings;
 - raw userspace decode paths for selected Aya exec/network/DNS/HTTP/profile
-  events, including profile fixture normalization with sensitive/reserved
+  events, including strict periodic/off-CPU/futex profile kind, mode, and
+  duration-weight combinations, plus profile fixture normalization with sensitive/reserved
   attribute filtering, owned stack-truncation markers, raw DNS label-shape
   validation, and build-checked DNS and HTTP raw decode fuzz targets plus HTTP
   iovec length validation;
@@ -158,14 +159,15 @@ or chart rendering:
   bounded non-empty final OTLP attribute key and string value conversion, and
   development-status OTLP Profiles `v1development` `v0.3.0` sample records
   with deterministic workload-aware IDs, bounded resource attributes and stack
-  frames, canonical-plus-user attribute caps, bounded/sensitive filtering, and
+  frames, canonical-plus-user attribute caps, bounded/sensitive filtering,
+  weighted event-driven duration encoding, and
   explicit cumulative-session export suppression. The pinned real Pyroscope
   `1.20.3` local smoke accepted the request and its Guara-shaped backend query
   returned `synthetic_api::checkout_handler` and deep representative frames;
 - native profile record formatting with bounded identifiers, bounded resource
   attributes, and non-empty sensitive attribute filtering;
 - pprof-compatible profile sample protobuf rendering with bounded stack
-  locations, sample-period scaling, bounded frame strings and workload labels,
+  locations, periodic sample scaling or explicit event duration, bounded frame strings and workload labels,
   canonical label overwrite protection, and sensitive/canonical metadata
   attribute filtering;
 - local Criterion hot-path benchmark harness compile coverage for host parsers,
@@ -236,6 +238,25 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   workloads, the benchmark release, loader, and namespace were removed. The
   standing Argo CD application returned Synced/Healthy with automated
   prune/self-heal and its original digest-pinned DaemonSet 2/2 Ready.
+
+- Profiling-breadth proof (2026-07-22, homelab k3s v1.30, kernel 6.6.68,
+  amd64, two NixOS nodes). Three counterbalanced 60-second pairs compared a
+  clean no-agent arm with an agent enabling only periodic CPU, scheduler
+  off-CPU, and futex-wait lock profiling. A digest-pinned CPython 3.11 image ran
+  a nested busy call chain, sleepers, and contended mutex threads after a
+  ten-second discovery window. Every profiling run emitted all three profile
+  modes, positive off-CPU and futex duration weights, named CPython 3.11 frames,
+  only the intended command and namespace, and a non-empty pprof payload. All
+  three recorded zero pending misses, state replacements, transport loss, perf
+  loss, and RingBuf reservation failures. Stack-capture failures were 0.0042 to
+  0.0049% of event-driven inputs, below the 0.1% gate. The profiling arm
+  averaged 4,655.687 busy batches/s versus 4,753.099 without an agent, a 2.049%
+  reduction for this one shared-cluster workload. This promotes exact CPython
+  3.11 and proves the bounded event-driven slice; it is not a mixed-runtime,
+  automatic JIT-map, backend, or production overhead claim. Curated evidence
+  is in `documentation/proof/profiling-breadth-20260722/`. Disposable
+  workloads, release, loader, and images were removed; the standing Argo CD
+  application returned Synced/Healthy with its original DaemonSet 2/2 Ready.
 
 - Capture-filter verifier-load and OrbStack live scoping proof (2026-07-07,
   OrbStack Docker plus its in-VM Kubernetes v1.34, arm64). The cgroup capture
@@ -606,10 +627,13 @@ These areas remain explicitly partial:
   live soaks are not proven.
 - **DNS capture:** selected UDP paths work, but symmetric all-node capture and
   lossless DNS coverage are not proven.
-- **CPU profiling:** selected samples and sessions, local pprof rendering, and
+- **CPU, off-CPU, and lock profiling:** exact CPython 3.11/3.12 interpreter
+  walks, selected periodic samples and sessions, three homelab repetitions of
+  bounded scheduler off-CPU and futex-wait profiles, local pprof rendering, and
   direct OTLP Profiles ingest/query against a disposable Pyroscope `1.20.3`
-  container are proven. Deterministic eBPF capture and backend queryability for
-  every workload/runtime shape, production storage/retention, and homelab
+  container are proven. Wakeup cause, lock ownership, non-futex synchronization,
+  allocations, automatic JIT-map production, reliable JIT unwind, every
+  workload/runtime shape, production storage/retention, and homelab
   direct-Pyroscope delivery are not proven.
 - **Exporter infrastructure:** local and namespace-local proof exists, but broad
   production backend/collector compatibility and longer live soaks are not
