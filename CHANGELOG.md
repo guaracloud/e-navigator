@@ -20,6 +20,14 @@ All notable changes to E-Navigator are documented here. The format follows
   Linux/amd64 Go 1.24 through 1.26 executables, with exact static-symbol and
   return-site preflight, goroutine-safe correlation, transactional attachment,
   native blind-spot counters, and stripped-binary rejection.
+- Add opt-in bounded scheduler off-CPU and futex-wait lock profiling with
+  strict raw-event weight semantics, duration thresholds, per-CPU rate caps,
+  native state/drop/loss counters, session aggregation, and weighted pprof and
+  OTLP Profiles delivery.
+- Promote exact CPython 3.11 interpreter unwinding with three guarded homelab
+  repetitions containing named frames, alongside the existing CPython 3.12
+  support. Keep JVM and V8 support limited to operator-produced bounded perf
+  maps without target-process mutation.
 
 ### Performance
 
@@ -28,6 +36,10 @@ All notable changes to E-Navigator are documented here. The format follows
   90-second homelab runs per arm. Keep the claim scoped to this scalar
   read/write workload: fexit remained 7.045% below no-agent throughput and used
   about 13.4 MiB more summed two-pod RSS than tracepoints.
+- Measure the all-mode profiling arm at 2.049% lower busy-loop throughput than
+  no agent across three 60-second CPython 3.11 homelab pairs. Keep the number
+  scoped to this pinned workload and shared cluster, not general or production
+  profiling overhead.
 
 ### Compatibility
 
@@ -39,6 +51,10 @@ All notable changes to E-Navigator are documented here. The format follows
 - Keep unsupported Go versions, prereleases, stripped binaries, malformed or
   ambiguous symbols, and non-amd64 Go ABIs fail-closed. Go 1.26.4 has homelab
   runtime proof; Go 1.24 and 1.25 remain test-only compatibility claims.
+- Keep event-driven profiling disabled by default. Unsupported scheduler
+  layouts and futex syscall architectures fail closed; non-futex locks,
+  wakeup cause and ownership, allocations, automatic JIT map generation, and
+  CPython versions outside 3.11/3.12 remain explicit non-claims.
 
 ## [0.1.2] - 2026-07-20
 

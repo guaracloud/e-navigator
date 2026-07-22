@@ -94,9 +94,11 @@ fn bench_raw_aya_decoders(c: &mut Criterion) {
     let exec_bytes = vec![0x42; 4096];
     let network_bytes = vec![0x11; 1024];
     // Full-size RawCpuProfileEvent (128 native frames + 64 python code
-    // pointers, 1608 bytes) so the decode bench exercises the deep-stack
-    // path, not the short-read early exit.
-    let cpu_profile_bytes = vec![0x7f; 1608];
+    // pointers, 1632 bytes) so each profile kind exercises the ABI decode
+    // and normalization path rather than the short-read early exit.
+    let cpu_profile_on_cpu = profile_event_bytes(1, 1, 0);
+    let cpu_profile_off_cpu = profile_event_bytes(1, 2, 5_000_000);
+    let cpu_profile_lock = profile_event_bytes(3, 3, 7_000_000);
 
     c.bench_function("aya_decode/exec_fuzz_harness", |b| {
         b.iter(|| fuzz_decode_raw_exec_event(black_box(&exec_bytes)))
@@ -104,9 +106,27 @@ fn bench_raw_aya_decoders(c: &mut Criterion) {
     c.bench_function("aya_decode/network_fuzz_harness", |b| {
         b.iter(|| fuzz_decode_raw_network_event(black_box(&network_bytes)))
     });
-    c.bench_function("aya_decode/cpu_profile_fuzz_harness", |b| {
-        b.iter(|| fuzz_decode_raw_cpu_profile_event(black_box(&cpu_profile_bytes)))
+    c.bench_function("aya_decode/cpu_profile_on_cpu", |b| {
+        b.iter(|| fuzz_decode_raw_cpu_profile_event(black_box(&cpu_profile_on_cpu)))
     });
+    c.bench_function("aya_decode/cpu_profile_off_cpu", |b| {
+        b.iter(|| fuzz_decode_raw_cpu_profile_event(black_box(&cpu_profile_off_cpu)))
+    });
+    c.bench_function("aya_decode/cpu_profile_lock", |b| {
+        b.iter(|| fuzz_decode_raw_cpu_profile_event(black_box(&cpu_profile_lock)))
+    });
+}
+
+fn profile_event_bytes(kind: u32, mode: u32, weight_nanos: u64) -> Vec<u8> {
+    let mut bytes = vec![0_u8; 1632];
+    bytes[0..4].copy_from_slice(&42_u32.to_ne_bytes());
+    bytes[4..8].copy_from_slice(&43_u32.to_ne_bytes());
+    bytes[24..32].copy_from_slice(&1_u64.to_ne_bytes());
+    bytes[40..46].copy_from_slice(b"worker");
+    bytes[64..68].copy_from_slice(&kind.to_ne_bytes());
+    bytes[68..72].copy_from_slice(&mode.to_ne_bytes());
+    bytes[80..88].copy_from_slice(&weight_nanos.to_ne_bytes());
+    bytes
 }
 
 fn bench_host_parsers(c: &mut Criterion) {

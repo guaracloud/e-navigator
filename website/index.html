@@ -103,7 +103,7 @@
             version-gated unstripped Linux/amd64 Go <code>crypto/tls</code>
             uprobes (interception, not on-the-wire decryption), accounts for TCP
             retransmits, resets, and state transitions, samples and symbolizes
-            CPU profiles, and turns resource, trace, and security observations
+            periodic CPU, scheduler off-CPU, and futex-wait lock profiles, and turns resource, trace, and security observations
             into bounded native E-Navigator signals. An optional capture filter
             scopes which workloads are probed by Kubernetes namespace and label.
             Supported kernels use BPF ring buffers with explicit producer-loss
@@ -173,7 +173,7 @@
           </article>
           <article class="status">
             <h3>Performance and security, unified</h3>
-            <p>Combine DNS and network telemetry, TLS visibility, TCP health, CPU profiles, resource metrics, and runtime security signals, then export through Prometheus, OTLP, pprof, or structured JSON.</p>
+            <p>Combine DNS and network telemetry, TLS visibility, TCP health, CPU, off-CPU, and futex-wait profiles, resource metrics, and runtime security signals, then export through Prometheus, OTLP, pprof, or structured JSON.</p>
           </article>
         </div>
         <div class="link-row">

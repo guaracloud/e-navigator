@@ -22,6 +22,26 @@ const APPLY_TICK: Duration = Duration::from_secs(1);
 /// Emit the accounting summary every this many ticks (30s at a 1s tick).
 const ACCOUNTING_LOG_EVERY: u32 = 30;
 
+/// Seed the fail-open/fail-closed control word before any source program is
+/// attached. Sources with high-frequency global hooks must call this before
+/// attachment so the short setup window cannot observe unrelated workloads.
+pub(crate) fn seed_capture_filter_control(ebpf: &mut Ebpf, module: &'static str) -> CoreResult<()> {
+    let Some(controller) = shared() else {
+        return Ok(());
+    };
+    let map = ebpf
+        .map_mut("CAPTURE_FILTER_CONTROL")
+        .ok_or_else(|| CoreError::ModuleFailed {
+            module: module.to_string(),
+            message: "missing CAPTURE_FILTER_CONTROL map".to_string(),
+        })?;
+    let mut control: AyaArray<&mut MapData, u32> =
+        AyaArray::try_from(map).map_err(|err| module_error(module, err))?;
+    control
+        .set(0, controller.control_word(), 0)
+        .map_err(|err| module_error(module, err))
+}
+
 /// If the capture filter is active, take this source's filter maps out of its
 /// eBPF object, seed the control word, and spawn the applier task. Returns the
 /// task handle so the source can join it on shutdown. Returns `None` (leaving

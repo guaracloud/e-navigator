@@ -114,6 +114,45 @@ const CPU_PROFILE_MIN_FRAMES: u32 = 1;
 const CPU_PROFILE_FLAG_TRUNCATED: u32 = 1;
 const CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED: u32 = 2;
 const CPU_PROFILE_FLAG_DWARF: u32 = 4;
+const PROFILE_KIND_CPU: u32 = 1;
+const PROFILE_KIND_LOCK: u32 = 3;
+const PROFILE_MODE_ON_CPU: u32 = 1;
+const PROFILE_MODE_OFF_CPU: u32 = 2;
+const PROFILE_MODE_FUTEX_WAIT: u32 = 3;
+const PROFILE_CONFIG_OFF_CPU_ENABLED: u32 = 0;
+const PROFILE_CONFIG_LOCK_ENABLED: u32 = 1;
+const PROFILE_CONFIG_OFF_CPU_MIN_NANOS: u32 = 2;
+const PROFILE_CONFIG_LOCK_MIN_NANOS: u32 = 3;
+const PROFILE_CONFIG_OFF_CPU_RATE_PER_CPU: u32 = 4;
+const PROFILE_CONFIG_LOCK_RATE_PER_CPU: u32 = 5;
+const PROFILE_CONFIG_FUTEX_SYSCALL: u32 = 6;
+const PROFILE_CONFIG_LEN: u32 = 7;
+const PROFILE_RATE_OFF_CPU: u32 = 0;
+const PROFILE_RATE_LOCK: u32 = 1;
+const PROFILE_PREPARE_FILTERED: u32 = 0;
+const PROFILE_PREPARE_STACK_FAILED: u32 = 1;
+const PROFILE_PREPARE_CAPTURED: u32 = 2;
+const PROFILE_RATE_LEN: u32 = 2;
+const PROFILE_DIAG_OFF_CPU_ENTRIES: u32 = 0;
+const PROFILE_DIAG_OFF_CPU_UPDATE_FAILURES: u32 = 1;
+const PROFILE_DIAG_OFF_CPU_REPLACEMENTS: u32 = 2;
+const PROFILE_DIAG_OFF_CPU_BELOW_MIN: u32 = 4;
+const PROFILE_DIAG_OFF_CPU_RATE_LIMITED: u32 = 5;
+const PROFILE_DIAG_OFF_CPU_STACK_FAILURES: u32 = 6;
+const PROFILE_DIAG_OFF_CPU_OUTPUTS: u32 = 7;
+const PROFILE_DIAG_LOCK_ENTRIES: u32 = 8;
+const PROFILE_DIAG_LOCK_UPDATE_FAILURES: u32 = 9;
+const PROFILE_DIAG_LOCK_REPLACEMENTS: u32 = 10;
+const PROFILE_DIAG_LOCK_BELOW_MIN: u32 = 12;
+const PROFILE_DIAG_LOCK_RATE_LIMITED: u32 = 13;
+const PROFILE_DIAG_LOCK_STACK_FAILURES: u32 = 14;
+const PROFILE_DIAG_LOCK_OUTPUTS: u32 = 15;
+const PROFILE_DIAGNOSTIC_COUNTERS_LEN: u32 = 16;
+const PROFILE_PENDING_MAX_ENTRIES: u32 = 4096;
+const PROFILE_RATE_WINDOW_NANOS: u64 = 1_000_000_000;
+const FUTEX_CMD_MASK: u32 = 0x7f;
+const FUTEX_WAIT: u32 = 0;
+const FUTEX_WAIT_BITSET: u32 = 9;
 // DWARF unwind stop reason, stored in flags bits 8..16.
 const UNWIND_STOP_SHIFT: u32 = 8;
 const UNWIND_STOP_COMPLETE: u32 = 1;
@@ -345,12 +384,26 @@ pub struct RawCpuProfileEvent {
     pub command: [u8; 16],
     pub frame_count: u32,
     pub flags: u32,
+    pub profile_kind: u32,
+    pub profile_mode: u32,
+    pub profile_status: i32,
+    pub reserved: u32,
+    /// Duration weight for event-driven profiles. Zero for periodic on-CPU
+    /// samples, whose weight is derived from the configured sample period.
+    pub weight_nanos: u64,
     pub instruction_pointers: [u64; CPU_PROFILE_MAX_FRAMES],
     pub py_frame_count: u32,
     pub py_stop: u32,
     /// CPython code-object pointers, leaf first; userspace resolves
     /// them to function/file/line through the process's memory.
     pub py_frames: [u64; PY_MAX_FRAMES],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ProfileRateState {
+    pub window_started_nanos: u64,
+    pub emitted: u64,
 }
 
 #[repr(C)]
@@ -736,6 +789,38 @@ static NETWORK_EVENT_SCRATCH: PerCpuArray<RawNetworkEvent> = PerCpuArray::with_m
 #[map]
 static CPU_PROFILE_EVENT_SCRATCH: PerCpuArray<RawCpuProfileEvent> =
     PerCpuArray::with_max_entries(1, 0);
+
+// The event-driven profilers use distinct per-CPU scratch values so a perf
+// interrupt cannot overwrite an in-flight tracepoint sample on the same CPU.
+#[map]
+static OFF_CPU_PROFILE_EVENT_SCRATCH: PerCpuArray<RawCpuProfileEvent> =
+    PerCpuArray::with_max_entries(1, 0);
+
+#[map]
+static LOCK_PROFILE_EVENT_SCRATCH: PerCpuArray<RawCpuProfileEvent> =
+    PerCpuArray::with_max_entries(1, 0);
+
+// Fixed-capacity, non-preallocated state. A full map rejects new entries and
+// increments an explicit update-failure counter; it never evicts silently.
+#[map]
+static PENDING_OFF_CPU_PROFILES: HashMap<u64, RawCpuProfileEvent> =
+    HashMap::with_max_entries(PROFILE_PENDING_MAX_ENTRIES, HASH_MAP_NO_PREALLOC);
+
+#[map]
+static PENDING_LOCK_PROFILES: HashMap<u64, RawCpuProfileEvent> =
+    HashMap::with_max_entries(PROFILE_PENDING_MAX_ENTRIES, HASH_MAP_NO_PREALLOC);
+
+/// Enable flags, minimum durations, rate caps, and the host futex syscall id.
+#[map]
+static PROFILE_CAPTURE_CONFIG: Array<u64> = Array::with_max_entries(PROFILE_CONFIG_LEN, 0);
+
+#[map]
+static PROFILE_RATE_STATE: PerCpuArray<ProfileRateState> =
+    PerCpuArray::with_max_entries(PROFILE_RATE_LEN, 0);
+
+#[map]
+static PROFILE_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
+    PerCpuArray::with_max_entries(PROFILE_DIAGNOSTIC_COUNTERS_LEN, 0);
 
 #[map]
 static CPU_PROFILE_FRAME_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
@@ -1481,6 +1566,40 @@ pub fn sample_cpu_profile(ctx: PerfEventContext) -> u32 {
     }
 }
 
+#[tracepoint]
+pub fn tracepoint_profile_sched_switch(ctx: TracePointContext) -> u32 {
+    match try_profile_sched_switch(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_profile_futex_enter(ctx: TracePointContext) -> u32 {
+    match try_profile_futex_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_profile_futex_exit(ctx: TracePointContext) -> u32 {
+    match try_profile_futex_exit(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_profile_process_exit(_ctx: TracePointContext) -> u32 {
+    let key = bpf_get_current_pid_tgid();
+    // Off-CPU state is keyed only by tid because sched_switch exposes
+    // next_pid, while futex state can retain the collision-safe pid/tid key.
+    let _ = PENDING_OFF_CPU_PROFILES.remove(&u64::from(key as u32));
+    let _ = PENDING_LOCK_PROFILES.remove(&key);
+    0
+}
+
 // OpenSSL: int SSL_write(SSL *ssl, const void *buf, int num).
 #[uprobe]
 pub fn uprobe_ssl_write_enter(ctx: ProbeContext) -> u32 {
@@ -1853,6 +1972,292 @@ fn read_tcp_tuple_addrs(
     Ok(())
 }
 
+fn try_profile_sched_switch(ctx: &TracePointContext) -> Result<u32, i64> {
+    if profile_config(PROFILE_CONFIG_OFF_CPU_ENABLED) == 0 {
+        return Ok(0);
+    }
+
+    let now = unsafe { bpf_ktime_get_ns() };
+    // Validated by userspace against tracefs before this program is attached.
+    let next_tid = unsafe { ctx.read_at::<u32>(56) }.map_err(|err| err as i64)?;
+    if next_tid != 0 {
+        finish_event_driven_profile(
+            ctx,
+            &PENDING_OFF_CPU_PROFILES,
+            u64::from(next_tid),
+            now,
+            PROFILE_CONFIG_OFF_CPU_MIN_NANOS,
+            PROFILE_CONFIG_OFF_CPU_RATE_PER_CPU,
+            PROFILE_RATE_OFF_CPU,
+            PROFILE_DIAG_OFF_CPU_BELOW_MIN,
+            PROFILE_DIAG_OFF_CPU_RATE_LIMITED,
+            PROFILE_DIAG_OFF_CPU_OUTPUTS,
+        );
+    }
+
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let tid = pid_tgid as u32;
+    if tid == 0 {
+        return Ok(0);
+    }
+    let event = unsafe {
+        let ptr = OFF_CPU_PROFILE_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+        &mut *ptr
+    };
+    let prepare =
+        prepare_event_driven_profile(ctx, event, PROFILE_KIND_CPU, PROFILE_MODE_OFF_CPU, now)?;
+    if prepare == PROFILE_PREPARE_FILTERED {
+        return Ok(0);
+    }
+    record_profile_counter(PROFILE_DIAG_OFF_CPU_ENTRIES);
+    if prepare == PROFILE_PREPARE_STACK_FAILED {
+        record_profile_counter(PROFILE_DIAG_OFF_CPU_STACK_FAILURES);
+        return Ok(0);
+    }
+    let key = u64::from(tid);
+    if unsafe { PENDING_OFF_CPU_PROFILES.get(&key) }.is_some() {
+        record_profile_counter(PROFILE_DIAG_OFF_CPU_REPLACEMENTS);
+    }
+    if PENDING_OFF_CPU_PROFILES.insert(&key, &*event, 0).is_err() {
+        record_profile_counter(PROFILE_DIAG_OFF_CPU_UPDATE_FAILURES);
+    }
+    Ok(0)
+}
+
+fn try_profile_futex_enter(ctx: &TracePointContext) -> Result<u32, i64> {
+    if profile_config(PROFILE_CONFIG_LOCK_ENABLED) == 0 {
+        return Ok(0);
+    }
+    let syscall = unsafe { ctx.read_at::<i64>(8) }.map_err(|err| err as i64)? as u64;
+    if syscall != profile_config(PROFILE_CONFIG_FUTEX_SYSCALL) {
+        return Ok(0);
+    }
+    let operation = unsafe { ctx.read_at::<u64>(24) }.map_err(|err| err as i64)? as u32;
+    let command = operation & FUTEX_CMD_MASK;
+    if command != FUTEX_WAIT && command != FUTEX_WAIT_BITSET {
+        return Ok(0);
+    }
+
+    let now = unsafe { bpf_ktime_get_ns() };
+    let event = unsafe {
+        let ptr = LOCK_PROFILE_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
+        &mut *ptr
+    };
+    let prepare =
+        prepare_event_driven_profile(ctx, event, PROFILE_KIND_LOCK, PROFILE_MODE_FUTEX_WAIT, now)?;
+    if prepare == PROFILE_PREPARE_FILTERED {
+        return Ok(0);
+    }
+    record_profile_counter(PROFILE_DIAG_LOCK_ENTRIES);
+    if prepare == PROFILE_PREPARE_STACK_FAILED {
+        record_profile_counter(PROFILE_DIAG_LOCK_STACK_FAILURES);
+        return Ok(0);
+    }
+    event.profile_status = command as i32;
+    let key = bpf_get_current_pid_tgid();
+    if unsafe { PENDING_LOCK_PROFILES.get(&key) }.is_some() {
+        record_profile_counter(PROFILE_DIAG_LOCK_REPLACEMENTS);
+    }
+    if PENDING_LOCK_PROFILES.insert(&key, &*event, 0).is_err() {
+        record_profile_counter(PROFILE_DIAG_LOCK_UPDATE_FAILURES);
+    }
+    Ok(0)
+}
+
+fn try_profile_futex_exit(ctx: &TracePointContext) -> Result<u32, i64> {
+    if profile_config(PROFILE_CONFIG_LOCK_ENABLED) == 0 {
+        return Ok(0);
+    }
+    let syscall = unsafe { ctx.read_at::<i64>(8) }.map_err(|err| err as i64)? as u64;
+    if syscall != profile_config(PROFILE_CONFIG_FUTEX_SYSCALL) {
+        return Ok(0);
+    }
+    let key = bpf_get_current_pid_tgid();
+    if !cgroup_capture_allowed(current_cgroup_id()) {
+        record_capture_filter_drop();
+        // A verdict can change while the syscall is blocked. Never retain an
+        // entry whose completion is now denied.
+        let _ = PENDING_LOCK_PROFILES.remove(&key);
+        return Ok(0);
+    }
+    let status = unsafe { ctx.read_at::<i64>(16) }.map_err(|err| err as i64)? as i32;
+    let now = unsafe { bpf_ktime_get_ns() };
+    if let Some(ptr) = PENDING_LOCK_PROFILES.get_ptr_mut(&key) {
+        unsafe {
+            (*ptr).profile_status = status;
+        }
+    }
+    finish_event_driven_profile(
+        ctx,
+        &PENDING_LOCK_PROFILES,
+        key,
+        now,
+        PROFILE_CONFIG_LOCK_MIN_NANOS,
+        PROFILE_CONFIG_LOCK_RATE_PER_CPU,
+        PROFILE_RATE_LOCK,
+        PROFILE_DIAG_LOCK_BELOW_MIN,
+        PROFILE_DIAG_LOCK_RATE_LIMITED,
+        PROFILE_DIAG_LOCK_OUTPUTS,
+    );
+    Ok(0)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+fn finish_event_driven_profile(
+    ctx: &TracePointContext,
+    pending: &HashMap<u64, RawCpuProfileEvent>,
+    key: u64,
+    now: u64,
+    min_duration_config: u32,
+    rate_config: u32,
+    rate_index: u32,
+    below_min_counter: u32,
+    rate_limited_counter: u32,
+    output_counter: u32,
+) {
+    // An absent state is not a scoped miss: sched_switch exposes no next-task
+    // cgroup, and raw sys_exit exposes no futex operation. Counting either
+    // would mislabel intentionally filtered/non-wait activity as data loss.
+    // Insert failures and replacements remain explicit scoped counters.
+    let Some(event_ptr) = pending.get_ptr_mut(&key) else {
+        return;
+    };
+    let event = unsafe { &mut *event_ptr };
+    let duration = now.saturating_sub(event.timestamp_unix_nanos);
+    event.timestamp_unix_nanos = 0;
+    event.weight_nanos = duration;
+    if duration < profile_config(min_duration_config) {
+        record_profile_counter(below_min_counter);
+        let _ = pending.remove(&key);
+        return;
+    }
+    if !profile_rate_allowed(rate_index, profile_config(rate_config), now) {
+        record_profile_counter(rate_limited_counter);
+        let _ = pending.remove(&key);
+        return;
+    }
+    record_profile_counter(output_counter);
+    output_event!(CPU_PROFILE_EVENTS, TRANSPORT_LOSS_CPU_PROFILE, ctx, &*event);
+    let _ = pending.remove(&key);
+}
+
+#[inline(always)]
+fn prepare_event_driven_profile(
+    ctx: &TracePointContext,
+    event: &mut RawCpuProfileEvent,
+    profile_kind: u32,
+    profile_mode: u32,
+    started_nanos: u64,
+) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let uid_gid = bpf_get_current_uid_gid();
+    event.pid = (pid_tgid >> 32) as u32;
+    event.tid = pid_tgid as u32;
+    event.uid = uid_gid as u32;
+    event.cgroup_id = current_cgroup_id();
+    if !cgroup_capture_allowed(event.cgroup_id) {
+        record_capture_filter_drop();
+        return Ok(PROFILE_PREPARE_FILTERED);
+    }
+    event.sample_count = 1;
+    event.timestamp_unix_nanos = started_nanos;
+    event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
+    event.frame_count = 0;
+    event.flags = 0;
+    event.profile_kind = profile_kind;
+    event.profile_mode = profile_mode;
+    event.profile_status = 0;
+    event.reserved = 0;
+    event.weight_nanos = 0;
+    translate_profile_pid(event);
+    event.instruction_pointers = [0; CPU_PROFILE_MAX_FRAMES];
+    event.py_frame_count = 0;
+    event.py_stop = 0;
+    event.py_frames = [0; PY_MAX_FRAMES];
+    let frame_limit = cpu_profile_frame_limit();
+    let stack_bytes = unsafe {
+        bpf_get_stack(
+            ctx.as_ptr(),
+            event.instruction_pointers.as_mut_ptr().cast(),
+            frame_limit * core::mem::size_of::<u64>() as u32,
+            u64::from(BPF_F_USER_STACK),
+        )
+    };
+    if stack_bytes <= 0 {
+        return Ok(PROFILE_PREPARE_STACK_FAILED);
+    }
+    let captured =
+        ((stack_bytes as usize) / core::mem::size_of::<u64>()).min(CPU_PROFILE_MAX_FRAMES) as u32;
+    event.frame_count = captured;
+    if captured >= frame_limit {
+        event.flags |= CPU_PROFILE_FLAG_TRUNCATED;
+    }
+    if captured > 0 {
+        Ok(PROFILE_PREPARE_CAPTURED)
+    } else {
+        Ok(PROFILE_PREPARE_STACK_FAILED)
+    }
+}
+
+#[inline(always)]
+fn translate_profile_pid(event: &mut RawCpuProfileEvent) {
+    let pidns_dev = CPU_PROFILE_PIDNS.get(0).copied().unwrap_or(0);
+    let pidns_ino = CPU_PROFILE_PIDNS.get(1).copied().unwrap_or(0);
+    if pidns_ino == 0 {
+        return;
+    }
+    let mut pidns = bpf_pidns_info { pid: 0, tgid: 0 };
+    let rc = unsafe {
+        bpf_get_ns_current_pid_tgid(
+            pidns_dev,
+            pidns_ino,
+            &mut pidns,
+            core::mem::size_of::<bpf_pidns_info>() as u32,
+        )
+    };
+    if rc == 0 {
+        event.pid = pidns.tgid;
+        event.tid = pidns.pid;
+    } else {
+        event.flags |= CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED;
+    }
+}
+
+#[inline(always)]
+fn profile_config(index: u32) -> u64 {
+    PROFILE_CAPTURE_CONFIG.get(index).copied().unwrap_or(0)
+}
+
+#[inline(always)]
+fn profile_rate_allowed(index: u32, limit: u64, now: u64) -> bool {
+    if limit == 0 {
+        return false;
+    }
+    let Some(ptr) = PROFILE_RATE_STATE.get_ptr_mut(index) else {
+        return false;
+    };
+    let state = unsafe { &mut *ptr };
+    if now.saturating_sub(state.window_started_nanos) >= PROFILE_RATE_WINDOW_NANOS {
+        state.window_started_nanos = now;
+        state.emitted = 0;
+    }
+    if state.emitted >= limit {
+        return false;
+    }
+    state.emitted = state.emitted.saturating_add(1);
+    true
+}
+
+#[inline(always)]
+fn record_profile_counter(index: u32) {
+    if let Some(counter) = PROFILE_DIAGNOSTIC_COUNTERS.get_ptr_mut(index) {
+        unsafe {
+            *counter = (*counter).wrapping_add(1);
+        }
+    }
+}
+
 fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let uid_gid = bpf_get_current_uid_gid();
@@ -1874,30 +2279,15 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
     event.command = bpf_get_current_comm().map_err(|err| err as i64)?;
     event.frame_count = 0;
     event.flags = 0;
-    // Translate the pid into the namespace of the procfs view userspace
-    // symbolizes from. The helper only succeeds when that namespace is the
-    // task's active pid namespace; otherwise the event keeps the
-    // root-namespace pid and is flagged so userspace verifies the pid
-    // against procfs before attributing frames to it.
-    let pidns_dev = CPU_PROFILE_PIDNS.get(0).copied().unwrap_or(0);
-    let pidns_ino = CPU_PROFILE_PIDNS.get(1).copied().unwrap_or(0);
-    if pidns_ino != 0 {
-        let mut pidns = bpf_pidns_info { pid: 0, tgid: 0 };
-        let rc = unsafe {
-            bpf_get_ns_current_pid_tgid(
-                pidns_dev,
-                pidns_ino,
-                &mut pidns,
-                core::mem::size_of::<bpf_pidns_info>() as u32,
-            )
-        };
-        if rc == 0 {
-            event.pid = pidns.tgid;
-            event.tid = pidns.pid;
-        } else {
-            event.flags |= CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED;
-        }
-    }
+    event.profile_kind = PROFILE_KIND_CPU;
+    event.profile_mode = PROFILE_MODE_ON_CPU;
+    event.profile_status = 0;
+    event.reserved = 0;
+    event.weight_nanos = 0;
+    // Translate into the procfs namespace userspace symbolizes from. On
+    // failure the root pid is retained and explicitly marked for identity
+    // verification before symbolization.
+    translate_profile_pid(event);
     event.instruction_pointers = [0; CPU_PROFILE_MAX_FRAMES];
     event.py_frame_count = 0;
     event.py_stop = 0;

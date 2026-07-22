@@ -66,18 +66,23 @@ E-Navigator does not currently claim:
   their outermost function classify conservatively as `no_mapping`, and
   stacks that fill the configured budget are flagged and counted, never
   silently truncated);
-- interpreter unwinding beyond CPython 3.12 (the interpreter walk targets
-  CPython 3.12 struct offsets measured from its headers; other versions are
-  counted as unsupported; Node/V8 and JVM generated-code names resolve only
+- interpreter unwinding beyond exact CPython 3.11 and 3.12 layouts (other
+  versions are counted as unsupported; Node/V8 and JVM generated-code names resolve only
   when the target runtime or its tooling publishes a bounded
   `/tmp/perf-<pid>.map` in the target mount namespace, and that symbol map does
-  not itself make every opaque JIT frame unwindable; thread matching uses
+  not itself make every opaque JIT frame unwindable. E-Navigator does not add
+  Node/V8 perf flags, attach a JVM agent, or generate jitdump output. Thread matching uses
   `native_thread_id` and therefore degrades with accounting when the
   interpreter runs in a pid namespace whose CPython thread ids the agent
   cannot translate, and only co_qualname/co_name, co_filename, and
   co_firstlineno are ever read from interpreter memory; the interpreter's
   own pid namespace is translated when the kernel allows, which is the
   containerized-workload case proven on the homelab);
+- complete off-CPU, synchronization, or allocation profiling (the opt-in
+  event-driven surface covers scheduler deschedule duration and
+  `FUTEX_WAIT`/`FUTEX_WAIT_BITSET` duration with bounded state, thresholds,
+  rate caps, and counters. It does not identify wakeup cause, lock owner,
+  spin locks, uncontended locks, non-futex primitives, or allocations);
 - native DWARF coverage of every process on a heavily loaded node (the
   in-kernel unwind-table row pool is finite; the agent prioritizes
   processes it observes on-CPU and re-allocates the pool each refresh, but
@@ -150,6 +155,11 @@ E-Navigator does not currently claim:
   0.265 second fixed request bursts on a shared homelab; Go 1.24/1.25,
   Linux/arm64, gRPC, WebSocket, production traffic, and sustained load were not
   runtime-proven);
+- a general profiling overhead claim (the 2026-07-22 homelab campaign covered
+  one pinned CPython 3.11.15 workload for three 60-second pairs. The profiling
+  arm measured 2.049% lower busy-loop throughput than no agent with all three
+  modes enabled, but it did not cover mixed services, higher rates, backend
+  delivery, JVM/V8, production, or a dedicated node);
 - reduced overhead versus another observability stack;
 - reduced-privilege or non-root eBPF operation;
 - complete attribution for every host process, packet, profile sample, or

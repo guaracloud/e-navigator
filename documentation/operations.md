@@ -44,6 +44,9 @@ labels. Monitor these categories:
 - OTLP queue depth, drops, retries, response classification, circuit state,
   sent records, and request latency;
 - profile dropped samples and profiling warning counts.
+- when event-driven profiling is enabled, profile input, output, map/stack
+  capture failure, replacement, below-minimum, rate-limited, and transport-loss
+  totals.
 
 Use the exact metric names rendered by the current version rather than copying
 names from an older dashboard. Version dashboards and alert rules with the
@@ -103,6 +106,7 @@ to loss when the downstream rate is permanently lower.
 | One OTLP family is missing | Family toggle, family endpoint, queue drops, circuit state, receiver response |
 | CPU rises after enabling protocols | Capture selector scope, explicit port lists, traffic rate, parser limits, reassembly bounds |
 | Profiles have unresolved frames | target permissions, supported runtime, ELF symbols, unwind coverage, JIT map availability |
+| Off-CPU or lock profiles are sparse | capture-filter scope, minimum duration, per-CPU rate limiting, pending-map/stack failures, supported scheduler layout and futex path |
 | Workload identity is stale | Pod watch freshness, full-resource relist freshness, RBAC, API response bounds |
 | Shutdown loses accepted data | termination grace, sink shutdown timeout, destination latency, pending queue size |
 

@@ -32,8 +32,8 @@ cargo bench --locked -p e-navigator-local-benches --bench hot_paths
 
 Current local benchmark targets:
 
-- raw Aya userspace decode harnesses for exec, network, CPU profile, and
-  protocol data event bytes;
+- raw Aya userspace decode harnesses for exec, network, periodic/off-CPU/futex
+  profile, and protocol data event bytes;
 - protocol request-stream reassembly (Redis pipelined chunk decode and Kafka
   split-frame reassembly through `RequestStreamDecoder`);
 - procfs, loadavg, meminfo, diskstats, and process stat parser paths;
@@ -559,3 +559,36 @@ This is a narrow scalar read/write result, not a mixed-workload, vectored-I/O,
 `send*`/`recv*`, lower-memory, production, or whole-stack overhead claim. Full
 method, normalized run values, image identity, and cleanup scope are recorded
 in the [`kernel-hook proof report`](proof/kernel-hook-20260721/report.md).
+
+## Profiling Breadth A/B (Homelab, 2026-07-22)
+
+The profiling campaign used a pinned CPython 3.11.15 workload on `homelab-01`
+with a nested CPU-bound call chain, two sleepers, three mutex contenders, and
+one lock holder. Three 60-second repetitions compared no benchmark agent with
+an agent enabling only periodic 11 Hz CPU, scheduler off-CPU, and futex-wait
+lock profiling. Run order was counterbalanced as `none/profiling`,
+`profiling/none`, and `none/profiling`.
+
+| Arm | Busy batches/s mean +/- sd | Agent CPU m mean +/- sd | Agent memory MiB mean +/- sd |
+| --- | ---: | ---: | ---: |
+| no benchmark agent | 4,753.099 +/- 56.078 | n/a | n/a |
+| profiling | 4,655.687 +/- 33.739 | 78.162 +/- 13.175 | 205.861 +/- 5.263 |
+
+The profiling arm measured 2.049% lower busy-loop throughput. All profiling
+runs contained named CPython 3.11 frames, on-CPU, off-CPU, and futex-wait
+samples, positive event duration weights, and a non-empty pprof payload. Every
+run reported zero pending misses, state replacements, transport loss, perf
+loss, and RingBuf reservation failures. The stack-capture failure rate ranged
+from 0.0042 to 0.0049%, below the declared 0.1% gate.
+
+This is one pinned application on a shared cluster, not a mixed-workload,
+higher-rate, backend, JVM/V8, dedicated-node, or production overhead claim.
+Exact normalized values, configuration, workload, image identity, and cleanup
+scope are recorded in the
+[`profiling-breadth proof report`](proof/profiling-breadth-20260722/report.md).
+
+A focused local Criterion run measured raw decode medians of 1.607 microseconds
+for on-CPU, 1.573 microseconds for off-CPU, and 1.935 microseconds for
+futex-wait samples. The raw event fuzz target executed 1,344,282 inputs in 21
+seconds without a failure. Those local numbers are decoder hygiene, not kernel
+or whole-agent overhead.

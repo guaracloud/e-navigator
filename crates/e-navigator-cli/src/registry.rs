@@ -375,6 +375,34 @@ fn aya_source_telemetry_lines(
                     "e_navigator_ebpf_source_go_tls_state_replacements_total",
                     snapshot.go_tls_state_replacements,
                 ),
+                metric(
+                    "e_navigator_ebpf_source_profile_events_total",
+                    snapshot.profile_events,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_profile_capture_failures_total",
+                    snapshot.profile_capture_failures,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_profile_state_replacements_total",
+                    snapshot.profile_state_replacements,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_profile_pending_misses_total",
+                    snapshot.profile_pending_misses,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_profile_below_min_duration_total",
+                    snapshot.profile_below_min_duration,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_profile_rate_limited_total",
+                    snapshot.profile_rate_limited,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_profile_output_attempts_total",
+                    snapshot.profile_output_attempts,
+                ),
             ];
             lines.push(PrometheusMetricLine {
                 name: "e_navigator_ebpf_source_event_transport".to_string(),
@@ -701,11 +729,18 @@ mod tests {
                 go_tls_fd_resolution_failures: 1,
                 go_tls_output_attempts: 9,
                 go_tls_state_replacements: 0,
+                profile_events: 12,
+                profile_capture_failures: 1,
+                profile_state_replacements: 1,
+                profile_pending_misses: 2,
+                profile_below_min_duration: 3,
+                profile_rate_limited: 4,
+                profile_output_attempts: 5,
             }]
             .into_iter(),
         );
 
-        assert_eq!(lines.len(), 29);
+        assert_eq!(lines.len(), 36);
         assert!(
             lines.iter().all(
                 |line| line.labels.get("source").map(String::as_str) == Some("source.aya_exec")

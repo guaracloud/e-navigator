@@ -599,7 +599,7 @@ use in_cluster::{apply_watch_line, parse_raw_pod_snapshot, parse_raw_pods};
 #[cfg(target_os = "linux")]
 mod apply;
 #[cfg(target_os = "linux")]
-pub(crate) use apply::attach_capture_filter;
+pub(crate) use apply::{attach_capture_filter, seed_capture_filter_control};
 
 #[cfg(test)]
 mod tests;

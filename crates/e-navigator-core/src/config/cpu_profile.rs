@@ -11,6 +11,24 @@ pub struct CpuProfileSourceConfig {
     pub module_name: String,
     #[serde(default = "default_cpu_profile_sample_frequency_hz")]
     pub sample_frequency_hz: u32,
+    /// Capture time spent descheduled from `sched_switch`. Disabled by
+    /// default because it adds global scheduler tracepoint work.
+    #[serde(default)]
+    pub off_cpu_enabled: bool,
+    /// Capture contended Linux futex waits as lock profiles. Disabled by
+    /// default; only FUTEX_WAIT and FUTEX_WAIT_BITSET are observed.
+    #[serde(default)]
+    pub lock_enabled: bool,
+    #[serde(default = "default_off_cpu_min_duration_micros")]
+    pub off_cpu_min_duration_micros: u64,
+    #[serde(default = "default_lock_min_duration_micros")]
+    pub lock_min_duration_micros: u64,
+    /// Maximum accepted off-CPU samples per second on each CPU.
+    #[serde(default = "default_profile_event_rate_per_cpu")]
+    pub max_off_cpu_events_per_second_per_cpu: u32,
+    /// Maximum accepted futex-wait samples per second on each CPU.
+    #[serde(default = "default_profile_event_rate_per_cpu")]
+    pub max_lock_events_per_second_per_cpu: u32,
     #[serde(default = "default_cpu_profile_max_active_targets")]
     pub max_active_targets: usize,
     /// Deepest stack captured per sample, both in-kernel (frame budget
@@ -80,6 +98,12 @@ impl Default for CpuProfileSourceConfig {
             enabled: default_cpu_profile_source_enabled(),
             module_name: default_cpu_profile_source_module_name(),
             sample_frequency_hz: default_cpu_profile_sample_frequency_hz(),
+            off_cpu_enabled: false,
+            lock_enabled: false,
+            off_cpu_min_duration_micros: default_off_cpu_min_duration_micros(),
+            lock_min_duration_micros: default_lock_min_duration_micros(),
+            max_off_cpu_events_per_second_per_cpu: default_profile_event_rate_per_cpu(),
+            max_lock_events_per_second_per_cpu: default_profile_event_rate_per_cpu(),
             max_active_targets: default_cpu_profile_max_active_targets(),
             max_frames_per_sample: default_cpu_profile_max_frames_per_sample(),
             max_samples_per_batch: default_cpu_profile_max_samples_per_batch(),
@@ -105,6 +129,8 @@ impl CpuProfileSourceConfig {
     pub const MAX_MODULE_BYTES_LIMIT: usize = 1024;
     pub const MAX_FILE_BYTES_LIMIT: usize = 1024;
     pub const MAX_UNWIND_PROCESSES_LIMIT: usize = 1024;
+    pub const MAX_EVENT_MIN_DURATION_MICROS: u64 = 60_000_000;
+    pub const MAX_EVENT_RATE_PER_CPU: u32 = 4096;
 
     pub(super) fn validate(&self, runtime: &RuntimeConfig) -> ConfigResult<()> {
         if self.module_name != Self::STATIC_MODULE_NAME {
@@ -130,6 +156,46 @@ impl CpuProfileSourceConfig {
                     Self::MAX_SAMPLE_FREQUENCY_HZ
                 ),
             ));
+        }
+        for (field, value) in [
+            (
+                "cpu_profile_source.off_cpu_min_duration_micros",
+                self.off_cpu_min_duration_micros,
+            ),
+            (
+                "cpu_profile_source.lock_min_duration_micros",
+                self.lock_min_duration_micros,
+            ),
+        ] {
+            if !(1..=Self::MAX_EVENT_MIN_DURATION_MICROS).contains(&value) {
+                return Err(ConfigError::invalid_value(
+                    field,
+                    format!(
+                        "{field} must be between 1 and {}",
+                        Self::MAX_EVENT_MIN_DURATION_MICROS
+                    ),
+                ));
+            }
+        }
+        for (field, value) in [
+            (
+                "cpu_profile_source.max_off_cpu_events_per_second_per_cpu",
+                self.max_off_cpu_events_per_second_per_cpu,
+            ),
+            (
+                "cpu_profile_source.max_lock_events_per_second_per_cpu",
+                self.max_lock_events_per_second_per_cpu,
+            ),
+        ] {
+            if !(1..=Self::MAX_EVENT_RATE_PER_CPU).contains(&value) {
+                return Err(ConfigError::invalid_value(
+                    field,
+                    format!(
+                        "{field} must be between 1 and {}",
+                        Self::MAX_EVENT_RATE_PER_CPU
+                    ),
+                ));
+            }
         }
         if !(1..=Self::MAX_ACTIVE_TARGETS_LIMIT).contains(&self.max_active_targets) {
             return Err(ConfigError::invalid_value(
@@ -208,6 +274,18 @@ fn default_cpu_profile_source_module_name() -> String {
 
 fn default_cpu_profile_sample_frequency_hz() -> u32 {
     49
+}
+
+fn default_off_cpu_min_duration_micros() -> u64 {
+    1_000
+}
+
+fn default_lock_min_duration_micros() -> u64 {
+    1_000
+}
+
+fn default_profile_event_rate_per_cpu() -> u32 {
+    64
 }
 
 fn default_cpu_profile_max_active_targets() -> usize {

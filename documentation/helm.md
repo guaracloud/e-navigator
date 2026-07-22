@@ -86,6 +86,33 @@ unsupported tracing type, absent BTF file, or absent target uses the retained
 syscall tracepoints with a warning. Probe, permission, malformed-BTF, verifier,
 load, and attachment errors fail source startup. Forced `fexit` is strict;
 forced `tracepoint` skips the fexit probe.
+
+Profiling is disabled by default. Periodic on-CPU sampling is controlled by
+`cpu_profile_source.sample_frequency_hz`. Scheduler off-CPU and futex-wait lock
+profiles are independently opt-in:
+
+```toml
+[cpu_profile_source]
+enabled = true
+module_name = "source.aya_cpu_profile"
+sample_frequency_hz = 49
+off_cpu_enabled = true
+lock_enabled = true
+off_cpu_min_duration_micros = 1000
+lock_min_duration_micros = 1000
+max_off_cpu_events_per_second_per_cpu = 64
+max_lock_events_per_second_per_cpu = 64
+```
+
+Each minimum duration must be 1 through 60,000,000 microseconds. Each event
+rate must be 1 through 4,096 accepted samples per second per CPU. The two modes
+use separate fixed 4,096-entry kernel pending maps and never silently evict
+another task. Off-CPU startup requires the running kernel's tracefs
+`sched_switch` `next_pid` layout to match the embedded ABI exactly. Lock startup
+requires a known architecture-specific futex syscall number. Unsupported or
+unreadable layouts fail source startup. Keep both modes disabled until their
+node-wide hook cost and expected signal volume have been measured on the target
+workload.
 `runtime_security.kubernetes_api_endpoints` must contain at most 32 entries.
 Filesystem path settings under `attribution`, `attribution.kubernetes`, and
 `resource_source` must be at most 4,096 bytes.
@@ -444,6 +471,21 @@ complete-export preflight, or for unstripped Linux/amd64 Go 1.24 through 1.26
 executables after exact build-info, symbol, function-bound, and return-site
 preflight. An unknown or incomplete library or Go executable is rejected
 rather than partially attached.
+
+When off-CPU or lock profiling is enabled, monitor
+`e_navigator_ebpf_source_profile_events_total`,
+`e_navigator_ebpf_source_profile_output_attempts_total`,
+`e_navigator_ebpf_source_profile_capture_failures_total`,
+`e_navigator_ebpf_source_profile_state_replacements_total`,
+`e_navigator_ebpf_source_profile_pending_misses_total`,
+`e_navigator_ebpf_source_profile_below_min_duration_total`, and
+`e_navigator_ebpf_source_profile_rate_limited_total`. Map update and stack
+capture failures contribute to `profile_capture_failures_total`; use the
+periodic detailed profiling-counter log to distinguish them. Transport loss
+remains visible through the aggregate, perf, and RingBuf loss series. A
+duration-weighted sample has `sample_count = 1`, no periodic sampling interval,
+and `profiling.sample.weight_nanos`; pprof and OTLP Profiles retain that
+duration rather than multiplying it by the CPU sampling period.
 
 When the workload capture filter is enabled, the same namespace, label,
 process, and container policy is applied to host process and cgroup resource
