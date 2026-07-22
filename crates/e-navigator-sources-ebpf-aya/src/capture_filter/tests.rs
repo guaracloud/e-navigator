@@ -26,6 +26,93 @@ fn control_word_encodes_posture() {
 }
 
 #[test]
+fn cgroup_hierarchy_probe_distinguishes_v2_v1_hybrid_and_unavailable() {
+    let fixture = std::env::temp_dir().join(format!(
+        "e-nav-cgroup-mode-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos())
+    ));
+    let unified = fixture.join("unified");
+    let legacy = fixture.join("legacy");
+    let hybrid = fixture.join("hybrid");
+    std::fs::create_dir_all(&unified).expect("unified fixture");
+    std::fs::write(unified.join("cgroup.controllers"), "cpu memory\n").expect("v2 marker");
+    assert_eq!(
+        detect_cgroup_hierarchy(&unified),
+        CgroupHierarchyMode::UnifiedV2
+    );
+
+    let legacy_cpu = legacy.join("cpu");
+    std::fs::create_dir_all(&legacy_cpu).expect("legacy fixture");
+    std::fs::write(legacy_cpu.join("tasks"), "").expect("v1 marker");
+    assert_eq!(
+        detect_cgroup_hierarchy(&legacy),
+        CgroupHierarchyMode::LegacyV1
+    );
+
+    let hybrid_cpu = hybrid.join("cpu");
+    std::fs::create_dir_all(&hybrid_cpu).expect("hybrid fixture");
+    std::fs::write(hybrid.join("cgroup.controllers"), "memory\n").expect("v2 marker");
+    std::fs::write(hybrid_cpu.join("tasks"), "").expect("v1 marker");
+    assert_eq!(
+        detect_cgroup_hierarchy(&hybrid),
+        CgroupHierarchyMode::Hybrid
+    );
+    assert_eq!(
+        detect_cgroup_hierarchy(&fixture.join("missing")),
+        CgroupHierarchyMode::Unavailable
+    );
+
+    let bounded = fixture.join("bounded");
+    std::fs::create_dir_all(&bounded).expect("bounded fixture");
+    std::fs::write(bounded.join("cgroup.controllers"), "cpu memory\n").expect("bounded v2 marker");
+    for index in 0..MAX_CGROUP_HIERARCHY_CHILDREN {
+        std::fs::create_dir(bounded.join(format!("child-{index}"))).expect("bounded child");
+    }
+    assert_eq!(
+        detect_cgroup_hierarchy(&bounded),
+        CgroupHierarchyMode::Unavailable,
+        "an oversized startup probe must fail closed instead of classifying a partial tree"
+    );
+
+    std::fs::remove_dir_all(&fixture).expect("cleanup hierarchy fixtures");
+}
+
+#[test]
+fn unsupported_cgroup_hierarchies_override_allow_to_fail_closed() {
+    let config = CaptureFilterConfig {
+        enabled: true,
+        unknown_cgroup: CapturePosture::Allow,
+        ..Default::default()
+    };
+    for mode in [
+        CgroupHierarchyMode::LegacyV1,
+        CgroupHierarchyMode::Hybrid,
+        CgroupHierarchyMode::Unavailable,
+    ] {
+        assert_eq!(
+            effective_control_word(&config, mode),
+            (CONTROL_UNKNOWN_DROP, true)
+        );
+    }
+    assert_eq!(
+        effective_control_word(&config, CgroupHierarchyMode::UnifiedV2),
+        (CONTROL_UNKNOWN_CAPTURE, false)
+    );
+
+    let controller =
+        CaptureFilterController::new(CONTROL_UNKNOWN_DROP, CgroupHierarchyMode::LegacyV1, true);
+    let telemetry = controller.telemetry();
+    assert_eq!(
+        telemetry.cgroup_hierarchy_mode,
+        CgroupHierarchyMode::LegacyV1
+    );
+    assert_eq!(telemetry.capture_filter_fail_closed_total, 1);
+}
+
+#[test]
 fn parse_raw_pods_extracts_bare_container_ids_unscoped() {
     let body = format!(
         r#"{{
@@ -359,7 +446,8 @@ fn scan_cgroups_discovers_pod_and_container_tokens() {
 
 #[test]
 fn controller_publish_increments_only_for_changed_desired_state() {
-    let controller = CaptureFilterController::new(CONTROL_UNKNOWN_DROP);
+    let controller =
+        CaptureFilterController::new(CONTROL_UNKNOWN_DROP, CgroupHierarchyMode::UnifiedV2, false);
     let (generation0, _) = controller.current();
 
     assert!(!controller.publish(DesiredFilterMap::default()));
@@ -408,7 +496,8 @@ fn controller_publish_increments_only_for_changed_desired_state() {
 
 #[test]
 fn controller_publishes_raw_pods_for_shared_attribution() {
-    let controller = CaptureFilterController::new(CONTROL_UNKNOWN_DROP);
+    let controller =
+        CaptureFilterController::new(CONTROL_UNKNOWN_DROP, CgroupHierarchyMode::UnifiedV2, false);
     controller.mark_resource_relist_success();
     controller.publish_snapshot(RawPodSnapshot {
         resource_version: "1".to_string(),

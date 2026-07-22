@@ -46,7 +46,8 @@ E-Navigator runs as one node-local agent with a statically registered
 - Sinks emit newline-delimited JSON, serve Prometheus and local pprof, or route
   metrics, traces, and profiles through independent bounded OTLP workers.
 - An optional Kubernetes-aware capture filter avoids probing excluded workload
-  cgroups at the connection boundary.
+  cgroups at the connection boundary on unified cgroup v2 nodes. Legacy and
+  hybrid layouts are detected and forced to deny rather than guessed.
 
 Detailed implementation and proof status lives in
 [capabilities](documentation/capabilities.md). Unsupported libraries,

@@ -307,7 +307,9 @@ cargo run --locked -p e-navigator-cli -- \
             <aside class="callout callout-warn">
               Attribution selectors limit retained metadata. The capture filter
               decides which workload cgroups are probed. They are separate
-              policies.
+              policies. Capture filtering requires a directly mounted unified
+              cgroup v2 root; legacy and hybrid modes force deny before Aya
+              programs attach.
             </aside>
             <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/helm.md">Open every validated setting</a>
           </div>

@@ -52,3 +52,14 @@ paths and safe database/messaging operation attributes without raw values.
 These requirements are semantic targets. E-Navigator will use its own names
 and schemas; Guara will migrate its queries rather than E-Navigator emitting
 collector-specific aliases.
+
+## Gap-closure addendum, 2026-07-22
+
+- Capture filtering now probes the configured cgroup hierarchy before loading
+  sources and accepts only a directly mounted unified v2 root. Legacy v1,
+  hybrid, unreadable, and ambiguous roots force deny before attachment and
+  expose fixed native diagnostics. Unit fixtures cover every mode. A guarded
+  homelab run proved the real v2 arm and fixture-backed legacy failure path with
+  zero decoded or sent legacy-arm samples and 3,012 accounted kernel drops.
+  Cgroup v1 support remains a deliberate ADR-backed non-claim, and a real
+  v1-booted node was not tested.

@@ -1,0 +1,211 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: e-navigator-cgroup-proof-config
+  namespace: e-navigator-bench
+data:
+  e-navigator.toml: |
+__CONFIG_TOML__
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: e-navigator-cgroup-v1-fixture
+  namespace: e-navigator-bench
+data:
+  tasks: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e-navigator-cgroup-v2
+  namespace: e-navigator-bench
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: e-navigator-cgroup-v2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: e-navigator-cgroup-v2
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: homelab-01
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: e-navigator
+          image: __IMAGE__
+          imagePullPolicy: Never
+          args: ["--source", "unified", "--config", "/etc/e-navigator/e-navigator.toml"]
+          ports:
+            - name: metrics
+              containerPort: 9090
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: false
+            runAsUser: 0
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
+              add:
+                - BPF
+                - SYS_PTRACE
+                - NET_RAW
+                - PERFMON
+                - DAC_READ_SEARCH
+                - CHECKPOINT_RESTORE
+                - SYS_ADMIN
+                - NET_ADMIN
+                - SYS_RESOURCE
+                - SYSLOG
+          volumeMounts:
+            - name: config
+              mountPath: /etc/e-navigator
+              readOnly: true
+            - name: sys-kernel-debug
+              mountPath: /sys/kernel/debug
+              readOnly: true
+            - name: sys-kernel-tracing
+              mountPath: /sys/kernel/tracing
+              readOnly: true
+            - name: host-proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: cgroup-root
+              mountPath: /host/cgroup
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: e-navigator-cgroup-proof-config
+        - name: sys-kernel-debug
+          hostPath:
+            path: /sys/kernel/debug
+            type: Directory
+        - name: sys-kernel-tracing
+          hostPath:
+            path: /sys/kernel/tracing
+            type: Directory
+        - name: host-proc
+          hostPath:
+            path: /proc
+            type: Directory
+        - name: cgroup-root
+          hostPath:
+            path: /sys/fs/cgroup
+            type: Directory
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e-navigator-cgroup-v1-fixture
+  namespace: e-navigator-bench
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: e-navigator-cgroup-v1-fixture
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: e-navigator-cgroup-v1-fixture
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: homelab-01
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: e-navigator
+          image: __IMAGE__
+          imagePullPolicy: Never
+          args: ["--source", "unified", "--config", "/etc/e-navigator/e-navigator.toml"]
+          ports:
+            - name: metrics
+              containerPort: 9090
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: false
+            runAsUser: 0
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
+              add:
+                - BPF
+                - SYS_PTRACE
+                - NET_RAW
+                - PERFMON
+                - DAC_READ_SEARCH
+                - CHECKPOINT_RESTORE
+                - SYS_ADMIN
+                - NET_ADMIN
+                - SYS_RESOURCE
+                - SYSLOG
+          volumeMounts:
+            - name: config
+              mountPath: /etc/e-navigator
+              readOnly: true
+            - name: sys-kernel-debug
+              mountPath: /sys/kernel/debug
+              readOnly: true
+            - name: sys-kernel-tracing
+              mountPath: /sys/kernel/tracing
+              readOnly: true
+            - name: host-proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: cgroup-root
+              mountPath: /host/cgroup
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: e-navigator-cgroup-proof-config
+        - name: sys-kernel-debug
+          hostPath:
+            path: /sys/kernel/debug
+            type: Directory
+        - name: sys-kernel-tracing
+          hostPath:
+            path: /sys/kernel/tracing
+            type: Directory
+        - name: host-proc
+          hostPath:
+            path: /proc
+            type: Directory
+        - name: cgroup-root
+          configMap:
+            name: e-navigator-cgroup-v1-fixture
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: e-navigator-cgroup-proof-execs
+  namespace: e-navigator-bench
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: e-navigator-cgroup-proof-execs
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: homelab-01
+      tolerations:
+        - operator: Exists
+      restartPolicy: Never
+      containers:
+        - name: execs
+          image: busybox:1.36.1
+          command:
+            - /bin/sh
+            - -c
+            - 'i=0; while [ "$i" -lt 300 ]; do /bin/echo proof >/dev/null; i=$((i + 1)); done'

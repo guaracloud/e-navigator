@@ -26,7 +26,7 @@ use e_navigator_core::capture_filter::{
     RawNodePodIndex, RawPod, RawService, build_desired_filter_map,
 };
 use e_navigator_core::{CaptureFilterConfig, CaptureFilterPolicy, KubernetesAttributionConfig};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Cadence of the local cgroup scan (cheap, no API traffic).
 const SCAN_TICK: Duration = Duration::from_secs(2);
@@ -39,6 +39,8 @@ const MAX_PROCESSES_PER_CGROUP: usize = 64;
 /// Linux task names are normally limited to 16 bytes; retain extra headroom
 /// while still bounding hostile procfs input.
 const MAX_PROCESS_NAME_BYTES: usize = 256;
+/// Bound on top-level hierarchy entries inspected during the startup probe.
+const MAX_CGROUP_HIERARCHY_CHILDREN: usize = 256;
 /// Cap on labels retained per pod for policy evaluation.
 const MAX_LABELS_PER_POD: usize = 64;
 /// Control-word values written into the eBPF `CAPTURE_FILTER_CONTROL` map.
@@ -50,6 +52,43 @@ const CONTROL_UNKNOWN_DROP: u32 = 2;
 const MAX_POD_LIST_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 /// Maximum service-account token bytes read.
 const MAX_TOKEN_BYTES: u64 = 16 * 1024;
+
+/// Host cgroup layout observed at the configured cgroup root.
+///
+/// The in-kernel join key comes from `bpf_get_current_cgroup_id()`, which is
+/// the current task's default (cgroup v2) hierarchy id. We therefore accept
+/// only a directly mounted, unified cgroup v2 tree. Legacy and mixed layouts
+/// are detected explicitly and never guessed through a v1 controller inode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CgroupHierarchyMode {
+    /// No controller was initialized, so no probe ran.
+    #[default]
+    NotChecked,
+    /// The configured root is a unified cgroup v2 mount.
+    UnifiedV2,
+    /// Only legacy cgroup v1 controller markers were found.
+    LegacyV1,
+    /// Both v1 and v2 markers were found, or v2 is nested below the root.
+    Hybrid,
+    /// The configured root could not be read or had no recognized markers.
+    Unavailable,
+}
+
+impl CgroupHierarchyMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotChecked => "not_checked",
+            Self::UnifiedV2 => "unified_v2",
+            Self::LegacyV1 => "legacy_v1",
+            Self::Hybrid => "hybrid",
+            Self::Unavailable => "unavailable",
+        }
+    }
+
+    pub const fn capture_filter_compatible(self) -> bool {
+        matches!(self, Self::UnifiedV2)
+    }
+}
 
 /// Fetches one bounded raw Kubernetes workload snapshot.
 pub(crate) type RawPodPublisher = Arc<dyn Fn(&RawPodSnapshot) + Send + Sync>;
@@ -112,16 +151,28 @@ struct PublishedState {
 #[derive(Debug)]
 pub(crate) struct CaptureFilterController {
     control_word: u32,
+    cgroup_hierarchy_mode: CgroupHierarchyMode,
     state: Mutex<PublishedState>,
     telemetry: WorkloadControllerTelemetry,
 }
 
 impl CaptureFilterController {
-    fn new(control_word: u32) -> Self {
+    fn new(
+        control_word: u32,
+        cgroup_hierarchy_mode: CgroupHierarchyMode,
+        capture_filter_fail_closed: bool,
+    ) -> Self {
+        let telemetry = WorkloadControllerTelemetry::default();
+        if capture_filter_fail_closed {
+            telemetry
+                .capture_filter_fail_closed
+                .store(1, Ordering::Relaxed);
+        }
         Self {
             control_word,
+            cgroup_hierarchy_mode,
             state: Mutex::new(PublishedState::default()),
-            telemetry: WorkloadControllerTelemetry::default(),
+            telemetry,
         }
     }
 
@@ -229,6 +280,11 @@ impl CaptureFilterController {
             allowed_cgroups: self.telemetry.allowed_cgroups.load(Ordering::Relaxed),
             denied_cgroups: self.telemetry.denied_cgroups.load(Ordering::Relaxed),
             unresolved_cgroups: self.telemetry.unresolved_cgroups.load(Ordering::Relaxed),
+            cgroup_hierarchy_mode: self.cgroup_hierarchy_mode,
+            capture_filter_fail_closed_total: self
+                .telemetry
+                .capture_filter_fail_closed
+                .load(Ordering::Relaxed),
             last_success_unix_seconds: self
                 .telemetry
                 .last_success_unix_seconds
@@ -255,6 +311,7 @@ struct WorkloadControllerTelemetry {
     allowed_cgroups: AtomicU64,
     denied_cgroups: AtomicU64,
     unresolved_cgroups: AtomicU64,
+    capture_filter_fail_closed: AtomicU64,
     last_success_unix_seconds: AtomicU64,
     last_resource_relist_unix_seconds: AtomicU64,
 }
@@ -273,6 +330,8 @@ pub struct WorkloadControllerTelemetrySnapshot {
     pub allowed_cgroups: u64,
     pub denied_cgroups: u64,
     pub unresolved_cgroups: u64,
+    pub cgroup_hierarchy_mode: CgroupHierarchyMode,
+    pub capture_filter_fail_closed_total: u64,
     pub last_success_unix_seconds: u64,
     pub last_resource_relist_unix_seconds: u64,
 }
@@ -312,8 +371,31 @@ fn build_shared(
     if !capture_filter.enabled && !kubernetes.enabled {
         return None;
     }
+    let cgroup_hierarchy_mode = detect_cgroup_hierarchy(&cgroup_root);
+    let (effective_control_word, capture_filter_fail_closed) =
+        effective_control_word(capture_filter, cgroup_hierarchy_mode);
     let policy = CaptureFilterPolicy::from_config(capture_filter);
-    let controller = Arc::new(CaptureFilterController::new(control_word(capture_filter)));
+    let controller = Arc::new(CaptureFilterController::new(
+        effective_control_word,
+        cgroup_hierarchy_mode,
+        capture_filter_fail_closed,
+    ));
+
+    if capture_filter_fail_closed {
+        error!(
+            cgroup_root = %cgroup_root.display(),
+            cgroup_hierarchy_mode = cgroup_hierarchy_mode.as_str(),
+            configured_unknown_cgroup = ?capture_filter.unknown_cgroup,
+            effective_control_word,
+            "capture filter requires a unified cgroup v2 hierarchy; all unknown cgroups are denied"
+        );
+    } else if !cgroup_hierarchy_mode.capture_filter_compatible() {
+        warn!(
+            cgroup_root = %cgroup_root.display(),
+            cgroup_hierarchy_mode = cgroup_hierarchy_mode.as_str(),
+            "cgroup v2 workload join is unavailable; cgroup capture filtering is not active"
+        );
+    }
 
     // Build the raw fetcher. Failure is not fatal: the controller still runs
     // and every cgroup falls to the unknown-cgroup posture, loudly logged.
@@ -334,13 +416,68 @@ fn build_shared(
     if let Some(fetcher) = fetcher {
         spawn_watch_loop(controller.clone(), fetcher);
     }
-    spawn_poll_loop(controller.clone(), policy, cgroup_root, procfs_root);
+    if cgroup_hierarchy_mode.capture_filter_compatible() {
+        spawn_poll_loop(controller.clone(), policy, cgroup_root, procfs_root);
+    }
     info!(
         control_word = controller.control_word(),
         capture_filter_enabled = capture_filter.enabled,
+        cgroup_hierarchy_mode = cgroup_hierarchy_mode.as_str(),
+        capture_filter_fail_closed,
         "shared Kubernetes workload controller active"
     );
     Some(controller)
+}
+
+fn effective_control_word(
+    config: &CaptureFilterConfig,
+    cgroup_hierarchy_mode: CgroupHierarchyMode,
+) -> (u32, bool) {
+    let fail_closed = config.enabled && !cgroup_hierarchy_mode.capture_filter_compatible();
+    if fail_closed {
+        (CONTROL_UNKNOWN_DROP, true)
+    } else {
+        (control_word(config), false)
+    }
+}
+
+/// Detect whether `root` is the directly mounted cgroup v2 hierarchy used by
+/// `bpf_get_current_cgroup_id()`. The marker probe is bounded and conservative:
+/// ambiguity is unsupported, which lets the kernel posture fail closed.
+fn detect_cgroup_hierarchy(root: &Path) -> CgroupHierarchyMode {
+    let root_has_v2 = root.join("cgroup.controllers").is_file();
+    let mut saw_v1 = root.join("tasks").is_file() || root.join("cgroup.clone_children").is_file();
+    let mut saw_nested_v2 = false;
+
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return CgroupHierarchyMode::Unavailable;
+    };
+    let mut scanned = 0usize;
+    for entry in entries {
+        if scanned >= MAX_CGROUP_HIERARCHY_CHILDREN {
+            return CgroupHierarchyMode::Unavailable;
+        }
+        scanned = scanned.saturating_add(1);
+        let Ok(entry) = entry else {
+            return CgroupHierarchyMode::Unavailable;
+        };
+        let Ok(file_type) = entry.file_type() else {
+            return CgroupHierarchyMode::Unavailable;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let path = entry.path();
+        saw_v1 |= path.join("tasks").is_file() || path.join("cgroup.clone_children").is_file();
+        saw_nested_v2 |= path.join("cgroup.controllers").is_file();
+    }
+
+    match (root_has_v2, saw_v1, saw_nested_v2) {
+        (true, false, _) => CgroupHierarchyMode::UnifiedV2,
+        (true, true, _) | (false, true, true) | (false, false, true) => CgroupHierarchyMode::Hybrid,
+        (false, true, false) => CgroupHierarchyMode::LegacyV1,
+        (false, false, false) => CgroupHierarchyMode::Unavailable,
+    }
 }
 
 /// The shared controller, when workload state is required. Consumed by the

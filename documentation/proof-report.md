@@ -54,7 +54,9 @@ or chart rendering:
   config validation and posture parsing; a privacy invariant test asserting only
   cgroup ids and 0/1 verdict bytes reach the kernel-bound map (no namespace or
   label strings); `capture_filter_glob` and `capture_filter_cgroup_path` fuzz
-  targets; and Criterion rule-eval (~9-12ns), whole-node desired-build (~11.8us
+  targets; bounded unified-v2, legacy-v1, hybrid, and unavailable hierarchy
+  detection; forced-deny control-word tests for unsupported roots; fixed native
+  hierarchy/compatibility/fail-closed metrics; and Criterion rule-eval (~9-12ns), whole-node desired-build (~11.8us
   for 300 cgroups), and map-diff (~3.4us steady, ~555ns churn) benchmarks;
 - strict config validation with unknown-field rejection, packaged config guards,
   runtime log-level, queue/derivation, and runtime-security endpoint bounds,
@@ -283,6 +285,20 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   `documentation/proof/protocol-surface-20260722/`. Both local-only images were
   removed from the nodes, disposable resources were removed, and the standing
   Argo CD application returned Synced/Healthy with its DaemonSet 2/2 Ready.
+
+- Cgroup hierarchy boundary proof (2026-07-22, `homelab-01`, k3s v1.30,
+  kernel 6.6.68, amd64). One guarded run attached the same Aya exec source and
+  image against the node's real unified v2 mount and a legacy `tasks` marker
+  fixture. The v2 arm reported compatibility 1, no fail-closed event, 3,135
+  decoded and sent signals, zero kernel filter drops, and zero transport loss.
+  The fixture arm deliberately configured unknown cgroups to allow, detected
+  `legacy_v1`, overrode the control word to deny before attachment, initialized
+  the source, decoded and sent zero signals, and accounted 3,012 suppressed
+  kernel events with zero transport loss. This proves the detector and forced
+  kernel posture on the homelab, not operation on a node booted with cgroup v1.
+  Curated evidence is in
+  `documentation/proof/cgroup-hierarchy-20260722/`. Disposable resources were
+  removed and the standing Argo CD application remained Synced/Healthy.
 
 - Capture-filter verifier-load and OrbStack live scoping proof (2026-07-07,
   OrbStack Docker plus its in-VM Kubernetes v1.34, arm64). The cgroup capture

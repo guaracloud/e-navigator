@@ -1,0 +1,17 @@
+# Real homelab cgroup v2 root, homelab-01
+e_navigator_capture_filter_cgroup_hierarchy_info{mode="unified_v2"} 1
+e_navigator_capture_filter_cgroup_v2_compatible 1
+e_navigator_capture_filter_fail_closed_total 0
+e_navigator_ebpf_source_initialized{source="source.aya_exec"} 1
+e_navigator_ebpf_source_decoded_samples_total{source="source.aya_exec"} 3135
+e_navigator_ebpf_source_sent_signals_total{source="source.aya_exec"} 3135
+e_navigator_ebpf_source_lost_transport_events_total{source="source.aya_exec"} 0
+
+# Fixture-backed legacy marker root, same homelab node and image
+e_navigator_capture_filter_cgroup_hierarchy_info{mode="legacy_v1"} 1
+e_navigator_capture_filter_cgroup_v2_compatible 0
+e_navigator_capture_filter_fail_closed_total 1
+e_navigator_ebpf_source_initialized{source="source.aya_exec"} 1
+e_navigator_ebpf_source_decoded_samples_total{source="source.aya_exec"} 0
+e_navigator_ebpf_source_sent_signals_total{source="source.aya_exec"} 0
+e_navigator_ebpf_source_lost_transport_events_total{source="source.aya_exec"} 0

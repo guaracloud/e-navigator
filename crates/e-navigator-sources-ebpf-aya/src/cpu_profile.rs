@@ -1402,13 +1402,6 @@ mod platform {
                 "source.aya_cpu_profile",
                 transport.kind.as_str(),
             ));
-            // sched_switch and raw_syscalls are node-wide, very hot hooks.
-            // Seed the configured unknown-cgroup posture before attaching any
-            // of them so bootstrap follows policy rather than defaulting open.
-            crate::capture_filter::seed_capture_filter_control(
-                &mut ebpf,
-                "source.aya_cpu_profile",
-            )?;
             populate_frame_limit(&mut ebpf, &self.config)?;
             populate_pid_namespace(&mut ebpf, &self.procfs_root);
             populate_profile_capture_config(&mut ebpf, &self.config)?;

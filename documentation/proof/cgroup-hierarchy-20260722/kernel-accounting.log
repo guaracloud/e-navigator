@@ -1,0 +1,5 @@
+2026-07-22T06:17:29.515145Z ERROR e_navigator_sources_ebpf_aya::capture_filter: capture filter requires a unified cgroup v2 hierarchy; all unknown cgroups are denied cgroup_root=/host/cgroup cgroup_hierarchy_mode="legacy_v1" configured_unknown_cgroup=Allow effective_control_word=2
+2026-07-22T06:17:29.515177Z INFO e_navigator_sources_ebpf_aya::capture_filter: shared Kubernetes workload controller active control_word=2 capture_filter_enabled=true cgroup_hierarchy_mode="legacy_v1" capture_filter_fail_closed=true
+2026-07-22T06:17:59.562432Z INFO e_navigator_sources_ebpf_aya::capture_filter: capture filter accounting source="source.aya_exec" allowed=0 denied=0 live_entries=0 dropped_total=3012
+2026-07-22T06:17:29.446118Z INFO e_navigator_sources_ebpf_aya::capture_filter: shared Kubernetes workload controller active control_word=1 capture_filter_enabled=true cgroup_hierarchy_mode="unified_v2" capture_filter_fail_closed=false
+2026-07-22T06:17:59.503342Z INFO e_navigator_sources_ebpf_aya::capture_filter: capture filter accounting source="source.aya_exec" allowed=0 denied=0 live_entries=0 dropped_total=0
