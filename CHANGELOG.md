@@ -6,6 +6,8 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0-rc.1] - 2026-07-22
+
 ### Added
 
 - Add a dual eBPF event transport with automatic ring-buffer selection on
@@ -50,6 +52,12 @@ All notable changes to E-Navigator are documented here. The format follows
   Alloy, and E-Navigator conditions; cumulative signal-family stages; bounded
   analysis; fixed topology and image gates; per-run variance, resource, and
   loss artifacts; resumable execution; and full cleanup/restore validation.
+- Harden benchmark isolation by suspending both the parent and child Argo CD
+  applications, asserting that the standing agent remains absent before and
+  after every arm, and restoring the exact GitOps posture on every exit path.
+- Add digest-pinned, bounded allocation diagnostics for both homelab nodes and
+  reproducible Criterion coverage for request correlation, gzip compression,
+  sensitive-key filtering, and bounded unwind parsing.
 
 ### Performance
 
@@ -70,12 +78,34 @@ All notable changes to E-Navigator are documented here. The format follows
   0.487 ms p95 with event-driven discovery, versus 1,148.131 ms median and
   1,216.842 ms p95 with 2-second polling across five counterbalanced homelab
   runs per mode. Keep the result scoped to the Linux 6.6.68 test workload.
-- Record the complete final-stack homelab comparison at 117.353 +/- 6.010
-  millicores and 180.881 +/- 5.079 MiB RSS for E-Navigator, versus 81.721 +/-
-  5.618 millicores and 137.131 +/- 4.680 MiB for Beyla plus Alloy. E-Navigator
-  measured 43.601071% more agent CPU and 31.903883% more agent RSS, so retain a
-  lower-overhead and lower-memory non-claim. All 591,030 measured workload
-  operations succeeded across the 33-run matrix.
+- Record the corrected complete final-stack homelab comparison at 97.150478
+  +/- 4.096372 millicores and 46.288628 +/- 2.594171 MiB RSS for E-Navigator,
+  versus 75.859599 +/- 6.058294 millicores and 128.862413 +/- 7.335634 MiB for
+  Beyla plus Alloy. E-Navigator measured 28.066163% more agent CPU and
+  64.079030% less agent RSS, so the dual CPU-and-memory objective remains a
+  NO-GO while the scoped memory advantage passes. All 591,030 measured
+  workload operations succeeded with zero workload errors and zero hard
+  E-Navigator signal loss.
+- Reduce E-Navigator allocator calls from 8,509,242 to 5,644,163 and requested
+  bytes from 925,090,490 to 692,293,775 in the matched diagnostic, reductions
+  of 33.670202% and 25.164751% respectively.
+- Reduce the focused 512 KiB gzip benchmark mean from 444.83 microseconds to
+  95.994 microseconds with level 1 compression, improve 8,192-entry request
+  fingerprint churn by 7.3448%, and shrink the release binary by 18.714152%
+  with thin LTO and one codegen unit.
+
+### Reliability And Engineering
+
+- Bound native unwind parsing and hot-PID tracking to kernel map budgets, keep
+  frame-pointer fallback explicit, and account for skipped modules and rows.
+- Move protobuf export batches instead of cloning them, restore failed batches
+  in original order, and cover non-clone success, encoding, permanent failure,
+  retry, and ordering behavior.
+- Remove lowercase-string allocations from sensitive and reserved attribute
+  checks while preserving mixed-case credential filtering.
+- Invalidate the earlier contaminated comparative proof, preserve it as
+  historical evidence, and publish the corrected inputs, results, checksums,
+  allocation profiles, CPU profiles, tradeoffs, and remaining bottlenecks.
 
 ### Compatibility
 
@@ -317,7 +347,8 @@ All notable changes to E-Navigator are documented here. The format follows
   reduced-privilege operation, and universal protocol/profile coverage remain
   explicit non-claims documented in `documentation/boundaries.md`.
 
-[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.2.0-rc.1...HEAD
+[0.2.0-rc.1]: https://github.com/guaracloud/e-navigator/compare/v0.1.2...v0.2.0-rc.1
 [0.1.2]: https://github.com/guaracloud/e-navigator/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/guaracloud/e-navigator/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/guaracloud/e-navigator/compare/v0.1.0-rc.3...v0.1.0

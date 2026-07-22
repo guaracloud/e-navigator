@@ -81,7 +81,21 @@ impl ElfUnwindTable {
     /// Parses `.eh_frame` rows from an ELF64 image. Returns an empty
     /// table when the image has no usable unwind information.
     pub fn parse(image: &[u8]) -> Self {
-        parse_eh_frame_table(image).unwrap_or_default()
+        Self::parse_bounded(image, MAX_UNWIND_ROWS)
+    }
+
+    /// Parses at most `max_rows` unwind rows from an ELF64 image.
+    ///
+    /// This is intended for collectors whose downstream unwind-table storage
+    /// is smaller than [`MAX_UNWIND_ROWS`]. Bounding construction here avoids
+    /// retaining or transiently allocating rows that can never be installed.
+    /// A zero bound yields an empty table. [`Self::truncated`] reports when the
+    /// input contained more usable rows than the supplied budget.
+    pub fn parse_bounded(image: &[u8], max_rows: usize) -> Self {
+        if max_rows == 0 {
+            return Self::default();
+        }
+        parse_eh_frame_table(image, max_rows.min(MAX_UNWIND_ROWS)).unwrap_or_default()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -238,7 +252,7 @@ fn arch_registers(machine: u16) -> Option<ArchRegisters> {
     }
 }
 
-fn parse_eh_frame_table(image: &[u8]) -> Option<ElfUnwindTable> {
+fn parse_eh_frame_table(image: &[u8], max_rows: usize) -> Option<ElfUnwindTable> {
     let elf = ElfReader::new(image)?;
     let machine = elf.read_u16(18)?;
     let registers = arch_registers(machine)?;
@@ -293,12 +307,17 @@ fn parse_eh_frame_table(image: &[u8]) -> Option<ElfUnwindTable> {
             if let Some(cie_start) = cie_start
                 && let Some(cie) = cies.get(&cie_start)
             {
-                if rows.len() >= MAX_UNWIND_ROWS {
+                if rows.len() >= max_rows {
                     truncated = true;
                     break;
                 }
                 let fde_field_vaddr = section_vaddr.checked_add(cursor as u64)?.checked_add(4)?;
                 parse_fde(&content[4..], cie, &registers, fde_field_vaddr, &mut rows);
+                if rows.len() > max_rows {
+                    rows.truncate(max_rows);
+                    truncated = true;
+                    break;
+                }
             }
         }
         cursor = content_end;

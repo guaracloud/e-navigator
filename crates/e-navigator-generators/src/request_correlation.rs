@@ -7,8 +7,9 @@ use e_navigator_signals::{
     TraceCorrelationKind,
 };
 use std::{
-    collections::{BTreeSet, VecDeque},
-    sync::{Mutex, MutexGuard},
+    collections::{HashSet, VecDeque},
+    hash::Hash,
+    sync::{Arc, Mutex, MutexGuard},
 };
 use tokio::sync::mpsc;
 
@@ -294,14 +295,14 @@ impl RequestCorrelationGenerator {
 
 #[derive(Debug)]
 struct BoundedFingerprints<T> {
-    entries: BTreeSet<T>,
-    insertion_order: VecDeque<T>,
+    entries: HashSet<Arc<T>>,
+    insertion_order: VecDeque<Arc<T>>,
 }
 
 impl<T> Default for BoundedFingerprints<T> {
     fn default() -> Self {
         Self {
-            entries: BTreeSet::new(),
+            entries: HashSet::new(),
             insertion_order: VecDeque::new(),
         }
     }
@@ -309,7 +310,7 @@ impl<T> Default for BoundedFingerprints<T> {
 
 impl<T> BoundedFingerprints<T>
 where
-    T: Clone + Ord,
+    T: Eq + Hash,
 {
     fn insert_if_new(&mut self, fingerprint: T, max_entries: usize) -> bool {
         if self.entries.contains(&fingerprint) {
@@ -321,16 +322,17 @@ where
             let Some(oldest) = self.insertion_order.pop_front() else {
                 break;
             };
-            self.entries.remove(&oldest);
+            self.entries.remove(oldest.as_ref());
         }
 
+        let fingerprint = Arc::new(fingerprint);
         self.insertion_order.push_back(fingerprint.clone());
         self.entries.insert(fingerprint);
         true
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RequestFingerprint {
     protocol: ProtocolKind,
     start_unix_nanos: u64,
@@ -370,7 +372,7 @@ impl RequestFingerprint {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct WarningFingerprint {
     warning_type: String,
     source_signal_kind: String,

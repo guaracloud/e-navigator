@@ -21,6 +21,7 @@ e-navigator-signals = { path = "../../../crates/e-navigator-signals" }
 e-navigator-sinks = { path = "../../../crates/e-navigator-sinks" }
 e-navigator-sources-ebpf-aya = { path = "../../../crates/e-navigator-sources-ebpf-aya", features = ["fuzzing"] }
 e-navigator-sources-host = { path = "../../../crates/e-navigator-sources-host" }
+flate2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }

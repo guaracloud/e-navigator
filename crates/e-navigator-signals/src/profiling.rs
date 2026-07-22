@@ -197,32 +197,47 @@ pub(crate) fn sanitize_optional_profiling_kubernetes_context(
 }
 
 pub fn is_sensitive_profiling_attribute_key(key: &str) -> bool {
-    let key = key.to_ascii_lowercase();
-    key.contains("token")
-        || key.contains("authorization")
-        || key.contains("cookie")
-        || key.contains("password")
-        || key.contains("secret")
-        || key.contains("api_key")
-        || key.contains("apikey")
-        || key.contains("x-api-key")
-        || key.contains("credential")
-        || key.contains("private_key")
-        || key.contains("jwt")
+    const SENSITIVE_KEY_PARTS: [&str; 11] = [
+        "token",
+        "authorization",
+        "cookie",
+        "password",
+        "secret",
+        "api_key",
+        "apikey",
+        "x-api-key",
+        "credential",
+        "private_key",
+        "jwt",
+    ];
+
+    SENSITIVE_KEY_PARTS
+        .iter()
+        .any(|sensitive| contains_ascii_case_insensitive(key, sensitive))
 }
 
 fn is_reserved_profiling_attribute_key(key: &str) -> bool {
-    matches!(
-        key.to_ascii_lowercase().as_str(),
-        "schema"
-            | "profile_id"
-            | "profile_kind"
-            | "correlation_kind"
-            | "confidence"
-            | "sample_count"
-            | "stack_id"
-            | "frame_count"
-    )
+    const RESERVED_KEYS: [&str; 8] = [
+        "schema",
+        "profile_id",
+        "profile_kind",
+        "correlation_kind",
+        "confidence",
+        "sample_count",
+        "stack_id",
+        "frame_count",
+    ];
+
+    RESERVED_KEYS
+        .iter()
+        .any(|reserved| key.eq_ignore_ascii_case(reserved))
+}
+
+fn contains_ascii_case_insensitive(value: &str, needle: &str) -> bool {
+    value
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 fn truncate_optional_string(value: &mut Option<String>, max_bytes: usize) {

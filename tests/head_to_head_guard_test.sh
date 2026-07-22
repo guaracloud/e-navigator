@@ -28,22 +28,33 @@ for name in (
     compile(path.read_text(), str(path), "exec")
 '
 
-if [ "$(grep -c '^run_arm ' benchmarks/runner/homelab-head-to-head.sh)" -ne 33 ]; then
+if [ "$(grep -Ec '^[[:space:]]+run_arm (none|beyla|e-navigator) ' \
+  benchmarks/runner/homelab-head-to-head.sh)" -ne 33 ]; then
   printf 'head-to-head harness must contain exactly 33 benchmark arms\n' >&2
+  exit 1
+fi
+if [ "$(grep -c 'assert_standing_suspended >' \
+  benchmarks/runner/homelab-head-to-head.sh)" -ne 3 ]; then
+  printf 'head-to-head harness must assert initial, pre-arm, and post-arm isolation\n' >&2
   exit 1
 fi
 
 for required in \
   'target must be exactly homelab/e-navigator-bench' \
   'requires exactly three repetitions' \
+  'profile diagnostic requires exactly one repetition' \
   'f404a525451c1b36ab0a8a98560e20fc4af70f59016518d414ce5fed367855e2' \
   'validated-run-order.log' \
   'prom-node-cpu.json' \
   'prom-node-memory.json' \
   'prom-agent-cpu.json' \
   'prom-agent-rss.json' \
+  'suspend-root-argocd-automation.txt' \
   'restore-standing-daemonset.txt' \
+  'restore-root-argocd-automation.txt' \
   'post-argocd-application.json' \
+  'post-root-argocd-application.json' \
+  'assert_standing_suspended' \
   'E_NAVIGATOR_HEAD_TO_HEAD_RESUME'; do
   if ! grep -Fq "$required" benchmarks/runner/homelab-head-to-head.sh; then
     printf 'missing head-to-head harness guard or evidence: %s\n' "$required" >&2
@@ -93,7 +104,7 @@ for config in benchmarks/config/head-to-head-*.toml; do
   cargo run --locked -q -p e-navigator-cli -- --validate-config --config "$config"
 done
 
-proof_dir="documentation/proof/head-to-head-20260722"
+historical_proof_dir="documentation/proof/head-to-head-20260722"
 for artifact in \
   SHA256SUMS \
   analysis.json \
@@ -112,14 +123,14 @@ for artifact in \
   representative-workload-result.json \
   runs.json \
   validated-run-order.log; do
-  if [ ! -s "$proof_dir/$artifact" ]; then
-    printf 'missing head-to-head proof artifact: %s\n' "$artifact" >&2
+  if [ ! -s "$historical_proof_dir/$artifact" ]; then
+    printf 'missing historical head-to-head proof artifact: %s\n' "$artifact" >&2
     exit 1
   fi
 done
 
 (
-  cd "$proof_dir"
+  cd "$historical_proof_dir"
   shasum -a 256 -c SHA256SUMS >/dev/null
 )
 
@@ -130,25 +141,28 @@ jq -e '
   (.conditions | length) == 11 and
   .final_stack_comparison.e_navigator_agent_cpu_change_vs_beyla_alloy_percent == 43.601071 and
   .final_stack_comparison.e_navigator_agent_rss_change_vs_beyla_alloy_percent == 31.903883
-' "$proof_dir/analysis.json" >/dev/null
+' "$historical_proof_dir/analysis.json" >/dev/null
 jq -e '
   .schema == "e-navigator.head-to-head-proof-runs.v1" and
   (.runs | length) == 33 and
   ([.runs[].workload.measured.families[].errors] | add) == 0
-' "$proof_dir/runs.json" >/dev/null
+' "$historical_proof_dir/runs.json" >/dev/null
 jq -e '
-  .results.integrity_verdict == "pass" and
-  .results.lower_agent_overhead_claim == "rejected" and
+  .schema == "e-navigator.head-to-head-proof-manifest.v1" and
   .validation.scripts_quality_sh == "pass" and
   (.validation.skipped_gates | length) == 0 and
   .cleanup.production_context_touched == false and
   .cleanup.candidate_image_references_removed_from_both_nodes == true
-' "$proof_dir/manifest.json" >/dev/null
+' "$historical_proof_dir/manifest.json" >/dev/null
+grep -Fq 'Result: INVALIDATED for comparative claims.' \
+  "$historical_proof_dir/report.md"
+grep -Fq 'left the automated `root-app` parent able to restore that' \
+  "$historical_proof_dir/report.md"
 
 for config in benchmarks/config/head-to-head-*.toml; do
   expected="$(jq -r --arg config "$config" \
     '.execution.finalized_config_sha256[$config] // empty' \
-    "$proof_dir/manifest.json")"
+    "$historical_proof_dir/manifest.json")"
   actual="$(shasum -a 256 "$config" | awk '{print $1}')"
   if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
     printf 'finalized config checksum mismatch: %s\n' "$config" >&2
@@ -162,21 +176,55 @@ jq -e '
   .standing_argocd_application.health == "Healthy" and
   .standing_daemonset.ready == 2 and
   .production_context_touched == false
-' "$proof_dir/cleanup.json" >/dev/null
+' "$historical_proof_dir/cleanup.json" >/dev/null
 
-if [ "$(wc -l <"$proof_dir/validated-run-order.log" | tr -d ' ')" -ne 33 ]; then
-  printf 'head-to-head proof must contain 33 validated run-order entries\n' >&2
+if [ "$(wc -l <"$historical_proof_dir/validated-run-order.log" | tr -d ' ')" -ne 33 ]; then
+  printf 'historical head-to-head proof must contain 33 validated entries\n' >&2
   exit 1
 fi
+
+optimization_proof_dir="documentation/proof/optimization-20260722"
+for artifact in SHA256SUMS report.md summary.json; do
+  if [ ! -s "$optimization_proof_dir/$artifact" ]; then
+    printf 'missing optimization proof artifact: %s\n' "$artifact" >&2
+    exit 1
+  fi
+done
+(
+  cd "$optimization_proof_dir"
+  shasum -a 256 -c SHA256SUMS >/dev/null
+)
+jq -e '
+  .schema == "e-navigator.optimization-campaign-summary.v1" and
+  .verdict.evidence_integrity == "pass" and
+  .verdict.dual_cpu_and_memory_goal == "no-go" and
+  .head_to_head.runs == 33 and
+  .head_to_head.measured_successes == 591030 and
+  .head_to_head.workload_errors == 0 and
+  .head_to_head.final_stack.e_navigator_cpu_change_percent == 28.066163 and
+  .head_to_head.final_stack.e_navigator_rss_change_percent == -64.07903 and
+  .head_to_head.e_navigator_signals.hard_loss_total == 0 and
+  .allocations.baseline_to_final.calls_change_percent == -33.670202 and
+  .allocations.baseline_to_final.requested_bytes_change_percent == -25.164751 and
+  .validation.scripts_quality_sh == "pass" and
+  (.validation.skipped_gates | length) == 0 and
+  .cleanup.candidate_image_references_removed_from_both_nodes == true and
+  .cleanup.production_context_touched == false
+' "$optimization_proof_dir/summary.json" >/dev/null
+
 grep -Fq 'ADR 0014, controlled cumulative head-to-head benchmark' documentation/README.md
-grep -Fq '43.601071% more agent CPU' documentation/capabilities.md
-grep -Fq 'lower overhead or lower memory versus another observability stack' \
+grep -Fq '28.066163% more agent CPU and 64.079030% less agent RSS' \
+  documentation/capabilities.md
+grep -Fq 'lower CPU and memory versus another observability stack' \
   documentation/boundaries.md
-grep -Fq 'Full-stack head-to-head proof' documentation/proof-report.md
+grep -Fq 'Corrected full-stack optimization proof' documentation/proof-report.md
 grep -Fq '<span class="metric-value">33</span>' website/index.html
 grep -Fq '<span class="metric-label">matched homelab runs</span>' website/index.html
+grep -Fq '<span class="metric-value">+28.07%</span>' website/index.html
+grep -Fq '<span class="metric-value">-64.08%</span>' website/index.html
 
 if command -v kubeconform >/dev/null 2>&1; then
   kubeconform -strict -summary benchmarks/k8s/head-to-head-workload.yaml >/dev/null
   kubeconform -strict -summary benchmarks/k8s/head-to-head-alloy.yaml >/dev/null
+  kubeconform -strict -summary benchmarks/k8s/allocation-probe.yaml >/dev/null
 fi

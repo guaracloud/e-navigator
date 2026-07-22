@@ -4,7 +4,7 @@
     reason = "benchmark setup and assertions abort the benchmark on invalid fixtures"
 )]
 
-use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use e_navigator_core::{Generator, PrometheusHttpConfig, Sink};
 use e_navigator_generators::{
     DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator, ProfilingGenerator,
@@ -55,8 +55,9 @@ use e_navigator_sources_ebpf_aya::{
 use e_navigator_sources_host::{
     parse_cpu_stat, parse_diskstats, parse_loadavg, parse_meminfo, parse_process_stat,
 };
+use flate2::{Compression, write::GzEncoder};
 use serde::Serialize;
-use std::{cell::Cell, collections::BTreeMap};
+use std::{cell::Cell, collections::BTreeMap, io::Write};
 use tokio::{runtime::Runtime, sync::mpsc};
 
 fn bench_reader_sample_handoff(c: &mut Criterion) {
@@ -684,6 +685,7 @@ fn bench_generators(c: &mut Criterion) {
         RequestCorrelationGenerator::with_limits(8192, 4096),
         request_signals(),
     );
+    bench_request_correlation_unique_at_capacity(c);
     bench_generator(
         c,
         "generator/profiling",
@@ -696,6 +698,34 @@ fn bench_generators(c: &mut Criterion) {
         RuntimeSecurityGenerator::with_kubernetes_api_endpoints([("10.43.0.1".to_string(), 443)]),
         security_signals(),
     );
+}
+
+fn bench_request_correlation_unique_at_capacity(c: &mut Criterion) {
+    let runtime = Runtime::new().unwrap();
+    let generator = RequestCorrelationGenerator::with_limits(8192, 4096);
+    for index in 0..8192 {
+        let signal = request_signal(index);
+        black_box(observe_generator_like_runner(&runtime, &generator, &signal));
+    }
+    let index = Cell::new(8192_u64);
+
+    c.bench_function("generator/request_correlation_unique_at_capacity", |b| {
+        b.iter_batched(
+            || {
+                let next = index.get().wrapping_add(1);
+                index.set(next);
+                request_signal(next)
+            },
+            |signal| {
+                black_box(observe_generator_like_runner(
+                    &runtime,
+                    &generator,
+                    black_box(&signal),
+                ));
+            },
+            BatchSize::SmallInput,
+        )
+    });
 }
 
 fn bench_network_open_aggregation(c: &mut Criterion) {
@@ -948,6 +978,31 @@ fn bench_serialization_and_exporter(c: &mut Criterion) {
     });
 }
 
+fn bench_gzip_export_payload(c: &mut Criterion) {
+    let mut payload = Vec::with_capacity(512 * 1024);
+    while payload.len() < 512 * 1024 {
+        payload.extend_from_slice(
+            b"service.name=e-navigator;http.route=/orders;http.response.status_code=200\n",
+        );
+    }
+    payload.truncate(512 * 1024);
+    let mut group = c.benchmark_group("exporter/gzip_512k");
+    group.throughput(Throughput::Bytes(payload.len() as u64));
+    for (name, compression) in [
+        ("default", Compression::default()),
+        ("fast", Compression::fast()),
+    ] {
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                let mut encoder = GzEncoder::new(Vec::new(), compression);
+                encoder.write_all(black_box(&payload)).unwrap();
+                black_box(encoder.finish().unwrap())
+            })
+        });
+    }
+    group.finish();
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct ExportRecord {
     value: u64,
@@ -1087,45 +1142,46 @@ fn trace_signals() -> Vec<SignalEnvelope> {
 }
 
 fn request_signals() -> Vec<SignalEnvelope> {
-    (0..128)
-        .map(|index| {
-            SignalEnvelope::protocol_request_observation(
-                "source.synthetic",
-                Some("node-a".to_string()),
-                ProtocolRequestObservation {
-                    protocol: ProtocolKind::Http,
-                    role: None,
-                    start_unix_nanos: 1_000 + index,
-                    end_unix_nanos: Some(2_000 + index),
-                    duration_nanos: Some(1_000),
-                    trace_id: Some(format!("4bf92f3577b34da6a3ce929d0e0e{:04x}", index)),
-                    span_id: Some(format!("00f067aa0ba9{:04x}", index)),
-                    parent_span_id: None,
-                    traceparent: None,
-                    tracestate: None,
-                    correlation_kind: TraceCorrelationKind::ProtocolObserved,
-                    confidence: TraceConfidence::High,
-                    service_name: Some("api".to_string()),
-                    method: Some("GET".to_string()),
-                    status_code: Some(200),
-                    process: Some(process()),
-                    container: Some(container()),
-                    kubernetes: Some(kubernetes("api")),
-                    peer: Some(TracePeerContext {
-                        address: Some("10.43.12.22".to_string()),
-                        port: Some(8080),
-                        domain: Some("web.e-navigator-bench.svc.cluster.local".to_string()),
-                        workload: Some(kubernetes("web")),
-                        container: None,
-                    }),
-                    attributes: vec![TraceAttribute {
-                        key: "http.route".to_string(),
-                        value: "/orders".to_string(),
-                    }],
-                },
-            )
-        })
-        .collect()
+    (0..128).map(request_signal).collect()
+}
+
+fn request_signal(index: u64) -> SignalEnvelope {
+    let identity = index & 0xffff;
+    SignalEnvelope::protocol_request_observation(
+        "source.synthetic",
+        Some("node-a".to_string()),
+        ProtocolRequestObservation {
+            protocol: ProtocolKind::Http,
+            role: None,
+            start_unix_nanos: 1_000 + index,
+            end_unix_nanos: Some(2_000 + index),
+            duration_nanos: Some(1_000),
+            trace_id: Some(format!("4bf92f3577b34da6a3ce929d0e0e{identity:04x}")),
+            span_id: Some(format!("00f067aa0ba9{identity:04x}")),
+            parent_span_id: None,
+            traceparent: None,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::High,
+            service_name: Some("api".to_string()),
+            method: Some("GET".to_string()),
+            status_code: Some(200),
+            process: Some(process()),
+            container: Some(container()),
+            kubernetes: Some(kubernetes("api")),
+            peer: Some(TracePeerContext {
+                address: Some("10.43.12.22".to_string()),
+                port: Some(8080),
+                domain: Some("web.e-navigator-bench.svc.cluster.local".to_string()),
+                workload: Some(kubernetes("web")),
+                container: None,
+            }),
+            attributes: vec![TraceAttribute {
+                key: "http.route".to_string(),
+                value: "/orders".to_string(),
+            }],
+        },
+    )
 }
 
 fn request_error_span_signal() -> SignalEnvelope {
@@ -1507,6 +1563,9 @@ fn bench_unwind_table(c: &mut Criterion) {
     c.bench_function("unwind/table_build_4096_fdes", |b| {
         b.iter(|| ElfUnwindTable::parse(black_box(&image)))
     });
+    c.bench_function("unwind/table_build_4096_fdes_bounded_4096_rows", |b| {
+        b.iter(|| ElfUnwindTable::parse_bounded(black_box(&image), 4096))
+    });
 
     let table = ElfUnwindTable::parse(&image);
     assert!(!table.is_empty());
@@ -1646,6 +1705,7 @@ criterion_group!(
     bench_protocol_stream,
     bench_processors,
     bench_generators,
-    bench_serialization_and_exporter
+    bench_serialization_and_exporter,
+    bench_gzip_export_payload
 );
 criterion_main!(benches);

@@ -103,7 +103,9 @@ E-Navigator does not currently claim:
   processes it observes on-CPU and re-allocates the pool each refresh, but
   on nodes running many processes with large system libraries some
   modules are skipped with row-budget accounting and fall back to
-  frame-pointer unwinding);
+  frame-pointer unwinding. The bounded parsed-module cache has no eviction,
+  so enough binary churn can also keep newly seen modules on that fallback
+  until the agent restarts);
 - cross-pid-namespace symbolization beyond verified pids (pids are translated
   in-kernel into the symbolization procfs namespace where the kernel allows;
   untranslatable pids are symbolized only after a thread-comm identity check
@@ -187,10 +189,11 @@ E-Navigator does not currently claim:
   arm measured 2.049% lower busy-loop throughput than no agent with all three
   modes enabled, but it did not cover mixed services, higher rates, backend
   delivery, JVM/V8, production, or a dedicated node);
-- lower overhead or lower memory versus another observability stack (the
-  2026-07-22 33-run homelab comparison measured E-Navigator at 43.601071% more
-  agent CPU and 31.903883% more agent RSS than pinned Beyla plus Alloy in the
-  final cumulative HTTP, gRPC, Redis, PostgreSQL, and 10 Hz CPU-profile arm);
+- lower CPU and memory versus another observability stack at the same time
+  (the corrected 2026-07-22 33-run homelab comparison measured optimized
+  E-Navigator at 28.066163% more agent CPU and 64.079030% less agent RSS than
+  pinned Beyla plus Alloy in the final cumulative HTTP, gRPC, Redis,
+  PostgreSQL, and 10 Hz CPU-profile arm);
 - universal application-latency or node-resource conclusions from that
   head-to-head result. The driver used fixed offered rates rather than a
   saturation search, only three shared-cluster repetitions were run, and the

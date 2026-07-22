@@ -711,7 +711,7 @@ image identity, method, and cleanup state are in the
 A focused local Criterion run measured one-slot coalescing of 64 notifications
 at 53.112 to 53.664 ns. That is local hot-path hygiene, not live overhead.
 
-## Full-Stack Head-To-Head Baseline (Homelab, 2026-07-22)
+## Corrected Full-Stack Optimization Campaign (Homelab, 2026-07-22)
 
 The flagship guarded campaign kept five services active under every condition:
 HTTP at 100 requests/s, gRPC at 80 calls/s, Redis at 160 operations/s,
@@ -726,7 +726,11 @@ PostgreSQL, then 10 Hz periodic CPU profiles. Every run used a 15-second
 warmup and a 45-second measurement. Beyla 3.28.0 and Alloy 1.18.0 were pinned
 by image digest; the Beyla 1.16.10 chart archive was pinned by checksum. Local
 E-Navigator and workload images were loaded directly into both homelab nodes
-and never pushed.
+and never pushed. The corrected harness suspended both the parent `root-app`
+and child `e-navigator` Argo CD applications, deleted the standing DaemonSet,
+and asserted its absence initially and before and after all 33 arms. The
+earlier capture is retained as invalidated diagnostic history because it did
+not enforce that parent-application boundary.
 
 Final-stack application values below are means across three repetitions with
 sample standard deviation after `+/-`. Throughput followed the fixed offered
@@ -735,42 +739,52 @@ not a capacity result.
 
 | Family | Condition | Throughput/s | p50 us | p95 us | p99 us |
 | --- | --- | ---: | ---: | ---: | ---: |
-| HTTP | no agent | 100.009479 +/- 0.000391 | 1793.667 +/- 3.055 | 6301.000 +/- 239.056 | 6971.667 +/- 19.732 |
-| HTTP | Beyla plus Alloy | 100.009727 +/- 0.000170 | 1850.000 +/- 8.544 | 6257.667 +/- 375.042 | 7037.000 +/- 37.723 |
-| HTTP | E-Navigator | 100.009765 +/- 0.000795 | 1851.667 +/- 12.897 | 6463.000 +/- 24.000 | 7020.667 +/- 20.599 |
-| gRPC | no agent | 80.007583 +/- 0.000312 | 2863.333 +/- 24.542 | 4110.667 +/- 59.214 | 5763.333 +/- 106.547 |
-| gRPC | Beyla plus Alloy | 80.007781 +/- 0.000136 | 3042.000 +/- 64.211 | 4312.000 +/- 121.787 | 5866.333 +/- 203.866 |
-| gRPC | E-Navigator | 80.007812 +/- 0.000636 | 3056.333 +/- 48.563 | 4590.333 +/- 27.025 | 6234.333 +/- 259.278 |
-| Redis | no agent | 160.015166 +/- 0.000625 | 1008.667 +/- 10.970 | 1784.667 +/- 18.824 | 2971.000 +/- 217.401 |
-| Redis | Beyla plus Alloy | 160.015562 +/- 0.000272 | 1137.333 +/- 17.786 | 2048.000 +/- 28.355 | 3399.667 +/- 222.480 |
-| Redis | E-Navigator | 160.015624 +/- 0.001273 | 1087.333 +/- 13.051 | 2071.000 +/- 51.507 | 3260.000 +/- 299.040 |
-| PostgreSQL | no agent | 50.004739 +/- 0.000195 | 1150.000 +/- 5.196 | 2281.667 +/- 31.086 | 4067.667 +/- 91.850 |
-| PostgreSQL | Beyla plus Alloy | 50.004863 +/- 0.000085 | 1258.333 +/- 6.658 | 2469.333 +/- 67.241 | 4477.667 +/- 620.033 |
-| PostgreSQL | E-Navigator | 50.004883 +/- 0.000398 | 1439.333 +/- 16.503 | 2802.667 +/- 43.317 | 4365.667 +/- 401.438 |
-| Python CPU | no agent | 8.000758 +/- 0.000031 | 30423.333 +/- 459.375 | 48258.667 +/- 221.816 | 53257.333 +/- 600.622 |
-| Python CPU | Beyla plus Alloy | 8.000778 +/- 0.000014 | 30875.000 +/- 240.308 | 45560.667 +/- 6748.336 | 53568.333 +/- 1382.483 |
-| Python CPU | E-Navigator | 8.000781 +/- 0.000064 | 31269.333 +/- 110.586 | 41879.333 +/- 4934.424 | 50957.000 +/- 3167.350 |
+| HTTP | no agent | 100.010226 +/- 0.000591 | 1767.000 +/- 13.115 | 6088.000 +/- 353.467 | 6916.000 +/- 35.000 |
+| HTTP | Beyla plus Alloy | 100.010123 +/- 0.001114 | 1817.000 +/- 6.000 | 6347.667 +/- 178.262 | 6993.667 +/- 34.948 |
+| HTTP | E-Navigator | 100.009620 +/- 0.000785 | 1838.000 +/- 12.166 | 6253.667 +/- 287.243 | 6999.000 +/- 10.440 |
+| gRPC | no agent | 80.008181 +/- 0.000473 | 2797.333 +/- 24.947 | 3770.000 +/- 154.522 | 5249.000 +/- 164.794 |
+| gRPC | Beyla plus Alloy | 80.008098 +/- 0.000891 | 2937.000 +/- 11.533 | 4078.333 +/- 36.295 | 5333.667 +/- 167.936 |
+| gRPC | E-Navigator | 80.007696 +/- 0.000628 | 2977.333 +/- 20.033 | 4470.000 +/- 161.391 | 5798.000 +/- 153.873 |
+| Redis | no agent | 160.016361 +/- 0.000946 | 954.667 +/- 7.095 | 1586.000 +/- 64.954 | 2447.333 +/- 228.354 |
+| Redis | Beyla plus Alloy | 160.016196 +/- 0.001782 | 1076.000 +/- 13.000 | 1883.667 +/- 15.503 | 2888.667 +/- 15.011 |
+| Redis | E-Navigator | 160.015392 +/- 0.001256 | 1041.333 +/- 5.033 | 2006.667 +/- 55.967 | 3071.667 +/- 117.458 |
+| PostgreSQL | no agent | 50.005113 +/- 0.000296 | 1092.667 +/- 40.857 | 1972.000 +/- 155.242 | 3481.333 +/- 254.129 |
+| PostgreSQL | Beyla plus Alloy | 50.005061 +/- 0.000557 | 1196.000 +/- 36.014 | 2351.667 +/- 21.962 | 3961.667 +/- 177.858 |
+| PostgreSQL | E-Navigator | 50.004810 +/- 0.000393 | 1395.333 +/- 48.881 | 2665.000 +/- 117.320 | 3985.667 +/- 36.364 |
+| Python CPU | no agent | 8.000818 +/- 0.000047 | 30110.000 +/- 157.617 | 43970.333 +/- 932.543 | 49783.333 +/- 2517.339 |
+| Python CPU | Beyla plus Alloy | 8.000810 +/- 0.000089 | 30410.000 +/- 78.886 | 44094.667 +/- 4039.664 | 51954.333 +/- 1701.497 |
+| Python CPU | E-Navigator | 8.000770 +/- 0.000063 | 31155.000 +/- 93.920 | 41493.000 +/- 3302.583 | 52031.000 +/- 1959.936 |
 
 The cumulative collector resources were:
 
 | Stage | Beyla or Beyla plus Alloy CPU m | E-Navigator CPU m | Beyla or Beyla plus Alloy RSS MiB | E-Navigator RSS MiB |
 | --- | ---: | ---: | ---: | ---: |
-| HTTP | 33.891 +/- 1.735 | 36.768 +/- 1.828 | 24.640 +/- 1.306 | 12.821 +/- 0.436 |
-| plus gRPC | 37.023 +/- 3.356 | 74.540 +/- 3.201 | 28.260 +/- 1.204 | 20.427 +/- 0.539 |
-| plus Redis | 45.019 +/- 0.981 | 71.933 +/- 1.536 | 23.979 +/- 0.459 | 20.751 +/- 0.345 |
-| plus PostgreSQL | 48.768 +/- 1.577 | 103.476 +/- 4.173 | 24.861 +/- 0.696 | 25.125 +/- 0.539 |
-| plus profiles | 81.721 +/- 5.618 | 117.353 +/- 6.010 | 137.131 +/- 4.680 | 180.881 +/- 5.079 |
+| HTTP | 27.898294 +/- 1.867604 | 32.438155 +/- 2.089083 | 25.511719 +/- 0.637046 | 11.029948 +/- 0.030033 |
+| plus gRPC | 34.747475 +/- 1.151602 | 63.770120 +/- 4.082139 | 27.834201 +/- 2.137823 | 18.043837 +/- 0.178021 |
+| plus Redis | 41.558824 +/- 0.831611 | 69.372705 +/- 3.991127 | 25.292101 +/- 0.222520 | 18.467882 +/- 0.293435 |
+| plus PostgreSQL | 45.508600 +/- 1.363484 | 91.127337 +/- 4.422200 | 24.538628 +/- 1.201238 | 21.107639 +/- 0.175063 |
+| plus profiles | 75.859599 +/- 6.058294 | 97.150478 +/- 4.096372 | 128.862413 +/- 7.335634 | 46.288628 +/- 2.594171 |
 
-At the final stage E-Navigator used 43.601071% more agent CPU and 31.903883%
-more agent RSS than Beyla plus Alloy. This rejects a lower-overhead or
-lower-memory claim for the measured workload.
+At the final stage E-Navigator used 28.066163% more agent CPU and 64.079030%
+less agent RSS than Beyla plus Alloy. This proves a scoped memory advantage but
+rejects the campaign goal of beating the comparison stack on both CPU and
+memory.
 
-The final E-Navigator runs enqueued and sent 68,622 traces and 567 profiles
-with zero hard-loss increments. Final Beyla application metrics accounted for
-all HTTP, Redis, and PostgreSQL operations, while leaving 17 of 14,400 gRPC
-calls unaccounted. Alloy collected and forwarded 55 profiles with zero drops
-and zero failing sessions, while recording one empty-stack and one
-wrong-text-section diagnostic.
+The final E-Navigator runs decoded 110,830 source samples and sent 69,482
+source signals with zero hard-loss increments. Their asynchronous boundary
+scrapes recorded 68,621 traces enqueued and 68,624 sent, plus 860 profiles
+enqueued and 861 sent. Final Beyla application metrics accounted for all HTTP,
+Redis, and PostgreSQL operations while leaving 26 of 14,400 gRPC calls
+unaccounted. Alloy collected and forwarded 38 profiles with zero drops and
+zero failing sessions.
+
+Matched 45-second allocation diagnostics reduced E-Navigator libc allocator
+calls from 8,509,242 to 5,644,163, or 33.670202%, and requested bytes from
+925,090,490 to 692,293,775, or 25.164751%. The final values still exceeded the
+combined Beyla and Alloy counters by 143.440915% in calls and 139.416141% in
+bytes. This comparison is descriptive because E-Navigator was measured at
+libc entry points while the Go processes were measured through
+`runtime.mallocgc` and Go runtime counters.
 
 Node-level container CPU and working-set memory were also recorded for every
 stage and repetition. They include unrelated shared-cluster work and are not
@@ -785,4 +799,4 @@ CPU, memory, and loss behavior. Exact per-run values, all p50/p95/p99 and
 variance fields, node series, signal-family increments, raw representative
 scrapes, image identities, interruption provenance, and cleanup evidence are
 in the
-[`head-to-head proof report`](proof/head-to-head-20260722/report.md).
+[`optimization campaign proof report`](proof/optimization-20260722/report.md).

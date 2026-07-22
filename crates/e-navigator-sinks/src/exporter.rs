@@ -294,10 +294,7 @@ where
     }
 }
 
-impl<T> HttpProtobufExporter<T>
-where
-    T: Clone,
-{
+impl<T> HttpProtobufExporter<T> {
     pub fn new(
         config: HttpExporterConfig,
         encode_batch: fn(&[T]) -> Result<Vec<u8>, ExporterError>,
@@ -361,15 +358,11 @@ where
         }
 
         let batch_len = self.queue.len().min(self.config.batch_size);
-        let batch = self
-            .queue
-            .iter()
-            .take(batch_len)
-            .cloned()
-            .collect::<Vec<_>>();
+        let batch = self.queue.drain(..batch_len).collect::<Vec<_>>();
         let body = match self.encode_body(&batch).await {
             Ok(body) => body,
             Err(err) => {
+                restore_batch_front(&mut self.queue, batch);
                 self.counters.failed_batches = self.counters.failed_batches.saturating_add(1);
                 return Err(err);
             }
@@ -392,9 +385,6 @@ where
             self.observe_request_duration(started.elapsed());
             match result {
                 Ok(ack) => {
-                    for _ in 0..batch_len {
-                        let _ = self.queue.pop_front();
-                    }
                     self.counters.exported =
                         self.counters.exported.saturating_add(batch_len as u64);
                     if ack.rejected_items > 0 {
@@ -428,6 +418,7 @@ where
                         _ => {}
                     }
                     if !err.is_retryable() {
+                        restore_batch_front(&mut self.queue, batch);
                         self.counters.failed_batches =
                             self.counters.failed_batches.saturating_add(1);
                         return Err(err);
@@ -439,6 +430,7 @@ where
         }
 
         self.counters.failed_batches = self.counters.failed_batches.saturating_add(1);
+        restore_batch_front(&mut self.queue, batch);
         Err(last_error.unwrap_or(ExporterError::RetriesExhausted))
     }
 
@@ -459,7 +451,10 @@ where
         match self.compression {
             OtlpHttpCompression::None => Ok(Bytes::from(body)),
             OtlpHttpCompression::Gzip => tokio::task::spawn_blocking(move || {
-                let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+                // OTLP batches are short-lived telemetry buffers. Level 1
+                // preserves the gzip wire contract while avoiding the much
+                // higher CPU cost of the default level on the export path.
+                let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
                 encoder
                     .write_all(&body)
                     .map_err(ExporterError::Compression)?;
@@ -538,6 +533,12 @@ where
         })
         .await
         .map_err(|_| ExporterError::Timeout)?
+    }
+}
+
+fn restore_batch_front<T>(queue: &mut VecDeque<T>, batch: Vec<T>) {
+    for item in batch.into_iter().rev() {
+        queue.push_front(item);
     }
 }
 
@@ -652,12 +653,21 @@ mod tests {
         value: u64,
     }
 
+    #[derive(Debug)]
+    struct NonCloneRecord {
+        value: u8,
+    }
+
     fn encode_test_records(batch: &[TestRecord]) -> Result<Vec<u8>, ExporterError> {
         serde_json::to_vec(batch).map_err(|err| ExporterError::Encode(err.to_string()))
     }
 
     fn fail_encode_test_records(_batch: &[TestRecord]) -> Result<Vec<u8>, ExporterError> {
         Err(ExporterError::Encode("encode failed".to_string()))
+    }
+
+    fn encode_non_clone_records(batch: &[NonCloneRecord]) -> Result<Vec<u8>, ExporterError> {
+        Ok(batch.iter().map(|record| record.value).collect())
     }
 
     fn valid_config() -> HttpExporterConfig {
@@ -950,6 +960,72 @@ mod tests {
 
         assert_eq!(exporter.queued_len(), 1);
         assert_eq!(exporter.counters().dropped_queue_full, 1);
+    }
+
+    #[tokio::test]
+    async fn protobuf_success_drains_non_clone_records() {
+        let server = FakeCollector::spawn(vec![200]).await;
+        let mut exporter = HttpProtobufExporter::new(
+            HttpExporterConfig {
+                endpoint: server.url(),
+                headers: Vec::new(),
+                batch_size: 2,
+                queue_capacity: 2,
+                timeout_millis: 1_000,
+                max_retries: 0,
+                tls_insecure_skip_verify: false,
+            },
+            encode_non_clone_records,
+        )
+        .expect("exporter builds");
+        exporter.enqueue(NonCloneRecord { value: 1 });
+        exporter.enqueue(NonCloneRecord { value: 2 });
+
+        exporter.flush_once().await.expect("flush succeeds");
+        let _request = server.next_request().await;
+
+        assert_eq!(exporter.queued_len(), 0);
+        assert_eq!(exporter.counters().exported, 2);
+    }
+
+    #[tokio::test]
+    async fn protobuf_permanent_failure_restores_non_clone_batch_in_order() {
+        let server = FakeCollector::spawn(vec![400]).await;
+        let mut exporter = HttpProtobufExporter::new(
+            HttpExporterConfig {
+                endpoint: server.url(),
+                headers: Vec::new(),
+                batch_size: 2,
+                queue_capacity: 3,
+                timeout_millis: 1_000,
+                max_retries: 0,
+                tls_insecure_skip_verify: false,
+            },
+            encode_non_clone_records,
+        )
+        .expect("exporter builds");
+        exporter.enqueue(NonCloneRecord { value: 1 });
+        exporter.enqueue(NonCloneRecord { value: 2 });
+        exporter.enqueue(NonCloneRecord { value: 3 });
+
+        let err = exporter
+            .flush_once()
+            .await
+            .expect_err("permanent response fails");
+        let _request = server.next_request().await;
+
+        assert!(matches!(err, ExporterError::PermanentStatus(400)));
+        assert_eq!(
+            exporter
+                .queue
+                .iter()
+                .map(|record| record.value)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(exporter.counters().failed_batches, 1);
+        assert_eq!(exporter.counters().permanent_responses, 1);
+        assert_eq!(exporter.counters().exported, 0);
     }
 
     #[tokio::test]
