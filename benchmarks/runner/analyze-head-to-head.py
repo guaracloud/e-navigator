@@ -22,6 +22,7 @@ COMPONENTS = {
     "profile": ("http", "grpc", "redis-proxy", "postgres-proxy", "python-cpu"),
 }
 FAMILIES = ("http", "grpc", "redis", "postgres", "python_cpu")
+PROTOCOL_FAMILIES = ("http", "grpc", "redis", "postgres")
 RUN_NAME = re.compile(
     r"^(?:(?P<none>none)|(?P<collector>beyla|e-navigator)-(?P<stage>http|grpc|redis|postgres|profile))-r(?P<repetition>[1-3])$"
 )
@@ -240,6 +241,19 @@ def expected_operations(workload: dict[str, Any], stage: str) -> dict[str, int]:
         )
         for family in enabled
     }
+
+
+def minimum_expected_protocol_signals(workload: dict[str, Any], stage: str) -> int:
+    """Return the cumulative protocol-operation floor for an E-Navigator arm.
+
+    E-Navigator can emit more than one signal for a protocol operation, notably
+    for PostgreSQL extended-query traffic. It must never emit fewer aggregate
+    protocol signals than the successful operations offered to the protocol
+    families enabled in the stage. CPU-profile operations are excluded because
+    profile sampling is frequency based rather than request based.
+    """
+    expected = expected_operations(workload, stage)
+    return sum(expected.get(family, 0) for family in PROTOCOL_FAMILIES)
 
 
 def beyla_accounting(run_dir: Path, workload: dict[str, Any], stage: str) -> dict[str, Any]:
@@ -616,10 +630,21 @@ def validate_run(run_dir: Path) -> dict[str, Any]:
                 fail(f"{run_dir}: Alloy profile accounting failed: {alloy}")
     elif collector == "e-navigator":
         accounting = e_navigator_accounting(run_dir)
+        minimum_source_signals = minimum_expected_protocol_signals(workload, stage)
+        accounting["minimum_expected_protocol_signals"] = minimum_source_signals
+        accounting["protocol_signal_surplus"] = (
+            accounting["source_signals_sent"] - minimum_source_signals
+        )
         if accounting["hard_loss_total"] != 0:
             fail(f"{run_dir}: E-Navigator reported hard signal loss")
         if accounting["source_samples_decoded"] <= 0 or accounting["source_signals_sent"] <= 0:
             fail(f"{run_dir}: E-Navigator emitted no source signals")
+        if accounting["source_signals_sent"] < minimum_source_signals:
+            fail(
+                f"{run_dir}: E-Navigator protocol signal completeness failed: "
+                f"sent={accounting['source_signals_sent']}, "
+                f"minimum={minimum_source_signals}"
+            )
         if stage == "profile" and (
             accounting["profile_samples_decoded"] <= 0
             or accounting["profile_signals_sent"] <= 0

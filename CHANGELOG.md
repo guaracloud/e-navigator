@@ -6,6 +6,45 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0-rc.2] - 2026-07-22
+
+### Fixed
+
+- Create Redis proxy backend connections only after collector attachment so
+  server-node eBPF capture observes the complete measured workload.
+- Enforce cumulative per-family protocol-operation floors in head-to-head
+  analysis, keeping frequency-sampled CPU profiles behind their own positive
+  sample and export gates.
+- Correct the local Aya protocol benchmark fixture to the current 384-byte raw
+  event ABI instead of measuring an early decode error.
+- Invalidate the incomplete `0.2.0-rc.1` Beyla plus Alloy comparison and its
+  derived full-stack CPU, RSS, allocation, throughput, and latency claims.
+
+### Performance
+
+- Replace allocated request-correlation peer strings with a structured
+  fingerprint and compute three deterministic generated-identity hashes in one
+  pass. Local Criterion medians improved generated identity by 19.399819% and
+  bounded 8,192-entry request deduplication by 15.755034%.
+- Replace the bounded HTTP/2 in-flight tree with a preallocated sorted index,
+  improving the 32-stream correlation cycle by 2.527201% while preserving
+  stream-ID ordering and out-of-order response matching.
+- Return before building OTLP resource and attribute maps for trace signals
+  that have no declared trace identity and cannot be exported, improving the
+  focused local benchmark by 99.906209%. Declared invalid identities still use
+  the existing validation and accounting path.
+
+### Validation
+
+- Add exact generated trace and span ID assertions plus bounded HTTP/2 and
+  OTLP fast-path regression benchmarks.
+- Pass `scripts/quality.sh` with no skipped gates, including strict Rust checks,
+  workspace tests, supply-chain checks, Docker smoke, Helm and Kubernetes
+  schema validation, website checks, and repository guards.
+- Preserve the historical proof bundle with an adjacent erratum and publish a
+  corrected campaign report. A fresh homelab comparison remains required
+  before making any replacement-overhead claim.
+
 ## [0.2.0-rc.1] - 2026-07-22
 
 ### Added
@@ -347,7 +386,8 @@ All notable changes to E-Navigator are documented here. The format follows
   reduced-privilege operation, and universal protocol/profile coverage remain
   explicit non-claims documented in `documentation/boundaries.md`.
 
-[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.2.0-rc.1...HEAD
+[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.2.0-rc.2...HEAD
+[0.2.0-rc.2]: https://github.com/guaracloud/e-navigator/compare/v0.2.0-rc.1...v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/guaracloud/e-navigator/compare/v0.1.2...v0.2.0-rc.1
 [0.1.2]: https://github.com/guaracloud/e-navigator/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/guaracloud/e-navigator/compare/v0.1.0...v0.1.1

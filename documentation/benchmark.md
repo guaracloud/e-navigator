@@ -711,7 +711,16 @@ image identity, method, and cleanup state are in the
 A focused local Criterion run measured one-slot coalescing of 64 notifications
 at 53.112 to 53.664 ns. That is local hot-path hygiene, not live overhead.
 
-## Corrected Full-Stack Optimization Campaign (Homelab, 2026-07-22)
+## Invalidated Full-Stack Optimization Campaign (Homelab, 2026-07-22)
+
+Status: invalid for comparative claims. The Redis proxy opened its backend
+connection before collector attachment, so all E-Navigator Redis arms missed
+the complete Redis family. Their 10,800 source signals covered only the 6,000
+HTTP and 4,800 gRPC operations, below the 20,400 cumulative protocol floor.
+The aggregate signal gate accepted those arms and was insufficient. The
+tables in this section remain historical diagnostics only. See the
+[`erratum`](proof/optimization-20260722/ERRATUM.md) and the
+[`corrected rerun report`](proof/optimization-20260722-campaign2/report.md).
 
 The flagship guarded campaign kept five services active under every condition:
 HTTP at 100 requests/s, gRPC at 80 calls/s, Redis at 160 operations/s,
@@ -765,10 +774,9 @@ The cumulative collector resources were:
 | plus PostgreSQL | 45.508600 +/- 1.363484 | 91.127337 +/- 4.422200 | 24.538628 +/- 1.201238 | 21.107639 +/- 0.175063 |
 | plus profiles | 75.859599 +/- 6.058294 | 97.150478 +/- 4.096372 | 128.862413 +/- 7.335634 | 46.288628 +/- 2.594171 |
 
-At the final stage E-Navigator used 28.066163% more agent CPU and 64.079030%
-less agent RSS than Beyla plus Alloy. This proves a scoped memory advantage but
-rejects the campaign goal of beating the comparison stack on both CPU and
-memory.
+The final-stage differences cannot support a CPU or RSS claim because the
+E-Navigator workload omitted Redis capture while the reference arm observed
+the offered Redis operations.
 
 The final E-Navigator runs decoded 110,830 source samples and sent 69,482
 source signals with zero hard-loss increments. Their asynchronous boundary
@@ -792,11 +800,8 @@ total host utilization. In particular, `homelab-01` no-agent CPU exceeded the
 final agent-arm values, so node totals support variance disclosure, not causal
 agent subtraction.
 
-This is a three-repetition fixed-rate result on one shared cluster. It does not
-prove saturation capacity, production behavior, sustained-load stability,
-backend storage equivalence, total host utilization, or universal latency,
-CPU, memory, and loss behavior. Exact per-run values, all p50/p95/p99 and
-variance fields, node series, signal-family increments, raw representative
-scrapes, image identities, interruption provenance, and cleanup evidence are
-in the
-[`optimization campaign proof report`](proof/optimization-20260722/report.md).
+This historical capture does not prove comparative CPU, RSS, allocations,
+throughput, latency, saturation capacity, production behavior, sustained-load
+stability, backend storage equivalence, total host utilization, or universal
+loss behavior. Exact invalidation evidence is in the
+[`optimization campaign erratum`](proof/optimization-20260722/ERRATUM.md).

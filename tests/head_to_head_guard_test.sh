@@ -99,6 +99,16 @@ grep -Fq 'MAX_OTLP_BODY_BYTES = 16 * 1024 * 1024' \
   benchmarks/workloads/head-to-head/head_to_head.py
 grep -Fq 'MAX_LATENCY_SAMPLES = 300_000' \
   benchmarks/workloads/head-to-head/head_to_head.py
+grep -Fq 'client = await wait_for_redis()' \
+  benchmarks/workloads/head-to-head/head_to_head.py
+grep -Fq 'minimum_expected_protocol_signals' \
+  benchmarks/runner/analyze-head-to-head.py
+grep -Fq 'E-Navigator protocol signal completeness failed' \
+  benchmarks/runner/analyze-head-to-head.py
+grep -Fq 'comparative CPU, RSS, allocation, throughput, and latency claims' \
+  documentation/proof/optimization-20260722/ERRATUM.md
+grep -Fq 'Status: local campaign complete, homelab baseline and A/B blocked' \
+  documentation/proof/optimization-20260722-campaign2/report.md
 
 for config in benchmarks/config/head-to-head-*.toml; do
   cargo run --locked -q -p e-navigator-cli -- --validate-config --config "$config"
@@ -213,15 +223,14 @@ jq -e '
 ' "$optimization_proof_dir/summary.json" >/dev/null
 
 grep -Fq 'ADR 0014, controlled cumulative head-to-head benchmark' documentation/README.md
-grep -Fq '28.066163% more agent CPU and 64.079030% less agent RSS' \
-  documentation/capabilities.md
-grep -Fq 'lower CPU and memory versus another observability stack' \
+grep -Fq 'earlier 33-run capture is invalidated' documentation/capabilities.md
+grep -Fq 'lower CPU or memory versus another observability stack' \
   documentation/boundaries.md
-grep -Fq 'Corrected full-stack optimization proof' documentation/proof-report.md
-grep -Fq '<span class="metric-value">33</span>' website/index.html
-grep -Fq '<span class="metric-label">matched homelab runs</span>' website/index.html
-grep -Fq '<span class="metric-value">+28.07%</span>' website/index.html
-grep -Fq '<span class="metric-value">-64.08%</span>' website/index.html
+grep -Fq 'Invalidated full-stack optimization campaign' documentation/proof-report.md
+grep -Fq '<span class="metric-value">5</span>' website/index.html
+grep -Fq '<span class="metric-label">cumulative workload stages</span>' website/index.html
+grep -Fq '<span class="metric-value">3x</span>' website/index.html
+grep -Fq '<span class="metric-value">0</span>' website/index.html
 
 if command -v kubeconform >/dev/null 2>&1; then
   kubeconform -strict -summary benchmarks/k8s/head-to-head-workload.yaml >/dev/null

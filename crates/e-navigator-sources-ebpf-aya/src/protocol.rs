@@ -495,13 +495,94 @@ struct InFlightRequest {
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug)]
+struct Http2InFlightRequests {
+    entries: Vec<(u32, InFlightRequest)>,
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+impl Default for Http2InFlightRequests {
+    fn default() -> Self {
+        Self {
+            entries: Vec::with_capacity(MAX_IN_FLIGHT_REQUESTS),
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+impl Http2InFlightRequests {
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn insert(&mut self, stream_id: u32, request: InFlightRequest) {
+        match self
+            .entries
+            .binary_search_by_key(&stream_id, |(entry_stream_id, _)| *entry_stream_id)
+        {
+            Ok(index) => self.entries[index].1 = request,
+            Err(index) => self.entries.insert(index, (stream_id, request)),
+        }
+    }
+
+    fn remove(&mut self, stream_id: u32) -> Option<InFlightRequest> {
+        self.entries
+            .binary_search_by_key(&stream_id, |(entry_stream_id, _)| *entry_stream_id)
+            .ok()
+            .map(|index| self.entries.remove(index).1)
+    }
+
+    fn pop_first(&mut self) -> Option<InFlightRequest> {
+        (!self.entries.is_empty()).then(|| self.entries.remove(0).1)
+    }
+}
+
+#[cfg(feature = "fuzzing")]
+pub fn bench_http2_in_flight_index_cycle() -> u64 {
+    fn request(stream_id: u32) -> InFlightRequest {
+        InFlightRequest {
+            parsed: ParsedRequestFrame {
+                protocol: ProtocolKind::Grpc,
+                operation: None,
+                status_code: None,
+                trace_id: None,
+                span_id: None,
+                warning: None,
+                attributes: Vec::new(),
+                websocket_upgrade: false,
+            },
+            started_unix_nanos: u64::from(stream_id),
+            kafka_api_key: -1,
+            kafka_api_version: -1,
+        }
+    }
+
+    let mut streams = Http2InFlightRequests::default();
+    for stream_id in (1..=63).step_by(2) {
+        streams.insert(stream_id, request(stream_id));
+    }
+    let mut checksum = 0_u64;
+    for stream_id in (1..=63).step_by(2) {
+        if let Some(entry) = streams.remove(stream_id) {
+            checksum = checksum.wrapping_add(entry.started_unix_nanos);
+        }
+        let replacement = stream_id + 64;
+        streams.insert(replacement, request(replacement));
+    }
+    while let Some(entry) = streams.pop_first() {
+        checksum = checksum.wrapping_add(entry.started_unix_nanos);
+    }
+    checksum
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug)]
 struct Http2ConnectionState {
     request_hpack: HpackDecoder,
     response_hpack: HpackDecoder,
     request_headers: Http2HeaderBlockAssembler,
     response_headers: Http2HeaderBlockAssembler,
     request_headers_started_unix_nanos: Option<u64>,
-    streams: std::collections::BTreeMap<u32, InFlightRequest>,
+    streams: Http2InFlightRequests,
 }
 
 /// Splicing position inside a multi-segment syscall capture whose final
@@ -705,7 +786,7 @@ impl ProtocolStreamRegistry {
                     request_headers: Http2HeaderBlockAssembler::new(),
                     response_headers: Http2HeaderBlockAssembler::new(),
                     request_headers_started_unix_nanos: None,
-                    streams: std::collections::BTreeMap::new(),
+                    streams: Http2InFlightRequests::default(),
                 }),
                 context: ObservationContext::from_raw(&raw, &self.procfs_root, self.source),
                 last_seen_unix_nanos: observed_unix_nanos,
@@ -788,7 +869,7 @@ impl ProtocolStreamRegistry {
         };
         self.counters.evicted_connections += 1;
         if let Some(http2) = stream.http2.as_mut() {
-            while let Some((_, entry)) = http2.streams.pop_first() {
+            while let Some(entry) = http2.streams.pop_first() {
                 self.counters.unmatched_evicted += 1;
                 signals.push(build_observation(
                     self.host.clone(),
@@ -1480,7 +1561,7 @@ fn handle_http2_frames(
                 }
             };
             if http2.streams.len() >= MAX_IN_FLIGHT_REQUESTS
-                && let Some((_, entry)) = http2.streams.pop_first()
+                && let Some(entry) = http2.streams.pop_first()
             {
                 counters.unmatched_overflow += 1;
                 signals.push(build_observation(
@@ -1539,7 +1620,7 @@ fn handle_http2_frames(
             (header, None)
         };
 
-        let Some(mut entry) = http2.streams.remove(&response_header.stream_id) else {
+        let Some(mut entry) = http2.streams.remove(response_header.stream_id) else {
             if response_header.frame_type == HTTP2_FRAME_TYPE_HEADERS {
                 counters.orphan_responses += 1;
             }

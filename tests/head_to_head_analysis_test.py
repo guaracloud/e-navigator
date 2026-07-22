@@ -152,6 +152,27 @@ class HeadToHeadAnalysisTests(unittest.TestCase):
         self.assertEqual(result["profile_samples_decoded"], 12)
         self.assertEqual(result["profile_signals_sent"], 12)
 
+    def test_e_navigator_protocol_signal_floor_is_cumulative(self) -> None:
+        fixture = workload("e-navigator-redis", 1)
+
+        expected = sum(
+            int(fixture[phase]["families"][family]["successes"])
+            for phase in ("warmup", "measured")
+            for family in ("http", "grpc", "redis")
+        )
+
+        self.assertEqual(
+            ANALYZER.minimum_expected_protocol_signals(fixture, "redis"), expected
+        )
+        self.assertEqual(
+            ANALYZER.minimum_expected_protocol_signals(fixture, "profile"),
+            expected
+            + sum(
+                int(fixture[phase]["families"]["postgres"]["successes"])
+                for phase in ("warmup", "measured")
+            ),
+        )
+
     def test_topology_enforces_fixed_load_and_server_nodes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory)

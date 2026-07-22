@@ -5,7 +5,7 @@
 )]
 
 use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use e_navigator_core::{Generator, PrometheusHttpConfig, Sink};
+use e_navigator_core::{Generator, OtlpHttpConfig, PrometheusHttpConfig, Sink};
 use e_navigator_generators::{
     DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator, ProfilingGenerator,
     RequestCorrelationGenerator, ResourceMetricsGenerator, RuntimeSecurityGenerator,
@@ -40,17 +40,22 @@ use e_navigator_signals::{
     ProcessResourceObservation, ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence,
     ProfilingCorrelationKind, ProfilingFrame, ProfilingKind, ProfilingSessionObservation,
     ProfilingWarningObservation, ProtocolKind, ProtocolRequestObservation, RequestSpanObservation,
-    SignalEnvelope, TraceAttribute, TraceConfidence, TraceCorrelationKind, TracePeerContext,
+    SignalEnvelope, SignalPayload, TraceAttribute, TraceConfidence, TraceCorrelationKind,
+    TracePeerContext,
 };
 use e_navigator_sinks::{
-    HttpExporterConfig, HttpJsonExporter, PrometheusHttpSink, format_otel_metric_record,
-    format_otel_trace_record, format_pprof_profile, format_profile_record, serialize_signal_line,
+    HttpExporterConfig, HttpJsonExporter, OtlpHttpSink, PrometheusHttpSink,
+    format_otel_metric_record, format_otel_trace_record, format_pprof_profile,
+    format_profile_record, serialize_signal_line,
 };
 use e_navigator_sources_ebpf_aya::{
     bench_inline_sample, bench_perf_sample_into_owned, bench_ring_sample_handoff,
-    bench_source_telemetry_summary_checks, cpu_profile::fuzz_decode_raw_cpu_profile_event,
-    exec::fuzz_decode_raw_exec_event, fuzz_decode_go_amd64_returns,
-    network::fuzz_decode_raw_network_event, protocol::fuzz_decode_raw_protocol_data_event,
+    bench_source_telemetry_summary_checks,
+    cpu_profile::fuzz_decode_raw_cpu_profile_event,
+    exec::fuzz_decode_raw_exec_event,
+    fuzz_decode_go_amd64_returns,
+    network::fuzz_decode_raw_network_event,
+    protocol::{bench_http2_in_flight_index_cycle, fuzz_decode_raw_protocol_data_event},
 };
 use e_navigator_sources_host::{
     parse_cpu_stat, parse_diskstats, parse_loadavg, parse_meminfo, parse_process_stat,
@@ -61,11 +66,11 @@ use std::{cell::Cell, collections::BTreeMap, io::Write};
 use tokio::{runtime::Runtime, sync::mpsc};
 
 fn bench_reader_sample_handoff(c: &mut Criterion) {
-    // A contiguous 368-byte RawProtocolDataEvent perf sample (tail empty),
+    // A contiguous 384-byte RawProtocolDataEvent perf sample (tail empty),
     // the common case. The old path allocated a Vec per event (per-CPU
     // reader threads → global-allocator contention); the inline path
     // copies into a fixed stack buffer with no heap allocation.
-    let head = vec![0x7f_u8; 368];
+    let head = vec![0x7f_u8; 384];
     c.bench_function("reader_handoff/vec_into_owned", |b| {
         b.iter(|| bench_perf_sample_into_owned(black_box(&head), black_box(&[])))
     });
@@ -560,6 +565,10 @@ fn bench_protocol_stream(c: &mut Criterion) {
             black_box(signals.len())
         })
     });
+
+    c.bench_function("protocol_stream/http2_in_flight_index_cycle", |b| {
+        b.iter(|| black_box(bench_http2_in_flight_index_cycle()))
+    });
 }
 
 /// Byte-encodes the read-direction response ("+OK\r\n") for the fixture
@@ -578,7 +587,7 @@ fn raw_protocol_data_event_fixture() -> Vec<u8> {
 }
 
 /// Byte-encodes one segment of a `RawProtocolDataEvent` syscall capture
-/// matching the eBPF struct layout (368 bytes; payload window at 112..368).
+/// matching the eBPF struct layout (384 bytes; payload window at 128..384).
 fn raw_protocol_event_fixture_bytes(
     segment: &[u8],
     payload_offset: u32,
@@ -586,23 +595,25 @@ fn raw_protocol_event_fixture_bytes(
     total_len: u32,
 ) -> Vec<u8> {
     assert!(segment.len() <= 256);
-    let mut bytes = vec![0_u8; 368];
+    let mut bytes = vec![0_u8; 384];
     bytes[0..4].copy_from_slice(&4242_u32.to_ne_bytes());
     bytes[4..8].copy_from_slice(&1000_u32.to_ne_bytes());
     bytes[8..16].copy_from_slice(&77_u64.to_ne_bytes());
     bytes[16..20].copy_from_slice(&9_i32.to_ne_bytes());
     bytes[20..24].copy_from_slice(&2_u32.to_ne_bytes());
-    bytes[24..28].copy_from_slice(&2_u32.to_ne_bytes());
-    bytes[28..30].copy_from_slice(&6379_u16.to_be_bytes());
-    bytes[30..32].copy_from_slice(&43210_u16.to_be_bytes());
-    bytes[32..36].copy_from_slice(&u32::from_ne_bytes([10, 0, 0, 5]).to_ne_bytes());
-    bytes[72..80].copy_from_slice(&1_000_u64.to_ne_bytes());
-    bytes[80..84].copy_from_slice(&(segment.len() as u32).to_ne_bytes());
-    bytes[84..88].copy_from_slice(&total_len.to_ne_bytes());
-    bytes[88..92].copy_from_slice(&payload_offset.to_ne_bytes());
-    bytes[92..96].copy_from_slice(&captured_len.to_ne_bytes());
-    bytes[96..102].copy_from_slice(b"client");
-    bytes[112..112 + segment.len()].copy_from_slice(segment);
+    bytes[24..28].copy_from_slice(&0_u32.to_ne_bytes());
+    bytes[28..32].copy_from_slice(&2_u32.to_ne_bytes());
+    bytes[32..34].copy_from_slice(&6379_u16.to_be_bytes());
+    bytes[34..36].copy_from_slice(&43210_u16.to_be_bytes());
+    bytes[36..40].copy_from_slice(&u32::from_ne_bytes([10, 0, 0, 5]).to_ne_bytes());
+    bytes[80..88].copy_from_slice(&1_000_u64.to_ne_bytes());
+    bytes[88..96].copy_from_slice(&1_000_u64.to_ne_bytes());
+    bytes[96..100].copy_from_slice(&(segment.len() as u32).to_ne_bytes());
+    bytes[100..104].copy_from_slice(&total_len.to_ne_bytes());
+    bytes[104..108].copy_from_slice(&payload_offset.to_ne_bytes());
+    bytes[108..112].copy_from_slice(&captured_len.to_ne_bytes());
+    bytes[112..118].copy_from_slice(b"client");
+    bytes[128..128 + segment.len()].copy_from_slice(segment);
     bytes
 }
 
@@ -686,6 +697,7 @@ fn bench_generators(c: &mut Criterion) {
         request_signals(),
     );
     bench_request_correlation_unique_at_capacity(c);
+    bench_request_correlation_generated_identity(c);
     bench_generator(
         c,
         "generator/profiling",
@@ -715,6 +727,36 @@ fn bench_request_correlation_unique_at_capacity(c: &mut Criterion) {
                 let next = index.get().wrapping_add(1);
                 index.set(next);
                 request_signal(next)
+            },
+            |signal| {
+                black_box(observe_generator_like_runner(
+                    &runtime,
+                    &generator,
+                    black_box(&signal),
+                ));
+            },
+            BatchSize::SmallInput,
+        )
+    });
+}
+
+fn bench_request_correlation_generated_identity(c: &mut Criterion) {
+    let runtime = Runtime::new().unwrap();
+    let generator = RequestCorrelationGenerator::with_limits(8192, 4096);
+    let index = Cell::new(0_u64);
+
+    c.bench_function("generator/request_correlation_generated_identity", |b| {
+        b.iter_batched(
+            || {
+                let next = index.get().wrapping_add(1);
+                index.set(next);
+                let mut signal = request_signal(next);
+                let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+                    unreachable!("request fixture must contain a protocol observation");
+                };
+                request.trace_id = None;
+                request.span_id = None;
+                signal
             },
             |signal| {
                 black_box(observe_generator_like_runner(
@@ -889,6 +931,19 @@ fn bench_serialization_and_exporter(c: &mut Criterion) {
     let profile = profiling_signals().remove(0);
     let profile_session = profile_session_signal();
     let profile_warning = profile_warning_signal();
+    let otlp_sink = {
+        let _runtime_guard = runtime.enter();
+        OtlpHttpSink::new(OtlpHttpConfig {
+            enabled: true,
+            traces_endpoint: "http://127.0.0.1:9/v1/traces".to_string(),
+            metrics_enabled: false,
+            traces_enabled: true,
+            profiles_enabled: false,
+            flush_interval_millis: 60_000,
+            ..OtlpHttpConfig::default()
+        })
+        .unwrap()
+    };
     // Binding outside a Tokio runtime keeps this benchmark focused on sink
     // write formatting/storage without starting an HTTP server.
     let prometheus_sink = PrometheusHttpSink::bind(PrometheusHttpConfig {
@@ -924,6 +979,13 @@ fn bench_serialization_and_exporter(c: &mut Criterion) {
     });
     c.bench_function("formatter/otel_protocol_error_trace_record", |b| {
         b.iter(|| format_otel_trace_record(black_box(&request_error_span)).unwrap())
+    });
+    c.bench_function("sink/otlp_no_identity_warning", |b| {
+        b.iter(|| {
+            black_box(otlp_sink.write_immediate(black_box(&profile_warning)))
+                .unwrap()
+                .unwrap()
+        })
     });
     c.bench_function("formatter/profile_record", |b| {
         b.iter(|| format_profile_record(black_box(&profile)).unwrap())
