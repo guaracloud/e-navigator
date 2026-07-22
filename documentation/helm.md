@@ -354,9 +354,10 @@ helm template e-navigator charts/e-navigator \
 ```
 
 The compatibility port lists are explicit and conservative. In particular,
-TLS application classification remains port-based: HTTP/1 uses 443 while h2
-uses 8443 in this preset. Do not claim same-port ALPN discrimination until the
-TLS source implements and validates it.
+TLS application classification remains port-based: HTTP/1, WebSocket, and
+gRPC-Web share the HTTP/1 port list, which uses 443 here, while h2 uses 8443 in
+this preset. Do not claim same-port ALPN discrimination until the TLS source
+implements and validates it.
 
 If a family-specific endpoint is omitted, that enabled family uses
 `otlp_http.endpoint`. Disabled families do not require an endpoint and do not
@@ -465,8 +466,15 @@ it is separate from corrupt or undecodable input. Use the bounded
 `e_navigator_ebpf_source_optional_rescans_total`, and
 `e_navigator_ebpf_source_optional_capacity_rejections_total` series for that
 coverage. Any increase in unsupported targets, attachment failures, or capacity
-rejections is a blind-spot signal. TLS candidates are accepted only for the
-documented OpenSSL 1.1.1/3 and GnuTLS ABI 30 surfaces after architecture and
+rejections is a blind-spot signal. For browser-facing protocol coverage,
+monitor `e_navigator_ebpf_source_protocol_websocket_upgrades_total`,
+`e_navigator_ebpf_source_protocol_websocket_frames_total`,
+`e_navigator_ebpf_source_protocol_websocket_transition_rejections_total`, and
+`e_navigator_ebpf_source_protocol_grpc_web_requests_total`. Valid traffic should
+make the first, second, and fourth counters increase; any transition rejection
+is an explicit fail-closed event to investigate. TLS candidates are accepted
+only for the documented OpenSSL 1.1.1/3 and GnuTLS ABI 30 surfaces after
+architecture and
 complete-export preflight, or for unstripped Linux/amd64 Go 1.24 through 1.26
 executables after exact build-info, symbol, function-bound, and return-site
 preflight. An unknown or incomplete library or Go executable is rejected

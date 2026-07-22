@@ -64,6 +64,18 @@ test = false
 doc = false
 
 [[bin]]
+name = "grpc_web_message_parser"
+path = "fuzz_targets/grpc_web_message_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "websocket_frame_parser"
+path = "fuzz_targets/websocket_frame_parser.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "kafka_request_parser"
 path = "fuzz_targets/kafka_request_parser.rs"
 test = false

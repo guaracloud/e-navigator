@@ -28,6 +28,10 @@ All notable changes to E-Navigator are documented here. The format follows
   repetitions containing named frames, alongside the existing CPython 3.12
   support. Keep JVM and V8 support limited to operator-produced bounded perf
   maps without target-process mutation.
+- Add bounded, metadata-only WebSocket and gRPC-Web protocol capture over the
+  existing HTTP/1 stream path, with connection-generation-safe transitions,
+  native protocol counters, property tests, fuzz targets, Criterion coverage,
+  and a guarded homelab proof workload.
 
 ### Performance
 
@@ -40,6 +44,10 @@ All notable changes to E-Navigator are documented here. The format follows
   no agent across three 60-second CPython 3.11 homelab pairs. Keep the number
   scoped to this pinned workload and shared cluster, not general or production
   profiling overhead.
+- Record the browser-protocol correctness workload at 19.852290 operations/s
+  with `source.aya_protocol` versus 19.862091 without a benchmark agent, a
+  0.049345% difference across three paced 30-second homelab runs. Keep this as
+  transparent correctness context, not a general overhead claim.
 
 ### Compatibility
 
@@ -55,6 +63,10 @@ All notable changes to E-Navigator are documented here. The format follows
   layouts and futex syscall architectures fail closed; non-futex locks,
   wakeup cause and ownership, allocations, automatic JIT map generation, and
   CPython versions outside 3.11/3.12 remain explicit non-claims.
+- Keep WebSocket extensions, compression, fragmented-message reconstruction,
+  gRPC-Web protobuf decoding, HTTP/3, and generic QUIC semantics outside the
+  claimed capture surface. HTTP/3 remains incompatible with the current TCP
+  payload architecture and is guarded by a real negative-control workload.
 
 ## [0.1.2] - 2026-07-20
 

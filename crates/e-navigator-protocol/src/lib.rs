@@ -3,6 +3,7 @@
 //! Bounded application-protocol, stream, and trace-context parsers.
 
 pub mod grpc;
+pub mod grpc_web;
 pub mod http;
 pub mod http2;
 pub mod kafka;
@@ -13,6 +14,7 @@ pub mod postgres;
 pub mod redis;
 pub mod stream;
 pub mod trace_context;
+pub mod websocket;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProtocolExtractionConfig {

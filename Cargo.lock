@@ -548,6 +548,7 @@ dependencies = [
 name = "e-navigator-protocol"
 version = "0.1.2"
 dependencies = [
+ "base64",
  "e-navigator-signals",
  "proptest",
 ]
@@ -603,6 +604,7 @@ dependencies = [
  "aya",
  "aya-build",
  "aya-obj",
+ "base64",
  "e-navigator-core",
  "e-navigator-profiling",
  "e-navigator-protocol",

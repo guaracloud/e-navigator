@@ -17,6 +17,7 @@ pub enum ProtocolKind {
     Nats,
     Postgresql,
     Redis,
+    Websocket,
     Unknown,
 }
 

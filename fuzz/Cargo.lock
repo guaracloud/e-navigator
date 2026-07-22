@@ -212,6 +212,7 @@ dependencies = [
 name = "e-navigator-protocol"
 version = "0.1.2"
 dependencies = [
+ "base64",
  "e-navigator-signals",
 ]
 

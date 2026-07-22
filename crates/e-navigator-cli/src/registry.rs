@@ -403,6 +403,22 @@ fn aya_source_telemetry_lines(
                     "e_navigator_ebpf_source_profile_output_attempts_total",
                     snapshot.profile_output_attempts,
                 ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_websocket_upgrades_total",
+                    snapshot.protocol_websocket_upgrades,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_websocket_frames_total",
+                    snapshot.protocol_websocket_frames,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_websocket_transition_rejections_total",
+                    snapshot.protocol_websocket_transition_rejections,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_grpc_web_requests_total",
+                    snapshot.protocol_grpc_web_requests,
+                ),
             ];
             lines.push(PrometheusMetricLine {
                 name: "e_navigator_ebpf_source_event_transport".to_string(),
@@ -736,11 +752,15 @@ mod tests {
                 profile_below_min_duration: 3,
                 profile_rate_limited: 4,
                 profile_output_attempts: 5,
+                protocol_websocket_upgrades: 6,
+                protocol_websocket_frames: 7,
+                protocol_websocket_transition_rejections: 1,
+                protocol_grpc_web_requests: 8,
             }]
             .into_iter(),
         );
 
-        assert_eq!(lines.len(), 36);
+        assert_eq!(lines.len(), 40);
         assert!(
             lines.iter().all(
                 |line| line.labels.get("source").map(String::as_str) == Some("source.aya_exec")
@@ -772,6 +792,14 @@ mod tests {
         }));
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_go_tls_fd_resolutions_total" && line.value == "7"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_protocol_websocket_frames_total"
+                && line.value == "7"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_protocol_grpc_web_requests_total"
+                && line.value == "8"
         }));
     }
 

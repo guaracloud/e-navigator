@@ -207,6 +207,42 @@ async fn grpc_protocol_request_preserves_response_status_for_span_export() {
 }
 
 #[tokio::test]
+async fn websocket_protocol_request_generates_named_metadata_span() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(None, true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.protocol = ProtocolKind::Websocket;
+    request.method = Some("text".to_string());
+    request.status_code = None;
+    request.attributes = vec![
+        TraceAttribute {
+            key: "websocket.frame.opcode".to_string(),
+            value: "1".to_string(),
+        },
+        TraceAttribute {
+            key: "websocket.frame.payload_length".to_string(),
+            value: "18".to_string(),
+        },
+    ];
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected request span");
+    };
+    assert_eq!(span.name, "websocket frame");
+    assert_eq!(span.protocol, ProtocolKind::Websocket);
+    assert_eq!(span.method.as_deref(), Some("text"));
+    assert!(has_attribute(
+        &span.attributes,
+        "websocket.frame.payload_length",
+        "18"
+    ));
+}
+
+#[tokio::test]
 async fn postgresql_protocol_request_generates_named_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);

@@ -464,6 +464,9 @@ pub struct RawProtocolDataEvent {
     pub remote_addr_v6: [u8; 16],
     pub local_addr_v6: [u8; 16],
     pub timestamp_unix_nanos: u64,
+    /// Monotonic connection-generation token. Unlike `(pid, fd)`, this
+    /// changes when an fd is closed and reused for the same peer.
+    pub connection_started_at_nanos: u64,
     pub payload_len: u32,
     pub payload_total_len: u32,
     pub payload_offset: u32,
@@ -3408,6 +3411,7 @@ fn emit_tls_data_for_connection<C: EbpfContext>(
     event.remote_addr_v6 = connection.remote_addr_v6;
     event.local_addr_v6 = connection.local_addr_v6;
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
+    event.connection_started_at_nanos = connection.started_at_nanos;
     event.payload_total_len = if len > u32::MAX as u64 {
         u32::MAX
     } else {
@@ -3475,6 +3479,7 @@ fn tls_data_event_scratch() -> Result<&'static mut RawProtocolDataEvent, i64> {
     event.remote_addr_v6 = [0; 16];
     event.local_addr_v6 = [0; 16];
     event.timestamp_unix_nanos = 0;
+    event.connection_started_at_nanos = 0;
     event.payload_len = 0;
     event.payload_total_len = 0;
     event.payload_offset = 0;
@@ -4723,6 +4728,7 @@ fn emit_protocol_data_event(
     event.remote_addr_v6 = connection.remote_addr_v6;
     event.local_addr_v6 = connection.local_addr_v6;
     event.timestamp_unix_nanos = unsafe { bpf_ktime_get_ns() };
+    event.connection_started_at_nanos = connection.started_at_nanos;
     event.payload_total_len = if len > u32::MAX as u64 {
         u32::MAX
     } else {
@@ -4813,6 +4819,7 @@ fn protocol_data_event_scratch() -> Result<&'static mut RawProtocolDataEvent, i6
     event.remote_addr_v6 = [0; 16];
     event.local_addr_v6 = [0; 16];
     event.timestamp_unix_nanos = 0;
+    event.connection_started_at_nanos = 0;
     event.payload_len = 0;
     event.payload_total_len = 0;
     event.payload_offset = 0;

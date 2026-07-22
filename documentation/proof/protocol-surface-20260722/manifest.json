@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "run_id": "protocol-surface-20260722",
+  "decision": "support-bounded-websocket-and-grpc-web-metadata-with-http3-nonclaim",
+  "proof_level": "homelab",
+  "started_at_utc": "2026-07-22T02:29:07Z",
+  "ended_at_utc": "2026-07-22T02:34:54Z",
+  "repository": {
+    "branch": "codex/ring-buffer-transport",
+    "base_commit": "69bc26a",
+    "pushed": false,
+    "released": false
+  },
+  "cluster": {
+    "context": "homelab",
+    "kubernetes": "v1.30.4+k3s1",
+    "nodes": ["homelab-01", "homelab-02"],
+    "os": "NixOS 24.05",
+    "architecture": "linux/amd64",
+    "kernel": "6.6.68",
+    "runtime": "containerd 1.7.20-k3s1"
+  },
+  "agent_image": {
+    "reference": "docker.io/library/e-navigator:gap5-dev-amd64",
+    "manifest_sha256": "99d8f1b59f1694746a173d40d6e0103426577894c7bd61c4a8e84747c899490a",
+    "distribution": "loaded directly into both homelab containerd stores; never pushed"
+  },
+  "workload_image": {
+    "reference": "docker.io/library/e-navigator-protocol-surface:gap5-20260722",
+    "manifest_sha256": "931586dd6c6d27b6d9766c4310b8b63ddd153c5388f5ca3155cb15c6245fa316",
+    "http3_implementation": "aioquic",
+    "distribution": "loaded directly into both homelab containerd stores; never pushed"
+  },
+  "method": {
+    "arms": ["no benchmark agent", "protocol source"],
+    "orders": [["none", "protocol"], ["protocol", "none"], ["none", "protocol"]],
+    "repetitions_per_arm": 3,
+    "duration_seconds_per_run": 30,
+    "round_pause_milliseconds": 100,
+    "event_transport": "ring_buffer",
+    "enabled_aya_sources": ["protocol"],
+    "workloads": [
+      "extension-free RFC 6455 WebSocket",
+      "binary-request and text-response gRPC-Web",
+      "aioquic HTTP/3 negative control"
+    ]
+  },
+  "results": {
+    "correctness_gate_passed": true,
+    "all_workload_operations_succeeded": true,
+    "no_agent_inventory_clean": true,
+    "semantic_and_native_counter_parity": true,
+    "websocket_transition_rejections_observed": false,
+    "transport_loss_observed": false,
+    "payload_secret_observed": false,
+    "http3_or_quic_semantic_claim_observed": false,
+    "performance_claim_supported": false
+  },
+  "cleanup": {
+    "benchmark_release_removed": true,
+    "benchmark_workloads_removed": true,
+    "standing_argocd_application_restored": true,
+    "standing_daemonset_ready": true,
+    "imported_campaign_images_removed": true,
+    "production_context_touched": false
+  },
+  "artifacts": [
+    "manifest.json",
+    "report.md",
+    "analysis.json",
+    "representative-signals.json",
+    "SHA256SUMS"
+  ]
+}

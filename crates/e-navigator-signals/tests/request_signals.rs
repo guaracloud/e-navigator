@@ -122,6 +122,57 @@ fn serializes_protocol_request_observation_with_explicit_context() {
 }
 
 #[test]
+fn serializes_websocket_frame_metadata_without_application_payload() {
+    let signal = SignalEnvelope::protocol_request_observation(
+        "source.protocol_fixture",
+        Some("node-a".to_string()),
+        ProtocolRequestObservation {
+            protocol: ProtocolKind::Websocket,
+            role: Some(e_navigator_signals::ProtocolCaptureRole::Server),
+            start_unix_nanos: 1_000,
+            end_unix_nanos: Some(1_500),
+            duration_nanos: Some(500),
+            trace_id: None,
+            span_id: None,
+            parent_span_id: None,
+            traceparent: None,
+            tracestate: None,
+            correlation_kind: TraceCorrelationKind::ProtocolObserved,
+            confidence: TraceConfidence::Medium,
+            service_name: Some("websocket-fixture".to_string()),
+            method: Some("text".to_string()),
+            status_code: None,
+            process: Some(process()),
+            container: Some(container()),
+            kubernetes: Some(kubernetes()),
+            peer: Some(peer()),
+            attributes: vec![
+                TraceAttribute {
+                    key: "websocket.frame.opcode".to_string(),
+                    value: "1".to_string(),
+                },
+                TraceAttribute {
+                    key: "websocket.frame.payload_length".to_string(),
+                    value: "18".to_string(),
+                },
+            ],
+        },
+    );
+
+    let json = serde_json::to_value(&signal).expect("signal serializes");
+    let encoded = serde_json::to_string(&signal).expect("signal serializes to text");
+
+    assert_eq!(json["payload"]["protocol"], "websocket");
+    assert_eq!(json["payload"]["method"], "text");
+    assert_eq!(
+        json["payload"]["attributes"][1]["key"],
+        "websocket.frame.payload_length"
+    );
+    assert!(!encoded.contains("client-secret-blue"));
+    assert!(!encoded.contains("server-secret-red"));
+}
+
+#[test]
 fn request_constructors_bound_and_filter_trace_attributes_before_json_stdout() {
     let attributes = oversized_trace_attributes();
     let protocol = SignalEnvelope::protocol_request_observation(
