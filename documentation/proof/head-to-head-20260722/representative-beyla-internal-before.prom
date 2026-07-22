@@ -1,0 +1,53 @@
+# HELP beyla_bpf_network_ignored_packets_total How many network packets have been internally ignored due to collisions in the internal eBPF cache
+# TYPE beyla_bpf_network_ignored_packets_total counter
+beyla_bpf_network_ignored_packets_total 0
+# HELP beyla_bpf_network_packets_total How many network packets have been internally accounted
+# TYPE beyla_bpf_network_packets_total counter
+beyla_bpf_network_packets_total 0
+# HELP beyla_ebpf_tracer_flushes Length of the groups of traces flushed from the eBPF tracer to the next pipeline stage
+# TYPE beyla_ebpf_tracer_flushes histogram
+beyla_ebpf_tracer_flushes_bucket{le="0"} 0
+beyla_ebpf_tracer_flushes_bucket{le="10"} 1
+beyla_ebpf_tracer_flushes_bucket{le="20"} 1
+beyla_ebpf_tracer_flushes_bucket{le="40"} 1
+beyla_ebpf_tracer_flushes_bucket{le="80"} 1
+beyla_ebpf_tracer_flushes_bucket{le="160"} 1
+beyla_ebpf_tracer_flushes_bucket{le="320"} 1
+beyla_ebpf_tracer_flushes_bucket{le="+Inf"} 1
+beyla_ebpf_tracer_flushes_sum 2
+beyla_ebpf_tracer_flushes_count 1
+# HELP beyla_instrumented_processes Total number of instrumented processes by process name
+# TYPE beyla_instrumented_processes gauge
+beyla_instrumented_processes{process_name="python3.13"} 5
+# HELP beyla_internal_build_info A metric with a constant '1' value labeled by version, revision, branch, goversion, goos and goarch during build.
+# TYPE beyla_internal_build_info gauge
+beyla_internal_build_info{goarch="amd64",goos="linux",goversion="go1.25.11",revision="9b16e14",version="v3.28.0"} 1
+# HELP beyla_kube_cache_forward_lag_seconds How long, in seconds, it takes since a Kubernetes event happens until it is forwarded to the subscribers
+# TYPE beyla_kube_cache_forward_lag_seconds histogram
+beyla_kube_cache_forward_lag_seconds_bucket{le="0.5"} 0
+beyla_kube_cache_forward_lag_seconds_bucket{le="1"} 0
+beyla_kube_cache_forward_lag_seconds_bucket{le="2"} 0
+beyla_kube_cache_forward_lag_seconds_bucket{le="4"} 0
+beyla_kube_cache_forward_lag_seconds_bucket{le="8"} 0
+beyla_kube_cache_forward_lag_seconds_bucket{le="16"} 0
+beyla_kube_cache_forward_lag_seconds_bucket{le="32"} 0
+beyla_kube_cache_forward_lag_seconds_bucket{le="64"} 0
+beyla_kube_cache_forward_lag_seconds_bucket{le="128"} 0
+beyla_kube_cache_forward_lag_seconds_bucket{le="256"} 0
+beyla_kube_cache_forward_lag_seconds_bucket{le="+Inf"} 0
+beyla_kube_cache_forward_lag_seconds_sum 0
+beyla_kube_cache_forward_lag_seconds_count 0
+# HELP beyla_otel_metric_exports_total Length of the metric batches submitted to the remote OTEL collector
+# TYPE beyla_otel_metric_exports_total counter
+beyla_otel_metric_exports_total 0
+# HELP beyla_otel_trace_exports_total Length of the trace batches submitted to the remote OTEL collector
+# TYPE beyla_otel_trace_exports_total counter
+beyla_otel_trace_exports_total 0
+# HELP beyla_prometheus_http_requests_total Requests towards the Prometheus Scrape endpoint
+# TYPE beyla_prometheus_http_requests_total counter
+beyla_prometheus_http_requests_total{path="/internal/metrics",port="9090"} 1
+beyla_prometheus_http_requests_total{path="/metrics",port="9090"} 2
+# HELP promhttp_metric_handler_errors_total Total number of internal errors encountered by the promhttp metric handler.
+# TYPE promhttp_metric_handler_errors_total counter
+promhttp_metric_handler_errors_total{cause="encoding"} 0
+promhttp_metric_handler_errors_total{cause="gathering"} 0

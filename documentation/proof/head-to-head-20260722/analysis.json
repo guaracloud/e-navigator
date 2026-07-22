@@ -1,0 +1,3673 @@
+{
+  "conditions": {
+    "beyla-grpc": {
+      "agent": {
+        "cpu_cores": {
+          "coefficient_of_variation_percent": 9.063699,
+          "max": 0.039455264,
+          "mean": 0.037022673,
+          "median": 0.038418289,
+          "min": 0.033194465,
+          "p95": 0.039455264,
+          "samples": 3,
+          "stdev": 0.003355624
+        },
+        "rss_bytes": {
+          "coefficient_of_variation_percent": 4.259256,
+          "max": 30397781.333333332,
+          "mean": 29633194.666666668,
+          "median": 30325418.666666668,
+          "min": 28176384.0,
+          "p95": 30397781.333333332,
+          "samples": 3,
+          "stdev": 1262153.745693095
+        }
+      },
+      "families": {
+        "grpc": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.66769,
+            "max": 3058.0,
+            "mean": 3040.0,
+            "median": 3044.0,
+            "min": 3018.0,
+            "p95": 3058.0,
+            "samples": 3,
+            "stdev": 20.29778313
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 1.250808,
+            "max": 4235.0,
+            "mean": 4191.0,
+            "median": 4205.0,
+            "min": 4133.0,
+            "p95": 4235.0,
+            "samples": 3,
+            "stdev": 52.421369688
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 3.65978,
+            "max": 5990.0,
+            "mean": 5758.333333333,
+            "median": 5707.0,
+            "min": 5578.0,
+            "p95": 5990.0,
+            "samples": 3,
+            "stdev": 210.74233873
+          },
+          "p99_change_vs_none_percent": -0.086755,
+          "throughput_change_vs_none_percent": 0.000837,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001345,
+            "max": 80.009433,
+            "mean": 80.008252531,
+            "median": 80.007997827,
+            "min": 80.007326765,
+            "p95": 80.009433,
+            "samples": 3,
+            "stdev": 0.00107597
+          }
+        },
+        "http": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.280418,
+            "max": 1856.0,
+            "mean": 1853.0,
+            "median": 1856.0,
+            "min": 1847.0,
+            "p95": 1856.0,
+            "samples": 3,
+            "stdev": 5.196152423
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 3.621934,
+            "max": 6478.0,
+            "mean": 6344.333333333,
+            "median": 6476.0,
+            "min": 6079.0,
+            "p95": 6478.0,
+            "samples": 3,
+            "stdev": 229.78758307
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 0.233534,
+            "max": 7028.0,
+            "mean": 7010.0,
+            "median": 7006.0,
+            "min": 6996.0,
+            "p95": 7028.0,
+            "samples": 3,
+            "stdev": 16.370705544
+          },
+          "p99_change_vs_none_percent": 0.549845,
+          "throughput_change_vs_none_percent": 0.000837,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001345,
+            "max": 100.01179125,
+            "mean": 100.010315663,
+            "median": 100.009997284,
+            "min": 100.009158456,
+            "p95": 100.01179125,
+            "samples": 3,
+            "stdev": 0.001344963
+          }
+        },
+        "postgres": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 2.147806,
+            "max": 1216.0,
+            "mean": 1197.333333333,
+            "median": 1208.0,
+            "min": 1168.0,
+            "p95": 1216.0,
+            "samples": 3,
+            "stdev": 25.716402029
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 4.148346,
+            "max": 2376.0,
+            "mean": 2306.0,
+            "median": 2345.0,
+            "min": 2197.0,
+            "p95": 2376.0,
+            "samples": 3,
+            "stdev": 95.660859289
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 6.34201,
+            "max": 4054.0,
+            "mean": 3803.0,
+            "median": 3782.0,
+            "min": 3573.0,
+            "p95": 4054.0,
+            "samples": 3,
+            "stdev": 241.186649713
+          },
+          "p99_change_vs_none_percent": -6.506597,
+          "throughput_change_vs_none_percent": 0.000837,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001345,
+            "max": 50.005895625,
+            "mean": 50.005157832,
+            "median": 50.004998642,
+            "min": 50.004579228,
+            "p95": 50.005895625,
+            "samples": 3,
+            "stdev": 0.000672481
+          }
+        },
+        "python_cpu": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.183377,
+            "max": 30695.0,
+            "mean": 30646.666666667,
+            "median": 30660.0,
+            "min": 30585.0,
+            "p95": 30695.0,
+            "samples": 3,
+            "stdev": 56.199051
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 6.222932,
+            "max": 40999.0,
+            "mean": 38368.0,
+            "median": 37766.0,
+            "min": 36339.0,
+            "p95": 40999.0,
+            "samples": 3,
+            "stdev": 2387.614499872
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 1.453297,
+            "max": 53245.0,
+            "mean": 52764.333333333,
+            "median": 53168.0,
+            "min": 51880.0,
+            "p95": 53245.0,
+            "samples": 3,
+            "stdev": 766.822230594
+          },
+          "p99_change_vs_none_percent": -0.925694,
+          "throughput_change_vs_none_percent": 0.000837,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001345,
+            "max": 8.0009433,
+            "mean": 8.000825253,
+            "median": 8.000799783,
+            "min": 8.000732677,
+            "p95": 8.0009433,
+            "samples": 3,
+            "stdev": 0.000107597
+          }
+        },
+        "redis": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.863073,
+            "max": 1061.0,
+            "mean": 1051.333333333,
+            "median": 1050.0,
+            "min": 1043.0,
+            "p95": 1061.0,
+            "samples": 3,
+            "stdev": 9.073771726
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 2.151318,
+            "max": 1883.0,
+            "mean": 1857.0,
+            "median": 1877.0,
+            "min": 1811.0,
+            "p95": 1883.0,
+            "samples": 3,
+            "stdev": 39.949968711
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 5.064738,
+            "max": 3117.0,
+            "mean": 2975.333333333,
+            "median": 2992.0,
+            "min": 2817.0,
+            "p95": 3117.0,
+            "samples": 3,
+            "stdev": 150.692844334
+          },
+          "p99_change_vs_none_percent": 0.145854,
+          "throughput_change_vs_none_percent": 0.000837,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001345,
+            "max": 160.018866,
+            "mean": 160.016505062,
+            "median": 160.015995654,
+            "min": 160.01465353,
+            "p95": 160.018866,
+            "samples": 3,
+            "stdev": 0.00215194
+          }
+        }
+      },
+      "nodes": {
+        "homelab-01": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 6.023775,
+            "max": 0.673846872,
+            "mean": 0.632549664,
+            "median": 0.625045339,
+            "min": 0.59875678,
+            "p95": 0.673846872,
+            "samples": 3,
+            "stdev": 0.038103368
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.286928,
+            "max": 14320025600.0,
+            "mean": 14274375224.888887,
+            "median": 14262251520.0,
+            "min": 14240848554.666666,
+            "p95": 14320025600.0,
+            "samples": 3,
+            "stdev": 40957164.11207999
+          }
+        },
+        "homelab-02": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 1.367066,
+            "max": 0.690097153,
+            "mean": 0.680053971,
+            "median": 0.67831585,
+            "min": 0.671748911,
+            "p95": 0.690097153,
+            "samples": 3,
+            "stdev": 0.00929679
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 1.771586,
+            "max": 1424116394.6666667,
+            "mean": 1395641912.888889,
+            "median": 1383201450.6666667,
+            "min": 1379607893.3333333,
+            "p95": 1424116394.6666667,
+            "samples": 3,
+            "stdev": 24724997.430975396
+          }
+        }
+      },
+      "runs": [
+        "beyla-grpc-r1",
+        "beyla-grpc-r2",
+        "beyla-grpc-r3"
+      ],
+      "signal_summary": {
+        "coverage": {
+          "grpc": {
+            "expected_operations": 14400.0,
+            "observed_metric_count": 14380.0,
+            "observed_minus_expected": -20.0,
+            "overcounted_operations": 0.0,
+            "overcounted_percent": 0.0,
+            "unaccounted_operations": 20.0,
+            "unaccounted_percent": 0.138889
+          },
+          "http": {
+            "expected_operations": 18000.0,
+            "observed_metric_count": 18000.0,
+            "observed_minus_expected": 0.0,
+            "overcounted_operations": 0.0,
+            "overcounted_percent": 0.0,
+            "unaccounted_operations": 0.0,
+            "unaccounted_percent": 0.0
+          }
+        },
+        "internal_hard_errors": 0.0
+      }
+    },
+    "beyla-http": {
+      "agent": {
+        "cpu_cores": {
+          "coefficient_of_variation_percent": 5.119076,
+          "max": 0.035720591,
+          "mean": 0.03389142,
+          "median": 0.033684346,
+          "min": 0.032269322,
+          "p95": 0.035720591,
+          "samples": 3,
+          "stdev": 0.001734928
+        },
+        "rss_bytes": {
+          "coefficient_of_variation_percent": 5.299448,
+          "max": 27343530.666666668,
+          "mean": 25836657.77777778,
+          "median": 25497600.0,
+          "min": 24668842.666666668,
+          "p95": 27343530.666666668,
+          "samples": 3,
+          "stdev": 1369200.170478993
+        }
+      },
+      "families": {
+        "grpc": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.854213,
+            "max": 2984.0,
+            "mean": 2964.666666667,
+            "median": 2974.0,
+            "min": 2936.0,
+            "p95": 2984.0,
+            "samples": 3,
+            "stdev": 25.324559884
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 5.86391,
+            "max": 4474.0,
+            "mean": 4212.666666667,
+            "median": 4181.0,
+            "min": 3983.0,
+            "p95": 4474.0,
+            "samples": 3,
+            "stdev": 247.026989079
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 8.8064,
+            "max": 6347.0,
+            "mean": 5782.333333333,
+            "median": 5642.0,
+            "min": 5358.0,
+            "p95": 6347.0,
+            "samples": 3,
+            "stdev": 509.21540956
+          },
+          "p99_change_vs_none_percent": 0.32967,
+          "throughput_change_vs_none_percent": 0.001046,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001162,
+            "max": 80.009417725,
+            "mean": 80.008419668,
+            "median": 80.008263938,
+            "min": 80.007577342,
+            "p95": 80.009417725,
+            "samples": 3,
+            "stdev": 0.000930023
+          }
+        },
+        "http": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.134963,
+            "max": 1867.0,
+            "mean": 1864.666666667,
+            "median": 1865.0,
+            "min": 1862.0,
+            "p95": 1867.0,
+            "samples": 3,
+            "stdev": 2.516611478
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 2.613884,
+            "max": 6445.0,
+            "mean": 6336.666666667,
+            "median": 6419.0,
+            "min": 6146.0,
+            "p95": 6445.0,
+            "samples": 3,
+            "stdev": 165.633128731
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 0.72767,
+            "max": 7090.0,
+            "mean": 7034.666666667,
+            "median": 7025.0,
+            "min": 6989.0,
+            "p95": 7090.0,
+            "samples": 3,
+            "stdev": 51.189191567
+          },
+          "p99_change_vs_none_percent": 0.903658,
+          "throughput_change_vs_none_percent": 0.001046,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001162,
+            "max": 100.011772157,
+            "mean": 100.010524585,
+            "median": 100.010329923,
+            "min": 100.009471677,
+            "p95": 100.011772157,
+            "samples": 3,
+            "stdev": 0.001162528
+          }
+        },
+        "postgres": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 2.385807,
+            "max": 1241.0,
+            "mean": 1209.0,
+            "median": 1201.0,
+            "min": 1185.0,
+            "p95": 1241.0,
+            "samples": 3,
+            "stdev": 28.844410204
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 10.007106,
+            "max": 2584.0,
+            "mean": 2321.0,
+            "median": 2235.0,
+            "min": 2144.0,
+            "p95": 2584.0,
+            "samples": 3,
+            "stdev": 232.264934934
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 21.719317,
+            "max": 4822.0,
+            "mean": 4013.666666667,
+            "median": 4129.0,
+            "min": 3090.0,
+            "p95": 4822.0,
+            "samples": 3,
+            "stdev": 871.740978349
+          },
+          "p99_change_vs_none_percent": -1.327542,
+          "throughput_change_vs_none_percent": 0.001046,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001162,
+            "max": 50.005886078,
+            "mean": 50.005262293,
+            "median": 50.005164961,
+            "min": 50.004735839,
+            "p95": 50.005886078,
+            "samples": 3,
+            "stdev": 0.000581264
+          }
+        },
+        "python_cpu": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.540225,
+            "max": 31018.0,
+            "mean": 30828.333333333,
+            "median": 30761.0,
+            "min": 30706.0,
+            "p95": 31018.0,
+            "samples": 3,
+            "stdev": 166.542286922
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 6.448403,
+            "max": 46275.0,
+            "mean": 43942.333333333,
+            "median": 44763.0,
+            "min": 40789.0,
+            "p95": 46275.0,
+            "samples": 3,
+            "stdev": 2833.57889132
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 4.94954,
+            "max": 55757.0,
+            "mean": 52791.0,
+            "median": 51787.0,
+            "min": 50829.0,
+            "p95": 55757.0,
+            "samples": 3,
+            "stdev": 2612.911785729
+          },
+          "p99_change_vs_none_percent": -0.875623,
+          "throughput_change_vs_none_percent": 0.001046,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001162,
+            "max": 8.000941773,
+            "mean": 8.000841967,
+            "median": 8.000826394,
+            "min": 8.000757734,
+            "p95": 8.000941773,
+            "samples": 3,
+            "stdev": 9.3002e-05
+          }
+        },
+        "redis": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.220657,
+            "max": 1080.0,
+            "mean": 1065.0,
+            "median": 1058.0,
+            "min": 1057.0,
+            "p95": 1080.0,
+            "samples": 3,
+            "stdev": 13.0
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 4.441164,
+            "max": 1961.0,
+            "mean": 1865.666666667,
+            "median": 1825.0,
+            "min": 1811.0,
+            "p95": 1961.0,
+            "samples": 3,
+            "stdev": 82.857307061
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 7.363793,
+            "max": 3320.0,
+            "mean": 3090.0,
+            "median": 3085.0,
+            "min": 2865.0,
+            "p95": 3320.0,
+            "samples": 3,
+            "stdev": 227.54120506
+          },
+          "p99_change_vs_none_percent": 4.005385,
+          "throughput_change_vs_none_percent": 0.001046,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001162,
+            "max": 160.018835451,
+            "mean": 160.016839337,
+            "median": 160.016527876,
+            "min": 160.015154683,
+            "p95": 160.018835451,
+            "samples": 3,
+            "stdev": 0.001860045
+          }
+        }
+      },
+      "nodes": {
+        "homelab-01": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 7.281056,
+            "max": 0.675182267,
+            "mean": 0.633538867,
+            "median": 0.641478121,
+            "min": 0.583956214,
+            "p95": 0.675182267,
+            "samples": 3,
+            "stdev": 0.046128321
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.349614,
+            "max": 14275278165.333334,
+            "mean": 14223337699.555555,
+            "median": 14218566314.666666,
+            "min": 14176168618.666666,
+            "p95": 14275278165.333334,
+            "samples": 3,
+            "stdev": 49726754.825109474
+          }
+        },
+        "homelab-02": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 2.35935,
+            "max": 0.697594795,
+            "mean": 0.680437215,
+            "median": 0.677936313,
+            "min": 0.665780538,
+            "p95": 0.697594795,
+            "samples": 3,
+            "stdev": 0.016053897
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.122204,
+            "max": 1375931050.6666667,
+            "mean": 1374834232.888889,
+            "median": 1375671637.3333333,
+            "min": 1372900010.6666667,
+            "p95": 1375931050.6666667,
+            "samples": 3,
+            "stdev": 1680099.855092354
+          }
+        }
+      },
+      "runs": [
+        "beyla-http-r1",
+        "beyla-http-r2",
+        "beyla-http-r3"
+      ],
+      "signal_summary": {
+        "coverage": {
+          "http": {
+            "expected_operations": 18000.0,
+            "observed_metric_count": 18000.0,
+            "observed_minus_expected": 0.0,
+            "overcounted_operations": 0.0,
+            "overcounted_percent": 0.0,
+            "unaccounted_operations": 0.0,
+            "unaccounted_percent": 0.0
+          }
+        },
+        "internal_hard_errors": 0.0
+      }
+    },
+    "beyla-postgres": {
+      "agent": {
+        "cpu_cores": {
+          "coefficient_of_variation_percent": 3.233233,
+          "max": 0.049755264,
+          "mean": 0.048768023,
+          "median": 0.049599266,
+          "min": 0.046949539,
+          "p95": 0.049755264,
+          "samples": 3,
+          "stdev": 0.001576784
+        },
+        "rss_bytes": {
+          "coefficient_of_variation_percent": 2.798557,
+          "max": 26760533.333333332,
+          "mean": 26068309.333333332,
+          "median": 26137941.333333332,
+          "min": 25306453.333333332,
+          "p95": 26760533.333333332,
+          "samples": 3,
+          "stdev": 729536.581103374
+        }
+      },
+      "families": {
+        "grpc": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.815453,
+            "max": 3038.0,
+            "mean": 3014.666666667,
+            "median": 3017.0,
+            "min": 2989.0,
+            "p95": 3038.0,
+            "samples": 3,
+            "stdev": 24.58319209
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 2.340436,
+            "max": 4283.0,
+            "mean": 4207.333333333,
+            "median": 4243.0,
+            "min": 4096.0,
+            "p95": 4283.0,
+            "samples": 3,
+            "stdev": 98.469961579
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 5.087882,
+            "max": 5954.0,
+            "mean": 5625.333333333,
+            "median": 5491.0,
+            "min": 5431.0,
+            "p95": 5954.0,
+            "samples": 3,
+            "stdev": 286.210295645
+          },
+          "p99_change_vs_none_percent": -2.394448,
+          "throughput_change_vs_none_percent": 0.000926,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000826,
+            "max": 80.009086463,
+            "mean": 80.008323416,
+            "median": 80.007942851,
+            "min": 80.007940934,
+            "p95": 80.009086463,
+            "samples": 3,
+            "stdev": 0.000660819
+          }
+        },
+        "http": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.548885,
+            "max": 1860.0,
+            "mean": 1849.0,
+            "median": 1847.0,
+            "min": 1840.0,
+            "p95": 1860.0,
+            "samples": 3,
+            "stdev": 10.148891565
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 0.303552,
+            "max": 6479.0,
+            "mean": 6458.333333333,
+            "median": 6456.0,
+            "min": 6440.0,
+            "p95": 6479.0,
+            "samples": 3,
+            "stdev": 19.60442127
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 0.289081,
+            "max": 7038.0,
+            "mean": 7024.333333333,
+            "median": 7034.0,
+            "min": 7001.0,
+            "p95": 7038.0,
+            "samples": 3,
+            "stdev": 20.305992547
+          },
+          "p99_change_vs_none_percent": 0.755439,
+          "throughput_change_vs_none_percent": 0.000926,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000826,
+            "max": 100.011358079,
+            "mean": 100.01040427,
+            "median": 100.009928563,
+            "min": 100.009926167,
+            "p95": 100.011358079,
+            "samples": 3,
+            "stdev": 0.000826024
+          }
+        },
+        "postgres": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 2.666037,
+            "max": 1306.0,
+            "mean": 1267.0,
+            "median": 1248.0,
+            "min": 1247.0,
+            "p95": 1306.0,
+            "samples": 3,
+            "stdev": 33.778691508
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 5.047979,
+            "max": 2558.0,
+            "mean": 2419.0,
+            "median": 2370.0,
+            "min": 2329.0,
+            "p95": 2558.0,
+            "samples": 3,
+            "stdev": 122.1106056
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 8.94048,
+            "max": 4028.0,
+            "mean": 3662.0,
+            "median": 3561.0,
+            "min": 3397.0,
+            "p95": 4028.0,
+            "samples": 3,
+            "stdev": 327.400366524
+          },
+          "p99_change_vs_none_percent": -9.972957,
+          "throughput_change_vs_none_percent": 0.000926,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000826,
+            "max": 50.005679039,
+            "mean": 50.005202135,
+            "median": 50.004964282,
+            "min": 50.004963084,
+            "p95": 50.005679039,
+            "samples": 3,
+            "stdev": 0.000413012
+          }
+        },
+        "python_cpu": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.687097,
+            "max": 30674.0,
+            "mean": 30494.0,
+            "median": 30544.0,
+            "min": 30264.0,
+            "p95": 30674.0,
+            "samples": 3,
+            "stdev": 209.523268398
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 15.055891,
+            "max": 47845.0,
+            "mean": 40765.333333333,
+            "median": 37506.0,
+            "min": 36945.0,
+            "p95": 47845.0,
+            "samples": 3,
+            "stdev": 6137.584242463
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 6.84858,
+            "max": 52922.0,
+            "mean": 50810.333333333,
+            "median": 52715.0,
+            "min": 46794.0,
+            "p95": 52922.0,
+            "samples": 3,
+            "stdev": 3479.786248225
+          },
+          "p99_change_vs_none_percent": -4.594672,
+          "throughput_change_vs_none_percent": 0.000926,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000826,
+            "max": 8.000908646,
+            "mean": 8.000832342,
+            "median": 8.000794285,
+            "min": 8.000794093,
+            "p95": 8.000908646,
+            "samples": 3,
+            "stdev": 6.6082e-05
+          }
+        },
+        "redis": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.715205,
+            "max": 1147.0,
+            "mean": 1126.0,
+            "median": 1122.0,
+            "min": 1109.0,
+            "p95": 1147.0,
+            "samples": 3,
+            "stdev": 19.313207916
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 3.298498,
+            "max": 2043.0,
+            "mean": 1985.0,
+            "median": 1998.0,
+            "min": 1914.0,
+            "p95": 2043.0,
+            "samples": 3,
+            "stdev": 65.475186139
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 12.256197,
+            "max": 3604.0,
+            "mean": 3163.0,
+            "median": 3009.0,
+            "min": 2876.0,
+            "p95": 3604.0,
+            "samples": 3,
+            "stdev": 387.663513888
+          },
+          "p99_change_vs_none_percent": 6.462471,
+          "throughput_change_vs_none_percent": 0.000926,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000826,
+            "max": 160.018172926,
+            "mean": 160.016646832,
+            "median": 160.015885702,
+            "min": 160.015881868,
+            "p95": 160.018172926,
+            "samples": 3,
+            "stdev": 0.001321638
+          }
+        }
+      },
+      "nodes": {
+        "homelab-01": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 3.237127,
+            "max": 0.635061893,
+            "mean": 0.61524407,
+            "median": 0.615439447,
+            "min": 0.595230871,
+            "p95": 0.635061893,
+            "samples": 3,
+            "stdev": 0.01991623
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.463201,
+            "max": 14354257237.333334,
+            "mean": 14306334947.555557,
+            "median": 14334035285.333334,
+            "min": 14230712320.0,
+            "p95": 14354257237.333334,
+            "samples": 3,
+            "stdev": 66267021.84704943
+          }
+        },
+        "homelab-02": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 2.681571,
+            "max": 0.719590652,
+            "mean": 0.698519543,
+            "median": 0.692211023,
+            "min": 0.683756954,
+            "p95": 0.719590652,
+            "samples": 3,
+            "stdev": 0.018731299
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.226994,
+            "max": 1394483200.0,
+            "mean": 1390975203.5555556,
+            "median": 1390081365.3333333,
+            "min": 1388361045.3333333,
+            "p95": 1394483200.0,
+            "samples": 3,
+            "stdev": 3157436.383567597
+          }
+        }
+      },
+      "runs": [
+        "beyla-postgres-r1",
+        "beyla-postgres-r2",
+        "beyla-postgres-r3"
+      ],
+      "signal_summary": {
+        "coverage": {
+          "grpc": {
+            "expected_operations": 14400.0,
+            "observed_metric_count": 14382.0,
+            "observed_minus_expected": -18.0,
+            "overcounted_operations": 0.0,
+            "overcounted_percent": 0.0,
+            "unaccounted_operations": 18.0,
+            "unaccounted_percent": 0.125
+          },
+          "http": {
+            "expected_operations": 18000.0,
+            "observed_metric_count": 18000.0,
+            "observed_minus_expected": 0.0,
+            "overcounted_operations": 0.0,
+            "overcounted_percent": 0.0,
+            "unaccounted_operations": 0.0,
+            "unaccounted_percent": 0.0
+          },
+          "postgres": {
+            "expected_operations": 9000.0,
+            "observed_metric_count": 9000.0,
+            "observed_minus_expected": 0.0,
+            "overcounted_operations": 0.0,
+            "overcounted_percent": 0.0,
+            "unaccounted_operations": 0.0,
+            "unaccounted_percent": 0.0
+          },
+          "redis": {
+            "expected_operations": 28800.0,
+            "observed_metric_count": 28802.0,
+            "observed_minus_expected": 2.0,
+            "overcounted_operations": 2.0,
+            "overcounted_percent": 0.006944,
+            "unaccounted_operations": 0.0,
+            "unaccounted_percent": 0.0
+          }
+        },
+        "internal_hard_errors": 0.0
+      }
+    },
+    "beyla-profile": {
+      "agent": {
+        "cpu_cores": {
+          "coefficient_of_variation_percent": 6.874507,
+          "max": 0.08630936,
+          "mean": 0.081721451,
+          "median": 0.083399227,
+          "min": 0.075455766,
+          "p95": 0.08630936,
+          "samples": 3,
+          "stdev": 0.005617947
+        },
+        "rss_bytes": {
+          "coefficient_of_variation_percent": 3.412902,
+          "max": 148946944.0,
+          "mean": 143791900.44444445,
+          "median": 143252138.66666666,
+          "min": 139176618.66666666,
+          "p95": 148946944.0,
+          "samples": 3,
+          "stdev": 4907476.068444572
+        }
+      },
+      "families": {
+        "grpc": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 2.110802,
+            "max": 3109.0,
+            "mean": 3042.0,
+            "median": 3036.0,
+            "min": 2981.0,
+            "p95": 3109.0,
+            "samples": 3,
+            "stdev": 64.210591027
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 2.824367,
+            "max": 4444.0,
+            "mean": 4312.0,
+            "median": 4288.0,
+            "min": 4204.0,
+            "p95": 4444.0,
+            "samples": 3,
+            "stdev": 121.786698781
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 3.475186,
+            "max": 5989.0,
+            "mean": 5866.333333333,
+            "median": 5979.0,
+            "min": 5631.0,
+            "p95": 5989.0,
+            "samples": 3,
+            "stdev": 203.865969042
+          },
+          "p99_change_vs_none_percent": 1.78716,
+          "throughput_change_vs_none_percent": 0.000248,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.00017,
+            "max": 80.007924049,
+            "mean": 80.007781232,
+            "median": 80.007766855,
+            "min": 80.007652792,
+            "p95": 80.007924049,
+            "samples": 3,
+            "stdev": 0.000136198
+          }
+        },
+        "http": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.461838,
+            "max": 1859.0,
+            "mean": 1850.0,
+            "median": 1849.0,
+            "min": 1842.0,
+            "p95": 1859.0,
+            "samples": 3,
+            "stdev": 8.544003745
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 5.993317,
+            "max": 6490.0,
+            "mean": 6257.666666667,
+            "median": 6458.0,
+            "min": 5825.0,
+            "p95": 6490.0,
+            "samples": 3,
+            "stdev": 375.041775451
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 0.536062,
+            "max": 7079.0,
+            "mean": 7037.0,
+            "median": 7026.0,
+            "min": 7006.0,
+            "p95": 7079.0,
+            "samples": 3,
+            "stdev": 37.722672228
+          },
+          "p99_change_vs_none_percent": 0.937126,
+          "throughput_change_vs_none_percent": 0.000248,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.00017,
+            "max": 100.009905061,
+            "mean": 100.00972654,
+            "median": 100.009708569,
+            "min": 100.009565991,
+            "p95": 100.009905061,
+            "samples": 3,
+            "stdev": 0.000170248
+          }
+        },
+        "postgres": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.529139,
+            "max": 1264.0,
+            "mean": 1258.333333333,
+            "median": 1260.0,
+            "min": 1251.0,
+            "p95": 1264.0,
+            "samples": 3,
+            "stdev": 6.658328118
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 2.723037,
+            "max": 2514.0,
+            "mean": 2469.333333333,
+            "median": 2502.0,
+            "min": 2392.0,
+            "p95": 2514.0,
+            "samples": 3,
+            "stdev": 67.240860593
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 13.847224,
+            "max": 5094.0,
+            "mean": 4477.666666667,
+            "median": 4485.0,
+            "min": 3854.0,
+            "p95": 5094.0,
+            "samples": 3,
+            "stdev": 620.032526029
+          },
+          "p99_change_vs_none_percent": 10.079489,
+          "throughput_change_vs_none_percent": 0.000248,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.00017,
+            "max": 50.004952531,
+            "mean": 50.00486327,
+            "median": 50.004854285,
+            "min": 50.004782995,
+            "p95": 50.004952531,
+            "samples": 3,
+            "stdev": 8.5124e-05
+          }
+        },
+        "python_cpu": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.778326,
+            "max": 31139.0,
+            "mean": 30875.0,
+            "median": 30817.0,
+            "min": 30669.0,
+            "p95": 31139.0,
+            "samples": 3,
+            "stdev": 240.308135526
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 14.811759,
+            "max": 49991.0,
+            "mean": 45560.666666667,
+            "median": 48897.0,
+            "min": 37794.0,
+            "p95": 49991.0,
+            "samples": 3,
+            "stdev": 6748.336264097
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 2.580783,
+            "max": 54450.0,
+            "mean": 53568.333333333,
+            "median": 54280.0,
+            "min": 51975.0,
+            "p95": 54450.0,
+            "samples": 3,
+            "stdev": 1382.482670175
+          },
+          "p99_change_vs_none_percent": 0.583957,
+          "throughput_change_vs_none_percent": 0.000248,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.00017,
+            "max": 8.000792405,
+            "mean": 8.000778123,
+            "median": 8.000776686,
+            "min": 8.000765279,
+            "p95": 8.000792405,
+            "samples": 3,
+            "stdev": 1.362e-05
+          }
+        },
+        "redis": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.563813,
+            "max": 1153.0,
+            "mean": 1137.333333333,
+            "median": 1141.0,
+            "min": 1118.0,
+            "p95": 1153.0,
+            "samples": 3,
+            "stdev": 17.785762096
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 1.384516,
+            "max": 2070.0,
+            "mean": 2048.0,
+            "median": 2058.0,
+            "min": 2016.0,
+            "p95": 2070.0,
+            "samples": 3,
+            "stdev": 28.354893758
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 6.54417,
+            "max": 3645.0,
+            "mean": 3399.666666667,
+            "median": 3343.0,
+            "min": 3211.0,
+            "p95": 3645.0,
+            "samples": 3,
+            "stdev": 222.479961644
+          },
+          "p99_change_vs_none_percent": 14.428363,
+          "throughput_change_vs_none_percent": 0.000248,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.00017,
+            "max": 160.015848098,
+            "mean": 160.015562464,
+            "median": 160.015533711,
+            "min": 160.015305585,
+            "p95": 160.015848098,
+            "samples": 3,
+            "stdev": 0.000272397
+          }
+        }
+      },
+      "nodes": {
+        "homelab-01": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 6.391067,
+            "max": 0.697619267,
+            "mean": 0.649775427,
+            "median": 0.62864018,
+            "min": 0.623066834,
+            "p95": 0.697619267,
+            "samples": 3,
+            "stdev": 0.041527585
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.415465,
+            "max": 14277227861.333334,
+            "mean": 14228774912.0,
+            "median": 14246188373.333334,
+            "min": 14162908501.333334,
+            "p95": 14277227861.333334,
+            "samples": 3,
+            "stdev": 59115568.96798018
+          }
+        },
+        "homelab-02": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 1.069185,
+            "max": 0.759863153,
+            "mean": 0.751015324,
+            "median": 0.748992193,
+            "min": 0.744190626,
+            "p95": 0.759863153,
+            "samples": 3,
+            "stdev": 0.008029746
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.823775,
+            "max": 1625167189.3333333,
+            "mean": 1612885560.888889,
+            "median": 1614707370.6666667,
+            "min": 1598782122.6666667,
+            "p95": 1625167189.3333333,
+            "samples": 3,
+            "stdev": 13286541.269303843
+          }
+        }
+      },
+      "runs": [
+        "beyla-profile-r1",
+        "beyla-profile-r2",
+        "beyla-profile-r3"
+      ],
+      "signal_summary": {
+        "alloy": {
+          "error_or_loss_metric_deltas": {
+            "alloy_config_load_failures_total": 0.0,
+            "bpf_errors_empty_stack_total{component_id=\"pyroscope.ebpf.head_to_head\",component_path=\"/\",otel_scope_name=\"pyroscope.ebpf\",otel_scope_schema_url=\"\",otel_scope_version=\"\"}": 1.0,
+            "bpf_native_errors_wrong_text_section_total{component_id=\"pyroscope.ebpf.head_to_head\",component_path=\"/\",otel_scope_name=\"pyroscope.ebpf\",otel_scope_schema_url=\"\",otel_scope_version=\"\"}": 1.0,
+            "net_conntrack_dialer_conn_failed_total{dialer_name=\"\",reason=\"refused\"}": 0.0,
+            "net_conntrack_dialer_conn_failed_total{dialer_name=\"\",reason=\"resolution\"}": 0.0,
+            "net_conntrack_dialer_conn_failed_total{dialer_name=\"\",reason=\"timeout\"}": 0.0,
+            "net_conntrack_dialer_conn_failed_total{dialer_name=\"\",reason=\"unknown\"}": 0.0,
+            "prometheus_sd_kubernetes_failures_total{component_id=\"discovery.kubernetes.local_pods\",component_path=\"/\"}": 0.0,
+            "prometheus_template_text_expansion_failures_total": 0.0,
+            "prometheus_treecache_zookeeper_failures_total": 0.0,
+            "pyroscope_ebpf_pprofs_dropped_total{component_id=\"pyroscope.ebpf.head_to_head\",component_path=\"/\"}": 0.0,
+            "pyroscope_ebpf_profiling_sessions_failing_total{component_id=\"pyroscope.ebpf.head_to_head\",component_path=\"/\"}": 0.0,
+            "remotecfg_load_failures_total": 0.0
+          },
+          "failing_sessions": 0.0,
+          "profiles_collected": 55.0,
+          "profiles_dropped": 0.0,
+          "profiles_forwarded": 55.0,
+          "sessions": 0.0
+        },
+        "coverage": {
+          "grpc": {
+            "expected_operations": 14400.0,
+            "observed_metric_count": 14383.0,
+            "observed_minus_expected": -17.0,
+            "overcounted_operations": 0.0,
+            "overcounted_percent": 0.0,
+            "unaccounted_operations": 17.0,
+            "unaccounted_percent": 0.118056
+          },
+          "http": {
+            "expected_operations": 18000.0,
+            "observed_metric_count": 18000.0,
+            "observed_minus_expected": 0.0,
+            "overcounted_operations": 0.0,
+            "overcounted_percent": 0.0,
+            "unaccounted_operations": 0.0,
+            "unaccounted_percent": 0.0
+          },
+          "postgres": {
+            "expected_operations": 9000.0,
+            "observed_metric_count": 9000.0,
+            "observed_minus_expected": 0.0,
+            "overcounted_operations": 0.0,
+            "overcounted_percent": 0.0,
+            "unaccounted_operations": 0.0,
+            "unaccounted_percent": 0.0
+          },
+          "redis": {
+            "expected_operations": 28800.0,
+            "observed_metric_count": 28800.0,
+            "observed_minus_expected": 0.0,
+            "overcounted_operations": 0.0,
+            "overcounted_percent": 0.0,
+            "unaccounted_operations": 0.0,
+            "unaccounted_percent": 0.0
+          }
+        },
+        "internal_hard_errors": 0.0
+      }
+    },
+    "beyla-redis": {
+      "agent": {
+        "cpu_cores": {
+          "coefficient_of_variation_percent": 2.178314,
+          "max": 0.046132534,
+          "mean": 0.045019233,
+          "median": 0.044641787,
+          "min": 0.044283377,
+          "p95": 0.046132534,
+          "samples": 3,
+          "stdev": 0.00098066
+        },
+        "rss_bytes": {
+          "coefficient_of_variation_percent": 1.914756,
+          "max": 25473024.0,
+          "mean": 25143523.555555556,
+          "median": 25366528.0,
+          "min": 24591018.666666668,
+          "p95": 25473024.0,
+          "samples": 3,
+          "stdev": 481437.00386301
+        }
+      },
+      "families": {
+        "grpc": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.129193,
+            "max": 3045.0,
+            "mean": 3011.0,
+            "median": 3011.0,
+            "min": 2977.0,
+            "p95": 3045.0,
+            "samples": 3,
+            "stdev": 34.0
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 4.216072,
+            "max": 4455.0,
+            "mean": 4256.333333333,
+            "median": 4208.0,
+            "min": 4106.0,
+            "p95": 4455.0,
+            "samples": 3,
+            "stdev": 179.450085911
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 10.608967,
+            "max": 6459.0,
+            "mean": 5762.666666667,
+            "median": 5515.0,
+            "min": 5314.0,
+            "p95": 6459.0,
+            "samples": 3,
+            "stdev": 611.359414202
+          },
+          "p99_change_vs_none_percent": -0.011567,
+          "throughput_change_vs_none_percent": -0.000431,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000899,
+            "max": 80.008064799,
+            "mean": 80.007238269,
+            "median": 80.006893778,
+            "min": 80.006756231,
+            "p95": 80.008064799,
+            "samples": 3,
+            "stdev": 0.000719092
+          }
+        },
+        "http": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.111422,
+            "max": 1865.0,
+            "mean": 1844.666666667,
+            "median": 1845.0,
+            "min": 1824.0,
+            "p95": 1865.0,
+            "samples": 3,
+            "stdev": 20.50203242
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 0.199002,
+            "max": 6476.0,
+            "mean": 6461.333333333,
+            "median": 6456.0,
+            "min": 6452.0,
+            "p95": 6476.0,
+            "samples": 3,
+            "stdev": 12.858201015
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 0.34602,
+            "max": 7060.0,
+            "mean": 7033.666666667,
+            "median": 7029.0,
+            "min": 7012.0,
+            "p95": 7060.0,
+            "samples": 3,
+            "stdev": 24.337899115
+          },
+          "p99_change_vs_none_percent": 0.889314,
+          "throughput_change_vs_none_percent": -0.000431,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000899,
+            "max": 100.010080998,
+            "mean": 100.009047837,
+            "median": 100.008617223,
+            "min": 100.008445289,
+            "p95": 100.010080998,
+            "samples": 3,
+            "stdev": 0.000898865
+          }
+        },
+        "postgres": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 2.331051,
+            "max": 1193.0,
+            "mean": 1176.666666667,
+            "median": 1192.0,
+            "min": 1145.0,
+            "p95": 1193.0,
+            "samples": 3,
+            "stdev": 27.428695436
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 8.926548,
+            "max": 2615.0,
+            "mean": 2382.333333333,
+            "median": 2334.0,
+            "min": 2198.0,
+            "p95": 2615.0,
+            "samples": 3,
+            "stdev": 212.660135741
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 14.606388,
+            "max": 4687.0,
+            "mean": 4249.333333333,
+            "median": 4522.0,
+            "min": 3539.0,
+            "p95": 4687.0,
+            "samples": 3,
+            "stdev": 620.67409591
+          },
+          "p99_change_vs_none_percent": 4.466115,
+          "throughput_change_vs_none_percent": -0.000431,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000899,
+            "max": 50.005040499,
+            "mean": 50.004523918,
+            "median": 50.004308611,
+            "min": 50.004222644,
+            "p95": 50.005040499,
+            "samples": 3,
+            "stdev": 0.000449432
+          }
+        },
+        "python_cpu": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.892697,
+            "max": 30829.0,
+            "mean": 30613.333333333,
+            "median": 30705.0,
+            "min": 30306.0,
+            "p95": 30829.0,
+            "samples": 3,
+            "stdev": 273.284345204
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 13.86767,
+            "max": 48058.0,
+            "mean": 42939.0,
+            "median": 44355.0,
+            "min": 36404.0,
+            "p95": 48058.0,
+            "samples": 3,
+            "stdev": 5954.63861204
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 5.749363,
+            "max": 54289.0,
+            "mean": 51971.333333333,
+            "median": 53026.0,
+            "min": 48599.0,
+            "p95": 54289.0,
+            "samples": 3,
+            "stdev": 2988.020470702
+          },
+          "p99_change_vs_none_percent": -2.414691,
+          "throughput_change_vs_none_percent": -0.000431,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000899,
+            "max": 8.00080648,
+            "mean": 8.000723827,
+            "median": 8.000689378,
+            "min": 8.000675623,
+            "p95": 8.00080648,
+            "samples": 3,
+            "stdev": 7.1909e-05
+          }
+        },
+        "redis": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 2.735887,
+            "max": 1166.0,
+            "mean": 1130.333333333,
+            "median": 1114.0,
+            "min": 1111.0,
+            "p95": 1166.0,
+            "samples": 3,
+            "stdev": 30.924639583
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 5.273809,
+            "max": 2133.0,
+            "mean": 2020.666666667,
+            "median": 2008.0,
+            "min": 1921.0,
+            "p95": 2133.0,
+            "samples": 3,
+            "stdev": 106.566098424
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 17.001703,
+            "max": 4117.0,
+            "mean": 3455.666666667,
+            "median": 3256.0,
+            "min": 2994.0,
+            "p95": 4117.0,
+            "samples": 3,
+            "stdev": 587.522198162
+          },
+          "p99_change_vs_none_percent": 16.31325,
+          "throughput_change_vs_none_percent": -0.000431,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000899,
+            "max": 160.016129597,
+            "mean": 160.014476538,
+            "median": 160.013787556,
+            "min": 160.013512462,
+            "p95": 160.016129597,
+            "samples": 3,
+            "stdev": 0.001438184
+          }
+        }
+      },
+      "nodes": {
+        "homelab-01": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 6.12555,
+            "max": 0.654646123,
+            "mean": 0.611466438,
+            "median": 0.59201301,
+            "min": 0.587740182,
+            "p95": 0.654646123,
+            "samples": 3,
+            "stdev": 0.037455682
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.580727,
+            "max": 14375635626.666666,
+            "mean": 14281836316.444443,
+            "median": 14251671552.0,
+            "min": 14218201770.666666,
+            "p95": 14375635626.666666,
+            "samples": 3,
+            "stdev": 82938468.24151492
+          }
+        },
+        "homelab-02": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 6.82126,
+            "max": 0.794267774,
+            "mean": 0.737446586,
+            "median": 0.719472516,
+            "min": 0.698599469,
+            "p95": 0.794267774,
+            "samples": 3,
+            "stdev": 0.050303147
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.932854,
+            "max": 1402639701.3333333,
+            "mean": 1393753656.888889,
+            "median": 1399790250.6666667,
+            "min": 1378831018.6666667,
+            "p95": 1402639701.3333333,
+            "samples": 3,
+            "stdev": 13001680.310980426
+          }
+        }
+      },
+      "runs": [
+        "beyla-redis-r1",
+        "beyla-redis-r2",
+        "beyla-redis-r3"
+      ],
+      "signal_summary": {
+        "coverage": {
+          "grpc": {
+            "expected_operations": 14400.0,
+            "observed_metric_count": 14382.0,
+            "observed_minus_expected": -18.0,
+            "overcounted_operations": 0.0,
+            "overcounted_percent": 0.0,
+            "unaccounted_operations": 18.0,
+            "unaccounted_percent": 0.125
+          },
+          "http": {
+            "expected_operations": 18000.0,
+            "observed_metric_count": 18000.0,
+            "observed_minus_expected": 0.0,
+            "overcounted_operations": 0.0,
+            "overcounted_percent": 0.0,
+            "unaccounted_operations": 0.0,
+            "unaccounted_percent": 0.0
+          },
+          "redis": {
+            "expected_operations": 28800.0,
+            "observed_metric_count": 28800.0,
+            "observed_minus_expected": 0.0,
+            "overcounted_operations": 0.0,
+            "overcounted_percent": 0.0,
+            "unaccounted_operations": 0.0,
+            "unaccounted_percent": 0.0
+          }
+        },
+        "internal_hard_errors": 0.0
+      }
+    },
+    "e-navigator-grpc": {
+      "agent": {
+        "cpu_cores": {
+          "coefficient_of_variation_percent": 4.294912,
+          "max": 0.076532442,
+          "mean": 0.074540176,
+          "median": 0.076240771,
+          "min": 0.070847315,
+          "p95": 0.076532442,
+          "samples": 3,
+          "stdev": 0.003201435
+        },
+        "rss_bytes": {
+          "coefficient_of_variation_percent": 2.638325,
+          "max": 22032384.0,
+          "mean": 21418894.22222222,
+          "median": 21304661.333333332,
+          "min": 20919637.333333332,
+          "p95": 22032384.0,
+          "samples": 3,
+          "stdev": 565100.124511021
+        }
+      },
+      "families": {
+        "grpc": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.108701,
+            "max": 3060.0,
+            "mean": 3021.666666667,
+            "median": 3007.0,
+            "min": 2998.0,
+            "p95": 3060.0,
+            "samples": 3,
+            "stdev": 33.501243758
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 1.679599,
+            "max": 4381.0,
+            "mean": 4313.666666667,
+            "median": 4323.0,
+            "min": 4237.0,
+            "p95": 4381.0,
+            "samples": 3,
+            "stdev": 72.452283148
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 3.87687,
+            "max": 6101.0,
+            "mean": 5861.333333333,
+            "median": 5834.0,
+            "min": 5649.0,
+            "p95": 6101.0,
+            "samples": 3,
+            "stdev": 227.236294049
+          },
+          "p99_change_vs_none_percent": 1.700405,
+          "throughput_change_vs_none_percent": 0.001065,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000559,
+            "max": 80.008750454,
+            "mean": 80.008434909,
+            "median": 80.008630794,
+            "min": 80.00792348,
+            "p95": 80.008750454,
+            "samples": 3,
+            "stdev": 0.000446934
+          }
+        },
+        "http": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.554268,
+            "max": 1863.0,
+            "mean": 1851.666666667,
+            "median": 1849.0,
+            "min": 1843.0,
+            "p95": 1863.0,
+            "samples": 3,
+            "stdev": 10.263202879
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 2.220659,
+            "max": 6489.0,
+            "mean": 6385.666666667,
+            "median": 6444.0,
+            "min": 6224.0,
+            "p95": 6489.0,
+            "samples": 3,
+            "stdev": 141.803855143
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 0.225309,
+            "max": 7036.0,
+            "mean": 7022.333333333,
+            "median": 7026.0,
+            "min": 7005.0,
+            "p95": 7036.0,
+            "samples": 3,
+            "stdev": 15.821925715
+          },
+          "p99_change_vs_none_percent": 0.726751,
+          "throughput_change_vs_none_percent": 0.001065,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000559,
+            "max": 100.010938067,
+            "mean": 100.010543637,
+            "median": 100.010788493,
+            "min": 100.00990435,
+            "p95": 100.010938067,
+            "samples": 3,
+            "stdev": 0.000558667
+          }
+        },
+        "postgres": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.338248,
+            "max": 1300.0,
+            "mean": 1286.333333333,
+            "median": 1292.0,
+            "min": 1267.0,
+            "p95": 1300.0,
+            "samples": 3,
+            "stdev": 17.214335112
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 3.816068,
+            "max": 2405.0,
+            "mean": 2352.666666667,
+            "median": 2404.0,
+            "min": 2249.0,
+            "p95": 2405.0,
+            "samples": 3,
+            "stdev": 89.779359172
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 8.235442,
+            "max": 4277.0,
+            "mean": 3907.333333333,
+            "median": 3755.0,
+            "min": 3690.0,
+            "p95": 4277.0,
+            "samples": 3,
+            "stdev": 321.786160879
+          },
+          "p99_change_vs_none_percent": -3.941654,
+          "throughput_change_vs_none_percent": 0.001065,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000559,
+            "max": 50.005469034,
+            "mean": 50.005271818,
+            "median": 50.005394246,
+            "min": 50.004952175,
+            "p95": 50.005469034,
+            "samples": 3,
+            "stdev": 0.000279334
+          }
+        },
+        "python_cpu": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.433029,
+            "max": 31286.0,
+            "mean": 31168.333333333,
+            "median": 31198.0,
+            "min": 31021.0,
+            "p95": 31286.0,
+            "samples": 3,
+            "stdev": 134.967897418
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 13.643062,
+            "max": 49698.0,
+            "mean": 43082.333333333,
+            "median": 41087.0,
+            "min": 38462.0,
+            "p95": 49698.0,
+            "samples": 3,
+            "stdev": 5877.749597706
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 2.113246,
+            "max": 55263.0,
+            "mean": 53978.0,
+            "median": 53586.0,
+            "min": 53085.0,
+            "p95": 55263.0,
+            "samples": 3,
+            "stdev": 1140.687950318
+          },
+          "p99_change_vs_none_percent": 1.353178,
+          "throughput_change_vs_none_percent": 0.001065,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000559,
+            "max": 8.000875045,
+            "mean": 8.000843491,
+            "median": 8.000863079,
+            "min": 8.000792348,
+            "p95": 8.000875045,
+            "samples": 3,
+            "stdev": 4.4693e-05
+          }
+        },
+        "redis": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.632546,
+            "max": 1080.0,
+            "mean": 1068.0,
+            "median": 1076.0,
+            "min": 1048.0,
+            "p95": 1080.0,
+            "samples": 3,
+            "stdev": 17.435595774
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 0.526122,
+            "max": 1940.0,
+            "mean": 1929.0,
+            "median": 1927.0,
+            "min": 1920.0,
+            "p95": 1940.0,
+            "samples": 3,
+            "stdev": 10.148891565
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 2.192651,
+            "max": 3147.0,
+            "mean": 3094.666666667,
+            "median": 3119.0,
+            "min": 3018.0,
+            "p95": 3147.0,
+            "samples": 3,
+            "stdev": 67.855238069
+          },
+          "p99_change_vs_none_percent": 4.162459,
+          "throughput_change_vs_none_percent": 0.001065,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000559,
+            "max": 160.017500908,
+            "mean": 160.016869819,
+            "median": 160.017261588,
+            "min": 160.01584696,
+            "p95": 160.017500908,
+            "samples": 3,
+            "stdev": 0.000893867
+          }
+        }
+      },
+      "nodes": {
+        "homelab-01": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 11.384665,
+            "max": 0.756373794,
+            "mean": 0.708511333,
+            "median": 0.753776848,
+            "min": 0.615383358,
+            "p95": 0.756373794,
+            "samples": 3,
+            "stdev": 0.080661644
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.525904,
+            "max": 14343471104.0,
+            "mean": 14257991680.0,
+            "median": 14227187029.333334,
+            "min": 14203316906.666666,
+            "p95": 14343471104.0,
+            "samples": 3,
+            "stdev": 74983295.70350502
+          }
+        },
+        "homelab-02": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 2.927646,
+            "max": 0.74865105,
+            "mean": 0.725233979,
+            "median": 0.719813566,
+            "min": 0.707237321,
+            "p95": 0.74865105,
+            "samples": 3,
+            "stdev": 0.021232284
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.541974,
+            "max": 1205309440.0,
+            "mean": 1200902599.111111,
+            "median": 1203971413.3333333,
+            "min": 1193426944.0,
+            "p95": 1205309440.0,
+            "samples": 3,
+            "stdev": 6508582.283830235
+          }
+        }
+      },
+      "runs": [
+        "e-navigator-grpc-r1",
+        "e-navigator-grpc-r2",
+        "e-navigator-grpc-r3"
+      ],
+      "signal_summary": {
+        "hard_loss_total": 0.0,
+        "per_signal_family": {
+          "metrics": {
+            "enqueued": 0.0,
+            "hard_loss_total": 0.0,
+            "sent": 0.0
+          },
+          "profiles": {
+            "enqueued": 0.0,
+            "hard_loss_total": 0.0,
+            "sent": 0.0
+          },
+          "traces": {
+            "enqueued": 32400.0,
+            "hard_loss_total": 0.0,
+            "sent": 32400.0
+          }
+        },
+        "profile_samples_decoded": 0.0,
+        "profile_signals_sent": 0.0,
+        "source_samples_decoded": 91096.0,
+        "source_signals_sent": 32400.0
+      }
+    },
+    "e-navigator-http": {
+      "agent": {
+        "cpu_cores": {
+          "coefficient_of_variation_percent": 4.971223,
+          "max": 0.038434421,
+          "mean": 0.036767753,
+          "median": 0.03705582,
+          "min": 0.034813017,
+          "p95": 0.038434421,
+          "samples": 3,
+          "stdev": 0.001827807
+        },
+        "rss_bytes": {
+          "coefficient_of_variation_percent": 3.399427,
+          "max": 13890901.333333334,
+          "mean": 13443982.222222224,
+          "median": 13463552.0,
+          "min": 12977493.333333334,
+          "p95": 13890901.333333334,
+          "samples": 3,
+          "stdev": 457018.353863063
+        }
+      },
+      "families": {
+        "grpc": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.515811,
+            "max": 2982.0,
+            "mean": 2931.333333333,
+            "median": 2913.0,
+            "min": 2899.0,
+            "p95": 2982.0,
+            "samples": 3,
+            "stdev": 44.433470868
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 1.604822,
+            "max": 4337.0,
+            "mean": 4269.333333333,
+            "median": 4271.0,
+            "min": 4200.0,
+            "p95": 4337.0,
+            "samples": 3,
+            "stdev": 68.515205125
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 3.399169,
+            "max": 5803.0,
+            "mean": 5642.333333333,
+            "median": 5694.0,
+            "min": 5430.0,
+            "p95": 5803.0,
+            "samples": 3,
+            "stdev": 191.792422513
+          },
+          "p99_change_vs_none_percent": -2.099479,
+          "throughput_change_vs_none_percent": 8.9e-05,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000977,
+            "max": 80.008265567,
+            "mean": 80.007654047,
+            "median": 80.007922696,
+            "min": 80.006773878,
+            "p95": 80.008265567,
+            "samples": 3,
+            "stdev": 0.000781289
+          }
+        },
+        "http": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.548481,
+            "max": 1846.0,
+            "mean": 1835.333333333,
+            "median": 1834.0,
+            "min": 1826.0,
+            "p95": 1846.0,
+            "samples": 3,
+            "stdev": 10.066445914
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 5.138126,
+            "max": 6451.0,
+            "mean": 6252.666666667,
+            "median": 6425.0,
+            "min": 5882.0,
+            "p95": 6451.0,
+            "samples": 3,
+            "stdev": 321.269876169
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 0.09506,
+            "max": 7012.0,
+            "mean": 7004.333333333,
+            "median": 7001.0,
+            "min": 7000.0,
+            "p95": 7012.0,
+            "samples": 3,
+            "stdev": 6.658328118
+          },
+          "p99_change_vs_none_percent": 0.468563,
+          "throughput_change_vs_none_percent": 8.9e-05,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000977,
+            "max": 100.010331958,
+            "mean": 100.009567559,
+            "median": 100.00990337,
+            "min": 100.008467348,
+            "p95": 100.010331958,
+            "samples": 3,
+            "stdev": 0.000976611
+          }
+        },
+        "postgres": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 2.485876,
+            "max": 1290.0,
+            "mean": 1255.666666667,
+            "median": 1248.0,
+            "min": 1229.0,
+            "p95": 1290.0,
+            "samples": 3,
+            "stdev": 31.214312956
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 3.048264,
+            "max": 2434.0,
+            "mean": 2362.0,
+            "median": 2362.0,
+            "min": 2290.0,
+            "p95": 2434.0,
+            "samples": 3,
+            "stdev": 72.0
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 11.41314,
+            "max": 3940.0,
+            "mean": 3670.666666667,
+            "median": 3884.0,
+            "min": 3188.0,
+            "p95": 3940.0,
+            "samples": 3,
+            "stdev": 418.93834073
+          },
+          "p99_change_vs_none_percent": -9.759895,
+          "throughput_change_vs_none_percent": 8.9e-05,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000977,
+            "max": 50.005165979,
+            "mean": 50.004783779,
+            "median": 50.004951685,
+            "min": 50.004233674,
+            "p95": 50.005165979,
+            "samples": 3,
+            "stdev": 0.000488306
+          }
+        },
+        "python_cpu": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.456596,
+            "max": 30777.0,
+            "mean": 30621.0,
+            "median": 30579.0,
+            "min": 30507.0,
+            "p95": 30777.0,
+            "samples": 3,
+            "stdev": 139.814162373
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 10.69681,
+            "max": 46879.0,
+            "mean": 42185.333333333,
+            "median": 41798.0,
+            "min": 37879.0,
+            "p95": 46879.0,
+            "samples": 3,
+            "stdev": 4512.484939956
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 7.636454,
+            "max": 51411.0,
+            "mean": 48939.333333333,
+            "median": 50767.0,
+            "min": 44640.0,
+            "p95": 51411.0,
+            "samples": 3,
+            "stdev": 3737.229499687
+          },
+          "p99_change_vs_none_percent": -8.107804,
+          "throughput_change_vs_none_percent": 8.9e-05,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000977,
+            "max": 8.000826557,
+            "mean": 8.000765405,
+            "median": 8.00079227,
+            "min": 8.000677388,
+            "p95": 8.000826557,
+            "samples": 3,
+            "stdev": 7.8129e-05
+          }
+        },
+        "redis": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.95158,
+            "max": 1043.0,
+            "mean": 1035.0,
+            "median": 1038.0,
+            "min": 1024.0,
+            "p95": 1043.0,
+            "samples": 3,
+            "stdev": 9.848857802
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 4.411515,
+            "max": 1952.0,
+            "mean": 1870.666666667,
+            "median": 1873.0,
+            "min": 1787.0,
+            "p95": 1952.0,
+            "samples": 3,
+            "stdev": 82.524743764
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 6.198617,
+            "max": 2955.0,
+            "mean": 2828.0,
+            "median": 2901.0,
+            "min": 2628.0,
+            "p95": 2955.0,
+            "samples": 3,
+            "stdev": 175.296891016
+          },
+          "p99_change_vs_none_percent": -4.813194,
+          "throughput_change_vs_none_percent": 8.9e-05,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000977,
+            "max": 160.016531134,
+            "mean": 160.015308094,
+            "median": 160.015845391,
+            "min": 160.013547757,
+            "p95": 160.016531134,
+            "samples": 3,
+            "stdev": 0.001562578
+          }
+        }
+      },
+      "nodes": {
+        "homelab-01": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 4.366826,
+            "max": 0.659624037,
+            "mean": 0.63113057,
+            "median": 0.629158442,
+            "min": 0.604609231,
+            "p95": 0.659624037,
+            "samples": 3,
+            "stdev": 0.027560373
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.797813,
+            "max": 14449901568.0,
+            "mean": 14323067107.555555,
+            "median": 14291156992.0,
+            "min": 14228142762.666666,
+            "p95": 14449901568.0,
+            "samples": 3,
+            "stdev": 114271315.48115455
+          }
+        },
+        "homelab-02": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 1.579728,
+            "max": 0.678870977,
+            "mean": 0.671660328,
+            "median": 0.676633207,
+            "min": 0.6594768,
+            "p95": 0.678870977,
+            "samples": 3,
+            "stdev": 0.010610404
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.52154,
+            "max": 1199677440.0,
+            "mean": 1194922439.1111112,
+            "median": 1197222570.6666667,
+            "min": 1187867306.6666667,
+            "p95": 1199677440.0,
+            "samples": 3,
+            "stdev": 6231995.364040655
+          }
+        }
+      },
+      "runs": [
+        "e-navigator-http-r1",
+        "e-navigator-http-r2",
+        "e-navigator-http-r3"
+      ],
+      "signal_summary": {
+        "hard_loss_total": 0.0,
+        "per_signal_family": {
+          "metrics": {
+            "enqueued": 0.0,
+            "hard_loss_total": 0.0,
+            "sent": 0.0
+          },
+          "profiles": {
+            "enqueued": 0.0,
+            "hard_loss_total": 0.0,
+            "sent": 0.0
+          },
+          "traces": {
+            "enqueued": 18000.0,
+            "hard_loss_total": 0.0,
+            "sent": 18000.0
+          }
+        },
+        "profile_samples_decoded": 0.0,
+        "profile_signals_sent": 0.0,
+        "source_samples_decoded": 18000.0,
+        "source_signals_sent": 18000.0
+      }
+    },
+    "e-navigator-postgres": {
+      "agent": {
+        "cpu_cores": {
+          "coefficient_of_variation_percent": 4.032695,
+          "max": 0.107438112,
+          "mean": 0.103476102,
+          "median": 0.103869914,
+          "min": 0.099120281,
+          "p95": 0.107438112,
+          "samples": 3,
+          "stdev": 0.004172876
+        },
+        "rss_bytes": {
+          "coefficient_of_variation_percent": 2.144511,
+          "max": 26877952.0,
+          "mean": 26345927.11111111,
+          "median": 26406912.0,
+          "min": 25752917.333333332,
+          "p95": 26877952.0,
+          "samples": 3,
+          "stdev": 564991.254627041
+        }
+      },
+      "families": {
+        "grpc": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.39048,
+            "max": 3100.0,
+            "mean": 3087.333333333,
+            "median": 3086.0,
+            "min": 3076.0,
+            "p95": 3100.0,
+            "samples": 3,
+            "stdev": 12.055427547
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 0.464472,
+            "max": 4651.0,
+            "mean": 4629.333333333,
+            "median": 4629.0,
+            "min": 4608.0,
+            "p95": 4651.0,
+            "samples": 3,
+            "stdev": 21.501937897
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 3.323256,
+            "max": 6192.0,
+            "mean": 5968.666666667,
+            "median": 5901.0,
+            "min": 5813.0,
+            "p95": 6192.0,
+            "samples": 3,
+            "stdev": 198.354060542
+          },
+          "p99_change_vs_none_percent": 3.562753,
+          "throughput_change_vs_none_percent": 0.000186,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001107,
+            "max": 80.008697009,
+            "mean": 80.007731803,
+            "median": 80.007542526,
+            "min": 80.006955874,
+            "p95": 80.008697009,
+            "samples": 3,
+            "stdev": 0.000885865
+          }
+        },
+        "http": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.815223,
+            "max": 1878.0,
+            "mean": 1861.666666667,
+            "median": 1859.0,
+            "min": 1848.0,
+            "p95": 1878.0,
+            "samples": 3,
+            "stdev": 15.176736584
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 0.32993,
+            "max": 6474.0,
+            "mean": 6451.0,
+            "median": 6447.0,
+            "min": 6432.0,
+            "p95": 6474.0,
+            "samples": 3,
+            "stdev": 21.283796654
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 0.610771,
+            "max": 7075.0,
+            "mean": 7025.666666667,
+            "median": 7005.0,
+            "min": 6997.0,
+            "p95": 7075.0,
+            "samples": 3,
+            "stdev": 42.910760111
+          },
+          "p99_change_vs_none_percent": 0.774564,
+          "throughput_change_vs_none_percent": 0.000186,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001107,
+            "max": 100.010871262,
+            "mean": 100.009664754,
+            "median": 100.009428158,
+            "min": 100.008694843,
+            "p95": 100.010871262,
+            "samples": 3,
+            "stdev": 0.001107332
+          }
+        },
+        "postgres": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 5.357502,
+            "max": 1544.0,
+            "mean": 1458.333333333,
+            "median": 1440.0,
+            "min": 1391.0,
+            "p95": 1544.0,
+            "samples": 3,
+            "stdev": 78.130233158
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 2.61622,
+            "max": 2922.0,
+            "mean": 2848.666666667,
+            "median": 2851.0,
+            "min": 2773.0,
+            "p95": 2922.0,
+            "samples": 3,
+            "stdev": 74.527399883
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 11.095313,
+            "max": 5102.0,
+            "mean": 4527.666666667,
+            "median": 4311.0,
+            "min": 4170.0,
+            "p95": 5102.0,
+            "samples": 3,
+            "stdev": 502.35876954
+          },
+          "p99_change_vs_none_percent": 11.308695,
+          "throughput_change_vs_none_percent": 0.000186,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001107,
+            "max": 50.005435631,
+            "mean": 50.004832377,
+            "median": 50.004714079,
+            "min": 50.004347421,
+            "p95": 50.005435631,
+            "samples": 3,
+            "stdev": 0.000553666
+          }
+        },
+        "python_cpu": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.045005,
+            "max": 31680.0,
+            "mean": 31323.0,
+            "median": 31252.0,
+            "min": 31037.0,
+            "p95": 31680.0,
+            "samples": 3,
+            "stdev": 327.327053572
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 7.254473,
+            "max": 46018.0,
+            "mean": 42590.0,
+            "median": 41732.0,
+            "min": 40020.0,
+            "p95": 46018.0,
+            "samples": 3,
+            "stdev": 3089.680242355
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 7.566596,
+            "max": 53421.0,
+            "mean": 49235.666666667,
+            "median": 48004.0,
+            "min": 46282.0,
+            "p95": 53421.0,
+            "samples": 3,
+            "stdev": 3725.464042684
+          },
+          "p99_change_vs_none_percent": -7.551386,
+          "throughput_change_vs_none_percent": 0.000186,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001107,
+            "max": 8.000869701,
+            "mean": 8.00077318,
+            "median": 8.000754253,
+            "min": 8.000695587,
+            "p95": 8.000869701,
+            "samples": 3,
+            "stdev": 8.8587e-05
+          }
+        },
+        "redis": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.436584,
+            "max": 1108.0,
+            "mean": 1094.0,
+            "median": 1097.0,
+            "min": 1077.0,
+            "p95": 1108.0,
+            "samples": 3,
+            "stdev": 15.716233646
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 1.684347,
+            "max": 2125.0,
+            "mean": 2099.333333333,
+            "median": 2114.0,
+            "min": 2059.0,
+            "p95": 2125.0,
+            "samples": 3,
+            "stdev": 35.36005279
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 3.185982,
+            "max": 3233.0,
+            "mean": 3118.333333333,
+            "median": 3064.0,
+            "min": 3058.0,
+            "p95": 3233.0,
+            "samples": 3,
+            "stdev": 99.349551249
+          },
+          "p99_change_vs_none_percent": 4.959049,
+          "throughput_change_vs_none_percent": 0.000186,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001107,
+            "max": 160.017394019,
+            "mean": 160.015463606,
+            "median": 160.015085052,
+            "min": 160.013911748,
+            "p95": 160.017394019,
+            "samples": 3,
+            "stdev": 0.001771731
+          }
+        }
+      },
+      "nodes": {
+        "homelab-01": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 10.467302,
+            "max": 0.715603657,
+            "mean": 0.638695052,
+            "median": 0.606009268,
+            "min": 0.594472231,
+            "p95": 0.715603657,
+            "samples": 3,
+            "stdev": 0.066854139
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.420689,
+            "max": 14379368448.0,
+            "mean": 14311716181.333334,
+            "median": 14291759104.0,
+            "min": 14264020992.0,
+            "p95": 14379368448.0,
+            "samples": 3,
+            "stdev": 60207745.375362374
+          }
+        },
+        "homelab-02": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 0.527791,
+            "max": 0.789958812,
+            "mean": 0.786910668,
+            "median": 0.788593006,
+            "min": 0.782180185,
+            "p95": 0.789958812,
+            "samples": 3,
+            "stdev": 0.004153246
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 2.022526,
+            "max": 1243571541.3333333,
+            "mean": 1215218119.111111,
+            "median": 1202111829.3333333,
+            "min": 1199970986.6666667,
+            "p95": 1243571541.3333333,
+            "samples": 3,
+            "stdev": 24578104.394248072
+          }
+        }
+      },
+      "runs": [
+        "e-navigator-postgres-r1",
+        "e-navigator-postgres-r2",
+        "e-navigator-postgres-r3"
+      ],
+      "signal_summary": {
+        "hard_loss_total": 0.0,
+        "per_signal_family": {
+          "metrics": {
+            "enqueued": 0.0,
+            "hard_loss_total": 0.0,
+            "sent": 0.0
+          },
+          "profiles": {
+            "enqueued": 0.0,
+            "hard_loss_total": 0.0,
+            "sent": 0.0
+          },
+          "traces": {
+            "enqueued": 68620.0,
+            "hard_loss_total": 0.0,
+            "sent": 68623.0
+          }
+        },
+        "profile_samples_decoded": 0.0,
+        "profile_signals_sent": 0.0,
+        "source_samples_decoded": 109979.0,
+        "source_signals_sent": 68622.0
+      }
+    },
+    "e-navigator-profile": {
+      "agent": {
+        "cpu_cores": {
+          "coefficient_of_variation_percent": 5.120943,
+          "max": 0.123714838,
+          "mean": 0.117352879,
+          "median": 0.11657171,
+          "min": 0.11177209,
+          "p95": 0.123714838,
+          "samples": 3,
+          "stdev": 0.006009574
+        },
+        "rss_bytes": {
+          "coefficient_of_variation_percent": 2.807822,
+          "max": 194981888.0,
+          "mean": 189667100.44444442,
+          "median": 189688490.66666666,
+          "min": 184330922.66666666,
+          "p95": 194981888.0,
+          "samples": 3,
+          "stdev": 5325514.884888803
+        }
+      },
+      "families": {
+        "grpc": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.588919,
+            "max": 3098.0,
+            "mean": 3056.333333333,
+            "median": 3068.0,
+            "min": 3003.0,
+            "p95": 3098.0,
+            "samples": 3,
+            "stdev": 48.562674281
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 0.58873,
+            "max": 4621.0,
+            "mean": 4590.333333333,
+            "median": 4580.0,
+            "min": 4570.0,
+            "p95": 4621.0,
+            "samples": 3,
+            "stdev": 27.024680078
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 4.158881,
+            "max": 6389.0,
+            "mean": 6234.333333333,
+            "median": 6379.0,
+            "min": 5935.0,
+            "p95": 6389.0,
+            "samples": 3,
+            "stdev": 259.27848606
+          },
+          "p99_change_vs_none_percent": 8.172354,
+          "throughput_change_vs_none_percent": 0.000286,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000795,
+            "max": 80.008532611,
+            "mean": 80.007812075,
+            "median": 80.007576086,
+            "min": 80.007327528,
+            "p95": 80.008532611,
+            "samples": 3,
+            "stdev": 0.000636258
+          }
+        },
+        "http": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.696509,
+            "max": 1866.0,
+            "mean": 1851.666666667,
+            "median": 1848.0,
+            "min": 1841.0,
+            "p95": 1866.0,
+            "samples": 3,
+            "stdev": 12.897028081
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 0.371345,
+            "max": 6487.0,
+            "mean": 6463.0,
+            "median": 6463.0,
+            "min": 6439.0,
+            "p95": 6487.0,
+            "samples": 3,
+            "stdev": 24.0
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 0.29341,
+            "max": 7040.0,
+            "mean": 7020.666666667,
+            "median": 7023.0,
+            "min": 6999.0,
+            "p95": 7040.0,
+            "samples": 3,
+            "stdev": 20.599352741
+          },
+          "p99_change_vs_none_percent": 0.702845,
+          "throughput_change_vs_none_percent": 0.000286,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000795,
+            "max": 100.010665764,
+            "mean": 100.009765094,
+            "median": 100.009470108,
+            "min": 100.00915941,
+            "p95": 100.010665764,
+            "samples": 3,
+            "stdev": 0.000795323
+          }
+        },
+        "postgres": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.146539,
+            "max": 1453.0,
+            "mean": 1439.333333333,
+            "median": 1444.0,
+            "min": 1421.0,
+            "p95": 1453.0,
+            "samples": 3,
+            "stdev": 16.502525059
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 1.545552,
+            "max": 2837.0,
+            "mean": 2802.666666667,
+            "median": 2817.0,
+            "min": 2754.0,
+            "p95": 2837.0,
+            "samples": 3,
+            "stdev": 43.31666346
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 9.195339,
+            "max": 4782.0,
+            "mean": 4365.666666667,
+            "median": 4334.0,
+            "min": 3981.0,
+            "p95": 4782.0,
+            "samples": 3,
+            "stdev": 401.437832464
+          },
+          "p99_change_vs_none_percent": 7.326067,
+          "throughput_change_vs_none_percent": 0.000286,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000795,
+            "max": 50.005332882,
+            "mean": 50.004882547,
+            "median": 50.004735054,
+            "min": 50.004579705,
+            "p95": 50.005332882,
+            "samples": 3,
+            "stdev": 0.000397661
+          }
+        },
+        "python_cpu": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.353657,
+            "max": 31396.0,
+            "mean": 31269.333333333,
+            "median": 31220.0,
+            "min": 31192.0,
+            "p95": 31396.0,
+            "samples": 3,
+            "stdev": 110.586316212
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 11.782479,
+            "max": 47568.0,
+            "mean": 41879.333333333,
+            "median": 39314.0,
+            "min": 38756.0,
+            "p95": 47568.0,
+            "samples": 3,
+            "stdev": 4934.42370833
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 6.215732,
+            "max": 53345.0,
+            "mean": 50957.0,
+            "median": 52162.0,
+            "min": 47364.0,
+            "p95": 53345.0,
+            "samples": 3,
+            "stdev": 3167.35047003
+          },
+          "p99_change_vs_none_percent": -4.31928,
+          "throughput_change_vs_none_percent": 0.000286,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000795,
+            "max": 8.000853261,
+            "mean": 8.000781208,
+            "median": 8.000757609,
+            "min": 8.000732753,
+            "p95": 8.000853261,
+            "samples": 3,
+            "stdev": 6.3626e-05
+          }
+        },
+        "redis": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.200293,
+            "max": 1101.0,
+            "mean": 1087.333333333,
+            "median": 1086.0,
+            "min": 1075.0,
+            "p95": 1101.0,
+            "samples": 3,
+            "stdev": 13.0511813
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 2.487073,
+            "max": 2130.0,
+            "mean": 2071.0,
+            "median": 2048.0,
+            "min": 2035.0,
+            "p95": 2130.0,
+            "samples": 3,
+            "stdev": 51.507281039
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 9.17301,
+            "max": 3605.0,
+            "mean": 3260.0,
+            "median": 3100.0,
+            "min": 3075.0,
+            "p95": 3605.0,
+            "samples": 3,
+            "stdev": 299.040131086
+          },
+          "p99_change_vs_none_percent": 9.727365,
+          "throughput_change_vs_none_percent": 0.000286,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000795,
+            "max": 160.017065223,
+            "mean": 160.01562415,
+            "median": 160.015152173,
+            "min": 160.014655056,
+            "p95": 160.017065223,
+            "samples": 3,
+            "stdev": 0.001272516
+          }
+        }
+      },
+      "nodes": {
+        "homelab-01": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 5.383166,
+            "max": 0.693601717,
+            "mean": 0.653228767,
+            "median": 0.636790988,
+            "min": 0.629293596,
+            "p95": 0.693601717,
+            "samples": 3,
+            "stdev": 0.035164386
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.358706,
+            "max": 14285156352.0,
+            "mean": 14239574243.555555,
+            "median": 14249197568.0,
+            "min": 14184368810.666666,
+            "p95": 14285156352.0,
+            "samples": 3,
+            "stdev": 51078257.62520596
+          }
+        },
+        "homelab-02": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 0.959289,
+            "max": 0.775611485,
+            "mean": 0.768540596,
+            "median": 0.769110763,
+            "min": 0.76089954,
+            "p95": 0.775611485,
+            "samples": 3,
+            "stdev": 0.007372527
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.378355,
+            "max": 1393143808.0,
+            "mean": 1387250574.2222223,
+            "median": 1385529344.0,
+            "min": 1383078570.6666667,
+            "p95": 1393143808.0,
+            "samples": 3,
+            "stdev": 5248735.633702637
+          }
+        }
+      },
+      "runs": [
+        "e-navigator-profile-r1",
+        "e-navigator-profile-r2",
+        "e-navigator-profile-r3"
+      ],
+      "signal_summary": {
+        "hard_loss_total": 0.0,
+        "per_signal_family": {
+          "metrics": {
+            "enqueued": 0.0,
+            "hard_loss_total": 0.0,
+            "sent": 0.0
+          },
+          "profiles": {
+            "enqueued": 567.0,
+            "hard_loss_total": 0.0,
+            "sent": 567.0
+          },
+          "traces": {
+            "enqueued": 68622.0,
+            "hard_loss_total": 0.0,
+            "sent": 68622.0
+          }
+        },
+        "profile_samples_decoded": 567.0,
+        "profile_signals_sent": 567.0,
+        "source_samples_decoded": 110544.0,
+        "source_signals_sent": 69189.0
+      }
+    },
+    "e-navigator-redis": {
+      "agent": {
+        "cpu_cores": {
+          "coefficient_of_variation_percent": 2.134649,
+          "max": 0.07287518,
+          "mean": 0.071933053,
+          "median": 0.072762802,
+          "min": 0.070161177,
+          "p95": 0.07287518,
+          "samples": 3,
+          "stdev": 0.001535518
+        },
+        "rss_bytes": {
+          "coefficient_of_variation_percent": 1.66038,
+          "max": 22170282.666666668,
+          "mean": 21759317.333333332,
+          "median": 21615957.333333332,
+          "min": 21491712.0,
+          "p95": 22170282.666666668,
+          "samples": 3,
+          "stdev": 361287.426594272
+        }
+      },
+      "families": {
+        "grpc": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.684483,
+            "max": 3147.0,
+            "mean": 3087.0,
+            "median": 3059.0,
+            "min": 3055.0,
+            "p95": 3147.0,
+            "samples": 3,
+            "stdev": 52.0
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 2.67651,
+            "max": 4508.0,
+            "mean": 4373.333333333,
+            "median": 4316.0,
+            "min": 4296.0,
+            "p95": 4508.0,
+            "samples": 3,
+            "stdev": 117.052694686
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 2.32306,
+            "max": 6099.0,
+            "mean": 6005.333333333,
+            "median": 6072.0,
+            "min": 5845.0,
+            "p95": 6099.0,
+            "samples": 3,
+            "stdev": 139.507466945
+          },
+          "p99_change_vs_none_percent": 4.198959,
+          "throughput_change_vs_none_percent": 9.8e-05,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001236,
+            "max": 80.008236645,
+            "mean": 80.007661037,
+            "median": 80.008227042,
+            "min": 80.006519424,
+            "p95": 80.008236645,
+            "samples": 3,
+            "stdev": 0.000988678
+          }
+        },
+        "http": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.435189,
+            "max": 1866.0,
+            "mean": 1857.333333333,
+            "median": 1856.0,
+            "min": 1850.0,
+            "p95": 1866.0,
+            "samples": 3,
+            "stdev": 8.082903769
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 3.540973,
+            "max": 6441.0,
+            "mean": 6301.333333333,
+            "median": 6419.0,
+            "min": 6044.0,
+            "p95": 6441.0,
+            "samples": 3,
+            "stdev": 223.128513044
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 0.362405,
+            "max": 7039.0,
+            "mean": 7009.666666667,
+            "median": 6995.0,
+            "min": 6995.0,
+            "p95": 7039.0,
+            "samples": 3,
+            "stdev": 25.403411844
+          },
+          "p99_change_vs_none_percent": 0.545063,
+          "throughput_change_vs_none_percent": 9.8e-05,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001236,
+            "max": 100.010295807,
+            "mean": 100.009576296,
+            "median": 100.010283802,
+            "min": 100.00814928,
+            "p95": 100.010295807,
+            "samples": 3,
+            "stdev": 0.001235847
+          }
+        },
+        "postgres": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.259685,
+            "max": 1309.0,
+            "mean": 1290.666666667,
+            "median": 1285.0,
+            "min": 1278.0,
+            "p95": 1309.0,
+            "samples": 3,
+            "stdev": 16.258331198
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 4.788187,
+            "max": 2553.0,
+            "mean": 2434.333333333,
+            "median": 2430.0,
+            "min": 2320.0,
+            "p95": 2553.0,
+            "samples": 3,
+            "stdev": 116.560427819
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 8.31441,
+            "max": 4219.0,
+            "mean": 3849.666666667,
+            "median": 3677.0,
+            "min": 3653.0,
+            "p95": 4219.0,
+            "samples": 3,
+            "stdev": 320.077074051
+          },
+          "p99_change_vs_none_percent": -5.359338,
+          "throughput_change_vs_none_percent": 9.8e-05,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001236,
+            "max": 50.005147903,
+            "mean": 50.004788148,
+            "median": 50.005141901,
+            "min": 50.00407464,
+            "p95": 50.005147903,
+            "samples": 3,
+            "stdev": 0.000617924
+          }
+        },
+        "python_cpu": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.730561,
+            "max": 31948.0,
+            "mean": 31335.333333333,
+            "median": 31141.0,
+            "min": 30917.0,
+            "p95": 31948.0,
+            "samples": 3,
+            "stdev": 542.276989493
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 1.927328,
+            "max": 47108.0,
+            "mean": 46477.333333333,
+            "median": 46872.0,
+            "min": 45452.0,
+            "p95": 47108.0,
+            "samples": 3,
+            "stdev": 895.770804019
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 1.264812,
+            "max": 52693.0,
+            "mean": 52001.0,
+            "median": 51926.0,
+            "min": 51384.0,
+            "p95": 52693.0,
+            "samples": 3,
+            "stdev": 657.714983865
+          },
+          "p99_change_vs_none_percent": -2.358987,
+          "throughput_change_vs_none_percent": 9.8e-05,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001236,
+            "max": 8.000823665,
+            "mean": 8.000766104,
+            "median": 8.000822704,
+            "min": 8.000651942,
+            "p95": 8.000823665,
+            "samples": 3,
+            "stdev": 9.8868e-05
+          }
+        },
+        "redis": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.768052,
+            "max": 1116.0,
+            "mean": 1107.333333333,
+            "median": 1107.0,
+            "min": 1099.0,
+            "p95": 1116.0,
+            "samples": 3,
+            "stdev": 8.504900548
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 2.88708,
+            "max": 2054.0,
+            "mean": 1994.666666667,
+            "median": 1991.0,
+            "min": 1939.0,
+            "p95": 2054.0,
+            "samples": 3,
+            "stdev": 57.587614409
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 6.845108,
+            "max": 3305.0,
+            "mean": 3080.0,
+            "median": 3048.0,
+            "min": 2887.0,
+            "p95": 3305.0,
+            "samples": 3,
+            "stdev": 210.82931485
+          },
+          "p99_change_vs_none_percent": 3.668798,
+          "throughput_change_vs_none_percent": 9.8e-05,
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.001236,
+            "max": 160.016473291,
+            "mean": 160.015322074,
+            "median": 160.016454083,
+            "min": 160.013038847,
+            "p95": 160.016473291,
+            "samples": 3,
+            "stdev": 0.001977355
+          }
+        }
+      },
+      "nodes": {
+        "homelab-01": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 5.974678,
+            "max": 0.677249846,
+            "mean": 0.63865122,
+            "median": 0.637752816,
+            "min": 0.600950998,
+            "p95": 0.677249846,
+            "samples": 3,
+            "stdev": 0.038157357
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.11278,
+            "max": 14274696533.333334,
+            "mean": 14259233223.111113,
+            "median": 14260405589.333334,
+            "min": 14242597546.666666,
+            "p95": 14274696533.333334,
+            "samples": 3,
+            "stdev": 16081575.425809126
+          }
+        },
+        "homelab-02": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 0.379961,
+            "max": 0.746754594,
+            "mean": 0.74465699,
+            "median": 0.745777424,
+            "min": 0.741438951,
+            "p95": 0.746754594,
+            "samples": 3,
+            "stdev": 0.002829407
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.838916,
+            "max": 1211200853.3333333,
+            "mean": 1200267719.111111,
+            "median": 1198227456.0,
+            "min": 1191374848.0,
+            "p95": 1211200853.3333333,
+            "samples": 3,
+            "stdev": 10069241.631883712
+          }
+        }
+      },
+      "runs": [
+        "e-navigator-redis-r1",
+        "e-navigator-redis-r2",
+        "e-navigator-redis-r3"
+      ],
+      "signal_summary": {
+        "hard_loss_total": 0.0,
+        "per_signal_family": {
+          "metrics": {
+            "enqueued": 0.0,
+            "hard_loss_total": 0.0,
+            "sent": 0.0
+          },
+          "profiles": {
+            "enqueued": 0.0,
+            "hard_loss_total": 0.0,
+            "sent": 0.0
+          },
+          "traces": {
+            "enqueued": 32402.0,
+            "hard_loss_total": 0.0,
+            "sent": 32402.0
+          }
+        },
+        "profile_samples_decoded": 0.0,
+        "profile_signals_sent": 0.0,
+        "source_samples_decoded": 91115.0,
+        "source_signals_sent": 32404.0
+      }
+    },
+    "none": {
+      "agent": null,
+      "families": {
+        "grpc": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.85713,
+            "max": 2878.0,
+            "mean": 2863.333333333,
+            "median": 2877.0,
+            "min": 2835.0,
+            "p95": 2878.0,
+            "samples": 3,
+            "stdev": 24.542480179
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 1.440504,
+            "max": 4153.0,
+            "mean": 4110.666666667,
+            "median": 4136.0,
+            "min": 4043.0,
+            "p95": 4153.0,
+            "samples": 3,
+            "stdev": 59.214300075
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 1.84871,
+            "max": 5868.0,
+            "mean": 5763.333333333,
+            "median": 5767.0,
+            "min": 5655.0,
+            "p95": 5868.0,
+            "samples": 3,
+            "stdev": 106.547329076
+          },
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000391,
+            "max": 80.007942022,
+            "mean": 80.00758288,
+            "median": 80.007432923,
+            "min": 80.007373695,
+            "p95": 80.007942022,
+            "samples": 3,
+            "stdev": 0.000312433
+          }
+        },
+        "http": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.170324,
+            "max": 1797.0,
+            "mean": 1793.666666667,
+            "median": 1793.0,
+            "min": 1791.0,
+            "p95": 1797.0,
+            "samples": 3,
+            "stdev": 3.055050463
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 3.793945,
+            "max": 6443.0,
+            "mean": 6301.0,
+            "median": 6435.0,
+            "min": 6025.0,
+            "p95": 6443.0,
+            "samples": 3,
+            "stdev": 239.056478682
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 0.283025,
+            "max": 6985.0,
+            "mean": 6971.666666667,
+            "median": 6981.0,
+            "min": 6949.0,
+            "p95": 6985.0,
+            "samples": 3,
+            "stdev": 19.731531449
+          },
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000391,
+            "max": 100.009927528,
+            "mean": 100.0094786,
+            "median": 100.009291154,
+            "min": 100.009217118,
+            "p95": 100.009927528,
+            "samples": 3,
+            "stdev": 0.000390541
+          }
+        },
+        "postgres": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 0.451839,
+            "max": 1153.0,
+            "mean": 1150.0,
+            "median": 1153.0,
+            "min": 1144.0,
+            "p95": 1153.0,
+            "samples": 3,
+            "stdev": 5.196152423
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 1.362421,
+            "max": 2314.0,
+            "mean": 2281.666666667,
+            "median": 2279.0,
+            "min": 2252.0,
+            "p95": 2314.0,
+            "samples": 3,
+            "stdev": 31.085902485
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 2.258039,
+            "max": 4172.0,
+            "mean": 4067.666666667,
+            "median": 4032.0,
+            "min": 3999.0,
+            "p95": 4172.0,
+            "samples": 3,
+            "stdev": 91.849514606
+          },
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000391,
+            "max": 50.004963764,
+            "mean": 50.0047393,
+            "median": 50.004645577,
+            "min": 50.004608559,
+            "p95": 50.004963764,
+            "samples": 3,
+            "stdev": 0.000195271
+          }
+        },
+        "python_cpu": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.509943,
+            "max": 30828.0,
+            "mean": 30423.333333333,
+            "median": 30518.0,
+            "min": 29924.0,
+            "p95": 30828.0,
+            "samples": 3,
+            "stdev": 459.374937642
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 0.45964,
+            "max": 48487.0,
+            "mean": 48258.666666667,
+            "median": 48245.0,
+            "min": 48044.0,
+            "p95": 48487.0,
+            "samples": 3,
+            "stdev": 221.815989805
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 1.127773,
+            "max": 53793.0,
+            "mean": 53257.333333333,
+            "median": 53371.0,
+            "min": 52608.0,
+            "p95": 53793.0,
+            "samples": 3,
+            "stdev": 600.621622432
+          },
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000391,
+            "max": 8.000794202,
+            "mean": 8.000758288,
+            "median": 8.000743292,
+            "min": 8.000737369,
+            "p95": 8.000794202,
+            "samples": 3,
+            "stdev": 3.1243e-05
+          }
+        },
+        "redis": {
+          "latency_p50_us": {
+            "coefficient_of_variation_percent": 1.08754,
+            "max": 1021.0,
+            "mean": 1008.666666667,
+            "median": 1005.0,
+            "min": 1000.0,
+            "p95": 1021.0,
+            "samples": 3,
+            "stdev": 10.969655115
+          },
+          "latency_p95_us": {
+            "coefficient_of_variation_percent": 1.054748,
+            "max": 1797.0,
+            "mean": 1784.666666667,
+            "median": 1794.0,
+            "min": 1763.0,
+            "p95": 1797.0,
+            "samples": 3,
+            "stdev": 18.823743871
+          },
+          "latency_p99_us": {
+            "coefficient_of_variation_percent": 7.31742,
+            "max": 3210.0,
+            "mean": 2971.0,
+            "median": 2918.0,
+            "min": 2785.0,
+            "p95": 3210.0,
+            "samples": 3,
+            "stdev": 217.400551977
+          },
+          "throughput_rps": {
+            "coefficient_of_variation_percent": 0.000391,
+            "max": 160.015884044,
+            "mean": 160.01516576,
+            "median": 160.014865847,
+            "min": 160.014747389,
+            "p95": 160.015884044,
+            "samples": 3,
+            "stdev": 0.000624866
+          }
+        }
+      },
+      "nodes": {
+        "homelab-01": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 5.334643,
+            "max": 0.827707872,
+            "mean": 0.795257736,
+            "median": 0.810813963,
+            "min": 0.747251372,
+            "p95": 0.827707872,
+            "samples": 3,
+            "stdev": 0.042424159
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.920007,
+            "max": 14444672341.333334,
+            "mean": 14367736718.222221,
+            "median": 14443432618.666666,
+            "min": 14215105194.666666,
+            "p95": 14444672341.333334,
+            "samples": 3,
+            "stdev": 132184230.20633075
+          }
+        },
+        "homelab-02": {
+          "cpu_cores": {
+            "coefficient_of_variation_percent": 9.812963,
+            "max": 0.757529974,
+            "mean": 0.680567945,
+            "median": 0.646296551,
+            "min": 0.637877311,
+            "p95": 0.757529974,
+            "samples": 3,
+            "stdev": 0.066783877
+          },
+          "memory_bytes": {
+            "coefficient_of_variation_percent": 0.627571,
+            "max": 1170877098.6666667,
+            "mean": 1165647416.888889,
+            "median": 1168777216.0,
+            "min": 1157287936.0,
+            "p95": 1170877098.6666667,
+            "samples": 3,
+            "stdev": 7315262.63043345
+          }
+        }
+      },
+      "runs": [
+        "none-r1",
+        "none-r2",
+        "none-r3"
+      ],
+      "signal_summary": null
+    }
+  },
+  "decision": "PASS",
+  "environment": {
+    "alloy_image": "docker.io/grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308",
+    "beyla_chart_version": "1.16.10",
+    "beyla_image": "docker.io/grafana/beyla@sha256:133b8d66190f21e20365d9972e1621513ea5e44518fb71e1c3e0180c64815566",
+    "cluster": "homelab",
+    "collector_image_ids": {
+      "alloy": "docker.io/grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308",
+      "beyla": "docker.io/grafana/beyla@sha256:133b8d66190f21e20365d9972e1621513ea5e44518fb71e1c3e0180c64815566",
+      "e-navigator": "sha256:f3e543e47b4fee2c906ad61fe1d88c1301644e63e249c3a6a48e6cdbe048db78"
+    },
+    "kernel": "6.6.68",
+    "load_node": "homelab-01",
+    "nodes": {
+      "homelab-01": {
+        "architecture": "amd64",
+        "container_runtime_version": "containerd://1.7.20-k3s1",
+        "kernel_version": "6.6.68",
+        "kubelet_version": "v1.30.4+k3s1"
+      },
+      "homelab-02": {
+        "architecture": "amd64",
+        "container_runtime_version": "containerd://1.7.20-k3s1",
+        "kernel_version": "6.6.68",
+        "kubelet_version": "v1.30.4+k3s1"
+      }
+    },
+    "repetitions": 3,
+    "server_node": "homelab-02",
+    "workload_contract": {
+      "duration_seconds": 45,
+      "families": {
+        "grpc": {
+          "concurrency": 8,
+          "offered_rps": 80
+        },
+        "http": {
+          "concurrency": 8,
+          "offered_rps": 100
+        },
+        "postgres": {
+          "concurrency": 5,
+          "offered_rps": 50
+        },
+        "python_cpu": {
+          "concurrency": 2,
+          "offered_rps": 8
+        },
+        "redis": {
+          "concurrency": 8,
+          "offered_rps": 160
+        }
+      },
+      "warmup_seconds": 15
+    },
+    "workload_image_id": "sha256:d630d323d2387b27627e1b1ded6b93e85296bb28538478182f08cf46a5a18c18"
+  },
+  "final_stack_comparison": {
+    "e_navigator_agent_cpu_change_vs_beyla_alloy_percent": 43.601071,
+    "e_navigator_agent_rss_change_vs_beyla_alloy_percent": 31.903883,
+    "families": {
+      "grpc": {
+        "latency_p50_us": 0.471181,
+        "latency_p95_us": 6.454855,
+        "latency_p99_us": 6.273084,
+        "throughput_rps": 3.9e-05
+      },
+      "http": {
+        "latency_p50_us": 0.09009,
+        "latency_p95_us": 3.281308,
+        "latency_p99_us": -0.232106,
+        "throughput_rps": 3.9e-05
+      },
+      "postgres": {
+        "latency_p50_us": 14.384106,
+        "latency_p95_us": 13.49892,
+        "latency_p99_us": -2.501303,
+        "throughput_rps": 3.9e-05
+      },
+      "python_cpu": {
+        "latency_p50_us": 1.277193,
+        "latency_p95_us": -8.080069,
+        "latency_p99_us": -4.874771,
+        "throughput_rps": 3.9e-05
+      },
+      "redis": {
+        "latency_p50_us": -4.396249,
+        "latency_p95_us": 1.123047,
+        "latency_p99_us": -4.108246,
+        "throughput_rps": 3.9e-05
+      }
+    },
+    "nodes": {
+      "homelab-01": {
+        "cpu_change_percent": 0.531467,
+        "memory_change_percent": 0.075898
+      },
+      "homelab-02": {
+        "cpu_change_percent": 2.333544,
+        "memory_change_percent": -13.989522
+      }
+    }
+  },
+  "run_order": [
+    "none-r1",
+    "beyla-http-r1",
+    "e-navigator-http-r1",
+    "e-navigator-grpc-r1",
+    "beyla-grpc-r1",
+    "beyla-redis-r1",
+    "e-navigator-redis-r1",
+    "e-navigator-postgres-r1",
+    "beyla-postgres-r1",
+    "beyla-profile-r1",
+    "e-navigator-profile-r1",
+    "e-navigator-profile-r2",
+    "beyla-profile-r2",
+    "beyla-postgres-r2",
+    "e-navigator-postgres-r2",
+    "e-navigator-redis-r2",
+    "beyla-redis-r2",
+    "beyla-grpc-r2",
+    "e-navigator-grpc-r2",
+    "e-navigator-http-r2",
+    "beyla-http-r2",
+    "none-r2",
+    "beyla-postgres-r3",
+    "e-navigator-postgres-r3",
+    "beyla-http-r3",
+    "e-navigator-http-r3",
+    "none-r3",
+    "e-navigator-profile-r3",
+    "beyla-profile-r3",
+    "e-navigator-redis-r3",
+    "beyla-redis-r3",
+    "e-navigator-grpc-r3",
+    "beyla-grpc-r3"
+  ],
+  "schema": "e-navigator.head-to-head-proof-analysis.v1"
+}

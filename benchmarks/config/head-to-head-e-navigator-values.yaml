@@ -1,0 +1,26 @@
+fullnameOverride: head-to-head-enav
+
+namespace:
+  create: false
+  name: e-navigator-bench
+
+podLabels:
+  app.kubernetes.io/part-of: e-navigator-head-to-head
+  e-navigator.dev/collector: e-navigator
+  e-navigator.dev/disposable: "true"
+
+nodeSelector:
+  kubernetes.io/hostname: homelab-02
+  kubernetes.io/os: linux
+
+prometheusHttp:
+  enabled: true
+
+health:
+  enabled: true
+
+service:
+  enabled: true
+
+serviceMonitor:
+  enabled: false

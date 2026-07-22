@@ -45,6 +45,11 @@ All notable changes to E-Navigator are documented here. The format follows
   inotify watches, one-slot notification coalescing, overflow-triggered state
   rebuilds, a polling compatibility mode, immediate per-source map wakeups,
   and native residual-window accounting.
+- Add a guarded 33-run homelab head-to-head harness with pinned HTTP, gRPC,
+  Redis, PostgreSQL, and CPU-bound Python workloads; no-agent, Beyla plus
+  Alloy, and E-Navigator conditions; cumulative signal-family stages; bounded
+  analysis; fixed topology and image gates; per-run variance, resource, and
+  loss artifacts; resumable execution; and full cleanup/restore validation.
 
 ### Performance
 
@@ -65,6 +70,12 @@ All notable changes to E-Navigator are documented here. The format follows
   0.487 ms p95 with event-driven discovery, versus 1,148.131 ms median and
   1,216.842 ms p95 with 2-second polling across five counterbalanced homelab
   runs per mode. Keep the result scoped to the Linux 6.6.68 test workload.
+- Record the complete final-stack homelab comparison at 117.353 +/- 6.010
+  millicores and 180.881 +/- 5.079 MiB RSS for E-Navigator, versus 81.721 +/-
+  5.618 millicores and 137.131 +/- 4.680 MiB for Beyla plus Alloy. E-Navigator
+  measured 43.601071% more agent CPU and 31.903883% more agent RSS, so retain a
+  lower-overhead and lower-memory non-claim. All 591,030 measured workload
+  operations succeeded across the 33-run matrix.
 
 ### Compatibility
 

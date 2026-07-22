@@ -57,6 +57,7 @@ operational documentation. Start with the path that matches your goal.
 - [ADR 0011, cgroup v1 capture filter boundary](adr/0011-cgroup-v1-capture-filter-boundary.md)
 - [ADR 0012, reduced privilege on proven modern kernels](adr/0012-reduced-privilege-modern-kernels.md)
 - [ADR 0013, event-driven cgroup discovery](adr/0013-event-driven-cgroup-discovery.md)
+- [ADR 0014, controlled cumulative head-to-head benchmark](adr/0014-controlled-head-to-head-benchmark.md)
 
 ## Source-Of-Truth Rules
 

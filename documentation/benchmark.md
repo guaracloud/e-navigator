@@ -710,3 +710,79 @@ image identity, method, and cleanup state are in the
 
 A focused local Criterion run measured one-slot coalescing of 64 notifications
 at 53.112 to 53.664 ns. That is local hot-path hygiene, not live overhead.
+
+## Full-Stack Head-To-Head Baseline (Homelab, 2026-07-22)
+
+The flagship guarded campaign kept five services active under every condition:
+HTTP at 100 requests/s, gRPC at 80 calls/s, Redis at 160 operations/s,
+PostgreSQL at 50 operations/s, and CPU-bound Python at 8 operations/s. Servers
+and observed collectors ran on `homelab-02`; the fixed-rate load generator and
+opaque OTLP trace sink ran on `homelab-01`. Both nodes were amd64 NixOS 24.05
+on Linux 6.6.68 and k3s v1.30.4.
+
+Three no-agent repetitions and three repetitions for each cumulative signal
+stage of each stack produced 33 accepted runs. Stages added HTTP, gRPC, Redis,
+PostgreSQL, then 10 Hz periodic CPU profiles. Every run used a 15-second
+warmup and a 45-second measurement. Beyla 3.28.0 and Alloy 1.18.0 were pinned
+by image digest; the Beyla 1.16.10 chart archive was pinned by checksum. Local
+E-Navigator and workload images were loaded directly into both homelab nodes
+and never pushed.
+
+Final-stack application values below are means across three repetitions with
+sample standard deviation after `+/-`. Throughput followed the fixed offered
+rate and all operations succeeded, so it is a pacing and correctness check,
+not a capacity result.
+
+| Family | Condition | Throughput/s | p50 us | p95 us | p99 us |
+| --- | --- | ---: | ---: | ---: | ---: |
+| HTTP | no agent | 100.009479 +/- 0.000391 | 1793.667 +/- 3.055 | 6301.000 +/- 239.056 | 6971.667 +/- 19.732 |
+| HTTP | Beyla plus Alloy | 100.009727 +/- 0.000170 | 1850.000 +/- 8.544 | 6257.667 +/- 375.042 | 7037.000 +/- 37.723 |
+| HTTP | E-Navigator | 100.009765 +/- 0.000795 | 1851.667 +/- 12.897 | 6463.000 +/- 24.000 | 7020.667 +/- 20.599 |
+| gRPC | no agent | 80.007583 +/- 0.000312 | 2863.333 +/- 24.542 | 4110.667 +/- 59.214 | 5763.333 +/- 106.547 |
+| gRPC | Beyla plus Alloy | 80.007781 +/- 0.000136 | 3042.000 +/- 64.211 | 4312.000 +/- 121.787 | 5866.333 +/- 203.866 |
+| gRPC | E-Navigator | 80.007812 +/- 0.000636 | 3056.333 +/- 48.563 | 4590.333 +/- 27.025 | 6234.333 +/- 259.278 |
+| Redis | no agent | 160.015166 +/- 0.000625 | 1008.667 +/- 10.970 | 1784.667 +/- 18.824 | 2971.000 +/- 217.401 |
+| Redis | Beyla plus Alloy | 160.015562 +/- 0.000272 | 1137.333 +/- 17.786 | 2048.000 +/- 28.355 | 3399.667 +/- 222.480 |
+| Redis | E-Navigator | 160.015624 +/- 0.001273 | 1087.333 +/- 13.051 | 2071.000 +/- 51.507 | 3260.000 +/- 299.040 |
+| PostgreSQL | no agent | 50.004739 +/- 0.000195 | 1150.000 +/- 5.196 | 2281.667 +/- 31.086 | 4067.667 +/- 91.850 |
+| PostgreSQL | Beyla plus Alloy | 50.004863 +/- 0.000085 | 1258.333 +/- 6.658 | 2469.333 +/- 67.241 | 4477.667 +/- 620.033 |
+| PostgreSQL | E-Navigator | 50.004883 +/- 0.000398 | 1439.333 +/- 16.503 | 2802.667 +/- 43.317 | 4365.667 +/- 401.438 |
+| Python CPU | no agent | 8.000758 +/- 0.000031 | 30423.333 +/- 459.375 | 48258.667 +/- 221.816 | 53257.333 +/- 600.622 |
+| Python CPU | Beyla plus Alloy | 8.000778 +/- 0.000014 | 30875.000 +/- 240.308 | 45560.667 +/- 6748.336 | 53568.333 +/- 1382.483 |
+| Python CPU | E-Navigator | 8.000781 +/- 0.000064 | 31269.333 +/- 110.586 | 41879.333 +/- 4934.424 | 50957.000 +/- 3167.350 |
+
+The cumulative collector resources were:
+
+| Stage | Beyla or Beyla plus Alloy CPU m | E-Navigator CPU m | Beyla or Beyla plus Alloy RSS MiB | E-Navigator RSS MiB |
+| --- | ---: | ---: | ---: | ---: |
+| HTTP | 33.891 +/- 1.735 | 36.768 +/- 1.828 | 24.640 +/- 1.306 | 12.821 +/- 0.436 |
+| plus gRPC | 37.023 +/- 3.356 | 74.540 +/- 3.201 | 28.260 +/- 1.204 | 20.427 +/- 0.539 |
+| plus Redis | 45.019 +/- 0.981 | 71.933 +/- 1.536 | 23.979 +/- 0.459 | 20.751 +/- 0.345 |
+| plus PostgreSQL | 48.768 +/- 1.577 | 103.476 +/- 4.173 | 24.861 +/- 0.696 | 25.125 +/- 0.539 |
+| plus profiles | 81.721 +/- 5.618 | 117.353 +/- 6.010 | 137.131 +/- 4.680 | 180.881 +/- 5.079 |
+
+At the final stage E-Navigator used 43.601071% more agent CPU and 31.903883%
+more agent RSS than Beyla plus Alloy. This rejects a lower-overhead or
+lower-memory claim for the measured workload.
+
+The final E-Navigator runs enqueued and sent 68,622 traces and 567 profiles
+with zero hard-loss increments. Final Beyla application metrics accounted for
+all HTTP, Redis, and PostgreSQL operations, while leaving 17 of 14,400 gRPC
+calls unaccounted. Alloy collected and forwarded 55 profiles with zero drops
+and zero failing sessions, while recording one empty-stack and one
+wrong-text-section diagnostic.
+
+Node-level container CPU and working-set memory were also recorded for every
+stage and repetition. They include unrelated shared-cluster work and are not
+total host utilization. In particular, `homelab-01` no-agent CPU exceeded the
+final agent-arm values, so node totals support variance disclosure, not causal
+agent subtraction.
+
+This is a three-repetition fixed-rate result on one shared cluster. It does not
+prove saturation capacity, production behavior, sustained-load stability,
+backend storage equivalence, total host utilization, or universal latency,
+CPU, memory, and loss behavior. Exact per-run values, all p50/p95/p99 and
+variance fields, node series, signal-family increments, raw representative
+scrapes, image identities, interruption provenance, and cleanup evidence are
+in the
+[`head-to-head proof report`](proof/head-to-head-20260722/report.md).
