@@ -107,6 +107,14 @@ E-Navigator does not currently claim:
   untranslatable pids are symbolized only after a thread-comm identity check
   and otherwise carry raw addresses with accounting. An unrelated process
   sharing pid, tid, and thread comm would evade this check);
+- cgroup v1 or hybrid capture filtering (the in-kernel
+  `bpf_get_current_cgroup_id()` key belongs to the task's default hierarchy,
+  while cgroup v1 can expose multiple controller hierarchies with unrelated
+  inode ids. E-Navigator accepts only a directly mounted unified cgroup v2
+  root. Legacy, hybrid, unreadable, and unrecognized roots are diagnosed with
+  native metrics and force every unknown cgroup to deny before any Aya program
+  attaches. This is a deliberate architecture boundary, not best-effort v1
+  support; see ADR 0011);
 - instant capture-scope changes for newly started workloads (the optional
   `[capture_filter]` cgroup-id capture filter cannot decide a pod that
   userspace has not yet discovered; a new pod's cgroup id is absent from the

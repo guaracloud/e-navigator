@@ -106,7 +106,9 @@
             retransmits, resets, and state transitions, samples and symbolizes
             periodic CPU, scheduler off-CPU, and futex-wait lock profiles, and turns resource, trace, and security observations
             into bounded native E-Navigator signals. An optional capture filter
-            scopes which workloads are probed by Kubernetes namespace and label.
+            scopes which workloads are probed by Kubernetes namespace and label
+            on unified cgroup v2 nodes. Legacy and hybrid layouts force deny
+            before probe attachment instead of guessing a hierarchy.
             Supported kernels use BPF ring buffers with explicit producer-loss
             accounting; a separately built perf-event path remains for older
             kernels and strict diagnostics. BTF-capable kernels also use
@@ -133,7 +135,7 @@
           <article class="capability">
             <span class="capability-kicker">Scope control</span>
             <h3>Namespace and label capture filter</h3>
-            <p>Opt-in cgroup-id filtering probes only the workloads you choose; excluded workloads pay near-zero per-syscall cost.</p>
+            <p>Opt-in cgroup-id filtering probes only the workloads you choose on unified cgroup v2 nodes; unsupported hierarchy modes fail closed with native diagnostics.</p>
           </article>
           <article class="capability">
             <span class="capability-kicker">Kernel transport</span>

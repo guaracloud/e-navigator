@@ -494,6 +494,14 @@ impl NativeTelemetrySource for WorkloadControllerTelemetrySource {
             labels: std::collections::BTreeMap::new(),
             value: value.to_string(),
         };
+        let hierarchy_info = PrometheusMetricLine {
+            name: "e_navigator_capture_filter_cgroup_hierarchy_info".to_string(),
+            labels: std::collections::BTreeMap::from([(
+                "mode".to_string(),
+                snapshot.cgroup_hierarchy_mode.as_str().to_string(),
+            )]),
+            value: "1".to_string(),
+        };
         vec![
             metric(
                 "e_navigator_kubernetes_controller_ready",
@@ -551,6 +559,15 @@ impl NativeTelemetrySource for WorkloadControllerTelemetrySource {
             metric(
                 "e_navigator_capture_filter_unresolved_cgroups",
                 snapshot.unresolved_cgroups,
+            ),
+            hierarchy_info,
+            metric(
+                "e_navigator_capture_filter_cgroup_v2_compatible",
+                u64::from(snapshot.cgroup_hierarchy_mode.capture_filter_compatible()),
+            ),
+            metric(
+                "e_navigator_capture_filter_fail_closed_total",
+                snapshot.capture_filter_fail_closed_total,
             ),
         ]
     }
@@ -685,7 +702,15 @@ mod tests {
             names.contains(&"e_navigator_kubernetes_controller_resource_relist_freshness_seconds")
         );
         assert!(names.contains(&"e_navigator_capture_filter_unresolved_cgroups"));
-        assert!(lines.iter().all(|line| line.labels.is_empty()));
+        assert!(names.contains(&"e_navigator_capture_filter_cgroup_hierarchy_info"));
+        assert!(names.contains(&"e_navigator_capture_filter_cgroup_v2_compatible"));
+        assert!(names.contains(&"e_navigator_capture_filter_fail_closed_total"));
+        assert!(lines.iter().all(|line| {
+            line.labels.is_empty()
+                || (line.name == "e_navigator_capture_filter_cgroup_hierarchy_info"
+                    && line.labels.len() == 1
+                    && line.labels.contains_key("mode"))
+        }));
     }
 
     #[test]

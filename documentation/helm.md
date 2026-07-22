@@ -436,6 +436,10 @@ For the workload controller, alert when
 `e_navigator_kubernetes_controller_watch_failures_total`, and when
 `e_navigator_capture_filter_unresolved_cgroups` remains nonzero. Resource-version
 expiration alone is recoverable; pair it with readiness/freshness before paging.
+Also alert when `e_navigator_capture_filter_cgroup_v2_compatible == 0` or on any
+increase in `e_navigator_capture_filter_fail_closed_total`. The hierarchy info
+metric distinguishes legacy v1, hybrid, unavailable, and not-yet-checked state;
+none is partial coverage when the filter is enabled.
 
 For the source supervisor, alert when a configured
 `e_navigator_source_running{source="..."}` series remains zero while the agent

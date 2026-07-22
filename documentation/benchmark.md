@@ -481,6 +481,24 @@ processes), or production node shapes.
 
 Raw run logs for both A/Bs are retained in the session records for this date.
 
+### Capture filter: cgroup hierarchy fail-closed proof (2026-07-22)
+
+The guarded homelab harness ran the same image and Aya exec source against the
+real unified v2 mount and a legacy `tasks` marker fixture on `homelab-01`. Both
+arms configured unknown cgroups to allow, and a Job made 300 external exec
+attempts after readiness.
+
+| Arm | Detected mode | Compatible | Fail-closed | Decoded/sent | Kernel drops |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Real host root | `unified_v2` | 1 | 0 | 3,135 / 3,135 | 0 |
+| Legacy marker fixture | `legacy_v1` | 0 | 1 | 0 / 0 | 3,012 |
+
+This proves that the unsupported-mode posture is applied before Aya program
+attachment and remains visible in native metrics and kernel accounting. The
+legacy arm is a fixture on a v2 node, not a benchmark or a claim of cgroup v1
+support. Method, image identity, exact metrics, logs, limitations, and cleanup
+are in the [cgroup hierarchy proof](proof/cgroup-hierarchy-20260722/report.md).
+
 ### Capture filter: excluded-workload per-syscall cost (`[capture_filter]`, 2026-07-07)
 
 Workload: identical `redis-benchmark -n 50000 -c 20` against a Redis server, run

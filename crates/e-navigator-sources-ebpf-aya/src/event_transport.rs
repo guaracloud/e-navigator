@@ -119,9 +119,13 @@ mod platform {
                 include_bytes_aligned!(concat!(env!("OUT_DIR"), "/e-navigator-ebpf-programs-perf"))
             }
         };
-        let ebpf = loader
+        let mut ebpf = loader
             .load(bytes)
             .map_err(|err| module_error(module, err))?;
+        // Every Aya source loads through this boundary. Seed the static
+        // capture posture before returning the object so no caller can attach
+        // a global hook while the map still has its zero (disabled) value.
+        crate::capture_filter::seed_capture_filter_control(&mut ebpf, module)?;
 
         info!(
             source = module,

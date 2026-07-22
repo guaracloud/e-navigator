@@ -32,6 +32,10 @@ All notable changes to E-Navigator are documented here. The format follows
   existing HTTP/1 stream path, with connection-generation-safe transitions,
   native protocol counters, property tests, fuzz targets, Criterion coverage,
   and a guarded homelab proof workload.
+- Add bounded cgroup hierarchy detection for the capture filter, with an
+  explicit cgroup v1 and hybrid non-claim, pre-attachment forced deny on
+  unsupported layouts, fixed native diagnostics, and guarded homelab proof of
+  the real v2 and legacy-fixture paths.
 
 ### Performance
 

@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "campaign": "cgroup-hierarchy-boundary",
+  "observed_at_utc": "2026-07-22T06:17:29Z",
+  "git_base_commit": "a328424a9297b71859d4970aeb032fa1c970c3ce",
+  "candidate_image": "docker.io/library/e-navigator:gap6-cgroup-amd64",
+  "candidate_image_digest": "sha256:115e972bb993bf9f3bdc50fcefe437be0083fe152d215cf06ba7937934282bb2",
+  "kubernetes_context": "homelab",
+  "namespace": "e-navigator-bench",
+  "node": {
+    "name": "homelab-01",
+    "os": "NixOS 24.05 (Uakari)",
+    "kernel": "6.6.68",
+    "kubernetes": "v1.30.4+k3s1",
+    "container_runtime": "containerd://1.7.20-k3s1"
+  },
+  "arms": {
+    "host_unified_v2": {
+      "cgroup_root": "hostPath:/sys/fs/cgroup",
+      "hierarchy_mode": "unified_v2",
+      "compatible": 1,
+      "fail_closed_total": 0,
+      "control_word": 1,
+      "aya_exec_initialized": 1,
+      "decoded_samples": 3135,
+      "sent_signals": 3135,
+      "kernel_dropped_total": 0,
+      "transport_loss_total": 0
+    },
+    "legacy_v1_fixture": {
+      "cgroup_root": "configMap file:tasks",
+      "hierarchy_mode": "legacy_v1",
+      "compatible": 0,
+      "fail_closed_total": 1,
+      "configured_unknown_cgroup": "allow",
+      "effective_control_word": 2,
+      "aya_exec_initialized": 1,
+      "decoded_samples": 0,
+      "sent_signals": 0,
+      "kernel_dropped_total": 3012,
+      "transport_loss_total": 0
+    }
+  },
+  "workload": {
+    "kind": "Job",
+    "external_exec_attempts": 300,
+    "image": "busybox:1.36.1"
+  },
+  "claim_limits": [
+    "The legacy arm is a marker fixture mounted on a cgroup v2 homelab node, not a node booted in cgroup v1 mode.",
+    "The evidence proves detection, pre-attach forced deny, native diagnostics, and kernel suppression for the Aya exec source.",
+    "No cgroup v1 capture support or cross-source runtime matrix is claimed."
+  ],
+  "cleanup": {
+    "proof_namespace_resources": 0,
+    "standing_argocd_application": "Synced Healthy",
+    "production_context_touched": false
+  },
+  "raw_artifact_directory": "benchmarks/results/cgroup-hierarchy-proof"
+}
