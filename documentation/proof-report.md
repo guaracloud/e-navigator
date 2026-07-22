@@ -217,6 +217,26 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   removed, and the standing Argo CD application returned Synced/Healthy with
   its original digest-pinned DaemonSet 2/2 Ready.
 
+- Go `crypto/tls` userspace-boundary proof (2026-07-21 local date, homelab k3s
+  v1.30, kernel 6.6.68, amd64, two NixOS nodes). Three counterbalanced pairs
+  compared a clean no-agent arm with an agent enabling only the TLS source and
+  RingBuf transport. A pinned Go 1.26.4 image ran two normal HTTPS replicas and
+  one `-s -w` rejection control. All six clients completed 4,000 of 4,000
+  requests. Every TLS run logged the exact unstripped binary as capture-ready,
+  rejected the stripped binary for its absent static symbol, emitted
+  workload-scoped `/proof` HTTP 200 observations through `source.aya_tls`, and
+  exposed positive Go entry/exit/fd/output counters with zero state-update
+  failures, zero transport loss, and zero RingBuf reservation failures. Every
+  no-agent inventory contained zero benchmark agent pods. This proves the Go
+  1.26.4 Linux/amd64 HTTP/1 slice, not Go 1.24/1.25 runtime compatibility,
+  other architectures/protocols, production, or overhead. The request bursts
+  lasted only 0.105 to 0.265 seconds, so their throughput and resource numbers
+  are recorded but support no performance claim. Curated evidence is in
+  `documentation/proof/go-crypto-tls-20260721/`. Both local-only images,
+  workloads, the benchmark release, loader, and namespace were removed. The
+  standing Argo CD application returned Synced/Healthy with automated
+  prune/self-heal and its original digest-pinned DaemonSet 2/2 Ready.
+
 - Capture-filter verifier-load and OrbStack live scoping proof (2026-07-07,
   OrbStack Docker plus its in-VM Kubernetes v1.34, arm64). The cgroup capture
   filter's in-kernel fast-path check verifier-loaded on every modified program:

@@ -1,0 +1,14 @@
+FROM docker.io/library/golang:1.26.4-bookworm@sha256:5a94593d87a066df5abb02969be911524963f53908292aa5a1a6096fc019012a AS builder
+
+WORKDIR /src
+COPY go.mod main.go ./
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/go-https-proof . \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/go-https-proof-stripped .
+
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:7a2bd171a18bdd39a4729600d0dca5f16e779d41156a6908b4f8a9a289e76d92
+
+COPY --from=builder /out/go-https-proof /usr/local/bin/go-https-proof
+COPY --from=builder /out/go-https-proof-stripped /usr/local/bin/go-https-proof-stripped
+
+EXPOSE 8443
+ENTRYPOINT ["/usr/local/bin/go-https-proof"]

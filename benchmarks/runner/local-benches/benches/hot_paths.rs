@@ -44,8 +44,8 @@ use e_navigator_sinks::{
 use e_navigator_sources_ebpf_aya::{
     bench_inline_sample, bench_perf_sample_into_owned, bench_ring_sample_handoff,
     bench_source_telemetry_summary_checks, cpu_profile::fuzz_decode_raw_cpu_profile_event,
-    exec::fuzz_decode_raw_exec_event, network::fuzz_decode_raw_network_event,
-    protocol::fuzz_decode_raw_protocol_data_event,
+    exec::fuzz_decode_raw_exec_event, fuzz_decode_go_amd64_returns,
+    network::fuzz_decode_raw_network_event, protocol::fuzz_decode_raw_protocol_data_event,
 };
 use e_navigator_sources_host::{
     parse_cpu_stat, parse_diskstats, parse_loadavg, parse_meminfo, parse_process_stat,
@@ -71,6 +71,16 @@ fn bench_reader_sample_handoff(c: &mut Criterion) {
     });
     c.bench_function("event_transport/ring_buffer_borrowed_record", |b| {
         b.iter(|| bench_ring_sample_handoff(black_box(&head)))
+    });
+}
+
+fn bench_go_tls_preflight(c: &mut Criterion) {
+    let mut function = vec![0x90_u8; 4096];
+    for offset in (511..function.len()).step_by(512) {
+        function[offset] = 0xc3;
+    }
+    c.bench_function("go_tls/amd64_return_site_decode_4k", |b| {
+        b.iter(|| fuzz_decode_go_amd64_returns(black_box(&function)))
     });
 }
 
@@ -1541,6 +1551,7 @@ fn bench_capture_filter(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_capture_filter,
+    bench_go_tls_preflight,
     bench_reader_sample_handoff,
     bench_source_telemetry,
     bench_unwind_table,

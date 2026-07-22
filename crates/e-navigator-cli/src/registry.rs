@@ -339,6 +339,42 @@ fn aya_source_telemetry_lines(
                     "e_navigator_ebpf_source_optional_capacity_rejections_total",
                     snapshot.optional_capacity_rejections,
                 ),
+                metric(
+                    "e_navigator_ebpf_source_go_tls_entries_total",
+                    snapshot.go_tls_entries,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_go_tls_exits_total",
+                    snapshot.go_tls_exits,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_go_tls_layout_misses_total",
+                    snapshot.go_tls_layout_misses,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_go_tls_pending_misses_total",
+                    snapshot.go_tls_pending_misses,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_go_tls_state_update_failures_total",
+                    snapshot.go_tls_state_update_failures,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_go_tls_fd_resolutions_total",
+                    snapshot.go_tls_fd_resolutions,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_go_tls_fd_resolution_failures_total",
+                    snapshot.go_tls_fd_resolution_failures,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_go_tls_output_attempts_total",
+                    snapshot.go_tls_output_attempts,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_go_tls_state_replacements_total",
+                    snapshot.go_tls_state_replacements,
+                ),
             ];
             lines.push(PrometheusMetricLine {
                 name: "e_navigator_ebpf_source_event_transport".to_string(),
@@ -656,11 +692,20 @@ mod tests {
                 optional_attachment_failures: 1,
                 optional_rescans: 3,
                 optional_capacity_rejections: 0,
+                go_tls_entries: 8,
+                go_tls_exits: 7,
+                go_tls_layout_misses: 1,
+                go_tls_pending_misses: 1,
+                go_tls_state_update_failures: 0,
+                go_tls_fd_resolutions: 7,
+                go_tls_fd_resolution_failures: 1,
+                go_tls_output_attempts: 9,
+                go_tls_state_replacements: 0,
             }]
             .into_iter(),
         );
 
-        assert_eq!(lines.len(), 20);
+        assert_eq!(lines.len(), 29);
         assert!(
             lines.iter().all(
                 |line| line.labels.get("source").map(String::as_str) == Some("source.aya_exec")
@@ -689,6 +734,9 @@ mod tests {
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_optional_probe_attachments_total"
                 && line.value == "14"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_go_tls_fd_resolutions_total" && line.value == "7"
         }));
     }
 

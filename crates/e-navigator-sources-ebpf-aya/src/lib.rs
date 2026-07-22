@@ -15,6 +15,8 @@ mod ebpf_capture_policy;
 mod ebpf_maps;
 mod event_transport;
 pub mod exec;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+mod go_tls;
 pub mod http;
 mod kernel_hook;
 pub mod network;
@@ -38,6 +40,9 @@ mod source_telemetry;
 pub use source_telemetry::bench_source_telemetry_summary_checks;
 pub use source_telemetry::{SourceTelemetrySnapshot, source_telemetry_snapshots};
 pub mod tls;
+
+#[cfg(feature = "fuzzing")]
+pub use go_tls::{fuzz_decode_go_amd64_returns, fuzz_parse_go_build_info};
 
 pub use cpu_profile::AyaCpuProfileSource;
 pub use dns::AyaDnsSource;

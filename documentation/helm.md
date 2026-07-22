@@ -440,8 +440,10 @@ it is separate from corrupt or undecodable input. Use the bounded
 coverage. Any increase in unsupported targets, attachment failures, or capacity
 rejections is a blind-spot signal. TLS candidates are accepted only for the
 documented OpenSSL 1.1.1/3 and GnuTLS ABI 30 surfaces after architecture and
-complete-export preflight; an unknown or incomplete library is rejected rather
-than partially attached.
+complete-export preflight, or for unstripped Linux/amd64 Go 1.24 through 1.26
+executables after exact build-info, symbol, function-bound, and return-site
+preflight. An unknown or incomplete library or Go executable is rejected
+rather than partially attached.
 
 When the workload capture filter is enabled, the same namespace, label,
 process, and container policy is applied to host process and cgroup resource

@@ -1,0 +1,159 @@
+{
+  "schema": "e-navigator.go-tls-proof.v1",
+  "aggregate": {
+    "correctness_gate_passed": true,
+    "no_agent_inventory_clean": true,
+    "none": {
+      "runs": 3,
+      "throughput_requests_per_second": {
+        "mean": 34732.431229,
+        "stdev": 4819.679332,
+        "min": 29203.297184,
+        "max": 38045.465568
+      },
+      "elapsed_seconds": {
+        "mean": 0.116789,
+        "stdev": 0.017548,
+        "min": 0.105137,
+        "max": 0.136971
+      },
+      "agent_resource_samples": 0
+    },
+    "tls": {
+      "runs": 3,
+      "throughput_requests_per_second": {
+        "mean": 15475.406014,
+        "stdev": 374.296695,
+        "min": 15069.413051,
+        "max": 15806.758645
+      },
+      "elapsed_seconds": {
+        "mean": 0.258576,
+        "stdev": 0.006299,
+        "min": 0.253056,
+        "max": 0.265438
+      },
+      "agent_cpu_m_run_mean": {
+        "mean": 238.708333,
+        "stdev": 21.928268
+      },
+      "agent_rss_mib_run_mean": {
+        "mean": 116.861111,
+        "stdev": 10.515888
+      }
+    },
+    "tls_vs_no_agent_throughput_delta_percent": -55.443931,
+    "performance_claim_supported": false,
+    "performance_nonclaim_reason": "The fixed request bursts lasted 0.105 to 0.265 seconds on a shared cluster and do not constitute a controlled sustained overhead benchmark."
+  },
+  "runs": [
+    {
+      "mode": "none",
+      "repetition": 1,
+      "requests": 4000,
+      "succeeded": 4000,
+      "failed": 0,
+      "elapsed_seconds": 0.136970835,
+      "throughput_requests_per_second": 29203.297184,
+      "agent_samples": 0
+    },
+    {
+      "mode": "none",
+      "repetition": 2,
+      "requests": 4000,
+      "succeeded": 4000,
+      "failed": 0,
+      "elapsed_seconds": 0.108258702,
+      "throughput_requests_per_second": 36948.530937,
+      "agent_samples": 0
+    },
+    {
+      "mode": "none",
+      "repetition": 3,
+      "requests": 4000,
+      "succeeded": 4000,
+      "failed": 0,
+      "elapsed_seconds": 0.105137365,
+      "throughput_requests_per_second": 38045.465568,
+      "agent_samples": 0
+    },
+    {
+      "mode": "tls",
+      "repetition": 1,
+      "requests": 4000,
+      "succeeded": 4000,
+      "failed": 0,
+      "elapsed_seconds": 0.253056309,
+      "throughput_requests_per_second": 15806.758645,
+      "agent_samples": 8,
+      "agent_cpu_m_mean": 249.25,
+      "agent_rss_mib_mean": 117.875,
+      "capture_ready_go_1_26_4_log_count": 3,
+      "stripped_fail_closed_log_count": 1,
+      "http_status_200_observations": 7971,
+      "go_tls_entries_total": 9779,
+      "go_tls_exits_total": 9770,
+      "go_tls_fd_resolutions_total": 5718,
+      "go_tls_fd_resolution_failures_total": 7783,
+      "go_tls_output_attempts_total": 3798,
+      "go_tls_pending_misses_total": 14,
+      "go_tls_state_replacements_total": 1,
+      "go_tls_state_update_failures_total": 0,
+      "optional_attachment_failures_total": 0,
+      "lost_transport_events_total": 0,
+      "ring_buffer_reservation_failures_total": 0
+    },
+    {
+      "mode": "tls",
+      "repetition": 2,
+      "requests": 4000,
+      "succeeded": 4000,
+      "failed": 0,
+      "elapsed_seconds": 0.25723396,
+      "throughput_requests_per_second": 15550.046347,
+      "agent_samples": 6,
+      "agent_cpu_m_mean": 213.5,
+      "agent_rss_mib_mean": 126.833333,
+      "capture_ready_go_1_26_4_log_count": 1,
+      "stripped_fail_closed_log_count": 1,
+      "http_status_200_observations": 1277,
+      "go_tls_entries_total": 7015,
+      "go_tls_exits_total": 7006,
+      "go_tls_fd_resolutions_total": 3954,
+      "go_tls_fd_resolution_failures_total": 5844,
+      "go_tls_output_attempts_total": 2635,
+      "go_tls_pending_misses_total": 15,
+      "go_tls_state_replacements_total": 0,
+      "go_tls_state_update_failures_total": 0,
+      "optional_attachment_failures_total": 0,
+      "lost_transport_events_total": 0,
+      "ring_buffer_reservation_failures_total": 0
+    },
+    {
+      "mode": "tls",
+      "repetition": 3,
+      "requests": 4000,
+      "succeeded": 4000,
+      "failed": 0,
+      "elapsed_seconds": 0.265438341,
+      "throughput_requests_per_second": 15069.413051,
+      "agent_samples": 8,
+      "agent_cpu_m_mean": 253.375,
+      "agent_rss_mib_mean": 105.875,
+      "capture_ready_go_1_26_4_log_count": 1,
+      "stripped_fail_closed_log_count": 1,
+      "http_status_200_observations": 1566,
+      "go_tls_entries_total": 8695,
+      "go_tls_exits_total": 8686,
+      "go_tls_fd_resolutions_total": 4812,
+      "go_tls_fd_resolution_failures_total": 7425,
+      "go_tls_output_attempts_total": 3201,
+      "go_tls_pending_misses_total": 10,
+      "go_tls_state_replacements_total": 1,
+      "go_tls_state_update_failures_total": 0,
+      "optional_attachment_failures_total": 0,
+      "lost_transport_events_total": 0,
+      "ring_buffer_reservation_failures_total": 0
+    }
+  ]
+}

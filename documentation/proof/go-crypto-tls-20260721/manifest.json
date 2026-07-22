@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "run_id": "go-crypto-tls-20260721",
+  "decision": "support-version-gated-go-crypto-tls-on-linux-amd64",
+  "proof_level": "homelab",
+  "started_at_utc": "2026-07-22T01:30:18Z",
+  "ended_at_utc": "2026-07-22T01:36:34Z",
+  "repository": {
+    "branch": "codex/ring-buffer-transport",
+    "base_commit": "ac35c889f4a601a99afaa1e6976b983aed74eae4",
+    "pushed": false,
+    "released": false
+  },
+  "cluster": {
+    "context": "homelab",
+    "server": "https://192.168.50.132:6443",
+    "kubernetes": "v1.30.4+k3s1",
+    "nodes": ["homelab-01", "homelab-02"],
+    "os": "NixOS 24.05",
+    "architecture": "linux/amd64",
+    "kernel": "6.6.68",
+    "runtime": "containerd 1.7.20-k3s1"
+  },
+  "agent_image": {
+    "reference": "docker.io/library/e-navigator:gap3-20260721",
+    "manifest_sha256": "240ceab0ebe67e0492ff0c21d87ab84500f54535b8a8e807c3807c842f1e721b",
+    "distribution": "loaded directly into both homelab containerd stores; never pushed"
+  },
+  "workload_image": {
+    "reference": "docker.io/library/e-navigator-go-tls:gap3-20260721",
+    "manifest_sha256": "296a5a72fcccccb4b33eba9397cd353b2e34afbae87d16ea7851f48917131fb3",
+    "go_version": "go1.26.4",
+    "distribution": "loaded directly into both homelab containerd stores; never pushed"
+  },
+  "method": {
+    "arms": ["no benchmark agent", "Go TLS source"],
+    "orders": [["none", "tls"], ["tls", "none"], ["none", "tls"]],
+    "repetitions_per_arm": 3,
+    "requests_per_run": 4000,
+    "concurrency": 16,
+    "warmup_seconds": 20,
+    "event_transport": "ring_buffer",
+    "enabled_aya_sources": ["tls"],
+    "workloads": ["unstripped Go HTTPS", "stripped Go HTTPS rejection control"]
+  },
+  "results": {
+    "correctness_gate_passed": true,
+    "all_requests_succeeded": true,
+    "no_agent_inventory_clean": true,
+    "go_1_26_4_capture_ready_all_tls_runs": true,
+    "stripped_binary_rejected_all_tls_runs": true,
+    "workload_http_200_observed_all_tls_runs": true,
+    "go_tls_state_update_failures_observed": false,
+    "transport_loss_observed": false,
+    "performance_claim_supported": false,
+    "full_quality_passed": true
+  },
+  "cleanup": {
+    "benchmark_release_removed": true,
+    "benchmark_workloads_removed": true,
+    "standing_argocd_application_restored": true,
+    "standing_daemonset_ready": true,
+    "imported_images_removed": true,
+    "benchmark_namespace_removed": true,
+    "production_context_touched": false
+  },
+  "artifacts": [
+    "manifest.json",
+    "report.md",
+    "representative-signal.json",
+    "runs.json",
+    "SHA256SUMS"
+  ]
+}

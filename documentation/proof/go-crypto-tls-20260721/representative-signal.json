@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "source": "source.aya_tls",
+  "kind": "protocol_request_observation",
+  "host": "homelab-01",
+  "payload": {
+    "protocol": "http",
+    "role": "server",
+    "service_name": "go-https-proof",
+    "process": {
+      "command": "go-https-proof",
+      "uid": 65532
+    },
+    "kubernetes": {
+      "namespace": "e-navigator-bench",
+      "container_name": "server",
+      "node_name": "homelab-01"
+    },
+    "attributes": [
+      {"key": "http.request.method", "value": "GET"},
+      {"key": "url.path", "value": "/proof"},
+      {"key": "server.port", "value": "8443"},
+      {"key": "http.response.status_code", "value": "200"}
+    ]
+  },
+  "curation": "Volatile pid, cgroup, container, pod, peer, and timestamp fields were omitted from the captured signal."
+}

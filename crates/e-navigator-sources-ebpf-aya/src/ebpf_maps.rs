@@ -21,7 +21,7 @@ pub(crate) enum SourceMapProfile {
     CpuProfile,
 }
 
-const CAPACITY_MAPS: [&str; 18] = [
+const CAPACITY_MAPS: [&str; 20] = [
     "UNWIND_ROWS",
     "UNWIND_MODULES",
     "UNWIND_PROC_MAPPINGS",
@@ -40,6 +40,8 @@ const CAPACITY_MAPS: [&str; 18] = [
     "TLS_HANDLE_FDS",
     "PENDING_TLS_SET_FD",
     "PENDING_TLS_IO",
+    "GO_TLS_PROCESS_LAYOUTS",
+    "PENDING_GO_TLS_IO",
 ];
 
 const EVENT_MAPS: [&str; 9] = [
@@ -153,6 +155,8 @@ fn retains_map(profile: SourceMapProfile, name: &str) -> bool {
                 | "TLS_HANDLE_FDS"
                 | "PENDING_TLS_SET_FD"
                 | "PENDING_TLS_IO"
+                | "GO_TLS_PROCESS_LAYOUTS"
+                | "PENDING_GO_TLS_IO"
         ),
         SourceMapProfile::CpuProfile => matches!(
             name,
@@ -208,6 +212,8 @@ mod tests {
     #[test]
     fn tls_keeps_library_and_socket_state_but_not_cleartext_pending_reads() {
         assert!(retains_map(SourceMapProfile::Tls, "TLS_HANDLE_FDS"));
+        assert!(retains_map(SourceMapProfile::Tls, "GO_TLS_PROCESS_LAYOUTS"));
+        assert!(retains_map(SourceMapProfile::Tls, "PENDING_GO_TLS_IO"));
         assert!(retains_map(SourceMapProfile::Tls, "PENDING_ACCEPTS"));
         assert!(!retains_map(SourceMapProfile::Tls, "PENDING_HTTP_READS"));
         assert!(!retains_map(

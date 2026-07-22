@@ -140,7 +140,7 @@ mod platform {
     use async_trait::async_trait;
     use aya::{
         Ebpf,
-        maps::{Array as AyaArray, HashMap as AyaHashMap, MapData},
+        maps::{Array as AyaArray, HashMap as AyaHashMap, MapData, PerCpuArray},
         programs::{TracePoint, UProbe, uprobe::UProbeLinkId, uprobe::UProbeScope},
         util::online_cpus,
     };
@@ -371,15 +371,27 @@ mod platform {
 
             load_uprobe_programs(&mut ebpf, OPENSSL_BINDINGS);
             load_uprobe_programs(&mut ebpf, GNUTLS_BINDINGS);
+            let mut go_tls_runtime = match crate::go_tls::GoTlsRuntime::initialize(&mut ebpf) {
+                Ok(runtime) => Some(runtime),
+                Err(reason) => {
+                    telemetry.record_optional_attachment_failure();
+                    warn!(
+                        source = "source.aya_tls",
+                        reason, "Go crypto/tls probes are disabled fail-closed"
+                    );
+                    None
+                }
+            };
             let mut seen_libraries: BTreeSet<(u64, u64)> = BTreeSet::new();
             let mut terminal_libraries: BTreeSet<(u64, u64)> = BTreeSet::new();
             let mut warning_budget = super::TLS_ATTACHMENT_WARNING_LIMIT;
             warn!(
                 source = "source.aya_tls",
                 "TLS plaintext capture is limited to dynamically linked OpenSSL 1.1.1/3.x and \
-                 GnuTLS ABI 30 using standard socket descriptors; Go crypto/tls, rustls, \
-                 statically bundled Node TLS, JVM JSSE, BoringSSL, custom BIOs, and custom \
-                 GnuTLS transports are not captured"
+                 GnuTLS ABI 30 using standard socket descriptors, plus unstripped linux/x86_64 \
+                 Go 1.24-1.26 crypto/tls binaries using netFD sockets; rustls, statically \
+                 bundled Node TLS, JVM JSSE, BoringSSL, custom BIOs, custom GnuTLS transports, \
+                 and unsupported Go ABIs are not captured"
             );
             let libraries = discover_tls_libraries(&self.procfs_root);
             telemetry.record_optional_rescan();
@@ -396,11 +408,15 @@ mod platform {
                 &telemetry,
                 &mut warning_budget,
             );
-            if attachment.ready_libraries == 0 {
+            let go_attachment = go_tls_runtime
+                .as_mut()
+                .map(|runtime| runtime.rescan(&mut ebpf, &self.procfs_root, &telemetry))
+                .unwrap_or_default();
+            if attachment.ready_libraries == 0 && go_attachment.ready_executables == 0 {
                 warn!(
                     source = "source.aya_tls",
-                    "no complete, supported TLS library attachment is ready yet; supported \
-                     libraries are rescanned periodically"
+                    "no complete, supported TLS target attachment is ready yet; supported \
+                     libraries and Go executables are rescanned periodically"
                 );
             }
             info!(
@@ -411,7 +427,15 @@ mod platform {
                 probes_attached = attachment.probes_attached,
                 skipped_processes = libraries.skipped_processes,
                 skipped_libraries = libraries.skipped_libraries,
-                "completed TLS library discovery"
+                go_ready_executables = go_attachment.ready_executables,
+                go_unsupported_executables = go_attachment.unsupported_executables,
+                go_attachment_failures = go_attachment.attachment_failures,
+                go_probes_attached = go_attachment.probes_attached,
+                go_configured_processes = go_attachment.configured_processes,
+                go_capacity_rejections = go_attachment.capacity_rejections,
+                go_skipped_processes = go_attachment.skipped_processes,
+                go_skipped_executables = go_attachment.skipped_executables,
+                "completed TLS target discovery"
             );
             if let Some(handle) =
                 crate::capture_filter::attach_capture_filter(&mut ebpf, "source.aya_tls", {
@@ -438,6 +462,11 @@ mod platform {
             )? {
                 reader_handles.push(handle);
             }
+            reader_handles.push(spawn_go_tls_counter_reader(
+                &mut ebpf,
+                shutdown.clone(),
+                telemetry.clone(),
+            )?);
 
             let (sample_tx, mut sample_rx) = mpsc::channel::<crate::protocol::ProtocolPerfMessage>(
                 super::TLS_RAW_SAMPLE_CHANNEL_CAPACITY,
@@ -685,7 +714,12 @@ mod platform {
                             &telemetry,
                             &mut warning_budget,
                         );
+                        let go_attachment = go_tls_runtime
+                            .as_mut()
+                            .map(|runtime| runtime.rescan(&mut ebpf, &self.procfs_root, &telemetry))
+                            .unwrap_or_default();
                         if !attachment.is_empty()
+                            || !go_attachment.is_empty()
                             || libraries.skipped_processes > 0
                             || libraries.skipped_libraries > 0
                         {
@@ -697,7 +731,15 @@ mod platform {
                                 probes_attached = attachment.probes_attached,
                                 skipped_processes = libraries.skipped_processes,
                                 skipped_libraries = libraries.skipped_libraries,
-                                "completed periodic TLS library discovery"
+                                go_ready_executables = go_attachment.ready_executables,
+                                go_unsupported_executables = go_attachment.unsupported_executables,
+                                go_attachment_failures = go_attachment.attachment_failures,
+                                go_probes_attached = go_attachment.probes_attached,
+                                go_configured_processes = go_attachment.configured_processes,
+                                go_capacity_rejections = go_attachment.capacity_rejections,
+                                go_skipped_processes = go_attachment.skipped_processes,
+                                go_skipped_executables = go_attachment.skipped_executables,
+                                "completed periodic TLS target discovery"
                             );
                         }
                     }
@@ -1133,6 +1175,68 @@ mod platform {
             ports.insert(port, 1, 0).map_err(module_error)?;
         }
         Ok(())
+    }
+
+    fn spawn_go_tls_counter_reader(
+        ebpf: &mut Ebpf,
+        shutdown: ReaderShutdown,
+        telemetry: Arc<SourceTelemetry>,
+    ) -> CoreResult<JoinHandle<()>> {
+        const COUNTER_COUNT: usize = 9;
+        let counters = PerCpuArray::try_from(
+            ebpf.take_map("GO_TLS_COUNTERS")
+                .ok_or_else(|| module_message("missing GO_TLS_COUNTERS map"))?,
+        )
+        .map_err(module_error)?;
+        Ok(tokio::task::spawn_blocking(move || {
+            let mut previous = [0_u64; COUNTER_COUNT];
+            loop {
+                if shutdown.is_stopped() {
+                    record_go_tls_counter_delta(&counters, &telemetry, &mut previous);
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                record_go_tls_counter_delta(&counters, &telemetry, &mut previous);
+            }
+        }))
+    }
+
+    fn record_go_tls_counter_delta(
+        counters: &PerCpuArray<MapData, u64>,
+        telemetry: &SourceTelemetry,
+        previous: &mut [u64; 9],
+    ) {
+        let mut current = [0_u64; 9];
+        for (index, total) in current.iter_mut().enumerate() {
+            let Ok(index) = u32::try_from(index) else {
+                return;
+            };
+            let values = match counters.get(&index, 0) {
+                Ok(values) => values,
+                Err(error) => {
+                    warn!(
+                        source = "source.aya_tls",
+                        counter_index = index,
+                        error = %error,
+                        "failed to read Go TLS coverage counter"
+                    );
+                    return;
+                }
+            };
+            *total = values
+                .iter()
+                .fold(0_u64, |sum, value| sum.wrapping_add(*value));
+        }
+        let mut deltas = [0_u64; 9];
+        for ((delta, current), previous) in deltas.iter_mut().zip(current).zip(previous.iter_mut())
+        {
+            *delta = current.wrapping_sub(*previous);
+            *previous = current;
+        }
+        telemetry.record_go_tls_counter_deltas(deltas);
+        if deltas.iter().any(|delta| *delta != 0) {
+            telemetry.maybe_log_summary();
+        }
     }
 
     fn populate_capture_limit(ebpf: &mut Ebpf, config: &TlsSourceConfig) -> CoreResult<()> {

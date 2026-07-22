@@ -45,11 +45,14 @@ E-Navigator does not currently claim:
 - on-the-wire TLS decryption (the claimed `source.aya_tls` surface is
   userspace library-boundary plaintext interception for dynamically linked
   OpenSSL 1.1.1/3 with the complete required read/write/fd-association export
-  set and GnuTLS ABI 30 using the standard integer socket transport; candidate
-  images are version-gated, architecture-checked, export-preflighted, and
-  transactionally attached, with 15-second rescans and native coverage
-  counters; BoringSSL, Go `crypto/tls`, rustls, custom BIO/custom transport,
-  and statically bundled Node/JVM TLS fail closed and are not claimed);
+  set, GnuTLS ABI 30 using the standard integer socket transport, and
+  unstripped Linux/amd64 Go 1.24 through 1.26 ELF executables with exact static
+  `crypto/tls` and `netFD` symbols; candidates are bounded, version-gated,
+  architecture-checked, preflighted, and transactionally attached, with
+  15-second rescans and native coverage counters; stripped Go binaries,
+  non-amd64 Go ABIs, unknown versions, BoringSSL, rustls, custom BIO/custom
+  transport, and statically bundled Node/JVM TLS fail closed and are not
+  claimed; only Go 1.26.4 has current homelab runtime proof);
 - full per-connection TCP state-machine tracking or packet accounting (TCP
   retransmit, reset, and state-transition observation and counting are
   implemented, with resets and state transitions locally proven);
@@ -143,6 +146,10 @@ E-Navigator does not currently claim:
   still 7.045% lower throughput than no agent and used about 13.4 MiB more
   summed two-pod RSS. Vectored I/O, `send*`/`recv*`, other sources, mixed
   workloads, and production were not measured);
+- a Go `crypto/tls` overhead claim (the correctness campaign used 0.105 to
+  0.265 second fixed request bursts on a shared homelab; Go 1.24/1.25,
+  Linux/arm64, gRPC, WebSocket, production traffic, and sustained load were not
+  runtime-proven);
 - reduced overhead versus another observability stack;
 - reduced-privilege or non-root eBPF operation;
 - complete attribution for every host process, packet, profile sample, or

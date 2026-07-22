@@ -164,3 +164,15 @@ name = "elf_unwind_table"
 path = "fuzz_targets/elf_unwind_table.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "go_build_info"
+path = "fuzz_targets/go_build_info.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "go_amd64_return_sites"
+path = "fuzz_targets/go_amd64_return_sites.rs"
+test = false
+doc = false
