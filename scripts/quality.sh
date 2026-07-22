@@ -42,6 +42,8 @@ run tests/go_tls_bench_guard_test.sh
 run env PYTHONDONTWRITEBYTECODE=1 python3 tests/go_tls_analysis_test.py
 run tests/profiling_breadth_bench_guard_test.sh
 run env PYTHONDONTWRITEBYTECODE=1 python3 tests/profiling_breadth_analysis_test.py
+run tests/reduced_privilege_guard_test.sh
+run env PYTHONDONTWRITEBYTECODE=1 python3 tests/reduced_privilege_analysis_test.py
 
 if [ "${E_NAVIGATOR_SKIP_SUPPLY_CHAIN:-0}" != "1" ]; then
   require_tool cargo-deny
@@ -68,6 +70,7 @@ if [ "${E_NAVIGATOR_SKIP_KUBERNETES:-0}" != "1" ]; then
   require_tool kubeconform
   run helm lint charts/e-navigator
   run helm lint charts/e-navigator --values charts/e-navigator/values-guara-production.yaml
+  run helm lint charts/e-navigator --values charts/e-navigator/values-reduced-privilege.yaml
   run tests/chart_service_guard_test.sh
   run helm template e-navigator charts/e-navigator
   run kubeconform -strict -summary deploy/kubernetes/*.yaml

@@ -1,0 +1,14 @@
+{
+  "schema": "e-navigator.reduced-privilege-observation-projections.v1",
+  "note": "These are bounded projections of raw JSON envelopes. The guarded raw logs remain under benchmarks/results/reduced-privilege-proof.",
+  "observations": [
+    {"arm":"exec","source":"source.aya_exec","kind":"exec","host":"homelab-01","uid":65532,"command":"/bin/true"},
+    {"arm":"network","source":"source.aya_network","kinds":["network_connection_open","network_connection_close"],"uid":65532,"workload_ports":[16379,18080]},
+    {"arm":"dns","source":"source.aya_dns","kinds":["dns_query","dns_response"],"query_pattern":"reduced-*.invalid.e-navigator.local"},
+    {"arm":"http","source":"source.aya_http","kind":"protocol_request_observation","protocol":"http","path":"/proof","server_port":18080},
+    {"arm":"protocol","source":"source.aya_protocol","kind":"protocol_request_observation","protocol":"redis","method":"PING","status":"PONG","uid":65532},
+    {"arm":"cpu-profile","source":"source.aya_cpu_profile","kind":"profile_sample_observation","process":"python","host_visible_uid":472,"symbols":["_PyObject_MakeTpCall","_PyEval_EvalFrameDefault","PyEval_EvalCode"]},
+    {"arm":"host-resource","source":"source.host_resource","kinds":["node_cpu_observation","node_memory_observation","process_resource_observation"]},
+    {"arm":"tls","source":"source.aya_tls","kind":"protocol_request_observation","protocol":"http","service_name":"go-https-proof","path":"/proof","server_port":8443,"status_code":200,"uid":65532,"container_runtime":"containerd"}
+  ]
+}

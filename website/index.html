@@ -114,6 +114,10 @@
             kernels and strict diagnostics. BTF-capable kernels also use
             preflighted fexit hooks for scalar network read/write accounting,
             with syscall tracepoints retained as the strict compatibility path.
+            An opt-in Linux 6.6 reduced-capability profile removes
+            <code>SYS_ADMIN</code>, retaining only <code>BPF</code>,
+            <code>PERFMON</code>, and <code>SYS_PTRACE</code> for the complete
+            source set proven on the homelab.
           </p>
         </div>
         <div class="capability-grid">
@@ -147,10 +151,15 @@
             <h3>Measured BTF fexit fast path</h3>
             <p>Scalar network read/write accounting uses preflighted fexit where supported; a homelab A/B measured 7.971% more operations per second than tracepoints for that narrow workload.</p>
           </article>
+          <article class="capability">
+            <span class="capability-kicker">Privilege posture</span>
+            <h3>Reduced profile, exact boundary</h3>
+            <p>Linux 6.6 homelab proof removed SYS_ADMIN: core Aya sources used BPF and PERFMON, TLS and cross-UID CPU symbols added SYS_PTRACE, and host resources used none.</p>
+          </article>
           <article class="capability capability-wide">
             <span class="capability-kicker">Boundaries</span>
             <h3>No hidden production claims</h3>
-            <p>Storage, UI, runtime pprof upload, broad collector compatibility, reduced privilege, and whole-stack overhead stay non-claims until directly proven.</p>
+            <p>Storage, UI, runtime pprof upload, broad collector compatibility, rootless and cross-kernel privilege portability, and whole-stack overhead stay non-claims until directly proven.</p>
           </article>
         </div>
       </section>

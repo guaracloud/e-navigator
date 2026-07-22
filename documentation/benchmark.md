@@ -643,3 +643,34 @@ to 346.98 ns, 1 KiB frame boundary and metadata handling at 3.1090 to 4.1909
 ns, gRPC-Web request parsing at 1.1899 to 1.2784 microseconds, and response
 parsing at 841.88 to 852.95 ns. Both dedicated fuzz targets ran for 20 seconds
 without a failure. These are parser hygiene results, not live overhead proof.
+
+## Reduced Privilege Matrix (Homelab, 2026-07-22)
+
+The reduced-privilege campaign used no-agent controls and one source at a time
+on both Linux 6.6.68 homelab nodes. The general workload ran as UID 65532 and
+repeated exec, DNS, HTTP, Redis, and CPU work for 30 seconds. A separate Go
+1.26.4 workload ran 4,000 HTTPS requests in both the no-agent and TLS arms.
+
+| Source | Effective capabilities | Workload-correlated signals |
+| --- | --- | ---: |
+| Exec | `BPF`, `PERFMON` | 776 |
+| Network | `BPF`, `PERFMON` | 500 |
+| DNS | `BPF`, `PERFMON` | 6,058 |
+| Cleartext HTTP | `BPF`, `PERFMON` | 1,502 |
+| Redis protocol | `BPF`, `PERFMON` | 1,544 |
+| CPU profile | `BPF`, `PERFMON`, `SYS_PTRACE` | 1 strict Python match |
+| Host resource | none | 7,788 |
+| Go TLS | `BPF`, `PERFMON`, `SYS_PTRACE` | 7,988 |
+
+Every positive arm had two ready pods with zero restarts, exact effective
+capabilities, `NoNewPrivs: 1`, `Seccomp: 2`, and zero transport, ring-buffer
+reservation, or send loss. The analyzer matched deterministic workload fields,
+not signal kind alone. The CPU count is deliberately the one sample satisfying
+all non-root Python and resolved-symbol predicates; native metrics recorded
+14,567 decoded and sent CPU samples.
+
+This matrix proves correctness under the scoped capability sets. The arms were
+not counterbalanced performance trials, and the short no-agent results support
+no overhead comparison. Full methodology, image identity, native totals, and
+cleanup state are in the
+[`reduced-privilege proof report`](proof/reduced-privilege-20260722/report.md).

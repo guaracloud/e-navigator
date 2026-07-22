@@ -34,6 +34,43 @@ image:
   digest: sha256:<image-digest>
 ```
 
+## Use The Reduced Privilege Profile
+
+The compatibility values retain a broad capability set for kernels that have
+not been independently proven. On a modern kernel, opt in to the narrower
+profile explicitly:
+
+```bash
+helm upgrade --install e-navigator charts/e-navigator \
+  --namespace e-navigator-system \
+  --create-namespace \
+  --values charts/e-navigator/values-reduced-privilege.yaml
+```
+
+The reduced profile drops every inherited capability and adds `BPF`,
+`PERFMON`, and `SYS_PTRACE`. It also keeps `privileged: false`, UID 0,
+`RuntimeDefault` seccomp, a read-only root filesystem, and no privilege
+escalation. It removes `SYS_ADMIN`, `NET_ADMIN`, `NET_RAW`, `SYS_RESOURCE`,
+`SYSLOG`, `CHECKPOINT_RESTORE`, and `DAC_READ_SEARCH`.
+
+The narrower per-source sets proven on Linux 6.6.68 are:
+
+| Source | Effective capabilities |
+| --- | --- |
+| Exec, network, DNS, cleartext HTTP, protocol | `BPF`, `PERFMON` |
+| Go TLS, complete cross-UID CPU symbolization | `BPF`, `PERFMON`, `SYS_PTRACE` |
+| Host resources | none |
+
+The public profile retains `SYS_PTRACE` so TLS and fully symbolized CPU
+profiling can be enabled without changing the pod security context. Operators
+who enable only core Aya sources may override `securityContext.capabilities.add`
+to `[BPF, PERFMON]`; host-resource-only deployments may use `[]`. Validate the
+rendered pod and runtime source on the target kernel before rollout. The proof
+covers two Linux 6.6.68 homelab nodes, not rootless operation, older kernels,
+every LSM policy, or every optional TLS target. See
+[ADR 0012](adr/0012-reduced-privilege-modern-kernels.md) and the
+[proof report](proof/reduced-privilege-20260722/report.md).
+
 ## Tune The Runtime Config
 
 The default `config.toml` matches `deploy/kubernetes/configmap.yaml`. Override it
@@ -527,13 +564,16 @@ helm template e-navigator charts/e-navigator | kubeconform -strict -summary -
 
 ```bash
 helm lint charts/e-navigator
+helm lint charts/e-navigator --values charts/e-navigator/values-reduced-privilege.yaml
 helm template e-navigator charts/e-navigator
+helm template e-navigator charts/e-navigator \
+  --values charts/e-navigator/values-reduced-privilege.yaml
 helm template e-navigator charts/e-navigator --set image.tag=main
 helm template e-navigator charts/e-navigator \
   --set image.digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
 ```
 
 Helm rendering, schema validation, and successful installs do not prove live
-eBPF behavior, Prometheus scrape success, OTLP ingestion, reduced privilege, or
-production readiness. Runtime proof requires a capable Linux node or cluster and
-observed Aya/eBPF output.
+eBPF behavior, Prometheus scrape success, OTLP ingestion, the reduced profile
+on an untested kernel, or production readiness. Runtime proof requires a
+capable Linux node or cluster and observed Aya/eBPF output.
