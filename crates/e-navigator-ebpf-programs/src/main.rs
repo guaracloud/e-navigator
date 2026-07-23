@@ -79,6 +79,11 @@ const PROTOCOL_DATA_BYTES: usize = 256;
 const PROTOCOL_IOVEC_DATA_MAX: u32 = (PROTOCOL_DATA_BYTES - 1) as u32;
 const PROTOCOL_MAX_IOVECS: u32 = 40;
 const PROTOCOL_IOVEC_CHUNK: u32 = 8;
+/// Iovec slots the emit tail program consumes per tail-call round. Each slot
+/// costs two user probe reads, a bounded payload copy, and an event output,
+/// so unchunked emission of all `PROTOCOL_MAX_IOVECS` slots exceeds the
+/// one-million-instruction verifier budget on arm64 kernels.
+const PROTOCOL_IOVEC_EMIT_CHUNK: u32 = 8;
 const PROTOCOL_DIAG_WRITE_ENTER: u32 = 0;
 const PROTOCOL_DIAG_READ_ENTER: u32 = 1;
 const PROTOCOL_DIAG_READ_EXIT: u32 = 2;
@@ -505,6 +510,15 @@ pub struct ProtocolIovecState {
     /// Exact successful syscall length for receive-side vectors; zero means
     /// an entry-side write whose complete vector length must be computed.
     pub total_bound: u64,
+    /// Emit-stage cursor: next iovec slot the emit tail program consumes.
+    pub emit_slot: u32,
+    /// Emit-stage cursor: payload offset of the next emitted segment.
+    pub emit_offset: u32,
+    /// Nonzero once the emit stage has emitted at least one segment.
+    pub emit_emitted: u32,
+    /// Nonzero once the emit stage hit a terminal condition (bounded tail,
+    /// partial capture, or vector end) and must not re-chain.
+    pub emit_done: u32,
 }
 
 /// Keys the userspace TLS object pointer (`SSL*` or GnuTLS session) to the
@@ -4436,6 +4450,10 @@ fn try_tracepoint_protocol_iovec_compute(ctx: &TracePointContext) -> Result<u32,
         record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
         return Ok(0);
     }
+    state.emit_slot = 0;
+    state.emit_offset = 0;
+    state.emit_emitted = 0;
+    state.emit_done = 0;
     unsafe {
         PROTOCOL_IOVEC_PROGS.tail_call(ctx, 1);
     }
@@ -4445,8 +4463,8 @@ fn try_tracepoint_protocol_iovec_compute(ctx: &TracePointContext) -> Result<u32,
 
 #[inline(always)]
 fn try_tracepoint_protocol_iovec_emit(ctx: &TracePointContext) -> Result<u32, i64> {
-    let state_ptr = PROTOCOL_IOVEC_STATE.get_ptr(0).ok_or(1_i64)?;
-    let state = unsafe { &*state_ptr };
+    let state_ptr = PROTOCOL_IOVEC_STATE.get_ptr_mut(0).ok_or(1_i64)?;
+    let state = unsafe { &mut *state_ptr };
     let event_ptr = PROTOCOL_DATA_EVENT_SCRATCH.get_ptr_mut(0).ok_or(1_i64)?;
     let event = unsafe { &mut *event_ptr };
     let iov = state.iov_ptr as *const u8;
@@ -4456,11 +4474,18 @@ fn try_tracepoint_protocol_iovec_emit(ctx: &TracePointContext) -> Result<u32, i6
     // Emit one segment per complete iovec prefix. All segments share the
     // syscall timestamp and totals, so userspace can join only adjacent
     // offsets and turn any missing event or bounded tail into a gap.
-    let mut emitted = false;
-    let mut offset = 0_u32;
-    let mut slot = 0_u32;
-    while slot < PROTOCOL_MAX_IOVECS {
-        if u64::from(slot) >= iov_len || offset >= captured_total {
+    //
+    // The loop runs at most `PROTOCOL_IOVEC_EMIT_CHUNK` slots per tail-call
+    // round and re-chains through `PROTOCOL_IOVEC_PROGS` slot 1 with the
+    // cursor kept in `PROTOCOL_IOVEC_STATE`; emitting every slot in one
+    // program exceeds the verifier instruction budget on arm64 kernels.
+    let mut processed = 0_u32;
+    while processed < PROTOCOL_IOVEC_EMIT_CHUNK {
+        processed += 1;
+        let slot = state.emit_slot;
+        let offset = state.emit_offset;
+        if slot >= PROTOCOL_MAX_IOVECS || u64::from(slot) >= iov_len || offset >= captured_total {
+            state.emit_done = 1;
             break;
         }
         let (buffer, slot_len) = read_protocol_iovec(iov, slot)?;
@@ -4477,9 +4502,10 @@ fn try_tracepoint_protocol_iovec_emit(ctx: &TracePointContext) -> Result<u32, i6
         };
         if captured == 0 {
             if slot_len == 0 {
-                slot += 1;
+                state.emit_slot = slot.saturating_add(1);
                 continue;
             }
+            state.emit_done = 1;
             break;
         }
         if buffer.is_null() {
@@ -4500,14 +4526,26 @@ fn try_tracepoint_protocol_iovec_emit(ctx: &TracePointContext) -> Result<u32, i6
         }
         record_protocol_diagnostic(PROTOCOL_DIAG_OUTPUT_ATTEMPT);
         output_event!(PROTOCOL_DATA_EVENTS, TRANSPORT_LOSS_PROTOCOL, ctx, &*event);
-        emitted = true;
-        offset = offset.saturating_add(captured);
+        state.emit_emitted = 1;
+        state.emit_offset = offset.saturating_add(captured);
         if u64::from(captured) != slot_len {
+            state.emit_done = 1;
             break;
         }
-        slot += 1;
+        state.emit_slot = slot.saturating_add(1);
     }
-    if !emitted {
+    if state.emit_done == 0
+        && state.emit_slot < PROTOCOL_MAX_IOVECS
+        && u64::from(state.emit_slot) < iov_len
+        && state.emit_offset < captured_total
+    {
+        unsafe {
+            PROTOCOL_IOVEC_PROGS.tail_call(ctx, 1);
+        }
+        record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
+        return Ok(0);
+    }
+    if state.emit_emitted == 0 {
         record_protocol_diagnostic(PROTOCOL_DIAG_COPY_EMPTY);
     }
     Ok(0)
