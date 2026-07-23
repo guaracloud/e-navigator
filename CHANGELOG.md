@@ -6,6 +6,16 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+### Validation
+
+- Record a retained optimization campaign after two corrected 33-arm homelab
+  head-to-head runs: final-stage whole-agent CPU fell 41.719% against the
+  v0.2.0 baseline (148.235 to 86.391 millicores) with unchanged RSS and zero
+  hard loss, closing the CPU gap against combined Beyla plus Alloy from
+  +87.933255% to +6.998686% while the RSS advantage held at -63.866085%.
+  The evidence, image identities, tradeoffs, and remaining bottlenecks are
+  recorded in `documentation/proof/optimization4-20260723/`.
+
 ### Performance
 
 - Stop allocating a lowercased copy of every trace attribute key in the

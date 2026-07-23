@@ -1,0 +1,110 @@
+{
+  "analyzers": {
+    "baseline": "PASS",
+    "candidate": "PASS"
+  },
+  "base_commit": "d83c7bb",
+  "candidate_commit": "00a9b0d",
+  "date": "2026-07-23",
+  "decision": "RETAINED",
+  "dual_objective": "cpu_not_met_by_5.651_millicores_rss_met",
+  "final_stack": {
+    "baseline_vs_beyla_alloy_cpu_percent": 87.933255,
+    "baseline_vs_beyla_alloy_rss_percent": -66.035821,
+    "candidate_vs_baseline_cpu_percent": -41.720081,
+    "candidate_vs_beyla_alloy_cpu_percent": 6.998686,
+    "candidate_vs_beyla_alloy_rss_percent": -63.866085
+  },
+  "images": {
+    "baseline": "sha256:67b060f4ae2cca2af2cdfa7cef6b3acc3362c0e72eae47a6ba9db489d38d5824",
+    "candidate": "sha256:c7f4873ba41843c85bd6fea51171b68b81f2fcf53927e0a01ca00993ef02ace4",
+    "workload": "sha256:9cdef1fa9b13c8f8f7c7718974fb0e01b5baf11d6dc9247c713437af67c7660e"
+  },
+  "schema": "e-navigator.optimization4-campaign.v1",
+  "stages": {
+    "beyla-profile": {
+      "baseline": {
+        "cpu_millicores_mean": 78.876353,
+        "cpu_millicores_stdev": 2.580178,
+        "rss_mib_mean": 138.542101,
+        "samples": 3
+      },
+      "candidate": {
+        "cpu_millicores_mean": 80.74041,
+        "cpu_millicores_stdev": 2.544714,
+        "rss_mib_mean": 131.224826,
+        "samples": 3
+      }
+    },
+    "e-navigator-grpc": {
+      "baseline": {
+        "cpu_millicores_mean": 63.016239,
+        "cpu_millicores_stdev": 4.18598,
+        "rss_mib_mean": 17.90408,
+        "samples": 3
+      },
+      "candidate": {
+        "cpu_millicores_mean": 37.983423,
+        "cpu_millicores_stdev": 2.010658,
+        "rss_mib_mean": 18.106337,
+        "samples": 3
+      }
+    },
+    "e-navigator-http": {
+      "baseline": {
+        "cpu_millicores_mean": 30.788094,
+        "cpu_millicores_stdev": 0.990831,
+        "rss_mib_mean": 11.146267,
+        "samples": 3
+      },
+      "candidate": {
+        "cpu_millicores_mean": 21.178183,
+        "cpu_millicores_stdev": 0.80251,
+        "rss_mib_mean": 11.15408,
+        "samples": 3
+      }
+    },
+    "e-navigator-postgres": {
+      "baseline": {
+        "cpu_millicores_mean": 139.429666,
+        "cpu_millicores_stdev": 0.798618,
+        "rss_mib_mean": 22.301649,
+        "samples": 3
+      },
+      "candidate": {
+        "cpu_millicores_mean": 76.646061,
+        "cpu_millicores_stdev": 0.729045,
+        "rss_mib_mean": 22.083333,
+        "samples": 3
+      }
+    },
+    "e-navigator-profile": {
+      "baseline": {
+        "cpu_millicores_mean": 148.234898,
+        "cpu_millicores_stdev": 1.173837,
+        "rss_mib_mean": 47.054688,
+        "samples": 3
+      },
+      "candidate": {
+        "cpu_millicores_mean": 86.391178,
+        "cpu_millicores_stdev": 1.825572,
+        "rss_mib_mean": 47.416667,
+        "samples": 3
+      }
+    },
+    "e-navigator-redis": {
+      "baseline": {
+        "cpu_millicores_mean": 118.356567,
+        "cpu_millicores_stdev": 2.388455,
+        "rss_mib_mean": 20.561632,
+        "samples": 3
+      },
+      "candidate": {
+        "cpu_millicores_mean": 63.542851,
+        "cpu_millicores_stdev": 2.138681,
+        "rss_mib_mean": 20.03342,
+        "samples": 3
+      }
+    }
+  }
+}
