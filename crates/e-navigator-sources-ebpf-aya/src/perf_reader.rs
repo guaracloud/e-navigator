@@ -33,10 +33,15 @@ pub(crate) fn wait_for_events<T: AsFd>(
     wait_for_readiness(buffer, source, Some(cpu_id), true)
 }
 
-/// Waits for a shared ring buffer without adding the perf reader's coalescing
-/// delay. Ring-buffer notifications already coalesce while the consumer lags.
+/// Waits for a shared ring buffer, then applies the same bounded coalescing
+/// delay as the perf readers. Ring-buffer notifications only coalesce on
+/// their own while the consumer lags; at low and moderate event rates the
+/// consumer always keeps up, so every event otherwise costs a full poll
+/// wakeup, drain, and downstream channel wake. Sleeping once per readiness
+/// batches those events with no loss: producers keep reserving ring space
+/// while the reader sleeps, and event timestamps are kernel-assigned.
 pub(crate) fn wait_for_ring_events<T: AsFd>(buffer: &T, source: &'static str) -> Option<bool> {
-    wait_for_readiness(buffer, source, None, false)
+    wait_for_readiness(buffer, source, None, true)
 }
 
 fn wait_for_readiness<T: AsFd>(
