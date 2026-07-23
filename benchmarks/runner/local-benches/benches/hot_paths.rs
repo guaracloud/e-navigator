@@ -262,9 +262,9 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
     let grpc = b":method: POST\n:path: /checkout.v1.CheckoutService/GetCart\n:authority: checkout.example.com:8443\ncontent-type: application/grpc+proto\ntraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\ntracestate: vendor=value\n\n";
     let grpc_trailers = b"grpc-status: 13\ngrpc-message: internal%20detail\n\n";
     let mongodb =
-        b"\x2e\0\0\0\x01\0\0\0\0\0\0\0\xdd\x07\0\0\0\0\0\0\0\x00\x19\0\0\0\x02find\0\x0a\0\0\0customers\0\0";
+        b"\x2e\0\0\0\x01\0\0\0\0\0\0\0\xdd\x07\0\0\0\0\0\0\0\x19\0\0\0\x02find\0\x0a\0\0\0customers\0\0";
     let mongodb_response =
-        b"<\0\0\0\x01\0\0\0\0\0\0\0\xdd\x07\0\0\0\0\0\0\0\x00'\0\0\0\x08ok\0\0\x10code\0\r\0\0\0\x02errmsg\0\x07\0\0\0secret\0\0";
+        b"<\0\0\0\x01\0\0\0\0\0\0\0\xdd\x07\0\0\0\0\0\0\0'\0\0\0\x08ok\0\0\x10code\0\r\0\0\0\x02errmsg\0\x07\0\0\0secret\0\0";
     let kafka = b"\0\0\0\x1b\0\0\0\x08\0\0\0\x2a\0\x0cbench-clienttopic";
     let kafka_response = b"\0\0\0\x15\0\0\0\x2a\0#secret-api-list";
     let kafka_produce_response = kafka_produce_response_fixture();
