@@ -36,7 +36,7 @@ const PERF_BUFFER_PAGE_COUNT: usize = 64;
 #[cfg(any(target_os = "linux", test))]
 const HTTP_DIAGNOSTIC_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 #[cfg(any(target_os = "linux", test))]
-const HTTP_DIAGNOSTIC_COUNTERS_LEN: usize = 19;
+const HTTP_DIAGNOSTIC_COUNTERS_LEN: usize = 20;
 #[cfg(any(target_os = "linux", test))]
 const HTTP_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_DIAGNOSTIC_COUNTERS_LEN] = [
     "connect_enter",
@@ -58,6 +58,7 @@ const HTTP_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_DIAGNOSTIC_COUNTERS_LEN] = [
     "inbound_read_enter",
     "inbound_output_attempt",
     "server_write_suppressed",
+    "non_http_connection_skip",
 ];
 
 #[cfg(any(target_os = "linux", test))]
@@ -2001,10 +2002,10 @@ mod tests {
     #[test]
     fn http_diagnostic_counter_snapshot_returns_stage_deltas() {
         let previous = HttpDiagnosticCounterSnapshot::from_counters([
-            10, 5, 100, 30, 1, 0, 2, 7, 0, 20, 3, 20, 4, 3, 1, 0, 0, 0, 0,
+            10, 5, 100, 30, 1, 0, 2, 7, 0, 20, 3, 20, 4, 3, 1, 0, 0, 0, 0, 0,
         ]);
         let current = HttpDiagnosticCounterSnapshot::from_counters([
-            12, 8, 100, 45, 1, 4, 2, 11, 0, 35, 3, 35, 10, 8, 2, 5, 6, 7, 8,
+            12, 8, 100, 45, 1, 4, 2, 11, 0, 35, 3, 35, 10, 8, 2, 5, 6, 7, 8, 9,
         ]);
 
         let delta = current.delta_since(&previous);
@@ -2037,6 +2038,7 @@ mod tests {
                 "inbound_read_enter",
                 "inbound_output_attempt",
                 "server_write_suppressed",
+                "non_http_connection_skip",
             ]
         );
     }

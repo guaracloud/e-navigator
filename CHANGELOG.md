@@ -6,6 +6,19 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+### Performance
+
+- Classify each tracked TCP connection once, in kernel, from its first
+  captured payload in the HTTP source. Previously every write on every
+  tracked client connection and every read on every accepted server
+  connection was copied, shipped, and decoded by the HTTP source even when
+  the connection carried Redis, PostgreSQL, gRPC, or other non-HTTP traffic.
+  Non-HTTP connections now skip the payload copy, event output, and
+  userspace decode for their lifetime, with skips accounted in the new
+  `non_http_connection_skip` diagnostic counter. In the local controlled
+  Redis A/B (800 operations per second, four paired arms), whole-agent CPU
+  fell 25.2% by median with byte-identical protocol signal counts.
+
 ### Fixed
 
 - Chunk the protocol iovec emit tail program across bounded tail-call rounds
