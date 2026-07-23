@@ -55,12 +55,45 @@ Current local benchmark targets:
   formatting, prefilled Prometheus latest-metric updates, and bounded HTTP
   exporter queue enqueue behavior;
 - bounded signal-envelope construction and JSON stdout line serialization,
-  including the argv-redacting and non-argv borrowed paths.
+  including the argv-redacting and non-argv borrowed paths;
+- the allocation-free sensitive trace attribute key deny check over a
+  representative request-span attribute mix.
 
 Benchmark setup must stay outside measured loops where the code path supports
 that. Benchmarks use fixed in-memory fixtures only. They must not read live
 `/proc`, `/sys`, Kubernetes, network sockets, Docker, or host files inside a
 Criterion measurement.
+
+### Local Whole-Agent A/B Harness
+
+`benchmarks/runner/local-agent-ab` runs the release agent under a privileged
+Linux container with a stdlib-only fixed-rate Redis and HTTP workload, an
+opaque gzip-aware OTLP sink, and the same pacing algorithm as the homelab
+head-to-head load generator. Each arm reports the agent's own utime plus
+stime over the measured window, RSS, native counters, and workload latency
+percentiles, so optimization candidates are qualified at the whole-agent
+level instead of only in Criterion microbenchmarks.
+
+Method requirements: alternate baseline and candidate arms pairwise, keep
+the host otherwise idle during arms, discard arms contaminated by host
+contention, and check that protocol source counters stay identical between
+arms before comparing CPU. Results are local directional evidence on a
+shared virtual machine, not production or homelab proof.
+
+The 2026-07-23 optimization pass qualified three retained changes with this
+harness on OrbStack (arm64, kernel 7.0.11), each at Redis 800 operations per
+second over 60-second measured windows with identical protocol counters
+(112,034 decoded, 56,017 sent) in every compared arm:
+
+- in-kernel per-connection HTTP classification: 25.2 percent lower
+  whole-agent CPU by median over four pairs;
+- ring-buffer reader wakeup coalescing: 50.7 percent lower whole-agent CPU
+  by mean over four pairs against the classification commit;
+- the final tree against the v0.2.0 baseline plus the arm64 verifier fix:
+  three same-session pairs measured 95.701, 109.382, and 122.721 millicores
+  for the baseline against 44.998, 39.559, and 36.917 millicores for the
+  final tree, a 53.0 to 69.9 percent paired reduction with unchanged RSS
+  and zero transport, queue, or export loss.
 
 ## Current Local Benchmark Status
 

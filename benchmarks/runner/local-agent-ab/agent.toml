@@ -1,0 +1,115 @@
+# Local whole-agent A/B config: mirrors benchmarks/config/head-to-head-redis.toml
+# minus Kubernetes attribution (no cluster locally). Same sources, generators,
+# sinks, bounds, and export contract.
+log_level = "info"
+queue_capacity = 8192
+
+[source_supervisor]
+failure_policy = "fail_fast"
+shutdown_timeout_millis = 20000
+
+[ebpf]
+event_transport = "auto"
+ring_buffer_bytes = 524288
+network_io_hook = "auto"
+
+[attribution]
+procfs_root = "/proc"
+cgroup_root = "/sys/fs/cgroup"
+
+[capture_filter]
+enabled = true
+default_posture = "allow"
+unknown_cgroup = "allow"
+discovery_mode = "event_driven"
+process_exclude = ["enav-load", "enav-otlp-sink", "e-navigator*"]
+
+[http_source]
+max_header_bytes = 8192
+max_request_line_bytes = 1024
+max_attributes = 16
+max_tracestate_bytes = 512
+inbound_enabled = true
+
+[protocol_source]
+inbound_enabled = true
+http1_ports = []
+http2_ports = []
+kafka_ports = []
+mongodb_ports = []
+mysql_ports = []
+nats_ports = []
+postgresql_ports = []
+redis_ports = [6379]
+max_buffered_bytes_per_connection = 8192
+capture_bytes_per_syscall = 1024
+max_tracked_connections = 8192
+max_attributes = 16
+
+[trace_correlation]
+max_service_paths = 4096
+max_seen_interactions = 8192
+max_warnings = 1024
+
+[request_correlation]
+generate_trace_ids = true
+max_seen_requests = 16384
+max_warnings = 1024
+
+[prometheus_http]
+enabled = true
+bind_address = "127.0.0.1"
+port = 9099
+max_metric_lines = 8192
+metrics_enabled = true
+profiles_enabled = false
+
+[otlp_http]
+enabled = true
+endpoint = ""
+metrics_endpoint = ""
+traces_endpoint = "http://127.0.0.1:4318/v1/traces"
+profiles_endpoint = ""
+metrics_enabled = false
+traces_enabled = true
+profiles_enabled = false
+queue_capacity = 8192
+batch_size = 4096
+flush_interval_millis = 1000
+timeout_millis = 3000
+max_retries = 3
+compression = "gzip"
+retry_initial_backoff_millis = 100
+retry_max_backoff_millis = 5000
+circuit_breaker_failure_threshold = 5
+circuit_breaker_cooldown_millis = 30000
+shutdown_timeout_millis = 20000
+tls_insecure_skip_verify = false
+
+[[modules]]
+name = "source.aya_http"
+enabled = true
+
+[[modules]]
+name = "source.aya_protocol"
+enabled = true
+
+[[modules]]
+name = "processor.container_attribution"
+enabled = true
+
+[[modules]]
+name = "generator.trace_correlation"
+enabled = true
+
+[[modules]]
+name = "generator.request_correlation"
+enabled = true
+
+[[modules]]
+name = "sink.prometheus_http"
+enabled = true
+
+[[modules]]
+name = "sink.otlp_http"
+enabled = true
