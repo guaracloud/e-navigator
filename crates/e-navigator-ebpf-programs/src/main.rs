@@ -3839,7 +3839,7 @@ fn emit_http_request_event(
         tgid: (pid_tgid >> 32) as u32,
         fd,
     };
-    let mut connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
+    let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
         Some(value) => *value,
         None => {
             record_http_diagnostic(HTTP_DIAG_ACTIVE_CONNECTION_MISS);
@@ -3857,7 +3857,7 @@ fn emit_http_request_event(
         record_http_diagnostic(HTTP_DIAG_SERVER_WRITE_SUPPRESSED);
         return Ok(0);
     }
-    if !http_connection_payload_captures(&key, &mut connection, buffer)? {
+    if !http_connection_payload_captures(&key, buffer)? {
         return Ok(0);
     }
 
@@ -3944,7 +3944,7 @@ fn emit_http_request_iovecs_event(
         tgid: (pid_tgid >> 32) as u32,
         fd,
     };
-    let mut connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
+    let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
         Some(value) => *value,
         None => {
             record_http_diagnostic(HTTP_DIAG_ACTIVE_CONNECTION_MISS);
@@ -3964,7 +3964,7 @@ fn emit_http_request_iovecs_event(
     let (first_buffer, first_len) = read_protocol_iovec(iov, 0)?;
     if first_len > 0
         && !first_buffer.is_null()
-        && !http_connection_payload_captures(&key, &mut connection, first_buffer)?
+        && !http_connection_payload_captures(&key, first_buffer)?
     {
         return Ok(0);
     }
@@ -4270,7 +4270,7 @@ fn try_tracepoint_http_read_exit(ctx: &TracePointContext) -> Result<u32, i64> {
         tgid: (pid_tgid >> 32) as u32,
         fd: pending.fd,
     };
-    let mut connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
+    let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
         Some(value) => *value,
         None => return Ok(0),
     };
@@ -4279,7 +4279,7 @@ fn try_tracepoint_http_read_exit(ctx: &TracePointContext) -> Result<u32, i64> {
     }
 
     let buffer = pending.buffer_ptr as *const u8;
-    if !http_connection_payload_captures(&key, &mut connection, buffer)? {
+    if !http_connection_payload_captures(&key, buffer)? {
         return Ok(0);
     }
 
@@ -5421,13 +5421,18 @@ fn http_classify_first_payload(buffer: *const u8) -> Result<bool, i64> {
 
 /// Returns whether the HTTP source should capture this tracked connection's
 /// payload, classifying the first captured payload and caching the verdict.
+///
+/// The verdict is written through the map value pointer instead of copying
+/// the connection struct and re-inserting it: the in-place single-field
+/// store keeps the caller's stack frame small enough for the kernel's
+/// 512-byte combined call-stack limit and cannot lose concurrent updates
+/// to the connection's byte counters.
 #[inline(always)]
-fn http_connection_payload_captures(
-    key: &ConnectionKey,
-    connection: &mut PendingConnect,
-    buffer: *const u8,
-) -> Result<bool, i64> {
-    match connection.http_state {
+fn http_connection_payload_captures(key: &ConnectionKey, buffer: *const u8) -> Result<bool, i64> {
+    let Some(connection) = ACTIVE_CONNECTIONS.get_ptr_mut(key) else {
+        return Ok(true);
+    };
+    match unsafe { (*connection).http_state } {
         HTTP_CONN_HTTP => Ok(true),
         HTTP_CONN_NOT_HTTP => {
             record_http_diagnostic(HTTP_DIAG_NON_HTTP_CONNECTION_SKIP);
@@ -5435,14 +5440,13 @@ fn http_connection_payload_captures(
         }
         _ => {
             let is_http = http_classify_first_payload(buffer)?;
-            connection.http_state = if is_http {
-                HTTP_CONN_HTTP
-            } else {
-                HTTP_CONN_NOT_HTTP
-            };
-            ACTIVE_CONNECTIONS
-                .insert(key, connection, 0)
-                .map_err(|err| err as i64)?;
+            unsafe {
+                (*connection).http_state = if is_http {
+                    HTTP_CONN_HTTP
+                } else {
+                    HTTP_CONN_NOT_HTTP
+                };
+            }
             if !is_http {
                 record_http_diagnostic(HTTP_DIAG_NON_HTTP_CONNECTION_SKIP);
             }
