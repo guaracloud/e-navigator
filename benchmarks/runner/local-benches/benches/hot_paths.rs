@@ -51,6 +51,7 @@ use e_navigator_sinks::{
 use e_navigator_sources_ebpf_aya::{
     bench_inline_sample, bench_perf_sample_into_owned, bench_ring_sample_handoff,
     bench_source_telemetry_summary_checks,
+    capture_filter::bench_scan_cgroups,
     cpu_profile::fuzz_decode_raw_cpu_profile_event,
     exec::fuzz_decode_raw_exec_event,
     fuzz_decode_go_amd64_returns,
@@ -62,7 +63,13 @@ use e_navigator_sources_host::{
 };
 use flate2::{Compression, write::GzEncoder};
 use serde::Serialize;
-use std::{cell::Cell, collections::BTreeMap, io::Write};
+use std::{
+    cell::Cell,
+    collections::BTreeMap,
+    io::Write,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tokio::{runtime::Runtime, sync::mpsc};
 
 fn bench_reader_sample_handoff(c: &mut Criterion) {
@@ -1752,6 +1759,58 @@ fn bench_capture_filter(c: &mut Criterion) {
             )
         })
     });
+
+    let scan_fixture = CgroupScanFixture::new(150);
+    c.bench_function("capture_filter/cgroup_tree_scan_150pods", |b| {
+        b.iter(|| {
+            assert_eq!(
+                black_box(bench_scan_cgroups(black_box(&scan_fixture.root))),
+                300
+            );
+        })
+    });
+}
+
+struct CgroupScanFixture {
+    root: PathBuf,
+}
+
+impl CgroupScanFixture {
+    fn new(pod_count: usize) -> Self {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("benchmark clock is after the Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "e-navigator-cgroup-scan-bench-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("system.slice")).expect("create host cgroup fixture");
+        for index in 0..pod_count {
+            std::fs::create_dir_all(
+                root.join("system.slice")
+                    .join(format!("host-service-{index}.service")),
+            )
+            .expect("create host cgroup");
+
+            let pod_uid = format!("{:08x}-1234-5678-9abc-{:012x}", index, index).replace('-', "_");
+            let container_id = format!("{index:064x}");
+            std::fs::create_dir_all(
+                root.join("kubepods.slice")
+                    .join("kubepods-burstable.slice")
+                    .join(format!("kubepods-burstable-pod{pod_uid}.slice"))
+                    .join(format!("cri-containerd-{container_id}.scope")),
+            )
+            .expect("create container cgroup fixture");
+        }
+        Self { root }
+    }
+}
+
+impl Drop for CgroupScanFixture {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.root).expect("remove cgroup benchmark fixture");
+    }
 }
 
 criterion_group!(

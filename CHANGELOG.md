@@ -6,6 +6,18 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-23
+
+### Validation
+
+- Add a filesystem-backed Criterion regression benchmark for a bounded
+  150-pod cgroup tree with an equal number of unrelated host cgroups.
+- Preserve direct-child pod cgroup discovery and bounded scan behavior in a
+  focused test.
+- Record an evidence-gated optimization NO-GO after 66 corrected homelab arms:
+  the candidate reduced RSS by 2.976308% but increased E-Navigator CPU by
+  4.440222%. Reject and revert all production candidates from the pass.
+
 ## [0.2.0-rc.2] - 2026-07-22
 
 ### Fixed
@@ -386,7 +398,8 @@ All notable changes to E-Navigator are documented here. The format follows
   reduced-privilege operation, and universal protocol/profile coverage remain
   explicit non-claims documented in `documentation/boundaries.md`.
 
-[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.2.0-rc.2...HEAD
+[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/guaracloud/e-navigator/compare/v0.2.0-rc.2...v0.2.0
 [0.2.0-rc.2]: https://github.com/guaracloud/e-navigator/compare/v0.2.0-rc.1...v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/guaracloud/e-navigator/compare/v0.1.2...v0.2.0-rc.1
 [0.1.2]: https://github.com/guaracloud/e-navigator/compare/v0.1.1...v0.1.2

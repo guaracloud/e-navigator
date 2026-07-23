@@ -1,0 +1,154 @@
+{
+  "schema": "e-navigator.optimization-campaign-summary.v1",
+  "date": "2026-07-23",
+  "verdict": {
+    "evidence_integrity": "pass",
+    "correctness_and_signal_contract": "pass",
+    "memory_goal": "pass",
+    "cpu_goal": "fail",
+    "dual_cpu_and_memory_goal": "no-go",
+    "production_candidates_retained": 0
+  },
+  "source": {
+    "base_commit": "c1cb84b3bf7cb266aee44dae6c6dd54be5fcdbcb",
+    "tag": "v0.2.0-rc.2",
+    "pushed": false
+  },
+  "environment": {
+    "context": "homelab",
+    "kubernetes": "v1.30.4+k3s1",
+    "kernel": "6.6.68",
+    "architecture": "amd64",
+    "nodes": 2,
+    "server_node": "homelab-02",
+    "load_node": "homelab-01",
+    "beyla_image": "docker.io/grafana/beyla@sha256:133b8d66190f21e20365d9972e1621513ea5e44518fb71e1c3e0180c64815566",
+    "alloy_image": "docker.io/grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308",
+    "baseline_archive_sha256": "ca555ebac6036f66dcad7503311a74368683f8f5a9a40a1355fefb55a703cb46",
+    "baseline_runtime_image_id": "sha256:ce8427d1ede03369f260c73e1cd2c875710c4de2f442fae7667c489cdd0a77b6",
+    "candidate_archive_sha256": "37fe100e11e5409b3d40e6f28473f3b13f06c567aa01e7e5cf71a5625f6b044d",
+    "candidate_runtime_image_id": "sha256:deb113611d29a1f4cc92556700097b6152a07c217c3a4e6998b1e875392f612d",
+    "workload_archive_sha256": "4c4b7ee1039e521b6315e63a0bc78ea5209d062d904779dc80d4a73fcc2a4957",
+    "workload_runtime_image_id": "sha256:ca166b018d3ce9e9c152055a323f90deb444b0bcd092800426d3b4472416563d"
+  },
+  "head_to_head": {
+    "campaigns": 2,
+    "runs": 66,
+    "repetitions_per_condition": 3,
+    "warmup_seconds": 15,
+    "measurement_seconds": 45,
+    "warmup_successes": 394020,
+    "measured_successes": 1182060,
+    "workload_errors": 0,
+    "baseline_final_stack": {
+      "e_navigator_cpu_millicores_mean": 146.499057,
+      "e_navigator_cpu_millicores_stdev": 5.007203,
+      "beyla_alloy_cpu_millicores_mean": 81.234226,
+      "beyla_alloy_cpu_millicores_stdev": 7.542902,
+      "e_navigator_cpu_change_percent": 80.341543,
+      "e_navigator_rss_mib_mean": 48.546007,
+      "e_navigator_rss_mib_stdev": 0.719213,
+      "beyla_alloy_rss_mib_mean": 127.893229,
+      "beyla_alloy_rss_mib_stdev": 3.629639,
+      "e_navigator_rss_change_percent": -62.041769
+    },
+    "candidate_final_stack": {
+      "e_navigator_cpu_millicores_mean": 153.00394,
+      "e_navigator_cpu_millicores_stdev": 8.908932,
+      "beyla_alloy_cpu_millicores_mean": 74.252625,
+      "beyla_alloy_cpu_millicores_stdev": 3.584579,
+      "e_navigator_cpu_change_percent": 106.058628,
+      "e_navigator_rss_mib_mean": 47.101128,
+      "e_navigator_rss_mib_stdev": 2.824644,
+      "beyla_alloy_rss_mib_mean": 137.66276,
+      "beyla_alloy_rss_mib_stdev": 12.633772,
+      "e_navigator_rss_change_percent": -65.785134
+    },
+    "candidate_vs_baseline": {
+      "cpu_change_percent": 4.440222,
+      "rss_change_percent": -2.976308,
+      "throughput_change_percent": -0.000273,
+      "latency_change_percent": {
+        "http_p50": 0.709607,
+        "http_p95": 0.015477,
+        "http_p99": 0.290048,
+        "grpc_p50": -0.196635,
+        "grpc_p95": 4.051579,
+        "grpc_p99": 10.73895,
+        "redis_p50": -0.607991,
+        "redis_p95": 6.797707,
+        "redis_p99": 19.324848,
+        "postgres_p50": 1.133284,
+        "postgres_p95": 9.90737,
+        "postgres_p99": 10.622222,
+        "python_cpu_p50": -0.659157,
+        "python_cpu_p95": 16.893915,
+        "python_cpu_p99": 0.159526
+      }
+    }
+  },
+  "allocations": {
+    "diagnostic_runs": 3,
+    "window_seconds": 45,
+    "workload_errors": 0,
+    "e_navigator_measurement_layer": "libc_entry_requested_size",
+    "baseline": {
+      "calls": 6470010,
+      "requested_bytes": 845112415
+    },
+    "candidate": {
+      "calls": 6279534,
+      "requested_bytes": 794275038
+    },
+    "candidate_vs_baseline": {
+      "calls_change_percent": -2.943983,
+      "requested_bytes_change_percent": -6.015457
+    },
+    "beyla": {
+      "measurement_layer": "go_runtime_mallocgc",
+      "calls": 2299714,
+      "requested_bytes": 291742377
+    },
+    "alloy": {
+      "measurement_layer": "go_runtime_counters",
+      "calls": 25198,
+      "requested_bytes": 8093880
+    },
+    "beyla_alloy_combined": {
+      "calls": 2324912,
+      "requested_bytes": 299836257
+    },
+    "candidate_vs_beyla_alloy": {
+      "calls_change_percent": 170.097707,
+      "requested_bytes_change_percent": 164.902933,
+      "cross_runtime_semantic_caveat": true
+    }
+  },
+  "candidate_decisions": {
+    "request_correlation_preallocation": "reverted",
+    "static_otlp_endpoint_keys": "reverted",
+    "cgroup_scan_shortcut": "reverted",
+    "cgroup_scan_regression_benchmark": "retained",
+    "direct_child_pod_cgroup_test": "retained"
+  },
+  "validation": {
+    "focused_tests": 521,
+    "scripts_quality_sh": "pass",
+    "skip_variables_set": false,
+    "skipped_gates": []
+  },
+  "cleanup": {
+    "benchmark_namespaced_resources": 0,
+    "benchmark_cluster_scoped_resources": 0,
+    "campaign_image_references_removed_from_both_nodes": true,
+    "root_application_sync": "Synced",
+    "root_application_health": "Healthy",
+    "child_application_sync": "Synced",
+    "child_application_health": "Healthy",
+    "standing_daemonset_ready": 2,
+    "standing_daemonset_desired": 2,
+    "standing_daemonset_image": "ghcr.io/guaracloud/e-navigator@sha256:62402d21b9cb02d59d63365c7e3716ffa0980bfea42d070b43fed618703a7df9",
+    "persistent_deployment_performed": false,
+    "pushed": false
+  }
+}
