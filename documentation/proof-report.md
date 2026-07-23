@@ -356,6 +356,20 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   `documentation/proof/optimization-20260722-campaign2/`. The replacement
   homelab run remains pending explicit deployment authorization.
 
+- Retained optimization campaign 4 (2026-07-23, homelab k3s amd64). Two
+  corrected 33-arm campaigns measured the v0.2.0 baseline against a candidate
+  carrying in-kernel per-connection HTTP classification, ring reader wakeup
+  coalescing, and an allocation-free sensitive-key check. Final-stage
+  whole-agent CPU fell 41.719% (148.235 to 86.391 millicores) with unchanged
+  RSS and zero hard loss, closing the CPU gap against combined Beyla plus
+  Alloy from +87.933255% to +6.998686% while the RSS advantage held at
+  -63.866085%. The dual objective therefore remains unmet on CPU by 5.651
+  millicores. The campaign also fixed two eBPF verifier-budget defects
+  (arm64 instruction budget, amd64 combined stack limit) and a broken
+  benchmark fixture. Method, image identities, signal completeness,
+  tradeoffs, and cleanup are in
+  `documentation/proof/optimization4-20260723/report.md`.
+
 - Corrected optimization baseline and candidate campaign (2026-07-23,
   homelab k3s amd64). All 66 resource arms and three allocator diagnostics
   passed their workload, signal-floor, loss, image-identity, and cleanup gates.
