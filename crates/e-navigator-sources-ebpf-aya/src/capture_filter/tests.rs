@@ -421,12 +421,14 @@ fn scan_cgroups_discovers_pod_and_container_tokens() {
     let root = std::env::temp_dir().join(format!("e-nav-cf-scan-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let uid_underscored = UID.replace('-', "_");
+    let direct_uid = "fedcba98-7654-3210-fedc-ba9876543210";
     let leaf = root
         .join("kubepods.slice")
         .join("kubepods-besteffort.slice")
         .join(format!("kubepods-besteffort-pod{uid_underscored}.slice"))
         .join(format!("cri-containerd-{CID}.scope"));
     std::fs::create_dir_all(&leaf).expect("fixture cgroup tree");
+    std::fs::create_dir_all(root.join(format!("pod{direct_uid}"))).expect("direct child cgroup");
     // A host cgroup that must not resolve to any pod.
     std::fs::create_dir_all(root.join("system.slice").join("sshd.service")).expect("host cgroup");
 
@@ -439,6 +441,12 @@ fn scan_cgroups_discovers_pod_and_container_tokens() {
         .find(|obs| obs.container_id.as_deref() == Some(CID))
         .expect("container cgroup discovered");
     assert_eq!(leaf.pod_uid.as_deref(), Some(UID));
+    assert!(
+        observations
+            .iter()
+            .any(|observation| observation.pod_uid.as_deref() == Some(direct_uid)),
+        "a pod cgroup directly below the configured root remains discoverable"
+    );
     assert!(
         observations
             .iter()

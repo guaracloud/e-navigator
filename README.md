@@ -5,7 +5,7 @@ observability. It captures node-local activity, attaches evidence-backed
 workload context, derives bounded native telemetry, and exports through JSON,
 Prometheus, OTLP HTTP, and local pprof surfaces.
 
-**Status:** active development after public preview `0.2.0-rc.2`. E-Navigator is a
+**Status:** active development after public preview `0.2.0`. E-Navigator is a
 collector, not a storage backend, query engine, or UI. Capabilities are promoted
 only when their matching evidence exists.
 
@@ -143,7 +143,7 @@ Install the published OCI chart only after release verification:
 
 ```bash
 helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
-  --version 0.2.0-rc.2 \
+  --version 0.2.0 \
   --namespace e-navigator-system \
   --create-namespace
 ```

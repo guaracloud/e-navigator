@@ -356,6 +356,18 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   `documentation/proof/optimization-20260722-campaign2/`. The replacement
   homelab run remains pending explicit deployment authorization.
 
+- Corrected optimization baseline and candidate campaign (2026-07-23,
+  homelab k3s amd64). All 66 resource arms and three allocator diagnostics
+  passed their workload, signal-floor, loss, image-identity, and cleanup gates.
+  Clean E-Navigator used 80.341543% more CPU and 62.041769% less RSS than
+  combined Beyla plus Alloy. The candidate reduced E-Navigator RSS by
+  2.976308% and libc requested bytes by 6.015457%, but increased CPU by
+  4.440222%; all production candidates were rejected and reverted. The
+  filesystem cgroup benchmark and its direct-child correctness test remain.
+  Exact CPU, RSS, allocation, throughput, latency, signal, image, tradeoff,
+  and cleanup evidence is in
+  `documentation/proof/optimization-20260723/report.md`.
+
 - Capture-filter verifier-load and OrbStack live scoping proof (2026-07-07,
   OrbStack Docker plus its in-VM Kubernetes v1.34, arm64). The cgroup capture
   filter's in-kernel fast-path check verifier-loaded on every modified program:

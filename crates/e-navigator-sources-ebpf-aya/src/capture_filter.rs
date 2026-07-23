@@ -932,6 +932,12 @@ fn scan_cgroups_blocking(
     observations
 }
 
+/// Exercises the bounded cgroup filesystem scan in local regression benchmarks.
+#[cfg(feature = "fuzzing")]
+pub fn bench_scan_cgroups(root: &Path) -> usize {
+    scan_cgroups_blocking(root, root, false).len()
+}
+
 fn process_names_for_cgroup(cgroup_path: &Path, procfs_root: &Path) -> Vec<String> {
     let Ok(pids) = std::fs::read_to_string(cgroup_path.join("cgroup.procs")) else {
         return Vec::new();
