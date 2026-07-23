@@ -11,6 +11,7 @@ pub mod profiling;
 pub mod request;
 pub mod resource;
 mod sanitize;
+pub use sanitize::contains_ascii_case_insensitive;
 pub mod trace;
 
 pub use dns::{

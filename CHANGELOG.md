@@ -8,6 +8,16 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ### Performance
 
+- Stop allocating a lowercased copy of every trace attribute key in the
+  sensitive-key deny check that runs during envelope construction. The
+  check now uses the same allocation-free case-insensitive scan as the
+  sink and profiling variants, and all three call one shared helper in
+  the signals crate. The new `signal/sensitive_trace_key_checks`
+  regression benchmark improved 56.1 percent (702 to 311 nanoseconds for
+  a representative eight-key attribute mix, p = 0.00), mixed-case
+  filtering behavior is locked by new unit tests, and a three-pair
+  whole-agent A/B showed no regression against the preceding commit.
+
 - Apply the perf readers' proven 25 ms coalescing window to ring-buffer
   event readers as well. Ring notifications only self-coalesce while the
   consumer lags; at low and moderate rates every event paid a poll wakeup,

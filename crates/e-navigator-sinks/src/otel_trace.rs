@@ -5,7 +5,8 @@ use e_navigator_signals::{
     ProtocolKind, RequestCorrelationWarning, RequestSpanObservation,
     ServiceInteractionSpanObservation, SignalEnvelope, SignalPayload, TraceAttribute,
     TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext,
-    TraceServicePathObservation, TraceSpanObservation, is_sensitive_profiling_attribute_key,
+    TraceServicePathObservation, TraceSpanObservation, contains_ascii_case_insensitive,
+    is_sensitive_profiling_attribute_key,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -886,13 +887,6 @@ fn trace_attribute_allowed(
     !SENSITIVE_TRACE_ATTRIBUTE_KEY_PARTS
         .iter()
         .any(|sensitive| contains_ascii_case_insensitive(&attribute.key, sensitive))
-}
-
-fn contains_ascii_case_insensitive(value: &str, needle: &str) -> bool {
-    value
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 fn profiling_attribute_allowed(
