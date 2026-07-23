@@ -1813,8 +1813,34 @@ impl Drop for CgroupScanFixture {
     }
 }
 
+fn bench_sensitive_trace_keys(c: &mut Criterion) {
+    use e_navigator_signals::is_sensitive_trace_attribute_key;
+
+    // A representative request-span attribute mix: mostly benign static keys
+    // with one sensitive header, matching what the capture hot path scans for
+    // every emitted envelope.
+    let keys = [
+        "db.system",
+        "db.operation",
+        "db.redis.argument.count",
+        "db.redis.key_present",
+        "http.route",
+        "e.navigator.protocol.capture.role",
+        "net.peer.name",
+        "http.request.header.authorization",
+    ];
+    c.bench_function("signal/sensitive_trace_key_checks", |b| {
+        b.iter(|| {
+            keys.iter()
+                .filter(|key| is_sensitive_trace_attribute_key(black_box(key)))
+                .count()
+        })
+    });
+}
+
 criterion_group!(
     benches,
+    bench_sensitive_trace_keys,
     bench_capture_filter,
     bench_go_tls_preflight,
     bench_reader_sample_handoff,

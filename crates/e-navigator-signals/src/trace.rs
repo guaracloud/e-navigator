@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::network::sanitize_network_process_identity;
-use crate::sanitize::{sanitize_kubernetes_labels, truncate_utf8_in_place};
+use crate::sanitize::{
+    contains_ascii_case_insensitive, sanitize_kubernetes_labels, truncate_utf8_in_place,
+};
 use crate::{
     ContainerContext, DependencyEndpoint, KubernetesContext, NetworkProcessIdentity,
     NetworkProtocol,
@@ -128,16 +130,21 @@ pub fn sanitize_trace_attributes(attributes: &mut Vec<TraceAttribute>) {
 }
 
 pub fn is_sensitive_trace_attribute_key(key: &str) -> bool {
-    let key = key.to_ascii_lowercase();
-    key.contains("password")
-        || key.contains("passwd")
-        || key.contains("secret")
-        || key.contains("token")
-        || key.contains("authorization")
-        || key.contains("cookie")
-        || key.contains("api_key")
-        || key.contains("apikey")
-        || key.contains("credential")
+    const SENSITIVE_KEY_PARTS: [&str; 9] = [
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "authorization",
+        "cookie",
+        "api_key",
+        "apikey",
+        "credential",
+    ];
+
+    SENSITIVE_KEY_PARTS
+        .iter()
+        .any(|sensitive| contains_ascii_case_insensitive(key, sensitive))
 }
 
 pub(crate) fn sanitize_trace_string(value: &mut String) {
@@ -201,4 +208,54 @@ pub(crate) fn sanitize_trace_dependency_endpoint(endpoint: &mut DependencyEndpoi
     sanitize_optional_trace_string(&mut endpoint.domain);
     sanitize_optional_trace_kubernetes_context(&mut endpoint.workload);
     sanitize_optional_trace_container_context(&mut endpoint.container);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sensitive_trace_key_check_is_case_insensitive_without_allocating() {
+        for key in [
+            "authorization",
+            "Authorization",
+            "http.request.header.X-API_KEY",
+            "db.PassWord",
+            "session.Cookie.value",
+            "refresh_TOKEN",
+        ] {
+            assert!(is_sensitive_trace_attribute_key(key), "{key}");
+        }
+        for key in [
+            "http.route",
+            "db.system",
+            "net.peer.name",
+            "e.navigator.protocol.capture.role",
+            "",
+            "toke",
+        ] {
+            assert!(!is_sensitive_trace_attribute_key(key), "{key}");
+        }
+    }
+
+    #[test]
+    fn sanitize_trace_attributes_drops_sensitive_and_oversized_entries() {
+        let mut attributes = vec![
+            TraceAttribute {
+                key: "http.route".to_string(),
+                value: "/orders".to_string(),
+            },
+            TraceAttribute {
+                key: "http.request.header.authorization".to_string(),
+                value: "Bearer secret".to_string(),
+            },
+            TraceAttribute {
+                key: String::new(),
+                value: "empty".to_string(),
+            },
+        ];
+        sanitize_trace_attributes(&mut attributes);
+        assert_eq!(attributes.len(), 1);
+        assert_eq!(attributes[0].key, "http.route");
+    }
 }

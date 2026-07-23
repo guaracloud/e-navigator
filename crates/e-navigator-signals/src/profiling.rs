@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::network::sanitize_network_process_identity;
-use crate::sanitize::{sanitize_kubernetes_labels, truncate_utf8_in_place};
+use crate::sanitize::{
+    contains_ascii_case_insensitive, sanitize_kubernetes_labels, truncate_utf8_in_place,
+};
 use crate::{ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkProcessIdentity};
 
 const MAX_PROFILING_ATTRIBUTES: usize = 16;
@@ -231,13 +233,6 @@ fn is_reserved_profiling_attribute_key(key: &str) -> bool {
     RESERVED_KEYS
         .iter()
         .any(|reserved| key.eq_ignore_ascii_case(reserved))
-}
-
-fn contains_ascii_case_insensitive(value: &str, needle: &str) -> bool {
-    value
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 fn truncate_optional_string(value: &mut Option<String>, max_bytes: usize) {

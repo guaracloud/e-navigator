@@ -1,5 +1,15 @@
 use std::collections::BTreeMap;
 
+/// Case-insensitive ASCII substring test without allocating a lowercased
+/// copy of `value`. This runs on capture hot paths for every attribute key
+/// checked against the sensitive-key deny list, so it must not allocate.
+pub fn contains_ascii_case_insensitive(value: &str, needle: &str) -> bool {
+    value
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
 pub(crate) fn truncate_utf8_in_place(value: &mut String, max_bytes: usize) {
     if value.len() <= max_bytes {
         return;
