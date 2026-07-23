@@ -72,7 +72,16 @@ const HTTP_DIAG_ACCEPT_ACTIVE: u32 = 15;
 const HTTP_DIAG_INBOUND_READ_ENTER: u32 = 16;
 const HTTP_DIAG_INBOUND_OUTPUT_ATTEMPT: u32 = 17;
 const HTTP_DIAG_SERVER_WRITE_SUPPRESSED: u32 = 18;
-const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 19;
+const HTTP_DIAG_NON_HTTP_CONNECTION_SKIP: u32 = 19;
+const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 20;
+
+/// First captured payload not yet inspected for an HTTP/1 request start.
+const HTTP_CONN_UNKNOWN: u32 = 0;
+/// First captured payload started like an HTTP/1 request; keep capturing.
+const HTTP_CONN_HTTP: u32 = 1;
+/// First captured payload did not start like an HTTP/1 request; skip the
+/// connection's remaining payload capture entirely.
+const HTTP_CONN_NOT_HTTP: u32 = 2;
 const CONNECTION_ROLE_CLIENT: u32 = 0;
 const CONNECTION_ROLE_SERVER: u32 = 1;
 const PROTOCOL_DATA_BYTES: usize = 256;
@@ -609,6 +618,10 @@ pub struct PendingConnect {
     pub bytes_sent: u64,
     pub bytes_received: u64,
     pub command: [u8; 16],
+    /// HTTP source only: lazily assigned `HTTP_CONN_*` classification of the
+    /// connection's first captured payload. Other sources leave it unknown.
+    pub http_state: u32,
+    pub reserved: u32,
 }
 
 #[repr(C)]
@@ -3542,6 +3555,8 @@ fn track_connect_enter(ctx: &TracePointContext) -> Result<u32, i64> {
         bytes_sent: 0,
         bytes_received: 0,
         command: bpf_get_current_comm().map_err(|err| err as i64)?,
+        http_state: HTTP_CONN_UNKNOWN,
+        reserved: 0,
     };
 
     if family as u32 == AF_INET {
@@ -3824,7 +3839,7 @@ fn emit_http_request_event(
         tgid: (pid_tgid >> 32) as u32,
         fd,
     };
-    let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
+    let mut connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
         Some(value) => *value,
         None => {
             record_http_diagnostic(HTTP_DIAG_ACTIVE_CONNECTION_MISS);
@@ -3840,6 +3855,9 @@ fn emit_http_request_event(
     // responses (header and body writes) for every real inbound request.
     if connection.role != CONNECTION_ROLE_CLIENT {
         record_http_diagnostic(HTTP_DIAG_SERVER_WRITE_SUPPRESSED);
+        return Ok(0);
+    }
+    if !http_connection_payload_captures(&key, &mut connection, buffer)? {
         return Ok(0);
     }
 
@@ -3926,7 +3944,7 @@ fn emit_http_request_iovecs_event(
         tgid: (pid_tgid >> 32) as u32,
         fd,
     };
-    let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
+    let mut connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
         Some(value) => *value,
         None => {
             record_http_diagnostic(HTTP_DIAG_ACTIVE_CONNECTION_MISS);
@@ -3939,6 +3957,15 @@ fn emit_http_request_iovecs_event(
     }
     if connection.role != CONNECTION_ROLE_CLIENT {
         record_http_diagnostic(HTTP_DIAG_SERVER_WRITE_SUPPRESSED);
+        return Ok(0);
+    }
+    // Classify from the first non-empty iovec slot; an empty or unreadable
+    // first slot leaves the connection unclassified rather than misjudging it.
+    let (first_buffer, first_len) = read_protocol_iovec(iov, 0)?;
+    if first_len > 0
+        && !first_buffer.is_null()
+        && !http_connection_payload_captures(&key, &mut connection, first_buffer)?
+    {
         return Ok(0);
     }
 
@@ -4149,6 +4176,8 @@ fn try_tracepoint_http_accept_exit(ctx: &TracePointContext) -> Result<u32, i64> 
         bytes_sent: 0,
         bytes_received: 0,
         command: bpf_get_current_comm().map_err(|err| err as i64)?,
+        http_state: HTTP_CONN_UNKNOWN,
+        reserved: 0,
     };
 
     let listener_key = ListenerKey {
@@ -4241,7 +4270,7 @@ fn try_tracepoint_http_read_exit(ctx: &TracePointContext) -> Result<u32, i64> {
         tgid: (pid_tgid >> 32) as u32,
         fd: pending.fd,
     };
-    let connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
+    let mut connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
         Some(value) => *value,
         None => return Ok(0),
     };
@@ -4250,6 +4279,9 @@ fn try_tracepoint_http_read_exit(ctx: &TracePointContext) -> Result<u32, i64> {
     }
 
     let buffer = pending.buffer_ptr as *const u8;
+    if !http_connection_payload_captures(&key, &mut connection, buffer)? {
+        return Ok(0);
+    }
 
     let event = http_request_event_scratch()?;
     event.pid = connection.pid;
@@ -5361,6 +5393,60 @@ fn record_http_diagnostic(stage: u32) {
     if let Some(counter) = HTTP_DIAGNOSTIC_COUNTERS.get_ptr_mut(stage) {
         unsafe {
             *counter = (*counter).wrapping_add(1);
+        }
+    }
+}
+
+/// Classifies a tracked connection's first captured payload. Runs once per
+/// connection; the verdict is cached in `ACTIVE_CONNECTIONS` so non-HTTP
+/// connections (databases, message brokers, RPC framing) stop paying the
+/// payload copy, event output, and userspace decode on every syscall.
+///
+/// The HTTP/2 connection preface (`PRI * HTTP/2.0`) starts like an HTTP/1
+/// method token but belongs to the port-scoped protocol source, so it
+/// classifies as non-HTTP here.
+fn http_classify_first_payload(buffer: *const u8) -> Result<bool, i64> {
+    if !http_buffer_starts_like_request(buffer)? {
+        return Ok(false);
+    }
+    let first = unsafe { bpf_probe_read_user::<u8>(buffer) }.map_err(|err| err as i64)?;
+    if first != b'P' {
+        return Ok(true);
+    }
+    let second = unsafe { bpf_probe_read_user::<u8>(buffer.add(1)) }.map_err(|err| err as i64)?;
+    let third = unsafe { bpf_probe_read_user::<u8>(buffer.add(2)) }.map_err(|err| err as i64)?;
+    let fourth = unsafe { bpf_probe_read_user::<u8>(buffer.add(3)) }.map_err(|err| err as i64)?;
+    Ok(!(second == b'R' && third == b'I' && fourth == b' '))
+}
+
+/// Returns whether the HTTP source should capture this tracked connection's
+/// payload, classifying the first captured payload and caching the verdict.
+#[inline(always)]
+fn http_connection_payload_captures(
+    key: &ConnectionKey,
+    connection: &mut PendingConnect,
+    buffer: *const u8,
+) -> Result<bool, i64> {
+    match connection.http_state {
+        HTTP_CONN_HTTP => Ok(true),
+        HTTP_CONN_NOT_HTTP => {
+            record_http_diagnostic(HTTP_DIAG_NON_HTTP_CONNECTION_SKIP);
+            Ok(false)
+        }
+        _ => {
+            let is_http = http_classify_first_payload(buffer)?;
+            connection.http_state = if is_http {
+                HTTP_CONN_HTTP
+            } else {
+                HTTP_CONN_NOT_HTTP
+            };
+            ACTIVE_CONNECTIONS
+                .insert(key, connection, 0)
+                .map_err(|err| err as i64)?;
+            if !is_http {
+                record_http_diagnostic(HTTP_DIAG_NON_HTTP_CONNECTION_SKIP);
+            }
+            Ok(is_http)
         }
     }
 }
