@@ -6,6 +6,15 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Chunk the protocol iovec emit tail program across bounded tail-call rounds
+  so `writev`, `sendmsg`, `readv`, and `recvmsg` capture verifier-loads within
+  the one-million-instruction budget on arm64 kernels. The unchunked emit loop
+  loaded on the proven amd64 homelab kernel but was rejected on an arm64
+  6.6-class-and-newer verifier, which blocked the whole protocol source on
+  those hosts.
+
 ## [0.2.0] - 2026-07-23
 
 ### Validation
