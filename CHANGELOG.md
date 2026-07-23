@@ -8,6 +8,19 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ### Performance
 
+- Apply the perf readers' proven 25 ms coalescing window to ring-buffer
+  event readers as well. Ring notifications only self-coalesce while the
+  consumer lags; at low and moderate rates every event paid a poll wakeup,
+  a drain, and a downstream channel wake. Batching readiness cuts that
+  scheduling churn with no event loss: producers keep reserving ring space
+  during the window and event timestamps stay kernel-assigned. In the local
+  controlled Redis A/B (800 operations per second, four paired arms),
+  whole-agent CPU fell from a 69.876 millicore mean to 34.445 millicores,
+  50.7 percent, with byte-identical protocol signal counters and zero
+  transport, queue, or export loss. Export-visible observation latency
+  grows by at most the 25 ms window, well inside the one-second default
+  flush interval.
+
 - Classify each tracked TCP connection once, in kernel, from its first
   captured payload in the HTTP source. Previously every write on every
   tracked client connection and every read on every accepted server
