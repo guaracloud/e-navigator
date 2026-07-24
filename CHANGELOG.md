@@ -6,6 +6,22 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-24
+
+### Validation
+
+- Promote `0.3.0-rc.1` unchanged after candidate validation: every release
+  artifact verified from a clean directory (checksums, Sigstore blob and
+  image signatures, SPDX SBOMs, and the release manifest, with the pulled
+  OCI chart digest matching the manifest), and the digest-pinned image ran
+  from the published OCI chart in a disposable homelab namespace on both
+  nodes. Scoped Redis and HTTP workloads were captured at full offered rate
+  with zero transport, queue, or export loss, generated trace identity on
+  every span, complete server-side Kubernetes attribution, and in-kernel
+  denial of all out-of-scope cgroups. Short-lived one-shot client processes
+  remain attributed as missing context with structured warnings, per the
+  attribution contract.
+
 ## [0.3.0-rc.1] - 2026-07-23
 
 ### Security
