@@ -2,6 +2,7 @@ use e_navigator_signals::{
     DnsCounterMetric, DnsLatencyMetric, MetricAggregationWindow, NetworkAddressFamily,
     NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric, NetworkProtocol,
     ResourceCounterMetric, ResourceGaugeMetric, SignalEnvelope, SignalPayload,
+    contains_ascii_case_insensitive, is_sensitive_attribute_key,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -360,33 +361,14 @@ fn insert_attribute_string(
 
 fn metric_attribute_allowed(key: &str) -> bool {
     const AUTH_FRAGMENT: &str = concat!("au", "th");
-    const SENSITIVE_FRAGMENTS: &[&str] = &[
-        "authorization",
-        AUTH_FRAGMENT,
-        "token",
-        "password",
-        "passwd",
-        "secret",
-        "credential",
-        "api_key",
-        "api-key",
-        "apikey",
-        "api-token",
-        "cookie",
-        "private_key",
-        "jwt",
-    ];
+    // Metrics extend the shared deny list with a deliberately broader bare
+    // fragment and the hyphenated token spelling.
+    const EXTRA_FRAGMENTS: &[&str] = &[AUTH_FRAGMENT, "api-token"];
 
-    !SENSITIVE_FRAGMENTS
-        .iter()
-        .any(|sensitive| contains_ascii_case_insensitive(key, sensitive))
-}
-
-fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+    !(is_sensitive_attribute_key(key)
+        || EXTRA_FRAGMENTS
+            .iter()
+            .any(|sensitive| contains_ascii_case_insensitive(key, sensitive)))
 }
 
 fn resource_attribute_key<'a>(metric_name: &str, key: &'a str, value: &str) -> &'a str {

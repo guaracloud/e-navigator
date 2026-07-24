@@ -170,17 +170,38 @@ async def run_http_server():
 
 # ---------------------------------------------------------------------- load
 
-class HttpOperation:
-    def __init__(self):
+class ConnectionOperation:
+    """Owns one lazily opened client connection to a service host."""
+
+    def __init__(self, family):
+        self.host, self.port = SERVICE_HOSTS[family]
         self.reader = None
         self.writer = None
 
     async def connect(self):
-        self.reader, self.writer = await asyncio.open_connection(*SERVICE_HOSTS["http"])
+        self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
 
-    async def invoke(self, sequence):
+    async def ensure_connected(self):
         if self.writer is None or self.reader is None:
             await self.connect()
+
+    async def close(self):
+        if self.writer is not None:
+            self.writer.close()
+            try:
+                await self.writer.wait_closed()
+            except (ConnectionError, OSError):
+                pass
+        self.reader = None
+        self.writer = None
+
+
+class HttpOperation(ConnectionOperation):
+    def __init__(self):
+        super().__init__("http")
+
+    async def invoke(self, sequence):
+        await self.ensure_connected()
         body = f"head-to-head-{sequence:016d}".encode()
         self.writer.write(
             b"POST /work HTTP/1.1\r\nHost: local-ab-http\r\n"
@@ -203,44 +224,15 @@ class HttpOperation:
             raise RuntimeError("HTTP response omitted content-length")
         await self.reader.readexactly(content_length)
 
-    async def close(self):
-        if self.writer is not None:
-            self.writer.close()
-            try:
-                await self.writer.wait_closed()
-            except (ConnectionError, OSError):
-                pass
-        self.reader = None
-        self.writer = None
 
-
-class LineOperation:
-    def __init__(self, family):
-        self.host, self.port = SERVICE_HOSTS[family]
-        self.reader = None
-        self.writer = None
-
-    async def connect(self):
-        self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
-
+class LineOperation(ConnectionOperation):
     async def invoke(self, sequence):
-        if self.writer is None or self.reader is None:
-            await self.connect()
+        await self.ensure_connected()
         self.writer.write(f"{sequence}\n".encode())
         await self.writer.drain()
         response = await asyncio.wait_for(self.reader.readline(), timeout=5)
         if not response.strip():
             raise RuntimeError("empty line-protocol response")
-
-    async def close(self):
-        if self.writer is not None:
-            self.writer.close()
-            try:
-                await self.writer.wait_closed()
-            except (ConnectionError, OSError):
-                pass
-        self.reader = None
-        self.writer = None
 
 
 def operation_for(family):

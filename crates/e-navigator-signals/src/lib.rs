@@ -11,7 +11,9 @@ pub mod profiling;
 pub mod request;
 pub mod resource;
 mod sanitize;
-pub use sanitize::contains_ascii_case_insensitive;
+pub use sanitize::{
+    SENSITIVE_ATTRIBUTE_KEY_PARTS, contains_ascii_case_insensitive, is_sensitive_attribute_key,
+};
 pub mod trace;
 
 pub use dns::{

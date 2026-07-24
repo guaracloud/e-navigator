@@ -55,14 +55,20 @@ sleep "${ATTACH_SETTLE_SECONDS:-10}"
 python3 /local-ab/local_ab.py load >"$OUT/load.log" 2>&1 &
 LOAD_PID=$!
 
-while ! grep -q LOCAL_AB_MEASURE_START "$OUT/load.log" 2>/dev/null; do
-  if ! kill -0 "$LOAD_PID" 2>/dev/null; then
-    echo "LOAD_FAILED" >&2
-    cat "$OUT/load.log" >&2
-    exit 1
-  fi
-  sleep 0.1
-done
+wait_for_load_marker() {
+  local marker="$1"
+  local failure="$2"
+  while ! grep -q "$marker" "$OUT/load.log" 2>/dev/null; do
+    if ! kill -0 "$LOAD_PID" 2>/dev/null; then
+      echo "$failure" >&2
+      cat "$OUT/load.log" >&2
+      exit 1
+    fi
+    sleep 0.2
+  done
+}
+
+wait_for_load_marker LOCAL_AB_MEASURE_START LOAD_FAILED
 
 CLK=$(getconf CLK_TCK)
 STAT0=$(awk '{print $14+$15}' "/proc/$AGENT_PID/stat")
@@ -74,14 +80,7 @@ if [ "${PERF_RECORD:-0}" = "1" ]; then
   PERF_PID=$!
 fi
 
-while ! grep -q LOCAL_AB_MEASURE_END "$OUT/load.log" 2>/dev/null; do
-  if ! kill -0 "$LOAD_PID" 2>/dev/null; then
-    echo "LOAD_DIED_MID_MEASURE" >&2
-    cat "$OUT/load.log" >&2
-    exit 1
-  fi
-  sleep 0.2
-done
+wait_for_load_marker LOCAL_AB_MEASURE_END LOAD_DIED_MID_MEASURE
 
 STAT1=$(awk '{print $14+$15}' "/proc/$AGENT_PID/stat")
 WALL1=$(date +%s.%N)

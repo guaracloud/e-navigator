@@ -620,7 +620,12 @@ pub struct PendingConnect {
     pub command: [u8; 16],
     /// HTTP source only: lazily assigned `HTTP_CONN_*` classification of the
     /// connection's first captured payload. Other sources leave it unknown.
+    /// If a second source ever needs a per-connection capture verdict, this
+    /// field should generalize into a source-neutral capture class rather
+    /// than gaining a sibling; the port-scoped protocol source currently
+    /// expresses its verdict through its port maps instead.
     pub http_state: u32,
+    /// Keeps the map value free of uninitialized tail padding.
     pub reserved: u32,
 }
 

@@ -5,8 +5,8 @@ use e_navigator_signals::{
     ProtocolKind, RequestCorrelationWarning, RequestSpanObservation,
     ServiceInteractionSpanObservation, SignalEnvelope, SignalPayload, TraceAttribute,
     TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext,
-    TraceServicePathObservation, TraceSpanObservation, contains_ascii_case_insensitive,
-    is_sensitive_profiling_attribute_key,
+    TraceServicePathObservation, TraceSpanObservation, is_sensitive_profiling_attribute_key,
+    is_sensitive_trace_attribute_key,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -15,15 +15,6 @@ const MAX_FORMATTED_TRACE_ATTRIBUTES: usize = 16;
 const MAX_TRACE_ATTRIBUTE_KEY_BYTES: usize = 128;
 const MAX_TRACE_ATTRIBUTE_VALUE_BYTES: usize = 256;
 const PROTOCOL_CAPTURE_ROLE_ATTRIBUTE: &str = "e.navigator.protocol.capture.role";
-const SENSITIVE_TRACE_ATTRIBUTE_KEY_PARTS: [&str; 6] = [
-    "password",
-    "passwd",
-    "secret",
-    "token",
-    "authorization",
-    "cookie",
-];
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OtelTraceRecordKind {
@@ -884,9 +875,7 @@ fn trace_attribute_allowed(
         return false;
     }
 
-    !SENSITIVE_TRACE_ATTRIBUTE_KEY_PARTS
-        .iter()
-        .any(|sensitive| contains_ascii_case_insensitive(&attribute.key, sensitive))
+    !is_sensitive_trace_attribute_key(&attribute.key)
 }
 
 fn profiling_attribute_allowed(

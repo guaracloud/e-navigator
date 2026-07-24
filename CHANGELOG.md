@@ -6,6 +6,17 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- Unify the sensitive attribute-key deny lists behind one shared vocabulary
+  in the signals crate. The trace, profiling, trace-sink, resource-metric,
+  metric-sink, and profile-format predicates had six hand-maintained lists
+  that disagreed: trace paths did not filter `jwt`, `private_key`, or
+  hyphenated API-key spellings, and profiling paths did not filter `passwd`.
+  Every path now applies the shared twelve-fragment list (resource and
+  metric paths keep their deliberately broader extra fragments on top), so
+  filtering is strictly tighter and can no longer drift per family.
+
 ### Validation
 
 - Record a retained optimization campaign after two corrected 33-arm homelab

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use e_navigator_core::{
     CoreError, CoreResult, ModuleKind, ModuleMetadata, PrometheusHttpConfig, Sink,
 };
-use e_navigator_signals::{SignalEnvelope, SignalPayload};
+use e_navigator_signals::{SignalEnvelope, SignalPayload, contains_ascii_case_insensitive};
 use std::{
     collections::{BTreeMap, VecDeque},
     io,
@@ -742,13 +742,6 @@ fn prometheus_identifier_is_already_valid(value: &str) -> bool {
         return false;
     }
     bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
-}
-
-fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 fn prometheus_label_value(value: &serde_json::Value) -> Option<String> {

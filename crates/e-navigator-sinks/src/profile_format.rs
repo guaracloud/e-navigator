@@ -1,6 +1,6 @@
 use e_navigator_signals::{
     ProfileSampleObservation, ProfilingAttribute, ProfilingSessionObservation, SignalEnvelope,
-    SignalPayload,
+    SignalPayload, is_sensitive_attribute_key,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -249,26 +249,10 @@ fn should_drop_attribute(key: &str) -> bool {
         "stack_id",
         "frame_count",
     ];
-    const SENSITIVE_FRAGMENTS: &[&str] = &[
-        "token",
-        "authorization",
-        "cookie",
-        "password",
-        "secret",
-        "api_key",
-        "apikey",
-        "x-api-key",
-        "credential",
-        "private_key",
-        "jwt",
-    ];
-
     CANONICAL_FIELDS
         .iter()
         .any(|field| key.eq_ignore_ascii_case(field))
-        || SENSITIVE_FRAGMENTS
-            .iter()
-            .any(|fragment| contains_ascii_case_insensitive(key, fragment))
+        || is_sensitive_attribute_key(key)
 }
 
 fn profiling_kind_name(kind: e_navigator_signals::ProfilingKind) -> &'static str {
@@ -331,13 +315,6 @@ fn hash_separator(hash: &mut u64) {
 fn hash_byte(hash: &mut u64, byte: u8) {
     *hash ^= u64::from(byte);
     *hash = hash.wrapping_mul(FNV_PRIME);
-}
-
-fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 fn truncate_utf8(value: &str, max_bytes: usize) -> String {
