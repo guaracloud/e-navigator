@@ -90,40 +90,11 @@
         </figure>
       </section>
 
-      <section id="capabilities" class="section" aria-labelledby="capabilities-title">
-        <div class="section-heading">
-          <p class="eyebrow">Capabilities</p>
-          <h2 id="capabilities-title">Runtime signals without application SDKs.</h2>
-          <p>
-            The current foundation captures process, network, DNS, HTTP/1,
-            HTTP/2, extension-free WebSocket metadata, and gRPC-Web metadata at
-            runtime, reassembles and matches Kafka, MongoDB, MySQL, NATS,
-            PostgreSQL, Redis, and gRPC requests to their responses for real
-            latency and status, reads TLS plaintext at the
-            userspace library boundary through OpenSSL, GnuTLS, and
-            version-gated unstripped Linux/amd64 Go <code>crypto/tls</code>
-            uprobes (interception, not on-the-wire decryption), accounts for TCP
-            retransmits, resets, and state transitions, samples and symbolizes
-            periodic CPU, scheduler off-CPU, and futex-wait lock profiles, and turns resource, trace, and security observations
-            into bounded native E-Navigator signals. An optional capture filter
-            scopes which workloads are probed by Kubernetes namespace and label
-            on unified cgroup v2 nodes. Bounded inotify discovery wakes the
-            controller for new cgroups, while a 2-second polling reconciliation
-            remains as a recovery path. Five homelab runs per mode measured a
-            0.463 ms event-driven median versus 1,148.131 ms with polling for
-            the scoped new-Pod exec workload. Legacy and hybrid layouts force deny
-            before probe attachment instead of guessing a hierarchy.
-            Supported kernels use BPF ring buffers with explicit producer-loss
-            accounting; a separately built perf-event path remains for older
-            kernels and strict diagnostics. BTF-capable kernels also use
-            preflighted fexit hooks for scalar network read/write accounting,
-            with syscall tracepoints retained as the strict compatibility path.
-            An opt-in Linux 6.6 reduced-capability profile removes
-            <code>SYS_ADMIN</code>, retaining only <code>BPF</code>,
-            <code>PERFMON</code>, and <code>SYS_PTRACE</code> for the complete
-            source set proven on the homelab.
-          </p>
-        </div>
+      <section
+        id="capabilities"
+        class="section capabilities-section"
+        aria-label="Capabilities"
+      >
         <div class="capability-grid">
           <article class="capability capability-primary">
             <span class="capability-kicker">Pipeline</span>

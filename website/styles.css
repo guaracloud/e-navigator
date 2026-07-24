@@ -264,6 +264,10 @@ p {
   grid-template-columns: 1.25fr 1fr 1fr;
 }
 
+.capabilities-section .capability-grid {
+  margin-top: 0;
+}
+
 .status-grid,
 .metric-layout {
   grid-template-columns: repeat(3, minmax(0, 1fr));
