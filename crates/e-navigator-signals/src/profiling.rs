@@ -1,9 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::network::sanitize_network_process_identity;
-use crate::sanitize::{
-    contains_ascii_case_insensitive, sanitize_kubernetes_labels, truncate_utf8_in_place,
-};
+use crate::sanitize::{sanitize_kubernetes_labels, truncate_utf8_in_place};
 use crate::{ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkProcessIdentity};
 
 const MAX_PROFILING_ATTRIBUTES: usize = 16;
@@ -199,23 +197,7 @@ pub(crate) fn sanitize_optional_profiling_kubernetes_context(
 }
 
 pub fn is_sensitive_profiling_attribute_key(key: &str) -> bool {
-    const SENSITIVE_KEY_PARTS: [&str; 11] = [
-        "token",
-        "authorization",
-        "cookie",
-        "password",
-        "secret",
-        "api_key",
-        "apikey",
-        "x-api-key",
-        "credential",
-        "private_key",
-        "jwt",
-    ];
-
-    SENSITIVE_KEY_PARTS
-        .iter()
-        .any(|sensitive| contains_ascii_case_insensitive(key, sensitive))
+    crate::sanitize::is_sensitive_attribute_key(key)
 }
 
 fn is_reserved_profiling_attribute_key(key: &str) -> bool {

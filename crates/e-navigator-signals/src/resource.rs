@@ -212,33 +212,14 @@ pub fn sanitize_resource_metric_attributes(attributes: &mut Vec<ResourceMetricAt
 
 fn is_sensitive_resource_metric_attribute_key(key: &str) -> bool {
     const AUTH_FRAGMENT: &str = concat!("au", "th");
-    const SENSITIVE_FRAGMENTS: &[&str] = &[
-        "authorization",
-        AUTH_FRAGMENT,
-        "token",
-        "password",
-        "passwd",
-        "secret",
-        "credential",
-        "api_key",
-        "api-key",
-        "apikey",
-        "api-token",
-        "cookie",
-        "private_key",
-        "jwt",
-    ];
+    // Resource metrics extend the shared deny list with a deliberately
+    // broader bare fragment and the hyphenated token spelling.
+    const EXTRA_FRAGMENTS: &[&str] = &[AUTH_FRAGMENT, "api-token"];
 
-    SENSITIVE_FRAGMENTS
-        .iter()
-        .any(|sensitive| contains_ascii_case_insensitive(key, sensitive))
-}
-
-fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+    crate::sanitize::is_sensitive_attribute_key(key)
+        || EXTRA_FRAGMENTS
+            .iter()
+            .any(|sensitive| crate::sanitize::contains_ascii_case_insensitive(key, sensitive))
 }
 
 pub(crate) fn sanitize_resource_gauge_metric(metric: &mut ResourceGaugeMetric) {

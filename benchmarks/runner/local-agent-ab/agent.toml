@@ -1,6 +1,17 @@
-# Local whole-agent A/B config: mirrors benchmarks/config/head-to-head-redis.toml
-# minus Kubernetes attribution (no cluster locally). Same sources, generators,
-# sinks, bounds, and export contract.
+# Local whole-agent A/B config, derived by hand from
+# benchmarks/config/head-to-head-redis.toml. The [protocol_source] bounds,
+# [http_source] bounds, correlation limits, [otlp_http] batching/retry/circuit
+# contract, and the module list must stay identical to the campaign config;
+# re-check them against the base file whenever either changes.
+#
+# Intended local deltas, and nothing else:
+# - no [attribution.kubernetes] table and capture_filter runs allow/allow with
+#   process_exclude only (no cluster locally; homelab scopes by namespace);
+# - attribution roots are /proc and /sys/fs/cgroup instead of /host/*;
+# - http2_ports is empty (no local gRPC family) and the [cpu_profile_source]
+#   and [profiling] stage tables are absent (profile stage not exercised);
+# - prometheus binds 127.0.0.1:9099 and OTLP targets 127.0.0.1:4318 (the
+#   in-container opaque sink) instead of cluster service addresses.
 log_level = "info"
 queue_capacity = 8192
 

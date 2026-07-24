@@ -30,25 +30,24 @@ pub(crate) fn wait_for_events<T: AsFd>(
     source: &'static str,
     cpu_id: u32,
 ) -> Option<bool> {
-    wait_for_readiness(buffer, source, Some(cpu_id), true)
+    wait_for_readiness(buffer, source, Some(cpu_id))
 }
 
-/// Waits for a shared ring buffer, then applies the same bounded coalescing
-/// delay as the perf readers. Ring-buffer notifications only coalesce on
-/// their own while the consumer lags; at low and moderate event rates the
-/// consumer always keeps up, so every event otherwise costs a full poll
-/// wakeup, drain, and downstream channel wake. Sleeping once per readiness
-/// batches those events with no loss: producers keep reserving ring space
-/// while the reader sleeps, and event timestamps are kernel-assigned.
+/// Waits for a shared ring buffer with the same bounded coalescing delay as
+/// the perf readers. Ring-buffer notifications only coalesce on their own
+/// while the consumer lags; at low and moderate event rates the consumer
+/// always keeps up, so every event otherwise costs a full poll wakeup,
+/// drain, and downstream channel wake. Sleeping once per readiness batches
+/// those events with no loss: producers keep reserving ring space while the
+/// reader sleeps, and event timestamps are kernel-assigned.
 pub(crate) fn wait_for_ring_events<T: AsFd>(buffer: &T, source: &'static str) -> Option<bool> {
-    wait_for_readiness(buffer, source, None, true)
+    wait_for_readiness(buffer, source, None)
 }
 
 fn wait_for_readiness<T: AsFd>(
     buffer: &T,
     source: &'static str,
     cpu_id: Option<u32>,
-    coalesce: bool,
 ) -> Option<bool> {
     let mut descriptors = [PollFd::new(buffer, PollFlags::IN)];
     loop {
@@ -62,9 +61,7 @@ fn wait_for_readiness<T: AsFd>(
                     return None;
                 }
                 if events.contains(PollFlags::IN) {
-                    if coalesce {
-                        std::thread::sleep(ACTIVE_COALESCE_DELAY);
-                    }
+                    std::thread::sleep(ACTIVE_COALESCE_DELAY);
                     return Some(true);
                 }
                 return Some(false);

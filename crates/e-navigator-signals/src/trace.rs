@@ -1,9 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::network::sanitize_network_process_identity;
-use crate::sanitize::{
-    contains_ascii_case_insensitive, sanitize_kubernetes_labels, truncate_utf8_in_place,
-};
+use crate::sanitize::{sanitize_kubernetes_labels, truncate_utf8_in_place};
 use crate::{
     ContainerContext, DependencyEndpoint, KubernetesContext, NetworkProcessIdentity,
     NetworkProtocol,
@@ -130,21 +128,7 @@ pub fn sanitize_trace_attributes(attributes: &mut Vec<TraceAttribute>) {
 }
 
 pub fn is_sensitive_trace_attribute_key(key: &str) -> bool {
-    const SENSITIVE_KEY_PARTS: [&str; 9] = [
-        "password",
-        "passwd",
-        "secret",
-        "token",
-        "authorization",
-        "cookie",
-        "api_key",
-        "apikey",
-        "credential",
-    ];
-
-    SENSITIVE_KEY_PARTS
-        .iter()
-        .any(|sensitive| contains_ascii_case_insensitive(key, sensitive))
+    crate::sanitize::is_sensitive_attribute_key(key)
 }
 
 pub(crate) fn sanitize_trace_string(value: &mut String) {
@@ -223,6 +207,9 @@ mod tests {
             "db.PassWord",
             "session.Cookie.value",
             "refresh_TOKEN",
+            "session_jwt",
+            "tls.private_KEY",
+            "http.request.header.x-api-key",
         ] {
             assert!(is_sensitive_trace_attribute_key(key), "{key}");
         }

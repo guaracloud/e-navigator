@@ -1,5 +1,37 @@
 use std::collections::BTreeMap;
 
+/// Shared deny-list fragments identifying secret-bearing attribute keys.
+///
+/// This is the single vocabulary behind every sensitive-key predicate in the
+/// workspace. Signal-family predicates may extend it with family-specific
+/// fragments, but they must not shrink it: a key that matches any fragment
+/// here is dropped before export on every path. `api-key` subsumes the
+/// `x-api-key` header spelling because matching is substring-based.
+pub const SENSITIVE_ATTRIBUTE_KEY_PARTS: [&str; 12] = [
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "authorization",
+    "cookie",
+    "api_key",
+    "api-key",
+    "apikey",
+    "credential",
+    "private_key",
+    "jwt",
+];
+
+/// Whether `key` matches the shared secret-bearing attribute deny list.
+///
+/// Matching is an allocation-free, case-insensitive substring test because
+/// this runs for every attribute of every envelope on the capture hot path.
+pub fn is_sensitive_attribute_key(key: &str) -> bool {
+    SENSITIVE_ATTRIBUTE_KEY_PARTS
+        .iter()
+        .any(|sensitive| contains_ascii_case_insensitive(key, sensitive))
+}
+
 /// Case-insensitive ASCII substring test without allocating a lowercased
 /// copy of `value`. This runs on capture hot paths for every attribute key
 /// checked against the sensitive-key deny list, so it must not allocate.
@@ -53,8 +85,27 @@ pub(crate) fn sanitize_kubernetes_labels(
 
 #[cfg(test)]
 mod tests {
-    use super::{sanitize_kubernetes_labels, truncate_utf8_in_place};
+    use super::{is_sensitive_attribute_key, sanitize_kubernetes_labels, truncate_utf8_in_place};
     use std::collections::BTreeMap;
+
+    #[test]
+    fn shared_sensitive_key_list_matches_all_family_spellings() {
+        for key in [
+            "passwd",
+            "db.password",
+            "http.request.header.X-API-Key",
+            "http.request.header.x-api-key",
+            "session_jwt",
+            "tls.private_key.path",
+            "service.credential",
+            "API_KEY",
+        ] {
+            assert!(is_sensitive_attribute_key(key), "{key}");
+        }
+        for key in ["http.route", "db.system", "net.peer.name", ""] {
+            assert!(!is_sensitive_attribute_key(key), "{key}");
+        }
+    }
 
     #[test]
     fn bounded_string_keeps_its_allocation() {

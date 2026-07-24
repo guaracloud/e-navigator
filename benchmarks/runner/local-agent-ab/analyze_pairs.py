@@ -30,6 +30,7 @@ def main() -> None:
                     'e_navigator_ebpf_source_decoded_samples_total{source="source.aya_protocol"}'
                 ):
                     decoded = float(line.rsplit(" ", 1)[1])
+                    break
         groups.setdefault(key, []).append(
             {
                 "label": label,
