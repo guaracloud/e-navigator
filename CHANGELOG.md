@@ -6,6 +6,8 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0-rc.1] - 2026-07-23
+
 ### Security
 
 - Unify the sensitive attribute-key deny lists behind one shared vocabulary
