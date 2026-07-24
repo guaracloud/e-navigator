@@ -64,7 +64,7 @@ rustix = { version = "1", default-features = false, features = ["event", "param"
 thiserror = "2"
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-stream = "0.1"
-toml = "0.9"
+toml = "1.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 which = "8"
