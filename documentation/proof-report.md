@@ -370,6 +370,19 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   tradeoffs, and cleanup are in
   `documentation/proof/optimization4-20260723/report.md`.
 
+- Optimization campaign 5 NO-GO (2026-07-25, homelab k3s amd64). A fresh
+  33-arm `v0.3.0` baseline used 18.085055% more CPU and 63.446164% less RSS
+  than combined Beyla plus Alloy. A profile-routed sensitive-key candidate
+  improved its Criterion fixture by 76.555%, but a second 33-arm campaign
+  widened the relative CPU deficit to 19.119465% and reduced the RSS advantage
+  to 61.879488%; the production change was rejected and reverted during the
+  campaign. It was restored on 2026-07-26 by explicit user direction after
+  focused correctness, lint, formatting, and Criterion checks, without
+  reclassifying the campaign NO-GO. Matched allocation diagnostics found
+  E-Navigator 168.631477% higher in calls and 219.048902% higher in requested
+  bytes than the directional combined cross-runtime reference. The historical
+  resource verdict remains a NO-GO despite the later retention decision.
+
 - Corrected optimization baseline and candidate campaign (2026-07-23,
   homelab k3s amd64). All 66 resource arms and three allocator diagnostics
   passed their workload, signal-floor, loss, image-identity, and cleanup gates.

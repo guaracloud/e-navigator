@@ -11,7 +11,7 @@
 # contended arms unusable for comparison.
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 harness_dir="$repo_root/benchmarks/runner/local-agent-ab"
 
 LABEL="${1:?usage: run_reps.sh <label> <binary-name> [reps] [rates] [duration]}"
