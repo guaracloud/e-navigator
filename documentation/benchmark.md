@@ -405,6 +405,38 @@ Timestamped raw directories are ignored by Git by default. Do not commit raw
 logs, screenshots, Criterion reports, or large transient output. Public proof
 belongs in [proof-report.md](proof-report.md).
 
+The guarded allocation diagnostic wraps the existing full-profile
+head-to-head arm and records one bounded allocator window:
+
+```bash
+E_NAVIGATOR_HOMELAB_CONFIRM=1 \
+E_NAVIGATOR_HEAD_TO_HEAD_RESULTS_DIR=benchmarks/results/allocation-enav \
+E_NAVIGATOR_HOMELAB_IMAGE_TAG=<node-local-tag> \
+E_NAVIGATOR_HEAD_TO_HEAD_WORKLOAD_IMAGE=<node-local-workload> \
+benchmarks/runner/homelab-allocation-diagnostic.sh e-navigator
+```
+
+Use `beyla` for the comparison stack. The command is destructive only inside
+the guarded benchmark workflow: it suspends and restores the two recorded
+Argo CD automation policies, temporarily removes and restores the standing
+DaemonSet, creates privileged allocation-probe Pods, and deletes all
+disposable resources on exit. It is restricted to the `homelab` context,
+`e-navigator-bench` namespace, and amd64 ABI. Rust libc probes, Beyla's Go
+runtime probe, and Alloy's Go runtime counters are directional layers, not
+strict cross-language equivalents.
+
+The 2026-07-25 campaign used this runner after two corrected 33-arm campaigns.
+The controlling baseline measured 94.060882 millicores and 50,356,679 bytes
+RSS for E-Navigator versus 79.655196 millicores and 137,760,313 bytes for
+combined Beyla plus Alloy. That is +18.085055% CPU and -63.446164% RSS.
+E-Navigator's directional allocation counts were +168.631477% calls and
++219.048902% requested bytes versus the combined reference. A microbenchmark
+win that failed the full campaign was reverted during the campaign, then
+restored on 2026-07-26 by explicit user direction after focused correctness,
+Clippy, formatting, and Criterion checks. That later retention does not
+reclassify the full campaign. The retained public summary and non-claims are
+in the [proof report](proof-report.md).
+
 Collection-only mode:
 
 ```bash

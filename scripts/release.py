@@ -134,6 +134,13 @@ def prepare(version: str) -> None:
         path = ROOT / relative
         if not path.exists():
             continue
+        if relative == "documentation/helm.md":
+            replace_once(
+                path,
+                rf"(^  --version ){re.escape(current)}( \\\\$)",
+                rf"\g<1>{version}\g<2>",
+            )
+            continue
         content = path.read_text(encoding="utf-8")
         if current not in content:
             fail(f"expected {current} in {relative}")

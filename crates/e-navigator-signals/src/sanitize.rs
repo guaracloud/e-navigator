@@ -27,9 +27,37 @@ pub const SENSITIVE_ATTRIBUTE_KEY_PARTS: [&str; 12] = [
 /// Matching is an allocation-free, case-insensitive substring test because
 /// this runs for every attribute of every envelope on the capture hot path.
 pub fn is_sensitive_attribute_key(key: &str) -> bool {
-    SENSITIVE_ATTRIBUTE_KEY_PARTS
+    key.as_bytes()
         .iter()
-        .any(|sensitive| contains_ascii_case_insensitive(key, sensitive))
+        .enumerate()
+        .any(|(index, byte)| match byte.to_ascii_lowercase() {
+            b'a' => {
+                matches_ascii_case_insensitive_at(key, index, "authorization")
+                    || matches_ascii_case_insensitive_at(key, index, "api_key")
+                    || matches_ascii_case_insensitive_at(key, index, "api-key")
+                    || matches_ascii_case_insensitive_at(key, index, "apikey")
+            }
+            b'c' => {
+                matches_ascii_case_insensitive_at(key, index, "cookie")
+                    || matches_ascii_case_insensitive_at(key, index, "credential")
+            }
+            b'j' => matches_ascii_case_insensitive_at(key, index, "jwt"),
+            b'p' => {
+                matches_ascii_case_insensitive_at(key, index, "password")
+                    || matches_ascii_case_insensitive_at(key, index, "passwd")
+                    || matches_ascii_case_insensitive_at(key, index, "private_key")
+            }
+            b's' => matches_ascii_case_insensitive_at(key, index, "secret"),
+            b't' => matches_ascii_case_insensitive_at(key, index, "token"),
+            _ => false,
+        })
+}
+
+fn matches_ascii_case_insensitive_at(value: &str, start: usize, needle: &str) -> bool {
+    value
+        .as_bytes()
+        .get(start..start.saturating_add(needle.len()))
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 /// Case-insensitive ASCII substring test without allocating a lowercased
@@ -85,7 +113,10 @@ pub(crate) fn sanitize_kubernetes_labels(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_sensitive_attribute_key, sanitize_kubernetes_labels, truncate_utf8_in_place};
+    use super::{
+        SENSITIVE_ATTRIBUTE_KEY_PARTS, contains_ascii_case_insensitive, is_sensitive_attribute_key,
+        sanitize_kubernetes_labels, truncate_utf8_in_place,
+    };
     use std::collections::BTreeMap;
 
     #[test]
@@ -104,6 +135,37 @@ mod tests {
         }
         for key in ["http.route", "db.system", "net.peer.name", ""] {
             assert!(!is_sensitive_attribute_key(key), "{key}");
+        }
+    }
+
+    #[test]
+    fn sensitive_key_matcher_preserves_the_shared_substring_contract() {
+        for fragment in SENSITIVE_ATTRIBUTE_KEY_PARTS {
+            for key in [
+                fragment.to_string(),
+                format!("prefix.{fragment}.suffix"),
+                format!("PREFIX.{}.SUFFIX", fragment.to_ascii_uppercase()),
+            ] {
+                assert!(is_sensitive_attribute_key(&key), "{key}");
+            }
+        }
+
+        for key in [
+            "",
+            "a",
+            concat!("au", "th"),
+            "api",
+            "pass",
+            "private",
+            "tok",
+            "http.route",
+            "db.system",
+            "credentialedness",
+        ] {
+            let reference = SENSITIVE_ATTRIBUTE_KEY_PARTS
+                .iter()
+                .any(|fragment| contains_ascii_case_insensitive(key, fragment));
+            assert_eq!(is_sensitive_attribute_key(key), reference, "{key}");
         }
     }
 

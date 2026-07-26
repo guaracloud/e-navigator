@@ -6,6 +6,32 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-26
+
+### Added
+
+- Add a guarded homelab allocation diagnostic that places a bounded bpftrace
+  window inside the existing full-profile workload and records the different
+  Rust, Beyla, and Alloy measurement layers explicitly.
+
+### Fixed
+
+- Resolve the local whole-agent A/B harness repository root from its actual
+  three-level nesting so it mounts the runner and writes ignored evidence
+  beneath the repository instead of failing at container startup.
+- Restrict automated Helm-documentation version preparation to the product
+  install example so it cannot rewrite the independently pinned OTLP Profiles
+  protocol module version.
+
+### Performance
+
+- Scan sensitive attribute keys once and dispatch comparisons by each
+  candidate fragment's first byte. This preserves the shared allocation-free,
+  case-insensitive substring deny-list contract while avoiding twelve
+  full-key scans on every trace, profile, and metric attribute. The focused
+  Criterion path remains faster, while the historical full-stack homelab
+  campaign remains a CPU and RSS optimization NO-GO.
+
 ## [0.3.0] - 2026-07-24
 
 ### Validation
