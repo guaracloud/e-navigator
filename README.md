@@ -42,8 +42,8 @@ E-Navigator runs as one node-local agent with a statically registered
 - Processors attach process, container, Kubernetes, owner, and service context
   only when the evidence supports it.
 - Generators derive bounded resource and network metrics, dependency edges,
-  request spans, trace service paths, profile sessions, and runtime security
-  findings.
+  peer-aware directional L4 byte metrics, request spans, trace service paths,
+  profile sessions, and runtime security findings.
 - Sinks emit newline-delimited JSON, serve Prometheus and local pprof, or route
   metrics, traces, and profiles through independent bounded OTLP workers.
 - An optional Kubernetes-aware capture filter avoids probing excluded workload
@@ -51,6 +51,10 @@ E-Navigator runs as one node-local agent with a statically registered
   hybrid layouts are detected and forced to deny rather than guessed. Bounded
   inotify discovery reduces new-Pod convergence time while retaining the
   configured unknown posture and a periodic loss-recovery scan.
+- A separately opt-in, disabled-by-default HTTP/1 propagation path can inject
+  W3C `traceparent` before TCP packetization for one strictly bounded plaintext
+  request shape. It is not a universal TLS, HTTP/2, HTTP/3, segmented-write, or
+  asynchronous propagation claim; see [ADR 0015](documentation/adr/0015-peer-flow-metrics-and-opt-in-http1-propagation.md).
 - An opt-in Helm profile removes `SYS_ADMIN` on the proven Linux 6.6.68
   homelab posture, using `BPF`, `PERFMON`, and `SYS_PTRACE` while retaining UID
   0 and explicit rootless and cross-kernel boundaries.

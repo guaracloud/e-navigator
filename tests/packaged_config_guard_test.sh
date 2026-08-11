@@ -17,6 +17,7 @@ known_modules=(
   "processor.container_attribution"
   "generator.resource_metrics"
   "generator.network_metrics"
+  "generator.peer_flow_metrics"
   "generator.dns_metrics"
   "generator.trace_correlation"
   "generator.request_correlation"
