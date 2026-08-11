@@ -41,6 +41,23 @@ pub enum ProfilingConfidence {
     High,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ProfilingFrameDomain {
+    #[default]
+    Unknown,
+    User,
+    Kernel,
+    ManagedRuntime,
+}
+
+impl ProfilingFrameDomain {
+    fn is_unknown(&self) -> bool {
+        *self == Self::Unknown
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfilingAttribute {
@@ -51,6 +68,8 @@ pub struct ProfilingAttribute {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfilingFrame {
+    #[serde(default, skip_serializing_if = "ProfilingFrameDomain::is_unknown")]
+    pub domain: ProfilingFrameDomain,
     pub symbol: Option<String>,
     pub module: Option<String>,
     pub file: Option<String>,

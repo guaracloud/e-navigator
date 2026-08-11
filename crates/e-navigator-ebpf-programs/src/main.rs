@@ -156,6 +156,10 @@ const EXEC_EVENT_SOURCE_SYSCALL_ENTER: u32 = 1;
 const EXEC_EVENT_SOURCE_SCHED_EXEC: u32 = 2;
 const CPU_PROFILE_MAX_FRAMES: usize = 128;
 const CPU_PROFILE_MIN_FRAMES: u32 = 1;
+const KERNEL_PROFILE_MAX_FRAMES: usize = 64;
+const KERNEL_PROFILE_MIN_FRAMES: u32 = 1;
+const KERNEL_PROFILE_FLAG_TRUNCATED: u32 = 1;
+const KERNEL_PROFILE_FLAG_CAPTURE_FAILED: u32 = 2;
 const CPU_PROFILE_FLAG_TRUNCATED: u32 = 1;
 const CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED: u32 = 2;
 const CPU_PROFILE_FLAG_DWARF: u32 = 4;
@@ -171,7 +175,8 @@ const PROFILE_CONFIG_LOCK_MIN_NANOS: u32 = 3;
 const PROFILE_CONFIG_OFF_CPU_RATE_PER_CPU: u32 = 4;
 const PROFILE_CONFIG_LOCK_RATE_PER_CPU: u32 = 5;
 const PROFILE_CONFIG_FUTEX_SYSCALL: u32 = 6;
-const PROFILE_CONFIG_LEN: u32 = 7;
+const PROFILE_CONFIG_KERNEL_STACK_ENABLED: u32 = 7;
+const PROFILE_CONFIG_LEN: u32 = 8;
 const PROFILE_RATE_OFF_CPU: u32 = 0;
 const PROFILE_RATE_LOCK: u32 = 1;
 const PROFILE_PREPARE_FILTERED: u32 = 0;
@@ -437,6 +442,9 @@ pub struct RawCpuProfileEvent {
     /// samples, whose weight is derived from the configured sample period.
     pub weight_nanos: u64,
     pub instruction_pointers: [u64; CPU_PROFILE_MAX_FRAMES],
+    pub kernel_frame_count: u32,
+    pub kernel_flags: u32,
+    pub kernel_instruction_pointers: [u64; KERNEL_PROFILE_MAX_FRAMES],
     pub py_frame_count: u32,
     pub py_stop: u32,
     /// CPython code-object pointers, leaf first; userspace resolves
@@ -909,7 +917,7 @@ static PROFILE_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
     PerCpuArray::with_max_entries(PROFILE_DIAGNOSTIC_COUNTERS_LEN, 0);
 
 #[map]
-static CPU_PROFILE_FRAME_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
+static CPU_PROFILE_FRAME_LIMIT: Array<u32> = Array::with_max_entries(2, 0);
 
 /// dev (index 0) and inode (index 1) of the pid namespace backing the
 /// procfs view userspace symbolizes from; zero inode disables translation.
@@ -2317,6 +2325,9 @@ fn prepare_event_driven_profile(
     event.weight_nanos = 0;
     translate_profile_pid(event);
     event.instruction_pointers = [0; CPU_PROFILE_MAX_FRAMES];
+    event.kernel_frame_count = 0;
+    event.kernel_flags = 0;
+    event.kernel_instruction_pointers = [0; KERNEL_PROFILE_MAX_FRAMES];
     event.py_frame_count = 0;
     event.py_stop = 0;
     event.py_frames = [0; PY_MAX_FRAMES];
@@ -2339,6 +2350,7 @@ fn prepare_event_driven_profile(
         event.flags |= CPU_PROFILE_FLAG_TRUNCATED;
     }
     if captured > 0 {
+        capture_kernel_stack(ctx.as_ptr(), event);
         Ok(PROFILE_PREPARE_CAPTURED)
     } else {
         Ok(PROFILE_PREPARE_STACK_FAILED)
@@ -2434,10 +2446,14 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
     // verification before symbolization.
     translate_profile_pid(event);
     event.instruction_pointers = [0; CPU_PROFILE_MAX_FRAMES];
+    event.kernel_frame_count = 0;
+    event.kernel_flags = 0;
+    event.kernel_instruction_pointers = [0; KERNEL_PROFILE_MAX_FRAMES];
     event.py_frame_count = 0;
     event.py_stop = 0;
     event.py_frames = [0; PY_MAX_FRAMES];
     let frame_limit = cpu_profile_frame_limit();
+    capture_kernel_stack(ctx.as_ptr(), event);
 
     // DWARF path: only for pids userspace registered unwind tables
     // for. Untranslated pids (processes in child pid namespaces, e.g.
@@ -3049,6 +3065,41 @@ fn cpu_profile_frame_limit() -> u32 {
         .copied()
         .unwrap_or(CPU_PROFILE_MAX_FRAMES as u32);
     configured.clamp(CPU_PROFILE_MIN_FRAMES, CPU_PROFILE_MAX_FRAMES as u32)
+}
+
+#[inline(always)]
+fn kernel_profile_frame_limit() -> u32 {
+    let configured = CPU_PROFILE_FRAME_LIMIT
+        .get(1)
+        .copied()
+        .unwrap_or(KERNEL_PROFILE_MAX_FRAMES as u32);
+    configured.clamp(KERNEL_PROFILE_MIN_FRAMES, KERNEL_PROFILE_MAX_FRAMES as u32)
+}
+
+#[inline(always)]
+fn capture_kernel_stack(ctx: *mut core::ffi::c_void, event: &mut RawCpuProfileEvent) {
+    if profile_config(PROFILE_CONFIG_KERNEL_STACK_ENABLED) == 0 {
+        return;
+    }
+    let frame_limit = kernel_profile_frame_limit();
+    let stack_bytes = unsafe {
+        bpf_get_stack(
+            ctx,
+            event.kernel_instruction_pointers.as_mut_ptr().cast(),
+            frame_limit * core::mem::size_of::<u64>() as u32,
+            0,
+        )
+    };
+    if stack_bytes <= 0 {
+        event.kernel_flags |= KERNEL_PROFILE_FLAG_CAPTURE_FAILED;
+        return;
+    }
+    let captured = ((stack_bytes as usize) / core::mem::size_of::<u64>())
+        .min(KERNEL_PROFILE_MAX_FRAMES) as u32;
+    event.kernel_frame_count = captured;
+    if captured >= frame_limit {
+        event.kernel_flags |= KERNEL_PROFILE_FLAG_TRUNCATED;
+    }
 }
 
 #[inline(always)]

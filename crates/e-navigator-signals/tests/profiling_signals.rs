@@ -36,6 +36,7 @@ proptest! {
                 sampling_period_nanos: Some(10_000_000),
                 stack_id: "stack:0123456789abcdef".to_string(),
                 stack_frames: vec![ProfilingFrame {
+                    domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
                     symbol: Some("checkout::handler".to_string()),
                     module: Some("checkout".to_string()),
                     file: None,
@@ -76,6 +77,7 @@ fn serializes_cpu_profile_sample_with_bounded_stack_and_context() {
             sampling_period_nanos: Some(10_000_000),
             stack_id: "stack:0123456789abcdef".to_string(),
             stack_frames: vec![ProfilingFrame {
+                domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
                 symbol: Some("checkout::handler".to_string()),
                 module: Some("checkout".to_string()),
                 file: None,
@@ -257,6 +259,7 @@ fn profile_sample_constructor_bounds_attributes_before_json_stdout() {
 fn profile_sample_constructor_bounds_stack_frames_before_json_stdout() {
     let frames = (0..300)
         .map(|index| ProfilingFrame {
+            domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
             symbol: Some(format!("frame-{index}-{}", "s".repeat(320))),
             module: Some("m".repeat(320)),
             file: Some("f".repeat(320)),
@@ -556,6 +559,7 @@ fn serializes_stack_trace_observation_with_optional_missing_symbols() {
             confidence: ProfilingConfidence::Medium,
             stack_id: "stack:missing".to_string(),
             stack_frames: vec![ProfilingFrame {
+                domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
                 symbol: None,
                 module: Some("libunknown.so".to_string()),
                 file: None,

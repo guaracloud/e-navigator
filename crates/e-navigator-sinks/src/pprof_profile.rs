@@ -1,5 +1,6 @@
 use e_navigator_signals::{
-    ProfileSampleObservation, ProfilingAttribute, SignalEnvelope, SignalPayload,
+    ProfileSampleObservation, ProfilingAttribute, ProfilingFrameDomain, SignalEnvelope,
+    SignalPayload,
 };
 use prost::Message;
 use std::collections::{BTreeMap, BTreeSet};
@@ -50,7 +51,7 @@ struct PprofBuilder {
     mappings: Vec<Mapping>,
     mapping_ids: BTreeMap<String, u64>,
     functions: Vec<Function>,
-    function_ids: BTreeMap<String, u64>,
+    function_ids: BTreeMap<(ProfilingFrameDomain, String, String), u64>,
     locations: Vec<Location>,
     location_ids: BTreeMap<(u64, u64, u64), u64>,
     samples: Vec<Sample>,
@@ -106,7 +107,7 @@ impl PprofBuilder {
             .as_deref()
             .map(|file| truncate_utf8(file, MAX_FRAME_STRING_BYTES))
             .unwrap_or_default();
-        let function_id = self.function_id(&name, &filename);
+        let function_id = self.function_id(frame.domain, &name, &filename);
 
         let key = (mapping_id, address, function_id);
         if let Some(id) = self.location_ids.get(&key) {
@@ -151,8 +152,9 @@ impl PprofBuilder {
         id
     }
 
-    fn function_id(&mut self, name: &str, filename: &str) -> u64 {
-        if let Some(id) = self.function_ids.get(name) {
+    fn function_id(&mut self, domain: ProfilingFrameDomain, name: &str, filename: &str) -> u64 {
+        let key = (domain, name.to_string(), filename.to_string());
+        if let Some(id) = self.function_ids.get(&key) {
             return *id;
         }
         let id = u64::try_from(self.functions.len() + 1).unwrap_or(u64::MAX);
@@ -163,7 +165,7 @@ impl PprofBuilder {
             filename: self.table.index(filename),
             start_line: 0,
         });
-        self.function_ids.insert(name.to_string(), id);
+        self.function_ids.insert(key, id);
         id
     }
 
@@ -173,6 +175,24 @@ impl PprofBuilder {
             insert_label(&mut labels, "host.name", host);
         }
         insert_label(&mut labels, "profile.stack.id", &sample.stack_id);
+        let mut frame_domains = Vec::new();
+        for domain in sample
+            .stack_frames
+            .iter()
+            .take(MAX_PPROF_STACK_FRAMES)
+            .map(|frame| frame_domain_name(frame.domain))
+        {
+            if !frame_domains.contains(&domain) {
+                frame_domains.push(domain);
+            }
+        }
+        if !frame_domains.is_empty() {
+            insert_label(
+                &mut labels,
+                "profile.frame.domains",
+                &frame_domains.join(","),
+            );
+        }
         if let Some(thread_id) = sample.thread_id {
             insert_label(&mut labels, "thread.id", &thread_id.to_string());
         }
@@ -339,6 +359,16 @@ fn profile_kind_name(kind: e_navigator_signals::ProfilingKind) -> &'static str {
         e_navigator_signals::ProfilingKind::Lock => "lock",
         e_navigator_signals::ProfilingKind::Unknown => "unknown",
         _ => "unknown",
+    }
+}
+
+fn frame_domain_name(domain: ProfilingFrameDomain) -> &'static str {
+    match domain {
+        ProfilingFrameDomain::Unknown => "unknown",
+        ProfilingFrameDomain::User => "user",
+        ProfilingFrameDomain::Kernel => "kernel",
+        ProfilingFrameDomain::ManagedRuntime => "managed_runtime",
+        _ => "future",
     }
 }
 

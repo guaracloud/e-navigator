@@ -684,6 +684,7 @@ fn sample_signal_with_stack(
             sampling_period_nanos: Some(10_000_000),
             stack_id: stack_id.to_string(),
             stack_frames: vec![ProfilingFrame {
+                domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
                 symbol: Some("checkout::handler".to_string()),
                 module: Some("checkout".to_string()),
                 file: None,

@@ -2042,6 +2042,7 @@ async fn profile_samples_reuse_existing_container_attribution_before_generation(
             sampling_period_nanos: Some(10_000_000),
             stack_id: "stack:0123456789abcdef".to_string(),
             stack_frames: vec![e_navigator_signals::ProfilingFrame {
+                domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
                 symbol: Some("profile_client::handler".to_string()),
                 module: Some("profile-client".to_string()),
                 file: None,

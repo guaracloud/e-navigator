@@ -8,7 +8,8 @@
 use e_navigator_signals::{
     ContainerContext, KubernetesContext, MetricAggregationWindow, NetworkProcessIdentity,
     ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind,
-    ProfilingFrame, ProfilingKind, ProfilingSessionObservation, SignalEnvelope,
+    ProfilingFrame, ProfilingFrameDomain, ProfilingKind, ProfilingSessionObservation,
+    SignalEnvelope,
 };
 use e_navigator_sinks::{
     E_NAVIGATOR_CPU_PROFILE_METRIC_NAME, format_otel_profile_record, format_pprof_profile,
@@ -140,6 +141,7 @@ fn formats_profile_sample_without_raw_stack_attribute_labels() {
             sampling_period_nanos: Some(10_000_000),
             stack_id: "stack:abc".to_string(),
             stack_frames: vec![ProfilingFrame {
+                domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
                 symbol: Some("checkout::handler".to_string()),
                 module: Some("checkout".to_string()),
                 file: Some("/src/checkout.rs".to_string()),
@@ -255,6 +257,11 @@ fn otlp_profile_bounds_sample_attributes_and_stack_frames() {
         sample.thread_name = Some(long_value.clone());
         sample.stack_frames = (0..MAX_STACK_FRAMES + 64)
             .map(|index| ProfilingFrame {
+                domain: if index == 0 {
+                    ProfilingFrameDomain::Kernel
+                } else {
+                    ProfilingFrameDomain::Unknown
+                },
                 symbol: Some(long_value.clone()),
                 module: Some(long_value.clone()),
                 file: Some(long_value.clone()),
@@ -276,6 +283,7 @@ fn otlp_profile_bounds_sample_attributes_and_stack_frames() {
     );
     assert_eq!(record.stack_frames.len(), MAX_STACK_FRAMES);
     let frame = record.stack_frames.first().expect("stack frame formats");
+    assert_eq!(frame.domain, ProfilingFrameDomain::Kernel);
     assert_eq!(frame.symbol.as_deref().map(str::len), Some(MAX_VALUE_BYTES));
     assert_eq!(frame.module.as_deref().map(str::len), Some(MAX_VALUE_BYTES));
     assert_eq!(frame.file.as_deref().map(str::len), Some(MAX_VALUE_BYTES));
@@ -465,6 +473,7 @@ fn pprof_profile_sample_encodes_stack_values_and_safe_labels() {
             stack_id: "stack:abc".to_string(),
             stack_frames: vec![
                 ProfilingFrame {
+                    domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
                     symbol: Some("checkout::handler".to_string()),
                     module: Some("checkout".to_string()),
                     file: Some("/src/checkout.rs".to_string()),
@@ -472,6 +481,7 @@ fn pprof_profile_sample_encodes_stack_values_and_safe_labels() {
                     module_offset: None,
                 },
                 ProfilingFrame {
+                    domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
                     symbol: Some("tokio::runtime".to_string()),
                     module: Some("tokio".to_string()),
                     file: None,
@@ -550,6 +560,7 @@ fn event_driven_profile_weight_is_preserved_in_pprof_and_otel() {
         sample.sample_count = 1;
         sample.sampling_period_nanos = None;
         sample.stack_frames = vec![ProfilingFrame {
+            domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
             symbol: Some("pthread_mutex_lock".to_string()),
             module: Some("libc.so.6".to_string()),
             file: None,
@@ -580,6 +591,7 @@ fn mixed_pprof_batch_keeps_kind_specific_values_without_a_false_period() {
     let mut cpu = profile_sample_signal(Some("node-a"), None, None);
     if let e_navigator_signals::SignalPayload::ProfileSampleObservation(sample) = &mut cpu.payload {
         sample.stack_frames = vec![ProfilingFrame {
+            domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
             symbol: Some("cpu_work".to_string()),
             module: Some("app".to_string()),
             file: None,
@@ -595,6 +607,7 @@ fn mixed_pprof_batch_keeps_kind_specific_values_without_a_false_period() {
         sample.profiling_kind = ProfilingKind::Lock;
         sample.sampling_period_nanos = None;
         sample.stack_frames = vec![ProfilingFrame {
+            domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
             symbol: Some("futex_wait".to_string()),
             module: Some("libc.so.6".to_string()),
             file: None,
@@ -643,6 +656,7 @@ fn pprof_profile_bounds_canonical_label_values() {
     {
         sample.stack_id = long_value.clone();
         sample.stack_frames = vec![ProfilingFrame {
+            domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
             symbol: Some("checkout::handler".to_string()),
             module: Some("checkout".to_string()),
             file: Some("/src/checkout.rs".to_string()),
@@ -695,6 +709,7 @@ fn pprof_profile_attributes_cannot_overwrite_canonical_labels() {
         &mut signal.payload
     {
         sample.stack_frames = vec![ProfilingFrame {
+            domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
             symbol: Some("checkout::handler".to_string()),
             module: Some("checkout".to_string()),
             file: Some("/src/checkout.rs".to_string()),
@@ -747,6 +762,7 @@ fn pprof_profile_bounds_frame_string_values() {
             sampling_period_nanos: Some(10_000_000),
             stack_id: "stack:abc".to_string(),
             stack_frames: vec![ProfilingFrame {
+                domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
                 symbol: Some(long_value.clone()),
                 module: Some("checkout".to_string()),
                 file: Some(long_value),
@@ -786,6 +802,7 @@ fn pprof_profile_bounds_stack_frame_count() {
 
     let stack_frames = (0..MAX_STACK_FRAMES + 64)
         .map(|index| ProfilingFrame {
+            domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
             symbol: Some(format!("frame_{index}")),
             module: Some("checkout".to_string()),
             file: Some(format!("/src/frame_{index}.rs")),
@@ -983,6 +1000,7 @@ fn profile_formatters_drop_empty_attribute_keys() {
         &mut sample.payload
     {
         observation.stack_frames = vec![ProfilingFrame {
+            domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
             symbol: Some("checkout::handler".to_string()),
             module: Some("checkout".to_string()),
             file: Some("/src/checkout.rs".to_string()),
@@ -1306,6 +1324,7 @@ fn pprof_batch_emits_addresses_and_shared_mappings() {
                 sampling_period_nanos: Some(20_000_000),
                 stack_id: format!("stack:{pid}"),
                 stack_frames: vec![ProfilingFrame {
+                    domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
                     symbol: Some(symbol.to_string()),
                     module: Some("/usr/bin/app".to_string()),
                     file: None,
@@ -1360,6 +1379,36 @@ fn pprof_batch_emits_addresses_and_shared_mappings() {
     assert_eq!(mapping_name, Some("/usr/bin/app"));
     // The two identical frames collapse to one location; the value is per-sample.
     assert_eq!(profile.sample[0].value, vec![40_000_000]);
+}
+
+#[test]
+fn pprof_distinguishes_equal_frames_from_different_domains() {
+    let mut signal = profile_sample_signal(Some("node-a"), None, None);
+    let e_navigator_signals::SignalPayload::ProfileSampleObservation(sample) = &mut signal.payload
+    else {
+        panic!("expected profile sample");
+    };
+    let shared = ProfilingFrame {
+        domain: ProfilingFrameDomain::User,
+        symbol: Some("schedule".to_string()),
+        module: Some("shared-module".to_string()),
+        file: Some("shared.rs".to_string()),
+        line: Some(7),
+        module_offset: Some(0x18),
+    };
+    let mut kernel = shared.clone();
+    kernel.domain = ProfilingFrameDomain::Kernel;
+    sample.stack_frames = vec![shared, kernel];
+
+    let bytes = format_pprof_profile(&signal).expect("pprof profile formats");
+    let profile = pprof::Profile::decode(bytes.as_slice()).expect("pprof decodes");
+
+    assert_eq!(profile.function.len(), 2);
+    assert_eq!(profile.location.len(), 2);
+    assert_eq!(
+        label_value(&profile, "profile.frame.domains"),
+        Some("user,kernel")
+    );
 }
 
 #[test]

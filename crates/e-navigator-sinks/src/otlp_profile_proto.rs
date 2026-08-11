@@ -141,7 +141,7 @@ fn stable_hash64(bytes: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::profile_id_bytes;
+    use super::{ProfileDictionaryBuilder, profile_id_bytes};
 
     #[test]
     fn profile_id_bytes_are_stable_and_otel_sized() {
@@ -162,6 +162,47 @@ mod tests {
         assert_eq!(left.len(), 16);
         assert_eq!(right.len(), 16);
         assert_ne!(left, right);
+    }
+
+    #[test]
+    fn location_dictionary_preserves_frame_domain() {
+        let mut builder = ProfileDictionaryBuilder::new();
+        let location_index = builder.location_index(&crate::OtelProfileFrame {
+            domain: e_navigator_signals::ProfilingFrameDomain::Kernel,
+            symbol: Some("schedule".to_string()),
+            module: Some("[kernel]".to_string()),
+            file: None,
+            line: None,
+        });
+        let dictionary = builder.finish();
+        let location = dictionary
+            .location_table
+            .get(usize::try_from(location_index).expect("location index fits"))
+            .expect("location is present");
+        let attribute = location
+            .attribute_indices
+            .iter()
+            .filter_map(|index| usize::try_from(*index).ok())
+            .filter_map(|index| dictionary.attribute_table.get(index))
+            .find(|attribute| {
+                dictionary
+                    .string_table
+                    .get(attribute.key_strindex as usize)
+                    .is_some_and(|key| key == "profile.frame.domain")
+            })
+            .expect("frame domain attribute is present");
+
+        assert!(format!("{:?}", attribute.value).contains("kernel"));
+    }
+}
+
+fn frame_domain_name(domain: e_navigator_signals::ProfilingFrameDomain) -> &'static str {
+    match domain {
+        e_navigator_signals::ProfilingFrameDomain::Unknown => "unknown",
+        e_navigator_signals::ProfilingFrameDomain::User => "user",
+        e_navigator_signals::ProfilingFrameDomain::Kernel => "kernel",
+        e_navigator_signals::ProfilingFrameDomain::ManagedRuntime => "managed_runtime",
+        _ => "future",
     }
 }
 
@@ -228,16 +269,14 @@ impl ProfileDictionaryBuilder {
 
     fn location_index(&mut self, frame: &crate::OtelProfileFrame) -> i32 {
         let function_index = self.function_index(frame);
-        let attribute_indices = frame
-            .module
-            .as_ref()
-            .map(|module| {
-                self.attribute_indices(&BTreeMap::from([(
-                    "code.module".to_string(),
-                    serde_json::json!(module),
-                )]))
-            })
-            .unwrap_or_default();
+        let mut attributes = BTreeMap::from([(
+            "profile.frame.domain".to_string(),
+            serde_json::json!(frame_domain_name(frame.domain)),
+        )]);
+        if let Some(module) = &frame.module {
+            attributes.insert("code.module".to_string(), serde_json::json!(module));
+        }
+        let attribute_indices = self.attribute_indices(&attributes);
         let index = i32::try_from(self.location_table.len()).unwrap_or(i32::MAX);
         self.location_table.push(Location {
             mapping_index: 0,

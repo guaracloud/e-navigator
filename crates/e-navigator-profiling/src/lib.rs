@@ -3,6 +3,7 @@
 //! Profile models, normalization, symbolization, JIT support, and unwind logic.
 
 pub mod jit;
+pub mod kernel;
 pub mod model;
 pub mod symbolize;
 pub mod unwind;

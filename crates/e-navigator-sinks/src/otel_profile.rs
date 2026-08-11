@@ -1,5 +1,5 @@
 use e_navigator_signals::{
-    NetworkProcessIdentity, ProfileSampleObservation, ProfilingAttribute,
+    NetworkProcessIdentity, ProfileSampleObservation, ProfilingAttribute, ProfilingFrameDomain,
     ProfilingSessionObservation, SignalEnvelope, SignalPayload,
 };
 use std::collections::BTreeMap;
@@ -28,6 +28,7 @@ pub struct OtelProfileRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OtelProfileFrame {
+    pub domain: ProfilingFrameDomain,
     pub symbol: Option<String>,
     pub module: Option<String>,
     pub file: Option<String>,
@@ -257,6 +258,7 @@ fn insert_resource_string(
 
 fn bounded_stack_frame(frame: &e_navigator_signals::ProfilingFrame) -> OtelProfileFrame {
     OtelProfileFrame {
+        domain: frame.domain,
         symbol: frame
             .symbol
             .as_deref()

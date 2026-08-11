@@ -19,6 +19,11 @@ pub struct CpuProfileSourceConfig {
     /// default; only FUTEX_WAIT and FUTEX_WAIT_BITSET are observed.
     #[serde(default)]
     pub lock_enabled: bool,
+    /// Capture a separately bounded kernel stack while retaining the existing
+    /// user and managed-runtime frames. Disabled by default because the second
+    /// stack helper call and larger events add measurable kernel work.
+    #[serde(default)]
+    pub kernel_stacks_enabled: bool,
     #[serde(default = "default_off_cpu_min_duration_micros")]
     pub off_cpu_min_duration_micros: u64,
     #[serde(default = "default_lock_min_duration_micros")]
@@ -31,13 +36,15 @@ pub struct CpuProfileSourceConfig {
     pub max_lock_events_per_second_per_cpu: u32,
     #[serde(default = "default_cpu_profile_max_active_targets")]
     pub max_active_targets: usize,
-    /// Deepest stack captured per sample, both in-kernel (frame budget
-    /// passed to bpf_get_stack) and during normalization. User stacks are
-    /// additionally bounded by the kernel `kernel.perf_event_max_stack`
-    /// sysctl (127 by default). Stacks that fill the budget are flagged and
-    /// counted, never silently truncated.
+    /// Deepest native user stack captured per sample. User stacks are also
+    /// bounded by the kernel `kernel.perf_event_max_stack` sysctl (127 by
+    /// default). Interpreter and kernel frames have separate bounded budgets
+    /// so a full user stack cannot silently discard another frame domain.
     #[serde(default = "default_cpu_profile_max_frames_per_sample")]
     pub max_frames_per_sample: usize,
+    /// Deepest kernel stack captured per sample when kernel stacks are enabled.
+    #[serde(default = "default_cpu_profile_max_kernel_frames_per_sample")]
+    pub max_kernel_frames_per_sample: usize,
     #[serde(default = "default_cpu_profile_max_samples_per_batch")]
     pub max_samples_per_batch: usize,
     #[serde(default = "default_cpu_profile_max_symbol_bytes")]
@@ -100,12 +107,14 @@ impl Default for CpuProfileSourceConfig {
             sample_frequency_hz: default_cpu_profile_sample_frequency_hz(),
             off_cpu_enabled: false,
             lock_enabled: false,
+            kernel_stacks_enabled: false,
             off_cpu_min_duration_micros: default_off_cpu_min_duration_micros(),
             lock_min_duration_micros: default_lock_min_duration_micros(),
             max_off_cpu_events_per_second_per_cpu: default_profile_event_rate_per_cpu(),
             max_lock_events_per_second_per_cpu: default_profile_event_rate_per_cpu(),
             max_active_targets: default_cpu_profile_max_active_targets(),
             max_frames_per_sample: default_cpu_profile_max_frames_per_sample(),
+            max_kernel_frames_per_sample: default_cpu_profile_max_kernel_frames_per_sample(),
             max_samples_per_batch: default_cpu_profile_max_samples_per_batch(),
             max_symbol_bytes: default_cpu_profile_max_symbol_bytes(),
             max_module_bytes: default_cpu_profile_max_module_bytes(),
@@ -124,6 +133,7 @@ impl CpuProfileSourceConfig {
     pub const MAX_SAMPLE_FREQUENCY_HZ: u32 = 999;
     pub const MAX_ACTIVE_TARGETS_LIMIT: usize = 4096;
     pub const MAX_FRAMES_PER_SAMPLE_LIMIT: usize = 128;
+    pub const MAX_KERNEL_FRAMES_PER_SAMPLE_LIMIT: usize = 64;
     pub const MAX_SAMPLES_PER_BATCH_LIMIT: usize = 1024;
     pub const MAX_SYMBOL_BYTES_LIMIT: usize = 1024;
     pub const MAX_MODULE_BYTES_LIMIT: usize = 1024;
@@ -215,6 +225,17 @@ impl CpuProfileSourceConfig {
                 ),
             ));
         }
+        if !(1..=Self::MAX_KERNEL_FRAMES_PER_SAMPLE_LIMIT)
+            .contains(&self.max_kernel_frames_per_sample)
+        {
+            return Err(ConfigError::invalid_value(
+                "cpu_profile_source.max_kernel_frames_per_sample",
+                format!(
+                    "cpu_profile_source.max_kernel_frames_per_sample must be between 1 and {}",
+                    Self::MAX_KERNEL_FRAMES_PER_SAMPLE_LIMIT
+                ),
+            ));
+        }
         if !(1..=Self::MAX_SAMPLES_PER_BATCH_LIMIT).contains(&self.max_samples_per_batch) {
             return Err(ConfigError::invalid_value(
                 "cpu_profile_source.max_samples_per_batch",
@@ -293,6 +314,10 @@ fn default_cpu_profile_max_active_targets() -> usize {
 }
 
 fn default_cpu_profile_max_frames_per_sample() -> usize {
+    64
+}
+
+fn default_cpu_profile_max_kernel_frames_per_sample() -> usize {
     64
 }
 

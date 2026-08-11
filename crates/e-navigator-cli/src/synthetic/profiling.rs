@@ -3,7 +3,7 @@ use e_navigator_profiling::model::{
 };
 use e_navigator_signals::{
     ContainerContext, KubernetesContext, ProfilingAttribute, ProfilingConfidence,
-    ProfilingCorrelationKind, ProfilingKind, SignalEnvelope,
+    ProfilingCorrelationKind, ProfilingFrameDomain, ProfilingKind, SignalEnvelope,
 };
 
 pub(super) fn signals(
@@ -58,6 +58,7 @@ pub(super) fn signals(
             sample_count: 1,
             sampling_period_nanos: Some(10_000_000),
             stack_frames: vec![RawProfileFrame {
+                domain: ProfilingFrameDomain::User,
                 symbol: None,
                 module: Some("libunknown.so".to_string()),
                 file: None,
@@ -141,6 +142,7 @@ pub(super) fn signals(
 
 fn raw_profile_frame(symbol: Option<&str>, module: Option<&str>) -> RawProfileFrame {
     RawProfileFrame {
+        domain: ProfilingFrameDomain::User,
         symbol: symbol.map(ToString::to_string),
         module: module.map(ToString::to_string),
         file: None,
