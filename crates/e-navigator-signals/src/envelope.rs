@@ -18,7 +18,8 @@ use crate::metrics::{
 use crate::network::{
     sanitize_dependency_edge_event, sanitize_network_connection_close_event,
     sanitize_network_connection_failure_event, sanitize_network_connection_open_event,
-    sanitize_network_flow_summary_event, sanitize_network_flow_warning,
+    sanitize_network_connection_snapshot_event, sanitize_network_flow_summary_event,
+    sanitize_network_flow_warning,
 };
 use crate::profiling::{
     sanitize_optional_profiling_container_context, sanitize_optional_profiling_kubernetes_context,
@@ -43,14 +44,14 @@ use crate::{
     CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
     CgroupPidsObservation, DependencyEdgeEvent, DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent,
     DnsResponseEvent, ExecEvent, ExtractedTraceContextObservation, NetworkConnectionCloseEvent,
-    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkCounterMetric,
-    NetworkDurationMetric, NetworkFlowSummaryEvent, NetworkFlowWarning, NetworkGaugeMetric,
-    NetworkPeerFlowMetric, NetworkTcpStatObservation, NodeCpuObservation, NodeDiskIoObservation,
-    NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation, ProcessExitEvent,
-    ProcessLifecycleDurationEvent, ProcessResourceObservation, ProfileSampleObservation,
-    ProfilingSessionObservation, ProfilingStackTraceObservation, ProfilingWarningObservation,
-    ProtocolRequestObservation, RequestCorrelationWarning, RequestSpanObservation,
-    ResourceCounterMetric, ResourceGaugeMetric, RuntimeSecurityFinding,
+    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkConnectionSnapshotEvent,
+    NetworkCounterMetric, NetworkDurationMetric, NetworkFlowSummaryEvent, NetworkFlowWarning,
+    NetworkGaugeMetric, NetworkPeerFlowMetric, NetworkTcpStatObservation, NodeCpuObservation,
+    NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation,
+    ProcessExitEvent, ProcessLifecycleDurationEvent, ProcessResourceObservation,
+    ProfileSampleObservation, ProfilingSessionObservation, ProfilingStackTraceObservation,
+    ProfilingWarningObservation, ProtocolRequestObservation, RequestCorrelationWarning,
+    RequestSpanObservation, ResourceCounterMetric, ResourceGaugeMetric, RuntimeSecurityFinding,
     ServiceInteractionSpanObservation, TraceCorrelationWarning, TraceServicePathObservation,
     TraceSpanObservation, sanitize_profiling_attributes, sanitize_profiling_frames,
 };
@@ -67,6 +68,7 @@ pub enum SignalKind {
     ProcessLifecycleDuration,
     NetworkConnectionOpen,
     NetworkConnectionClose,
+    NetworkConnectionSnapshot,
     NetworkConnectionFailure,
     NetworkFlowSummary,
     NetworkFlowWarning,
@@ -117,6 +119,7 @@ pub enum SignalPayload {
     NetworkFlowWarning(NetworkFlowWarning),
     NetworkConnectionOpen(NetworkConnectionOpenEvent),
     NetworkConnectionClose(NetworkConnectionCloseEvent),
+    NetworkConnectionSnapshot(NetworkConnectionSnapshotEvent),
     NetworkConnectionFailure(NetworkConnectionFailureEvent),
     NetworkFlowSummary(NetworkFlowSummaryEvent),
     NetworkCounterMetric(NetworkCounterMetric),
@@ -206,6 +209,15 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
                     .map(SignalPayload::NetworkConnectionClose)
                     .map_err(|err| {
                         D::Error::custom(format!("invalid network_connection_close payload: {err}"))
+                    })?
+            }
+            SignalKind::NetworkConnectionSnapshot => {
+                serde_json::from_value::<NetworkConnectionSnapshotEvent>(raw.payload)
+                    .map(SignalPayload::NetworkConnectionSnapshot)
+                    .map_err(|err| {
+                        D::Error::custom(format!(
+                            "invalid network_connection_snapshot payload: {err}"
+                        ))
                     })?
             }
             SignalKind::NetworkConnectionFailure => serde_json::from_value::<
@@ -575,6 +587,20 @@ impl SignalEnvelope {
             host,
             SignalKind::NetworkConnectionClose,
             SignalPayload::NetworkConnectionClose(event),
+        )
+    }
+
+    pub fn network_connection_snapshot(
+        source: impl Into<String>,
+        host: Option<String>,
+        mut event: NetworkConnectionSnapshotEvent,
+    ) -> Self {
+        sanitize_network_connection_snapshot_event(&mut event);
+        Self::new(
+            source,
+            host,
+            SignalKind::NetworkConnectionSnapshot,
+            SignalPayload::NetworkConnectionSnapshot(event),
         )
     }
 
@@ -1225,6 +1251,7 @@ impl Signal for SignalEnvelope {
             SignalKind::ProcessLifecycleDuration => "process_lifecycle_duration",
             SignalKind::NetworkConnectionOpen => "network_connection_open",
             SignalKind::NetworkConnectionClose => "network_connection_close",
+            SignalKind::NetworkConnectionSnapshot => "network_connection_snapshot",
             SignalKind::NetworkConnectionFailure => "network_connection_failure",
             SignalKind::NetworkTcpStatObservation => "network_tcp_stat_observation",
             SignalKind::NetworkFlowSummary => "network_flow_summary",
@@ -1274,14 +1301,15 @@ mod tests {
         CgroupCpuObservation, CgroupFileDescriptorObservation, CgroupMemoryObservation,
         CgroupPidsObservation, CgroupResourceContext, DependencyEndpoint, DnsCounterMetric,
         DnsLatencyMetric, DnsQueryEvent, DnsQueryType, DnsResponseCode, DnsResponseEvent,
-        MetricAggregationWindow, NetworkAddressFamily, NetworkCounterMetric, NetworkDurationMetric,
-        NetworkFlowDirection, NetworkFlowEndpoint, NetworkGaugeMetric, NetworkProcessIdentity,
-        NetworkProtocol, NodeCpuObservation, NodeDiskIoObservation, NodeFilesystemObservation,
-        NodeLoadObservation, NodeMemoryObservation, ProcessResourceContext,
-        ProcessResourceObservation, ResourceContext, ResourceCounterMetric, ResourceGaugeMetric,
-        ResourceMetricAttribute, ServiceInteractionSpanObservation, TraceAttribute,
-        TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning, TracePeerContext,
-        TraceServicePathObservation, TraceSpanObservation,
+        MetricAggregationWindow, NetworkAddressFamily, NetworkConnectionSnapshotEvent,
+        NetworkCounterMetric, NetworkDurationMetric, NetworkFlowDirection, NetworkFlowEndpoint,
+        NetworkGaugeMetric, NetworkProcessIdentity, NetworkProtocol, NodeCpuObservation,
+        NodeDiskIoObservation, NodeFilesystemObservation, NodeLoadObservation,
+        NodeMemoryObservation, ProcessResourceContext, ProcessResourceObservation, ResourceContext,
+        ResourceCounterMetric, ResourceGaugeMetric, ResourceMetricAttribute,
+        ServiceInteractionSpanObservation, TraceAttribute, TraceConfidence, TraceCorrelationKind,
+        TraceCorrelationWarning, TracePeerContext, TraceServicePathObservation,
+        TraceSpanObservation,
     };
     use crate::{MatchedNetworkConnection, MatchedProcess, RuntimeSecuritySeverity};
 
@@ -1641,6 +1669,49 @@ mod tests {
         assert_eq!(json["kind"], "network_connection_close");
         assert_eq!(json["payload"]["duration_nanos"], 600);
         assert_eq!(json["payload"]["closed_at_unix_nanos"], 900);
+    }
+
+    #[test]
+    fn serializes_active_network_connection_snapshot_with_cumulative_bytes() {
+        let signal = SignalEnvelope::network_connection_snapshot(
+            "source.test",
+            Some("node-a".to_string()),
+            NetworkConnectionSnapshotEvent {
+                process: NetworkProcessIdentity {
+                    pid: 42,
+                    ppid: Some(1),
+                    uid: Some(1000),
+                    command: "api".to_string(),
+                    executable: Some("/usr/bin/api".to_string()),
+                    cgroup_id: Some(9),
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.0.0.10".to_string()),
+                local_port: Some(43512),
+                remote_address: "10.0.0.20".to_string(),
+                remote_port: 5432,
+                fd: Some(7),
+                opened_at_unix_nanos: Some(300),
+                observed_at_unix_nanos: 900,
+                bytes_sent: 512,
+                bytes_received: 1_024,
+                container: None,
+                kubernetes: None,
+            },
+        );
+
+        let json = serde_json::to_value(&signal).expect("signal serializes");
+
+        assert_eq!(json["kind"], "network_connection_snapshot");
+        assert_eq!(json["payload"]["opened_at_unix_nanos"], 300);
+        assert_eq!(json["payload"]["observed_at_unix_nanos"], 900);
+        assert_eq!(json["payload"]["bytes_sent"], 512);
+        assert_eq!(json["payload"]["bytes_received"], 1_024);
+
+        let decoded =
+            serde_json::from_value::<SignalEnvelope>(json).expect("snapshot signal round trips");
+        assert_eq!(decoded.kind(), "network_connection_snapshot");
     }
 
     #[test]

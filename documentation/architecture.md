@@ -82,6 +82,13 @@ limits, and converts raw data into safe Rust models. The host and Aya crates
 are the only workspace areas that permit the unsafe operations needed for FFI
 and raw event decoding. Other workspace crates forbid unsafe code.
 
+The network source also owns a read-only periodic view of the bounded
+`ACTIVE_CONNECTIONS` map. A source-lifetime monotonic-to-Unix clock anchor keeps
+connection lifecycle timestamps stable across polls. Versioned cumulative
+snapshot signals cross the source boundary; delta calculation, close remainder
+accounting, endpoint attribution, and peer-series idle reclamation remain in
+their respective generators and processor rather than leaking into the loader.
+
 An eBPF program compiling is not runtime proof. Kernel, capability, ABI,
 uprobe, perf-event, and workload differences require guarded Linux or
 Kubernetes evidence before a public capability claim changes.

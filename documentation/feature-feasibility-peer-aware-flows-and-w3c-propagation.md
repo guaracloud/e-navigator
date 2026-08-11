@@ -32,7 +32,10 @@ kernel allocations can fail independently of the BPF program's verdict.
 
 The peer metric is implemented as the post-attribution
 `generator.peer_flow_metrics` module and native `network.peer.flow.bytes`
-signal. The narrow socket-message design is implemented behind the
+signal. Active TCP connections emit versioned cumulative snapshots on a
+configurable interval; the network generator derives interval deltas and the
+peer generator reclaims idle exact series through an ordered expiry index. The
+narrow socket-message design is implemented behind the
 disabled-by-default `[http_source.context_propagation]` gate. It adopts the
 strictest safe subset from this analysis: complete contiguous body-free
 plaintext HTTP/1 only, application-context preservation, userspace CSPRNG ids,
@@ -48,7 +51,7 @@ contract.
 
 | Feature | Engineering decision | Main reason |
 | --- | --- | --- |
-| Peer-aware L4 byte metric | Implement now as a native bounded metric | Existing close events, generated flow summaries, and Kubernetes endpoint attribution provide the required data |
+| Peer-aware L4 byte metric | Implemented as a native bounded metric with active snapshots and idle exact-series reclamation | Kernel-owned cumulative connection counters, generated directional flow summaries, and Kubernetes endpoint attribution provide the required data without waiting for close |
 | Cleartext HTTP/1 propagation | Prefer an opt-in `SK_MSG` socket-message implementation for mapped local TCP sockets; retain TC only as a separately qualified fallback | Mutation before `tcp_sendmsg_locked` leaves packetization, sequence numbers, retransmission, and checksums to TCP, but it covers only eligible sockets and still requires bounded HTTP stream parsing |
 | HTTPS propagation | Support only through explicit pre-encryption, runtime or library integrations | TLS application data is authenticated and encrypted, so ciphertext mutation cannot create a valid HTTP header |
 | HTTP/2 and gRPC propagation | Separate HPACK-aware, per-stream implementation | A connection carries concurrent streams and compressed header blocks |
@@ -58,10 +61,12 @@ contract.
 
 The existing native path already has most of the peer metric substrate:
 
-1. The network source emits connection observations with sent and received byte
-   totals.
-2. `generator.network_metrics` emits `NetworkFlowSummaryEvent` and the current
-   `network.flow.bytes` counter.
+1. The network source emits final connection observations plus periodic,
+   cumulative active-connection snapshots with sent and received byte totals.
+2. `generator.network_metrics` converts snapshots to non-overlapping interval
+   deltas, reconciles the final close remainder, and emits directional
+   `NetworkFlowSummaryEvent` signals plus the current `network.flow.bytes`
+   counter.
 3. Generated signals are processed again by the runner. This allows
    `processor.container_attribution` to enrich both flow endpoints after the
    flow summary has been generated.
@@ -71,11 +76,12 @@ The existing native path already has most of the peer metric substrate:
 5. OTLP traces already establish the native source and destination workload
    attribute vocabulary.
 
-There are two semantic gaps. The current flow counter aggregates only local
-workload, protocol, and address family. It does not include peer identity or
-direction. The current summary also adds sent and received bytes together and
-marks the result as egress. A bidirectional total cannot truthfully carry one
-direction.
+The native `network.flow.bytes` counter intentionally retains its stable local
+workload, protocol, and address-family identity. The separately named
+`network.peer.flow.bytes` contract carries peer identity and direction without
+silently changing the older series. Its exact-series budget is recyclable
+after the configured idle timeout, while a fixed `__other__` family preserves
+traffic observed during saturation.
 
 The request-correlation path provides useful observation and local correlation,
 but it is not an injection implementation. It intentionally avoids generating

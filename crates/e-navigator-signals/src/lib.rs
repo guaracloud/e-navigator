@@ -32,10 +32,10 @@ pub use metrics::{
 };
 pub use network::{
     DependencyEdgeEvent, DependencyEndpoint, NetworkAddressFamily, NetworkConnectionCloseEvent,
-    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkFlowDirection,
-    NetworkFlowEndpoint, NetworkFlowSummaryEvent, NetworkFlowWarning, NetworkProcessIdentity,
-    NetworkProtocol, NetworkTcpResetDirection, NetworkTcpStatKind, NetworkTcpStatObservation,
-    NetworkTcpState,
+    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkConnectionSnapshotEvent,
+    NetworkFlowDirection, NetworkFlowEndpoint, NetworkFlowSummaryEvent, NetworkFlowWarning,
+    NetworkProcessIdentity, NetworkProtocol, NetworkTcpResetDirection, NetworkTcpStatKind,
+    NetworkTcpStatObservation, NetworkTcpState,
 };
 pub use profiling::{
     ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind,

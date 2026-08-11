@@ -34,6 +34,8 @@ namespace_include = ["e-navigator-bench"]
 [network_metrics]
 max_metric_keys = 4096
 max_active_connections = 8192
+active_flow_snapshot_interval_millis = 3000
+peer_series_idle_timeout_millis = 900000
 
 [json_stdout]
 mode = "all"

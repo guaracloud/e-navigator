@@ -1,8 +1,9 @@
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_signals::{
     NetworkAddressFamily, NetworkConnectionCloseEvent, NetworkConnectionFailureEvent,
-    NetworkConnectionOpenEvent, NetworkProcessIdentity, NetworkProtocol, NetworkTcpResetDirection,
-    NetworkTcpStatKind, NetworkTcpStatObservation, NetworkTcpState, SignalEnvelope,
+    NetworkConnectionOpenEvent, NetworkConnectionSnapshotEvent, NetworkProcessIdentity,
+    NetworkProtocol, NetworkTcpResetDirection, NetworkTcpStatKind, NetworkTcpStatObservation,
+    NetworkTcpState, SignalEnvelope,
 };
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -52,6 +53,70 @@ pub(crate) struct RawNetworkEvent {
     pub bytes_sent: u64,
     pub bytes_received: u64,
     pub command: [u8; 16],
+}
+
+/// Byte-identical to the eBPF-side `ConnectionKey` used by
+/// `ACTIVE_CONNECTIONS`.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) struct RawConnectionKey {
+    pub tgid: u32,
+    pub fd: i32,
+}
+
+/// Byte-identical to the eBPF-side `PendingConnect` map value. This is kept
+/// private to the Aya source so the kernel ABI does not leak into signals.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) struct RawActiveConnection {
+    pub pid: u32,
+    pub uid: u32,
+    pub cgroup_id: u64,
+    pub fd: i32,
+    pub family: u32,
+    pub role: u32,
+    pub protocol: u32,
+    pub remote_port_be: u16,
+    pub local_port_be: u16,
+    pub remote_addr_v4: u32,
+    pub local_addr_v4: u32,
+    pub remote_addr_v6: [u8; 16],
+    pub local_addr_v6: [u8; 16],
+    pub started_at_nanos: u64,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub command: [u8; 16],
+    pub http_state: u32,
+    pub reserved: u32,
+}
+
+/// Stable conversion between the kernel monotonic clock and Unix time for one
+/// source lifetime. Keeping one anchor prevents NTP adjustments or sampling
+/// skew from changing a connection's derived open timestamp between polls.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+struct ClockAnchor {
+    unix_nanos: u64,
+    monotonic_nanos: u64,
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+impl ClockAnchor {
+    fn unix_for_monotonic(self, monotonic_nanos: u64) -> Option<u64> {
+        if monotonic_nanos >= self.monotonic_nanos {
+            self.unix_nanos
+                .checked_add(monotonic_nanos - self.monotonic_nanos)
+        } else {
+            self.unix_nanos
+                .checked_sub(self.monotonic_nanos - monotonic_nanos)
+        }
+    }
 }
 
 /// Byte-identical to the eBPF-side `RawTcpStatEvent`.
@@ -275,6 +340,93 @@ fn raw_network_to_signal_with_clock_and_procfs(
     }
 }
 
+#[cfg(target_os = "linux")]
+fn raw_network_to_signal_with_clock_anchor_and_procfs(
+    bytes: &[u8],
+    host: Option<String>,
+    clock_anchor: ClockAnchor,
+    procfs_root: &std::path::Path,
+) -> Option<SignalEnvelope> {
+    if bytes.len() < core::mem::size_of::<RawNetworkEvent>() {
+        return None;
+    }
+    let raw = unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<RawNetworkEvent>()) };
+    let observed_unix_nanos = clock_anchor.unix_for_monotonic(raw.timestamp_unix_nanos)?;
+    raw_network_to_signal_with_clock_and_procfs(bytes, host, observed_unix_nanos, procfs_root)
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn active_connection_to_signal_with_clock_and_procfs(
+    key: RawConnectionKey,
+    raw: RawActiveConnection,
+    host: Option<String>,
+    clock_anchor: ClockAnchor,
+    observed_monotonic_nanos: u64,
+    procfs_root: &std::path::Path,
+) -> Option<SignalEnvelope> {
+    if key.tgid != raw.pid || key.fd != raw.fd {
+        return None;
+    }
+    let address_family = address_family(raw.family)?;
+    let protocol = protocol(raw.protocol)?;
+    let remote_address = match address_family {
+        NetworkAddressFamily::Ipv4 => ipv4_to_string(raw.remote_addr_v4),
+        NetworkAddressFamily::Ipv6 => ipv6_to_string(raw.remote_addr_v6),
+        _ => return None,
+    };
+    let local_address = match address_family {
+        NetworkAddressFamily::Ipv4 if raw.local_addr_v4 != 0 => {
+            Some(ipv4_to_string(raw.local_addr_v4))
+        }
+        NetworkAddressFamily::Ipv6 if raw.local_addr_v6.iter().any(|byte| *byte != 0) => {
+            Some(ipv6_to_string(raw.local_addr_v6))
+        }
+        _ => None,
+    };
+    let observed_at_unix_nanos = clock_anchor.unix_for_monotonic(observed_monotonic_nanos)?;
+    let opened_at_unix_nanos = (raw.started_at_nanos != 0)
+        .then(|| clock_anchor.unix_for_monotonic(raw.started_at_nanos))
+        .flatten();
+    let process = NetworkProcessIdentity {
+        pid: raw.pid,
+        ppid: None,
+        uid: Some(raw.uid),
+        command: bytes_to_string(&raw.command),
+        executable: None,
+        cgroup_id: (raw.cgroup_id != 0).then_some(raw.cgroup_id),
+    };
+    let container = crate::procfs::container_from_pid_cgroup(procfs_root, raw.pid);
+
+    Some(SignalEnvelope::network_connection_snapshot(
+        "source.aya_network",
+        host,
+        NetworkConnectionSnapshotEvent {
+            process,
+            protocol,
+            address_family,
+            local_address,
+            local_port: nonzero_network_port(raw.local_port_be),
+            remote_address,
+            remote_port: u16::from_be(raw.remote_port_be),
+            fd: Some(raw.fd),
+            opened_at_unix_nanos,
+            observed_at_unix_nanos,
+            bytes_sent: raw.bytes_sent,
+            bytes_received: raw.bytes_received,
+            container,
+            kubernetes: None,
+        },
+    ))
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn nonzero_network_port(port_be: u16) -> Option<u16> {
+    let port = u16::from_be(port_be);
+    (port != 0).then_some(port)
+}
+
 #[cfg(feature = "fuzzing")]
 pub fn fuzz_decode_raw_network_event(bytes: &[u8]) -> bool {
     const MAX_FUZZ_BYTES: usize = 1024;
@@ -365,19 +517,36 @@ mod platform {
     use async_trait::async_trait;
     use aya::{
         Btf, Ebpf,
+        maps::{HashMap as AyaHashMap, MapData},
         programs::{FExit, TracePoint},
     };
     use e_navigator_core::{CoreError, CoreResult, EbpfConfig, ModuleKind, ModuleMetadata, Source};
     use e_navigator_signals::{ContainerContext, KubernetesContext, SignalEnvelope, SignalPayload};
-    use std::{path::PathBuf, sync::Arc};
+    use std::{
+        path::PathBuf,
+        sync::Arc,
+        time::{Duration, Instant},
+    };
     use tokio::{sync::mpsc, task::JoinHandle};
-    use tracing::{debug, info};
+    use tracing::{debug, info, warn};
+
+    const SNAPSHOT_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+    // SAFETY: `RawConnectionKey` is a `repr(C)` value composed exclusively of
+    // plain integer fields and is byte-identical to the eBPF `ConnectionKey`.
+    unsafe impl aya::Pod for super::RawConnectionKey {}
+
+    // SAFETY: `RawActiveConnection` is a `repr(C)` value composed exclusively
+    // of plain integers and byte arrays and is byte-identical to the eBPF
+    // `PendingConnect` value stored in `ACTIVE_CONNECTIONS`.
+    unsafe impl aya::Pod for super::RawActiveConnection {}
 
     #[derive(Debug, Default)]
     pub struct AyaNetworkSource {
         host: Option<String>,
         procfs_root: PathBuf,
         ebpf: EbpfConfig,
+        active_flow_snapshot_interval_millis: u64,
     }
 
     impl AyaNetworkSource {
@@ -386,11 +555,17 @@ mod platform {
                 host,
                 procfs_root,
                 ebpf: EbpfConfig::default(),
+                active_flow_snapshot_interval_millis: 3_000,
             }
         }
 
         pub fn with_ebpf_config(mut self, ebpf: EbpfConfig) -> Self {
             self.ebpf = ebpf;
+            self
+        }
+
+        pub fn with_active_flow_snapshot_interval_millis(mut self, interval_millis: u64) -> Self {
+            self.active_flow_snapshot_interval_millis = interval_millis.max(1);
             self
         }
     }
@@ -417,6 +592,13 @@ mod platform {
                 "source.aya_network",
                 transport.kind.as_str(),
             ));
+            let clock_anchor = super::ClockAnchor {
+                unix_nanos: super::now_unix_nanos(),
+                monotonic_nanos: monotonic_nanos().ok_or_else(|| CoreError::ModuleFailed {
+                    module: "source.aya_network".to_string(),
+                    message: "failed to read the monotonic clock".to_string(),
+                })?,
+            };
 
             attach_tracepoint(
                 &mut ebpf,
@@ -533,6 +715,15 @@ mod platform {
                 transport,
                 "source.aya_network",
             )?;
+            let active_connections = ebpf
+                .take_map("ACTIVE_CONNECTIONS")
+                .ok_or_else(|| missing_map("ACTIVE_CONNECTIONS"))?;
+            let active_connections = AyaHashMap::<
+                MapData,
+                super::RawConnectionKey,
+                super::RawActiveConnection,
+            >::try_from(active_connections)
+            .map_err(module_error)?;
             if let Some(handle) = crate::event_transport::spawn_transport_loss_reader(
                 &mut ebpf,
                 crate::ebpf_maps::SourceMapProfile::Network,
@@ -558,12 +749,14 @@ mod platform {
                     let diagnostics = diagnostics.clone();
                     let telemetry = telemetry.clone();
                     move |bytes| {
-                        let Some(signal) = super::raw_network_to_signal_with_clock_and_procfs(
-                            bytes,
-                            host.clone(),
-                            super::now_unix_nanos(),
-                            &procfs_root,
-                        ) else {
+                        let Some(signal) =
+                            super::raw_network_to_signal_with_clock_anchor_and_procfs(
+                                bytes,
+                                host.clone(),
+                                clock_anchor,
+                                &procfs_root,
+                            )
+                        else {
                             telemetry.record_invalid_sample();
                             return true;
                         };
@@ -580,6 +773,17 @@ mod platform {
                     }
                 },
             )?);
+
+            reader_handles.push(spawn_active_connection_snapshot_reader(
+                active_connections,
+                tx.clone(),
+                self.host.clone(),
+                self.procfs_root.clone(),
+                Duration::from_millis(self.active_flow_snapshot_interval_millis),
+                clock_anchor,
+                shutdown.clone(),
+                telemetry.clone(),
+            ));
 
             reader_handles.extend(crate::event_transport::spawn_event_readers(
                 tcp_stat_events,
@@ -873,6 +1077,109 @@ mod platform {
         Ok(())
     }
 
+    fn spawn_active_connection_snapshot_reader(
+        active_connections: AyaHashMap<
+            MapData,
+            super::RawConnectionKey,
+            super::RawActiveConnection,
+        >,
+        tx: mpsc::Sender<SignalEnvelope>,
+        host: Option<String>,
+        procfs_root: PathBuf,
+        interval: Duration,
+        clock_anchor: super::ClockAnchor,
+        shutdown: ReaderShutdown,
+        telemetry: Arc<SourceTelemetry>,
+    ) -> JoinHandle<()> {
+        tokio::task::spawn_blocking(move || {
+            let mut next_snapshot = Instant::now() + interval;
+            while wait_for_snapshot(next_snapshot, &shutdown) {
+                let Some(observed_monotonic_nanos) = monotonic_nanos() else {
+                    warn!(
+                        source = "source.aya_network",
+                        "failed to read the monotonic clock for active-flow snapshot"
+                    );
+                    next_snapshot = advance_snapshot_deadline(next_snapshot, interval);
+                    continue;
+                };
+                for entry in active_connections.iter() {
+                    if shutdown.is_stopped() {
+                        return;
+                    }
+                    let (key, active) = match entry {
+                        Ok(entry) => entry,
+                        Err(err) => {
+                            warn!(
+                                source = "source.aya_network",
+                                error = %err,
+                                "failed to read active connection for flow snapshot"
+                            );
+                            break;
+                        }
+                    };
+                    let Some(signal) = super::active_connection_to_signal_with_clock_and_procfs(
+                        key,
+                        active,
+                        host.clone(),
+                        clock_anchor,
+                        observed_monotonic_nanos,
+                        &procfs_root,
+                    ) else {
+                        telemetry.record_invalid_sample();
+                        continue;
+                    };
+                    telemetry.record_decoded_sample();
+                    if tx.blocking_send(signal).is_err() {
+                        telemetry.record_send_failure();
+                        return;
+                    }
+                    telemetry.record_sent_signal();
+                }
+
+                next_snapshot = advance_snapshot_deadline(next_snapshot, interval);
+            }
+        })
+    }
+
+    fn wait_for_snapshot(deadline: Instant, shutdown: &ReaderShutdown) -> bool {
+        while !shutdown.is_stopped() {
+            let now = Instant::now();
+            if now >= deadline {
+                return true;
+            }
+            std::thread::sleep(
+                deadline
+                    .saturating_duration_since(now)
+                    .min(SNAPSHOT_SHUTDOWN_POLL_INTERVAL),
+            );
+        }
+        false
+    }
+
+    fn advance_snapshot_deadline(previous: Instant, interval: Duration) -> Instant {
+        let now = Instant::now();
+        let next = previous + interval;
+        if next > now { next } else { now + interval }
+    }
+
+    fn monotonic_nanos() -> Option<u64> {
+        let mut timestamp = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: `timestamp` points to a valid, writable `timespec` for the
+        // duration of this libc call.
+        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut timestamp) } != 0 {
+            return None;
+        }
+        Some(
+            u64::try_from(timestamp.tv_sec)
+                .unwrap_or(0)
+                .saturating_mul(1_000_000_000)
+                .saturating_add(u64::try_from(timestamp.tv_nsec).unwrap_or(0)),
+        )
+    }
+
     fn attach_fexit(
         ebpf: &mut Ebpf,
         program_name: &'static str,
@@ -936,6 +1243,13 @@ mod platform {
             message: err.to_string(),
         }
     }
+
+    fn missing_map(name: &str) -> CoreError {
+        CoreError::ModuleFailed {
+            module: "source.aya_network".to_string(),
+            message: format!("missing {name} map"),
+        }
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -950,6 +1264,7 @@ mod platform {
         host: Option<String>,
         _procfs_root: std::path::PathBuf,
         _ebpf: EbpfConfig,
+        _active_flow_snapshot_interval_millis: u64,
     }
 
     impl AyaNetworkSource {
@@ -958,11 +1273,17 @@ mod platform {
                 host,
                 _procfs_root: procfs_root,
                 _ebpf: EbpfConfig::default(),
+                _active_flow_snapshot_interval_millis: 3_000,
             }
         }
 
         pub fn with_ebpf_config(mut self, ebpf: EbpfConfig) -> Self {
             self._ebpf = ebpf;
+            self
+        }
+
+        pub fn with_active_flow_snapshot_interval_millis(mut self, interval_millis: u64) -> Self {
+            self._active_flow_snapshot_interval_millis = interval_millis.max(1);
             self
         }
     }
@@ -1225,6 +1546,60 @@ mod tests {
     }
 
     #[test]
+    fn decodes_active_connection_map_value_to_cumulative_snapshot() {
+        let key = RawConnectionKey { tgid: 42, fd: 7 };
+        let active = RawActiveConnection {
+            pid: 42,
+            uid: 1000,
+            cgroup_id: 55,
+            fd: 7,
+            family: RAW_AF_INET,
+            role: 1,
+            protocol: RAW_PROTO_TCP,
+            remote_port_be: 5432_u16.to_be(),
+            local_port_be: 43512_u16.to_be(),
+            remote_addr_v4: u32::from_ne_bytes([10, 0, 0, 20]),
+            local_addr_v4: u32::from_ne_bytes([10, 0, 0, 5]),
+            remote_addr_v6: [0; 16],
+            local_addr_v6: [0; 16],
+            started_at_nanos: 1_000,
+            bytes_sent: 512,
+            bytes_received: 1_024,
+            command: fixed_command("api"),
+            http_state: 0,
+            reserved: 0,
+        };
+
+        let signal = active_connection_to_signal_with_clock_and_procfs(
+            key,
+            active,
+            Some("node-a".to_string()),
+            ClockAnchor {
+                unix_nanos: 7_000,
+                monotonic_nanos: 1_000,
+            },
+            4_000,
+            std::path::Path::new("__e_navigator_test_no_procfs__"),
+        )
+        .expect("active TCP connection decodes");
+
+        let SignalPayload::NetworkConnectionSnapshot(event) = signal.payload else {
+            panic!("expected network snapshot payload");
+        };
+        assert_eq!(event.process.pid, 42);
+        assert_eq!(event.process.cgroup_id, Some(55));
+        assert_eq!(event.fd, Some(7));
+        assert_eq!(event.opened_at_unix_nanos, Some(7_000));
+        assert_eq!(event.observed_at_unix_nanos, 10_000);
+        assert_eq!(event.local_address.as_deref(), Some("10.0.0.5"));
+        assert_eq!(event.local_port, Some(43512));
+        assert_eq!(event.remote_address, "10.0.0.20");
+        assert_eq!(event.remote_port, 5432);
+        assert_eq!(event.bytes_sent, 512);
+        assert_eq!(event.bytes_received, 1_024);
+    }
+
+    #[test]
     fn rejects_short_unknown_family_and_protocol_raw_network_events() {
         assert!(raw_network_to_signal_with_clock(&[0, 1, 2], None, 1_000).is_none());
 
@@ -1263,6 +1638,8 @@ mod tests {
     #[test]
     fn raw_network_event_layout_size_matches_ebpf_abi() {
         assert_eq!(std::mem::size_of::<RawNetworkEvent>(), 136);
+        assert_eq!(std::mem::size_of::<RawConnectionKey>(), 8);
+        assert_eq!(std::mem::size_of::<RawActiveConnection>(), 128);
     }
 
     fn tcp_stat_as_bytes(raw: &RawTcpStatEvent) -> &[u8] {

@@ -143,6 +143,15 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
                 )
                 .await;
             }
+            SignalPayload::NetworkConnectionSnapshot(event) => {
+                self.enrich_context(
+                    event.process.pid,
+                    event.process.cgroup_id,
+                    &mut event.container,
+                    &mut event.kubernetes,
+                )
+                .await;
+            }
             SignalPayload::NetworkConnectionFailure(event) => {
                 self.enrich_context(
                     event.process.pid,

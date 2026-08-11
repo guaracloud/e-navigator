@@ -44,6 +44,9 @@ E-Navigator runs as one node-local agent with a statically registered
 - Generators derive bounded resource and network metrics, dependency edges,
   peer-aware directional L4 byte metrics, request spans, trace service paths,
   profile sessions, and runtime security findings.
+- Active TCP connections emit cumulative snapshots every three seconds by
+  default, so long-lived pools keep directional byte-rate queries current;
+  exact peer series are reclaimed after a configurable idle timeout.
 - Sinks emit newline-delimited JSON, serve Prometheus and local pprof, or route
   metrics, traces, and profiles through independent bounded OTLP workers.
 - An optional Kubernetes-aware capture filter avoids probing excluded workload
