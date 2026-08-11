@@ -6,6 +6,52 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-11
+
+### Added
+
+- Add disabled-by-default kernel-stack capture to periodic CPU, scheduler
+  off-CPU, and futex-wait profiles. Kernel frames use an independent bounded
+  budget, retain the existing managed-runtime and user frames, and preserve
+  their domain through native signals, deterministic stack identity, pprof,
+  and OTLP Profiles.
+- Add a bounded, shared, identity-aware `/proc/kallsyms` symbol table with
+  periodic refresh for module churn. Restricted or unavailable kernel symbols
+  degrade to an address-free `[kernel:unresolved]` frame instead of exporting
+  KASLR-sensitive raw kernel addresses.
+- Add per-sample and periodic kernel capture failure and truncation accounting,
+  Helm and raw-manifest controls, and a privileged disposable Docker smoke that
+  verifies combined user and kernel frames from the real Aya program.
+
+### Security
+
+- Keep kernel stacks opt-in and leave `kptr_restrict` unchanged. The reduced
+  capability profile continues to omit `SYSLOG`; deployments that cannot read
+  kernel symbols retain useful typed placeholders without weakening the host.
+- Preserve the standalone, non-intrusive runtime boundary: E-Navigator does not
+  inject agents, change runtime flags, start EventPipe or JFR, or present native
+  allocator probes as managed allocations or live heap profiles.
+
+### Documentation
+
+- Record the managed-runtime, kernel-stack, and allocation feasibility decision
+  in ADR 0016 and the profiling parity research report. Representative Node/V8,
+  HotSpot, Ruby, PHP, and .NET support remains gated on independently versioned,
+  fail-closed native adapters and live architecture/build matrices.
+- Publish kernel-stack configuration, operations guidance, website copy,
+  explicit non-claims, and the scoped local aarch64 OrbStack proof report.
+
+### Validation
+
+- Pass the complete local quality gate, including strict Rust checks, workspace
+  tests, release-contract validation, supply-chain checks, Docker build and
+  smoke, Helm and Kubernetes schema validation, website contracts, and diff
+  hygiene.
+- Verifier-load and attach the release eBPF profiler in privileged Docker,
+  observe one periodic profile containing both user and address-safe kernel
+  frames, and pass the pinned Pyroscope `1.20.3` OTLP ingest/query smoke with
+  40,000,000 ticks.
+
 ## [0.4.0-rc.1] - 2026-08-11
 
 ### Added
@@ -541,7 +587,12 @@ All notable changes to E-Navigator are documented here. The format follows
   reduced-privilege operation, and universal protocol/profile coverage remain
   explicit non-claims documented in `documentation/boundaries.md`.
 
-[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/guaracloud/e-navigator/compare/v0.4.0-rc.1...v0.4.0
+[0.4.0-rc.1]: https://github.com/guaracloud/e-navigator/compare/v0.3.1...v0.4.0-rc.1
+[0.3.1]: https://github.com/guaracloud/e-navigator/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/guaracloud/e-navigator/compare/v0.3.0-rc.1...v0.3.0
+[0.3.0-rc.1]: https://github.com/guaracloud/e-navigator/compare/v0.2.0...v0.3.0-rc.1
 [0.2.0]: https://github.com/guaracloud/e-navigator/compare/v0.2.0-rc.2...v0.2.0
 [0.2.0-rc.2]: https://github.com/guaracloud/e-navigator/compare/v0.2.0-rc.1...v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/guaracloud/e-navigator/compare/v0.1.2...v0.2.0-rc.1
