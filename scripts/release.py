@@ -137,7 +137,7 @@ def prepare(version: str) -> None:
         if relative == "documentation/helm.md":
             replace_once(
                 path,
-                rf"(^  --version ){re.escape(current)}( \\\\$)",
+                rf"(^  --version ){re.escape(current)}( \\$)",
                 rf"\g<1>{version}\g<2>",
             )
             continue
