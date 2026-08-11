@@ -507,6 +507,7 @@ mod tests {
                 sampling_period_nanos: Some(10_000_000),
                 stack_id: "stack:abc".to_string(),
                 stack_frames: vec![ProfilingFrame {
+                    domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
                     symbol: Some("checkout::handler".to_string()),
                     module: Some("checkout".to_string()),
                     file: None,
@@ -597,6 +598,7 @@ mod tests {
                 confidence: ProfilingConfidence::Medium,
                 stack_id: "stack:missing".to_string(),
                 stack_frames: vec![ProfilingFrame {
+                    domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
                     symbol: None,
                     module: Some("libunknown.so".to_string()),
                     file: None,

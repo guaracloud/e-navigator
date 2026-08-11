@@ -1365,6 +1365,7 @@ mod tests {
                 sampling_period_nanos: Some(20_000_000),
                 stack_id: "stack:aa".to_string(),
                 stack_frames: vec![ProfilingFrame {
+                    domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
                     symbol: Some("/usr/bin/app+0x1500".to_string()),
                     module: Some("/usr/bin/app".to_string()),
                     file: None,

@@ -2696,6 +2696,31 @@ fn cpu_profile_source_validates_zero_and_oversized_limits() {
 }
 
 #[test]
+fn cpu_profile_kernel_stack_config_is_opt_in_and_bounded() {
+    let defaults = CpuProfileSourceConfig::default();
+    assert!(!defaults.kernel_stacks_enabled);
+    assert_eq!(defaults.max_kernel_frames_per_sample, 64);
+
+    assert_invalid(
+        RuntimeConfig {
+            modules: cpu_profile_modules(),
+            cpu_profile_source: CpuProfileSourceConfig {
+                enabled: true,
+                kernel_stacks_enabled: true,
+                max_kernel_frames_per_sample:
+                    CpuProfileSourceConfig::MAX_KERNEL_FRAMES_PER_SAMPLE_LIMIT + 1,
+                ..CpuProfileSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "cpu_profile_source.max_kernel_frames_per_sample must be between 1 and {}",
+            CpuProfileSourceConfig::MAX_KERNEL_FRAMES_PER_SAMPLE_LIMIT
+        ),
+    );
+}
+
+#[test]
 fn cpu_profile_source_requires_static_module_enablement() {
     let config = RuntimeConfig {
         modules: cpu_profile_modules(),

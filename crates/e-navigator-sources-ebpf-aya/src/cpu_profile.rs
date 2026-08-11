@@ -7,12 +7,13 @@ use e_navigator_profiling::model::{NormalizationLimits, RawProfileFrame, RawProf
 #[cfg(any(target_os = "linux", test))]
 use e_navigator_profiling::{
     jit::JitSymbolMap,
+    kernel::{KernelSymbolLimits, KernelSymbolTable},
     symbolize::{ElfSymbolTable, ProcessModuleMap},
 };
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_signals::{
     NetworkProcessIdentity, ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind,
-    ProfilingKind, SignalEnvelope,
+    ProfilingFrameDomain, ProfilingKind, SignalEnvelope,
 };
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -20,6 +21,9 @@ pub(crate) const RAW_CPU_PROFILE_MAX_FRAMES: usize = 128;
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_PY_MAX_FRAMES: usize = 64;
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_KERNEL_PROFILE_MAX_FRAMES: usize = 64;
 
 #[cfg(target_os = "linux")]
 const PROFILE_DIAGNOSTIC_COUNTERS_LEN: usize = 16;
@@ -41,6 +45,12 @@ pub(crate) const RAW_CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED: u32 = 2;
 /// reason.
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_CPU_PROFILE_FLAG_DWARF: u32 = 4;
+/// The kernel stack filled the configured frame budget.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_KERNEL_PROFILE_FLAG_TRUNCATED: u32 = 1;
+/// `bpf_get_stack` could not capture a kernel stack for the sample.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+pub(crate) const RAW_KERNEL_PROFILE_FLAG_CAPTURE_FAILED: u32 = 2;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_PROFILE_KIND_CPU: u32 = 1;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -96,6 +106,9 @@ pub(crate) struct RawCpuProfileEvent {
     pub reserved: u32,
     pub weight_nanos: u64,
     pub instruction_pointers: [u64; RAW_CPU_PROFILE_MAX_FRAMES],
+    pub kernel_frame_count: u32,
+    pub kernel_flags: u32,
+    pub kernel_instruction_pointers: [u64; RAW_KERNEL_PROFILE_MAX_FRAMES],
     pub py_frame_count: u32,
     pub py_stop: u32,
     pub py_frames: [u64; RAW_PY_MAX_FRAMES],
@@ -135,6 +148,10 @@ pub(crate) struct DecodedCpuProfileSample {
     pub dwarf_incomplete: bool,
     /// True when the CPython frame walk stopped before the root frame.
     pub py_incomplete: bool,
+    /// True when the kernel rejected the kernel-stack capture helper call.
+    pub kernel_capture_failed: bool,
+    /// True when the kernel stack filled its configured frame budget.
+    pub kernel_capture_truncated: bool,
 }
 
 /// Resolves a captured instruction pointer for a pid into a stack frame.
@@ -155,6 +172,34 @@ pub(crate) trait FrameResolver {
     fn resolve_python_frame(&mut self, _pid: u32, _code_ptr: u64) -> Option<RawProfileFrame> {
         None
     }
+
+    /// Kernel addresses are never exported as a fallback. Resolvers that
+    /// cannot bind an address to the running kernel return a typed placeholder.
+    fn resolve_kernel_frame(&mut self, _ip: u64) -> RawProfileFrame {
+        unresolved_kernel_frame()
+    }
+
+    /// Resolves one captured kernel stack as a batch. Implementations that
+    /// refresh shared symbol metadata should do so once here, not per frame.
+    fn resolve_kernel_frames(&mut self, ips: &[u64]) -> Vec<RawProfileFrame> {
+        ips.iter()
+            .copied()
+            .filter(|ip| *ip != 0)
+            .map(|ip| self.resolve_kernel_frame(ip))
+            .collect()
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn unresolved_kernel_frame() -> RawProfileFrame {
+    RawProfileFrame {
+        domain: ProfilingFrameDomain::Kernel,
+        symbol: Some("[kernel:unresolved]".to_string()),
+        module: Some("[kernel]".to_string()),
+        file: None,
+        line: None,
+        module_offset: None,
+    }
 }
 
 /// Fallback resolver that carries the raw instruction pointer as a hex
@@ -167,6 +212,7 @@ pub(crate) struct RawAddressResolver;
 impl FrameResolver for RawAddressResolver {
     fn resolve(&mut self, _pid: u32, ip: u64) -> RawProfileFrame {
         RawProfileFrame {
+            domain: ProfilingFrameDomain::User,
             symbol: Some(format!("ip:{ip:016x}")),
             module: None,
             file: None,
@@ -191,8 +237,8 @@ pub(crate) struct ProcfsSymbolizer {
     /// Per-process JIT perf maps. Negative results are cached and retried on a
     /// short interval because runtimes commonly create the map after startup.
     jit_maps: std::collections::BTreeMap<u32, CachedJitSymbols>,
-    /// Target-filesystem module identity -> parsed ELF symbol table, shared
-    /// across every per-CPU reader thread: symbol tables of large modules
+    /// Target-filesystem ELF tables and the immutable kernel symbol snapshot,
+    /// shared across every per-CPU reader thread because symbol tables
     /// dominate symbolizer memory and must not be duplicated per thread.
     symbols: std::sync::Arc<std::sync::Mutex<SharedSymbolTables>>,
     /// Cached thread comms for untranslated pids, keyed by (pid, tid);
@@ -207,6 +253,10 @@ pub(crate) struct ProcfsSymbolizer {
     /// Detected CPython minor version per pid. Unsupported and unreadable
     /// processes are negatively cached under the same pid bound.
     python_versions: std::collections::BTreeMap<u32, Option<u32>>,
+    /// Identity-bound, periodically refreshed snapshot of non-zero symbols
+    /// from the running kernel. An empty table records unavailable addresses.
+    kernel_symbols: Option<CachedKernelSymbols>,
+    kernel_symbol_refresh_interval: std::time::Duration,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -214,6 +264,14 @@ pub(crate) struct ProcfsSymbolizer {
 struct CachedJitSymbols {
     last_checked: std::time::Instant,
     symbols: Option<JitSymbolMap>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone)]
+struct CachedKernelSymbols {
+    identity: Option<String>,
+    last_checked: std::time::Instant,
+    table: std::sync::Arc<KernelSymbolTable>,
 }
 
 /// Stable-enough identity for a module image reached through a target
@@ -239,6 +297,7 @@ struct ModuleFileIdentity {
 #[derive(Debug, Default)]
 pub(crate) struct SharedSymbolTables {
     tables: std::collections::BTreeMap<ModuleFileIdentity, Option<std::sync::Arc<ElfSymbolTable>>>,
+    kernel_symbols: Option<CachedKernelSymbols>,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -286,7 +345,10 @@ impl PythonObjectLayout {
 impl ProcfsSymbolizer {
     const MAX_MODULE_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
     const MAX_JIT_MAP_BYTES: u64 = 16 * 1024 * 1024;
+    const MAX_KALLSYMS_BYTES: u64 = 32 * 1024 * 1024;
+    const MAX_KERNEL_IDENTITY_BYTES: u64 = 4 * 1024;
     const JIT_MAP_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+    const KERNEL_SYMBOL_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
     #[cfg(test)]
     pub(crate) fn new(procfs_root: std::path::PathBuf, resolve_symbols: bool) -> Self {
@@ -313,7 +375,79 @@ impl ProcfsSymbolizer {
             thread_comms: std::collections::BTreeMap::new(),
             python_frames: std::collections::BTreeMap::new(),
             python_versions: std::collections::BTreeMap::new(),
+            kernel_symbols: None,
+            kernel_symbol_refresh_interval: Self::KERNEL_SYMBOL_REFRESH_INTERVAL,
         }
+    }
+
+    fn refresh_kernel_symbols(&mut self) -> Option<()> {
+        if !self.resolve_symbols {
+            return None;
+        }
+        let now = std::time::Instant::now();
+        if self.kernel_symbols.as_ref().is_some_and(|cached| {
+            now.duration_since(cached.last_checked) < self.kernel_symbol_refresh_interval
+        }) {
+            return Some(());
+        }
+        let identity = Self::read_bounded_utf8(
+            &self.procfs_root.join("sys/kernel/osrelease"),
+            Self::MAX_KERNEL_IDENTITY_BYTES,
+        )
+        .map(|value| value.trim().to_string());
+        let should_refresh = self.kernel_symbols.as_ref().is_none_or(|cached| {
+            cached.identity != identity
+                || now.duration_since(cached.last_checked) >= self.kernel_symbol_refresh_interval
+        });
+        if should_refresh {
+            let mut shared = self.symbols.lock().ok()?;
+            let shared_needs_refresh = shared.kernel_symbols.as_ref().is_none_or(|cached| {
+                cached.identity != identity
+                    || now.duration_since(cached.last_checked)
+                        >= self.kernel_symbol_refresh_interval
+            });
+            if shared_needs_refresh {
+                let table = Self::read_bounded_utf8(
+                    &self.procfs_root.join("kallsyms"),
+                    Self::MAX_KALLSYMS_BYTES,
+                )
+                .map(|contents| KernelSymbolTable::parse(&contents, &KernelSymbolLimits::default()))
+                .unwrap_or_default();
+                shared.kernel_symbols = Some(CachedKernelSymbols {
+                    identity: identity.clone(),
+                    last_checked: now,
+                    table: std::sync::Arc::new(table),
+                });
+            }
+            self.kernel_symbols.clone_from(&shared.kernel_symbols);
+        }
+        Some(())
+    }
+
+    fn cached_kernel_symbol_frame(&self, ip: u64) -> Option<RawProfileFrame> {
+        let resolved = self.kernel_symbols.as_ref()?.table.resolve(ip)?;
+        let symbol = if resolved.offset == 0 {
+            resolved.name.to_string()
+        } else {
+            format!("{}+{:#x}", resolved.name, resolved.offset)
+        };
+        let module = resolved
+            .module
+            .map(|module| format!("[kernel:{module}]"))
+            .unwrap_or_else(|| "[kernel]".to_string());
+        Some(RawProfileFrame {
+            domain: ProfilingFrameDomain::Kernel,
+            symbol: Some(symbol),
+            module: Some(module),
+            file: None,
+            line: None,
+            module_offset: Some(resolved.offset),
+        })
+    }
+
+    fn kernel_symbol_frame(&mut self, ip: u64) -> Option<RawProfileFrame> {
+        self.refresh_kernel_symbols()?;
+        self.cached_kernel_symbol_frame(ip)
     }
 
     fn process_map(&mut self, pid: u32) -> &ProcessModuleMap {
@@ -529,6 +663,7 @@ impl ProcfsSymbolizer {
                 .and_then(|()| u32::try_from(i32::from_le_bytes(word)).ok())
         };
         Some(RawProfileFrame {
+            domain: ProfilingFrameDomain::ManagedRuntime,
             symbol: Some(symbol),
             module: Some("<python>".to_string()),
             file,
@@ -608,6 +743,7 @@ impl FrameResolver for ProcfsSymbolizer {
     fn resolve(&mut self, pid: u32, ip: u64) -> RawProfileFrame {
         if let Some((symbol, offset)) = self.jit_symbol(pid, ip) {
             return RawProfileFrame {
+                domain: ProfilingFrameDomain::ManagedRuntime,
                 symbol: Some(symbol),
                 module: Some("<jit>".to_string()),
                 file: None,
@@ -622,6 +758,7 @@ impl FrameResolver for ProcfsSymbolizer {
             .symbol_name(pid, &location.module, location.module_offset)
             .unwrap_or_else(|| format!("{}+{:#x}", location.module, location.module_offset));
         RawProfileFrame {
+            domain: ProfilingFrameDomain::User,
             symbol: Some(symbol),
             module: Some(location.module),
             file: None,
@@ -646,6 +783,25 @@ impl FrameResolver for ProcfsSymbolizer {
             self.python_frames.insert(key, frame);
         }
         self.python_frames.get(&key)?.clone()
+    }
+
+    fn resolve_kernel_frame(&mut self, ip: u64) -> RawProfileFrame {
+        self.kernel_symbol_frame(ip).unwrap_or_else(|| {
+            let mut fallback = RawAddressResolver;
+            fallback.resolve_kernel_frame(ip)
+        })
+    }
+
+    fn resolve_kernel_frames(&mut self, ips: &[u64]) -> Vec<RawProfileFrame> {
+        let _ = self.refresh_kernel_symbols();
+        ips.iter()
+            .copied()
+            .filter(|ip| *ip != 0)
+            .map(|ip| {
+                self.cached_kernel_symbol_frame(ip)
+                    .unwrap_or_else(unresolved_kernel_frame)
+            })
+            .collect()
     }
 }
 
@@ -693,13 +849,19 @@ fn raw_cpu_profile_to_signal_with_clock(
             _ => return None,
         };
     let capture_truncated = raw.flags & RAW_CPU_PROFILE_FLAG_TRUNCATED != 0;
+    let kernel_capture_failed = config.kernel_stacks_enabled
+        && raw.kernel_flags & RAW_KERNEL_PROFILE_FLAG_CAPTURE_FAILED != 0;
+    let kernel_capture_truncated =
+        config.kernel_stacks_enabled && raw.kernel_flags & RAW_KERNEL_PROFILE_FLAG_TRUNCATED != 0;
     let command = bytes_to_string(&raw.command);
     // An untranslated pid may belong to an unrelated same-numbered process
     // in the symbolization procfs view; only symbolize it after the
     // resolver confirms the thread identity there.
     let pid_unverified = raw.flags & RAW_CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED != 0
         && !resolver.verify_thread(raw.pid, raw.tid, &command);
-    let frame_count = (raw.frame_count as usize).min(RAW_CPU_PROFILE_MAX_FRAMES);
+    let declared_user_frame_count = (raw.frame_count as usize).min(RAW_CPU_PROFILE_MAX_FRAMES);
+    let user_frames_truncated_by_config = declared_user_frame_count > config.max_frames_per_sample;
+    let frame_count = declared_user_frame_count.min(config.max_frames_per_sample);
     let stack_frames = raw
         .instruction_pointers
         .iter()
@@ -720,6 +882,15 @@ fn raw_cpu_profile_to_signal_with_clock(
             }
         })
         .collect::<Vec<_>>();
+    let kernel_frame_count = if config.kernel_stacks_enabled {
+        (raw.kernel_frame_count as usize)
+            .min(RAW_KERNEL_PROFILE_MAX_FRAMES)
+            .min(config.max_kernel_frames_per_sample)
+    } else {
+        0
+    };
+    let kernel_frames =
+        resolver.resolve_kernel_frames(&raw.kernel_instruction_pointers[..kernel_frame_count]);
     // Interpreter frames resolve leaf-first ahead of the native stack;
     // unverified pids keep raw pointers rather than reading an
     // unrelated process's memory.
@@ -740,6 +911,7 @@ fn raw_cpu_profile_to_signal_with_clock(
                 resolver.resolve_python_frame(raw.pid, code_ptr)
             };
             merged.push(resolved.unwrap_or_else(|| RawProfileFrame {
+                domain: ProfilingFrameDomain::ManagedRuntime,
                 symbol: Some(format!("py:{code_ptr:#x}")),
                 module: Some("<python>".to_string()),
                 file: None,
@@ -752,6 +924,8 @@ fn raw_cpu_profile_to_signal_with_clock(
     } else {
         stack_frames
     };
+    let mut stack_frames = stack_frames;
+    stack_frames.extend(kernel_frames);
     let timestamp_unix_nanos = if raw.timestamp_unix_nanos == 0 {
         observed_unix_nanos
     } else {
@@ -847,6 +1021,24 @@ fn raw_cpu_profile_to_signal_with_clock(
                     value: jit_frame_count.to_string(),
                 });
             }
+            if kernel_frame_count > 0 {
+                attributes.push(ProfilingAttribute {
+                    key: "profiling.stack.kernel_frames".to_string(),
+                    value: kernel_frame_count.to_string(),
+                });
+            }
+            if kernel_capture_failed {
+                attributes.push(ProfilingAttribute {
+                    key: "profiling.stack.kernel_capture_failed".to_string(),
+                    value: "true".to_string(),
+                });
+            }
+            if kernel_capture_truncated {
+                attributes.push(ProfilingAttribute {
+                    key: "profiling.stack.kernel_capture_truncated".to_string(),
+                    value: "true".to_string(),
+                });
+            }
             if let Some((reason, _)) = py_stop_reason(raw.py_stop) {
                 attributes.push(ProfilingAttribute {
                     key: "profiling.stack.py_stop".to_string(),
@@ -857,7 +1049,10 @@ fn raw_cpu_profile_to_signal_with_clock(
         },
     };
     let limits = NormalizationLimits {
-        max_frames_per_stack: config.max_frames_per_sample,
+        max_frames_per_stack: config
+            .max_frames_per_sample
+            .saturating_add(py_count)
+            .saturating_add(kernel_frame_count),
         max_symbol_bytes: config.max_symbol_bytes,
         max_module_bytes: config.max_module_bytes,
         max_file_bytes: config.max_file_bytes,
@@ -865,7 +1060,7 @@ fn raw_cpu_profile_to_signal_with_clock(
         ..NormalizationLimits::default()
     };
     sample
-        .normalize(&limits)
+        .normalize_with_stack_truncation(&limits, user_frames_truncated_by_config)
         .ok()
         .map(|sample| DecodedCpuProfileSample {
             signal: SignalEnvelope::profile_sample_observation(
@@ -879,12 +1074,14 @@ fn raw_cpu_profile_to_signal_with_clock(
             dwarf_incomplete: unwind_stop_reason(raw.flags)
                 .is_some_and(|(_, incomplete)| incomplete),
             py_incomplete,
+            kernel_capture_failed,
+            kernel_capture_truncated,
         })
 }
 
 #[cfg(feature = "fuzzing")]
 pub fn fuzz_decode_raw_cpu_profile_event(bytes: &[u8]) -> bool {
-    const MAX_FUZZ_BYTES: usize = 2048;
+    const MAX_FUZZ_BYTES: usize = core::mem::size_of::<RawCpuProfileEvent>();
 
     let bytes = &bytes[..bytes.len().min(MAX_FUZZ_BYTES)];
     let config = CpuProfileSourceConfig {
@@ -1007,6 +1204,8 @@ pub(crate) struct CpuProfileDropCounters {
     pid_unverified_samples: std::sync::atomic::AtomicU64,
     dwarf_incomplete_samples: std::sync::atomic::AtomicU64,
     py_incomplete_samples: std::sync::atomic::AtomicU64,
+    kernel_capture_failed_samples: std::sync::atomic::AtomicU64,
+    kernel_truncated_samples: std::sync::atomic::AtomicU64,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -1041,11 +1240,22 @@ impl CpuProfileDropCounters {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
+    pub(crate) fn record_kernel_capture_failed_sample(&self) {
+        self.kernel_capture_failed_samples
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_kernel_truncated_sample(&self) {
+        self.kernel_truncated_samples
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Atomically reads and resets all counters, returning
     /// (lost_perf_events, backpressure_dropped, truncated_stacks,
     /// pid_unverified_samples, dwarf_incomplete_samples,
-    /// py_incomplete_samples) since the last drain.
-    pub(crate) fn drain(&self) -> (u64, u64, u64, u64, u64, u64) {
+    /// py_incomplete_samples, kernel_capture_failed_samples,
+    /// kernel_truncated_samples) since the last drain.
+    pub(crate) fn drain(&self) -> (u64, u64, u64, u64, u64, u64, u64, u64) {
         (
             self.lost_perf_events
                 .swap(0, std::sync::atomic::Ordering::Relaxed),
@@ -1059,8 +1269,55 @@ impl CpuProfileDropCounters {
                 .swap(0, std::sync::atomic::Ordering::Relaxed),
             self.py_incomplete_samples
                 .swap(0, std::sync::atomic::Ordering::Relaxed),
+            self.kernel_capture_failed_samples
+                .swap(0, std::sync::atomic::Ordering::Relaxed),
+            self.kernel_truncated_samples
+                .swap(0, std::sync::atomic::Ordering::Relaxed),
         )
     }
+}
+
+/// Builds a bounded warning for kernel-stack capture failures and
+/// configured-depth truncation.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn kernel_capture_degradation_warning(
+    host: Option<String>,
+    capture_failed_samples: u64,
+    truncated_samples: u64,
+    timestamp_unix_nanos: u64,
+) -> SignalEnvelope {
+    use e_navigator_signals::{
+        ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind,
+        ProfilingWarningObservation,
+    };
+    SignalEnvelope::profiling_warning_observation(
+        "source.aya_cpu_profile",
+        host,
+        ProfilingWarningObservation {
+            warning_type: "kernel_stack_capture_degraded".to_string(),
+            message: "kernel stacks could not be captured completely for some profile samples"
+                .to_string(),
+            timestamp_unix_nanos,
+            source_signal_kind: "profile_sample_observation".to_string(),
+            source_module: "source.aya_cpu_profile".to_string(),
+            profiling_kind: ProfilingKind::Cpu,
+            correlation_kind: ProfilingCorrelationKind::ObservedProfileSample,
+            confidence: ProfilingConfidence::High,
+            process: None,
+            container: None,
+            kubernetes: None,
+            attributes: vec![
+                ProfilingAttribute {
+                    key: "profiling.stack.kernel_capture_failed_samples".to_string(),
+                    value: capture_failed_samples.to_string(),
+                },
+                ProfilingAttribute {
+                    key: "profiling.stack.kernel_truncated_samples".to_string(),
+                    value: truncated_samples.to_string(),
+                },
+            ],
+        },
+    )
 }
 
 /// Builds a bounded profiling warning reporting source-layer sample drops.
@@ -1757,8 +2014,16 @@ mod platform {
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     while !emitter_shutdown.is_stopped() {
                         std::thread::sleep(std::time::Duration::from_secs(10));
-                        let (lost, dropped, truncated, foreign, dwarf_incomplete, py_incomplete) =
-                            emitter_counters.drain();
+                        let (
+                            lost,
+                            dropped,
+                            truncated,
+                            foreign,
+                            dwarf_incomplete,
+                            py_incomplete,
+                            kernel_failed,
+                            kernel_truncated,
+                        ) = emitter_counters.drain();
                         if lost > 0 || dropped > 0 {
                             let warning = super::source_drop_warning(
                                 emitter_host.clone(),
@@ -1811,6 +2076,17 @@ mod platform {
                                 return ReaderExit::Stopped;
                             }
                         }
+                        if kernel_failed > 0 || kernel_truncated > 0 {
+                            let warning = super::kernel_capture_degradation_warning(
+                                emitter_host.clone(),
+                                kernel_failed,
+                                kernel_truncated,
+                                super::now_unix_nanos(),
+                            );
+                            if emitter_tx.blocking_send(warning).is_err() {
+                                return ReaderExit::Stopped;
+                            }
+                        }
                     }
                     ReaderExit::Stopped
                 }));
@@ -1852,6 +2128,12 @@ mod platform {
         if decoded.py_incomplete {
             counters.record_py_incomplete_sample();
         }
+        if decoded.kernel_capture_failed {
+            counters.record_kernel_capture_failed_sample();
+        }
+        if decoded.kernel_capture_truncated {
+            counters.record_kernel_truncated_sample();
+        }
     }
 
     async fn join_reader_handles(handles: Vec<JoinHandle<ReaderExit>>) -> CoreResult<()> {
@@ -1888,6 +2170,10 @@ mod platform {
             .max_frames_per_sample
             .clamp(1, super::RAW_CPU_PROFILE_MAX_FRAMES) as u32;
         limit.set(0, frames, 0).map_err(module_error)?;
+        let kernel_frames = config
+            .max_kernel_frames_per_sample
+            .clamp(1, super::RAW_KERNEL_PROFILE_MAX_FRAMES) as u32;
+        limit.set(1, kernel_frames, 0).map_err(module_error)?;
         Ok(())
     }
 
@@ -1916,6 +2202,7 @@ mod platform {
             u64::from(config.max_off_cpu_events_per_second_per_cpu),
             u64::from(config.max_lock_events_per_second_per_cpu),
             futex_syscall,
+            u64::from(config.kernel_stacks_enabled),
         ];
         for (index, value) in configured.into_iter().enumerate() {
             values
@@ -2335,7 +2622,8 @@ mod tests {
     use super::*;
     use e_navigator_core::{CpuProfileSourceConfig, Signal};
     use e_navigator_signals::{
-        ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind, SignalPayload,
+        ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrameDomain, ProfilingKind,
+        SignalPayload,
     };
     use proptest::prelude::*;
 
@@ -2386,6 +2674,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0xabc, 0xdef, 0, 0]),
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -2431,6 +2722,180 @@ mod tests {
                 .any(|attribute| attribute.key == "profiling.source"
                     && attribute.value == "aya_perf_event")
         );
+    }
+
+    #[test]
+    fn decodes_user_and_kernel_frames_with_distinct_domains() {
+        let raw = RawCpuProfileEvent {
+            pid: 42,
+            tid: 43,
+            uid: 1000,
+            cgroup_id: 7,
+            sample_count: 1,
+            timestamp_unix_nanos: 1_000,
+            command: fixed_command("api"),
+            frame_count: 1,
+            flags: 0,
+            profile_kind: RAW_PROFILE_KIND_CPU,
+            profile_mode: RAW_PROFILE_MODE_ON_CPU,
+            profile_status: 0,
+            reserved: 0,
+            weight_nanos: 0,
+            instruction_pointers: padded_pointers(&[0xabc]),
+            kernel_frame_count: 1,
+            kernel_flags: 0,
+            kernel_instruction_pointers: padded_kernel_pointers(&[0xffff_ffff_8100_1234]),
+            py_frame_count: 0,
+            py_stop: 0,
+            py_frames: [0; RAW_PY_MAX_FRAMES],
+        };
+
+        let signal = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            Some("node-a".to_string()),
+            &CpuProfileSourceConfig {
+                kernel_stacks_enabled: true,
+                ..source_config()
+            },
+            10_000,
+            &mut RawAddressResolver,
+        )
+        .expect("combined profile event decodes")
+        .signal;
+
+        let SignalPayload::ProfileSampleObservation(sample) = signal.payload else {
+            panic!("expected profile sample");
+        };
+        assert_eq!(sample.stack_frames.len(), 2);
+        assert_eq!(sample.stack_frames[0].domain, ProfilingFrameDomain::User);
+        assert_eq!(sample.stack_frames[1].domain, ProfilingFrameDomain::Kernel);
+        assert_eq!(
+            sample.stack_frames[0].symbol.as_deref(),
+            Some("ip:0000000000000abc")
+        );
+        assert_eq!(
+            sample.stack_frames[1].symbol.as_deref(),
+            Some("[kernel:unresolved]")
+        );
+        assert!(
+            sample.stack_frames[1]
+                .symbol
+                .as_deref()
+                .is_some_and(|symbol| !symbol.contains("81001234"))
+        );
+    }
+
+    #[test]
+    fn exposes_kernel_capture_degradation_on_each_sample() {
+        let mut raw = event_driven_raw(RAW_PROFILE_KIND_CPU, RAW_PROFILE_MODE_ON_CPU, 0, 0);
+        raw.kernel_flags = 1 | 2;
+
+        let signal = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            Some("node-a".to_string()),
+            &CpuProfileSourceConfig {
+                kernel_stacks_enabled: true,
+                ..source_config()
+            },
+            10_000,
+            &mut RawAddressResolver,
+        )
+        .expect("degraded kernel profile event decodes")
+        .signal;
+
+        let SignalPayload::ProfileSampleObservation(sample) = signal.payload else {
+            panic!("expected profile sample");
+        };
+        assert!(sample.attributes.iter().any(|attribute| attribute.key
+            == "profiling.stack.kernel_capture_failed"
+            && attribute.value == "true"));
+        assert!(sample.attributes.iter().any(|attribute| attribute.key
+            == "profiling.stack.kernel_capture_truncated"
+            && attribute.value == "true"));
+    }
+
+    #[test]
+    fn user_frame_budget_does_not_discard_captured_kernel_frames() {
+        let mut raw = event_driven_raw(RAW_PROFILE_KIND_CPU, RAW_PROFILE_MODE_ON_CPU, 0, 0);
+        raw.frame_count = 1;
+        raw.instruction_pointers = padded_pointers(&[0xabc]);
+        raw.kernel_frame_count = 1;
+        raw.kernel_instruction_pointers = padded_kernel_pointers(&[0xffff_ffff_8100_1234]);
+        let config = CpuProfileSourceConfig {
+            max_frames_per_sample: 1,
+            kernel_stacks_enabled: true,
+            max_kernel_frames_per_sample: 1,
+            ..source_config()
+        };
+
+        let signal = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &config,
+            10_000,
+            &mut RawAddressResolver,
+        )
+        .expect("combined profile event decodes")
+        .signal;
+        let SignalPayload::ProfileSampleObservation(sample) = signal.payload else {
+            panic!("expected profile sample");
+        };
+
+        assert_eq!(sample.stack_frames.len(), 2);
+        assert_eq!(sample.stack_frames[0].domain, ProfilingFrameDomain::User);
+        assert_eq!(sample.stack_frames[1].domain, ProfilingFrameDomain::Kernel);
+    }
+
+    #[test]
+    fn decoder_enforces_kernel_stack_opt_in() {
+        let mut raw = event_driven_raw(RAW_PROFILE_KIND_CPU, RAW_PROFILE_MODE_ON_CPU, 0, 0);
+        raw.kernel_frame_count = 1;
+        raw.kernel_instruction_pointers = padded_kernel_pointers(&[0xffff_ffff_8100_1234]);
+
+        let signal = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &source_config(),
+            10_000,
+            &mut RawAddressResolver,
+        )
+        .expect("profile event decodes")
+        .signal;
+        let SignalPayload::ProfileSampleObservation(sample) = signal.payload else {
+            panic!("expected profile sample");
+        };
+
+        assert!(
+            sample
+                .stack_frames
+                .iter()
+                .all(|frame| frame.domain != ProfilingFrameDomain::Kernel)
+        );
+    }
+
+    #[test]
+    fn decoder_resolves_each_kernel_stack_as_one_batch() {
+        let mut raw = event_driven_raw(RAW_PROFILE_KIND_CPU, RAW_PROFILE_MODE_ON_CPU, 0, 0);
+        raw.kernel_frame_count = 2;
+        raw.kernel_instruction_pointers =
+            padded_kernel_pointers(&[0xffff_ffff_8100_1234, 0xffff_ffff_8100_5678]);
+        let config = CpuProfileSourceConfig {
+            kernel_stacks_enabled: true,
+            ..source_config()
+        };
+        let mut resolver = BatchKernelResolver::default();
+
+        raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &config,
+            10_000,
+            &mut resolver,
+        )
+        .expect("profile event decodes");
+
+        assert_eq!(resolver.batch_calls, 1);
+        assert_eq!(resolver.individual_calls, 0);
     }
 
     #[test]
@@ -2543,6 +3008,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -2584,6 +3052,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0x1, 0x2, 0x3, 0x4]),
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -2693,6 +3164,7 @@ mod tests {
         impl FrameResolver for JitResolver {
             fn resolve(&mut self, _pid: u32, ip: u64) -> RawProfileFrame {
                 RawProfileFrame {
+                    domain: ProfilingFrameDomain::ManagedRuntime,
                     symbol: Some(format!("generated_{ip:x}")),
                     module: Some("<jit>".to_string()),
                     file: None,
@@ -2718,6 +3190,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0x1000, 0x2000]),
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -2749,6 +3224,7 @@ mod tests {
                 );
                 match map.resolve(ip) {
                     Some(location) => RawProfileFrame {
+                        domain: ProfilingFrameDomain::User,
                         symbol: Some(format!("{}+{:#x}", location.module, location.module_offset)),
                         module: Some(location.module),
                         file: None,
@@ -2780,6 +3256,9 @@ mod tests {
                 pointers[0] = 0x55f000000500;
                 pointers
             },
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -2801,6 +3280,100 @@ mod tests {
         assert_eq!(frame.module.as_deref(), Some("/usr/bin/app"));
         assert_eq!(frame.module_offset, Some(0x1500));
         assert_eq!(frame.symbol.as_deref(), Some("/usr/bin/app+0x1500"));
+    }
+
+    #[test]
+    fn procfs_symbolizer_resolves_kernel_symbols_without_raw_addresses() {
+        let dir =
+            std::env::temp_dir().join(format!("e-nav-kernel-symbol-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create kernel symbol fixture root");
+        std::fs::write(
+            dir.join("kallsyms"),
+            "ffffffff81000000 T _stext\n\
+             ffffffff81000100 t schedule\n\
+             ffffffff81000200 T _etext\n",
+        )
+        .expect("write kallsyms fixture");
+
+        let mut symbolizer = ProcfsSymbolizer::new(dir.clone(), true);
+        let frame = symbolizer.resolve_kernel_frame(0xffff_ffff_8100_0118);
+
+        assert_eq!(frame.domain, ProfilingFrameDomain::Kernel);
+        assert_eq!(frame.symbol.as_deref(), Some("schedule+0x18"));
+        assert_eq!(frame.module.as_deref(), Some("[kernel]"));
+        assert_eq!(frame.module_offset, Some(0x18));
+        assert!(
+            !frame
+                .symbol
+                .as_deref()
+                .unwrap_or_default()
+                .contains("81000118")
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn procfs_symbolizer_reloads_kernel_symbols_when_identity_changes() {
+        let dir = std::env::temp_dir().join(format!(
+            "e-nav-kernel-symbol-refresh-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(dir.join("sys/kernel")).expect("create kernel symbol fixture root");
+        std::fs::write(dir.join("sys/kernel/osrelease"), "6.12.0-test-a\n")
+            .expect("write initial kernel identity");
+        std::fs::write(
+            dir.join("kallsyms"),
+            "0000000081000100 T schedule\n0000000081000200 T finish_task_switch\n",
+        )
+        .expect("write initial kallsyms fixture");
+        let mut symbolizer = ProcfsSymbolizer::new(dir.clone(), true);
+        let first = symbolizer.resolve_kernel_frame(0x8100_0118);
+        assert_eq!(first.symbol.as_deref(), Some("schedule+0x18"));
+        symbolizer.kernel_symbol_refresh_interval = std::time::Duration::ZERO;
+
+        std::fs::write(dir.join("sys/kernel/osrelease"), "6.12.0-test-b\n")
+            .expect("write replacement kernel identity");
+        std::fs::write(
+            dir.join("kallsyms"),
+            "0000000081000100 T schedule_new\n0000000081000200 T finish_task_switch\n",
+        )
+        .expect("write replacement kallsyms fixture");
+        let refreshed = symbolizer.resolve_kernel_frame(0x8100_0118);
+        assert_eq!(refreshed.symbol.as_deref(), Some("schedule_new+0x18"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn procfs_symbolizers_share_one_kernel_symbol_snapshot() {
+        let dir = std::env::temp_dir().join(format!(
+            "e-nav-kernel-symbol-shared-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(dir.join("sys/kernel")).expect("create kernel symbol fixture root");
+        std::fs::write(dir.join("sys/kernel/osrelease"), "6.12.0-test\n")
+            .expect("write kernel identity");
+        std::fs::write(
+            dir.join("kallsyms"),
+            "0000000081000100 T schedule\n0000000081000200 T finish_task_switch\n",
+        )
+        .expect("write kallsyms fixture");
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(SharedSymbolTables::default()));
+        let mut first = ProcfsSymbolizer::with_shared_symbols(dir.clone(), true, shared.clone());
+        let mut second = ProcfsSymbolizer::with_shared_symbols(dir.clone(), true, shared);
+
+        assert_eq!(
+            first.resolve_kernel_frame(0x8100_0118).symbol.as_deref(),
+            Some("schedule+0x18")
+        );
+        std::fs::remove_file(dir.join("kallsyms")).expect("remove source after snapshot");
+        assert_eq!(
+            second.resolve_kernel_frame(0x8100_0118).symbol.as_deref(),
+            Some("schedule+0x18")
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -2829,9 +3402,11 @@ mod tests {
         counters.record_pid_unverified_sample();
         counters.record_dwarf_incomplete_sample();
         counters.record_py_incomplete_sample();
-        assert_eq!(counters.drain(), (5, 1, 2, 1, 1, 1));
+        counters.record_kernel_capture_failed_sample();
+        counters.record_kernel_truncated_sample();
+        assert_eq!(counters.drain(), (5, 1, 2, 1, 1, 1, 1, 1));
         // Draining resets all counters.
-        assert_eq!(counters.drain(), (0, 0, 0, 0, 0, 0));
+        assert_eq!(counters.drain(), (0, 0, 0, 0, 0, 0, 0, 0));
     }
 
     #[test]
@@ -2847,6 +3422,21 @@ mod tests {
             && attribute.value == "7"));
         assert!(warning.attributes.iter().any(|attribute| attribute.key
             == "profiling.dropped.backpressure"
+            && attribute.value == "4"));
+    }
+
+    #[test]
+    fn kernel_capture_warning_reports_failure_and_truncation_counts() {
+        let signal = kernel_capture_degradation_warning(Some("node-a".to_string()), 7, 4, 12_000);
+        let SignalPayload::ProfilingWarningObservation(warning) = signal.payload else {
+            panic!("expected profiling warning");
+        };
+        assert_eq!(warning.warning_type, "kernel_stack_capture_degraded");
+        assert!(warning.attributes.iter().any(|attribute| attribute.key
+            == "profiling.stack.kernel_capture_failed_samples"
+            && attribute.value == "7"));
+        assert!(warning.attributes.iter().any(|attribute| attribute.key
+            == "profiling.stack.kernel_truncated_samples"
             && attribute.value == "4"));
     }
 
@@ -2882,6 +3472,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0xabc, 0, 0, 0]),
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -2917,6 +3510,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0xabc, 0xdef, 0, 0]),
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -2962,6 +3558,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -2998,6 +3597,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -3045,6 +3647,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: [0; RAW_CPU_PROFILE_MAX_FRAMES],
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -3092,6 +3697,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0x1, 0x2, 0x3, 0x4]),
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -3132,6 +3740,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0x1, 0x2]),
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -3197,6 +3808,7 @@ mod tests {
     impl FrameResolver for VerdictResolver {
         fn resolve(&mut self, _pid: u32, _ip: u64) -> RawProfileFrame {
             RawProfileFrame {
+                domain: ProfilingFrameDomain::User,
                 symbol: Some("resolved_fn".to_string()),
                 module: Some("/usr/bin/app".to_string()),
                 file: None,
@@ -3228,6 +3840,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0xabc]),
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -3277,6 +3892,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0xabc]),
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -3362,6 +3980,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0x1000, 0x2000, 0x3000]),
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -3401,6 +4022,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0xabc]),
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -3487,6 +4111,7 @@ mod tests {
                 code_ptr: u64,
             ) -> Option<RawProfileFrame> {
                 (code_ptr == 0x5000).then(|| RawProfileFrame {
+                    domain: ProfilingFrameDomain::ManagedRuntime,
                     symbol: Some("my_module.busy".to_string()),
                     module: Some("<python>".to_string()),
                     file: Some("/app/busy.py".to_string()),
@@ -3512,6 +4137,9 @@ mod tests {
             reserved: 0,
             weight_nanos: 0,
             instruction_pointers: padded_pointers(&[0xabc]),
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
@@ -3690,11 +4318,17 @@ mod tests {
 
     #[test]
     fn raw_cpu_profile_event_layout_size_matches_ebpf_abi() {
-        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 1632);
+        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 2152);
     }
 
     fn padded_pointers(values: &[u64]) -> [u64; RAW_CPU_PROFILE_MAX_FRAMES] {
         let mut pointers = [0_u64; RAW_CPU_PROFILE_MAX_FRAMES];
+        pointers[..values.len()].copy_from_slice(values);
+        pointers
+    }
+
+    fn padded_kernel_pointers(values: &[u64]) -> [u64; RAW_KERNEL_PROFILE_MAX_FRAMES] {
+        let mut pointers = [0_u64; RAW_KERNEL_PROFILE_MAX_FRAMES];
         pointers[..values.len()].copy_from_slice(values);
         pointers
     }
@@ -3721,9 +4355,51 @@ mod tests {
             reserved: 0,
             weight_nanos,
             instruction_pointers: padded_pointers(&[0xabc, 0xdef]),
+            kernel_frame_count: 0,
+            kernel_flags: 0,
+            kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
+        }
+    }
+
+    #[derive(Default)]
+    struct BatchKernelResolver {
+        batch_calls: usize,
+        individual_calls: usize,
+    }
+
+    impl FrameResolver for BatchKernelResolver {
+        fn resolve(&mut self, _pid: u32, ip: u64) -> RawProfileFrame {
+            RawAddressResolver.resolve(0, ip)
+        }
+
+        fn resolve_kernel_frame(&mut self, _ip: u64) -> RawProfileFrame {
+            self.individual_calls += 1;
+            RawProfileFrame {
+                domain: ProfilingFrameDomain::Kernel,
+                symbol: Some("kernel".to_string()),
+                module: Some("[kernel]".to_string()),
+                file: None,
+                line: None,
+                module_offset: None,
+            }
+        }
+
+        fn resolve_kernel_frames(&mut self, ips: &[u64]) -> Vec<RawProfileFrame> {
+            self.batch_calls += 1;
+            ips.iter()
+                .filter(|ip| **ip != 0)
+                .map(|_| RawProfileFrame {
+                    domain: ProfilingFrameDomain::Kernel,
+                    symbol: Some("kernel".to_string()),
+                    module: Some("[kernel]".to_string()),
+                    file: None,
+                    line: None,
+                    module_offset: None,
+                })
+                .collect()
         }
     }
 

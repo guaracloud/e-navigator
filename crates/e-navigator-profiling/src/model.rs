@@ -1,7 +1,7 @@
 use e_navigator_signals::{
     ContainerContext, KubernetesContext, NetworkProcessIdentity, ProfileSampleObservation,
     ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame,
-    ProfilingKind, is_sensitive_profiling_attribute_key,
+    ProfilingFrameDomain, ProfilingKind, is_sensitive_profiling_attribute_key,
 };
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +36,8 @@ impl Default for NormalizationLimits {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawProfileFrame {
+    #[serde(default)]
+    pub domain: ProfilingFrameDomain,
     pub symbol: Option<String>,
     pub module: Option<String>,
     pub file: Option<String>,
@@ -67,6 +69,16 @@ impl RawProfileSample {
         self,
         limits: &NormalizationLimits,
     ) -> Result<ProfileSampleObservation, String> {
+        self.normalize_with_stack_truncation(limits, false)
+    }
+
+    /// Normalizes a sample whose producer may already have applied an
+    /// independent domain budget before combining the logical stack.
+    pub fn normalize_with_stack_truncation(
+        self,
+        limits: &NormalizationLimits,
+        stack_was_pretruncated: bool,
+    ) -> Result<ProfileSampleObservation, String> {
         if self.sample_count == 0 {
             return Err("sample_count must be greater than zero".to_string());
         }
@@ -77,7 +89,8 @@ impl RawProfileSample {
             return Err("max_samples_per_window must be greater than zero".to_string());
         }
 
-        let frames_were_truncated = self.stack_frames.len() > limits.max_frames_per_stack;
+        let frames_were_truncated =
+            stack_was_pretruncated || self.stack_frames.len() > limits.max_frames_per_stack;
         let mut attributes = normalize_attributes(
             self.attributes,
             limits.max_attributes,
@@ -162,6 +175,7 @@ pub fn parse_profile_fixture(
 
 fn normalize_frame(frame: RawProfileFrame, limits: &NormalizationLimits) -> ProfilingFrame {
     ProfilingFrame {
+        domain: frame.domain,
         symbol: frame
             .symbol
             .map(|value| truncate_utf8_owned(value, limits.max_symbol_bytes)),
@@ -221,6 +235,18 @@ fn is_reserved_profile_attribute_key(key: &str) -> bool {
 fn deterministic_stack_id(frames: &[ProfilingFrame]) -> String {
     let mut hash = 0xcbf29ce484222325_u64;
     for frame in frames {
+        if frame.domain != ProfilingFrameDomain::Unknown {
+            let domain = match frame.domain {
+                ProfilingFrameDomain::User => "user",
+                ProfilingFrameDomain::Kernel => "kernel",
+                ProfilingFrameDomain::ManagedRuntime => "managed_runtime",
+                ProfilingFrameDomain::Unknown => "unknown",
+                _ => "future",
+            };
+            hash_bytes(&mut hash, "domain:");
+            hash_bytes(&mut hash, domain);
+            hash_bytes(&mut hash, "\x1f");
+        }
         hash_optional(&mut hash, frame.symbol.as_deref());
         hash_bytes(&mut hash, "\x1f");
         hash_optional(&mut hash, frame.module.as_deref());

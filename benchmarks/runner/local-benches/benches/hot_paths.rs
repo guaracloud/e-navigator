@@ -38,10 +38,10 @@ use e_navigator_signals::{
     NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkCounterMetric,
     NetworkProcessIdentity, NetworkProtocol, NodeCpuObservation, ProcessResourceContext,
     ProcessResourceObservation, ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence,
-    ProfilingCorrelationKind, ProfilingFrame, ProfilingKind, ProfilingSessionObservation,
-    ProfilingWarningObservation, ProtocolKind, ProtocolRequestObservation, RequestSpanObservation,
-    SignalEnvelope, SignalPayload, TraceAttribute, TraceConfidence, TraceCorrelationKind,
-    TracePeerContext,
+    ProfilingCorrelationKind, ProfilingFrame, ProfilingFrameDomain, ProfilingKind,
+    ProfilingSessionObservation, ProfilingWarningObservation, ProtocolKind,
+    ProtocolRequestObservation, RequestSpanObservation, SignalEnvelope, SignalPayload,
+    TraceAttribute, TraceConfidence, TraceCorrelationKind, TracePeerContext,
 };
 use e_navigator_sinks::{
     HttpExporterConfig, HttpJsonExporter, OtlpHttpSink, PrometheusHttpSink,
@@ -321,6 +321,7 @@ fn bench_protocol_and_profiles(c: &mut Criterion) {
         sampling_period_nanos: Some(20_000_000),
         stack_frames: (0..64)
             .map(|index| RawProfileFrame {
+                domain: ProfilingFrameDomain::Unknown,
                 symbol: Some(format!("checkout::handler_{index}")),
                 module: Some("/opt/checkout/bin/checkout-api".to_string()),
                 file: Some(format!("src/handlers/handler_{index}.rs")),
@@ -1315,6 +1316,7 @@ fn profiling_signals() -> Vec<SignalEnvelope> {
                     stack_id: format!("stack:{index:016x}"),
                     stack_frames: vec![
                         ProfilingFrame {
+                            domain: ProfilingFrameDomain::Unknown,
                             symbol: Some("handler".to_string()),
                             module: Some("api".to_string()),
                             file: Some("src/main.rs".to_string()),
@@ -1322,6 +1324,7 @@ fn profiling_signals() -> Vec<SignalEnvelope> {
                             module_offset: None,
                         },
                         ProfilingFrame {
+                            domain: ProfilingFrameDomain::Unknown,
                             symbol: Some("tokio::runtime".to_string()),
                             module: Some("tokio".to_string()),
                             file: None,

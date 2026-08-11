@@ -9,7 +9,8 @@ use e_navigator_profiling::model::{
     NormalizationLimits, RawProfileFrame, RawProfileSample, parse_profile_fixture,
 };
 use e_navigator_signals::{
-    ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingKind,
+    ProfilingAttribute, ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrameDomain,
+    ProfilingKind,
 };
 use proptest::prelude::*;
 
@@ -100,6 +101,7 @@ fn bounded_stack_truncation_limits_frame_count() {
 #[test]
 fn oversized_symbols_modules_and_files_are_truncated_on_char_boundaries() {
     let sample = raw_sample(vec![RawProfileFrame {
+        domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
         symbol: Some("abcdef".to_string()),
         module: Some("moduleabcdef".to_string()),
         file: Some("src/checkout/mod.rs".to_string()),
@@ -175,6 +177,7 @@ fn sensitive_profile_attributes_are_filtered_during_normalization() {
 #[test]
 fn missing_symbols_remain_missing_without_inventing_frames() {
     let sample = raw_sample(vec![RawProfileFrame {
+        domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
         symbol: None,
         module: Some("libunknown.so".to_string()),
         file: None,
@@ -212,8 +215,26 @@ fn deterministic_stack_ids_are_stable_for_same_normalized_frames() {
 }
 
 #[test]
+fn deterministic_stack_ids_distinguish_frame_domains() {
+    let mut user_frame = frame(Some("schedule".to_string()));
+    user_frame.domain = ProfilingFrameDomain::User;
+    let mut kernel_frame = user_frame.clone();
+    kernel_frame.domain = ProfilingFrameDomain::Kernel;
+
+    let user = raw_sample(vec![user_frame])
+        .normalize(&NormalizationLimits::default())
+        .expect("user sample normalizes");
+    let kernel = raw_sample(vec![kernel_frame])
+        .normalize(&NormalizationLimits::default())
+        .expect("kernel sample normalizes");
+
+    assert_ne!(user.stack_id, kernel.stack_id);
+}
+
+#[test]
 fn deterministic_stack_id_format_is_preserved_for_numeric_frame_fields() {
     let normalized = raw_sample(vec![RawProfileFrame {
+        domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
         symbol: Some("handler".to_string()),
         module: Some("api".to_string()),
         file: Some("src/main.rs".to_string()),
@@ -244,6 +265,7 @@ fn owned_profile_normalization_reuses_bounded_string_allocations() {
     ];
 
     let mut sample = raw_sample(vec![RawProfileFrame {
+        domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
         symbol: Some(symbol),
         module: Some(module),
         file: Some(file),
@@ -280,6 +302,7 @@ fn owned_profile_normalization_reuses_bounded_string_allocations() {
 #[test]
 fn deterministic_stack_ids_distinguish_missing_from_empty_fields() {
     let missing = raw_sample(vec![RawProfileFrame {
+        domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
         symbol: None,
         module: Some("checkout".to_string()),
         file: None,
@@ -289,6 +312,7 @@ fn deterministic_stack_ids_distinguish_missing_from_empty_fields() {
     .normalize(&NormalizationLimits::default())
     .expect("missing sample normalizes");
     let empty = raw_sample(vec![RawProfileFrame {
+        domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
         symbol: Some(String::new()),
         module: Some("checkout".to_string()),
         file: None,
@@ -495,6 +519,7 @@ impl RawProfileSampleExt for RawProfileSample {
 
 fn frame(symbol: Option<String>) -> RawProfileFrame {
     RawProfileFrame {
+        domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
         symbol,
         module: Some("checkout".to_string()),
         file: None,
@@ -511,6 +536,7 @@ fn raw_frame_strategy() -> impl Strategy<Value = RawProfileFrame> {
         prop::option::of(any::<u32>()),
     )
         .prop_map(|(symbol, module, file, line)| RawProfileFrame {
+            domain: e_navigator_signals::ProfilingFrameDomain::Unknown,
             symbol,
             module,
             file,
