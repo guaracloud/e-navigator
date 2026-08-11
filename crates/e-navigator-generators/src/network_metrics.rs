@@ -2,11 +2,11 @@ use async_trait::async_trait;
 use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata};
 use e_navigator_signals::{
     MetricAggregationWindow, NetworkAddressFamily, NetworkConnectionCloseEvent,
-    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkCounterMetric,
-    NetworkDurationMetric, NetworkFlowDirection, NetworkFlowEndpoint, NetworkFlowSummaryEvent,
-    NetworkFlowWarning, NetworkGaugeMetric, NetworkProcessIdentity, NetworkProtocol,
-    NetworkTcpResetDirection, NetworkTcpStatKind, NetworkTcpStatObservation, NetworkTcpState,
-    SignalEnvelope, SignalPayload,
+    NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkConnectionSnapshotEvent,
+    NetworkCounterMetric, NetworkDurationMetric, NetworkFlowDirection, NetworkFlowEndpoint,
+    NetworkFlowSummaryEvent, NetworkFlowWarning, NetworkGaugeMetric, NetworkProcessIdentity,
+    NetworkProtocol, NetworkTcpResetDirection, NetworkTcpStatKind, NetworkTcpStatObservation,
+    NetworkTcpState, SignalEnvelope, SignalPayload,
 };
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -30,11 +30,14 @@ pub struct NetworkMetricsGenerator {
     durations: Mutex<BTreeMap<DurationKey, DurationState>>,
     active_connections: Mutex<BTreeMap<ActiveConnectionKey, ActiveConnectionState>>,
     active_counts: Mutex<BTreeMap<ActiveGaugeKey, ActiveGaugeState>>,
+    flow_snapshots: Mutex<BTreeMap<ActiveConnectionKey, FlowSnapshotState>>,
+    closed_connections: Mutex<ClosedConnectionCache>,
     seen_events: Mutex<BoundedEventFingerprints>,
     suppressed_counters: AtomicU64,
     suppressed_durations: AtomicU64,
     suppressed_active_connections: AtomicU64,
     suppressed_active_gauges: AtomicU64,
+    suppressed_flow_snapshots: AtomicU64,
 }
 
 impl Default for NetworkMetricsGenerator {
@@ -52,11 +55,14 @@ impl NetworkMetricsGenerator {
             durations: Mutex::new(BTreeMap::new()),
             active_connections: Mutex::new(BTreeMap::new()),
             active_counts: Mutex::new(BTreeMap::new()),
+            flow_snapshots: Mutex::new(BTreeMap::new()),
+            closed_connections: Mutex::new(ClosedConnectionCache::default()),
             seen_events: Mutex::new(BoundedEventFingerprints::default()),
             suppressed_counters: AtomicU64::new(0),
             suppressed_durations: AtomicU64::new(0),
             suppressed_active_connections: AtomicU64::new(0),
             suppressed_active_gauges: AtomicU64::new(0),
+            suppressed_flow_snapshots: AtomicU64::new(0),
         }
     }
 
@@ -67,6 +73,7 @@ impl NetworkMetricsGenerator {
             durations: self.suppressed_durations.load(Ordering::Relaxed),
             active_connections: self.suppressed_active_connections.load(Ordering::Relaxed),
             active_gauges: self.suppressed_active_gauges.load(Ordering::Relaxed),
+            flow_snapshots: self.suppressed_flow_snapshots.load(Ordering::Relaxed),
         }
     }
 }
@@ -82,6 +89,7 @@ impl Generator<SignalEnvelope> for NetworkMetricsGenerator {
             &signal.payload,
             SignalPayload::NetworkConnectionOpen(_)
                 | SignalPayload::NetworkConnectionClose(_)
+                | SignalPayload::NetworkConnectionSnapshot(_)
                 | SignalPayload::NetworkConnectionFailure(_)
                 | SignalPayload::NetworkTcpStatObservation(_)
         )
@@ -118,6 +126,9 @@ impl NetworkMetricsGenerator {
         let outputs = match &signal.payload {
             SignalPayload::NetworkConnectionOpen(event) => self.observe_open(signal, event)?,
             SignalPayload::NetworkConnectionClose(event) => self.observe_close(signal, event)?,
+            SignalPayload::NetworkConnectionSnapshot(event) => {
+                self.observe_snapshot(signal, event)?
+            }
             SignalPayload::NetworkConnectionFailure(event) => {
                 self.observe_failure(signal, event)?
             }
@@ -185,29 +196,25 @@ impl NetworkMetricsGenerator {
         if let Some(metric) = self.track_active_close(event, signal.host.clone())? {
             metrics.push(metric);
         }
-        metrics.extend(flow_summaries_from_close(signal, event));
-        if let Some(warning) = flow_warning_from_close(signal, event) {
-            metrics.push(warning);
-        }
-        if event.kubernetes.is_some()
-            && let Some(metric) = self.update_counter_by(
-                CounterKey::flow_bytes(event),
-                || CounterTemplate::flow_bytes(event),
-                event
-                    .opened_at_unix_nanos
-                    .unwrap_or(event.closed_at_unix_nanos),
-                event.closed_at_unix_nanos,
-                event
-                    .bytes_sent
-                    .unwrap_or(0)
-                    .saturating_add(event.bytes_received.unwrap_or(0)),
-                signal.host.clone(),
-            )?
-        {
-            metrics.push(metric);
-        }
+        let interval = self.close_flow_interval(event)?;
+        metrics.extend(self.flow_outputs(
+            signal,
+            ConnectionFlowView::from_close(event),
+            interval,
+        )?);
 
         Ok(metrics)
+    }
+
+    fn observe_snapshot(
+        &self,
+        signal: &SignalEnvelope,
+        event: &NetworkConnectionSnapshotEvent,
+    ) -> CoreResult<Vec<SignalEnvelope>> {
+        let Some(interval) = self.snapshot_flow_interval(event)? else {
+            return Ok(Vec::new());
+        };
+        self.flow_outputs(signal, ConnectionFlowView::from_snapshot(event), interval)
     }
 
     fn observe_failure(
@@ -452,6 +459,158 @@ impl NetworkMetricsGenerator {
         Ok(Some(signal))
     }
 
+    fn snapshot_flow_interval(
+        &self,
+        event: &NetworkConnectionSnapshotEvent,
+    ) -> CoreResult<Option<FlowInterval>> {
+        let Some(key) = ActiveConnectionKey::from_snapshot(event) else {
+            return Ok(None);
+        };
+
+        let mut closed_connections = self.closed_connections()?;
+        if let Some(closed) = closed_connections.entries.get(&key) {
+            if same_connection_lifecycle(closed.opened_at_unix_nanos, event.opened_at_unix_nanos)
+                && event.observed_at_unix_nanos <= closed.closed_at_unix_nanos
+            {
+                return Ok(None);
+            }
+            closed_connections.remove(&key);
+        }
+
+        let mut snapshots = self.flow_snapshots()?;
+        let previous = snapshots.get(&key);
+        let same_lifecycle = previous.is_none_or(|previous| {
+            same_connection_lifecycle(previous.opened_at_unix_nanos, event.opened_at_unix_nanos)
+        });
+        let (bytes_sent, bytes_received, start_unix_nanos) =
+            match previous.filter(|_| same_lifecycle) {
+                Some(previous) => (
+                    counter_delta(event.bytes_sent, previous.bytes_sent),
+                    counter_delta(event.bytes_received, previous.bytes_received),
+                    previous.observed_at_unix_nanos,
+                ),
+                None => (
+                    event.bytes_sent,
+                    event.bytes_received,
+                    event
+                        .opened_at_unix_nanos
+                        .unwrap_or(event.observed_at_unix_nanos),
+                ),
+            };
+
+        if previous.is_none() && snapshots.len() >= self.max_active_connections {
+            let suppressed_total = self
+                .suppressed_flow_snapshots
+                .fetch_add(1, Ordering::Relaxed)
+                + 1;
+            warn_network_suppression(
+                "active_flow_snapshot",
+                self.max_active_connections,
+                suppressed_total,
+            );
+            return Ok(None);
+        }
+
+        snapshots.insert(
+            key,
+            FlowSnapshotState {
+                opened_at_unix_nanos: event.opened_at_unix_nanos,
+                observed_at_unix_nanos: event.observed_at_unix_nanos,
+                bytes_sent: event.bytes_sent,
+                bytes_received: event.bytes_received,
+            },
+        );
+        Ok(Some(FlowInterval {
+            bytes_sent,
+            bytes_received,
+            start_unix_nanos,
+            end_unix_nanos: event.observed_at_unix_nanos,
+            emit_unchanged: true,
+        }))
+    }
+
+    fn close_flow_interval(&self, event: &NetworkConnectionCloseEvent) -> CoreResult<FlowInterval> {
+        let totals = (
+            event.bytes_sent.unwrap_or(0),
+            event.bytes_received.unwrap_or(0),
+        );
+        let Some(key) = ActiveConnectionKey::from_close(event) else {
+            return Ok(FlowInterval {
+                bytes_sent: totals.0,
+                bytes_received: totals.1,
+                start_unix_nanos: event
+                    .opened_at_unix_nanos
+                    .unwrap_or(event.closed_at_unix_nanos),
+                end_unix_nanos: event.closed_at_unix_nanos,
+                emit_unchanged: false,
+            });
+        };
+
+        let mut closed_connections = self.closed_connections()?;
+        closed_connections.insert(
+            key.clone(),
+            ClosedConnectionState {
+                opened_at_unix_nanos: event.opened_at_unix_nanos,
+                closed_at_unix_nanos: event.closed_at_unix_nanos,
+            },
+            self.max_active_connections.max(1),
+        );
+
+        let mut snapshots = self.flow_snapshots()?;
+        let previous = snapshots.remove(&key).filter(|previous| {
+            same_connection_lifecycle(previous.opened_at_unix_nanos, event.opened_at_unix_nanos)
+        });
+        let (bytes_sent, bytes_received, start_unix_nanos, emit_unchanged) = match previous {
+            Some(previous) => (
+                counter_delta(totals.0, previous.bytes_sent),
+                counter_delta(totals.1, previous.bytes_received),
+                previous.observed_at_unix_nanos,
+                true,
+            ),
+            None => (
+                totals.0,
+                totals.1,
+                event
+                    .opened_at_unix_nanos
+                    .unwrap_or(event.closed_at_unix_nanos),
+                false,
+            ),
+        };
+        Ok(FlowInterval {
+            bytes_sent,
+            bytes_received,
+            start_unix_nanos,
+            end_unix_nanos: event.closed_at_unix_nanos,
+            emit_unchanged,
+        })
+    }
+
+    fn flow_outputs(
+        &self,
+        signal: &SignalEnvelope,
+        event: ConnectionFlowView<'_>,
+        interval: FlowInterval,
+    ) -> CoreResult<Vec<SignalEnvelope>> {
+        let mut outputs = flow_summaries(signal, event, interval);
+        if let Some(warning) = flow_warning(signal, event, interval) {
+            outputs.push(warning);
+        }
+        let total = interval.bytes_sent.saturating_add(interval.bytes_received);
+        if event.kubernetes.is_some()
+            && let Some(metric) = self.update_counter_by(
+                CounterKey::flow_bytes(event),
+                || CounterTemplate::flow_bytes(event),
+                interval.start_unix_nanos,
+                interval.end_unix_nanos,
+                total,
+                signal.host.clone(),
+            )?
+        {
+            outputs.push(metric);
+        }
+        Ok(outputs)
+    }
+
     fn mark_seen(&self, signal: &SignalEnvelope) -> CoreResult<bool> {
         let Some(fingerprint) = EventFingerprint::from_signal(signal) else {
             return Ok(true);
@@ -486,18 +645,92 @@ impl NetworkMetricsGenerator {
     fn seen_events(&self) -> CoreResult<MutexGuard<'_, BoundedEventFingerprints>> {
         self.seen_events.lock().map_err(module_error)
     }
+
+    fn flow_snapshots(
+        &self,
+    ) -> CoreResult<MutexGuard<'_, BTreeMap<ActiveConnectionKey, FlowSnapshotState>>> {
+        self.flow_snapshots.lock().map_err(module_error)
+    }
+
+    fn closed_connections(&self) -> CoreResult<MutexGuard<'_, ClosedConnectionCache>> {
+        self.closed_connections.lock().map_err(module_error)
+    }
 }
 
-fn flow_summaries_from_close(
+#[derive(Debug, Clone, Copy)]
+struct ConnectionFlowView<'a> {
+    source_signal_kind: &'static str,
+    process: &'a NetworkProcessIdentity,
+    protocol: NetworkProtocol,
+    address_family: NetworkAddressFamily,
+    local_address: &'a Option<String>,
+    local_port: Option<u16>,
+    remote_address: &'a str,
+    remote_port: u16,
+    container: &'a Option<e_navigator_signals::ContainerContext>,
+    kubernetes: &'a Option<e_navigator_signals::KubernetesContext>,
+}
+
+impl<'a> ConnectionFlowView<'a> {
+    fn from_close(event: &'a NetworkConnectionCloseEvent) -> Self {
+        Self {
+            source_signal_kind: "network_connection_close",
+            process: &event.process,
+            protocol: event.protocol,
+            address_family: event.address_family,
+            local_address: &event.local_address,
+            local_port: event.local_port,
+            remote_address: &event.remote_address,
+            remote_port: event.remote_port,
+            container: &event.container,
+            kubernetes: &event.kubernetes,
+        }
+    }
+
+    fn from_snapshot(event: &'a NetworkConnectionSnapshotEvent) -> Self {
+        Self {
+            source_signal_kind: "network_connection_snapshot",
+            process: &event.process,
+            protocol: event.protocol,
+            address_family: event.address_family,
+            local_address: &event.local_address,
+            local_port: event.local_port,
+            remote_address: &event.remote_address,
+            remote_port: event.remote_port,
+            container: &event.container,
+            kubernetes: &event.kubernetes,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FlowInterval {
+    bytes_sent: u64,
+    bytes_received: u64,
+    start_unix_nanos: u64,
+    end_unix_nanos: u64,
+    emit_unchanged: bool,
+}
+
+fn counter_delta(current: u64, previous: u64) -> u64 {
+    current.checked_sub(previous).unwrap_or(current)
+}
+
+fn same_connection_lifecycle(left: Option<u64>, right: Option<u64>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left == right,
+        _ => true,
+    }
+}
+
+fn flow_summaries(
     signal: &SignalEnvelope,
-    event: &NetworkConnectionCloseEvent,
+    event: ConnectionFlowView<'_>,
+    interval: FlowInterval,
 ) -> Vec<SignalEnvelope> {
-    let Some(kubernetes) = event.kubernetes.as_ref() else {
+    let Some(kubernetes) = event.kubernetes else {
         return Vec::new();
     };
-    let first_seen_unix_nanos = event
-        .opened_at_unix_nanos
-        .unwrap_or(event.closed_at_unix_nanos);
     let local_endpoint = || NetworkFlowEndpoint {
         address: event.local_address.clone(),
         port: event.local_port,
@@ -505,10 +738,10 @@ fn flow_summaries_from_close(
         owner_name: None,
         owner_type: None,
         container: event.container.clone(),
-        kubernetes: event.kubernetes.clone(),
+        kubernetes: Some(kubernetes.clone()),
     };
     let remote_endpoint = || NetworkFlowEndpoint {
-        address: Some(event.remote_address.clone()),
+        address: Some(event.remote_address.to_string()),
         port: Some(event.remote_port),
         namespace: None,
         owner_name: None,
@@ -528,40 +761,38 @@ fn flow_summaries_from_close(
                 bytes,
                 packets: None,
                 direction,
-                first_seen_unix_nanos,
-                last_seen_unix_nanos: event.closed_at_unix_nanos,
+                first_seen_unix_nanos: interval.start_unix_nanos,
+                last_seen_unix_nanos: interval.end_unix_nanos,
             },
         )
     };
 
     let mut summaries = Vec::with_capacity(2);
-    if let Some(bytes) = event.bytes_sent.filter(|bytes| *bytes > 0) {
+    if interval.bytes_sent > 0 || interval.emit_unchanged {
         summaries.push(summary(
             local_endpoint(),
             remote_endpoint(),
-            bytes,
+            interval.bytes_sent,
             NetworkFlowDirection::Egress,
         ));
     }
-    if let Some(bytes) = event.bytes_received.filter(|bytes| *bytes > 0) {
+    if interval.bytes_received > 0 || interval.emit_unchanged {
         summaries.push(summary(
             remote_endpoint(),
             local_endpoint(),
-            bytes,
+            interval.bytes_received,
             NetworkFlowDirection::Ingress,
         ));
     }
     summaries
 }
 
-fn flow_warning_from_close(
+fn flow_warning(
     signal: &SignalEnvelope,
-    event: &NetworkConnectionCloseEvent,
+    event: ConnectionFlowView<'_>,
+    interval: FlowInterval,
 ) -> Option<SignalEnvelope> {
-    let bytes = event
-        .bytes_sent
-        .unwrap_or(0)
-        .saturating_add(event.bytes_received.unwrap_or(0));
+    let bytes = interval.bytes_sent.saturating_add(interval.bytes_received);
     if bytes == 0 || (event.container.is_some() && event.kubernetes.is_some()) {
         return None;
     }
@@ -572,12 +803,12 @@ fn flow_warning_from_close(
         NetworkFlowWarning {
             warning_type: "missing_attribution".to_string(),
             message: "byte-counted network flow has incomplete source container or Kubernetes attribution".to_string(),
-            timestamp_unix_nanos: event.closed_at_unix_nanos,
-            source_signal_kind: "network_connection_close".to_string(),
+            timestamp_unix_nanos: interval.end_unix_nanos,
+            source_signal_kind: event.source_signal_kind.to_string(),
             source_module: signal.source.clone(),
             protocol: event.protocol,
             address_family: event.address_family,
-            remote_address: event.remote_address.clone(),
+            remote_address: event.remote_address.to_string(),
             remote_port: event.remote_port,
             process: event.process.clone(),
             container: event.container.clone(),
@@ -647,7 +878,7 @@ impl CounterKey {
         }
     }
 
-    fn flow_bytes(event: &NetworkConnectionCloseEvent) -> Self {
+    fn flow_bytes(event: ConnectionFlowView<'_>) -> Self {
         CounterKey {
             metric_name: "network.flow.bytes",
             workload: event.kubernetes.as_ref().map(workload_key),
@@ -774,7 +1005,7 @@ impl CounterTemplate {
         }
     }
 
-    fn flow_bytes(event: &NetworkConnectionCloseEvent) -> Self {
+    fn flow_bytes(event: ConnectionFlowView<'_>) -> Self {
         Self {
             metric_name: "network.flow.bytes",
             unit: "By",
@@ -964,11 +1195,84 @@ impl ActiveConnectionKey {
             remote_port: event.remote_port,
         })
     }
+
+    fn from_snapshot(event: &NetworkConnectionSnapshotEvent) -> Option<Self> {
+        Some(Self {
+            pid: event.process.pid,
+            fd: event.fd?,
+            remote_address: event.remote_address.clone(),
+            remote_port: event.remote_port,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
 struct ActiveConnectionState {
     gauge_key: ActiveGaugeKey,
+}
+
+#[derive(Debug, Clone)]
+struct FlowSnapshotState {
+    opened_at_unix_nanos: Option<u64>,
+    observed_at_unix_nanos: u64,
+    bytes_sent: u64,
+    bytes_received: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ClosedConnectionState {
+    opened_at_unix_nanos: Option<u64>,
+    closed_at_unix_nanos: u64,
+}
+
+#[derive(Debug, Default)]
+struct ClosedConnectionCache {
+    entries: BTreeMap<ActiveConnectionKey, ClosedConnectionState>,
+    recency: BTreeSet<ClosedConnectionRecency>,
+}
+
+impl ClosedConnectionCache {
+    fn insert(
+        &mut self,
+        key: ActiveConnectionKey,
+        state: ClosedConnectionState,
+        max_entries: usize,
+    ) {
+        if let Some(previous) = self.entries.remove(&key) {
+            self.recency.remove(&ClosedConnectionRecency {
+                closed_at_unix_nanos: previous.closed_at_unix_nanos,
+                key: key.clone(),
+            });
+        }
+        self.recency.insert(ClosedConnectionRecency {
+            closed_at_unix_nanos: state.closed_at_unix_nanos,
+            key: key.clone(),
+        });
+        self.entries.insert(key, state);
+
+        while self.entries.len() > max_entries {
+            let Some(oldest) = self.recency.pop_first() else {
+                break;
+            };
+            self.entries.remove(&oldest.key);
+        }
+    }
+
+    fn remove(&mut self, key: &ActiveConnectionKey) {
+        let Some(state) = self.entries.remove(key) else {
+            return;
+        };
+        self.recency.remove(&ClosedConnectionRecency {
+            closed_at_unix_nanos: state.closed_at_unix_nanos,
+            key: key.clone(),
+        });
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ClosedConnectionRecency {
+    closed_at_unix_nanos: u64,
+    key: ActiveConnectionKey,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -1110,6 +1414,20 @@ impl EventFingerprint {
                 timestamp: event.closed_at_unix_nanos,
                 errno: None,
             }),
+            SignalPayload::NetworkConnectionSnapshot(event) => Some(Self {
+                kind: "snapshot",
+                pid: event.process.pid,
+                fd: event.fd,
+                protocol: event.protocol,
+                address_family: event.address_family,
+                local_address: event.local_address.clone(),
+                local_port: event.local_port,
+                remote_address: event.remote_address.clone(),
+                remote_port: event.remote_port,
+                opened_at: event.opened_at_unix_nanos,
+                timestamp: event.observed_at_unix_nanos,
+                errno: None,
+            }),
             SignalPayload::NetworkConnectionFailure(event) => Some(Self {
                 kind: "failure",
                 pid: event.process.pid,
@@ -1194,6 +1512,7 @@ struct NetworkSuppressionCounts {
     durations: u64,
     active_connections: u64,
     active_gauges: u64,
+    flow_snapshots: u64,
 }
 
 #[cfg(test)]
@@ -1201,9 +1520,9 @@ mod tests {
     use e_navigator_core::Generator;
     use e_navigator_signals::{
         ContainerContext, KubernetesContext, NetworkAddressFamily, NetworkConnectionCloseEvent,
-        NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkCounterMetric,
-        NetworkDurationMetric, NetworkGaugeMetric, NetworkProcessIdentity, NetworkProtocol,
-        SignalEnvelope, SignalPayload,
+        NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkConnectionSnapshotEvent,
+        NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric, NetworkProcessIdentity,
+        NetworkProtocol, SignalEnvelope, SignalPayload,
     };
     use std::{cell::Cell, collections::BTreeMap};
     use tokio::sync::mpsc;
@@ -1435,6 +1754,46 @@ mod tests {
         assert_eq!(ingress.destination.port, Some(43512));
         assert_eq!(ingress.destination.container, Some(container_context()));
         assert_eq!(ingress.destination.kubernetes, Some(kubernetes_context()));
+    }
+
+    #[tokio::test]
+    async fn active_snapshots_emit_interval_deltas_and_close_emits_only_the_remainder() {
+        let generator = NetworkMetricsGenerator::default();
+
+        let first = observe(
+            &generator,
+            &network_snapshot_signal("10.0.0.20", 5432, 100, 400, Some(7), 100, 200),
+        )
+        .await;
+        let second = observe(
+            &generator,
+            &network_snapshot_signal("10.0.0.20", 5432, 100, 700, Some(7), 160, 260),
+        )
+        .await;
+        let closed = observe(
+            &generator,
+            &network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 200, 300),
+        )
+        .await;
+        let stale = observe(
+            &generator,
+            &network_snapshot_signal("10.0.0.20", 5432, 100, 800, Some(7), 180, 280),
+        )
+        .await;
+
+        assert_flow_bytes(&first, NetworkFlowDirection::Egress, 100, 100, 400);
+        assert_flow_bytes(&first, NetworkFlowDirection::Ingress, 200, 100, 400);
+        assert_flow_bytes(&second, NetworkFlowDirection::Egress, 60, 400, 700);
+        assert_flow_bytes(&second, NetworkFlowDirection::Ingress, 60, 400, 700);
+        assert_flow_bytes(&closed, NetworkFlowDirection::Egress, 40, 700, 900);
+        assert_flow_bytes(&closed, NetworkFlowDirection::Ingress, 40, 700, 900);
+        assert!(network_flow_summaries(&stale).is_empty());
+
+        assert_eq!(
+            counter_metric(&closed, "network.flow.bytes").value,
+            500,
+            "the cumulative metric must count each interval exactly once"
+        );
     }
 
     #[tokio::test]
@@ -1721,6 +2080,45 @@ mod tests {
         assert!(seen.insert_if_new(first, 1));
     }
 
+    #[test]
+    fn closed_connection_cache_evicts_by_close_time_and_replaces_recency() {
+        let mut cache = ClosedConnectionCache::default();
+        let older = ActiveConnectionKey {
+            pid: 42,
+            fd: 7,
+            remote_address: "z.example".to_string(),
+            remote_port: 443,
+        };
+        let newer = ActiveConnectionKey {
+            pid: 42,
+            fd: 8,
+            remote_address: "a.example".to_string(),
+            remote_port: 443,
+        };
+        let state = |closed_at_unix_nanos| ClosedConnectionState {
+            opened_at_unix_nanos: Some(1),
+            closed_at_unix_nanos,
+        };
+
+        cache.insert(older.clone(), state(100), 1);
+        cache.insert(newer.clone(), state(200), 1);
+
+        assert!(!cache.entries.contains_key(&older));
+        assert!(cache.entries.contains_key(&newer));
+        assert_eq!(cache.recency.len(), 1);
+
+        cache.insert(newer.clone(), state(300), 1);
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(cache.recency.len(), 1);
+        assert_eq!(
+            cache
+                .entries
+                .get(&newer)
+                .map(|entry| entry.closed_at_unix_nanos),
+            Some(300)
+        );
+    }
+
     #[tokio::test]
     async fn suppresses_duplicate_identical_observations() {
         let generator = NetworkMetricsGenerator::default();
@@ -1928,6 +2326,22 @@ mod tests {
             .expect("network flow warning exists")
     }
 
+    fn assert_flow_bytes(
+        outputs: &[SignalEnvelope],
+        direction: NetworkFlowDirection,
+        bytes: u64,
+        first_seen_unix_nanos: u64,
+        last_seen_unix_nanos: u64,
+    ) {
+        let flow = network_flow_summaries(outputs)
+            .into_iter()
+            .find(|flow| flow.direction == direction)
+            .expect("directional flow summary exists");
+        assert_eq!(flow.bytes, bytes);
+        assert_eq!(flow.first_seen_unix_nanos, first_seen_unix_nanos);
+        assert_eq!(flow.last_seen_unix_nanos, last_seen_unix_nanos);
+    }
+
     fn event_fingerprint(remote_address: &str, timestamp: u64) -> EventFingerprint {
         EventFingerprint {
             kind: "open",
@@ -2026,6 +2440,37 @@ mod tests {
                 duration_nanos: Some(closed_at.saturating_sub(opened_at)),
                 bytes_sent: Some(bytes_sent),
                 bytes_received: Some(bytes_received),
+                container: Some(container_context()),
+                kubernetes: Some(kubernetes_context()),
+            },
+        )
+    }
+
+    fn network_snapshot_signal(
+        remote_address: &str,
+        remote_port: u16,
+        opened_at: u64,
+        observed_at: u64,
+        fd: Option<i32>,
+        bytes_sent: u64,
+        bytes_received: u64,
+    ) -> SignalEnvelope {
+        SignalEnvelope::network_connection_snapshot(
+            "source.test",
+            Some("node-a".to_string()),
+            NetworkConnectionSnapshotEvent {
+                process: network_process(),
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                local_address: Some("10.0.0.5".to_string()),
+                local_port: Some(43512),
+                remote_address: remote_address.to_string(),
+                remote_port,
+                fd,
+                opened_at_unix_nanos: Some(opened_at),
+                observed_at_unix_nanos: observed_at,
+                bytes_sent,
+                bytes_received,
                 container: Some(container_context()),
                 kubernetes: Some(kubernetes_context()),
             },

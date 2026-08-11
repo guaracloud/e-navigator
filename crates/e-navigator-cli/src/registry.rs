@@ -21,6 +21,7 @@ use e_navigator_sources_ebpf_aya::{
     AyaProtocolSource, AyaTlsSource,
 };
 use e_navigator_sources_host::{HostResourceConfig, HostResourceSource};
+use std::time::Duration;
 
 pub(crate) fn build_registry(
     config: &RuntimeConfig,
@@ -57,7 +58,10 @@ pub(crate) fn build_registry(
     {
         registry = registry.with_source(Box::new(
             AyaNetworkSource::new(host.clone(), config.attribution.procfs_root.clone())
-                .with_ebpf_config(config.ebpf.clone()),
+                .with_ebpf_config(config.ebpf.clone())
+                .with_active_flow_snapshot_interval_millis(
+                    config.network_metrics.active_flow_snapshot_interval_millis,
+                ),
         ));
     }
 
@@ -164,9 +168,12 @@ pub(crate) fn build_registry(
     }
 
     if config.module_enabled("generator.peer_flow_metrics") {
-        registry = registry.with_generator(Box::new(PeerFlowMetricsGenerator::with_limit(
-            config.network_metrics.max_metric_keys,
-        )));
+        registry = registry.with_generator(Box::new(
+            PeerFlowMetricsGenerator::with_limit_and_idle_timeout(
+                config.network_metrics.max_metric_keys,
+                Duration::from_millis(config.network_metrics.peer_series_idle_timeout_millis),
+            ),
+        ));
     }
 
     if config.module_enabled("generator.resource_metrics") {

@@ -37,13 +37,23 @@ reverse the endpoints and are `ingress`. A series is emitted only when both
 endpoints have a namespace, stable owner name, and owner type. Missing or
 ambiguous attribution remains absent rather than being guessed.
 
-The generator retains at most `network_metrics.max_metric_keys` exact series.
-Further observations aggregate into the fixed `__other__` identity by protocol,
-address family, and direction, preserving byte totals. The compiled protocol,
-address-family, and direction enums bound this overflow set independently of
-workload cardinality (eight series in the current TCP/UDP, IPv4/IPv6, and
-ingress/egress model). Pod names, IP addresses, ports, container ids, and labels
-never enter the metric identity.
+The network source periodically reads cumulative counters from its bounded
+`ACTIVE_CONNECTIONS` map. `generator.network_metrics` turns each observation
+into a delta since the preceding snapshot, emits a zero-delta heartbeat for an
+unchanged active direction, and subtracts the last snapshot from final close
+totals. Polling never resets or deletes kernel counters, and delayed snapshots
+observed before a processed close are suppressed.
+
+The peer generator retains at most `network_metrics.max_metric_keys` exact
+series. An ordered idle index reclaims exact series whose last observation is
+older than `network_metrics.peer_series_idle_timeout_millis` before admitting a
+new identity. A zero-delta heartbeat refreshes an existing identity but cannot
+create a new one. Further observations aggregate into the fixed `__other__`
+identity by protocol, address family, and direction, preserving byte totals.
+The compiled protocol, address-family, and direction enums bound this overflow
+set independently of workload cardinality (eight series in the current TCP/UDP,
+IPv4/IPv6, and ingress/egress model). Pod names, IP addresses, ports, container
+ids, and labels never enter the metric identity.
 
 ### W3C context propagation
 
@@ -96,6 +106,9 @@ downstream calls. Async task/thread hops are not claimed.
 
 - Peer metrics are available through native JSON, Prometheus, and OTLP metric
   contracts without changing the existing `network.flow.bytes` series.
+  Long-lived active connections refresh both flow contracts at the configured
+  interval, while idle reclamation prevents deployment churn from permanently
+  consuming the exact-series budget.
 - Passive HTTP capture remains unchanged when propagation is disabled.
 - This closes multi-service traces only for the qualified plaintext,
   synchronous HTTP/1 subset. HTTPS, HTTP/2/gRPC, HTTP/3/QUIC, segmented writes,

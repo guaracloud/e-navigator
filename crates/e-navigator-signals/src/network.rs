@@ -44,6 +44,27 @@ pub struct NetworkConnectionCloseEvent {
     pub kubernetes: Option<KubernetesContext>,
 }
 
+/// Cumulative application-byte counters observed for a connection that is
+/// still active. Consumers derive interval deltas by connection identity; a
+/// later close event carries the final cumulative totals.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkConnectionSnapshotEvent {
+    pub process: NetworkProcessIdentity,
+    pub protocol: NetworkProtocol,
+    pub address_family: NetworkAddressFamily,
+    pub local_address: Option<String>,
+    pub local_port: Option<u16>,
+    pub remote_address: String,
+    pub remote_port: u16,
+    pub fd: Option<i32>,
+    pub opened_at_unix_nanos: Option<u64>,
+    pub observed_at_unix_nanos: u64,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub container: Option<ContainerContext>,
+    pub kubernetes: Option<KubernetesContext>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkConnectionFailureEvent {
     pub process: NetworkProcessIdentity,
@@ -287,6 +308,16 @@ pub(crate) fn sanitize_network_connection_open_event(event: &mut NetworkConnecti
 }
 
 pub(crate) fn sanitize_network_connection_close_event(event: &mut NetworkConnectionCloseEvent) {
+    sanitize_network_process_identity(&mut event.process);
+    sanitize_optional_network_signal_string(&mut event.local_address);
+    sanitize_network_signal_string(&mut event.remote_address);
+    sanitize_optional_container_context(&mut event.container);
+    sanitize_optional_kubernetes_context(&mut event.kubernetes);
+}
+
+pub(crate) fn sanitize_network_connection_snapshot_event(
+    event: &mut NetworkConnectionSnapshotEvent,
+) {
     sanitize_network_process_identity(&mut event.process);
     sanitize_optional_network_signal_string(&mut event.local_address);
     sanitize_network_signal_string(&mut event.remote_address);

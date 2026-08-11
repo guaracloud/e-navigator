@@ -41,6 +41,7 @@ fn golden_signal_families_round_trip_without_schema_drift() {
             "network_connection_close".to_string(),
             "network_connection_failure".to_string(),
             "network_connection_open".to_string(),
+            "network_connection_snapshot".to_string(),
             "network_counter_metric".to_string(),
             "network_duration_metric".to_string(),
             "network_flow_summary".to_string(),

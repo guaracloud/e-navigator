@@ -4,6 +4,7 @@ use e_navigator_signals::{
     MetricAggregationWindow, NetworkAddressFamily, NetworkFlowDirection, NetworkFlowEndpoint,
     NetworkFlowSummaryEvent, NetworkProtocol, SignalEnvelope, SignalPayload,
 };
+use std::time::Duration;
 
 #[test]
 fn enriched_flow_emits_bounded_peer_byte_metric() {
@@ -219,6 +220,115 @@ fn cardinality_overflow_preserves_bytes_in_a_bounded_fallback_series() {
     assert_eq!(metric.destination.owner_type, "__other__");
     assert_eq!(metric.window.start_unix_nanos, 300);
     assert_eq!(metric.window.end_unix_nanos, 600);
+}
+
+#[test]
+fn idle_exact_series_are_reclaimed_for_new_peer_identities() {
+    let generator =
+        PeerFlowMetricsGenerator::with_limit_and_idle_timeout(1, Duration::from_nanos(100));
+    let exact = peer_flow_signal(
+        "shop",
+        "shop/checkout",
+        "payments",
+        "payments/api",
+        512,
+        100,
+        200,
+    );
+    let before_expiry = peer_flow_signal(
+        "shop",
+        "shop/catalog",
+        "payments",
+        "payments/api",
+        32,
+        250,
+        250,
+    );
+    let after_expiry = peer_flow_signal(
+        "shop",
+        "shop/catalog",
+        "payments",
+        "payments/api",
+        64,
+        301,
+        301,
+    );
+
+    generator
+        .observe_immediate(&exact)
+        .expect("peer-flow generator is synchronous")
+        .expect("exact peer-flow generation succeeds");
+    let overflow = generator
+        .observe_immediate(&before_expiry)
+        .expect("peer-flow generator is synchronous")
+        .expect("pre-expiry generation succeeds");
+    let reclaimed = generator
+        .observe_immediate(&after_expiry)
+        .expect("peer-flow generator is synchronous")
+        .expect("post-expiry generation succeeds");
+
+    let overflow = peer_metric(&overflow).expect("overflow metric exists before expiry");
+    assert!(overflow.overflow);
+    assert_eq!(overflow.value, 32);
+    let reclaimed = peer_metric(&reclaimed).expect("reclaimed exact metric exists");
+    assert!(!reclaimed.overflow);
+    assert_eq!(reclaimed.value, 64);
+    assert_eq!(reclaimed.source.owner_name, "shop/catalog");
+    assert_eq!(reclaimed.window.start_unix_nanos, 301);
+}
+
+#[test]
+fn zero_byte_active_flow_heartbeat_refreshes_an_existing_exact_series() {
+    let generator =
+        PeerFlowMetricsGenerator::with_limit_and_idle_timeout(1, Duration::from_nanos(100));
+    let exact = peer_flow_signal(
+        "shop",
+        "shop/checkout",
+        "payments",
+        "payments/api",
+        512,
+        100,
+        200,
+    );
+    let heartbeat = peer_flow_signal(
+        "shop",
+        "shop/checkout",
+        "payments",
+        "payments/api",
+        0,
+        250,
+        250,
+    );
+    let contender = peer_flow_signal(
+        "shop",
+        "shop/catalog",
+        "payments",
+        "payments/api",
+        64,
+        320,
+        320,
+    );
+
+    generator
+        .observe_immediate(&exact)
+        .expect("peer-flow generator is synchronous")
+        .expect("exact peer-flow generation succeeds");
+    let heartbeat_output = generator
+        .observe_immediate(&heartbeat)
+        .expect("peer-flow generator is synchronous")
+        .expect("heartbeat generation succeeds");
+    let contender_output = generator
+        .observe_immediate(&contender)
+        .expect("peer-flow generator is synchronous")
+        .expect("contender generation succeeds");
+
+    let heartbeat_metric = peer_metric(&heartbeat_output).expect("heartbeat metric exists");
+    assert_eq!(heartbeat_metric.value, 512);
+    assert_eq!(heartbeat_metric.window.end_unix_nanos, 250);
+    assert!(!heartbeat_metric.overflow);
+    let contender_metric = peer_metric(&contender_output).expect("contender metric exists");
+    assert!(contender_metric.overflow);
+    assert_eq!(contender_metric.value, 64);
 }
 
 #[test]

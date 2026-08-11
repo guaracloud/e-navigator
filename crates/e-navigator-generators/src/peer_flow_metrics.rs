@@ -5,12 +5,14 @@ use e_navigator_signals::{
     NetworkPeerFlowMetric, NetworkPeerIdentity, SignalEnvelope, SignalPayload,
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Mutex, MutexGuard},
+    time::Duration,
 };
 use tokio::sync::mpsc;
 
 const DEFAULT_MAX_PEER_FLOW_KEYS: usize = 4096;
+const DEFAULT_PEER_FLOW_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 /// Aggregates already-enriched L4 flow summaries into bounded workload-pair
 /// counters. The interface deliberately accepts only the native flow signal;
@@ -18,7 +20,8 @@ const DEFAULT_MAX_PEER_FLOW_KEYS: usize = 4096;
 #[derive(Debug)]
 pub struct PeerFlowMetricsGenerator {
     max_keys: usize,
-    counters: Mutex<BTreeMap<PeerFlowKey, PeerFlowState>>,
+    idle_timeout_nanos: u64,
+    exact_series: Mutex<PeerFlowStore>,
     overflow_counters: Mutex<BTreeMap<OverflowKey, PeerFlowState>>,
 }
 
@@ -30,9 +33,16 @@ impl Default for PeerFlowMetricsGenerator {
 
 impl PeerFlowMetricsGenerator {
     pub fn with_limit(max_keys: usize) -> Self {
+        Self::with_limit_and_idle_timeout(max_keys, DEFAULT_PEER_FLOW_IDLE_TIMEOUT)
+    }
+
+    pub fn with_limit_and_idle_timeout(max_keys: usize, idle_timeout: Duration) -> Self {
         Self {
             max_keys: max_keys.max(1),
-            counters: Mutex::new(BTreeMap::new()),
+            idle_timeout_nanos: u64::try_from(idle_timeout.as_nanos())
+                .unwrap_or(u64::MAX)
+                .max(1),
+            exact_series: Mutex::new(PeerFlowStore::default()),
             overflow_counters: Mutex::new(BTreeMap::new()),
         }
     }
@@ -45,14 +55,29 @@ impl PeerFlowMetricsGenerator {
             return Ok(Vec::new());
         };
 
-        let mut counters = self.counters()?;
-        if let Some(state) = counters.get_mut(&key) {
+        let mut series = self.exact_series()?;
+        series.reclaim_expired(flow.last_seen_unix_nanos, self.idle_timeout_nanos);
+        if let Some(mut state) = series.counters.remove(&key) {
+            series.expirations.remove(&PeerFlowExpiry {
+                last_observed_unix_nanos: state.window.end_unix_nanos,
+                key: key.clone(),
+            });
             state.observe(flow);
-            return Ok(vec![state.to_signal()]);
+            let output = state.to_signal();
+            series.expirations.insert(PeerFlowExpiry {
+                last_observed_unix_nanos: state.window.end_unix_nanos,
+                key: key.clone(),
+            });
+            series.counters.insert(key, state);
+            return Ok(vec![output]);
         }
 
-        if counters.len() >= self.max_keys {
-            drop(counters);
+        if flow.bytes == 0 {
+            return Ok(Vec::new());
+        }
+
+        if series.counters.len() >= self.max_keys {
+            drop(series);
             return self.observe_overflow(flow);
         }
 
@@ -66,15 +91,21 @@ impl PeerFlowMetricsGenerator {
             overflow: false,
         };
         let output = state.to_signal();
-        counters.insert(key, state);
+        series.expirations.insert(PeerFlowExpiry {
+            last_observed_unix_nanos: flow.last_seen_unix_nanos,
+            key: key.clone(),
+        });
+        series.counters.insert(key, state);
         Ok(vec![output])
     }
 
-    fn counters(&self) -> CoreResult<MutexGuard<'_, BTreeMap<PeerFlowKey, PeerFlowState>>> {
-        self.counters.lock().map_err(|err| CoreError::ModuleFailed {
-            module: "generator.peer_flow_metrics".to_string(),
-            message: err.to_string(),
-        })
+    fn exact_series(&self) -> CoreResult<MutexGuard<'_, PeerFlowStore>> {
+        self.exact_series
+            .lock()
+            .map_err(|err| CoreError::ModuleFailed {
+                module: "generator.peer_flow_metrics".to_string(),
+                message: err.to_string(),
+            })
     }
 
     fn overflow_counters(
@@ -173,9 +204,6 @@ struct OverflowKey {
 
 impl PeerFlowKey {
     fn from_flow(flow: &NetworkFlowSummaryEvent, host: Option<String>) -> Option<Self> {
-        if flow.bytes == 0 {
-            return None;
-        }
         Some(Self {
             host,
             protocol: flow.protocol,
@@ -185,6 +213,42 @@ impl PeerFlowKey {
             destination: peer_identity(&flow.destination)?,
         })
     }
+}
+
+#[derive(Debug, Default)]
+struct PeerFlowStore {
+    counters: BTreeMap<PeerFlowKey, PeerFlowState>,
+    expirations: BTreeSet<PeerFlowExpiry>,
+}
+
+impl PeerFlowStore {
+    fn reclaim_expired(&mut self, observed_unix_nanos: u64, idle_timeout_nanos: u64) {
+        loop {
+            let Some(expiry) = self.expirations.first().cloned() else {
+                return;
+            };
+            if observed_unix_nanos.saturating_sub(expiry.last_observed_unix_nanos)
+                < idle_timeout_nanos
+            {
+                return;
+            }
+
+            self.expirations.remove(&expiry);
+            if self
+                .counters
+                .get(&expiry.key)
+                .is_some_and(|state| state.window.end_unix_nanos == expiry.last_observed_unix_nanos)
+            {
+                self.counters.remove(&expiry.key);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PeerFlowExpiry {
+    last_observed_unix_nanos: u64,
+    key: PeerFlowKey,
 }
 
 fn peer_identity(endpoint: &NetworkFlowEndpoint) -> Option<NetworkPeerIdentity> {

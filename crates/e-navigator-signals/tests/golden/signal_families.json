@@ -71,6 +71,28 @@
   },
   {
     "schema_version": 1,
+    "kind": "network_connection_snapshot",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "process": {"pid": 42, "ppid": 1, "uid": 1000, "command": "checkout", "executable": "/app/checkout", "cgroup_id": null},
+      "protocol": "tcp",
+      "address_family": "ipv4",
+      "local_address": "10.0.0.5",
+      "local_port": 41000,
+      "remote_address": "203.0.113.10",
+      "remote_port": 443,
+      "fd": 9,
+      "opened_at_unix_nanos": 1000,
+      "observed_at_unix_nanos": 1100,
+      "bytes_sent": 512,
+      "bytes_received": 1024,
+      "container": null,
+      "kubernetes": null
+    }
+  },
+  {
+    "schema_version": 1,
     "kind": "network_connection_close",
     "source": "golden",
     "host": "node-a",

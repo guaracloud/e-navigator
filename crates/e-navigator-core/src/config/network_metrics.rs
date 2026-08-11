@@ -66,6 +66,10 @@ pub struct NetworkMetricsConfig {
     pub max_metric_keys: usize,
     #[serde(default = "default_network_metrics_max_active_connections")]
     pub max_active_connections: usize,
+    #[serde(default = "default_active_flow_snapshot_interval_millis")]
+    pub active_flow_snapshot_interval_millis: u64,
+    #[serde(default = "default_peer_series_idle_timeout_millis")]
+    pub peer_series_idle_timeout_millis: u64,
 }
 
 impl Default for NetworkMetricsConfig {
@@ -73,6 +77,8 @@ impl Default for NetworkMetricsConfig {
         Self {
             max_metric_keys: default_network_metrics_max_metric_keys(),
             max_active_connections: default_network_metrics_max_active_connections(),
+            active_flow_snapshot_interval_millis: default_active_flow_snapshot_interval_millis(),
+            peer_series_idle_timeout_millis: default_peer_series_idle_timeout_millis(),
         }
     }
 }
@@ -80,6 +86,8 @@ impl Default for NetworkMetricsConfig {
 impl NetworkMetricsConfig {
     pub const MAX_METRIC_KEYS_LIMIT: usize = 262_144;
     pub const MAX_ACTIVE_CONNECTIONS_LIMIT: usize = 1_048_576;
+    pub const MAX_ACTIVE_FLOW_SNAPSHOT_INTERVAL_MILLIS: u64 = 5 * 60 * 1_000;
+    pub const MAX_PEER_SERIES_IDLE_TIMEOUT_MILLIS: u64 = 24 * 60 * 60 * 1_000;
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
         if self.max_metric_keys == 0 {
@@ -114,6 +122,40 @@ impl NetworkMetricsConfig {
             ));
         }
 
+        if self.active_flow_snapshot_interval_millis == 0 {
+            return Err(ConfigError::invalid_value(
+                "network_metrics.active_flow_snapshot_interval_millis",
+                "network_metrics.active_flow_snapshot_interval_millis must be greater than zero",
+            ));
+        }
+        if self.active_flow_snapshot_interval_millis
+            > Self::MAX_ACTIVE_FLOW_SNAPSHOT_INTERVAL_MILLIS
+        {
+            return Err(ConfigError::invalid_value(
+                "network_metrics.active_flow_snapshot_interval_millis",
+                format!(
+                    "network_metrics.active_flow_snapshot_interval_millis must be less than or equal to {}",
+                    Self::MAX_ACTIVE_FLOW_SNAPSHOT_INTERVAL_MILLIS
+                ),
+            ));
+        }
+
+        if self.peer_series_idle_timeout_millis < self.active_flow_snapshot_interval_millis {
+            return Err(ConfigError::invalid_value(
+                "network_metrics.peer_series_idle_timeout_millis",
+                "network_metrics.peer_series_idle_timeout_millis must be greater than or equal to network_metrics.active_flow_snapshot_interval_millis",
+            ));
+        }
+        if self.peer_series_idle_timeout_millis > Self::MAX_PEER_SERIES_IDLE_TIMEOUT_MILLIS {
+            return Err(ConfigError::invalid_value(
+                "network_metrics.peer_series_idle_timeout_millis",
+                format!(
+                    "network_metrics.peer_series_idle_timeout_millis must be less than or equal to {}",
+                    Self::MAX_PEER_SERIES_IDLE_TIMEOUT_MILLIS
+                ),
+            ));
+        }
+
         Ok(())
     }
 }
@@ -124,4 +166,12 @@ fn default_network_metrics_max_metric_keys() -> usize {
 
 fn default_network_metrics_max_active_connections() -> usize {
     8192
+}
+
+const fn default_active_flow_snapshot_interval_millis() -> u64 {
+    3_000
+}
+
+const fn default_peer_series_idle_timeout_millis() -> u64 {
+    15 * 60 * 1_000
 }

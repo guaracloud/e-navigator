@@ -38,6 +38,14 @@ fn default_config_is_valid_and_preserves_expected_modules() {
     assert!(config.validate().is_ok());
     assert!(config.queue_capacity > 0);
     assert_eq!(
+        config.network_metrics.active_flow_snapshot_interval_millis,
+        3_000
+    );
+    assert_eq!(
+        config.network_metrics.peer_series_idle_timeout_millis,
+        15 * 60 * 1_000
+    );
+    assert_eq!(
         config.modules,
         vec![
             ModuleConfig::enabled("source.aya_exec"),
@@ -2062,6 +2070,7 @@ fn network_metrics_limits_are_validated() {
             network_metrics: NetworkMetricsConfig {
                 max_metric_keys: 0,
                 max_active_connections: 128,
+                ..NetworkMetricsConfig::default()
             },
             ..RuntimeConfig::default()
         },
@@ -2073,6 +2082,7 @@ fn network_metrics_limits_are_validated() {
             network_metrics: NetworkMetricsConfig {
                 max_metric_keys: NetworkMetricsConfig::MAX_METRIC_KEYS_LIMIT + 1,
                 max_active_connections: 128,
+                ..NetworkMetricsConfig::default()
             },
             ..RuntimeConfig::default()
         },
@@ -2087,6 +2097,7 @@ fn network_metrics_limits_are_validated() {
             network_metrics: NetworkMetricsConfig {
                 max_metric_keys: 128,
                 max_active_connections: 0,
+                ..NetworkMetricsConfig::default()
             },
             ..RuntimeConfig::default()
         },
@@ -2098,6 +2109,7 @@ fn network_metrics_limits_are_validated() {
             network_metrics: NetworkMetricsConfig {
                 max_metric_keys: 128,
                 max_active_connections: NetworkMetricsConfig::MAX_ACTIVE_CONNECTIONS_LIMIT + 1,
+                ..NetworkMetricsConfig::default()
             },
             ..RuntimeConfig::default()
         },
@@ -2105,6 +2117,29 @@ fn network_metrics_limits_are_validated() {
             "network_metrics.max_active_connections must be less than or equal to {}",
             NetworkMetricsConfig::MAX_ACTIVE_CONNECTIONS_LIMIT
         ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            network_metrics: NetworkMetricsConfig {
+                active_flow_snapshot_interval_millis: 0,
+                ..NetworkMetricsConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "network_metrics.active_flow_snapshot_interval_millis must be greater than zero",
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            network_metrics: NetworkMetricsConfig {
+                active_flow_snapshot_interval_millis: 5_000,
+                peer_series_idle_timeout_millis: 4_999,
+                ..NetworkMetricsConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "network_metrics.peer_series_idle_timeout_millis must be greater than or equal to network_metrics.active_flow_snapshot_interval_millis",
     );
 }
 

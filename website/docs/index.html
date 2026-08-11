@@ -259,7 +259,11 @@ cargo run --locked -p e-navigator-cli -- \
               path.
             </p>
             <p>
-              Peer-flow metrics are derived only after endpoint attribution.
+              Active TCP counters are snapshotted every three seconds by
+              default, converted into non-overlapping interval deltas, and
+              reconciled with final close totals. Peer-flow metrics are derived
+              only after endpoint attribution, and idle exact identities are
+              reclaimed before new identities overflow.
               Active W3C propagation is a separate, disabled-by-default
               plaintext HTTP/1 mutation boundary using cgroup SOCK_OPS and
               SK_MSG before TCP packetization; it is not a universal protocol
@@ -308,7 +312,10 @@ cargo run --locked -p e-navigator-cli -- \
             </p>
             <p>
               <code>generator.peer_flow_metrics</code> exports bounded
-              <code>network.peer.flow.bytes</code> series. The optional
+              <code>network.peer.flow.bytes</code> series. Configure active
+              polling and churn reclamation with
+              <code>active_flow_snapshot_interval_millis</code> and
+              <code>peer_series_idle_timeout_millis</code>. The optional
               <code>[http_source.context_propagation]</code> surface requires
               inbound capture, a cgroup v2 root, a bounded plaintext port
               allowlist, and target-kernel qualification; chart defaults keep
