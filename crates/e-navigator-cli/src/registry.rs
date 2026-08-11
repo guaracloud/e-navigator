@@ -81,6 +81,7 @@ pub(crate) fn build_registry(
             AyaHttpSource::new(
                 host.clone(),
                 config.attribution.procfs_root.clone(),
+                config.attribution.cgroup_root.clone(),
                 config.http_source.clone(),
             )
             .with_ebpf_config(config.ebpf.clone()),

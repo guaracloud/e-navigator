@@ -21,7 +21,7 @@ pub(crate) enum SourceMapProfile {
     CpuProfile,
 }
 
-const CAPACITY_MAPS: [&str; 22] = [
+const CAPACITY_MAPS: [&str; 26] = [
     "UNWIND_ROWS",
     "UNWIND_MODULES",
     "UNWIND_PROC_MAPPINGS",
@@ -35,6 +35,10 @@ const CAPACITY_MAPS: [&str; 22] = [
     "LISTENER_ENDPOINTS",
     "PENDING_ACCEPTS",
     "PENDING_HTTP_READS",
+    "PENDING_HTTP_PROPAGATIONS",
+    "HTTP_THREAD_TRACE_CONTEXTS",
+    "HTTP_PROPAGATION_SOCKETS",
+    "HTTP_PROPAGATION_CONTEXTS",
     "PENDING_PROTOCOL_READS",
     "PENDING_PROTOCOL_IOVEC_READS",
     "TLS_HANDLE_FDS",
@@ -134,6 +138,10 @@ fn retains_map(profile: SourceMapProfile, name: &str) -> bool {
                 | "LISTENER_ENDPOINTS"
                 | "PENDING_ACCEPTS"
                 | "PENDING_HTTP_READS"
+                | "PENDING_HTTP_PROPAGATIONS"
+                | "HTTP_THREAD_TRACE_CONTEXTS"
+                | "HTTP_PROPAGATION_SOCKETS"
+                | "HTTP_PROPAGATION_CONTEXTS"
         ),
         SourceMapProfile::Protocol => matches!(
             name,
@@ -211,6 +219,14 @@ mod tests {
     fn http_keeps_connection_and_inbound_request_state() {
         assert!(retains_map(SourceMapProfile::Http, "ACTIVE_CONNECTIONS"));
         assert!(retains_map(SourceMapProfile::Http, "PENDING_HTTP_READS"));
+        assert!(retains_map(
+            SourceMapProfile::Http,
+            "HTTP_PROPAGATION_SOCKETS"
+        ));
+        assert!(retains_map(
+            SourceMapProfile::Http,
+            "HTTP_PROPAGATION_CONTEXTS"
+        ));
         assert!(!retains_map(
             SourceMapProfile::Http,
             "PENDING_PROTOCOL_READS"

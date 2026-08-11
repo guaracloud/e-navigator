@@ -25,6 +25,20 @@ pub(crate) const RAW_HTTP_AF_INET6: u32 = 10;
 pub(crate) const RAW_HTTP_ROLE_CLIENT: u32 = 0;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_HTTP_ROLE_SERVER: u32 = 1;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+const RAW_HTTP_PROPAGATION_GENERATED: u32 = 1;
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RawHttpPropagationContext {
+    pub state: u32,
+    pub trace_id: [u8; 16],
+    pub span_id: [u8; 8],
+    pub parent_span_id: [u8; 8],
+    pub trace_flags: u8,
+    pub reserved: [u8; 3],
+}
 #[cfg(any(target_os = "linux", test))]
 const MAX_HTTP_REASSEMBLY_STREAMS: usize = 4096;
 #[cfg(any(target_os = "linux", test))]
@@ -60,11 +74,57 @@ const HTTP_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_DIAGNOSTIC_COUNTERS_LEN] = [
     "server_write_suppressed",
     "non_http_connection_skip",
 ];
+#[cfg(any(target_os = "linux", test))]
+const HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN: usize = 10;
+#[cfg(any(target_os = "linux", test))]
+const HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN] = [
+    "socket_tracked",
+    "socket_track_failed",
+    "planned",
+    "injected",
+    "bypassed",
+    "context_pool_empty",
+    "pending_contended",
+    "push_failed",
+    "post_push_bounds_failed",
+    "thread_context_failed",
+];
+#[cfg(target_os = "linux")]
+const HTTP_CONTEXT_REFILL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
 
 #[cfg(any(target_os = "linux", test))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct HttpDiagnosticCounterSnapshot {
     counters: [u64; HTTP_DIAGNOSTIC_COUNTERS_LEN],
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct HttpPropagationDiagnosticSnapshot {
+    counters: [u64; HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN],
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl HttpPropagationDiagnosticSnapshot {
+    fn from_counters(counters: [u64; HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN]) -> Self {
+        Self { counters }
+    }
+
+    fn delta_since(&self, previous: &Self) -> Self {
+        let mut counters = [0_u64; HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN];
+        for (index, counter) in counters.iter_mut().enumerate() {
+            *counter = self.counters[index].saturating_sub(previous.counters[index]);
+        }
+        Self { counters }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.counters.iter().all(|counter| *counter == 0)
+    }
+
+    fn get(&self, index: usize) -> u64 {
+        self.counters[index]
+    }
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -125,6 +185,7 @@ pub(crate) struct RawHttpRequestEvent {
     pub request_len: u32,
     pub request_total_len: u32,
     pub request_iovec_lens: [u16; RAW_HTTP_MAX_IOVECS],
+    pub propagation: RawHttpPropagationContext,
     pub command: [u8; 16],
     pub request: [u8; RAW_HTTP_REQUEST_BYTES],
 }
@@ -662,6 +723,7 @@ fn raw_http_request_parts_to_signal_with_container(
         }
     })?;
     let trace_context = parsed.trace_context.as_ref();
+    let propagated = propagated_context(raw);
     let peer = peer_context(raw, &parsed.attributes);
     let process = NetworkProcessIdentity {
         pid: raw.pid,
@@ -685,13 +747,28 @@ fn raw_http_request_parts_to_signal_with_container(
             start_unix_nanos: observed_unix_nanos,
             end_unix_nanos: None,
             duration_nanos: None,
-            trace_id: trace_context.map(|context| context.trace_id.clone()),
-            span_id: trace_context.map(|context| context.span_id.clone()),
-            parent_span_id: None,
+            trace_id: propagated
+                .as_ref()
+                .map(|context| hex_identifier(&context.trace_id))
+                .or_else(|| trace_context.map(|context| context.trace_id.clone())),
+            span_id: propagated
+                .as_ref()
+                .map(|context| hex_identifier(&context.span_id))
+                .or_else(|| trace_context.map(|context| context.span_id.clone())),
+            parent_span_id: propagated.as_ref().and_then(|_| {
+                (!raw.propagation.parent_span_id.iter().all(|byte| *byte == 0))
+                    .then(|| hex_identifier(&raw.propagation.parent_span_id))
+            }),
             traceparent: parsed.traceparent,
             tracestate: parsed.tracestate,
-            correlation_kind: TraceCorrelationKind::ProtocolObserved,
-            confidence: if parsed.warning.is_none() {
+            correlation_kind: if raw.propagation.state == RAW_HTTP_PROPAGATION_GENERATED {
+                TraceCorrelationKind::GeneratedTraceContext
+            } else {
+                TraceCorrelationKind::ProtocolObserved
+            },
+            confidence: if raw.propagation.state == RAW_HTTP_PROPAGATION_GENERATED
+                || parsed.warning.is_none()
+            {
                 TraceConfidence::High
             } else {
                 TraceConfidence::Low
@@ -706,6 +783,32 @@ fn raw_http_request_parts_to_signal_with_container(
             attributes: parsed.attributes,
         },
     ))
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn propagated_context(
+    raw: &RawHttpRequestEvent,
+) -> Option<e_navigator_context_propagation::TraceContext> {
+    (raw.propagation.state == RAW_HTTP_PROPAGATION_GENERATED)
+        .then(|| {
+            e_navigator_context_propagation::TraceContext::new(
+                raw.propagation.trace_id,
+                raw.propagation.span_id,
+                raw.propagation.trace_flags,
+            )
+        })
+        .flatten()
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn hex_identifier(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut value = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        value.push(HEX[usize::from(byte >> 4)] as char);
+        value.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    value
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -827,38 +930,62 @@ mod platform {
     use async_trait::async_trait;
     use aya::{
         Ebpf,
-        maps::{MapData, PerCpuArray},
-        programs::TracePoint,
+        maps::{HashMap as AyaHashMap, MapData, MapError, PerCpuArray, Queue, SockHash},
+        programs::{CgroupAttachMode, SkMsg, SockOps, TracePoint},
     };
     use e_navigator_core::{
-        CoreError, CoreResult, EbpfConfig, HttpSourceConfig, ModuleKind, ModuleMetadata, Source,
+        CoreError, CoreResult, EbpfConfig, HttpContextPropagationConfig, HttpSourceConfig,
+        ModuleKind, ModuleMetadata, Source,
     };
     use e_navigator_protocol::ProtocolExtractionConfig;
     use e_navigator_signals::{SignalEnvelope, SignalPayload};
     use std::{
+        fs::File,
         path::PathBuf,
         sync::{Arc, Mutex},
     };
     use tokio::{sync::mpsc, task::JoinHandle};
     use tracing::{debug, info, warn};
 
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    struct KernelTraceContext {
+        trace_id: [u8; 16],
+        span_id: [u8; 8],
+        trace_flags: u8,
+    }
+
+    // SAFETY: `repr(C)` contains only byte arrays and one byte scalar, so it
+    // has no padding and exactly matches the eBPF `TraceContext` map value.
+    unsafe impl aya::Pod for KernelTraceContext {}
+
     #[derive(Debug, Default)]
     pub struct AyaHttpSource {
         host: Option<String>,
         procfs_root: PathBuf,
+        cgroup_root: PathBuf,
         protocol_config: ProtocolExtractionConfig,
         inbound_enabled: bool,
+        context_propagation: HttpContextPropagationConfig,
         ebpf: EbpfConfig,
     }
 
     impl AyaHttpSource {
-        pub fn new(host: Option<String>, procfs_root: PathBuf, config: HttpSourceConfig) -> Self {
+        pub fn new(
+            host: Option<String>,
+            procfs_root: PathBuf,
+            cgroup_root: PathBuf,
+            config: HttpSourceConfig,
+        ) -> Self {
             let inbound_enabled = config.inbound_enabled;
+            let context_propagation = config.context_propagation.clone();
             Self {
                 host,
                 procfs_root,
+                cgroup_root,
                 protocol_config: protocol_config(config),
                 inbound_enabled,
+                context_propagation,
                 ebpf: EbpfConfig::default(),
             }
         }
@@ -881,18 +1008,63 @@ mod platform {
             let mut reader_handles = Vec::new();
             let diagnostics = SourceDiagnostics::from_env();
             let diagnostics_enabled: &'static u8 = if diagnostics.enabled() { &1 } else { &0 };
+            let propagation_enabled = u8::from(self.context_propagation.enabled);
+            let propagation_ttl_nanos = self
+                .context_propagation
+                .same_thread_context_ttl_millis
+                .saturating_mul(1_000_000);
+            let propagation_map_capacity = if self.context_propagation.enabled {
+                self.context_propagation.max_tracked_sockets
+            } else {
+                1
+            };
+            let propagation_context_capacity = if self.context_propagation.enabled {
+                self.context_propagation.context_pool_capacity
+            } else {
+                1
+            };
+            let propagation_port_capacity = if self.context_propagation.enabled {
+                u32::try_from(self.context_propagation.plaintext_ports.len()).unwrap_or(1)
+            } else {
+                1
+            };
             let (mut ebpf, transport) = crate::event_transport::load_ebpf_with(
                 &self.ebpf,
                 crate::ebpf_maps::SourceMapProfile::Http,
                 "source.aya_http",
                 |loader| {
                     loader.override_global("SOURCE_DIAGNOSTICS_ENABLED", diagnostics_enabled, true);
+                    loader.override_global(
+                        "HTTP_CONTEXT_PROPAGATION_ENABLED",
+                        &propagation_enabled,
+                        true,
+                    );
+                    loader.override_global(
+                        "HTTP_CONTEXT_PROPAGATION_TTL_NANOS",
+                        &propagation_ttl_nanos,
+                        true,
+                    );
+                    loader.map_max_entries("HTTP_PROPAGATION_SOCKETS", propagation_map_capacity);
+                    loader.map_max_entries("PENDING_HTTP_PROPAGATIONS", propagation_map_capacity);
+                    loader.map_max_entries("HTTP_THREAD_TRACE_CONTEXTS", propagation_map_capacity);
+                    loader
+                        .map_max_entries("HTTP_PROPAGATION_CONTEXTS", propagation_context_capacity);
+                    loader.map_max_entries("HTTP_PROPAGATION_PORTS", propagation_port_capacity);
                 },
             )?;
             let telemetry = Arc::new(SourceTelemetry::new_with_transport(
                 "source.aya_http",
                 transport.kind.as_str(),
             ));
+
+            if self.context_propagation.enabled {
+                reader_handles.extend(attach_http_context_propagation(
+                    &mut ebpf,
+                    &self.context_propagation,
+                    &self.cgroup_root,
+                    shutdown.clone(),
+                )?);
+            }
 
             attach_tracepoint(
                 &mut ebpf,
@@ -936,6 +1108,32 @@ mod platform {
                 "syscalls",
                 "sys_enter_sendmsg",
             )?;
+            if self.context_propagation.enabled {
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_write_exit",
+                    "syscalls",
+                    "sys_exit_write",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_writev_exit",
+                    "syscalls",
+                    "sys_exit_writev",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_sendto_exit",
+                    "syscalls",
+                    "sys_exit_sendto",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_sendmsg_exit",
+                    "syscalls",
+                    "sys_exit_sendmsg",
+                )?;
+            }
             if self.inbound_enabled {
                 attach_tracepoint(
                     &mut ebpf,
@@ -1145,6 +1343,230 @@ mod platform {
             crate::shutdown::signal().await.map_err(module_error)?;
             shutdown.stop();
             join_reader_handles(reader_handles).await
+        }
+    }
+
+    fn attach_http_context_propagation(
+        ebpf: &mut Ebpf,
+        config: &HttpContextPropagationConfig,
+        cgroup_root: &std::path::Path,
+        shutdown: ReaderShutdown,
+    ) -> CoreResult<Vec<JoinHandle<()>>> {
+        File::open(cgroup_root.join("cgroup.controllers")).map_err(|err| {
+            CoreError::ModuleFailed {
+                module: "source.aya_http".to_string(),
+                message: format!(
+                    "HTTP context propagation requires a cgroup v2 root at {}: {err}",
+                    cgroup_root.display()
+                ),
+            }
+        })?;
+
+        {
+            let map = ebpf
+                .map_mut("HTTP_PROPAGATION_PORTS")
+                .ok_or_else(|| missing_map("HTTP_PROPAGATION_PORTS"))?;
+            let mut ports = AyaHashMap::<_, u16, u8>::try_from(map).map_err(module_error)?;
+            for port in &config.plaintext_ports {
+                ports.insert(*port, 1, 0).map_err(module_error)?;
+            }
+        }
+
+        let context_map = ebpf
+            .take_map("HTTP_PROPAGATION_CONTEXTS")
+            .ok_or_else(|| missing_map("HTTP_PROPAGATION_CONTEXTS"))?;
+        let mut contexts =
+            Queue::<MapData, KernelTraceContext>::try_from(context_map).map_err(module_error)?;
+        seed_context_pool(&mut contexts)?;
+
+        let socket_map_fd = {
+            let map = ebpf
+                .map("HTTP_PROPAGATION_SOCKETS")
+                .ok_or_else(|| missing_map("HTTP_PROPAGATION_SOCKETS"))?;
+            let sockets = SockHash::<_, u64>::try_from(map).map_err(module_error)?;
+            sockets.fd().try_clone().map_err(module_error)?
+        };
+
+        let sk_msg: &mut SkMsg = ebpf
+            .program_mut("sk_msg_http_context_propagation")
+            .ok_or_else(|| missing_program("sk_msg_http_context_propagation"))?
+            .try_into()
+            .map_err(module_error)?;
+        sk_msg.load().map_err(module_error)?;
+        sk_msg.attach(&socket_map_fd).map_err(module_error)?;
+
+        let cgroup = File::open(cgroup_root).map_err(module_error)?;
+        let sock_ops: &mut SockOps = ebpf
+            .program_mut("sockops_http_context_propagation")
+            .ok_or_else(|| missing_program("sockops_http_context_propagation"))?
+            .try_into()
+            .map_err(module_error)?;
+        sock_ops.load().map_err(module_error)?;
+        sock_ops
+            .attach(cgroup, CgroupAttachMode::AllowMultiple)
+            .map_err(module_error)?;
+
+        let diagnostic_map = ebpf
+            .take_map("HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS")
+            .ok_or_else(|| missing_map("HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS"))?;
+        let diagnostic_counters = PerCpuArray::try_from(diagnostic_map).map_err(module_error)?;
+
+        info!(
+            source = "source.aya_http",
+            cgroup_root = %cgroup_root.display(),
+            plaintext_ports = ?config.plaintext_ports,
+            max_tracked_sockets = config.max_tracked_sockets,
+            context_pool_capacity = config.context_pool_capacity,
+            "attached opt-in plaintext HTTP/1 context propagation"
+        );
+
+        Ok(vec![
+            spawn_context_pool_refiller(contexts, shutdown.clone()),
+            spawn_http_propagation_diagnostic_logger(diagnostic_counters, shutdown),
+        ])
+    }
+
+    fn seed_context_pool(contexts: &mut Queue<MapData, KernelTraceContext>) -> CoreResult<()> {
+        for _ in 0..contexts.capacity() {
+            let context = generate_kernel_trace_context()?;
+            contexts.push(context, 0).map_err(module_error)?;
+        }
+        Ok(())
+    }
+
+    fn spawn_context_pool_refiller(
+        mut contexts: Queue<MapData, KernelTraceContext>,
+        shutdown: ReaderShutdown,
+    ) -> JoinHandle<()> {
+        tokio::task::spawn_blocking(move || {
+            let capacity = contexts.capacity();
+            while !shutdown.is_stopped() {
+                std::thread::sleep(super::HTTP_CONTEXT_REFILL_INTERVAL);
+                if shutdown.is_stopped() {
+                    break;
+                }
+
+                for _ in 0..capacity {
+                    let context = match generate_kernel_trace_context() {
+                        Ok(context) => context,
+                        Err(err) => {
+                            warn!(error = %err, "failed to generate HTTP propagation context");
+                            break;
+                        }
+                    };
+                    match contexts.push(context, 0) {
+                        Ok(()) => {}
+                        Err(err) if is_queue_full(&err) => break,
+                        Err(err) => {
+                            warn!(error = %err, "failed to refill HTTP propagation context pool");
+                            break;
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    fn generate_kernel_trace_context() -> CoreResult<KernelTraceContext> {
+        let mut random = [0_u8; 24];
+        getrandom::fill(&mut random).map_err(module_error)?;
+        let mut trace_id = [0_u8; 16];
+        trace_id.copy_from_slice(&random[..16]);
+        let mut span_id = [0_u8; 8];
+        span_id.copy_from_slice(&random[16..]);
+        // W3C forbids all-zero identifiers. Conditioning the astronomically
+        // unlikely CSPRNG output preserves availability without reusing IDs.
+        if trace_id.iter().all(|byte| *byte == 0) {
+            trace_id[0] = 1;
+        }
+        if span_id.iter().all(|byte| *byte == 0) {
+            span_id[0] = 1;
+        }
+        Ok(KernelTraceContext {
+            trace_id,
+            span_id,
+            trace_flags: 1,
+        })
+    }
+
+    fn is_queue_full(err: &MapError) -> bool {
+        matches!(
+            err,
+            MapError::SyscallError(syscall) if syscall.io_error.raw_os_error() == Some(libc::E2BIG)
+        )
+    }
+
+    fn spawn_http_propagation_diagnostic_logger(
+        counters: PerCpuArray<MapData, u64>,
+        shutdown: ReaderShutdown,
+    ) -> JoinHandle<()> {
+        tokio::task::spawn_blocking(move || {
+            let mut previous = super::HttpPropagationDiagnosticSnapshot::default();
+
+            while !shutdown.is_stopped() {
+                std::thread::sleep(super::HTTP_DIAGNOSTIC_POLL_INTERVAL);
+                if shutdown.is_stopped() {
+                    break;
+                }
+
+                match read_http_propagation_diagnostic_counters(&counters) {
+                    Ok(snapshot) => {
+                        let delta = snapshot.delta_since(&previous);
+                        previous = snapshot;
+                        if delta.is_empty() {
+                            continue;
+                        }
+                        info!(
+                            target: "e_navigator_sources_ebpf_aya::context_propagation",
+                            source = "source.aya_http",
+                            socket_tracked = delta.get(0),
+                            socket_track_failed = delta.get(1),
+                            planned = delta.get(2),
+                            injected = delta.get(3),
+                            bypassed = delta.get(4),
+                            context_pool_empty = delta.get(5),
+                            pending_contended = delta.get(6),
+                            push_failed = delta.get(7),
+                            post_push_bounds_failed = delta.get(8),
+                            thread_context_failed = delta.get(9),
+                            stage_names = ?super::HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES,
+                            "HTTP context propagation counters"
+                        );
+                    }
+                    Err(err) => {
+                        warn!(error = %err, "failed to read HTTP propagation counters");
+                    }
+                }
+            }
+        })
+    }
+
+    fn read_http_propagation_diagnostic_counters(
+        counters: &PerCpuArray<MapData, u64>,
+    ) -> Result<super::HttpPropagationDiagnosticSnapshot, MapError> {
+        let mut totals = [0_u64; super::HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN];
+        for (index, total) in totals.iter_mut().enumerate() {
+            let per_cpu = counters.get(&(index as u32), 0)?;
+            *total = per_cpu
+                .iter()
+                .fold(0_u64, |sum, value| sum.saturating_add(*value));
+        }
+        Ok(super::HttpPropagationDiagnosticSnapshot::from_counters(
+            totals,
+        ))
+    }
+
+    fn missing_map(name: &'static str) -> CoreError {
+        CoreError::ModuleFailed {
+            module: "source.aya_http".to_string(),
+            message: format!("missing {name} map"),
+        }
+    }
+
+    fn missing_program(name: &'static str) -> CoreError {
+        CoreError::ModuleFailed {
+            module: "source.aya_http".to_string(),
+            message: format!("missing {name} program"),
         }
     }
 
@@ -1370,6 +1792,7 @@ mod platform {
     pub struct AyaHttpSource {
         host: Option<String>,
         _procfs_root: std::path::PathBuf,
+        _cgroup_root: std::path::PathBuf,
         _config: HttpSourceConfig,
         _ebpf: EbpfConfig,
     }
@@ -1378,11 +1801,13 @@ mod platform {
         pub fn new(
             host: Option<String>,
             procfs_root: std::path::PathBuf,
+            cgroup_root: std::path::PathBuf,
             config: HttpSourceConfig,
         ) -> Self {
             Self {
                 host,
                 _procfs_root: procfs_root,
+                _cgroup_root: cgroup_root,
                 _config: config,
                 _ebpf: EbpfConfig::default(),
             }
@@ -1446,6 +1871,7 @@ mod tests {
             request_total_len: request.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("curl"),
+            propagation: RawHttpPropagationContext::default(),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.request[..request.len()].copy_from_slice(request.as_bytes());
@@ -1503,6 +1929,47 @@ mod tests {
     }
 
     #[test]
+    fn injected_context_owns_the_observed_client_span_identity() {
+        let request = b"GET /orders HTTP/1.1\r\nHost: orders\r\n\r\n";
+        let mut raw = raw_http_chunk(42, 9, RAW_HTTP_ROLE_CLIENT, request);
+        raw.propagation = RawHttpPropagationContext {
+            state: RAW_HTTP_PROPAGATION_GENERATED,
+            trace_id: [
+                0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6, 0xa3, 0xce, 0x92, 0x9d, 0x0e, 0x0e,
+                0x47, 0x36,
+            ],
+            span_id: [0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7],
+            parent_span_id: [0x7a, 0x8b, 0x9c, 0x0d, 0x1e, 0x2f, 0x30, 0x41],
+            trace_flags: 1,
+            reserved: [0; 3],
+        };
+
+        let signal = raw_http_request_to_signal_with_clock_and_procfs(
+            raw_as_bytes(&raw),
+            Some("node-a".to_string()),
+            1_000,
+            std::path::Path::new("/proc"),
+        )
+        .expect("generated propagation event decodes");
+
+        let SignalPayload::ProtocolRequestObservation(event) = signal.payload else {
+            panic!("expected protocol request observation");
+        };
+        assert_eq!(
+            event.trace_id.as_deref(),
+            Some("4bf92f3577b34da6a3ce929d0e0e4736")
+        );
+        assert_eq!(event.span_id.as_deref(), Some("00f067aa0ba902b7"));
+        assert_eq!(event.parent_span_id.as_deref(), Some("7a8b9c0d1e2f3041"));
+        assert_eq!(event.traceparent, None);
+        assert_eq!(
+            event.correlation_kind,
+            TraceCorrelationKind::GeneratedTraceContext
+        );
+        assert_eq!(event.confidence, TraceConfidence::High);
+    }
+
+    #[test]
     fn compact_wire_event_decodes_without_fixed_buffer_tail() {
         let request = b"GET /compact HTTP/1.1\r\nHost: compact.example.test\r\n\r\n";
         let mut raw = RawHttpRequestEvent {
@@ -1523,6 +1990,7 @@ mod tests {
             request_total_len: request.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("python"),
+            propagation: RawHttpPropagationContext::default(),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.request[..request.len()].copy_from_slice(request);
@@ -1577,6 +2045,7 @@ mod tests {
             request_total_len: (part1.len() + part2.len()) as u32,
             request_iovec_lens: [part1.len() as u16, part2.len() as u16, 0],
             command: fixed_command("curl"),
+            propagation: RawHttpPropagationContext::default(),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.request[..part1.len()].copy_from_slice(part1);
@@ -1633,6 +2102,7 @@ mod tests {
             request_total_len: (part1.len() + part2.len() + part3.len()) as u32,
             request_iovec_lens: [part1.len() as u16, part2.len() as u16, part3.len() as u16],
             command: fixed_command("curl"),
+            propagation: RawHttpPropagationContext::default(),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.request[..part1.len()].copy_from_slice(part1);
@@ -1699,6 +2169,7 @@ mod tests {
             request_total_len: payload.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("curl"),
+            propagation: RawHttpPropagationContext::default(),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.request[..payload.len()].copy_from_slice(payload);
@@ -1745,6 +2216,7 @@ mod tests {
             request_total_len: request.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("curl"),
+            propagation: RawHttpPropagationContext::default(),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.request[..request.len()].copy_from_slice(request);
@@ -1782,6 +2254,7 @@ mod tests {
             request_total_len: request.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("curl"),
+            propagation: RawHttpPropagationContext::default(),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.request[..request.len()].copy_from_slice(request);
@@ -1831,6 +2304,7 @@ mod tests {
             request_total_len: payload.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("curl"),
+            propagation: RawHttpPropagationContext::default(),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.request[..payload.len()].copy_from_slice(payload);
@@ -1874,6 +2348,7 @@ mod tests {
             request_total_len: payload.len() as u32,
             request_iovec_lens: [3, 5, 7],
             command: fixed_command("curl"),
+            propagation: RawHttpPropagationContext::default(),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.request[..payload.len()].copy_from_slice(payload);
@@ -1927,6 +2402,7 @@ mod tests {
                 0,
             ],
             command: fixed_command("curl"),
+            propagation: RawHttpPropagationContext::default(),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.request[..part1.len()].copy_from_slice(part1);
@@ -1977,6 +2453,7 @@ mod tests {
             request_total_len: request.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("curl"),
+            propagation: RawHttpPropagationContext::default(),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.request[..request.len()].copy_from_slice(request.as_bytes());
@@ -2064,6 +2541,7 @@ mod tests {
             request_total_len: request.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("server"),
+            propagation: RawHttpPropagationContext::default(),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.role = RAW_HTTP_ROLE_SERVER;
@@ -2471,6 +2949,7 @@ mod tests {
             request_total_len: bytes.len() as u32,
             request_iovec_lens: [0; RAW_HTTP_MAX_IOVECS],
             command: fixed_command("server"),
+            propagation: RawHttpPropagationContext::default(),
             request: [0; RAW_HTTP_REQUEST_BYTES],
         };
         raw.request[..bytes.len()].copy_from_slice(bytes);

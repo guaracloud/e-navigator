@@ -178,6 +178,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "e-navigator-context-propagation"
+version = "0.3.1"
+
+[[package]]
 name = "e-navigator-core"
 version = "0.3.1"
 dependencies = [
@@ -234,10 +238,12 @@ dependencies = [
  "aya",
  "aya-build",
  "aya-obj",
+ "e-navigator-context-propagation",
  "e-navigator-core",
  "e-navigator-profiling",
  "e-navigator-protocol",
  "e-navigator-signals",
+ "getrandom 0.3.4",
  "iced-x86",
  "inotify",
  "libc",

@@ -33,6 +33,7 @@ fuzzing = []
 [dependencies]
 async-trait = { workspace = true }
 e-navigator-core = { path = "../e-navigator-core" }
+e-navigator-context-propagation = { path = "../e-navigator-context-propagation" }
 e-navigator-protocol = { path = "../e-navigator-protocol" }
 e-navigator-profiling = { path = "../e-navigator-profiling" }
 e-navigator-signals = { path = "../e-navigator-signals" }
@@ -46,6 +47,7 @@ tracing = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { workspace = true }
 aya-obj = { workspace = true }
+getrandom = { workspace = true }
 inotify = { workspace = true }
 libc = { workspace = true }
 object = { workspace = true }
