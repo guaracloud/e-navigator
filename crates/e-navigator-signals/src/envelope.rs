@@ -13,7 +13,7 @@ use crate::exec::{
 };
 use crate::metrics::{
     sanitize_network_counter_metric, sanitize_network_duration_metric,
-    sanitize_network_gauge_metric,
+    sanitize_network_gauge_metric, sanitize_network_peer_flow_metric,
 };
 use crate::network::{
     sanitize_dependency_edge_event, sanitize_network_connection_close_event,
@@ -45,7 +45,7 @@ use crate::{
     DnsResponseEvent, ExecEvent, ExtractedTraceContextObservation, NetworkConnectionCloseEvent,
     NetworkConnectionFailureEvent, NetworkConnectionOpenEvent, NetworkCounterMetric,
     NetworkDurationMetric, NetworkFlowSummaryEvent, NetworkFlowWarning, NetworkGaugeMetric,
-    NetworkTcpStatObservation, NodeCpuObservation, NodeDiskIoObservation,
+    NetworkPeerFlowMetric, NetworkTcpStatObservation, NodeCpuObservation, NodeDiskIoObservation,
     NodeFilesystemObservation, NodeLoadObservation, NodeMemoryObservation, ProcessExitEvent,
     ProcessLifecycleDurationEvent, ProcessResourceObservation, ProfileSampleObservation,
     ProfilingSessionObservation, ProfilingStackTraceObservation, ProfilingWarningObservation,
@@ -71,6 +71,7 @@ pub enum SignalKind {
     NetworkFlowSummary,
     NetworkFlowWarning,
     NetworkCounterMetric,
+    NetworkPeerFlowMetric,
     NetworkDurationMetric,
     NetworkGaugeMetric,
     NetworkTcpStatObservation,
@@ -119,6 +120,7 @@ pub enum SignalPayload {
     NetworkConnectionFailure(NetworkConnectionFailureEvent),
     NetworkFlowSummary(NetworkFlowSummaryEvent),
     NetworkCounterMetric(NetworkCounterMetric),
+    NetworkPeerFlowMetric(NetworkPeerFlowMetric),
     NetworkDurationMetric(NetworkDurationMetric),
     NetworkGaugeMetric(NetworkGaugeMetric),
     NetworkTcpStatObservation(NetworkTcpStatObservation),
@@ -232,6 +234,13 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
                     .map(SignalPayload::NetworkCounterMetric)
                     .map_err(|err| {
                         D::Error::custom(format!("invalid network_counter_metric payload: {err}"))
+                    })?
+            }
+            SignalKind::NetworkPeerFlowMetric => {
+                serde_json::from_value::<NetworkPeerFlowMetric>(raw.payload)
+                    .map(SignalPayload::NetworkPeerFlowMetric)
+                    .map_err(|err| {
+                        D::Error::custom(format!("invalid network_peer_flow_metric payload: {err}"))
                     })?
             }
             SignalKind::NetworkDurationMetric => {
@@ -636,6 +645,20 @@ impl SignalEnvelope {
             host,
             SignalKind::NetworkCounterMetric,
             SignalPayload::NetworkCounterMetric(metric),
+        )
+    }
+
+    pub fn network_peer_flow_metric(
+        source: impl Into<String>,
+        host: Option<String>,
+        mut metric: NetworkPeerFlowMetric,
+    ) -> Self {
+        sanitize_network_peer_flow_metric(&mut metric);
+        Self::new(
+            source,
+            host,
+            SignalKind::NetworkPeerFlowMetric,
+            SignalPayload::NetworkPeerFlowMetric(metric),
         )
     }
 
@@ -1207,6 +1230,7 @@ impl Signal for SignalEnvelope {
             SignalKind::NetworkFlowSummary => "network_flow_summary",
             SignalKind::NetworkFlowWarning => "network_flow_warning",
             SignalKind::NetworkCounterMetric => "network_counter_metric",
+            SignalKind::NetworkPeerFlowMetric => "network_peer_flow_metric",
             SignalKind::NetworkDurationMetric => "network_duration_metric",
             SignalKind::NetworkGaugeMetric => "network_gauge_metric",
             SignalKind::DnsQuery => "dns_query",
@@ -1922,6 +1946,7 @@ mod tests {
         let endpoint = NetworkFlowEndpoint {
             address: Some(long.clone()),
             port: Some(443),
+            namespace: Some(long.clone()),
             owner_name: Some(long.clone()),
             owner_type: Some(long.clone()),
             container: None,
@@ -2016,6 +2041,7 @@ mod tests {
                 source: NetworkFlowEndpoint {
                     address: Some("10.0.0.5".to_string()),
                     port: Some(443),
+                    namespace: None,
                     owner_name: None,
                     owner_type: None,
                     container: Some(container.clone()),
@@ -2024,6 +2050,7 @@ mod tests {
                 destination: NetworkFlowEndpoint {
                     address: Some("10.0.0.6".to_string()),
                     port: Some(443),
+                    namespace: None,
                     owner_name: None,
                     owner_type: None,
                     container: Some(container.clone()),

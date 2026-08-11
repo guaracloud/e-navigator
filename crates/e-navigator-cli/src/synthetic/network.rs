@@ -141,6 +141,7 @@ fn flow_endpoint(
     NetworkFlowEndpoint {
         address: Some(address.to_string()),
         port: Some(port),
+        namespace: Some("e-navigator-smoke".to_string()),
         owner_name: Some(owner_name.to_string()),
         owner_type: Some(owner_type.to_string()),
         container: None,

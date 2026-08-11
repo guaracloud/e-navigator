@@ -301,6 +301,7 @@ pub struct KubernetesMetadataCache {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct WorkloadOwner {
+    pub(super) namespace: String,
     pub(super) name: String,
     pub(super) owner_type: String,
 }
@@ -408,6 +409,7 @@ impl KubernetesMetadataCache {
                 (
                     format!("{}/{}", service.namespace, service.service_name),
                     WorkloadOwner {
+                        namespace: service.namespace.clone(),
                         name: format!("{}/{}", service.namespace, service.service_name),
                         owner_type: "service".to_string(),
                     },
@@ -619,6 +621,7 @@ fn raw_pod_owner(pod: &RawPod) -> WorkloadOwner {
         .filter(|name| !name.is_empty())
         .unwrap_or(&pod.pod_name);
     WorkloadOwner {
+        namespace: pod.namespace.clone(),
         name: format!("{}/{name}", pod.namespace),
         owner_type: pod
             .workload_type
@@ -974,11 +977,13 @@ mod tests {
         assert_eq!(
             cache.get_owner_for_context(&remote_pod),
             Some(WorkloadOwner {
+                namespace: "proj-orders".to_string(),
                 name: "proj-orders/orders".to_string(),
                 owner_type: "deployment".to_string(),
             })
         );
         let service_owner = WorkloadOwner {
+            namespace: "proj-orders".to_string(),
             name: "proj-orders/orders".to_string(),
             owner_type: "service".to_string(),
         };

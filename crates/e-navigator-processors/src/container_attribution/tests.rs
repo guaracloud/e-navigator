@@ -989,6 +989,7 @@ async fn network_flow_summary_enriches_destination_from_pod_ip_cache() {
             source: NetworkFlowEndpoint {
                 address: Some("10.0.0.5".to_string()),
                 port: Some(43512),
+                namespace: None,
                 owner_name: None,
                 owner_type: None,
                 container: Some(ContainerContext {
@@ -1000,6 +1001,7 @@ async fn network_flow_summary_enriches_destination_from_pod_ip_cache() {
             destination: NetworkFlowEndpoint {
                 address: Some("10.0.0.20".to_string()),
                 port: Some(6379),
+                namespace: None,
                 owner_name: None,
                 owner_type: None,
                 container: None,
@@ -1070,6 +1072,7 @@ async fn network_flow_summary_exports_stable_pod_and_service_owners() {
             source: NetworkFlowEndpoint {
                 address: Some("10.42.1.10".to_string()),
                 port: Some(43000),
+                namespace: None,
                 owner_name: None,
                 owner_type: None,
                 container: Some(ContainerContext {
@@ -1081,6 +1084,7 @@ async fn network_flow_summary_exports_stable_pod_and_service_owners() {
             destination: NetworkFlowEndpoint {
                 address: Some("10.43.0.20".to_string()),
                 port: Some(6379),
+                namespace: None,
                 owner_name: None,
                 owner_type: None,
                 container: None,
@@ -1106,11 +1110,13 @@ async fn network_flow_summary_exports_stable_pod_and_service_owners() {
     };
     assert_eq!(flow.source.owner_name.as_deref(), Some("proj-api/api"));
     assert_eq!(flow.source.owner_type.as_deref(), Some("deployment"));
+    assert_eq!(flow.source.namespace.as_deref(), Some("proj-api"));
     assert_eq!(
         flow.destination.owner_name.as_deref(),
         Some("proj-data/redis")
     );
     assert_eq!(flow.destination.owner_type.as_deref(), Some("service"));
+    assert_eq!(flow.destination.namespace.as_deref(), Some("proj-data"));
     assert!(flow.destination.kubernetes.is_none());
 
     let dependency = SignalEnvelope::dependency_edge(

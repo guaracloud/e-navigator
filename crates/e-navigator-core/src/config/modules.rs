@@ -106,6 +106,11 @@ pub const KNOWN_MODULES: &[KnownModule] = &[
         default_enabled: true,
     },
     KnownModule {
+        name: "generator.peer_flow_metrics",
+        kind: ModuleKind::Generator,
+        default_enabled: true,
+    },
+    KnownModule {
         name: "generator.dns_metrics",
         kind: ModuleKind::Generator,
         default_enabled: true,

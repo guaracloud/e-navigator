@@ -328,6 +328,7 @@ impl PrometheusHttpSink {
             && matches!(
                 &signal.payload,
                 SignalPayload::NetworkCounterMetric(_)
+                    | SignalPayload::NetworkPeerFlowMetric(_)
                     | SignalPayload::NetworkDurationMetric(_)
                     | SignalPayload::NetworkGaugeMetric(_)
                     | SignalPayload::DnsCounterMetric(_)
@@ -806,10 +807,11 @@ mod tests {
     use e_navigator_core::Sink;
     use e_navigator_signals::{
         ContainerContext, DnsCounterMetric, DnsQueryType, KubernetesContext,
-        MetricAggregationWindow, NetworkAddressFamily, NetworkCounterMetric,
-        NetworkProcessIdentity, NetworkProtocol, ProfileSampleObservation, ProfilingAttribute,
-        ProfilingConfidence, ProfilingCorrelationKind, ProfilingFrame, ProfilingKind,
-        ProfilingSessionObservation, ProfilingWarningObservation,
+        MetricAggregationWindow, NetworkAddressFamily, NetworkCounterMetric, NetworkFlowDirection,
+        NetworkPeerFlowMetric, NetworkPeerIdentity, NetworkProcessIdentity, NetworkProtocol,
+        ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence,
+        ProfilingCorrelationKind, ProfilingFrame, ProfilingKind, ProfilingSessionObservation,
+        ProfilingWarningObservation,
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -874,6 +876,48 @@ mod tests {
             rendered,
             "network_flow_bytes{host_name=\"node-a\",k8s_container_name=\"workload\",k8s_namespace_name=\"e-navigator-bench\",k8s_node_name=\"homelab-01\",k8s_pod_name=\"workload-a\",k8s_pod_uid_hash=\"c4ec3fe00b0d17fd\",net_transport=\"tcp\",network_type=\"ipv4\"} 2048\n"
         );
+    }
+
+    #[test]
+    fn renders_peer_flow_metric_with_bounded_workload_labels() {
+        let signal = SignalEnvelope::network_peer_flow_metric(
+            "generator.peer_flow_metrics",
+            Some("node-a".to_string()),
+            NetworkPeerFlowMetric {
+                metric_name: "network.peer.flow.bytes".to_string(),
+                unit: "By".to_string(),
+                value: 2048,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 1,
+                    end_unix_nanos: 2,
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                direction: NetworkFlowDirection::Egress,
+                source: peer_identity("shop", "shop/checkout", "deployment"),
+                destination: peer_identity("payments", "payments/api", "service"),
+                overflow: false,
+            },
+        );
+
+        let line = format_prometheus_metric_lines(&signal)
+            .into_iter()
+            .next()
+            .expect("peer metric formats");
+        let rendered = render_prometheus_text(&[line]);
+
+        assert_eq!(
+            rendered,
+            "network_peer_flow_bytes{destination_k8s_namespace_name=\"payments\",destination_k8s_workload_kind=\"service\",destination_k8s_workload_name=\"payments/api\",host_name=\"node-a\",network_flow_direction=\"egress\",network_transport=\"tcp\",network_type=\"ipv4\",otel_metric_overflow=\"false\",source_k8s_namespace_name=\"shop\",source_k8s_workload_kind=\"deployment\",source_k8s_workload_name=\"shop/checkout\"} 2048\n"
+        );
+    }
+
+    fn peer_identity(namespace: &str, owner_name: &str, owner_type: &str) -> NetworkPeerIdentity {
+        NetworkPeerIdentity {
+            namespace: namespace.to_string(),
+            owner_name: owner_name.to_string(),
+            owner_type: owner_type.to_string(),
+        }
     }
 
     #[test]

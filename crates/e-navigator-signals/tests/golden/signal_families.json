@@ -179,6 +179,32 @@
   },
   {
     "schema_version": 1,
+    "kind": "network_peer_flow_metric",
+    "source": "golden",
+    "host": "node-a",
+    "payload": {
+      "metric_name": "network.peer.flow.bytes",
+      "unit": "By",
+      "value": 2048,
+      "window": {"start_unix_nanos": 1000, "end_unix_nanos": 1200},
+      "protocol": "tcp",
+      "address_family": "ipv4",
+      "direction": "egress",
+      "source": {
+        "namespace": "shop",
+        "owner_name": "shop/checkout",
+        "owner_type": "deployment"
+      },
+      "destination": {
+        "namespace": "payments",
+        "owner_name": "payments/api",
+        "owner_type": "service"
+      },
+      "overflow": false
+    }
+  },
+  {
+    "schema_version": 1,
     "kind": "network_counter_metric",
     "source": "golden",
     "host": "node-a",

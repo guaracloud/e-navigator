@@ -684,6 +684,7 @@ mod tests {
         NetworkFlowEndpoint {
             address: Some(address.to_string()),
             port: Some(port),
+            namespace: Some("shop".to_string()),
             owner_name: None,
             owner_type: None,
             container: container_id.map(|container_id| ContainerContext {

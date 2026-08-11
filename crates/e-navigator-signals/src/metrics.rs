@@ -4,8 +4,8 @@ use crate::sanitize::{sanitize_kubernetes_labels, truncate_utf8_in_place};
 
 use crate::network::sanitize_network_process_identity;
 use crate::{
-    ContainerContext, KubernetesContext, NetworkAddressFamily, NetworkProcessIdentity,
-    NetworkProtocol,
+    ContainerContext, KubernetesContext, NetworkAddressFamily, NetworkFlowDirection,
+    NetworkProcessIdentity, NetworkProtocol,
 };
 
 const MAX_NETWORK_METRIC_STRING_BYTES: usize = 256;
@@ -34,6 +34,37 @@ pub struct NetworkCounterMetric {
     pub errno: Option<i32>,
     pub container: Option<ContainerContext>,
     pub kubernetes: Option<KubernetesContext>,
+}
+
+/// Bounded workload identity used on both sides of a peer-aware flow metric.
+///
+/// Pod names, container ids, IP addresses, and ports are deliberately absent:
+/// they are unstable or high-cardinality and do not belong in this metric's
+/// identity.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkPeerIdentity {
+    pub namespace: String,
+    pub owner_name: String,
+    pub owner_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkPeerFlowMetric {
+    pub metric_name: String,
+    pub unit: String,
+    pub value: u64,
+    pub window: MetricAggregationWindow,
+    pub protocol: NetworkProtocol,
+    pub address_family: NetworkAddressFamily,
+    pub direction: NetworkFlowDirection,
+    pub source: NetworkPeerIdentity,
+    pub destination: NetworkPeerIdentity,
+    /// True when this point aggregates identities beyond the configured
+    /// exact-series budget into the fixed `__other__` identity.
+    #[serde(default)]
+    pub overflow: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +108,19 @@ pub(crate) fn sanitize_network_counter_metric(metric: &mut NetworkCounterMetric)
     sanitize_optional_network_metric_string(&mut metric.remote_address);
     sanitize_optional_container_context(&mut metric.container);
     sanitize_optional_kubernetes_context(&mut metric.kubernetes);
+}
+
+pub(crate) fn sanitize_network_peer_flow_metric(metric: &mut NetworkPeerFlowMetric) {
+    sanitize_network_metric_string(&mut metric.metric_name);
+    sanitize_network_metric_string(&mut metric.unit);
+    sanitize_network_peer_identity(&mut metric.source);
+    sanitize_network_peer_identity(&mut metric.destination);
+}
+
+fn sanitize_network_peer_identity(identity: &mut NetworkPeerIdentity) {
+    sanitize_network_metric_string(&mut identity.namespace);
+    sanitize_network_metric_string(&mut identity.owner_name);
+    sanitize_network_metric_string(&mut identity.owner_type);
 }
 
 pub(crate) fn sanitize_network_duration_metric(metric: &mut NetworkDurationMetric) {

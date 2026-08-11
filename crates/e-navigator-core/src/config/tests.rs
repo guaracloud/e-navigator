@@ -52,6 +52,7 @@ fn default_config_is_valid_and_preserves_expected_modules() {
             ModuleConfig::enabled("processor.container_attribution"),
             ModuleConfig::enabled("generator.resource_metrics"),
             ModuleConfig::enabled("generator.network_metrics"),
+            ModuleConfig::enabled("generator.peer_flow_metrics"),
             ModuleConfig::enabled("generator.dns_metrics"),
             ModuleConfig::enabled("generator.trace_correlation"),
             ModuleConfig::enabled("generator.request_correlation"),
@@ -1044,7 +1045,7 @@ fn unknown_module_names_are_invalid_and_list_known_modules() {
             ],
             ..RuntimeConfig::default()
         },
-        "unknown module 'generator.dns_typo'; known modules: source.aya_exec, source.aya_network, source.aya_dns, source.aya_http, source.aya_protocol, source.aya_tls, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, sink.json_stdout, sink.prometheus_http, sink.otlp_http",
+        "unknown module 'generator.dns_typo'; known modules: source.aya_exec, source.aya_network, source.aya_dns, source.aya_http, source.aya_protocol, source.aya_tls, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.peer_flow_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, sink.json_stdout, sink.prometheus_http, sink.otlp_http",
     );
 }
 

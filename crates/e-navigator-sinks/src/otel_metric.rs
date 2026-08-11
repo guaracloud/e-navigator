@@ -1,8 +1,8 @@
 use e_navigator_signals::{
     DnsCounterMetric, DnsLatencyMetric, MetricAggregationWindow, NetworkAddressFamily,
-    NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric, NetworkProtocol,
-    ResourceCounterMetric, ResourceGaugeMetric, SignalEnvelope, SignalPayload,
-    contains_ascii_case_insensitive, is_sensitive_attribute_key,
+    NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric, NetworkPeerFlowMetric,
+    NetworkPeerIdentity, NetworkProtocol, ResourceCounterMetric, ResourceGaugeMetric,
+    SignalEnvelope, SignalPayload, contains_ascii_case_insensitive, is_sensitive_attribute_key,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -46,6 +46,9 @@ pub struct OtelMetricRecord {
 pub fn format_otel_metric_record(signal: &SignalEnvelope) -> Option<OtelMetricRecord> {
     let mut record = match &signal.payload {
         SignalPayload::NetworkCounterMetric(metric) => Some(network_counter_record(signal, metric)),
+        SignalPayload::NetworkPeerFlowMetric(metric) => {
+            Some(network_peer_flow_record(signal, metric))
+        }
         SignalPayload::NetworkDurationMetric(metric) => {
             Some(network_duration_record(signal, metric))
         }
@@ -60,6 +63,66 @@ pub fn format_otel_metric_record(signal: &SignalEnvelope) -> Option<OtelMetricRe
     }?;
     mirror_metric_identity_attributes(&mut record);
     Some(record)
+}
+
+fn network_peer_flow_record(
+    signal: &SignalEnvelope,
+    metric: &NetworkPeerFlowMetric,
+) -> OtelMetricRecord {
+    let mut attributes = BTreeMap::new();
+    insert_attribute_string(
+        &mut attributes,
+        "network.transport",
+        protocol_name(metric.protocol),
+    );
+    insert_attribute_string(
+        &mut attributes,
+        "network.flow.direction",
+        flow_direction_name(metric.direction),
+    );
+    insert_attribute_string(
+        &mut attributes,
+        "network.type",
+        address_family_name(metric.address_family),
+    );
+    insert_peer_attributes(&mut attributes, "source", &metric.source);
+    insert_peer_attributes(&mut attributes, "destination", &metric.destination);
+    attributes.insert(
+        "otel.metric.overflow".to_string(),
+        serde_json::json!(metric.overflow),
+    );
+
+    OtelMetricRecord {
+        name: bounded_metric_string(&metric.metric_name),
+        unit: bounded_metric_string(&metric.unit),
+        kind: OtelMetricKind::Sum,
+        value: OtelMetricValue::U64(metric.value),
+        window: metric.window.clone(),
+        resource: resource_attributes(signal, None, None),
+        attributes,
+    }
+}
+
+fn insert_peer_attributes(
+    attributes: &mut BTreeMap<String, serde_json::Value>,
+    side: &str,
+    peer: &NetworkPeerIdentity,
+) {
+    insert_attribute_string(
+        attributes,
+        format!("{side}.k8s.namespace.name"),
+        &peer.namespace,
+    );
+    insert_attribute_string(
+        attributes,
+        format!("{side}.k8s.workload.name"),
+        &peer.owner_name,
+    );
+    insert_attribute_string(
+        attributes,
+        format!("{side}.k8s.workload.kind"),
+        &peer.owner_type,
+    );
 }
 
 fn mirror_metric_identity_attributes(record: &mut OtelMetricRecord) {
@@ -441,6 +504,15 @@ fn protocol_name(protocol: NetworkProtocol) -> &'static str {
     }
 }
 
+fn flow_direction_name(direction: e_navigator_signals::NetworkFlowDirection) -> &'static str {
+    match direction {
+        e_navigator_signals::NetworkFlowDirection::Egress => "egress",
+        e_navigator_signals::NetworkFlowDirection::Ingress => "ingress",
+        e_navigator_signals::NetworkFlowDirection::Unknown => "unknown",
+        _ => "other",
+    }
+}
+
 fn address_family_name(address_family: NetworkAddressFamily) -> &'static str {
     match address_family {
         NetworkAddressFamily::Ipv4 => "ipv4",
@@ -472,10 +544,62 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use e_navigator_signals::{
-        MetricAggregationWindow, NetworkCounterMetric, SignalEnvelope, SignalPayload,
+        MetricAggregationWindow, NetworkCounterMetric, NetworkFlowDirection, NetworkPeerFlowMetric,
+        NetworkPeerIdentity, NetworkProtocol, SignalEnvelope, SignalPayload,
     };
 
     use super::*;
+
+    #[test]
+    fn formats_peer_flow_metric_with_directional_workload_attributes() {
+        let signal = SignalEnvelope::network_peer_flow_metric(
+            "generator.peer_flow_metrics",
+            Some("node-a".to_string()),
+            NetworkPeerFlowMetric {
+                metric_name: "network.peer.flow.bytes".to_string(),
+                unit: "By".to_string(),
+                value: 2048,
+                window: MetricAggregationWindow {
+                    start_unix_nanos: 100,
+                    end_unix_nanos: 200,
+                },
+                protocol: NetworkProtocol::Tcp,
+                address_family: NetworkAddressFamily::Ipv4,
+                direction: NetworkFlowDirection::Egress,
+                source: peer_identity("shop", "shop/checkout", "deployment"),
+                destination: peer_identity("payments", "payments/api", "service"),
+                overflow: false,
+            },
+        );
+
+        let record = format_otel_metric_record(&signal).expect("peer metric formats");
+
+        assert_eq!(record.name, "network.peer.flow.bytes");
+        assert_eq!(record.kind, OtelMetricKind::Sum);
+        assert_eq!(record.value, OtelMetricValue::U64(2048));
+        assert_eq!(record.attributes["network.transport"], "tcp");
+        assert_eq!(record.attributes["network.type"], "ipv4");
+        assert_eq!(record.attributes["network.flow.direction"], "egress");
+        assert_eq!(record.attributes["source.k8s.namespace.name"], "shop");
+        assert_eq!(
+            record.attributes["source.k8s.workload.name"],
+            "shop/checkout"
+        );
+        assert_eq!(
+            record.attributes["destination.k8s.workload.kind"],
+            "service"
+        );
+        assert_eq!(record.attributes["otel.metric.overflow"], false);
+        assert_eq!(record.resource["host.name"], "node-a");
+    }
+
+    fn peer_identity(namespace: &str, owner_name: &str, owner_type: &str) -> NetworkPeerIdentity {
+        NetworkPeerIdentity {
+            namespace: namespace.to_string(),
+            owner_name: owner_name.to_string(),
+            owner_type: owner_type.to_string(),
+        }
+    }
 
     #[test]
     fn formats_network_counter_metric_as_stable_otel_record() {

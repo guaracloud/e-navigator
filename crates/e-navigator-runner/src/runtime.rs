@@ -424,7 +424,8 @@ mod tests {
         ModuleMetadata, Processor, Signal, Sink, Source,
     };
     use e_navigator_generators::{
-        DependencyGraphGenerator, NetworkMetricsGenerator, TraceCorrelationGenerator,
+        DependencyGraphGenerator, NetworkMetricsGenerator, PeerFlowMetricsGenerator,
+        TraceCorrelationGenerator,
     };
     use e_navigator_processors::{
         ContainerAttributionProcessor, container_attribution::KubernetesMetadataCache,
@@ -743,6 +744,37 @@ mod tests {
                 && event.command == "generated-exit"
             {
                 event.command = "processed-generated-exit".to_string();
+            }
+
+            Ok(Some(signal))
+        }
+    }
+
+    struct StableFlowOwnerProcessor;
+
+    #[async_trait]
+    impl Processor<SignalEnvelope> for StableFlowOwnerProcessor {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("processor.stable_flow_owner", ModuleKind::Processor)
+        }
+
+        async fn process(&self, mut signal: SignalEnvelope) -> CoreResult<Option<SignalEnvelope>> {
+            if let SignalPayload::NetworkFlowSummary(flow) = &mut signal.payload {
+                for endpoint in [&mut flow.source, &mut flow.destination] {
+                    match endpoint.address.as_deref() {
+                        Some("10.0.0.5") => {
+                            endpoint.namespace = Some("shop".to_string());
+                            endpoint.owner_name = Some("shop/checkout".to_string());
+                            endpoint.owner_type = Some("deployment".to_string());
+                        }
+                        Some("10.0.0.20") => {
+                            endpoint.namespace = Some("data".to_string());
+                            endpoint.owner_name = Some("data/redis".to_string());
+                            endpoint.owner_type = Some("service".to_string());
+                        }
+                        _ => {}
+                    }
+                }
             }
 
             Ok(Some(signal))
@@ -1514,7 +1546,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generated_network_flow_summary_is_destination_attributed_before_sinks() {
+    async fn generated_network_flow_is_attributed_before_peer_metric_generation() {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let destination = kubernetes_context("redis-0", "redis");
         let processor = ContainerAttributionProcessor::with_cache(
@@ -1533,7 +1565,9 @@ mod tests {
         let registry = ModuleRegistry::new()
             .with_source(Box::new(NetworkFlowBytesSource))
             .with_processor(Box::new(processor))
+            .with_processor(Box::new(StableFlowOwnerProcessor))
             .with_generator(Box::new(NetworkMetricsGenerator::default()))
+            .with_generator(Box::new(PeerFlowMetricsGenerator::default()))
             .with_sink(Box::new(MemorySink { seen: seen.clone() }));
         let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
 
@@ -1545,10 +1579,34 @@ mod tests {
         let seen = seen.lock().await;
         assert!(seen.iter().any(|signal| {
             matches!(&signal.payload, SignalPayload::NetworkFlowSummary(flow)
-                if flow.bytes == 1536
+                if flow.bytes == 512
+                    && flow.direction == e_navigator_signals::NetworkFlowDirection::Egress
                     && flow.destination.address.as_deref() == Some("10.0.0.20")
                     && flow.destination.port == Some(6379)
                     && flow.destination.kubernetes.as_ref() == Some(&destination))
+        }));
+        assert!(seen.iter().any(|signal| {
+            matches!(&signal.payload, SignalPayload::NetworkPeerFlowMetric(metric)
+                if metric.value == 512
+                    && metric.direction == e_navigator_signals::NetworkFlowDirection::Egress
+                    && metric.source.namespace == "shop"
+                    && metric.source.owner_name == "shop/checkout"
+                    && metric.destination.namespace == "data"
+                    && metric.destination.owner_name == "data/redis")
+        }));
+        assert!(seen.iter().any(|signal| {
+            matches!(&signal.payload, SignalPayload::NetworkPeerFlowMetric(metric)
+                if metric.value == 1_024
+                    && metric.direction == e_navigator_signals::NetworkFlowDirection::Ingress
+                    && metric.source.namespace == "data"
+                    && metric.destination.namespace == "shop")
+        }));
+        assert!(seen.iter().any(|signal| {
+            matches!(&signal.payload, SignalPayload::NetworkFlowSummary(flow)
+                if flow.bytes == 1_024
+                    && flow.direction == e_navigator_signals::NetworkFlowDirection::Ingress
+                    && flow.source.address.as_deref() == Some("10.0.0.20")
+                    && flow.source.kubernetes.as_ref() == Some(&destination))
         }));
     }
 
