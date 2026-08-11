@@ -1856,6 +1856,106 @@ fn http_source_defaults_are_bounded() {
     assert_eq!(config.http_source.max_request_line_bytes, 1024);
     assert_eq!(config.http_source.max_attributes, 8);
     assert_eq!(config.http_source.max_tracestate_bytes, 512);
+    assert!(!config.http_source.context_propagation.enabled);
+    assert_eq!(
+        config.http_source.context_propagation.plaintext_ports,
+        vec![80, 8080]
+    );
+    assert_eq!(
+        config.http_source.context_propagation.max_tracked_sockets,
+        8192
+    );
+    assert_eq!(
+        config.http_source.context_propagation.context_pool_capacity,
+        4096
+    );
+}
+
+#[test]
+fn http_context_propagation_requires_the_http_source_module() {
+    assert_invalid(
+        RuntimeConfig {
+            http_source: HttpSourceConfig {
+                inbound_enabled: true,
+                context_propagation: HttpContextPropagationConfig {
+                    enabled: true,
+                    ..HttpContextPropagationConfig::default()
+                },
+                ..HttpSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "http_source.context_propagation.enabled requires enabled source.aya_http module",
+    );
+}
+
+#[test]
+fn http_context_propagation_requires_inbound_capture() {
+    assert_invalid(
+        RuntimeConfig {
+            http_source: HttpSourceConfig {
+                context_propagation: HttpContextPropagationConfig {
+                    enabled: true,
+                    ..HttpContextPropagationConfig::default()
+                },
+                ..HttpSourceConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "http_source.context_propagation.enabled requires http_source.inbound_enabled = true so propagated server context can be continued",
+    );
+}
+
+#[test]
+fn http_context_propagation_bounds_ports_and_kernel_state() {
+    for (propagation, expected) in [
+        (
+            HttpContextPropagationConfig {
+                plaintext_ports: Vec::new(),
+                ..HttpContextPropagationConfig::default()
+            },
+            "http_source.context_propagation.plaintext_ports must contain between 1 and 32 ports",
+        ),
+        (
+            HttpContextPropagationConfig {
+                plaintext_ports: vec![80, 80],
+                ..HttpContextPropagationConfig::default()
+            },
+            "http_source.context_propagation.plaintext_ports must not contain duplicates",
+        ),
+        (
+            HttpContextPropagationConfig {
+                max_tracked_sockets: 0,
+                ..HttpContextPropagationConfig::default()
+            },
+            "http_source.context_propagation.max_tracked_sockets must be between 1 and 65536",
+        ),
+        (
+            HttpContextPropagationConfig {
+                context_pool_capacity: 0,
+                ..HttpContextPropagationConfig::default()
+            },
+            "http_source.context_propagation.context_pool_capacity must be between 128 and 65536",
+        ),
+        (
+            HttpContextPropagationConfig {
+                same_thread_context_ttl_millis: 0,
+                ..HttpContextPropagationConfig::default()
+            },
+            "http_source.context_propagation.same_thread_context_ttl_millis must be between 1 and 300000",
+        ),
+    ] {
+        assert_invalid(
+            RuntimeConfig {
+                http_source: HttpSourceConfig {
+                    context_propagation: propagation,
+                    ..HttpSourceConfig::default()
+                },
+                ..RuntimeConfig::default()
+            },
+            expected,
+        );
+    }
 }
 
 #[test]
