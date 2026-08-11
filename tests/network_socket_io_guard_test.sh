@@ -25,6 +25,7 @@ done
 for expected in \
   "try_tracepoint_network_io_enter(&ctx, NETWORK_IO_WRITE)" \
   "try_tracepoint_network_io_enter(&ctx, NETWORK_IO_READ)" \
+  "try_tracepoint_network_splice_enter(&ctx)" \
   "try_tracepoint_network_io_exit(&ctx)"; do
   if ! grep -Fq "$expected" "$program"; then
     printf 'expected %s to use shared network I/O accounting: missing %s\n' "$program" "$expected" >&2
@@ -33,6 +34,22 @@ for expected in \
 done
 
 for expected in \
+  "tracepoint_readv_enter" \
+  "sys_enter_readv" \
+  "tracepoint_readv_exit" \
+  "sys_exit_readv" \
+  "tracepoint_writev_enter" \
+  "sys_enter_writev" \
+  "tracepoint_writev_exit" \
+  "sys_exit_writev" \
+  "tracepoint_sendfile_enter" \
+  "sys_enter_sendfile64" \
+  "tracepoint_sendfile_exit" \
+  "sys_exit_sendfile64" \
+  "tracepoint_splice_enter" \
+  "sys_enter_splice" \
+  "tracepoint_splice_exit" \
+  "sys_exit_splice" \
   "tracepoint_sendto_enter" \
   "sys_enter_sendto" \
   "tracepoint_sendto_exit" \

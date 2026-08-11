@@ -308,7 +308,12 @@ cargo run --locked -p e-navigator-cli -- \
               tracing-program, kernel-BTF, and target-function preflight.
               Positively unsupported kernels retain syscall tracepoints;
               indeterminate probe, verifier, load, and attach failures stop the
-              source instead of silently weakening it.
+              source instead of silently weakening it. Stable tracepoint
+              accounting also covers vectored reads/writes, send/receive,
+              <code>sendfile</code>, and both directions of
+              <code>splice</code>. General <code>io_uring</code> remains an
+              explicit non-claim because submission and byte completion do not
+              preserve the current process/fd identity seam.
             </p>
             <p>
               <code>generator.peer_flow_metrics</code> exports bounded

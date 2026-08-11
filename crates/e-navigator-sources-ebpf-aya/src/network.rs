@@ -1074,6 +1074,29 @@ mod platform {
                 }
             }
         }
+
+        for (program, event) in [
+            ("tracepoint_readv_enter", "sys_enter_readv"),
+            ("tracepoint_readv_exit", "sys_exit_readv"),
+            ("tracepoint_writev_enter", "sys_enter_writev"),
+            ("tracepoint_writev_exit", "sys_exit_writev"),
+            ("tracepoint_splice_enter", "sys_enter_splice"),
+            ("tracepoint_splice_exit", "sys_exit_splice"),
+        ] {
+            attach_tracepoint(ebpf, program, "syscalls", event)?;
+        }
+        attach_tracepoint_with_fallback(
+            ebpf,
+            "tracepoint_sendfile_enter",
+            "syscalls",
+            &["sys_enter_sendfile64", "sys_enter_sendfile"],
+        )?;
+        attach_tracepoint_with_fallback(
+            ebpf,
+            "tracepoint_sendfile_exit",
+            "syscalls",
+            &["sys_exit_sendfile64", "sys_exit_sendfile"],
+        )?;
         Ok(())
     }
 
@@ -1216,6 +1239,38 @@ mod platform {
         program.load().map_err(module_error)?;
         program.attach(category, name).map_err(module_error)?;
         Ok(())
+    }
+
+    fn attach_tracepoint_with_fallback(
+        ebpf: &mut Ebpf,
+        program_name: &'static str,
+        category: &'static str,
+        names: &[&'static str],
+    ) -> CoreResult<()> {
+        let program: &mut TracePoint = ebpf
+            .program_mut(program_name)
+            .ok_or_else(|| CoreError::ModuleFailed {
+                module: "source.aya_network".to_string(),
+                message: format!("missing {program_name} program"),
+            })?
+            .try_into()
+            .map_err(module_error)?;
+        program.load().map_err(module_error)?;
+
+        let mut failures = Vec::with_capacity(names.len());
+        for name in names {
+            match program.attach(category, name) {
+                Ok(_) => return Ok(()),
+                Err(err) => failures.push(format!("{name}: {err}")),
+            }
+        }
+        Err(CoreError::ModuleFailed {
+            module: "source.aya_network".to_string(),
+            message: format!(
+                "failed to attach {program_name} to any supported tracepoint ({})",
+                failures.join(", ")
+            ),
+        })
     }
 
     async fn join_reader_handles(handles: Vec<JoinHandle<()>>) -> CoreResult<()> {
