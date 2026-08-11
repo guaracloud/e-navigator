@@ -94,14 +94,14 @@ mod platform {
         load_ebpf_with(config, profile, module, |_| {})
     }
 
-    pub(crate) fn load_ebpf_with(
+    pub(crate) fn load_ebpf_with<'loader>(
         config: &EbpfConfig,
         profile: SourceMapProfile,
         module: &'static str,
-        configure: impl FnOnce(&mut EbpfLoader<'_>),
+        configure: impl FnOnce(&mut EbpfLoader<'loader>),
     ) -> CoreResult<(Ebpf, ResolvedEventTransport)> {
         let transport = resolve_event_transport(config, module)?;
-        let mut loader = EbpfLoader::new();
+        let mut loader: EbpfLoader<'loader> = EbpfLoader::new();
         configure(&mut loader);
         crate::ebpf_maps::constrain_unrelated_maps(&mut loader, profile);
         crate::ebpf_maps::configure_event_transport_maps(

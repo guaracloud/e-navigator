@@ -31,6 +31,7 @@ ring-buffer = []
 
 [dependencies]
 aya-ebpf = { workspace = true }
+e-navigator-context-propagation = { path = "../e-navigator-context-propagation" }
 
 [[bin]]
 name = "e-navigator-ebpf-programs"

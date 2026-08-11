@@ -9,6 +9,7 @@ members = [
   "crates/e-navigator-ebpf-programs",
   "crates/e-navigator-signals",
   "crates/e-navigator-protocol",
+  "crates/e-navigator-context-propagation",
   "crates/e-navigator-profiling",
   "crates/e-navigator-sinks",
   "crates/e-navigator-sources-host",
@@ -23,6 +24,7 @@ default-members = [
   "crates/e-navigator-runner",
   "crates/e-navigator-signals",
   "crates/e-navigator-protocol",
+  "crates/e-navigator-context-propagation",
   "crates/e-navigator-profiling",
   "crates/e-navigator-sinks",
   "crates/e-navigator-sources-host",
@@ -53,6 +55,7 @@ bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 criterion = "0.5"
 flate2 = "1"
+getrandom = "0.3"
 iced-x86 = { version = "1.21", default-features = false, features = ["decoder", "std"] }
 inotify = "0.11.4"
 libc = "0.2"

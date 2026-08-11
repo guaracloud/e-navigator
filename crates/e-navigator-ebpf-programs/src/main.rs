@@ -17,23 +17,33 @@ use aya_ebpf::maps::RingBuf;
 use aya_ebpf::maps::{PerfEventArray, PerfEventByteArray};
 use aya_ebpf::{
     EbpfContext, Global,
-    bindings::{BPF_F_USER_STACK, bpf_pidns_info},
+    bindings::{
+        BPF_F_USER_STACK, BPF_NOEXIST, BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB, bpf_pidns_info,
+        sk_action::{SK_DROP, SK_PASS},
+    },
     helpers::{
         bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_get_stack,
         bpf_ktime_get_ns, bpf_probe_read_user, bpf_probe_read_user_buf,
         bpf_probe_read_user_str_bytes,
         generated::{
             bpf_get_current_cgroup_id, bpf_get_current_task_btf, bpf_get_ns_current_pid_tgid,
-            bpf_probe_read_kernel, bpf_probe_read_user as bpf_probe_read_user_raw,
-            bpf_task_pt_regs,
+            bpf_get_socket_cookie, bpf_probe_read_kernel,
+            bpf_probe_read_user as bpf_probe_read_user_raw, bpf_task_pt_regs,
         },
     },
-    macros::{fexit, map, perf_event, tracepoint, uprobe, uretprobe},
-    maps::{Array, HashMap, LruHashMap, PerCpuArray, ProgramArray},
-    programs::{FExitContext, PerfEventContext, ProbeContext, RetProbeContext, TracePointContext},
+    macros::{fexit, map, perf_event, sk_msg, sock_ops, tracepoint, uprobe, uretprobe},
+    maps::{Array, HashMap, LruHashMap, PerCpuArray, ProgramArray, Queue, SockHash},
+    programs::{
+        FExitContext, PerfEventContext, ProbeContext, RetProbeContext, SkMsgContext,
+        SockOpsContext, TracePointContext,
+    },
 };
 use capture_policy::{CAPTURE_FILTER_DISABLED, capture_allowed, listener_metadata_allowed};
 use dns_peer::is_dns_ipv4_peer;
+use e_navigator_context_propagation::{
+    PropagationDecision, TraceContext, extract_traceparent, format_traceparent_header,
+    plan_http1_propagation,
+};
 
 /// Source-stage diagnostics are intentionally opt-in. The userspace loader
 /// overrides this read-only global before loading an object when diagnostic
@@ -41,6 +51,15 @@ use dns_peer::is_dns_ipv4_peer;
 /// several counter-map writes for every captured syscall in production.
 #[unsafe(no_mangle)]
 static SOURCE_DIAGNOSTICS_ENABLED: Global<u8> = Global::new(0);
+
+/// Cleartext HTTP/1 propagation is opt-in because attaching SK_MSG changes
+/// application traffic and has a deliberately narrower support contract than
+/// passive capture.
+#[unsafe(no_mangle)]
+static HTTP_CONTEXT_PROPAGATION_ENABLED: Global<u8> = Global::new(0);
+
+#[unsafe(no_mangle)]
+static HTTP_CONTEXT_PROPAGATION_TTL_NANOS: Global<u64> = Global::new(30_000_000_000);
 
 const EXECUTABLE_LEN: usize = 256;
 const MAX_ARGS: usize = 8;
@@ -74,6 +93,18 @@ const HTTP_DIAG_INBOUND_OUTPUT_ATTEMPT: u32 = 17;
 const HTTP_DIAG_SERVER_WRITE_SUPPRESSED: u32 = 18;
 const HTTP_DIAG_NON_HTTP_CONNECTION_SKIP: u32 = 19;
 const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 20;
+const HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN: u32 = 10;
+const HTTP_PROPAGATION_DIAG_SOCKET_TRACKED: u32 = 0;
+const HTTP_PROPAGATION_DIAG_SOCKET_TRACK_FAILED: u32 = 1;
+const HTTP_PROPAGATION_DIAG_PLANNED: u32 = 2;
+const HTTP_PROPAGATION_DIAG_INJECTED: u32 = 3;
+const HTTP_PROPAGATION_DIAG_BYPASSED: u32 = 4;
+const HTTP_PROPAGATION_DIAG_CONTEXT_POOL_EMPTY: u32 = 5;
+const HTTP_PROPAGATION_DIAG_PENDING_CONTENDED: u32 = 6;
+const HTTP_PROPAGATION_DIAG_PUSH_FAILED: u32 = 7;
+const HTTP_PROPAGATION_DIAG_POST_PUSH_BOUNDS_FAILED: u32 = 8;
+const HTTP_PROPAGATION_DIAG_THREAD_CONTEXT_FAILED: u32 = 9;
+const HTTP_PROPAGATION_GENERATED: u32 = 1;
 
 /// First captured payload not yet inspected for an HTTP/1 request start.
 const HTTP_CONN_UNKNOWN: u32 = 0;
@@ -438,6 +469,17 @@ pub struct RawDnsEvent {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct RawHttpPropagationContext {
+    pub state: u32,
+    pub trace_id: [u8; 16],
+    pub span_id: [u8; 8],
+    pub parent_span_id: [u8; 8],
+    pub trace_flags: u8,
+    pub reserved: [u8; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct RawHttpRequestEvent {
     pub pid: u32,
     pub uid: u32,
@@ -457,8 +499,17 @@ pub struct RawHttpRequestEvent {
     /// larger than `request_len` is an explicit reassembly gap.
     pub request_total_len: u32,
     pub request_iovec_lens: [u16; HTTP_MAX_IOVECS],
+    pub propagation: RawHttpPropagationContext,
     pub command: [u8; 16],
     pub request: [u8; HTTP_REQUEST_BYTES],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HttpThreadTraceContext {
+    pub context: TraceContext,
+    pub reserved: [u8; 7],
+    pub started_at_nanos: u64,
 }
 
 #[repr(C)]
@@ -901,6 +952,35 @@ static DNS_EVENT_SCRATCH: PerCpuArray<RawDnsEvent> = PerCpuArray::with_max_entri
 static HTTP_REQUEST_EVENT_SCRATCH: PerCpuArray<RawHttpRequestEvent> =
     PerCpuArray::with_max_entries(1, 0);
 
+/// CSPRNG-generated contexts supplied and continuously replenished by the
+/// userspace loader. The kernel consumes each element at most once.
+#[map]
+static HTTP_PROPAGATION_CONTEXTS: Queue<TraceContext> = Queue::with_max_entries(4096, 0);
+
+/// Active client TCP sockets selected by the opt-in plaintext port allowlist.
+#[map]
+static HTTP_PROPAGATION_SOCKETS: SockHash<u64> = SockHash::with_max_entries(8192, 0);
+
+/// One in-flight eligible write per calling thread. `BPF_NOEXIST` preserves
+/// the older request if the same thread somehow overlaps socket writes.
+#[map]
+static PENDING_HTTP_PROPAGATIONS: HashMap<u64, RawHttpRequestEvent> =
+    HashMap::with_max_entries(4096, HASH_MAP_NO_PREALLOC);
+
+/// Best-effort same-thread continuation for synchronous request handlers.
+/// Async/thread-hop runtimes are an explicit nonclaim.
+#[map]
+static HTTP_THREAD_TRACE_CONTEXTS: LruHashMap<u64, HttpThreadTraceContext> =
+    LruHashMap::with_max_entries(8192, 0);
+
+#[map]
+static HTTP_PROPAGATION_PORTS: HashMap<u16, u8> =
+    HashMap::with_max_entries(32, HASH_MAP_NO_PREALLOC);
+
+#[map]
+static HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
+    PerCpuArray::with_max_entries(HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN, 0);
+
 #[map]
 static ARGV_CAPTURE_ENABLED: Array<u32> = Array::with_max_entries(1, 0);
 
@@ -1188,6 +1268,36 @@ pub fn tracepoint_http_sendmsg_enter(ctx: TracePointContext) -> u32 {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
+}
+
+#[tracepoint]
+pub fn tracepoint_http_write_exit(ctx: TracePointContext) -> u32 {
+    flush_pending_http_propagation(&ctx)
+}
+
+#[tracepoint]
+pub fn tracepoint_http_writev_exit(ctx: TracePointContext) -> u32 {
+    flush_pending_http_propagation(&ctx)
+}
+
+#[tracepoint]
+pub fn tracepoint_http_sendto_exit(ctx: TracePointContext) -> u32 {
+    flush_pending_http_propagation(&ctx)
+}
+
+#[tracepoint]
+pub fn tracepoint_http_sendmsg_exit(ctx: TracePointContext) -> u32 {
+    flush_pending_http_propagation(&ctx)
+}
+
+#[sock_ops]
+pub fn sockops_http_context_propagation(ctx: SockOpsContext) -> u32 {
+    try_sockops_http_context_propagation(&ctx)
+}
+
+#[sk_msg]
+pub fn sk_msg_http_context_propagation(ctx: SkMsgContext) -> u32 {
+    try_sk_msg_http_context_propagation(&ctx)
 }
 
 #[tracepoint]
@@ -3828,6 +3938,276 @@ fn track_connected_tcp_exit(ctx: &TracePointContext) -> Result<bool, i64> {
     Ok(true)
 }
 
+#[inline(always)]
+fn http_context_propagation_enabled() -> bool {
+    HTTP_CONTEXT_PROPAGATION_ENABLED.load() != 0
+}
+
+fn try_sockops_http_context_propagation(ctx: &SockOpsContext) -> u32 {
+    if !http_context_propagation_enabled()
+        || ctx.op() != BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB as u32
+        || (ctx.family() != AF_INET && ctx.family() != AF_INET6)
+    {
+        return 0;
+    }
+    if !cgroup_capture_allowed(current_cgroup_id()) {
+        record_capture_filter_drop();
+        return 0;
+    }
+    // `bpf_sock_ops.remote_port` is a 32-bit network-order port. This is
+    // equivalent to the kernel samples' `bpf_ntohl(remote_port)` conversion.
+    let remote_port = u32::from_be(ctx.remote_port()) as u16;
+    if unsafe { HTTP_PROPAGATION_PORTS.get(&remote_port) }.is_none() {
+        return 0;
+    }
+    let cookie = unsafe { bpf_get_socket_cookie(ctx.as_ptr()) };
+    if cookie == 0 {
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_SOCKET_TRACK_FAILED);
+        return 0;
+    }
+    let mut key = cookie;
+    let ops = unsafe { &mut *ctx.ops };
+    if HTTP_PROPAGATION_SOCKETS.update(&mut key, ops, 0).is_ok() {
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_SOCKET_TRACKED);
+    } else {
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_SOCKET_TRACK_FAILED);
+    }
+    0
+}
+
+fn try_sk_msg_http_context_propagation(ctx: &SkMsgContext) -> u32 {
+    if !http_context_propagation_enabled() {
+        return SK_PASS as u32;
+    }
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let pending = match PENDING_HTTP_PROPAGATIONS.get_ptr_mut(&pid_tgid) {
+        Some(pending) => unsafe { &mut *pending },
+        None => return SK_PASS as u32,
+    };
+    let size = ctx.size() as usize;
+    let data = ctx.data();
+    let data_end = ctx.data_end();
+    if size == 0
+        || size != pending.request_total_len as usize
+        || data.checked_add(size).is_none_or(|end| end > data_end)
+    {
+        finish_pending_http_propagation(ctx, pid_tgid, false);
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_BYPASSED);
+        return SK_PASS as u32;
+    }
+    let message = unsafe { core::slice::from_raw_parts(data as *const u8, size) };
+    let pending_len = pending.request_len as usize;
+    if pending_len > HTTP_REQUEST_BYTES {
+        finish_pending_http_propagation(ctx, pid_tgid, false);
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_BYPASSED);
+        return SK_PASS as u32;
+    }
+    let pending_message = &pending.request[..pending_len];
+    let (message_insert_at, pending_insert_at) = match (
+        plan_http1_propagation(message),
+        plan_http1_propagation(pending_message),
+    ) {
+        (
+            PropagationDecision::Inject {
+                insert_at: message_insert_at,
+            },
+            PropagationDecision::Inject {
+                insert_at: pending_insert_at,
+            },
+        ) => (message_insert_at, pending_insert_at),
+        _ => {
+            finish_pending_http_propagation(ctx, pid_tgid, false);
+            record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_BYPASSED);
+            return SK_PASS as u32;
+        }
+    };
+    if message_insert_at != pending_insert_at {
+        finish_pending_http_propagation(ctx, pid_tgid, false);
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_BYPASSED);
+        return SK_PASS as u32;
+    }
+    let context = TraceContext {
+        trace_id: pending.propagation.trace_id,
+        span_id: pending.propagation.span_id,
+        trace_flags: pending.propagation.trace_flags,
+    };
+    let header = format_traceparent_header(context);
+    if ctx
+        .push_data(message_insert_at as u32, header.len() as u32, 0)
+        .is_err()
+    {
+        finish_pending_http_propagation(ctx, pid_tgid, false);
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_PUSH_FAILED);
+        return SK_PASS as u32;
+    }
+
+    // `bpf_msg_push_data` invalidates direct packet pointers. Reload and
+    // prove the complete inserted span before the first write. If the kernel
+    // cannot expose the pushed bytes linearly, dropping is the only safe way
+    // to avoid transmitting uninitialized memory.
+    let data = ctx.data();
+    let data_end = ctx.data_end();
+    let header_end = match data
+        .checked_add(message_insert_at)
+        .and_then(|start| start.checked_add(header.len()))
+    {
+        Some(end) => end,
+        None => {
+            finish_pending_http_propagation(ctx, pid_tgid, false);
+            record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_POST_PUSH_BOUNDS_FAILED);
+            return SK_DROP as u32;
+        }
+    };
+    if header_end > data_end {
+        finish_pending_http_propagation(ctx, pid_tgid, false);
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_POST_PUSH_BOUNDS_FAILED);
+        return SK_DROP as u32;
+    }
+    let target = (data + message_insert_at) as *mut [u8; 70];
+    unsafe {
+        *target = header;
+    }
+    finish_pending_http_propagation(ctx, pid_tgid, true);
+    record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_INJECTED);
+    SK_PASS as u32
+}
+
+fn prepare_http_context_propagation(event: &mut RawHttpRequestEvent) -> bool {
+    if !http_context_propagation_enabled()
+        || event.request_len == 0
+        || event.request_len != event.request_total_len
+        || event.request_len as usize > HTTP_REQUEST_BYTES
+    {
+        return false;
+    }
+    let message = &event.request[..event.request_len as usize];
+    if !matches!(
+        plan_http1_propagation(message),
+        PropagationDecision::Inject { .. }
+    ) {
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_BYPASSED);
+        return false;
+    }
+    let seed = match HTTP_PROPAGATION_CONTEXTS.pop() {
+        Ok(Some(seed)) => seed,
+        _ => {
+            record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_CONTEXT_POOL_EMPTY);
+            return false;
+        }
+    };
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let now = unsafe { bpf_ktime_get_ns() };
+    let mut context = seed;
+    let mut parent_span_id = [0_u8; 8];
+    if let Some(current) = unsafe { HTTP_THREAD_TRACE_CONTEXTS.get(&pid_tgid) } {
+        let ttl = HTTP_CONTEXT_PROPAGATION_TTL_NANOS.load();
+        if now.saturating_sub(current.started_at_nanos) <= ttl {
+            context.trace_id = current.context.trace_id;
+            context.trace_flags = current.context.trace_flags;
+            parent_span_id = current.context.span_id;
+        } else {
+            let _ = HTTP_THREAD_TRACE_CONTEXTS.remove(&pid_tgid);
+        }
+    }
+    event.propagation = RawHttpPropagationContext {
+        state: HTTP_PROPAGATION_GENERATED,
+        trace_id: context.trace_id,
+        span_id: context.span_id,
+        parent_span_id,
+        trace_flags: context.trace_flags,
+        reserved: [0; 3],
+    };
+    if PENDING_HTTP_PROPAGATIONS
+        .insert(&pid_tgid, &*event, BPF_NOEXIST as u64)
+        .is_err()
+    {
+        event.propagation = empty_raw_http_propagation_context();
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_PENDING_CONTENDED);
+        return false;
+    }
+    record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_PLANNED);
+    true
+}
+
+fn activate_inbound_http_context(event: &mut RawHttpRequestEvent) {
+    if !http_context_propagation_enabled()
+        || event.request_len == 0
+        || event.request_len != event.request_total_len
+        || event.request_len as usize > HTTP_REQUEST_BYTES
+    {
+        return;
+    }
+    let message = &event.request[..event.request_len as usize];
+    let Some(remote_parent) = extract_traceparent(message) else {
+        return;
+    };
+    let seed = match HTTP_PROPAGATION_CONTEXTS.pop() {
+        Ok(Some(seed)) => seed,
+        _ => {
+            record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_CONTEXT_POOL_EMPTY);
+            return;
+        }
+    };
+    let server_context = TraceContext {
+        trace_id: remote_parent.trace_id,
+        span_id: seed.span_id,
+        trace_flags: remote_parent.trace_flags,
+    };
+    event.propagation = RawHttpPropagationContext {
+        state: HTTP_PROPAGATION_GENERATED,
+        trace_id: server_context.trace_id,
+        span_id: server_context.span_id,
+        parent_span_id: remote_parent.span_id,
+        trace_flags: server_context.trace_flags,
+        reserved: [0; 3],
+    };
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let thread_context = HttpThreadTraceContext {
+        context: server_context,
+        reserved: [0; 7],
+        started_at_nanos: unsafe { bpf_ktime_get_ns() },
+    };
+    if HTTP_THREAD_TRACE_CONTEXTS
+        .insert(&pid_tgid, &thread_context, 0)
+        .is_err()
+    {
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_THREAD_CONTEXT_FAILED);
+    }
+}
+
+fn clear_current_http_thread_context() {
+    if http_context_propagation_enabled() {
+        let _ = HTTP_THREAD_TRACE_CONTEXTS.remove(&bpf_get_current_pid_tgid());
+    }
+}
+
+fn finish_pending_http_propagation<C: EbpfContext>(ctx: &C, pid_tgid: u64, injected: bool) {
+    if let Some(pending) = PENDING_HTTP_PROPAGATIONS.get_ptr_mut(&pid_tgid) {
+        let pending = unsafe { &mut *pending };
+        if !injected {
+            pending.propagation = empty_raw_http_propagation_context();
+        }
+        output_http_request_event(ctx, pending);
+    }
+    let _ = PENDING_HTTP_PROPAGATIONS.remove(&pid_tgid);
+}
+
+fn flush_pending_http_propagation(ctx: &TracePointContext) -> u32 {
+    if http_context_propagation_enabled() {
+        finish_pending_http_propagation(ctx, bpf_get_current_pid_tgid(), false);
+    }
+    0
+}
+
+#[inline(always)]
+fn record_http_propagation_diagnostic(stage: u32) {
+    if let Some(counter) = HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS.get_ptr_mut(stage) {
+        unsafe {
+            *counter = (*counter).wrapping_add(1);
+        }
+    }
+}
+
 fn emit_http_request_event(
     ctx: &TracePointContext,
     fd: i32,
@@ -3859,6 +4239,7 @@ fn emit_http_request_event(
     // the request decoder produced two false invalid samples for many Python
     // responses (header and body writes) for every real inbound request.
     if connection.role != CONNECTION_ROLE_CLIENT {
+        clear_current_http_thread_context();
         record_http_diagnostic(HTTP_DIAG_SERVER_WRITE_SUPPRESSED);
         return Ok(0);
     }
@@ -3890,6 +4271,9 @@ fn emit_http_request_event(
         return Ok(0);
     }
     record_http_diagnostic(HTTP_DIAG_COPY_SUCCESS);
+    if prepare_http_context_propagation(event) {
+        return Ok(0);
+    }
     record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
     output_http_request_event(ctx, event);
     Ok(0)
@@ -3961,6 +4345,7 @@ fn emit_http_request_iovecs_event(
         return Ok(0);
     }
     if connection.role != CONNECTION_ROLE_CLIENT {
+        clear_current_http_thread_context();
         record_http_diagnostic(HTTP_DIAG_SERVER_WRITE_SUPPRESSED);
         return Ok(0);
     }
@@ -4313,6 +4698,7 @@ fn try_tracepoint_http_read_exit(ctx: &TracePointContext) -> Result<u32, i64> {
         return Ok(0);
     }
     record_http_diagnostic(HTTP_DIAG_COPY_SUCCESS);
+    activate_inbound_http_context(event);
     record_http_diagnostic(HTTP_DIAG_INBOUND_OUTPUT_ATTEMPT);
     record_http_diagnostic(HTTP_DIAG_OUTPUT_ATTEMPT);
     output_http_request_event(ctx, event);
@@ -5355,7 +5741,7 @@ fn http_request_capture_span(event: &RawHttpRequestEvent) -> usize {
 }
 
 #[inline(always)]
-fn output_http_request_event(ctx: &TracePointContext, event: &RawHttpRequestEvent) {
+fn output_http_request_event<C: EbpfContext>(ctx: &C, event: &RawHttpRequestEvent) {
     let prefix_len = core::mem::offset_of!(RawHttpRequestEvent, request);
     let output_len = prefix_len + http_request_capture_span(event);
     let bytes = unsafe {
@@ -5386,8 +5772,21 @@ fn http_request_event_scratch() -> Result<&'static mut RawHttpRequestEvent, i64>
     event.request_len = 0;
     event.request_total_len = 0;
     event.request_iovec_lens = [0; HTTP_MAX_IOVECS];
+    event.propagation = empty_raw_http_propagation_context();
     event.command = [0; 16];
     Ok(event)
+}
+
+#[inline(always)]
+const fn empty_raw_http_propagation_context() -> RawHttpPropagationContext {
+    RawHttpPropagationContext {
+        state: 0,
+        trace_id: [0; 16],
+        span_id: [0; 8],
+        parent_span_id: [0; 8],
+        trace_flags: 0,
+        reserved: [0; 3],
+    }
 }
 
 #[inline(always)]
