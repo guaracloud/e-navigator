@@ -10,7 +10,7 @@ Status: passed, scoped local smoke
 - Kernel: `7.0.11-orbstack-00360-gc9bc4d96ac70`
 - Architecture: `aarch64`
 - Local image id:
-  `sha256:ce8321b6964f18c2f0c84ffb9af9d75b259159aafb34e6a9022d9ec845812639`
+  `sha256:5fa7089fe0c60ff6db6552fc7e52638bce76bece5046b657ee410b844e63b2c9`
 - Pinned builder: `rust:1.96-bookworm` with
   `nightly-2026-07-01` for eBPF and `bpf-linker 0.10.3`
 
