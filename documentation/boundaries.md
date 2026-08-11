@@ -181,6 +181,13 @@ E-Navigator does not currently claim:
 - live native `network.flow.bytes` or `network.peer.flow.bytes` export from
   traffic after the native metric migration, including directional owner
   attribution, overflow, churn, and warning proof;
+- general io_uring or `sendmmsg`/`recvmmsg` byte accounting. The local Node 20
+  transport qualification observed covered vectored syscalls and no io_uring
+  use, while a privileged OrbStack smoke proved exact `readv`/`writev`,
+  `sendfile`, and bidirectional `splice` totals. io_uring submission and
+  completion are decoupled, fixed-file and SQPOLL modes do not preserve the
+  current tgid/fd identity seam, and message-batch syscall returns are message
+  counts rather than byte counts;
 - privileged verifier, attachment, or live-wire proof for the disabled-by-default
   plaintext HTTP/1 `traceparent` injector. It does not claim TLS, HTTP/2/gRPC,
   HTTP/3/QUIC, segmented or iovec writes, request bodies, connections predating

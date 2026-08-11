@@ -1,0 +1,30 @@
+log_level = "debug"
+queue_capacity = 1024
+
+[ebpf]
+event_transport = "perf_buffer"
+network_io_hook = "tracepoint"
+
+[attribution]
+procfs_root = "/host/proc"
+cgroup_root = "/host/cgroup"
+
+[attribution.kubernetes]
+enabled = false
+
+[network_metrics]
+max_metric_keys = 128
+max_active_connections = 128
+active_flow_snapshot_interval_millis = 250
+peer_series_idle_timeout_millis = 250
+
+[json_stdout]
+mode = "all"
+
+[[modules]]
+name = "source.aya_network"
+enabled = true
+
+[[modules]]
+name = "sink.json_stdout"
+enabled = true

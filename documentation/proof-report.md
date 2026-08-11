@@ -778,6 +778,14 @@ These areas remain explicitly partial:
   live soaks are not proven.
 - **DNS capture:** selected UDP paths work, but symmetric all-node capture and
   lossless DNS coverage are not proven.
+- **Network byte accounting:** a privileged local OrbStack
+  `7.0.11-orbstack-00360-gc9bc4d96ac70` run proved exact active-snapshot and
+  close totals across `readv`, `writev`, `sendfile`, and both `splice`
+  directions. A Node `20.20.2` strace observed a covered vectored transport and
+  no io_uring syscall. This evidence is recorded in
+  [`proof/network-io-20260811/report.md`](proof/network-io-20260811/report.md).
+  Other kernels/runtimes, io_uring, and message-batch accounting remain
+  unproven or explicit non-claims.
 - **CPU, off-CPU, and lock profiling:** exact CPython 3.11/3.12 interpreter
   walks, selected periodic samples and sessions, three homelab repetitions of
   bounded scheduler off-CPU and futex-wait profiles, local pprof rendering, and

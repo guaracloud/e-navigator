@@ -694,6 +694,10 @@ pub struct PendingNetworkIo {
     pub tgid: u32,
     pub fd: i32,
     pub direction: u32,
+    /// A splice can move bytes between two tracked sockets. Ordinary I/O uses
+    /// `-1` and direction zero for this slot.
+    pub secondary_fd: i32,
+    pub secondary_direction: u32,
 }
 
 #[repr(C)]
@@ -1564,6 +1568,70 @@ pub fn tracepoint_write_enter(ctx: TracePointContext) -> u32 {
 
 #[tracepoint]
 pub fn tracepoint_write_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_io_exit(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_readv_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_io_enter(&ctx, NETWORK_IO_READ) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_readv_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_io_exit(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_writev_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_io_enter(&ctx, NETWORK_IO_WRITE) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_writev_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_io_exit(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_sendfile_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_io_enter(&ctx, NETWORK_IO_WRITE) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_sendfile_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_io_exit(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_splice_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_splice_enter(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_splice_exit(ctx: TracePointContext) -> u32 {
     match try_tracepoint_network_io_exit(&ctx) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
@@ -3897,23 +3965,66 @@ fn try_tracepoint_http_sendmsg_enter(ctx: TracePointContext) -> Result<u32, i64>
 fn try_tracepoint_network_io_enter(ctx: &TracePointContext, direction: u32) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
-    let key = ConnectionKey {
-        tgid: (pid_tgid >> 32) as u32,
-        fd,
-    };
+    try_track_network_io(pid_tgid, fd, direction, -1, 0)
+}
+
+fn try_tracepoint_network_splice_enter(ctx: &TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let tgid = (pid_tgid >> 32) as u32;
+    let input_fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let output_fd = unsafe { ctx.read_at::<i32>(32) }.map_err(|err| err as i64)?;
+    let input_tracked = network_connection_tracked(tgid, input_fd);
+    let output_tracked = network_connection_tracked(tgid, output_fd);
+
+    if input_tracked {
+        let (secondary_fd, secondary_direction) = if output_tracked {
+            (output_fd, NETWORK_IO_WRITE)
+        } else {
+            (-1, 0)
+        };
+        return try_track_network_io(
+            pid_tgid,
+            input_fd,
+            NETWORK_IO_READ,
+            secondary_fd,
+            secondary_direction,
+        );
+    }
+    if output_tracked {
+        return try_track_network_io(pid_tgid, output_fd, NETWORK_IO_WRITE, -1, 0);
+    }
+    Ok(0)
+}
+
+fn try_track_network_io(
+    pid_tgid: u64,
+    fd: i32,
+    direction: u32,
+    secondary_fd: i32,
+    secondary_direction: u32,
+) -> Result<u32, i64> {
+    let tgid = (pid_tgid >> 32) as u32;
+    let key = ConnectionKey { tgid, fd };
     if unsafe { ACTIVE_CONNECTIONS.get(&key) }.is_none() {
         return Ok(0);
     }
 
     let pending = PendingNetworkIo {
-        tgid: key.tgid,
+        tgid,
         fd,
         direction,
+        secondary_fd,
+        secondary_direction,
     };
     PENDING_NETWORK_IO
         .insert(&pid_tgid, &pending, 0)
         .map_err(|err| err as i64)?;
     Ok(0)
+}
+
+fn network_connection_tracked(tgid: u32, fd: i32) -> bool {
+    let key = ConnectionKey { tgid, fd };
+    unsafe { ACTIVE_CONNECTIONS.get(&key) }.is_some()
 }
 
 fn try_tracepoint_network_io_exit(ctx: &TracePointContext) -> Result<u32, i64> {
@@ -3935,6 +4046,8 @@ fn try_fexit_network_io(ctx: &FExitContext, direction: u32) -> Result<u32, i64> 
         tgid: (pid_tgid >> 32) as u32,
         fd,
         direction,
+        secondary_fd: -1,
+        secondary_direction: 0,
     };
     complete_network_io(pending, retval)
 }
@@ -3944,23 +4057,33 @@ fn complete_network_io(pending: PendingNetworkIo, retval: i64) -> Result<u32, i6
         return Ok(0);
     }
 
-    let key = ConnectionKey {
-        tgid: pending.tgid,
-        fd: pending.fd,
-    };
+    add_network_io_bytes(pending.tgid, pending.fd, pending.direction, retval as u64)?;
+    if pending.secondary_direction != 0 {
+        add_network_io_bytes(
+            pending.tgid,
+            pending.secondary_fd,
+            pending.secondary_direction,
+            retval as u64,
+        )?;
+    }
+    Ok(0)
+}
+
+fn add_network_io_bytes(tgid: u32, fd: i32, direction: u32, bytes: u64) -> Result<(), i64> {
+    let key = ConnectionKey { tgid, fd };
     let mut connection = match unsafe { ACTIVE_CONNECTIONS.get(&key) } {
         Some(value) => *value,
-        None => return Ok(0),
+        None => return Ok(()),
     };
-    if pending.direction == NETWORK_IO_WRITE {
-        connection.bytes_sent = connection.bytes_sent.saturating_add(retval as u64);
-    } else if pending.direction == NETWORK_IO_READ {
-        connection.bytes_received = connection.bytes_received.saturating_add(retval as u64);
+    if direction == NETWORK_IO_WRITE {
+        connection.bytes_sent = connection.bytes_sent.saturating_add(bytes);
+    } else if direction == NETWORK_IO_READ {
+        connection.bytes_received = connection.bytes_received.saturating_add(bytes);
     }
     ACTIVE_CONNECTIONS
         .insert(&key, &connection, 0)
         .map_err(|err| err as i64)?;
-    Ok(0)
+    Ok(())
 }
 
 fn track_connected_tcp_exit(ctx: &TracePointContext) -> Result<bool, i64> {
