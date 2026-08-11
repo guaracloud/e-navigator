@@ -33,7 +33,7 @@ pub use dns_metrics::DnsMetricsConfig;
 pub use dns_source::DnsSourceConfig;
 pub use ebpf::{EbpfConfig, EbpfEventTransport, EbpfNetworkIoHook};
 pub use error::{ConfigError, ConfigErrorKind, ConfigResult};
-pub use http_source::HttpSourceConfig;
+pub use http_source::{HttpContextPropagationConfig, HttpSourceConfig};
 pub use json_stdout::{JsonStdoutConfig, JsonStdoutMode};
 pub use kubernetes::KubernetesAttributionConfig;
 pub use modules::{

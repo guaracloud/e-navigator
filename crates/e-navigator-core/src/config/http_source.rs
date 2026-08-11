@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 use super::{ConfigError, ConfigResult};
 
@@ -17,6 +18,37 @@ pub struct HttpSourceConfig {
     /// tracking and read-side payload capture.
     #[serde(default)]
     pub inbound_enabled: bool,
+    /// Narrow, opt-in cleartext HTTP/1 W3C propagation. This contract does
+    /// not cover TLS or multiplexed HTTP versions.
+    #[serde(default)]
+    pub context_propagation: HttpContextPropagationConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpContextPropagationConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_plaintext_ports")]
+    pub plaintext_ports: Vec<u16>,
+    #[serde(default = "default_max_tracked_sockets")]
+    pub max_tracked_sockets: u32,
+    #[serde(default = "default_context_pool_capacity")]
+    pub context_pool_capacity: u32,
+    #[serde(default = "default_same_thread_context_ttl_millis")]
+    pub same_thread_context_ttl_millis: u64,
+}
+
+impl Default for HttpContextPropagationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            plaintext_ports: default_plaintext_ports(),
+            max_tracked_sockets: default_max_tracked_sockets(),
+            context_pool_capacity: default_context_pool_capacity(),
+            same_thread_context_ttl_millis: default_same_thread_context_ttl_millis(),
+        }
+    }
 }
 
 impl Default for HttpSourceConfig {
@@ -27,6 +59,7 @@ impl Default for HttpSourceConfig {
             max_attributes: default_http_source_max_attributes(),
             max_tracestate_bytes: default_http_source_max_tracestate_bytes(),
             inbound_enabled: false,
+            context_propagation: HttpContextPropagationConfig::default(),
         }
     }
 }
@@ -86,6 +119,80 @@ impl HttpSourceConfig {
                 "http_source.max_tracestate_bytes must be less than or equal to http_source.max_header_bytes",
             ));
         }
+        if self.context_propagation.enabled && !self.inbound_enabled {
+            return Err(ConfigError::invalid_value(
+                "http_source.context_propagation.enabled",
+                "http_source.context_propagation.enabled requires http_source.inbound_enabled = true so propagated server context can be continued",
+            ));
+        }
+        self.context_propagation.validate()?;
+        Ok(())
+    }
+}
+
+impl HttpContextPropagationConfig {
+    pub const MAX_PLAINTEXT_PORTS: usize = 32;
+    pub const MAX_TRACKED_SOCKETS_LIMIT: u32 = 65_536;
+    pub const MIN_CONTEXT_POOL_CAPACITY: u32 = 128;
+    pub const MAX_CONTEXT_POOL_CAPACITY: u32 = 65_536;
+    pub const MAX_SAME_THREAD_CONTEXT_TTL_MILLIS: u64 = 300_000;
+
+    fn validate(&self) -> ConfigResult<()> {
+        if self.plaintext_ports.is_empty() || self.plaintext_ports.len() > Self::MAX_PLAINTEXT_PORTS
+        {
+            return Err(ConfigError::invalid_value(
+                "http_source.context_propagation.plaintext_ports",
+                format!(
+                    "http_source.context_propagation.plaintext_ports must contain between 1 and {} ports",
+                    Self::MAX_PLAINTEXT_PORTS
+                ),
+            ));
+        }
+        if self.plaintext_ports.contains(&0) {
+            return Err(ConfigError::invalid_value(
+                "http_source.context_propagation.plaintext_ports",
+                "http_source.context_propagation.plaintext_ports must not contain port 0",
+            ));
+        }
+        if self.plaintext_ports.iter().collect::<BTreeSet<_>>().len() != self.plaintext_ports.len()
+        {
+            return Err(ConfigError::invalid_value(
+                "http_source.context_propagation.plaintext_ports",
+                "http_source.context_propagation.plaintext_ports must not contain duplicates",
+            ));
+        }
+        if !(1..=Self::MAX_TRACKED_SOCKETS_LIMIT).contains(&self.max_tracked_sockets) {
+            return Err(ConfigError::invalid_value(
+                "http_source.context_propagation.max_tracked_sockets",
+                format!(
+                    "http_source.context_propagation.max_tracked_sockets must be between 1 and {}",
+                    Self::MAX_TRACKED_SOCKETS_LIMIT
+                ),
+            ));
+        }
+        if !(Self::MIN_CONTEXT_POOL_CAPACITY..=Self::MAX_CONTEXT_POOL_CAPACITY)
+            .contains(&self.context_pool_capacity)
+        {
+            return Err(ConfigError::invalid_value(
+                "http_source.context_propagation.context_pool_capacity",
+                format!(
+                    "http_source.context_propagation.context_pool_capacity must be between {} and {}",
+                    Self::MIN_CONTEXT_POOL_CAPACITY,
+                    Self::MAX_CONTEXT_POOL_CAPACITY
+                ),
+            ));
+        }
+        if !(1..=Self::MAX_SAME_THREAD_CONTEXT_TTL_MILLIS)
+            .contains(&self.same_thread_context_ttl_millis)
+        {
+            return Err(ConfigError::invalid_value(
+                "http_source.context_propagation.same_thread_context_ttl_millis",
+                format!(
+                    "http_source.context_propagation.same_thread_context_ttl_millis must be between 1 and {}",
+                    Self::MAX_SAME_THREAD_CONTEXT_TTL_MILLIS
+                ),
+            ));
+        }
         Ok(())
     }
 }
@@ -104,4 +211,20 @@ fn default_http_source_max_attributes() -> usize {
 
 fn default_http_source_max_tracestate_bytes() -> usize {
     512
+}
+
+fn default_plaintext_ports() -> Vec<u16> {
+    vec![80, 8080]
+}
+
+const fn default_max_tracked_sockets() -> u32 {
+    8192
+}
+
+const fn default_context_pool_capacity() -> u32 {
+    4096
+}
+
+const fn default_same_thread_context_ttl_millis() -> u64 {
+    30_000
 }

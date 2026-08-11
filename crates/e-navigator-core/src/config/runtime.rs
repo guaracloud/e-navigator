@@ -206,6 +206,12 @@ impl RuntimeConfig {
         self.resource_source.validate()?;
         self.dns_source.validate()?;
         self.http_source.validate()?;
+        if self.http_source.context_propagation.enabled && !self.module_enabled("source.aya_http") {
+            return Err(ConfigError::invalid_value(
+                "http_source.context_propagation.enabled",
+                "http_source.context_propagation.enabled requires enabled source.aya_http module",
+            ));
+        }
         self.protocol_source.validate()?;
         if self.module_enabled("source.aya_http")
             && self.module_enabled("source.aya_protocol")

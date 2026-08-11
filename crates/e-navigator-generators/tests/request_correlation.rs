@@ -98,6 +98,34 @@ async fn client_capture_does_not_duplicate_propagating_span_identity() {
 }
 
 #[tokio::test]
+async fn e_navigator_injected_client_context_exports_the_owned_span() {
+    let generator = RequestCorrelationGenerator::default();
+    let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.role = Some(ProtocolCaptureRole::Client);
+    request.parent_span_id = Some("7a8b9c0d1e2f3041".to_string());
+    request.correlation_kind = TraceCorrelationKind::GeneratedTraceContext;
+
+    let outputs = observe(&generator, &signal).await;
+
+    let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
+        panic!("expected owned client span");
+    };
+    assert_eq!(
+        span.trace_id.as_deref(),
+        Some("4bf92f3577b34da6a3ce929d0e0e4736")
+    );
+    assert_eq!(span.span_id.as_deref(), Some("00f067aa0ba902b7"));
+    assert_eq!(span.parent_span_id.as_deref(), Some("7a8b9c0d1e2f3041"));
+    assert_eq!(
+        span.correlation_kind,
+        TraceCorrelationKind::GeneratedTraceContext
+    );
+}
+
+#[tokio::test]
 async fn redis_protocol_request_generates_named_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);

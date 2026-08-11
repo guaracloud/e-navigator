@@ -124,6 +124,7 @@ impl RequestCorrelationGenerator {
             && trace_context.trace_id.is_some()
             && trace_context.span_id.is_some()
             && trace_context.warning_type.is_none()
+            && request.correlation_kind != TraceCorrelationKind::GeneratedTraceContext
         {
             return Ok(Vec::new());
         }
@@ -454,7 +455,7 @@ fn trace_context(request: &ProtocolRequestObservation) -> RequestTraceContext {
                 trace_id: Some(trace_id.clone()),
                 span_id: Some(span_id.clone()),
                 warning_type: None,
-                generated: false,
+                generated: request.correlation_kind == TraceCorrelationKind::GeneratedTraceContext,
             };
         }
         if request.traceparent.is_none() {
@@ -473,7 +474,7 @@ fn trace_context(request: &ProtocolRequestObservation) -> RequestTraceContext {
                 trace_id: Some(context.trace_id),
                 span_id: Some(context.span_id),
                 warning_type: None,
-                generated: false,
+                generated: request.correlation_kind == TraceCorrelationKind::GeneratedTraceContext,
             },
             Err(_) => RequestTraceContext {
                 trace_id: None,
