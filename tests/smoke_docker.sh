@@ -133,6 +133,10 @@ name = "generator.network_metrics"
 enabled = true
 
 [[modules]]
+name = "generator.peer_flow_metrics"
+enabled = true
+
+[[modules]]
 name = "generator.dns_metrics"
 enabled = true
 

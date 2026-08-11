@@ -58,6 +58,7 @@ config:
 
     [attribution]
     procfs_root = "/host/proc"
+    cgroup_root = "/host/cgroup"
 
     [attribution.kubernetes]
     enabled = true
@@ -93,6 +94,16 @@ config:
     max_request_line_bytes = 1024
     max_attributes = 8
     max_tracestate_bytes = 512
+    inbound_enabled = false
+
+    [http_source.context_propagation]
+    # Active byte-stream mutation is disabled by default. Enable only after
+    # qualifying the target Linux kernel and plaintext HTTP/1 workload.
+    enabled = false
+    plaintext_ports = [80, 8080]
+    max_tracked_sockets = 8192
+    context_pool_capacity = 4096
+    same_thread_context_ttl_millis = 30000
 
     [cpu_profile_source]
     enabled = false
@@ -217,6 +228,10 @@ config:
 
     [[modules]]
     name = "generator.network_metrics"
+    enabled = true
+
+    [[modules]]
+    name = "generator.peer_flow_metrics"
     enabled = true
 
     [[modules]]

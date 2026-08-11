@@ -158,8 +158,13 @@ E-Navigator does not currently claim:
   changes while a connection is open still emits that connection's open/close
   events, though its L7/payload events re-check the live per-cgroup verdict);
 - lossless DNS or HTTP capture across every node and workload shape;
-- live native `network.flow.bytes` export from traffic after the native metric
-  migration, including flow-attribution warning proof;
+- live native `network.flow.bytes` or `network.peer.flow.bytes` export from
+  traffic after the native metric migration, including directional owner
+  attribution, overflow, churn, and warning proof;
+- privileged verifier, attachment, or live-wire proof for the disabled-by-default
+  plaintext HTTP/1 `traceparent` injector. It does not claim TLS, HTTP/2/gRPC,
+  HTTP/3/QUIC, segmented or iovec writes, request bodies, connections predating
+  attachment, async task/thread continuation, or universal kernel support;
 - production collector/backend compatibility beyond recorded local or
   namespace-local Collector proof;
 - a RingBuf performance win over the perf-event transport (the 2026-07-21

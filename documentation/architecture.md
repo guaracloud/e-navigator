@@ -30,6 +30,7 @@ disable registered modules, but it cannot load arbitrary code.
 | `e-navigator-core` | Module traits, runtime configuration, errors, capture policy, and pipeline contracts |
 | `e-navigator-signals` | Versioned signal envelopes and bounded signal models |
 | `e-navigator-protocol` | Bounded protocol parsing, stream reassembly, and trace-context parsing |
+| `e-navigator-context-propagation` | Allocation-free HTTP/1 propagation planning and W3C trace-context formatting shared by host and eBPF code |
 | `e-navigator-profiling` | Profile models, normalization, symbolization, JIT support, and unwind tables |
 | `e-navigator-sources-host` | Host resource observations from procfs, sysfs, and cgroups |
 | `e-navigator-sources-ebpf-aya` | Aya loaders, dual RingBuf/perf event readers, raw-event decoding, protocol capture, TLS uprobes, and CPU profiling |
@@ -84,6 +85,14 @@ and raw event decoding. Other workspace crates forbid unsafe code.
 An eBPF program compiling is not runtime proof. Kernel, capability, ABI,
 uprobe, perf-event, and workload differences require guarded Linux or
 Kubernetes evidence before a public capability claim changes.
+
+Active plaintext HTTP/1 propagation is a distinct mutation boundary inside the
+Aya HTTP source. Userspace supplies bounded CSPRNG contexts; cgroup `SOCK_OPS`
+selects capture-allowed active client sockets; `SK_MSG` inserts one fixed W3C
+header before TCP packetization. The passive source path, protocol parsers,
+request-correlation generator, and sinks remain separate modules. Configuration
+keeps mutation off by default, and [ADR 0015](adr/0015-peer-flow-metrics-and-opt-in-http1-propagation.md)
+defines every supported and bypassed request shape.
 
 ## Kubernetes Workload Control
 

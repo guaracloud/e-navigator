@@ -104,8 +104,8 @@
             version-gated unstripped Linux/amd64 Go <code>crypto/tls</code>
             uprobes (interception, not on-the-wire decryption), accounts for TCP
             retransmits, resets, and state transitions, samples and symbolizes
-            periodic CPU, scheduler off-CPU, and futex-wait lock profiles, and turns resource, trace, and security observations
-            into bounded native E-Navigator signals. An optional capture filter
+            periodic CPU, scheduler off-CPU, and futex-wait lock profiles, and turns resource, trace, peer-aware directional L4 bytes, and security observations
+            into bounded native E-Navigator signals. A disabled-by-default plaintext HTTP/1 path can inject W3C context for a strict, qualified subset; TLS, HTTP/2, HTTP/3, segmented writes, and async continuation remain explicit non-claims. An optional capture filter
             scopes which workloads are probed by Kubernetes namespace and label
             on unified cgroup v2 nodes. Bounded inotify discovery wakes the
             controller for new cgroups, while a 2-second polling reconciliation
@@ -185,7 +185,7 @@
           </article>
           <article class="status">
             <h3>Workload context on every signal</h3>
-            <p>Attribute runtime activity across hosts, processes, containers, namespaces, and Kubernetes workloads. Scope capture by namespace and labels for focused collection with explicit loss accounting.</p>
+            <p>Attribute runtime activity across hosts, processes, containers, namespaces, and Kubernetes workloads. Export bounded directional L4 bytes by stable source and destination workload owner, with explicit overflow instead of unbounded labels.</p>
           </article>
           <article class="status">
             <h3>Performance and security, unified</h3>

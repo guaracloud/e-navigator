@@ -63,6 +63,16 @@ max_header_bytes = 8192
 max_request_line_bytes = 1024
 max_attributes = 8
 max_tracestate_bytes = 512
+inbound_enabled = false
+
+[http_source.context_propagation]
+# Keep active mutation off until this exact kernel/workload combination has
+# passed the privileged qualification matrix in ADR 0015.
+enabled = false
+plaintext_ports = [80, 8080]
+max_tracked_sockets = 8192
+context_pool_capacity = 4096
+same_thread_context_ttl_millis = 30000
 
 [cpu_profile_source]
 enabled = false
@@ -184,6 +194,10 @@ enabled = true
 
 [[modules]]
 name = "generator.network_metrics"
+enabled = true
+
+[[modules]]
+name = "generator.peer_flow_metrics"
 enabled = true
 
 [[modules]]
