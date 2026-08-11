@@ -24,6 +24,9 @@ operational documentation. Start with the path that matches your goal.
   that keep runtime behavior and public claims aligned.
 - [Peer-flow and W3C propagation feasibility](feature-feasibility-peer-aware-flows-and-w3c-propagation.md),
   review the primary-source design analysis and rejected universal claims.
+- [Profiling parity feasibility](research/profiling-parity-feasibility.md),
+  review the evidence, support matrices, and non-intrusive implementation
+  limits for managed runtimes, kernel stacks, and allocation profiles.
 
 ## Evaluate And Contribute
 
@@ -61,6 +64,7 @@ operational documentation. Start with the path that matches your goal.
 - [ADR 0013, event-driven cgroup discovery](adr/0013-event-driven-cgroup-discovery.md)
 - [ADR 0014, controlled cumulative head-to-head benchmark](adr/0014-controlled-head-to-head-benchmark.md)
 - [ADR 0015, peer flow metrics and opt-in HTTP/1 propagation](adr/0015-peer-flow-metrics-and-opt-in-http1-propagation.md)
+- [ADR 0016, non-intrusive profiling parity](adr/0016-non-intrusive-profiling-parity.md)
 
 ## Source-Of-Truth Rules
 
