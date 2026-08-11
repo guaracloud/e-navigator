@@ -81,6 +81,15 @@ E-Navigator does not currently claim:
   their outermost function classify conservatively as `no_mapping`, and
   stacks that fill the configured budget are flagged and counted, never
   silently truncated);
+- broad runtime proof for the opt-in kernel-stack path (the separately
+  bounded raw ABI, combined decoder, typed frame domain, identity-bound
+  kallsyms cache, address-free restricted-symbol fallback, pprof, OTLP, and
+  accounting paths are implemented and locally tested. A privileged periodic
+  run verifier-loaded, attached, and emitted combined frames on the local
+  aarch64 OrbStack kernel. Off-CPU/futex semantics, other target kernels,
+  loss, and overhead remain unproven. The reduced capability profile omits
+  `SYSLOG`, so kernel names may remain `[kernel:unresolved]` even when capture
+  succeeds);
 - interpreter unwinding beyond exact CPython 3.11 and 3.12 layouts (other
   versions are counted as unsupported; Node/V8 and JVM generated-code names resolve only
   when the target runtime or its tooling publishes a bounded
@@ -93,11 +102,22 @@ E-Navigator does not currently claim:
   co_firstlineno are ever read from interpreter memory; the interpreter's
   own pid namespace is translated when the kernel allows, which is the
   containerized-workload case proven on the homelab);
+- representative non-intrusive managed-runtime support for Node/V8, HotSpot,
+  Ruby, PHP, .NET, or other customer runtimes (a bounded perf map can add names
+  only after the workload publishes one and cannot unwind opaque runtime
+  frames. Reliable support requires an independently implemented, versioned,
+  fail-closed runtime adapter and live architecture/build matrix for each
+  runtime. E-Navigator does not inject agents, change runtime flags, start
+  EventPipe or JFR, or copy GPL-licensed eBPF unwinders);
 - complete off-CPU, synchronization, or allocation profiling (the opt-in
   event-driven surface covers scheduler deschedule duration and
   `FUTEX_WAIT`/`FUTEX_WAIT_BITSET` duration with bounded state, thresholds,
   rate caps, and counters. It does not identify wakeup cause, lock owner,
-  spin locks, uncontended locks, non-futex primitives, or allocations);
+  spin locks, uncontended locks, non-futex primitives, or allocations. Generic
+  allocator uprobes would not describe managed allocations, live heap, or
+  retained objects. Alloy's eBPF component is a CPU profiler; its Java
+  allocation path uses an attach-based profiler and conflicts with the current
+  non-intrusive policy);
 - native DWARF coverage of every process on a heavily loaded node (the
   in-kernel unwind-table row pool is finite; the agent prioritizes
   processes it observes on-CPU and re-allocates the pool each refresh, but

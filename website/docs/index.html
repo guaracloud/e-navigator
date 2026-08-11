@@ -287,6 +287,17 @@ cargo run --locked -p e-navigator-cli -- \
               exposes native loss accounting.
             </p>
             <p>
+              Profiling remains disabled by default. Within
+              <code>[cpu_profile_source]</code>,
+              <code>kernel_stacks_enabled = true</code> adds a separately
+              bounded kernel stack, controlled by
+              <code>max_kernel_frames_per_sample</code>, without consuming the
+              user or interpreter frame budgets. Restricted kernel symbols
+              produce <code>[kernel:unresolved]</code> without a raw address.
+              Representative managed-runtime unwinders and allocation or heap
+              profiles are not claimed by this non-intrusive implementation.
+            </p>
+            <p>
               The same section defaults to
               <code>network_io_hook = "auto"</code>. It selects BTF-backed
               <code>ksys_read</code>/<code>ksys_write</code> fexit only after

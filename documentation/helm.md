@@ -135,10 +135,12 @@ module_name = "source.aya_cpu_profile"
 sample_frequency_hz = 49
 off_cpu_enabled = true
 lock_enabled = true
+kernel_stacks_enabled = true
 off_cpu_min_duration_micros = 1000
 lock_min_duration_micros = 1000
 max_off_cpu_events_per_second_per_cpu = 64
 max_lock_events_per_second_per_cpu = 64
+max_kernel_frames_per_sample = 64
 ```
 
 Each minimum duration must be 1 through 60,000,000 microseconds. Each event
@@ -150,6 +152,23 @@ requires a known architecture-specific futex syscall number. Unsupported or
 unreadable layouts fail source startup. Keep both modes disabled until their
 node-wide hook cost and expected signal volume have been measured on the target
 workload.
+
+`kernel_stacks_enabled` adds one separately bounded kernel stack to each
+eligible periodic, off-CPU, and futex-wait sample while retaining the existing
+managed-runtime and user frames. `max_kernel_frames_per_sample` accepts 1
+through 64 and does not consume the native user-frame budget. The raw event,
+normalizer, deterministic stack identity, pprof renderer, and OTLP Profiles
+dictionary keep kernel and user frame domains distinct. Kernel capture failure
+and depth truncation appear on the sample and in periodic profiling warnings.
+
+Kernel symbol names come from the host-mounted `/proc/kallsyms` snapshot. The
+compatibility capability profile includes `SYSLOG`; the reduced profile does
+not. When the kernel withholds addresses, E-Navigator emits the synthetic
+`[kernel:unresolved]` frame without a raw address and never changes
+`kptr_restrict`. Module churn is covered by a bounded periodic refresh, and a
+kernel identity change invalidates the snapshot at the next refresh. Keep kernel
+stacks disabled until the second helper call, larger event, transport loss,
+CPU cost, and RSS have been measured on the target kernels and workloads.
 `runtime_security.kubernetes_api_endpoints` must contain at most 32 entries.
 Filesystem path settings under `attribution`, `attribution.kubernetes`, and
 `resource_source` must be at most 4,096 bytes.
@@ -555,6 +574,12 @@ remains visible through the aggregate, perf, and RingBuf loss series. A
 duration-weighted sample has `sample_count = 1`, no periodic sampling interval,
 and `profiling.sample.weight_nanos`; pprof and OTLP Profiles retain that
 duration rather than multiplying it by the CPU sampling period.
+
+When kernel stacks are enabled, also monitor profiling warnings with
+`warning_type = "kernel_stack_capture_degraded"`. The warning attributes
+separate helper failures from stacks that filled the configured kernel-frame
+budget. A missing kernel symbol name is not a reason to expose its address;
+inspect the node's `kptr_restrict`, capability, and LSM posture instead.
 
 When the workload capture filter is enabled, the same namespace, label,
 process, and container policy is applied to host process and cgroup resource

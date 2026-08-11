@@ -49,6 +49,10 @@ labels. Monitor these categories:
 - when event-driven profiling is enabled, profile input, output, map/stack
   capture failure, replacement, below-minimum, rate-limited, and transport-loss
   totals.
+- when kernel stacks are enabled, `kernel_stack_capture_degraded` warnings and
+  their separate helper-failure and kernel-depth-truncation counts. Repeated
+  `[kernel:unresolved]` frames indicate symbol visibility, not permission to
+  change the node's `kptr_restrict` policy.
 - when HTTP context propagation is enabled, its periodic structured counters:
   socket tracking/failure, planned, injected, bypassed, context-pool empty,
   pending contention, push failure, post-push bounds failure, and thread-context

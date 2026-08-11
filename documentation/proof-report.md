@@ -636,6 +636,20 @@ Guarded Linux/Kubernetes runs have recorded these slices:
   perf-event program verifier-loaded on the OrbStack kernel after both
   changes. Local smoke proof only.
 
+- Live combined kernel and user CPU stacks on the local OrbStack Docker VM
+  (2026-08-11): the pinned Linux container build compiled both RingBuf and
+  perf-buffer eBPF objects. A privileged host-pid run on aarch64 kernel
+  `7.0.11-orbstack-00360-gc9bc4d96ac70` verifier-loaded and attached the
+  profiler, sampled a disposable busy-loop workload, retained both `user` and
+  `kernel` frame domains in one periodic profile, reported a positive kernel
+  frame count, and exported no kernel frame through the raw `ip:<address>`
+  fallback. The disposable pinned Pyroscope `1.20.3` ingest/query smoke also
+  passed after the OTLP frame-domain change with 40,000,000 ticks. Evidence and
+  non-claims are recorded in
+  [`proof/kernel-stack-20260811/report.md`](proof/kernel-stack-20260811/report.md).
+  This does not prove off-CPU/futex kernel-stack semantics, other kernels,
+  capability-reduced symbol names, overhead, soak, or production readiness.
+
 - Live in-kernel DWARF/CFI stack unwinding on the local OrbStack Docker VM
   (2026-07-06): with `.eh_frame` unwind tables built and registered for
   running processes, a `-fomit-frame-pointer` deep-recursion binary whose
