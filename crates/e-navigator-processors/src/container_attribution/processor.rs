@@ -359,6 +359,12 @@ impl ContainerAttributionProcessor {
                         .and_then(|address| self.kubernetes_context_for_pod_ip(address))
                 });
         }
+        if endpoint.namespace.is_none() {
+            endpoint.namespace = endpoint
+                .kubernetes
+                .as_ref()
+                .map(|context| context.namespace.clone());
+        }
         let owner = endpoint
             .kubernetes
             .as_ref()
@@ -370,6 +376,9 @@ impl ContainerAttributionProcessor {
                     .and_then(|address| self.kubernetes.owner_for_address(address))
             });
         if let Some(owner) = owner {
+            if endpoint.namespace.is_none() {
+                endpoint.namespace = Some(owner.namespace);
+            }
             if endpoint.owner_name.is_none() {
                 endpoint.owner_name = Some(owner.name);
             }

@@ -298,6 +298,7 @@ impl OtlpHttpSink {
                 && matches!(
                     &signal.payload,
                     SignalPayload::NetworkCounterMetric(_)
+                        | SignalPayload::NetworkPeerFlowMetric(_)
                         | SignalPayload::NetworkDurationMetric(_)
                         | SignalPayload::NetworkGaugeMetric(_)
                         | SignalPayload::DnsCounterMetric(_)

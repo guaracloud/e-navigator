@@ -5,6 +5,7 @@
 pub mod dependency_graph;
 pub mod dns_metrics;
 pub mod network_metrics;
+pub mod peer_flow_metrics;
 pub mod profiling;
 pub mod request_correlation;
 pub mod resource_metrics;
@@ -14,6 +15,7 @@ pub mod trace_correlation;
 pub use dependency_graph::DependencyGraphGenerator;
 pub use dns_metrics::DnsMetricsGenerator;
 pub use network_metrics::NetworkMetricsGenerator;
+pub use peer_flow_metrics::PeerFlowMetricsGenerator;
 pub use profiling::ProfilingGenerator;
 pub use request_correlation::RequestCorrelationGenerator;
 pub use resource_metrics::ResourceMetricsGenerator;

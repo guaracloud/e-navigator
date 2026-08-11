@@ -28,6 +28,7 @@ pub use exec::{
 };
 pub use metrics::{
     MetricAggregationWindow, NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric,
+    NetworkPeerFlowMetric, NetworkPeerIdentity,
 };
 pub use network::{
     DependencyEdgeEvent, DependencyEndpoint, NetworkAddressFamily, NetworkConnectionCloseEvent,

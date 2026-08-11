@@ -104,6 +104,8 @@ pub struct NetworkFlowWarning {
 pub struct NetworkFlowEndpoint {
     pub address: Option<String>,
     pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     pub owner_name: Option<String>,
     pub owner_type: Option<String>,
     pub container: Option<ContainerContext>,
@@ -322,6 +324,7 @@ pub(crate) fn sanitize_dependency_edge_event(event: &mut DependencyEdgeEvent) {
 
 fn sanitize_network_flow_endpoint(endpoint: &mut NetworkFlowEndpoint) {
     sanitize_optional_network_signal_string(&mut endpoint.address);
+    sanitize_optional_network_signal_string(&mut endpoint.namespace);
     sanitize_optional_network_signal_string(&mut endpoint.owner_name);
     sanitize_optional_network_signal_string(&mut endpoint.owner_type);
     sanitize_optional_container_context(&mut endpoint.container);

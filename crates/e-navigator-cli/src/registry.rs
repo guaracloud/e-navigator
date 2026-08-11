@@ -3,9 +3,9 @@ use crate::synthetic::SyntheticExecSource;
 use async_trait::async_trait;
 use e_navigator_core::{CoreResult, RuntimeConfig};
 use e_navigator_generators::{
-    DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator, ProfilingGenerator,
-    RequestCorrelationGenerator, ResourceMetricsGenerator, RuntimeSecurityGenerator,
-    TraceCorrelationGenerator,
+    DependencyGraphGenerator, DnsMetricsGenerator, NetworkMetricsGenerator,
+    PeerFlowMetricsGenerator, ProfilingGenerator, RequestCorrelationGenerator,
+    ResourceMetricsGenerator, RuntimeSecurityGenerator, TraceCorrelationGenerator,
 };
 use e_navigator_processors::{
     ContainerAttributionProcessor, KubernetesMetadataCache, KubernetesMetadataProvider,
@@ -159,6 +159,12 @@ pub(crate) fn build_registry(
         registry = registry.with_generator(Box::new(NetworkMetricsGenerator::with_limits(
             config.network_metrics.max_metric_keys,
             config.network_metrics.max_active_connections,
+        )));
+    }
+
+    if config.module_enabled("generator.peer_flow_metrics") {
+        registry = registry.with_generator(Box::new(PeerFlowMetricsGenerator::with_limit(
+            config.network_metrics.max_metric_keys,
         )));
     }
 
@@ -720,7 +726,7 @@ mod tests {
 
         assert_eq!(registry.sources().len(), 1);
         assert_eq!(registry.processors().len(), 0);
-        assert_eq!(registry.generators().len(), 8);
+        assert_eq!(registry.generators().len(), 9);
         assert_eq!(registry.sinks().len(), 1);
 
         let names = generator_names(&registry);
@@ -729,6 +735,7 @@ mod tests {
             vec![
                 "generator.dependency_graph",
                 "generator.network_metrics",
+                "generator.peer_flow_metrics",
                 "generator.resource_metrics",
                 "generator.dns_metrics",
                 "generator.trace_correlation",
@@ -746,6 +753,7 @@ mod tests {
             vec![
                 "generator.dependency_graph",
                 "generator.network_metrics",
+                "generator.peer_flow_metrics",
                 "generator.resource_metrics",
                 "generator.dns_metrics",
                 "generator.request_correlation",

@@ -185,9 +185,7 @@ impl NetworkMetricsGenerator {
         if let Some(metric) = self.track_active_close(event, signal.host.clone())? {
             metrics.push(metric);
         }
-        if let Some(summary) = flow_summary_from_close(signal, event) {
-            metrics.push(summary);
-        }
+        metrics.extend(flow_summaries_from_close(signal, event));
         if let Some(warning) = flow_warning_from_close(signal, event) {
             metrics.push(warning);
         }
@@ -490,50 +488,70 @@ impl NetworkMetricsGenerator {
     }
 }
 
-fn flow_summary_from_close(
+fn flow_summaries_from_close(
     signal: &SignalEnvelope,
     event: &NetworkConnectionCloseEvent,
-) -> Option<SignalEnvelope> {
-    event.kubernetes.as_ref()?;
-    let bytes = event
-        .bytes_sent
-        .unwrap_or(0)
-        .saturating_add(event.bytes_received.unwrap_or(0));
-    if bytes == 0 {
-        return None;
-    }
+) -> Vec<SignalEnvelope> {
+    let Some(kubernetes) = event.kubernetes.as_ref() else {
+        return Vec::new();
+    };
+    let first_seen_unix_nanos = event
+        .opened_at_unix_nanos
+        .unwrap_or(event.closed_at_unix_nanos);
+    let local_endpoint = || NetworkFlowEndpoint {
+        address: event.local_address.clone(),
+        port: event.local_port,
+        namespace: Some(kubernetes.namespace.clone()),
+        owner_name: None,
+        owner_type: None,
+        container: event.container.clone(),
+        kubernetes: event.kubernetes.clone(),
+    };
+    let remote_endpoint = || NetworkFlowEndpoint {
+        address: Some(event.remote_address.clone()),
+        port: Some(event.remote_port),
+        namespace: None,
+        owner_name: None,
+        owner_type: None,
+        container: None,
+        kubernetes: None,
+    };
+    let summary = |source, destination, bytes, direction| {
+        SignalEnvelope::network_flow_summary(
+            "generator.network_metrics",
+            signal.host.clone(),
+            NetworkFlowSummaryEvent {
+                source,
+                destination,
+                protocol: event.protocol,
+                address_family: event.address_family,
+                bytes,
+                packets: None,
+                direction,
+                first_seen_unix_nanos,
+                last_seen_unix_nanos: event.closed_at_unix_nanos,
+            },
+        )
+    };
 
-    Some(SignalEnvelope::network_flow_summary(
-        "generator.network_metrics",
-        signal.host.clone(),
-        NetworkFlowSummaryEvent {
-            source: NetworkFlowEndpoint {
-                address: event.local_address.clone(),
-                port: event.local_port,
-                owner_name: None,
-                owner_type: None,
-                container: event.container.clone(),
-                kubernetes: event.kubernetes.clone(),
-            },
-            destination: NetworkFlowEndpoint {
-                address: Some(event.remote_address.clone()),
-                port: Some(event.remote_port),
-                owner_name: None,
-                owner_type: None,
-                container: None,
-                kubernetes: None,
-            },
-            protocol: event.protocol,
-            address_family: event.address_family,
+    let mut summaries = Vec::with_capacity(2);
+    if let Some(bytes) = event.bytes_sent.filter(|bytes| *bytes > 0) {
+        summaries.push(summary(
+            local_endpoint(),
+            remote_endpoint(),
             bytes,
-            packets: None,
-            direction: NetworkFlowDirection::Egress,
-            first_seen_unix_nanos: event
-                .opened_at_unix_nanos
-                .unwrap_or(event.closed_at_unix_nanos),
-            last_seen_unix_nanos: event.closed_at_unix_nanos,
-        },
-    ))
+            NetworkFlowDirection::Egress,
+        ));
+    }
+    if let Some(bytes) = event.bytes_received.filter(|bytes| *bytes > 0) {
+        summaries.push(summary(
+            remote_endpoint(),
+            local_endpoint(),
+            bytes,
+            NetworkFlowDirection::Ingress,
+        ));
+    }
+    summaries
 }
 
 fn flow_warning_from_close(
@@ -1386,20 +1404,37 @@ mod tests {
             network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
 
         let outputs = observe(&generator, &close).await;
-        let flow = network_flow_summary(&outputs);
+        let flows = network_flow_summaries(&outputs);
 
-        assert_eq!(flow.bytes, 1536);
-        assert_eq!(flow.packets, None);
-        assert_eq!(flow.protocol, NetworkProtocol::Tcp);
-        assert_eq!(flow.address_family, NetworkAddressFamily::Ipv4);
-        assert_eq!(flow.source.address.as_deref(), Some("10.0.0.5"));
-        assert_eq!(flow.source.port, Some(43512));
-        assert_eq!(flow.source.container, Some(container_context()));
-        assert_eq!(flow.source.kubernetes, Some(kubernetes_context()));
-        assert_eq!(flow.destination.address.as_deref(), Some("10.0.0.20"));
-        assert_eq!(flow.destination.port, Some(5432));
-        assert_eq!(flow.first_seen_unix_nanos, 100);
-        assert_eq!(flow.last_seen_unix_nanos, 900);
+        assert_eq!(flows.len(), 2);
+        let egress = flows
+            .iter()
+            .find(|flow| flow.direction == NetworkFlowDirection::Egress)
+            .expect("egress flow");
+        assert_eq!(egress.bytes, 512);
+        assert_eq!(egress.packets, None);
+        assert_eq!(egress.protocol, NetworkProtocol::Tcp);
+        assert_eq!(egress.address_family, NetworkAddressFamily::Ipv4);
+        assert_eq!(egress.source.address.as_deref(), Some("10.0.0.5"));
+        assert_eq!(egress.source.port, Some(43512));
+        assert_eq!(egress.source.container, Some(container_context()));
+        assert_eq!(egress.source.kubernetes, Some(kubernetes_context()));
+        assert_eq!(egress.destination.address.as_deref(), Some("10.0.0.20"));
+        assert_eq!(egress.destination.port, Some(5432));
+        assert_eq!(egress.first_seen_unix_nanos, 100);
+        assert_eq!(egress.last_seen_unix_nanos, 900);
+
+        let ingress = flows
+            .iter()
+            .find(|flow| flow.direction == NetworkFlowDirection::Ingress)
+            .expect("ingress flow");
+        assert_eq!(ingress.bytes, 1024);
+        assert_eq!(ingress.source.address.as_deref(), Some("10.0.0.20"));
+        assert_eq!(ingress.source.port, Some(5432));
+        assert_eq!(ingress.destination.address.as_deref(), Some("10.0.0.5"));
+        assert_eq!(ingress.destination.port, Some(43512));
+        assert_eq!(ingress.destination.container, Some(container_context()));
+        assert_eq!(ingress.destination.kubernetes, Some(kubernetes_context()));
     }
 
     #[tokio::test]
@@ -1869,16 +1904,16 @@ mod tests {
         })
     }
 
-    fn network_flow_summary(
-        metrics: &[SignalEnvelope],
-    ) -> &e_navigator_signals::NetworkFlowSummaryEvent {
-        metrics
+    fn network_flow_summaries(
+        outputs: &[SignalEnvelope],
+    ) -> Vec<&e_navigator_signals::NetworkFlowSummaryEvent> {
+        outputs
             .iter()
-            .find_map(|signal| match &signal.payload {
+            .filter_map(|signal| match &signal.payload {
                 SignalPayload::NetworkFlowSummary(flow) => Some(flow),
                 _ => None,
             })
-            .expect("network flow summary exists")
+            .collect()
     }
 
     fn network_flow_warning(
