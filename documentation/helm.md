@@ -9,7 +9,7 @@ and attribution model.
 
 ```bash
 helm upgrade --install e-navigator oci://ghcr.io/guaracloud/charts/e-navigator \
-  --version 0.3.1 \
+  --version 0.4.0-rc.1 \
   --namespace e-navigator-system \
   --create-namespace
 ```

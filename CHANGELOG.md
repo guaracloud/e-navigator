@@ -6,6 +6,39 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0-rc.1] - 2026-08-11
+
+### Added
+
+- Export the native cumulative `network.peer.flow.bytes` metric after endpoint
+  attribution, with directional source and destination Kubernetes namespace,
+  workload owner name and type, transport, and address-family dimensions.
+  Exact workload-pair series use the configured cardinality budget; excess
+  identities preserve byte totals in deterministic `__other__` overflow series.
+- Add disabled-by-default zero-code W3C Trace Context propagation for a strict
+  plaintext HTTP/1 subset. A cgroup `SOCK_OPS` program admits allowlisted active
+  TCP sockets into a bounded `SOCKHASH`, and `SK_MSG` injects a CSPRNG-backed
+  `traceparent` before TCP packetization while preserving application-owned
+  context and matching E-Navigator client/server span identities.
+
+### Documentation
+
+- Define the standalone peer-flow and propagation architecture in ADR 0015,
+  document deployment and operations controls, and publish the target-kernel
+  qualification matrix and explicit protocol/runtime non-claims. Active
+  propagation remains disabled until verifier, attach, live-wire, and multi-hop
+  qualification succeeds on the deployment kernel.
+
+### Validation
+
+- Pass the complete local quality gate, including strict Rust checks, workspace
+  tests, supply-chain checks, release Docker build and packaged smoke, Helm and
+  Kubernetes schema validation, and website contracts.
+- Link RingBuf and perf-event eBPF release objects for x86-64 and arm64, and add
+  focused coverage for W3C parsing/injection decisions, generated span ownership,
+  directional flow splitting, attribution, overflow accounting, OTLP,
+  Prometheus, golden signals, and generated-signal reprocessing.
+
 ## [0.3.1] - 2026-07-26
 
 ### Added
