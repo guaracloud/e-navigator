@@ -104,7 +104,10 @@
             version-gated unstripped Linux/amd64 Go <code>crypto/tls</code>
             uprobes (interception, not on-the-wire decryption), accounts for TCP
             retransmits, resets, and state transitions, samples and symbolizes
-            periodic CPU, scheduler off-CPU, and futex-wait lock profiles, and turns resource, trace, peer-aware directional L4 bytes, and security observations
+            periodic CPU, scheduler off-CPU, and futex-wait lock profiles,
+            with separately bounded opt-in kernel frames that retain user and
+            interpreter frames, and turns resource, trace, peer-aware
+            directional L4 bytes, and security observations
             into bounded native E-Navigator signals. A disabled-by-default plaintext HTTP/1 path can inject W3C context for a strict, qualified subset; TLS, HTTP/2, HTTP/3, segmented writes, and async continuation remain explicit non-claims. An optional capture filter
             scopes which workloads are probed by Kubernetes namespace and label
             on unified cgroup v2 nodes. Bounded inotify discovery wakes the
@@ -156,6 +159,11 @@
             <p>Scalar network read/write accounting uses preflighted fexit where supported; a homelab A/B measured 7.971% more operations per second than tracepoints for that narrow workload.</p>
           </article>
           <article class="capability">
+            <span class="capability-kicker">Profiling domains</span>
+            <h3>Kernel and user frames stay distinct</h3>
+            <p>Opt-in kernel stacks use an independent frame budget, address-free restricted-symbol fallback, and explicit pprof and OTLP frame domains. A local aarch64 Linux VM smoke passed; production-target portability and overhead proof remain pending.</p>
+          </article>
+          <article class="capability">
             <span class="capability-kicker">Privilege posture</span>
             <h3>Reduced profile, exact boundary</h3>
             <p>Linux 6.6 homelab proof removed SYS_ADMIN: core Aya sources used BPF and PERFMON, TLS and cross-UID CPU symbols added SYS_PTRACE, and host resources used none.</p>
@@ -189,7 +197,7 @@
           </article>
           <article class="status">
             <h3>Performance and security, unified</h3>
-            <p>Combine DNS and network telemetry, TLS visibility, TCP health, CPU, off-CPU, and futex-wait profiles, resource metrics, and runtime security signals, then export through Prometheus, OTLP, pprof, or structured JSON.</p>
+            <p>Combine DNS and network telemetry, TLS visibility, TCP health, CPU, off-CPU, futex-wait, and opt-in kernel-stack profiles, resource metrics, and runtime security signals, then export through Prometheus, OTLP, pprof, or structured JSON. Broad managed-runtime unwinders and allocation profiles remain explicit gaps under the non-intrusive policy.</p>
           </article>
         </div>
         <div class="link-row">
