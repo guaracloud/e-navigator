@@ -6,6 +6,63 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0-rc.1] - 2026-08-11
+
+### Added
+
+- Emit cumulative snapshots for active TCP peer flows at a bounded periodic
+  interval, so long-lived Redis, NATS, PostgreSQL, and similar connections
+  continue to produce current directional byte-rate inputs before close.
+- Reclaim inactive exact peer identities after a configurable TTL while
+  preserving cumulative totals and deterministic `__other__` overflow
+  accounting, allowing the bounded peer-series budget to recover from
+  deployment churn without a process restart.
+- Account successful bytes from scalar and vectored socket I/O, `sendfile`,
+  `splice`, and supported `io_uring` read/write operations through the native
+  eBPF network source, with explicit duplicate-accounting guards.
+- Extend disabled-by-default plaintext HTTP/1 Trace Context propagation to
+  bounded request bodies, segmented and vectored writes, keep-alive requests,
+  pipelined messages, and pre-existing allowlisted sockets. Preserve valid
+  application-owned `traceparent` and `tracestate` fields and inject a bounded
+  `tracestate` value alongside generated `traceparent` context.
+
+### Security
+
+- Keep propagation opt-in, cgroup-scoped, socket-allowlisted, plaintext-only,
+  and fail-closed when framing, header limits, protocol state, or kernel support
+  falls outside the qualified boundary. HTTPS, HTTP/2, gRPC, HTTP/3, task-local
+  context transfer, and arbitrary encrypted or multiplexed transports remain
+  explicit non-goals for this release candidate.
+- Bound active-flow state, peer identity retention, per-socket HTTP parsing,
+  scatter-gather traversal, and all emitted metadata to preserve predictable
+  kernel and userspace resource use.
+
+### Documentation
+
+- Update ADR 0015, architecture, capability, operations, Helm, website, and
+  standalone-readiness guidance for periodic flow snapshots, peer-series
+  expiration, expanded network I/O accounting, and the qualified HTTP/1
+  propagation envelope.
+- Add reproducible target-kernel proof reports for network I/O accounting and
+  HTTP propagation, including exact supported and unsupported runtime paths.
+
+### Validation
+
+- Add unit, property, integration, golden-signal, and shell guard coverage for
+  active-flow lifecycle behavior, TTL reclamation, cumulative monotonicity,
+  syscall accounting, HTTP framing, segmented writes, request bodies,
+  pipelining, and `tracestate` handling.
+- Pass the complete local quality gate, including strict Rust checks, workspace
+  tests, release-contract validation, fuzz targets, supply-chain checks, Docker
+  build and smoke, Helm and Kubernetes schema validation, website contracts,
+  and diff hygiene.
+- Verifier-load and attach the release eBPF programs in privileged Docker;
+  observe exact scalar, vectored, and zero-copy byte totals and live-wire
+  propagation across a body-bearing three-iovec request with `traceparent` and
+  `tracestate`. The representative Node.js 20 qualifier observed the vectored
+  path and no `io_uring` traffic, which remains implementation-covered rather
+  than runtime-qualified for Node.js.
+
 ## [0.4.0] - 2026-08-11
 
 ### Added
