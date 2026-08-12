@@ -266,7 +266,9 @@ cargo run --locked -p e-navigator-cli -- \
               reclaimed before new identities overflow.
               Active W3C propagation is a separate, disabled-by-default
               plaintext HTTP/1 mutation boundary using cgroup SOCK_OPS and
-              SK_MSG before TCP packetization; it is not a universal protocol
+              SK_MSG before TCP packetization. Its qualified subset preserves
+              valid inbound tracestate and covers bounded fixed-length bodies
+              plus three small iovecs; it is not a universal protocol, runtime,
               or kernel claim.
             </p>
             <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/architecture.md">Read the crate and lifecycle map</a>
@@ -323,8 +325,11 @@ cargo run --locked -p e-navigator-cli -- \
               <code>peer_series_idle_timeout_millis</code>. The optional
               <code>[http_source.context_propagation]</code> surface requires
               inbound capture, a cgroup v2 root, a bounded plaintext port
-              allowlist, and target-kernel qualification; chart defaults keep
-              it disabled.
+              allowlist, complete HTTP/1 headers in one syscall, and
+              target-kernel qualification. It preserves valid inbound
+              <code>tracestate</code>, supports <code>Content-Length</code>
+              bodies, and bounds vectored writes to three 96-byte iovecs;
+              chart defaults keep it disabled.
             </p>
             <div class="comparison-table" role="table" aria-label="Configuration boundaries">
               <div role="row">

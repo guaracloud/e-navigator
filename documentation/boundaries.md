@@ -188,10 +188,13 @@ E-Navigator does not currently claim:
   completion are decoupled, fixed-file and SQPOLL modes do not preserve the
   current tgid/fd identity seam, and message-batch syscall returns are message
   counts rather than byte counts;
-- privileged verifier, attachment, or live-wire proof for the disabled-by-default
-  plaintext HTTP/1 `traceparent` injector. It does not claim TLS, HTTP/2/gRPC,
-  HTTP/3/QUIC, segmented or iovec writes, request bodies, connections predating
-  attachment, async task/thread continuation, or universal kernel support;
+- universal W3C propagation from the disabled-by-default plaintext HTTP/1
+  injector. A privileged local OrbStack aarch64 run proved one bounded
+  three-iovec `sendmsg` request with a `Content-Length` body, child
+  `traceparent`, and preserved valid `tracestate`. It does not claim TLS,
+  HTTP/2/gRPC, HTTP/3/QUIC, segmented headers, more or larger iovecs,
+  transfer-encoded or pipelined messages, connections predating attachment,
+  async task/thread continuation, other kernels, or production load;
 - production collector/backend compatibility beyond recorded local or
   namespace-local Collector proof;
 - a RingBuf performance win over the perf-event transport (the 2026-07-21

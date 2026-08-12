@@ -326,11 +326,14 @@ Enable it only for a qualified plaintext HTTP/1 workload on a directly mounted
 unified cgroup v2 root. Port lists contain 1 through 32 unique nonzero ports;
 socket state is bounded from 1 through 65,536; the CSPRNG pool is bounded from
 128 through 65,536; and same-thread context lifetime is 1 through 300,000 ms.
-The path bypasses existing context, bodies, segmented/iovec messages, tunnels,
-upgrades, TLS, HTTP/2, HTTP/3, async thread hops, and sockets established before
-attachment. See [ADR 0015](adr/0015-peer-flow-metrics-and-opt-in-http1-propagation.md)
-before enabling it. The default and production example intentionally keep it
-off.
+The path preserves existing context, forwards valid inbound `tracestate`, and
+supports a `Content-Length` body when the current syscall does not cross the
+declared boundary. Vectored injection is limited to three iovecs of at most 96
+bytes each. It bypasses segmented headers, pipelining/trailing messages,
+ambiguous framing, tunnels, upgrades, TLS, HTTP/2, HTTP/3, async thread hops,
+and sockets established before attachment. See
+[ADR 0015](adr/0015-peer-flow-metrics-and-opt-in-http1-propagation.md) before
+enabling it. The default and production example intentionally keep it off.
 
 Metric generator cardinality bounds are validated before runtime:
 `resource_metrics.max_keys`, `network_metrics.max_metric_keys`,

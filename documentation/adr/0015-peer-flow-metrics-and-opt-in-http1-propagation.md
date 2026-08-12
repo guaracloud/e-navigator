@@ -12,7 +12,7 @@ derive a stable peer-aware L4 metric; the latter cannot connect uninstrumented
 services because observation does not modify the request.
 
 Active context propagation changes application traffic. TLS, HTTP/2, HTTP/3,
-segmented headers, request bodies, application-owned trace context, and kernel
+segmented headers, pipelining, application-owned trace context, and kernel
 feature differences make a universal injector unsafe and untruthful. The
 standalone contract requires native behavior with explicit limits rather than
 vendor compatibility modes.
@@ -75,23 +75,35 @@ owns sequence numbers, acknowledgements, checksums, segmentation, retransmits,
 and application send-return semantics. E-Navigator does not implement a packet
 sequence translator.
 
-Injection is allowed only for one complete, contiguous, header-only HTTP/1.0 or
-HTTP/1.1 message of at most 1,024 bytes observed through a supported scalar
-write path. It bypasses:
+Injection is allowed only when the current syscall contains one complete
+HTTP/1.0 or HTTP/1.1 header block and its complete captured payload is bounded.
+Scalar writes may contribute at most 1,024 bytes. `writev` and `sendmsg` may
+contribute up to three iovecs of at most 96 bytes each; the fixed slots are
+compacted before planning and compared byte-for-byte with the `SK_MSG` payload
+before mutation. A request body is supported only with one valid
+`Content-Length`, and the bytes present in the current syscall must not exceed
+that declared length. The remaining body may follow in later writes. It
+bypasses:
 
 - an existing `traceparent`, regardless of header-name case;
-- incomplete or segmented headers, multiple requests, and trailing bytes;
-- positive `Content-Length` or any `Transfer-Encoding`;
+- incomplete or segmented headers, multiple requests, and bytes beyond the
+  declared message boundary;
+- absent, duplicate, invalid, or ambiguous body framing, and any
+  `Transfer-Encoding`;
 - CONNECT, HTTP/2 prefaces, upgrades, TLS, and non-HTTP traffic;
-- iovec/sendmsg paths, sockets established before attachment, sockets outside
-  the cgroup capture policy, and ports outside the allowlist; and
+- vectored messages outside the three-by-96-byte bound, sockets established
+  before attachment, sockets outside the cgroup capture policy, and ports
+  outside the allowlist; and
 - an empty context pool, full pending map, or any pre-mutation helper failure.
 
-All decisions occur before `bpf_msg_push_data`. After a successful push, direct
-message pointers are reloaded and the complete inserted range is proven before
-all 70 bytes are overwritten. If that post-push proof unexpectedly fails, the
-message is dropped: passing could transmit kernel-created uninitialized bytes.
-This exceptional counter must remain zero in qualification and production.
+All decisions occur before `bpf_msg_push_data`. Immediately before mutation,
+the current socket-message bytes must exactly match the syscall capture that
+was planned. After a successful push, `bpf_msg_pull_data` establishes a linear
+direct-access window for exactly the inserted range; pointers are reloaded and
+every write is bounds-checked. If linearization or the post-push proof fails,
+the message is dropped: passing could transmit kernel-created uninitialized
+bytes. This exceptional counter must remain zero in qualification and
+production.
 
 Userspace fills and continuously replenishes a bounded BPF queue with
 cryptographically secure random trace and span ids. The kernel never derives
@@ -100,7 +112,12 @@ preserved. A successfully injected client observation is marked as
 E-Navigator-owned so request correlation exports the matching client span.
 Inbound single-message HTTP/1 requests create a new server span beneath the
 wire parent and retain a short, bounded same-thread context for synchronous
-downstream calls. Async task/thread hops are not claimed.
+downstream calls. Valid W3C `tracestate` fields are combined in wire order,
+validated with the 512-byte and 32-member bounds, and forwarded with member
+order and opaque values preserved. Invalid `tracestate` is discarded without
+invalidating a valid `traceparent`; orphan `tracestate` causes outbound
+injection to bypass.
+Async task/thread hops are not claimed.
 
 ## Consequences
 
@@ -111,17 +128,20 @@ downstream calls. Async task/thread hops are not claimed.
   consuming the exact-series budget.
 - Passive HTTP capture remains unchanged when propagation is disabled.
 - This closes multi-service traces only for the qualified plaintext,
-  synchronous HTTP/1 subset. HTTPS, HTTP/2/gRPC, HTTP/3/QUIC, segmented writes,
-  and asynchronous continuation require separate pre-encryption or
-  protocol-aware designs.
+  synchronous HTTP/1 subset. HTTPS, HTTP/2/gRPC, HTTP/3/QUIC, segmented header
+  writes, pre-existing connections, pipelining, and asynchronous continuation
+  require separate pre-encryption, runtime, or protocol-aware designs.
 - Propagation counters report socket tracking, planning, injection, bypass,
   context exhaustion, contention, push failure, post-push failure, and thread
   context failure. Any nonzero mutation-failure counter blocks capability
   promotion.
 - Unit and integration tests prove deterministic planning, formatting,
   identity ownership, correlation, bounded aggregation, overflow, and sink
-  formatting. They do not prove verifier acceptance or live mutation on a
-  target Linux kernel.
+  formatting. A privileged local OrbStack run on aarch64 kernel
+  `7.0.11-orbstack-00360-gc9bc4d96ac70` proved verifier acceptance, attachment,
+  and live `sendmsg` injection across three iovecs with a fixed-length body and
+  preserved multi-member `tracestate`. That scoped result is not proof for
+  another kernel, architecture, cgroup topology, runtime, or production load.
 
 ## Rejected alternatives
 

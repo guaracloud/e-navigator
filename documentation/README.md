@@ -31,6 +31,9 @@ operational documentation. Start with the path that matches your goal.
 ## Evaluate And Contribute
 
 - [Proof report](proof-report.md), inspect the current evidence map.
+- [Opt-in HTTP/1 propagation proof](proof/http-propagation-20260811/report.md),
+  inspect the exact local verifier, attachment, and live-wire evidence and its
+  explicit non-claims.
 - [Benchmark methodology](benchmark.md), reproduce local and runtime
   measurements without mixing evidence tiers.
 - [Rust engineering](rust-engineering.md), apply the repository's code,
