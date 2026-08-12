@@ -56,7 +56,8 @@ labels. Monitor these categories:
 - when HTTP context propagation is enabled, its periodic structured counters:
   socket tracking/failure, planned, injected, bypassed, context-pool empty,
   pending contention, push failure, post-push bounds failure, and thread-context
-  failure.
+  failure, plus planning-ineligible, planner-rejected, mutation-mismatch,
+  inbound-activated, and inbound-rejected counts.
 
 Use the exact metric names rendered by the current version rather than copying
 names from an older dashboard. Version dashboards and alert rules with the
@@ -116,7 +117,7 @@ to loss when the downstream rate is permanently lower.
 | One OTLP family is missing | Family toggle, family endpoint, queue drops, circuit state, receiver response |
 | CPU rises after enabling protocols | Capture selector scope, explicit port lists, traffic rate, parser limits, reassembly bounds |
 | Peer flow metric is absent | Both endpoints need stable namespace and owner name/type; check Kubernetes controller freshness, Service/Pod address resolution, module registration, and overflow series |
-| HTTP propagation does not inject | Plaintext allowlisted port, active socket established after attachment, scalar single-message HTTP/1 headers without body/existing context, cgroup capture verdict, context-pool and propagation counters |
+| HTTP propagation does not inject | Plaintext allowlisted port, active socket established after attachment, one complete HTTP/1 header block in the syscall, valid `Content-Length` framing for any body bytes, at most three 96-byte iovecs, no existing/orphan context, same-thread inbound continuation, cgroup capture verdict, context-pool and propagation counters |
 | HTTP request is dropped after propagation | Stop rollout immediately and inspect `post_push_bounds_failed`; a post-push bounds failure drops instead of risking transmission of uninitialized inserted bytes |
 | Profiles have unresolved frames | target permissions, supported runtime, ELF symbols, unwind coverage, JIT map availability |
 | Off-CPU or lock profiles are sparse | capture-filter scope, minimum duration, per-CPU rate limiting, pending-map/stack failures, supported scheduler layout and futex path |

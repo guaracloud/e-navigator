@@ -96,10 +96,16 @@ Kubernetes evidence before a public capability claim changes.
 Active plaintext HTTP/1 propagation is a distinct mutation boundary inside the
 Aya HTTP source. Userspace supplies bounded CSPRNG contexts; cgroup `SOCK_OPS`
 selects capture-allowed active client sockets; `SK_MSG` inserts one fixed W3C
-header before TCP packetization. The passive source path, protocol parsers,
-request-correlation generator, and sinks remain separate modules. Configuration
-keeps mutation off by default, and [ADR 0015](adr/0015-peer-flow-metrics-and-opt-in-http1-propagation.md)
-defines every supported and bypassed request shape.
+`traceparent` header and an optional validated `tracestate` header before TCP
+packetization. The allocation-free shared crate owns the host grammar, while
+verifier-bounded `bpf_loop` state machines implement the same fail-closed wire
+contract in the kernel. Bounded iovecs are compacted before planning, the live
+socket message must exactly match that capture, and `bpf_msg_pull_data`
+linearizes the inserted range before any direct write. The passive source path,
+protocol parsers, request-correlation generator, and sinks remain separate
+modules. Configuration keeps mutation off by default, and
+[ADR 0015](adr/0015-peer-flow-metrics-and-opt-in-http1-propagation.md) defines
+every supported and bypassed request shape.
 
 ## Kubernetes Workload Control
 

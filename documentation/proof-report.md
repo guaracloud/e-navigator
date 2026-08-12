@@ -708,6 +708,17 @@ These areas remain explicitly partial:
   response-status attribute errors, and network interaction errors, but broad
   backend service-graph compatibility and live collector proof for the status
   mappings are not yet proven.
+- **Opt-in W3C propagation:** a privileged local OrbStack
+  `7.0.11-orbstack-00360-gc9bc4d96ac70` run verifier-loaded and attached the
+  bounded `SOCK_OPS`/`SK_MSG` path. A three-iovec `sendmsg` carrying a
+  four-byte fixed-length body arrived with the body unchanged, exactly one
+  regenerated child `traceparent`, and the valid inbound multi-member
+  `tracestate` preserved. This evidence is recorded in
+  [`proof/http-propagation-20260811/report.md`](proof/http-propagation-20260811/report.md).
+  TLS, HTTP/2 and gRPC, HTTP/3, segmented headers, larger iovec shapes,
+  pipelining, pre-attachment sockets, async continuation, other kernels,
+  backend trace-tree proof, load, and production behavior remain explicit
+  non-claims.
 - **Kafka protocol observability:** bounded request-header parsing for common
   API keys, bounded ApiVersions request-body validation, bounded flexible AddRaftVoter, UpdateRaftVoter, InitializeShareGroupState, ReadShareGroupState, WriteShareGroupState, DeleteShareGroupState, ReadShareGroupStateSummary, DeleteShareGroupOffsets, DescribeShareGroupOffsets, RemoveRaftVoter, AlterPartitionReassignments, AlterUserScramCredentials, ConsumerGroupDescribe, ControllerRegistration, ConsumerGroupHeartbeat, ShareGroupHeartbeat, DescribeCluster, DescribeProducers, BrokerHeartbeat, DescribeQuorum, DescribeTopicPartitions, DescribeTransactions, DescribeUserScramCredentials, GetTelemetrySubscriptions, ListConfigResources, ListPartitionReassignments, ListTransactions, AllocateProducerIds, PushTelemetry, UnregisterBroker, UpdateFeatures, and WriteTxnMarkers, flexible/non-flexible
   AlterClientQuotas, DescribeClientQuotas, and IncrementalAlterConfigs, and non-flexible Produce, Fetch, AddOffsetsToTxn, AddPartitionsToTxn, AlterConfigs, AlterReplicaLogDirs, CreateDelegationToken, DescribeDelegationToken, DescribeLogDirs, ElectLeaders, ExpireDelegationToken, RenewDelegationToken, CreateAcls, CreatePartitions, CreateTopics, DeleteAcls, DeleteRecords, DeleteTopics, DeleteGroups, DescribeAcls, DescribeConfigs, DescribeGroups, EndTxn,

@@ -55,8 +55,10 @@ E-Navigator runs as one node-local agent with a statically registered
   inotify discovery reduces new-Pod convergence time while retaining the
   configured unknown posture and a periodic loss-recovery scan.
 - A separately opt-in, disabled-by-default HTTP/1 propagation path can inject
-  W3C `traceparent` before TCP packetization for one strictly bounded plaintext
-  request shape. It is not a universal TLS, HTTP/2, HTTP/3, segmented-write, or
+  W3C `traceparent` and preserve valid inbound `tracestate` before TCP
+  packetization for a strictly bounded plaintext request shape, including
+  fixed-length bodies and up to three small iovecs. It is not a universal TLS,
+  HTTP/2, HTTP/3, segmented-header, pipelined, pre-existing-connection, or
   asynchronous propagation claim; see [ADR 0015](documentation/adr/0015-peer-flow-metrics-and-opt-in-http1-propagation.md).
 - An opt-in Helm profile removes `SYS_ADMIN` on the proven Linux 6.6.68
   homelab posture, using `BPF`, `PERFMON`, and `SYS_PTRACE` while retaining UID

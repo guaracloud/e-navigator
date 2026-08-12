@@ -37,17 +37,21 @@ configurable interval; the network generator derives interval deltas and the
 peer generator reclaims idle exact series through an ordered expiry index. The
 narrow socket-message design is implemented behind the
 disabled-by-default `[http_source.context_propagation]` gate. It adopts the
-strictest safe subset from this analysis: complete contiguous body-free
-plaintext HTTP/1 only, application-context preservation, userspace CSPRNG ids,
-bounded maps, capture-policy admission, pre-push bypass, and post-push drop if
-the inserted region cannot be proven before overwrite.
+strictest safe subset from this analysis: one complete bounded plaintext HTTP/1
+header block, valid `Content-Length` body prefixes, up to three 96-byte iovecs,
+application-context preservation, valid inbound `tracestate` forwarding,
+userspace CSPRNG ids, bounded maps, capture-policy admission, exact pre-push
+message comparison, and post-push drop if the inserted region cannot be
+linearized and proven before overwrite.
 
-This implementation state does not promote the mutation path to runtime-proven.
-The repository-pinned nightly and `bpf-linker` successfully produced RingBuf
-and perf-event ELF objects for both x86-64 and arm64 BPF configuration. Verifier
-acceptance, attachment, live-wire behavior, and multi-hop backend trace shape
-still require the qualification matrix below. ADR 0015 fixes the public support
-contract.
+The repository-pinned nightly and `bpf-linker` produce the release eBPF object.
+A privileged local aarch64 OrbStack run on kernel
+`7.0.11-orbstack-00360-gc9bc4d96ac70` proved verifier acceptance, cgroup
+`SOCK_OPS`/`SK_MSG` attachment, and live three-iovec `sendmsg` injection with a
+four-byte body, child `traceparent`, and preserved multi-member `tracestate`.
+This promotes only that exact cell. Backend trace shape, other kernels and
+architectures, async runtimes, saturation, exhaustion, and soak remain in the
+qualification matrix below. ADR 0015 fixes the public support contract.
 
 | Feature | Engineering decision | Main reason |
 | --- | --- | --- |
