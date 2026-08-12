@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+use e_navigator_context_propagation::{MAX_TRACESTATE_BYTES, validate_tracestate};
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
     http::{HttpExtraction, parse_http_request},
@@ -30,14 +32,38 @@ const RAW_HTTP_PROPAGATION_GENERATED: u32 = 1;
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RawHttpPropagationContext {
     pub state: u32,
     pub trace_id: [u8; 16],
     pub span_id: [u8; 8],
     pub parent_span_id: [u8; 8],
     pub trace_flags: u8,
-    pub reserved: [u8; 3],
+    pub reserved: u8,
+    pub insert_at: u16,
+    pub started_at_nanos: u64,
+    pub tracestate_len: u16,
+    pub tracestate_reserved: [u8; 6],
+    pub tracestate: [u8; MAX_TRACESTATE_BYTES],
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+impl Default for RawHttpPropagationContext {
+    fn default() -> Self {
+        Self {
+            state: 0,
+            trace_id: [0; 16],
+            span_id: [0; 8],
+            parent_span_id: [0; 8],
+            trace_flags: 0,
+            reserved: 0,
+            insert_at: 0,
+            started_at_nanos: 0,
+            tracestate_len: 0,
+            tracestate_reserved: [0; 6],
+            tracestate: [0; MAX_TRACESTATE_BYTES],
+        }
+    }
 }
 #[cfg(any(target_os = "linux", test))]
 const MAX_HTTP_REASSEMBLY_STREAMS: usize = 4096;
@@ -75,7 +101,7 @@ const HTTP_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_DIAGNOSTIC_COUNTERS_LEN] = [
     "non_http_connection_skip",
 ];
 #[cfg(any(target_os = "linux", test))]
-const HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN: usize = 10;
+const HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN: usize = 15;
 #[cfg(any(target_os = "linux", test))]
 const HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN] = [
     "socket_tracked",
@@ -88,6 +114,11 @@ const HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_PROPAGATION_DIAGNOS
     "push_failed",
     "post_push_bounds_failed",
     "thread_context_failed",
+    "planning_ineligible",
+    "planner_rejected",
+    "mutation_mismatch",
+    "inbound_activated",
+    "inbound_rejected",
 ];
 #[cfg(target_os = "linux")]
 const HTTP_CONTEXT_REFILL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
@@ -760,7 +791,7 @@ fn raw_http_request_parts_to_signal_with_container(
                     .then(|| hex_identifier(&raw.propagation.parent_span_id))
             }),
             traceparent: parsed.traceparent,
-            tracestate: parsed.tracestate,
+            tracestate: propagated_tracestate(raw).or(parsed.tracestate),
             correlation_kind: if raw.propagation.state == RAW_HTTP_PROPAGATION_GENERATED {
                 TraceCorrelationKind::GeneratedTraceContext
             } else {
@@ -798,6 +829,17 @@ fn propagated_context(
             )
         })
         .flatten()
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn propagated_tracestate(raw: &RawHttpRequestEvent) -> Option<String> {
+    if raw.propagation.state != RAW_HTTP_PROPAGATION_GENERATED {
+        return None;
+    }
+    let len = usize::from(raw.propagation.tracestate_len);
+    let value = raw.propagation.tracestate.get(..len)?;
+    validate_tracestate(value).ok()?;
+    std::str::from_utf8(value).ok().map(ToOwned::to_owned)
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -1339,7 +1381,7 @@ mod platform {
                 );
             }
             telemetry.mark_initialized();
-            debug!("aya http source attached");
+            info!(source = "source.aya_http", "aya http source ready");
             crate::shutdown::signal().await.map_err(module_error)?;
             shutdown.stop();
             join_reader_handles(reader_handles).await
@@ -1392,8 +1434,12 @@ mod platform {
             .ok_or_else(|| missing_program("sk_msg_http_context_propagation"))?
             .try_into()
             .map_err(module_error)?;
-        sk_msg.load().map_err(module_error)?;
-        sk_msg.attach(&socket_map_fd).map_err(module_error)?;
+        sk_msg
+            .load()
+            .map_err(|err| propagation_program_error("load SK_MSG program", err))?;
+        sk_msg
+            .attach(&socket_map_fd)
+            .map_err(|err| propagation_program_error("attach SK_MSG program to socket map", err))?;
 
         let cgroup = File::open(cgroup_root).map_err(module_error)?;
         let sock_ops: &mut SockOps = ebpf
@@ -1401,10 +1447,18 @@ mod platform {
             .ok_or_else(|| missing_program("sockops_http_context_propagation"))?
             .try_into()
             .map_err(module_error)?;
-        sock_ops.load().map_err(module_error)?;
         sock_ops
-            .attach(cgroup, CgroupAttachMode::AllowMultiple)
-            .map_err(module_error)?;
+            .load()
+            .map_err(|err| propagation_program_error("load SOCK_OPS program", err))?;
+        sock_ops
+            // Cgroup BPF links are multi-program attachments by construction:
+            // Linux adds BPF_F_ALLOW_MULTI internally. Passing Aya's legacy
+            // AllowMultiple mode would put that prog-attach-only flag in
+            // BPF_LINK_CREATE, which the kernel rejects with EINVAL.
+            .attach(cgroup, CgroupAttachMode::Single)
+            .map_err(|err| {
+                propagation_program_error("attach SOCK_OPS program to cgroup v2 root", err)
+            })?;
 
         let diagnostic_map = ebpf
             .take_map("HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS")
@@ -1529,6 +1583,11 @@ mod platform {
                             push_failed = delta.get(7),
                             post_push_bounds_failed = delta.get(8),
                             thread_context_failed = delta.get(9),
+                            planning_ineligible = delta.get(10),
+                            planner_rejected = delta.get(11),
+                            mutation_mismatch = delta.get(12),
+                            inbound_activated = delta.get(13),
+                            inbound_rejected = delta.get(14),
                             stage_names = ?super::HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES,
                             "HTTP context propagation counters"
                         );
@@ -1567,6 +1626,16 @@ mod platform {
         CoreError::ModuleFailed {
             module: "source.aya_http".to_string(),
             message: format!("missing {name} program"),
+        }
+    }
+
+    fn propagation_program_error(
+        operation: impl std::fmt::Display,
+        err: aya::programs::ProgramError,
+    ) -> CoreError {
+        CoreError::ModuleFailed {
+            module: "source.aya_http".to_string(),
+            message: format!("failed to {operation}: {err}; details: {err:?}"),
         }
     }
 
@@ -1738,8 +1807,15 @@ mod platform {
             })?
             .try_into()
             .map_err(module_error)?;
-        program.load().map_err(module_error)?;
-        program.attach(category, name).map_err(module_error)?;
+        program.load().map_err(|err| {
+            propagation_program_error(format!("load tracepoint program {program_name}"), err)
+        })?;
+        program.attach(category, name).map_err(|err| {
+            propagation_program_error(
+                format!("attach tracepoint program {program_name} to {category}/{name}"),
+                err,
+            )
+        })?;
         Ok(())
     }
 
@@ -1941,8 +2017,21 @@ mod tests {
             span_id: [0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7],
             parent_span_id: [0x7a, 0x8b, 0x9c, 0x0d, 0x1e, 0x2f, 0x30, 0x41],
             trace_flags: 1,
-            reserved: [0; 3],
+            reserved: 0,
+            insert_at: 0,
+            started_at_nanos: 0,
+            tracestate_len: 13,
+            tracestate_reserved: [0; 6],
+            tracestate: {
+                let mut value = [0; MAX_TRACESTATE_BYTES];
+                value[..13].copy_from_slice(b"vendor=opaque");
+                value
+            },
         };
+        assert_eq!(
+            propagated_tracestate(&raw).as_deref(),
+            Some("vendor=opaque")
+        );
 
         let signal = raw_http_request_to_signal_with_clock_and_procfs(
             raw_as_bytes(&raw),
@@ -1962,6 +2051,7 @@ mod tests {
         assert_eq!(event.span_id.as_deref(), Some("00f067aa0ba902b7"));
         assert_eq!(event.parent_span_id.as_deref(), Some("7a8b9c0d1e2f3041"));
         assert_eq!(event.traceparent, None);
+        assert_eq!(event.tracestate, None);
         assert_eq!(
             event.correlation_kind,
             TraceCorrelationKind::GeneratedTraceContext
@@ -2518,6 +2608,44 @@ mod tests {
                 "non_http_connection_skip",
             ]
         );
+    }
+
+    #[test]
+    fn http_propagation_diagnostic_snapshot_covers_every_kernel_stage() {
+        let previous = HttpPropagationDiagnosticSnapshot::from_counters([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+        ]);
+        let current = HttpPropagationDiagnosticSnapshot::from_counters([
+            2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30,
+        ]);
+
+        let delta = current.delta_since(&previous);
+
+        assert_eq!(HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES.len(), 15);
+        for index in 0..HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN {
+            assert_eq!(delta.get(index), (index + 1) as u64);
+        }
+        assert!(!delta.is_empty());
+        assert!(delta.delta_since(&delta).is_empty());
+    }
+
+    #[test]
+    fn raw_http_propagation_layout_is_stable() {
+        assert_eq!(core::mem::align_of::<RawHttpPropagationContext>(), 8);
+        assert_eq!(core::mem::size_of::<RawHttpPropagationContext>(), 568);
+        assert_eq!(
+            core::mem::offset_of!(RawHttpPropagationContext, started_at_nanos),
+            40
+        );
+        assert_eq!(
+            core::mem::offset_of!(RawHttpPropagationContext, tracestate),
+            56
+        );
+
+        assert_eq!(core::mem::align_of::<RawHttpRequestEvent>(), 8);
+        assert_eq!(core::mem::size_of::<RawHttpRequestEvent>(), 1_704);
+        assert_eq!(core::mem::offset_of!(RawHttpRequestEvent, propagation), 96);
+        assert_eq!(core::mem::offset_of!(RawHttpRequestEvent, request), 680);
     }
 
     #[test]
