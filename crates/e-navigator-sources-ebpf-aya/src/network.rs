@@ -776,13 +776,15 @@ mod platform {
 
             reader_handles.push(spawn_active_connection_snapshot_reader(
                 active_connections,
-                tx.clone(),
-                self.host.clone(),
-                self.procfs_root.clone(),
                 Duration::from_millis(self.active_flow_snapshot_interval_millis),
-                clock_anchor,
-                shutdown.clone(),
-                telemetry.clone(),
+                ActiveSnapshotReaderContext {
+                    tx: tx.clone(),
+                    host: self.host.clone(),
+                    procfs_root: self.procfs_root.clone(),
+                    clock_anchor,
+                    shutdown: shutdown.clone(),
+                    telemetry: telemetry.clone(),
+                },
             ));
 
             reader_handles.extend(crate::event_transport::spawn_event_readers(
@@ -1100,23 +1102,27 @@ mod platform {
         Ok(())
     }
 
+    struct ActiveSnapshotReaderContext {
+        tx: mpsc::Sender<SignalEnvelope>,
+        host: Option<String>,
+        procfs_root: PathBuf,
+        clock_anchor: super::ClockAnchor,
+        shutdown: ReaderShutdown,
+        telemetry: Arc<SourceTelemetry>,
+    }
+
     fn spawn_active_connection_snapshot_reader(
         active_connections: AyaHashMap<
             MapData,
             super::RawConnectionKey,
             super::RawActiveConnection,
         >,
-        tx: mpsc::Sender<SignalEnvelope>,
-        host: Option<String>,
-        procfs_root: PathBuf,
         interval: Duration,
-        clock_anchor: super::ClockAnchor,
-        shutdown: ReaderShutdown,
-        telemetry: Arc<SourceTelemetry>,
+        context: ActiveSnapshotReaderContext,
     ) -> JoinHandle<()> {
         tokio::task::spawn_blocking(move || {
             let mut next_snapshot = Instant::now() + interval;
-            while wait_for_snapshot(next_snapshot, &shutdown) {
+            while wait_for_snapshot(next_snapshot, &context.shutdown) {
                 let Some(observed_monotonic_nanos) = monotonic_nanos() else {
                     warn!(
                         source = "source.aya_network",
@@ -1126,7 +1132,7 @@ mod platform {
                     continue;
                 };
                 for entry in active_connections.iter() {
-                    if shutdown.is_stopped() {
+                    if context.shutdown.is_stopped() {
                         return;
                     }
                     let (key, active) = match entry {
@@ -1143,20 +1149,20 @@ mod platform {
                     let Some(signal) = super::active_connection_to_signal_with_clock_and_procfs(
                         key,
                         active,
-                        host.clone(),
-                        clock_anchor,
+                        context.host.clone(),
+                        context.clock_anchor,
                         observed_monotonic_nanos,
-                        &procfs_root,
+                        &context.procfs_root,
                     ) else {
-                        telemetry.record_invalid_sample();
+                        context.telemetry.record_invalid_sample();
                         continue;
                     };
-                    telemetry.record_decoded_sample();
-                    if tx.blocking_send(signal).is_err() {
-                        telemetry.record_send_failure();
+                    context.telemetry.record_decoded_sample();
+                    if context.tx.blocking_send(signal).is_err() {
+                        context.telemetry.record_send_failure();
                         return;
                     }
-                    telemetry.record_sent_signal();
+                    context.telemetry.record_sent_signal();
                 }
 
                 next_snapshot = advance_snapshot_deadline(next_snapshot, interval);
