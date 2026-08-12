@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 base64 = { workspace = true }
+e-navigator-context-propagation = { path = "../e-navigator-context-propagation" }
 e-navigator-signals = { path = "../e-navigator-signals" }
 
 [dev-dependencies]

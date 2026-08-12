@@ -39,6 +39,33 @@ for expected in \
   fi
 done
 
+for expected in \
+  "extract_bpf_inbound_http_context" \
+  "bpf_copy_inbound_tracestate" \
+  "bpf_validate_tracestate" \
+  "plan_bpf_http1_propagation_loop" \
+  "http_message_matches_capture" \
+  "bpf_msg_push_data" \
+  "bpf_msg_pull_data" \
+  "HTTP_THREAD_TRACE_CONTEXTS"; do
+  if ! grep -Fq "$expected" "$program"; then
+    printf 'expected %s to preserve the verifier-bounded propagation contract: missing %s\n' "$program" "$expected" >&2
+    exit 1
+  fi
+done
+
+for expected in \
+  "RawHttpPropagationContext" \
+  "MAX_TRACESTATE_BYTES" \
+  "CgroupAttachMode::Single" \
+  "propagation_program_error" \
+  "aya http source ready"; do
+  if ! grep -Fq "$expected" "$source_file"; then
+    printf 'expected %s to preserve the host propagation ABI and fail-closed loader contract: missing %s\n' "$source_file" "$expected" >&2
+    exit 1
+  fi
+done
+
 if ! grep -Fq "return emit_http_request_event_without_connection(ctx, fd, buffer, len)" "$program"; then
   printf 'expected %s to emit bounded HTTP request candidates when socket peer metadata is missing\n' "$program" >&2
   exit 1
@@ -61,6 +88,17 @@ fi
 
 if ! grep -Fq "emit_http_request_iovecs_event(&ctx, fd, iov, iov_len)" "$program"; then
   printf 'expected %s to route HTTP sendmsg through bounded iovec request capture\n' "$program" >&2
+  exit 1
+fi
+
+if ! awk '
+  /fn emit_http_request_iovecs_event\(/ { in_iovec_emit = 1 }
+  in_iovec_emit && /fn emit_http_request_iovecs_event_without_connection\(/ { in_iovec_emit = 0 }
+  in_iovec_emit && /compact_http_request_iovecs_for_propagation\(event\)/ { found_compaction = 1 }
+  in_iovec_emit && /prepare_http_context_propagation\(event\)/ { found_planner = 1 }
+  END { exit found_compaction && found_planner ? 0 : 1 }
+' "$program"; then
+  printf 'expected %s to route tracked writev/sendmsg requests through the propagation planner\n' "$program" >&2
   exit 1
 fi
 
