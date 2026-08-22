@@ -40,6 +40,17 @@ suppresses the request span and emits a bounded
 `otel_sdk_span_suppressed` request-correlation warning once per pid and source.
 The input observation and every other generator remain unchanged.
 
+Also support explicit application ownership through
+`request_correlation.application_span_ownership_labels`. A non-empty map is an
+operator assertion that application instrumentation owns request spans for
+pods carrying every configured exact key/value label. Evaluate this declaration
+before process detection, suppress only the request span, and emit one bounded
+`application_span_owner_suppressed` warning per pod/source. Empty configuration,
+missing Kubernetes attribution, and partial or mismatched labels fail open and
+retain the E-Navigator span. This is the supported coexistence path for manual
+SDKs, renamed/custom agents, Go, Ruby, PHP, and framework-managed SDKs when
+automatic positive evidence is unavailable.
+
 ## Consequences
 
 This policy avoids false positive suppression from configuration alone and
@@ -48,17 +59,24 @@ request for an identity and a mutex-protected bounded cache thereafter. The
 feature requires the same host-procfs visibility already used for workload
 attribution.
 
+Explicit ownership avoids inspecting runtime internals and is independent of
+procfs, but it transfers correctness to the operator's Kubernetes labels. The
+label selector is exact, all-of, empty by default, and uses the same bounded
+key/value validation as capture filtering.
+
 This is not complete SDK coexistence detection. Manual SDK setup, Java Spring
 Boot or Quarkus SDK integration, renamed agents, custom Node loaders, Python
-launchers that remove every marker, PHP, Go, Ruby, and actual exporter-activity
-detection remain unclaimed. Strict parity requires independently proven
-runtime export-activity evidence rather than broader string matching.
+launchers that remove every marker, PHP, Go, Ruby, and actual exporter activity
+remain undetectable automatically. They are supported only when the operator
+declares application ownership. Strict automatic parity requires independently
+proven runtime export-activity evidence rather than broader string matching.
 
 ## Validation status
 
 Configuration defaults and parsing, official marker families, trace-disabled
 negative evidence, generic-configuration false positives, request-span-only
-suppression, bounded warning deduplication, and retention of the L4 generator
+suppression, exact all-label ownership matching, missing/partial-label fail-open
+behavior, bounded warning deduplication, and retention of the L4 generator
 boundary have deterministic local tests. Live workload/exporter coexistence
-and production overhead remain required before enabling this option by
+and production overhead remain required before enabling automatic detection by
 default.

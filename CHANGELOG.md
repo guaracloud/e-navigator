@@ -28,6 +28,10 @@ All notable changes to E-Navigator are documented here. The format follows
 - Fold exact `DW_OP_bregN` and `DW_OP_bregx` register-plus-signed-offset
   `DW_CFA_def_cfa_expression` programs into the existing bounded x86-64 and
   arm64 native unwind rules without expanding the kernel ABI.
+- Add exact, all-label Kubernetes application-span ownership declarations for
+  request-span coexistence. This explicit path covers manual SDKs, custom or
+  renamed agents, framework integrations, Go, Ruby, and PHP without widening
+  heuristic process detection.
 
 ### Security
 
@@ -40,6 +44,9 @@ All notable changes to E-Navigator are documented here. The format follows
 - Keep dynamic, dereferencing, multi-operation, malformed, and
   untracked-register CFA expressions on the existing explicit
   unsupported/fallback path.
+- Keep application ownership empty by default and fail open when Kubernetes
+  attribution is missing, partial, or mismatched; matching suppresses request
+  spans only and emits a bounded ownership warning.
 
 ## [0.5.0-rc.2] - 2026-08-22
 
