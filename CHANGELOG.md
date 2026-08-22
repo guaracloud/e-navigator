@@ -21,12 +21,19 @@ All notable changes to E-Navigator are documented here. The format follows
   select a parser only when exactly one supported protocol matches. Candidate
   buffers, evictions, unclassified events, and discovered connections are
   bounded and exported as native health counters.
+- Account TCP bytes from native-LP64 `sendmmsg` and `recvmmsg` calls by summing
+  the kernel-written length of each successfully completed message within a
+  16-message traversal bound. Exact active-snapshot and close totals are
+  verifier-loaded and runtime-proven on local arm64 OrbStack Linux.
 
 ### Security
 
 - Keep arbitrary-port capture opt-in because it expands the kernel plaintext
   capture surface. Ambiguous, gapped, truncated, oversized, encrypted, and
   unsupported prefixes fail closed without emitting protocol semantics.
+- Reject compat-ABI, oversized, and unreadable message batches instead of
+  interpreting the syscalls' message-count return value as bytes; expose both
+  accounted and unsupported batches as cumulative native health metrics.
 
 ## [0.5.0-rc.2] - 2026-08-22
 

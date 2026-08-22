@@ -202,7 +202,7 @@
           </article>
           <article class="status">
             <h3>Workload context on every signal</h3>
-            <p>Attribute runtime activity across hosts, processes, containers, namespaces, and Kubernetes workloads. Keep byte-rate views current for long-lived TCP pools with periodic active-flow snapshots, and export bounded directional L4 bytes by stable workload owner with idle reclamation and explicit overflow.</p>
+            <p>Attribute runtime activity across hosts, processes, containers, namespaces, and Kubernetes workloads. Keep byte-rate views current for long-lived TCP pools with periodic active-flow snapshots, and export bounded directional L4 bytes by stable workload owner with idle reclamation and explicit overflow. Native LP64 TCP <code>sendmmsg</code>/<code>recvmmsg</code> batches are measured from per-message lengths within an explicit 16-message bound; unsupported batches are counted and omitted.</p>
           </article>
           <article class="status">
             <h3>Performance and security, unified</h3>

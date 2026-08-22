@@ -517,7 +517,7 @@ mod platform {
     use async_trait::async_trait;
     use aya::{
         Btf, Ebpf,
-        maps::{HashMap as AyaHashMap, MapData},
+        maps::{HashMap as AyaHashMap, MapData, PerCpuArray},
         programs::{FExit, TracePoint},
     };
     use e_navigator_core::{CoreError, CoreResult, EbpfConfig, ModuleKind, ModuleMetadata, Source};
@@ -669,6 +669,30 @@ mod platform {
             )?;
             attach_tracepoint(
                 &mut ebpf,
+                "tracepoint_sendmmsg_enter",
+                "syscalls",
+                "sys_enter_sendmmsg",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_sendmmsg_exit",
+                "syscalls",
+                "sys_exit_sendmmsg",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_recvmmsg_enter",
+                "syscalls",
+                "sys_enter_recvmmsg",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
+                "tracepoint_recvmmsg_exit",
+                "syscalls",
+                "sys_exit_recvmmsg",
+            )?;
+            attach_tracepoint(
+                &mut ebpf,
                 "tracepoint_tcp_set_state",
                 "sock",
                 "inet_sock_set_state",
@@ -715,6 +739,16 @@ mod platform {
                 transport,
                 "source.aya_network",
             )?;
+            let mmsg_diagnostic_counters = PerCpuArray::try_from(
+                ebpf.take_map("NETWORK_MMSG_DIAGNOSTIC_COUNTERS")
+                    .ok_or_else(|| missing_map("NETWORK_MMSG_DIAGNOSTIC_COUNTERS"))?,
+            )
+            .map_err(module_error)?;
+            reader_handles.push(spawn_network_mmsg_counter_reader(
+                mmsg_diagnostic_counters,
+                shutdown.clone(),
+                telemetry.clone(),
+            ));
             let active_connections = ebpf
                 .take_map("ACTIVE_CONNECTIONS")
                 .ok_or_else(|| missing_map("ACTIVE_CONNECTIONS"))?;
@@ -1277,6 +1311,61 @@ mod platform {
                 failures.join(", ")
             ),
         })
+    }
+
+    fn spawn_network_mmsg_counter_reader(
+        counters: PerCpuArray<MapData, u64>,
+        shutdown: ReaderShutdown,
+        telemetry: Arc<SourceTelemetry>,
+    ) -> JoinHandle<()> {
+        tokio::task::spawn_blocking(move || {
+            let mut previous = [0_u64; 2];
+            loop {
+                if shutdown.is_stopped() {
+                    record_network_mmsg_counter_delta(&counters, &telemetry, &mut previous);
+                    return;
+                }
+                std::thread::sleep(Duration::from_secs(1));
+                record_network_mmsg_counter_delta(&counters, &telemetry, &mut previous);
+            }
+        })
+    }
+
+    fn record_network_mmsg_counter_delta(
+        counters: &PerCpuArray<MapData, u64>,
+        telemetry: &SourceTelemetry,
+        previous: &mut [u64; 2],
+    ) {
+        let mut current = [0_u64; 2];
+        for (index, total) in current.iter_mut().enumerate() {
+            let index = index as u32;
+            let values = match counters.get(&index, 0) {
+                Ok(values) => values,
+                Err(error) => {
+                    warn!(
+                        source = "source.aya_network",
+                        counter_index = index,
+                        error = %error,
+                        "failed to read network message-batch counter"
+                    );
+                    return;
+                }
+            };
+            *total = values
+                .iter()
+                .fold(0_u64, |sum, value| sum.wrapping_add(*value));
+        }
+        let deltas = std::array::from_fn(|index| current[index].wrapping_sub(previous[index]));
+        *previous = current;
+        telemetry.record_network_mmsg_counter_deltas(deltas);
+        if deltas[1] != 0 {
+            warn!(
+                source = "source.aya_network",
+                unsupported_batches = deltas[1],
+                max_messages = 16,
+                "network message-batch accounting skipped unsupported batches"
+            );
+        }
     }
 
     async fn join_reader_handles(handles: Vec<JoinHandle<()>>) -> CoreResult<()> {
