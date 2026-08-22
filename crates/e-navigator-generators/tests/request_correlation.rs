@@ -5,7 +5,7 @@
     reason = "integration tests use panic-oriented assertions for failed contracts"
 )]
 
-use e_navigator_core::Generator;
+use e_navigator_core::{Generator, RequestCorrelationConfig};
 use e_navigator_generators::RequestCorrelationGenerator;
 use e_navigator_signals::{
     ContainerContext, KubernetesContext, NetworkAddressFamily, NetworkConnectionCloseEvent,
@@ -95,6 +95,62 @@ async fn client_capture_does_not_duplicate_propagating_span_identity() {
     let outputs = observe(&generator, &signal).await;
 
     assert!(outputs.is_empty());
+}
+
+#[tokio::test]
+async fn supported_otel_zero_code_agent_suppresses_only_generated_request_spans() {
+    let procfs_root =
+        std::env::temp_dir().join(format!("e-navigator-otel-sdk-test-{}", std::process::id()));
+    let process_root = procfs_root.join("42");
+    std::fs::create_dir_all(&process_root).expect("create procfs fixture");
+    std::fs::write(
+        process_root.join("environ"),
+        b"NODE_OPTIONS=--require @opentelemetry/auto-instrumentations-node/register\0OTEL_TRACES_EXPORTER=otlp\0",
+    )
+    .expect("write environment fixture");
+    std::fs::write(process_root.join("cmdline"), b"node\0/app/server.js\0")
+        .expect("write command line fixture");
+
+    let generator = RequestCorrelationGenerator::from_config(
+        &RequestCorrelationConfig {
+            suppress_otel_sdk_spans: true,
+            ..RequestCorrelationConfig::default()
+        },
+        procfs_root.clone(),
+    );
+    let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.role = Some(ProtocolCaptureRole::Server);
+    request.process = Some(NetworkProcessIdentity {
+        command: "node".to_string(),
+        executable: Some("/usr/bin/node".to_string()),
+        ..process()
+    });
+
+    let outputs = observe(&generator, &signal).await;
+
+    assert!(
+        !outputs
+            .iter()
+            .any(|output| matches!(output.payload, SignalPayload::RequestSpanObservation(_)))
+    );
+    assert_request_warning(&outputs, "otel_sdk_span_suppressed");
+    assert!(observe(&generator, &signal).await.is_empty());
+
+    let disabled = RequestCorrelationGenerator::from_config(
+        &RequestCorrelationConfig::default(),
+        procfs_root.clone(),
+    );
+    assert!(
+        observe(&disabled, &signal)
+            .await
+            .iter()
+            .any(|output| matches!(output.payload, SignalPayload::RequestSpanObservation(_)))
+    );
+    assert!(!generator.accepts(&network_close_signal()));
+    std::fs::remove_dir_all(procfs_root).ok();
 }
 
 #[tokio::test]

@@ -15,6 +15,13 @@ All notable changes to E-Navigator are documented here. The format follows
   symbolization with Alloy-compatible `none`, `simplified`, `templates`, and
   `full` modes; `simplified` remains the default.
 
+### Added
+
+- Add opt-in, bounded procfs detection for supported OpenTelemetry Java,
+  Node.js, .NET, and Python zero-code agents. Matching processes suppress only
+  generated request spans and emit a bounded coexistence warning; L4 signals
+  and profiles remain unaffected.
+
 ## [0.5.0-rc.1] - 2026-08-11
 
 ### Added

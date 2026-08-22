@@ -7,6 +7,10 @@ use super::{ConfigError, ConfigResult};
 pub struct RequestCorrelationConfig {
     #[serde(default = "default_generate_trace_ids")]
     pub generate_trace_ids: bool,
+    /// Suppress request spans only when bounded procfs evidence identifies a
+    /// supported OpenTelemetry zero-code agent in the observed process.
+    #[serde(default)]
+    pub suppress_otel_sdk_spans: bool,
     #[serde(default = "default_request_correlation_max_seen_requests")]
     pub max_seen_requests: usize,
     #[serde(default = "default_request_correlation_max_warnings")]
@@ -17,6 +21,7 @@ impl Default for RequestCorrelationConfig {
     fn default() -> Self {
         Self {
             generate_trace_ids: default_generate_trace_ids(),
+            suppress_otel_sdk_spans: false,
             max_seen_requests: default_request_correlation_max_seen_requests(),
             max_warnings: default_request_correlation_max_warnings(),
         }
