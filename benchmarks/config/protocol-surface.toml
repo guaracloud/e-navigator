@@ -32,6 +32,7 @@ unknown_cgroup = "deny"
 namespace_include = ["e-navigator-bench"]
 
 [protocol_source]
+discovery_enabled = false
 inbound_enabled = false
 http1_ports = [18080]
 http2_ports = []

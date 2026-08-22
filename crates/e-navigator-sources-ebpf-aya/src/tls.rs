@@ -608,7 +608,7 @@ mod platform {
                     reader_count,
                     crate::protocol::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
                 );
-                let mut last_protocol_surface_counts = [0_u64; 4];
+                let mut last_protocol_surface_counts = [0_u64; 7];
 
                 let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
@@ -1170,6 +1170,9 @@ mod platform {
             unparsed_responses = counters.unparsed_responses,
             kafka_correlation_mismatches = counters.kafka_correlation_mismatches,
             mongodb_correlation_mismatches = counters.mongodb_correlation_mismatches,
+            discovered_connections = counters.discovered_connections,
+            discovery_unclassified_events = counters.discovery_unclassified_events,
+            discovery_candidate_evictions = counters.discovery_candidate_evictions,
             segment_gaps = counters.segment_gaps,
             websocket_upgrades = counters.websocket_upgrades,
             websocket_frames = counters.websocket_frames,

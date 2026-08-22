@@ -59,6 +59,9 @@ struct SourceCounters {
     protocol_websocket_frames: AtomicU64,
     protocol_websocket_transition_rejections: AtomicU64,
     protocol_grpc_web_requests: AtomicU64,
+    protocol_discovered_connections: AtomicU64,
+    protocol_discovery_unclassified_events: AtomicU64,
+    protocol_discovery_candidate_evictions: AtomicU64,
 }
 
 impl SourceCounters {
@@ -104,6 +107,9 @@ impl SourceCounters {
             protocol_websocket_frames: AtomicU64::new(0),
             protocol_websocket_transition_rejections: AtomicU64::new(0),
             protocol_grpc_web_requests: AtomicU64::new(0),
+            protocol_discovered_connections: AtomicU64::new(0),
+            protocol_discovery_unclassified_events: AtomicU64::new(0),
+            protocol_discovery_candidate_evictions: AtomicU64::new(0),
         }
     }
 }
@@ -151,6 +157,9 @@ pub struct SourceTelemetrySnapshot {
     pub protocol_websocket_frames: u64,
     pub protocol_websocket_transition_rejections: u64,
     pub protocol_grpc_web_requests: u64,
+    pub protocol_discovered_connections: u64,
+    pub protocol_discovery_unclassified_events: u64,
+    pub protocol_discovery_candidate_evictions: u64,
 }
 
 static SOURCE_COUNTERS: OnceLock<Mutex<BTreeMap<&'static str, Arc<SourceCounters>>>> =
@@ -350,12 +359,15 @@ impl SourceTelemetry {
         }
     }
 
-    pub(crate) fn record_protocol_surface_counter_deltas(&self, deltas: [u64; 4]) {
+    pub(crate) fn record_protocol_surface_counter_deltas(&self, deltas: [u64; 7]) {
         for (counter, delta) in [
             &self.counters.protocol_websocket_upgrades,
             &self.counters.protocol_websocket_frames,
             &self.counters.protocol_websocket_transition_rejections,
             &self.counters.protocol_grpc_web_requests,
+            &self.counters.protocol_discovered_connections,
+            &self.counters.protocol_discovery_unclassified_events,
+            &self.counters.protocol_discovery_candidate_evictions,
         ]
         .into_iter()
         .zip(deltas)
@@ -418,6 +430,9 @@ impl SourceTelemetry {
             protocol_websocket_frames = snapshot.protocol_websocket_frames,
             protocol_websocket_transition_rejections = snapshot.protocol_websocket_transition_rejections,
             protocol_grpc_web_requests = snapshot.protocol_grpc_web_requests,
+            protocol_discovered_connections = snapshot.protocol_discovered_connections,
+            protocol_discovery_unclassified_events = snapshot.protocol_discovery_unclassified_events,
+            protocol_discovery_candidate_evictions = snapshot.protocol_discovery_candidate_evictions,
             "source telemetry summary"
         );
     }
@@ -535,6 +550,15 @@ fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceT
             .protocol_websocket_transition_rejections
             .load(Ordering::Relaxed),
         protocol_grpc_web_requests: counters.protocol_grpc_web_requests.load(Ordering::Relaxed),
+        protocol_discovered_connections: counters
+            .protocol_discovered_connections
+            .load(Ordering::Relaxed),
+        protocol_discovery_unclassified_events: counters
+            .protocol_discovery_unclassified_events
+            .load(Ordering::Relaxed),
+        protocol_discovery_candidate_evictions: counters
+            .protocol_discovery_candidate_evictions
+            .load(Ordering::Relaxed),
     }
 }
 
@@ -582,6 +606,9 @@ impl SourceTelemetrySnapshot {
             protocol_websocket_frames: 0,
             protocol_websocket_transition_rejections: 0,
             protocol_grpc_web_requests: 0,
+            protocol_discovered_connections: 0,
+            protocol_discovery_unclassified_events: 0,
+            protocol_discovery_candidate_evictions: 0,
         }
     }
 
@@ -694,6 +721,15 @@ impl SourceTelemetrySnapshot {
             protocol_grpc_web_requests: self
                 .protocol_grpc_web_requests
                 .saturating_sub(previous.protocol_grpc_web_requests),
+            protocol_discovered_connections: self
+                .protocol_discovered_connections
+                .saturating_sub(previous.protocol_discovered_connections),
+            protocol_discovery_unclassified_events: self
+                .protocol_discovery_unclassified_events
+                .saturating_sub(previous.protocol_discovery_unclassified_events),
+            protocol_discovery_candidate_evictions: self
+                .protocol_discovery_candidate_evictions
+                .saturating_sub(previous.protocol_discovery_candidate_evictions),
         }
     }
 
@@ -736,6 +772,9 @@ impl SourceTelemetrySnapshot {
             && self.protocol_websocket_frames == 0
             && self.protocol_websocket_transition_rejections == 0
             && self.protocol_grpc_web_requests == 0
+            && self.protocol_discovered_connections == 0
+            && self.protocol_discovery_unclassified_events == 0
+            && self.protocol_discovery_candidate_evictions == 0
     }
 }
 
@@ -786,7 +825,7 @@ mod tests {
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Exhausted);
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Disabled);
         telemetry.record_profile_counter_deltas([8, 1, 2, 3, 4, 5, 6]);
-        telemetry.record_protocol_surface_counter_deltas([9, 10, 1, 11]);
+        telemetry.record_protocol_surface_counter_deltas([9, 10, 1, 11, 12, 13, 14]);
 
         let snapshot = telemetry.snapshot_for_test();
         assert!(snapshot.initialized);
@@ -812,6 +851,9 @@ mod tests {
         assert_eq!(snapshot.protocol_websocket_frames, 10);
         assert_eq!(snapshot.protocol_websocket_transition_rejections, 1);
         assert_eq!(snapshot.protocol_grpc_web_requests, 11);
+        assert_eq!(snapshot.protocol_discovered_connections, 12);
+        assert_eq!(snapshot.protocol_discovery_unclassified_events, 13);
+        assert_eq!(snapshot.protocol_discovery_candidate_evictions, 14);
 
         let first_delta = telemetry.take_summary_delta();
         assert_eq!(first_delta.decoded_samples, 1);

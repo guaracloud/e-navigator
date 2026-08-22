@@ -883,6 +883,11 @@ const HASH_MAP_NO_PREALLOC: u32 = 1;
 static PROTOCOL_CAPTURE_PORTS: HashMap<u16, u32> =
     HashMap::with_max_entries(64, HASH_MAP_NO_PREALLOC);
 
+/// Opt-in capture of bounded payload prefixes on every TCP port. Userspace
+/// still emits semantics only after strict, unique protocol classification.
+#[map]
+static PROTOCOL_CAPTURE_ALL: Array<u32> = Array::with_max_entries(1, 0);
+
 #[map]
 static PROTOCOL_CAPTURE_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
 
@@ -6560,8 +6565,11 @@ fn protocol_capture_connection(fd: i32) -> Option<PendingConnect> {
     };
     let unresolved_inbound = connection.role == CONNECTION_ROLE_SERVER && capture_port == 0;
     let inbound_enabled = PROTOCOL_CAPTURE_INBOUND.get(0).copied().unwrap_or(0) == 1;
+    let capture_all = PROTOCOL_CAPTURE_ALL.get(0).copied().unwrap_or(0) == 1;
     if (unresolved_inbound && !inbound_enabled)
-        || (!unresolved_inbound && unsafe { PROTOCOL_CAPTURE_PORTS.get(&capture_port) }.is_none())
+        || (!unresolved_inbound
+            && !capture_all
+            && unsafe { PROTOCOL_CAPTURE_PORTS.get(&capture_port) }.is_none())
     {
         record_protocol_diagnostic(PROTOCOL_DIAG_PORT_FILTERED);
         return None;

@@ -43,6 +43,7 @@ max_tracestate_bytes = 512
 inbound_enabled = true
 
 [protocol_source]
+discovery_enabled = false
 inbound_enabled = true
 http1_ports = []
 http2_ports = []

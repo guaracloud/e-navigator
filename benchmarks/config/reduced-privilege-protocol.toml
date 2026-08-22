@@ -18,6 +18,7 @@ cgroup_root = "/host/cgroup"
 enabled = false
 
 [protocol_source]
+discovery_enabled = false
 inbound_enabled = true
 http1_ports = []
 http2_ports = []
