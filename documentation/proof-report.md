@@ -792,12 +792,15 @@ These areas remain explicitly partial:
   lossless DNS coverage are not proven.
 - **Network byte accounting:** a privileged local OrbStack
   `7.0.11-orbstack-00360-gc9bc4d96ac70` run proved exact active-snapshot and
-  close totals across `readv`, `writev`, `sendfile`, and both `splice`
-  directions. A Node `20.20.2` strace observed a covered vectored transport and
-  no io_uring syscall. This evidence is recorded in
-  [`proof/network-io-20260811/report.md`](proof/network-io-20260811/report.md).
-  Other kernels/runtimes, io_uring, and message-batch accounting remain
-  unproven or explicit non-claims.
+  close totals across `readv`, `writev`, bounded native-LP64 `sendmmsg` and
+  `recvmmsg`, `sendfile`, and both `splice` directions. A Node `20.20.2` strace
+  observed a covered vectored transport and no io_uring syscall. The original
+  evidence is recorded in
+  [`proof/network-io-20260811/report.md`](proof/network-io-20260811/report.md),
+  and the message-batch extension in
+  [`proof/network-mmsg-20260822/report.md`](proof/network-mmsg-20260822/report.md).
+  Other kernels/runtimes, compat processes, batches above 16 completed
+  messages, and general io_uring remain unproven or explicit non-claims.
 - **CPU, off-CPU, and lock profiling:** exact CPython 3.11/3.12 interpreter
   walks, selected periodic samples and sessions, three homelab repetitions of
   bounded scheduler off-CPU and futex-wait profiles, local pprof rendering, and

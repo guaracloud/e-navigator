@@ -313,6 +313,14 @@ fn aya_source_telemetry_lines(
                     snapshot.ring_buffer_reservation_failures,
                 ),
                 metric(
+                    "e_navigator_ebpf_source_network_mmsg_accounted_batches_total",
+                    snapshot.network_mmsg_accounted_batches,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_network_mmsg_unsupported_batches_total",
+                    snapshot.network_mmsg_unsupported_batches,
+                ),
+                metric(
                     "e_navigator_ebpf_source_diagnostic_matches_total",
                     snapshot.diagnostic_matches,
                 ),
@@ -850,6 +858,8 @@ mod tests {
                 lost_transport_events: 6,
                 lost_perf_events: 4,
                 ring_buffer_reservation_failures: 2,
+                network_mmsg_accounted_batches: 11,
+                network_mmsg_unsupported_batches: 2,
                 diagnostic_matches: 1,
                 diagnostic_filtered: 1,
                 diagnostic_exhausted: 0,
@@ -887,7 +897,7 @@ mod tests {
             .into_iter(),
         );
 
-        assert_eq!(lines.len(), 43);
+        assert_eq!(lines.len(), 45);
         assert!(
             lines.iter().all(
                 |line| line.labels.get("source").map(String::as_str) == Some("source.aya_exec")
@@ -919,6 +929,10 @@ mod tests {
         }));
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_go_tls_fd_resolutions_total" && line.value == "7"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_network_mmsg_accounted_batches_total"
+                && line.value == "11"
         }));
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_protocol_websocket_frames_total"

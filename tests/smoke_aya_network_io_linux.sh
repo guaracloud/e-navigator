@@ -43,26 +43,26 @@ docker run --rm \
   --volume "$repo_root/tests/fixtures/network_io_workload.py:/network_io_workload.py:ro" \
   "$python_image" \
   python /network_io_workload.py \
-  | grep -F 'network-io-workload-ok sent=383 received=352'
+  | grep -F 'network-io-workload-ok sent=599 received=563'
 
 sleep 1
 docker stop --time 5 "$agent_name" >/dev/null
 docker logs "$agent_name" >"$agent_log" 2>&1
 
 if ! grep -F '"kind":"network_connection_snapshot"' "$agent_log" \
-  | grep -F '"bytes_sent":383' \
-  | grep -Fq '"bytes_received":352'; then
+  | grep -F '"bytes_sent":599' \
+  | grep -Fq '"bytes_received":563'; then
   cat "$agent_log" >&2
   printf 'active snapshot did not include all vectored and zero-copy bytes\n' >&2
   exit 1
 fi
 
 if ! grep -F '"kind":"network_connection_close"' "$agent_log" \
-  | grep -F '"bytes_sent":383' \
-  | grep -Fq '"bytes_received":352'; then
+  | grep -F '"bytes_sent":599' \
+  | grep -Fq '"bytes_received":563'; then
   cat "$agent_log" >&2
   printf 'close event did not include all vectored and zero-copy bytes\n' >&2
   exit 1
 fi
 
-printf 'Aya network I/O smoke passed: writev/readv/sendfile/splice and active snapshot totals\n'
+printf 'Aya network I/O smoke passed: vectored/message-batch/zero-copy and active snapshot totals\n'

@@ -21,7 +21,7 @@ pub(crate) enum SourceMapProfile {
     CpuProfile,
 }
 
-const CAPACITY_MAPS: [&str; 26] = [
+const CAPACITY_MAPS: [&str; 27] = [
     "UNWIND_ROWS",
     "UNWIND_MODULES",
     "UNWIND_PROC_MAPPINGS",
@@ -29,6 +29,7 @@ const CAPACITY_MAPS: [&str; 26] = [
     "PENDING_CONNECTS",
     "ACTIVE_CONNECTIONS",
     "PENDING_NETWORK_IO",
+    "PENDING_NETWORK_MMSG",
     "PENDING_DNS_RECVS",
     "PENDING_BINDS",
     "PROCESS_LISTENER_ENDPOINTS",
@@ -123,7 +124,10 @@ fn retains_map(profile: SourceMapProfile, name: &str) -> bool {
         SourceMapProfile::Exec => false,
         SourceMapProfile::Network => matches!(
             name,
-            "PENDING_CONNECTS" | "ACTIVE_CONNECTIONS" | "PENDING_NETWORK_IO"
+            "PENDING_CONNECTS"
+                | "ACTIVE_CONNECTIONS"
+                | "PENDING_NETWORK_IO"
+                | "PENDING_NETWORK_MMSG"
         ),
         SourceMapProfile::Dns => matches!(
             name,

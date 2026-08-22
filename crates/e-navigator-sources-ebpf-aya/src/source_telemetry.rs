@@ -29,6 +29,8 @@ struct SourceCounters {
     lost_transport_events: AtomicU64,
     lost_perf_events: AtomicU64,
     ring_buffer_reservation_failures: AtomicU64,
+    network_mmsg_accounted_batches: AtomicU64,
+    network_mmsg_unsupported_batches: AtomicU64,
     diagnostic_matches: AtomicU64,
     diagnostic_filtered: AtomicU64,
     diagnostic_exhausted: AtomicU64,
@@ -77,6 +79,8 @@ impl SourceCounters {
             lost_transport_events: AtomicU64::new(0),
             lost_perf_events: AtomicU64::new(0),
             ring_buffer_reservation_failures: AtomicU64::new(0),
+            network_mmsg_accounted_batches: AtomicU64::new(0),
+            network_mmsg_unsupported_batches: AtomicU64::new(0),
             diagnostic_matches: AtomicU64::new(0),
             diagnostic_filtered: AtomicU64::new(0),
             diagnostic_exhausted: AtomicU64::new(0),
@@ -127,6 +131,8 @@ pub struct SourceTelemetrySnapshot {
     pub lost_transport_events: u64,
     pub lost_perf_events: u64,
     pub ring_buffer_reservation_failures: u64,
+    pub network_mmsg_accounted_batches: u64,
+    pub network_mmsg_unsupported_batches: u64,
     pub diagnostic_matches: u64,
     pub diagnostic_filtered: u64,
     pub diagnostic_exhausted: u64,
@@ -257,6 +263,18 @@ impl SourceTelemetry {
         self.counters
             .ring_buffer_reservation_failures
             .fetch_add(count, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_network_mmsg_counter_deltas(&self, deltas: [u64; 2]) {
+        for (counter, delta) in [
+            &self.counters.network_mmsg_accounted_batches,
+            &self.counters.network_mmsg_unsupported_batches,
+        ]
+        .into_iter()
+        .zip(deltas)
+        {
+            counter.fetch_add(delta, Ordering::Relaxed);
+        }
     }
 
     #[cfg(any(target_os = "linux", test))]
@@ -400,6 +418,8 @@ impl SourceTelemetry {
             lost_transport_events = snapshot.lost_transport_events,
             lost_perf_events = snapshot.lost_perf_events,
             ring_buffer_reservation_failures = snapshot.ring_buffer_reservation_failures,
+            network_mmsg_accounted_batches = snapshot.network_mmsg_accounted_batches,
+            network_mmsg_unsupported_batches = snapshot.network_mmsg_unsupported_batches,
             diagnostic_matches = snapshot.diagnostic_matches,
             diagnostic_filtered = snapshot.diagnostic_filtered,
             diagnostic_exhausted = snapshot.diagnostic_exhausted,
@@ -508,6 +528,12 @@ fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceT
         ring_buffer_reservation_failures: counters
             .ring_buffer_reservation_failures
             .load(Ordering::Relaxed),
+        network_mmsg_accounted_batches: counters
+            .network_mmsg_accounted_batches
+            .load(Ordering::Relaxed),
+        network_mmsg_unsupported_batches: counters
+            .network_mmsg_unsupported_batches
+            .load(Ordering::Relaxed),
         diagnostic_matches: counters.diagnostic_matches.load(Ordering::Relaxed),
         diagnostic_filtered: counters.diagnostic_filtered.load(Ordering::Relaxed),
         diagnostic_exhausted: counters.diagnostic_exhausted.load(Ordering::Relaxed),
@@ -576,6 +602,8 @@ impl SourceTelemetrySnapshot {
             lost_transport_events: 0,
             lost_perf_events: 0,
             ring_buffer_reservation_failures: 0,
+            network_mmsg_accounted_batches: 0,
+            network_mmsg_unsupported_batches: 0,
             diagnostic_matches: 0,
             diagnostic_filtered: 0,
             diagnostic_exhausted: 0,
@@ -637,6 +665,12 @@ impl SourceTelemetrySnapshot {
             ring_buffer_reservation_failures: self
                 .ring_buffer_reservation_failures
                 .saturating_sub(previous.ring_buffer_reservation_failures),
+            network_mmsg_accounted_batches: self
+                .network_mmsg_accounted_batches
+                .saturating_sub(previous.network_mmsg_accounted_batches),
+            network_mmsg_unsupported_batches: self
+                .network_mmsg_unsupported_batches
+                .saturating_sub(previous.network_mmsg_unsupported_batches),
             diagnostic_matches: self
                 .diagnostic_matches
                 .saturating_sub(previous.diagnostic_matches),
@@ -742,6 +776,8 @@ impl SourceTelemetrySnapshot {
             && self.lost_transport_events == 0
             && self.lost_perf_events == 0
             && self.ring_buffer_reservation_failures == 0
+            && self.network_mmsg_accounted_batches == 0
+            && self.network_mmsg_unsupported_batches == 0
             && self.diagnostic_matches == 0
             && self.diagnostic_filtered == 0
             && self.diagnostic_exhausted == 0
@@ -820,6 +856,7 @@ mod tests {
         telemetry.record_send_failure();
         telemetry.record_lost_perf_events(3);
         telemetry.record_ring_buffer_reservation_failures(2);
+        telemetry.record_network_mmsg_counter_deltas([15, 2]);
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Matched);
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Filtered);
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Exhausted);
@@ -837,6 +874,8 @@ mod tests {
         assert_eq!(snapshot.lost_transport_events, 5);
         assert_eq!(snapshot.lost_perf_events, 3);
         assert_eq!(snapshot.ring_buffer_reservation_failures, 2);
+        assert_eq!(snapshot.network_mmsg_accounted_batches, 15);
+        assert_eq!(snapshot.network_mmsg_unsupported_batches, 2);
         assert_eq!(snapshot.diagnostic_matches, 1);
         assert_eq!(snapshot.diagnostic_filtered, 1);
         assert_eq!(snapshot.diagnostic_exhausted, 1);

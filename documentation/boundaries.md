@@ -193,13 +193,15 @@ E-Navigator does not currently claim:
 - live native `network.flow.bytes` or `network.peer.flow.bytes` export from
   traffic after the native metric migration, including directional owner
   attribution, overflow, churn, and warning proof;
-- general io_uring or `sendmmsg`/`recvmmsg` byte accounting. The local Node 20
-  transport qualification observed covered vectored syscalls and no io_uring
-  use, while a privileged OrbStack smoke proved exact `readv`/`writev`,
-  `sendfile`, and bidirectional `splice` totals. io_uring submission and
-  completion are decoupled, fixed-file and SQPOLL modes do not preserve the
-  current tgid/fd identity seam, and message-batch syscall returns are message
-  counts rather than byte counts;
+- general io_uring byte accounting. The local Node 20 transport qualification
+  observed covered vectored syscalls and no io_uring use. A privileged arm64
+  OrbStack smoke proved exact `readv`/`writev`, bounded native-LP64
+  `sendmmsg`/`recvmmsg`, `sendfile`, and bidirectional `splice` totals. Message
+  batches are supported only when at most 16 messages complete; larger
+  completed batches, compat ABIs, and unreadable `mmsghdr.msg_len` values fail
+  closed with a native counter. io_uring submission and completion remain
+  decoupled, while fixed-file and SQPOLL modes do not preserve the current
+  tgid/fd identity seam;
 - universal W3C propagation from the disabled-by-default plaintext HTTP/1
   injector. A privileged local OrbStack aarch64 run proved one bounded
   three-iovec `sendmsg` request with a `Content-Length` body, child

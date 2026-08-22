@@ -26,6 +26,12 @@ for expected in \
   "try_tracepoint_network_io_enter(&ctx, NETWORK_IO_WRITE)" \
   "try_tracepoint_network_io_enter(&ctx, NETWORK_IO_READ)" \
   "try_tracepoint_network_splice_enter(&ctx)" \
+  "try_tracepoint_network_mmsg_enter(&ctx, NETWORK_IO_WRITE)" \
+  "try_tracepoint_network_mmsg_enter(&ctx, NETWORK_IO_READ)" \
+  "native_mmsg_syscall(ctx, direction)?" \
+  "completed > NETWORK_MMSG_MAX_MESSAGES" \
+  "NETWORK_MMSG_DIAG_UNSUPPORTED" \
+  "try_tracepoint_network_mmsg_exit(&ctx)" \
   "try_tracepoint_network_io_exit(&ctx)"; do
   if ! grep -Fq "$expected" "$program"; then
     printf 'expected %s to use shared network I/O accounting: missing %s\n' "$program" "$expected" >&2
@@ -65,7 +71,15 @@ for expected in \
   "tracepoint_recvmsg_enter" \
   "sys_enter_recvmsg" \
   "tracepoint_recvmsg_exit" \
-  "sys_exit_recvmsg"; do
+  "sys_exit_recvmsg" \
+  "tracepoint_sendmmsg_enter" \
+  "sys_enter_sendmmsg" \
+  "tracepoint_sendmmsg_exit" \
+  "sys_exit_sendmmsg" \
+  "tracepoint_recvmmsg_enter" \
+  "sys_enter_recvmmsg" \
+  "tracepoint_recvmmsg_exit" \
+  "sys_exit_recvmmsg"; do
   if ! grep -Fq "$expected" "$source_file"; then
     printf 'expected %s to attach stream socket I/O tracepoint: missing %s\n' "$source_file" "$expected" >&2
     exit 1

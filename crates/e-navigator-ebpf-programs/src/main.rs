@@ -179,6 +179,21 @@ const TCP_RESET_DIRECTION_RECEIVE: u32 = 2;
 const AF_INET_U16: u16 = 2;
 const NETWORK_IO_READ: u32 = 1;
 const NETWORK_IO_WRITE: u32 = 2;
+const NETWORK_MMSG_MAX_MESSAGES: u32 = 16;
+#[cfg(bpf_target_arch = "aarch64")]
+const NETWORK_RECVMMSG_SYSCALL: i32 = 243;
+#[cfg(bpf_target_arch = "aarch64")]
+const NETWORK_SENDMMSG_SYSCALL: i32 = 269;
+#[cfg(bpf_target_arch = "x86_64")]
+const NETWORK_RECVMMSG_SYSCALL: i32 = 299;
+#[cfg(bpf_target_arch = "x86_64")]
+const NETWORK_SENDMMSG_SYSCALL: i32 = 307;
+// Linux LP64 `struct mmsghdr`: 56-byte `msghdr`, then `msg_len`.
+const NETWORK_MMSG_HEADER_BYTES: usize = 64;
+const NETWORK_MMSG_LENGTH_OFFSET: usize = 56;
+const NETWORK_MMSG_DIAGNOSTIC_COUNTERS_LEN: u32 = 2;
+const NETWORK_MMSG_DIAG_ACCOUNTED: u32 = 0;
+const NETWORK_MMSG_DIAG_UNSUPPORTED: u32 = 1;
 const NEG_EINPROGRESS: i64 = -115;
 const EXEC_EVENT_SOURCE_SYSCALL_ENTER: u32 = 1;
 const EXEC_EVENT_SOURCE_SCHED_EXEC: u32 = 2;
@@ -727,6 +742,16 @@ pub struct PendingNetworkIo {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct PendingNetworkMmsg {
+    pub tgid: u32,
+    pub fd: i32,
+    pub direction: u32,
+    pub vlen: u32,
+    pub messages_ptr: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct PendingDnsRecv {
     pub pid: u32,
     pub uid: u32,
@@ -1037,6 +1062,14 @@ static ACTIVE_CONNECTIONS: HashMap<ConnectionKey, PendingConnect> =
 #[map]
 static PENDING_NETWORK_IO: HashMap<u64, PendingNetworkIo> =
     HashMap::with_max_entries(8192, HASH_MAP_NO_PREALLOC);
+
+#[map]
+static PENDING_NETWORK_MMSG: HashMap<u64, PendingNetworkMmsg> =
+    HashMap::with_max_entries(8192, HASH_MAP_NO_PREALLOC);
+
+#[map]
+static NETWORK_MMSG_DIAGNOSTIC_COUNTERS: PerCpuArray<u64> =
+    PerCpuArray::with_max_entries(NETWORK_MMSG_DIAGNOSTIC_COUNTERS_LEN, 0);
 
 #[map]
 static PENDING_DNS_RECVS: HashMap<u64, PendingDnsRecv> =
@@ -1773,6 +1806,38 @@ pub fn tracepoint_recvmsg_exit(ctx: TracePointContext) -> u32 {
     };
     match try_tracepoint_dns_recvmsg_exit(&ctx) {
         Ok(_) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_sendmmsg_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_mmsg_enter(&ctx, NETWORK_IO_WRITE) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_sendmmsg_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_mmsg_exit(&ctx) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_recvmmsg_enter(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_mmsg_enter(&ctx, NETWORK_IO_READ) {
+        Ok(ret) => ret,
+        Err(ret) => ret as u32,
+    }
+}
+
+#[tracepoint]
+pub fn tracepoint_recvmmsg_exit(ctx: TracePointContext) -> u32 {
+    match try_tracepoint_network_mmsg_exit(&ctx) {
+        Ok(ret) => ret,
         Err(ret) => ret as u32,
     }
 }
@@ -3996,6 +4061,104 @@ fn try_tracepoint_network_io_enter(ctx: &TracePointContext, direction: u32) -> R
     let pid_tgid = bpf_get_current_pid_tgid();
     let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
     try_track_network_io(pid_tgid, fd, direction, -1, 0)
+}
+
+fn try_tracepoint_network_mmsg_enter(ctx: &TracePointContext, direction: u32) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let tgid = (pid_tgid >> 32) as u32;
+    let fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
+    let messages = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;
+    let vlen = unsafe { ctx.read_at::<u32>(32) }.map_err(|err| err as i64)?;
+    if messages.is_null() || vlen == 0 || !network_connection_tracked(tgid, fd) {
+        return Ok(0);
+    }
+    if !native_mmsg_syscall(ctx, direction)? {
+        record_network_mmsg_diagnostic(NETWORK_MMSG_DIAG_UNSUPPORTED);
+        return Ok(0);
+    }
+
+    let pending = PendingNetworkMmsg {
+        tgid,
+        fd,
+        direction,
+        vlen,
+        messages_ptr: messages as u64,
+    };
+    PENDING_NETWORK_MMSG
+        .insert(&pid_tgid, &pending, 0)
+        .map_err(|err| err as i64)?;
+    Ok(0)
+}
+
+#[inline(always)]
+fn native_mmsg_syscall(ctx: &TracePointContext, direction: u32) -> Result<bool, i64> {
+    let syscall = unsafe { ctx.read_at::<i32>(8) }.map_err(|err| err as i64)?;
+    #[cfg(any(bpf_target_arch = "aarch64", bpf_target_arch = "x86_64"))]
+    {
+        let expected = if direction == NETWORK_IO_WRITE {
+            NETWORK_SENDMMSG_SYSCALL
+        } else {
+            NETWORK_RECVMMSG_SYSCALL
+        };
+        Ok(syscall == expected)
+    }
+    #[cfg(not(any(bpf_target_arch = "aarch64", bpf_target_arch = "x86_64")))]
+    {
+        let _ = (syscall, direction);
+        Ok(false)
+    }
+}
+
+fn try_tracepoint_network_mmsg_exit(ctx: &TracePointContext) -> Result<u32, i64> {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let pending = match unsafe { PENDING_NETWORK_MMSG.get(&pid_tgid) } {
+        Some(value) => *value,
+        None => return Ok(0),
+    };
+    PENDING_NETWORK_MMSG.remove(&pid_tgid).ok();
+
+    let retval = unsafe { ctx.read_at::<i64>(16) }.map_err(|err| err as i64)?;
+    if retval <= 0 {
+        return Ok(0);
+    }
+    let completed = (retval as u32).min(pending.vlen);
+    if completed > NETWORK_MMSG_MAX_MESSAGES {
+        record_network_mmsg_diagnostic(NETWORK_MMSG_DIAG_UNSUPPORTED);
+        return Ok(0);
+    }
+    let messages = pending.messages_ptr as *const u8;
+    let mut total = 0_u64;
+    let mut index = 0_u32;
+    while index < NETWORK_MMSG_MAX_MESSAGES {
+        if index >= completed {
+            break;
+        }
+        let offset = index as usize * NETWORK_MMSG_HEADER_BYTES + NETWORK_MMSG_LENGTH_OFFSET;
+        let length = match unsafe { bpf_probe_read_user::<u32>(messages.add(offset).cast::<u32>()) }
+        {
+            Ok(length) => length,
+            Err(_) => {
+                record_network_mmsg_diagnostic(NETWORK_MMSG_DIAG_UNSUPPORTED);
+                return Ok(0);
+            }
+        };
+        total = total.saturating_add(u64::from(length));
+        index += 1;
+    }
+    if total > 0 {
+        add_network_io_bytes(pending.tgid, pending.fd, pending.direction, total)?;
+    }
+    record_network_mmsg_diagnostic(NETWORK_MMSG_DIAG_ACCOUNTED);
+    Ok(0)
+}
+
+#[inline(always)]
+fn record_network_mmsg_diagnostic(index: u32) {
+    if let Some(counter) = NETWORK_MMSG_DIAGNOSTIC_COUNTERS.get_ptr_mut(index) {
+        unsafe {
+            *counter = (*counter).wrapping_add(1);
+        }
+    }
 }
 
 fn try_tracepoint_network_splice_enter(ctx: &TracePointContext) -> Result<u32, i64> {
