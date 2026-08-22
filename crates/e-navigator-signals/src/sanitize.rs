@@ -133,7 +133,7 @@ mod tests {
         ] {
             assert!(is_sensitive_attribute_key(key), "{key}");
         }
-        for key in ["http.route", "db.system", "net.peer.name", ""] {
+        for key in ["http.route", "db.system.name", "net.peer.name", ""] {
             assert!(!is_sensitive_attribute_key(key), "{key}");
         }
     }
@@ -159,7 +159,7 @@ mod tests {
             "private",
             "tok",
             "http.route",
-            "db.system",
+            "db.system.name",
             "credentialedness",
         ] {
             let reference = SENSITIVE_ATTRIBUTE_KEY_PARTS

@@ -53,13 +53,13 @@ pub fn parse_redis_command(
     push_attribute(
         &mut attributes,
         config.max_attributes,
-        "db.system",
+        "db.system.name",
         Some("redis"),
     );
     push_attribute(
         &mut attributes,
         config.max_attributes,
-        "db.operation",
+        "db.operation.name",
         command.as_deref(),
     );
     let argument_count = frame.argument_count.to_string();
@@ -187,7 +187,7 @@ pub fn parse_redis_response(
     push_attribute(
         &mut attributes,
         config.max_attributes,
-        "db.system",
+        "db.system.name",
         Some("redis"),
     );
     push_attribute(

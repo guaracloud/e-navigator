@@ -616,11 +616,11 @@ fn serializes_redis_protocol_request_observation_without_payload_values() {
             peer: Some(peer()),
             attributes: vec![
                 TraceAttribute {
-                    key: "db.system".to_string(),
+                    key: "db.system.name".to_string(),
                     value: "redis".to_string(),
                 },
                 TraceAttribute {
-                    key: "db.operation".to_string(),
+                    key: "db.operation.name".to_string(),
                     value: "GET".to_string(),
                 },
                 TraceAttribute {
@@ -671,11 +671,11 @@ fn serializes_postgresql_protocol_request_observation_without_query_text() {
             peer: Some(peer()),
             attributes: vec![
                 TraceAttribute {
-                    key: "db.system".to_string(),
+                    key: "db.system.name".to_string(),
                     value: "postgresql".to_string(),
                 },
                 TraceAttribute {
-                    key: "db.operation".to_string(),
+                    key: "db.operation.name".to_string(),
                     value: "SELECT".to_string(),
                 },
             ],
@@ -722,11 +722,11 @@ fn serializes_mysql_protocol_request_observation_without_query_text() {
             peer: Some(peer()),
             attributes: vec![
                 TraceAttribute {
-                    key: "db.system".to_string(),
+                    key: "db.system.name".to_string(),
                     value: "mysql".to_string(),
                 },
                 TraceAttribute {
-                    key: "db.operation".to_string(),
+                    key: "db.operation.name".to_string(),
                     value: "SELECT".to_string(),
                 },
             ],
@@ -773,11 +773,11 @@ fn serializes_mongodb_protocol_request_observation_without_bson_values() {
             peer: Some(peer()),
             attributes: vec![
                 TraceAttribute {
-                    key: "db.system".to_string(),
+                    key: "db.system.name".to_string(),
                     value: "mongodb".to_string(),
                 },
                 TraceAttribute {
-                    key: "db.operation".to_string(),
+                    key: "db.operation.name".to_string(),
                     value: "find".to_string(),
                 },
             ],

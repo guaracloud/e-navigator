@@ -215,7 +215,7 @@ mod tests {
         }
         for key in [
             "http.route",
-            "db.system",
+            "db.system.name",
             "net.peer.name",
             "e.navigator.protocol.capture.role",
             "",

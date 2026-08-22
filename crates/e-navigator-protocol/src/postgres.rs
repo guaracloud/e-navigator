@@ -82,13 +82,13 @@ pub fn parse_postgres_message(
     push_attribute(
         &mut attributes,
         config.max_attributes,
-        "db.system",
+        "db.system.name",
         Some("postgresql"),
     );
     push_attribute(
         &mut attributes,
         config.max_attributes,
-        "db.operation",
+        "db.operation.name",
         operation.as_deref(),
     );
     push_attribute(
@@ -552,7 +552,7 @@ fn postgres_response_attributes(
     push_attribute(
         &mut attributes,
         max_attributes,
-        "db.system",
+        "db.system.name",
         Some("postgresql"),
     );
     push_attribute(
