@@ -25,6 +25,9 @@ All notable changes to E-Navigator are documented here. The format follows
   the kernel-written length of each successfully completed message within a
   16-message traversal bound. Exact active-snapshot and close totals are
   verifier-loaded and runtime-proven on local arm64 OrbStack Linux.
+- Fold exact `DW_OP_bregN` and `DW_OP_bregx` register-plus-signed-offset
+  `DW_CFA_def_cfa_expression` programs into the existing bounded x86-64 and
+  arm64 native unwind rules without expanding the kernel ABI.
 
 ### Security
 
@@ -34,6 +37,9 @@ All notable changes to E-Navigator are documented here. The format follows
 - Reject compat-ABI, oversized, and unreadable message batches instead of
   interpreting the syscalls' message-count return value as bytes; expose both
   accounted and unsupported batches as cumulative native health metrics.
+- Keep dynamic, dereferencing, multi-operation, malformed, and
+  untracked-register CFA expressions on the existing explicit
+  unsupported/fallback path.
 
 ## [0.5.0-rc.2] - 2026-08-22
 
