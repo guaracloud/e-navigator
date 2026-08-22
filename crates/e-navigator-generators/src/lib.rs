@@ -5,6 +5,7 @@
 pub mod dependency_graph;
 pub mod dns_metrics;
 pub mod network_metrics;
+mod otel_coexistence;
 pub mod peer_flow_metrics;
 pub mod profiling;
 pub mod request_correlation;

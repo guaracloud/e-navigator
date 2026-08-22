@@ -200,10 +200,9 @@ pub(crate) fn build_registry(
     }
 
     if config.module_enabled("generator.request_correlation") {
-        registry = registry.with_generator(Box::new(RequestCorrelationGenerator::with_options(
-            config.request_correlation.max_seen_requests,
-            config.request_correlation.max_warnings,
-            config.request_correlation.generate_trace_ids,
+        registry = registry.with_generator(Box::new(RequestCorrelationGenerator::from_config(
+            &config.request_correlation,
+            config.attribution.procfs_root.clone(),
         )));
     }
 

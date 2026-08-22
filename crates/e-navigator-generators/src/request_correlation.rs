@@ -1,5 +1,7 @@
 use async_trait::async_trait;
-use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata, Signal};
+use e_navigator_core::{
+    CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata, RequestCorrelationConfig, Signal,
+};
 use e_navigator_protocol::trace_context::parse_traceparent;
 use e_navigator_signals::{
     ProtocolCaptureRole, ProtocolKind, ProtocolRequestObservation, RequestCorrelationWarning,
@@ -13,6 +15,8 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 use tokio::sync::mpsc;
+
+use crate::otel_coexistence::OtelSdkDetector;
 
 const DEFAULT_MAX_SEEN_REQUESTS: usize = 8192;
 const DEFAULT_MAX_WARNINGS: usize = 1024;
@@ -28,6 +32,7 @@ pub struct RequestCorrelationGenerator {
     max_seen_requests: usize,
     max_warnings: usize,
     generate_trace_ids: bool,
+    otel_sdk_detector: Option<Mutex<OtelSdkDetector>>,
     seen_requests: Mutex<BoundedFingerprints<RequestFingerprint>>,
     seen_warnings: Mutex<BoundedFingerprints<WarningFingerprint>>,
 }
@@ -52,9 +57,22 @@ impl RequestCorrelationGenerator {
             max_seen_requests,
             max_warnings,
             generate_trace_ids,
+            otel_sdk_detector: None,
             seen_requests: Mutex::new(BoundedFingerprints::default()),
             seen_warnings: Mutex::new(BoundedFingerprints::default()),
         }
+    }
+
+    pub fn from_config(config: &RequestCorrelationConfig, procfs_root: std::path::PathBuf) -> Self {
+        let mut generator = Self::with_options(
+            config.max_seen_requests,
+            config.max_warnings,
+            config.generate_trace_ids,
+        );
+        if config.suppress_otel_sdk_spans {
+            generator.otel_sdk_detector = Some(Mutex::new(OtelSdkDetector::new(procfs_root)));
+        }
+        generator
     }
 }
 
@@ -110,6 +128,10 @@ impl RequestCorrelationGenerator {
         signal: &SignalEnvelope,
         request: &ProtocolRequestObservation,
     ) -> CoreResult<Vec<SignalEnvelope>> {
+        if self.should_suppress_for_otel_sdk(request)? {
+            let warning = self.otel_sdk_suppression_warning(signal, request)?;
+            return Ok(warning.into_iter().collect());
+        }
         let mut trace_context = trace_context(request);
 
         // On an outbound request, the span id carried by traceparent belongs
@@ -251,17 +273,66 @@ impl RequestCorrelationGenerator {
         Ok(seen.insert_if_new(fingerprint, self.max_seen_requests))
     }
 
+    fn should_suppress_for_otel_sdk(
+        &self,
+        request: &ProtocolRequestObservation,
+    ) -> CoreResult<bool> {
+        let (Some(detector), Some(process)) = (&self.otel_sdk_detector, &request.process) else {
+            return Ok(false);
+        };
+        detector
+            .lock()
+            .map_err(module_error)
+            .map(|mut detector| detector.has_supported_zero_code_trace_agent(process))
+    }
+
     fn warning(
         &self,
         signal: &SignalEnvelope,
         request: &ProtocolRequestObservation,
         warning_type: &str,
     ) -> CoreResult<Option<SignalEnvelope>> {
-        let fingerprint = WarningFingerprint {
+        let fingerprint = WarningFingerprint::Request {
             warning_type: warning_type.to_string(),
             source_signal_kind: signal.kind().to_string(),
             source_module: signal.source.clone(),
             timestamp_unix_nanos: request.start_unix_nanos,
+        };
+        let mut seen = self.seen_warnings()?;
+        if !seen.insert_if_new(fingerprint, self.max_warnings) {
+            return Ok(None);
+        }
+        drop(seen);
+
+        Ok(Some(SignalEnvelope::request_correlation_warning(
+            "generator.request_correlation",
+            signal.host.clone(),
+            RequestCorrelationWarning {
+                warning_type: warning_type.to_string(),
+                message: warning_message(warning_type).to_string(),
+                timestamp_unix_nanos: request.start_unix_nanos,
+                source_signal_kind: signal.kind().to_string(),
+                source_module: signal.source.clone(),
+                correlation_kind: request.correlation_kind,
+                protocol: request.protocol,
+                process: request.process.clone(),
+                container: request.container.clone(),
+                kubernetes: request.kubernetes.clone(),
+                peer: request.peer.clone(),
+            },
+        )))
+    }
+
+    fn otel_sdk_suppression_warning(
+        &self,
+        signal: &SignalEnvelope,
+        request: &ProtocolRequestObservation,
+    ) -> CoreResult<Option<SignalEnvelope>> {
+        let warning_type = "otel_sdk_span_suppressed";
+        let fingerprint = WarningFingerprint::OtelSdkSuppression {
+            source_signal_kind: signal.kind().to_string(),
+            source_module: signal.source.clone(),
+            pid: request.process.as_ref().map(|process| process.pid),
         };
         let mut seen = self.seen_warnings()?;
         if !seen.insert_if_new(fingerprint, self.max_warnings) {
@@ -433,11 +504,18 @@ fn write_peer_fingerprint(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct WarningFingerprint {
-    warning_type: String,
-    source_signal_kind: String,
-    source_module: String,
-    timestamp_unix_nanos: u64,
+enum WarningFingerprint {
+    Request {
+        warning_type: String,
+        source_signal_kind: String,
+        source_module: String,
+        timestamp_unix_nanos: u64,
+    },
+    OtelSdkSuppression {
+        source_signal_kind: String,
+        source_module: String,
+        pid: Option<u32>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -678,6 +756,9 @@ fn warning_message(warning_type: &str) -> &'static str {
         "missing_trace_context" => "protocol request had no observed trace context",
         "malformed_trace_context" => "protocol request had malformed trace context",
         "missing_attribution" => "protocol request has no container or Kubernetes context",
+        "otel_sdk_span_suppressed" => {
+            "request span suppressed because the process has a supported OpenTelemetry zero-code agent"
+        }
         _ => "request correlation warning",
     }
 }
