@@ -6,6 +6,8 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0-rc.2] - 2026-08-22
+
 ### Changed
 
 - Emit the stable OpenTelemetry database semantic-convention attributes
