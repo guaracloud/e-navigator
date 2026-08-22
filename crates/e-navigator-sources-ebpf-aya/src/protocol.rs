@@ -12,7 +12,10 @@ use e_navigator_protocol::{
         HpackDecoder, Http2HeaderBlockAssembler, parse_http2_frame_header,
         parse_http2_request_headers_frame, parse_http2_response_headers_frame,
     },
-    kafka::{parse_kafka_request, parse_kafka_response_for_api_key},
+    kafka::{
+        parse_kafka_request, parse_kafka_request_correlation_id,
+        parse_kafka_response_correlation_id, parse_kafka_response_for_api_key,
+    },
     mongodb::{parse_mongodb_message, parse_mongodb_response},
     mysql::{parse_mysql_command, parse_mysql_response},
     nats::parse_nats_command,
@@ -391,6 +394,7 @@ pub(crate) struct ProtocolRegistryCounters {
     pub matched_responses: u64,
     pub orphan_responses: u64,
     pub unparsed_responses: u64,
+    pub kafka_correlation_mismatches: u64,
     pub response_continuations: u64,
     pub unmatched_overflow: u64,
     pub unmatched_expired: u64,
@@ -491,6 +495,7 @@ struct InFlightRequest {
     started_unix_nanos: u64,
     kafka_api_key: i16,
     kafka_api_version: i16,
+    kafka_correlation_id: Option<i32>,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -553,6 +558,7 @@ pub fn bench_http2_in_flight_index_cycle() -> u64 {
             started_unix_nanos: u64::from(stream_id),
             kafka_api_key: -1,
             kafka_api_version: -1,
+            kafka_correlation_id: None,
         }
     }
 
@@ -1023,10 +1029,12 @@ fn handle_request_frames(
             continue;
         }
 
-        let (kafka_api_key, kafka_api_version) = frame_bytes
+        let (kafka_api_key, kafka_api_version, kafka_correlation_id) = frame_bytes
             .filter(|_| stream.protocol == StreamProtocol::Kafka)
-            .and_then(kafka_request_header_prefix)
-            .unwrap_or((-1, -1));
+            .and_then(|frame| kafka_request_header_prefix(frame, extraction))
+            .map_or((-1, -1, None), |(api_key, api_version, correlation_id)| {
+                (api_key, api_version, Some(correlation_id))
+            });
 
         expire_in_flight(stream, host, counters, observed_unix_nanos, signals);
         if stream.in_flight.len() >= MAX_IN_FLIGHT_REQUESTS
@@ -1046,6 +1054,7 @@ fn handle_request_frames(
             started_unix_nanos: observed_unix_nanos,
             kafka_api_key,
             kafka_api_version,
+            kafka_correlation_id,
         });
     }
 }
@@ -1069,14 +1078,15 @@ enum ResponseAction {
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn response_action(protocol: StreamProtocol, frame: &[u8]) -> ResponseAction {
     match protocol {
-        // HTTP/2 uses stream-id matching, never the FIFO queue.
-        StreamProtocol::Http2 | StreamProtocol::WebSocket => ResponseAction::Ignore,
+        // HTTP/2 and Kafka use their own keyed matching paths, never FIFO.
+        StreamProtocol::Http2 | StreamProtocol::Kafka | StreamProtocol::WebSocket => {
+            ResponseAction::Ignore
+        }
         // HTTP/1 is strict request/response over one connection; each framed
         // response completes exactly the oldest in-flight request.
-        StreamProtocol::Http1
-        | StreamProtocol::Kafka
-        | StreamProtocol::Mongodb
-        | StreamProtocol::Redis => ResponseAction::PopOne,
+        StreamProtocol::Http1 | StreamProtocol::Mongodb | StreamProtocol::Redis => {
+            ResponseAction::PopOne
+        }
         // MySQL response packets to one command increment the sequence id;
         // only the first packet (sequence 1) marks the response start.
         StreamProtocol::Mysql => {
@@ -1188,6 +1198,20 @@ fn handle_response_frames(
             StreamFrame::ProtocolSwitch { .. } => continue,
         };
 
+        if stream.protocol == StreamProtocol::Kafka {
+            handle_kafka_response_frame(
+                stream,
+                frame_bytes,
+                truncated,
+                extraction,
+                host,
+                counters,
+                observed_unix_nanos,
+                signals,
+            );
+            continue;
+        }
+
         let action = response_action(stream.protocol, frame_bytes);
         if action == ResponseAction::Ignore {
             counters.response_continuations += 1;
@@ -1247,6 +1271,83 @@ fn handle_response_frames(
             ));
         }
     }
+}
+
+/// Completes the Kafka request identified by the response correlation id.
+/// A missing or ambiguous match is deliberately non-destructive: retaining
+/// the queue is safer than attributing the response to the wrong request.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[allow(clippy::too_many_arguments)]
+fn handle_kafka_response_frame(
+    stream: &mut ConnectionStream,
+    frame: &[u8],
+    truncated: bool,
+    extraction: &ProtocolExtractionConfig,
+    host: &Option<String>,
+    counters: &mut ProtocolRegistryCounters,
+    observed_unix_nanos: u64,
+    signals: &mut Vec<SignalEnvelope>,
+) {
+    if truncated {
+        counters.unparsed_responses += 1;
+        return;
+    }
+    let Ok(correlation_id) = parse_kafka_response_correlation_id(frame, extraction) else {
+        counters.unparsed_responses += 1;
+        return;
+    };
+
+    let mut matching_positions =
+        stream
+            .in_flight
+            .iter()
+            .enumerate()
+            .filter_map(|(position, entry)| {
+                (entry.kafka_correlation_id == Some(correlation_id)).then_some(position)
+            });
+    let Some(position) = matching_positions.next() else {
+        if stream.in_flight.is_empty() {
+            counters.orphan_responses += 1;
+        } else {
+            counters.kafka_correlation_mismatches += 1;
+        }
+        return;
+    };
+    if matching_positions.next().is_some() {
+        counters.kafka_correlation_mismatches += 1;
+        return;
+    }
+
+    let Some(entry) = stream.in_flight.remove(position) else {
+        counters.kafka_correlation_mismatches += 1;
+        return;
+    };
+    let response = parse_response_frame(
+        StreamProtocol::Kafka,
+        frame,
+        entry.kafka_api_key,
+        entry.kafka_api_version,
+        extraction,
+    );
+    let mut parsed = entry.parsed;
+    match response {
+        Ok(response) => {
+            counters.matched_responses += 1;
+            parsed.status_code = response.signal_status_code;
+            merge_response_attributes(&mut parsed, &response, extraction.max_attributes);
+        }
+        Err(reason) => {
+            counters.unparsed_responses += 1;
+            parsed.warning.get_or_insert_with(|| reason.to_string());
+        }
+    }
+    signals.push(build_observation(
+        host.clone(),
+        &stream.context,
+        parsed,
+        entry.started_unix_nanos,
+        Some(observed_unix_nanos),
+    ));
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -1579,6 +1680,7 @@ fn handle_http2_frames(
                     started_unix_nanos,
                     kafka_api_key: -1,
                     kafka_api_version: -1,
+                    kafka_correlation_id: None,
                 },
             );
             continue;
@@ -1747,15 +1849,20 @@ fn protocol_kind(protocol: StreamProtocol) -> ProtocolKind {
     }
 }
 
-/// Reads the API key and version from a Kafka request frame prefix.
+/// Reads the API key, version, and internal correlation id from a Kafka
+/// request frame prefix.
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-fn kafka_request_header_prefix(frame: &[u8]) -> Option<(i16, i16)> {
+fn kafka_request_header_prefix(
+    frame: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Option<(i16, i16, i32)> {
     if frame.len() < 8 {
         return None;
     }
     let api_key = i16::from_be_bytes([frame[4], frame[5]]);
     let api_version = i16::from_be_bytes([frame[6], frame[7]]);
-    Some((api_key, api_version))
+    let correlation_id = parse_kafka_request_correlation_id(frame, config).ok()?;
+    Some((api_key, api_version, correlation_id))
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -3341,6 +3448,23 @@ mod tests {
         event
     }
 
+    fn kafka_api_versions_request(correlation_id: i32) -> Vec<u8> {
+        let mut body = vec![0, 18, 0, 0];
+        body.extend_from_slice(&correlation_id.to_be_bytes());
+        body.extend_from_slice(&[0xff, 0xff]);
+        let mut frame = (body.len() as i32).to_be_bytes().to_vec();
+        frame.extend_from_slice(&body);
+        frame
+    }
+
+    fn kafka_api_versions_response(correlation_id: i32) -> Vec<u8> {
+        let mut body = correlation_id.to_be_bytes().to_vec();
+        body.extend_from_slice(&[0, 0]);
+        let mut frame = (body.len() as i32).to_be_bytes().to_vec();
+        frame.extend_from_slice(&body);
+        frame
+    }
+
     #[test]
     fn protocol_perf_watermarks_merge_cross_cpu_samples_by_kernel_time() {
         let mut later = raw_event(6379, b"later", 5);
@@ -3700,6 +3824,86 @@ mod tests {
         assert_eq!(observation.method.as_deref(), Some("api_versions"));
         assert_eq!(observation.duration_nanos, Some(4_000));
         assert_eq!(registry.counters().matched_responses, 1);
+    }
+
+    #[test]
+    fn kafka_response_correlation_id_prevents_destructive_fifo_mismatch() {
+        let mut registry = registry();
+        let frame = kafka_api_versions_request(7);
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(9092, &frame, frame.len() as u32),
+                5_000
+            )
+            .is_empty()
+        );
+
+        let mismatched_frame = kafka_api_versions_response(6);
+        let mismatched = response_event(9092, &mismatched_frame);
+        assert!(handle_at(&mut registry, &mismatched, 6_000).is_empty());
+        assert_eq!(registry.counters().matched_responses, 0);
+        assert_eq!(registry.counters().kafka_correlation_mismatches, 1);
+
+        let matched_frame = kafka_api_versions_response(7);
+        let matched = response_event(9092, &matched_frame);
+        let signals = handle_at(&mut registry, &matched, 7_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(registry.counters().matched_responses, 1);
+    }
+
+    #[test]
+    fn kafka_response_correlation_id_matches_out_of_order_requests() {
+        let mut registry = registry();
+        for (correlation_id, observed_at) in [(7, 5_000), (8, 6_000)] {
+            let request = kafka_api_versions_request(correlation_id);
+            assert!(
+                handle_at(
+                    &mut registry,
+                    &raw_event(9092, &request, request.len() as u32),
+                    observed_at,
+                )
+                .is_empty()
+            );
+        }
+
+        let response_eight = kafka_api_versions_response(8);
+        let signals = handle_at(&mut registry, &response_event(9092, &response_eight), 7_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(1_000));
+
+        let response_seven = kafka_api_versions_response(7);
+        let signals = handle_at(&mut registry, &response_event(9092, &response_seven), 8_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(3_000));
+        assert_eq!(registry.counters().matched_responses, 2);
+        assert_eq!(registry.counters().kafka_correlation_mismatches, 0);
+    }
+
+    #[test]
+    fn kafka_duplicate_in_flight_correlation_id_is_non_destructive() {
+        let mut registry = registry();
+        let request = kafka_api_versions_request(7);
+        for observed_at in [5_000, 6_000] {
+            assert!(
+                handle_at(
+                    &mut registry,
+                    &raw_event(9092, &request, request.len() as u32),
+                    observed_at,
+                )
+                .is_empty()
+            );
+        }
+
+        let response = kafka_api_versions_response(7);
+        for expected_mismatches in [1, 2] {
+            assert!(handle_at(&mut registry, &response_event(9092, &response), 7_000,).is_empty());
+            assert_eq!(
+                registry.counters().kafka_correlation_mismatches,
+                expected_mismatches
+            );
+        }
+        assert_eq!(registry.counters().matched_responses, 0);
     }
 
     #[test]

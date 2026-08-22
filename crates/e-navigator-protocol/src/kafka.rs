@@ -89,6 +89,32 @@ pub fn parse_kafka_request(
     })
 }
 
+/// Extract the request correlation id used to pair Kafka responses without
+/// exporting the id as telemetry.
+pub fn parse_kafka_request_correlation_id(
+    bytes: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<i32, KafkaExtraction> {
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    read_i32_be(body, 4)
+}
+
+/// Extract the response correlation id used to pair Kafka responses without
+/// exporting the id as telemetry.
+pub fn parse_kafka_response_correlation_id(
+    bytes: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<i32, KafkaExtraction> {
+    if bytes.len() > config.max_header_bytes {
+        return Err(KafkaExtraction::FrameTooLong);
+    }
+    let body = frame_body(bytes, config.max_header_bytes)?;
+    read_i32_be(body, 0)
+}
+
 pub fn parse_kafka_api_versions_response(
     bytes: &[u8],
     api_version: i16,
