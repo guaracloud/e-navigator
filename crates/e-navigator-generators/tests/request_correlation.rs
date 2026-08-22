@@ -154,6 +154,101 @@ async fn supported_otel_zero_code_agent_suppresses_only_generated_request_spans(
 }
 
 #[tokio::test]
+async fn explicit_application_span_ownership_suppresses_manual_sdk_workloads() {
+    let ownership_labels = BTreeMap::from([(
+        "observability.guara.io/request-spans".to_string(),
+        "application".to_string(),
+    )]);
+    let generator = RequestCorrelationGenerator::from_config(
+        &RequestCorrelationConfig {
+            application_span_ownership_labels: ownership_labels.clone(),
+            ..RequestCorrelationConfig::default()
+        },
+        std::path::PathBuf::from("/proc/does-not-need-to-exist"),
+    );
+    let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
+    let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
+        panic!("expected protocol request");
+    };
+    request.role = Some(ProtocolCaptureRole::Server);
+    request.process = Some(NetworkProcessIdentity {
+        command: "manual-go-sdk".to_string(),
+        executable: Some("/app/server".to_string()),
+        ..process()
+    });
+    request
+        .kubernetes
+        .as_mut()
+        .expect("attributed request")
+        .labels = ownership_labels;
+
+    let outputs = observe(&generator, &signal).await;
+
+    assert!(
+        !outputs
+            .iter()
+            .any(|output| matches!(output.payload, SignalPayload::RequestSpanObservation(_)))
+    );
+    assert_request_warning(&outputs, "application_span_owner_suppressed");
+    assert!(observe(&generator, &signal).await.is_empty());
+
+    let nonmatching_config = RequestCorrelationConfig {
+        application_span_ownership_labels: BTreeMap::from([
+            (
+                "observability.guara.io/request-spans".to_string(),
+                "application".to_string(),
+            ),
+            ("instrumentation".to_string(), "manual".to_string()),
+        ]),
+        ..RequestCorrelationConfig::default()
+    };
+    let nonmatching = RequestCorrelationGenerator::from_config(
+        &nonmatching_config,
+        std::path::PathBuf::from("/proc/does-not-need-to-exist"),
+    );
+    assert!(
+        observe(&nonmatching, &signal)
+            .await
+            .iter()
+            .any(|output| matches!(output.payload, SignalPayload::RequestSpanObservation(_)))
+    );
+
+    let mut unattributed_signal = signal.clone();
+    let SignalPayload::ProtocolRequestObservation(request) = &mut unattributed_signal.payload
+    else {
+        panic!("expected protocol request");
+    };
+    request.kubernetes = None;
+    let unattributed = RequestCorrelationGenerator::from_config(
+        &nonmatching_config,
+        std::path::PathBuf::from("/proc/does-not-need-to-exist"),
+    );
+    assert!(
+        observe(&unattributed, &unattributed_signal)
+            .await
+            .iter()
+            .any(|output| matches!(output.payload, SignalPayload::RequestSpanObservation(_)))
+    );
+
+    let different_owner = RequestCorrelationGenerator::from_config(
+        &RequestCorrelationConfig {
+            application_span_ownership_labels: BTreeMap::from([(
+                "observability.guara.io/request-spans".to_string(),
+                "different-owner".to_string(),
+            )]),
+            ..RequestCorrelationConfig::default()
+        },
+        std::path::PathBuf::from("/proc/does-not-need-to-exist"),
+    );
+    assert!(
+        observe(&different_owner, &signal)
+            .await
+            .iter()
+            .any(|output| matches!(output.payload, SignalPayload::RequestSpanObservation(_)))
+    );
+}
+
+#[tokio::test]
 async fn e_navigator_injected_client_context_exports_the_owned_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);

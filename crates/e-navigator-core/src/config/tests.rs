@@ -2421,11 +2421,18 @@ fn request_correlation_limits_are_validated() {
             .request_correlation
             .suppress_otel_sdk_spans
     );
+    assert!(
+        RuntimeConfig::default()
+            .request_correlation
+            .application_span_ownership_labels
+            .is_empty()
+    );
     assert_invalid(
         RuntimeConfig {
             request_correlation: RequestCorrelationConfig {
                 generate_trace_ids: true,
                 suppress_otel_sdk_spans: false,
+                application_span_ownership_labels: BTreeMap::new(),
                 max_seen_requests: 0,
                 max_warnings: 128,
             },
@@ -2437,11 +2444,43 @@ fn request_correlation_limits_are_validated() {
         ),
     );
 
+    let ownership_labels = (0..=RequestCorrelationConfig::MAX_APPLICATION_SPAN_OWNERSHIP_LABELS)
+        .map(|index| (format!("owner-{index}"), "application".to_string()))
+        .collect();
+    assert_invalid(
+        RuntimeConfig {
+            request_correlation: RequestCorrelationConfig {
+                application_span_ownership_labels: ownership_labels,
+                ..RequestCorrelationConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        format!(
+            "request_correlation.application_span_ownership_labels must contain at most {} entries",
+            RequestCorrelationConfig::MAX_APPLICATION_SPAN_OWNERSHIP_LABELS
+        ),
+    );
+
+    assert_invalid(
+        RuntimeConfig {
+            request_correlation: RequestCorrelationConfig {
+                application_span_ownership_labels: BTreeMap::from([(
+                    "observability.guara.io/request-spans".to_string(),
+                    String::new(),
+                )]),
+                ..RequestCorrelationConfig::default()
+            },
+            ..RuntimeConfig::default()
+        },
+        "request_correlation.application_span_ownership_labels value for 'observability.guara.io/request-spans' must not be empty",
+    );
+
     assert_invalid(
         RuntimeConfig {
             request_correlation: RequestCorrelationConfig {
                 generate_trace_ids: true,
                 suppress_otel_sdk_spans: false,
+                application_span_ownership_labels: BTreeMap::new(),
                 max_seen_requests: 128,
                 max_warnings: RequestCorrelationConfig::MAX_WARNINGS_LIMIT + 1,
             },
@@ -2452,6 +2491,25 @@ fn request_correlation_limits_are_validated() {
             RequestCorrelationConfig::MAX_WARNINGS_LIMIT
         ),
     );
+}
+
+#[test]
+fn request_correlation_parses_explicit_application_span_ownership_labels() {
+    let config: RequestCorrelationConfig = toml::from_str(
+        r#"
+        application_span_ownership_labels = { "observability.guara.io/request-spans" = "application" }
+        "#,
+    )
+    .expect("application span ownership labels parse");
+
+    assert_eq!(
+        config.application_span_ownership_labels,
+        BTreeMap::from([(
+            "observability.guara.io/request-spans".to_string(),
+            "application".to_string(),
+        )])
+    );
+    assert!(config.validate().is_ok());
 }
 
 #[test]

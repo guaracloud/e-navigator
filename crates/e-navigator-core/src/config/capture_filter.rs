@@ -295,7 +295,7 @@ fn validate_pattern_list(path: &'static str, patterns: &[String]) -> ConfigResul
     Ok(())
 }
 
-fn validate_label_selector(
+pub(super) fn validate_label_selector(
     path: &'static str,
     selector: &BTreeMap<String, String>,
 ) -> ConfigResult<()> {

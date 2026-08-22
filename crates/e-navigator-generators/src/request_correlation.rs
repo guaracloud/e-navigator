@@ -9,7 +9,7 @@ use e_navigator_signals::{
     TraceCorrelationKind,
 };
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     fmt,
     hash::Hash,
     sync::{Arc, Mutex, MutexGuard},
@@ -32,6 +32,7 @@ pub struct RequestCorrelationGenerator {
     max_seen_requests: usize,
     max_warnings: usize,
     generate_trace_ids: bool,
+    application_span_ownership_labels: BTreeMap<String, String>,
     otel_sdk_detector: Option<Mutex<OtelSdkDetector>>,
     seen_requests: Mutex<BoundedFingerprints<RequestFingerprint>>,
     seen_warnings: Mutex<BoundedFingerprints<WarningFingerprint>>,
@@ -57,6 +58,7 @@ impl RequestCorrelationGenerator {
             max_seen_requests,
             max_warnings,
             generate_trace_ids,
+            application_span_ownership_labels: BTreeMap::new(),
             otel_sdk_detector: None,
             seen_requests: Mutex::new(BoundedFingerprints::default()),
             seen_warnings: Mutex::new(BoundedFingerprints::default()),
@@ -69,6 +71,8 @@ impl RequestCorrelationGenerator {
             config.max_warnings,
             config.generate_trace_ids,
         );
+        generator.application_span_ownership_labels =
+            config.application_span_ownership_labels.clone();
         if config.suppress_otel_sdk_spans {
             generator.otel_sdk_detector = Some(Mutex::new(OtelSdkDetector::new(procfs_root)));
         }
@@ -128,8 +132,8 @@ impl RequestCorrelationGenerator {
         signal: &SignalEnvelope,
         request: &ProtocolRequestObservation,
     ) -> CoreResult<Vec<SignalEnvelope>> {
-        if self.should_suppress_for_otel_sdk(request)? {
-            let warning = self.otel_sdk_suppression_warning(signal, request)?;
+        if let Some(reason) = self.span_suppression_reason(request)? {
+            let warning = self.span_suppression_warning(signal, request, reason)?;
             return Ok(warning.into_iter().collect());
         }
         let mut trace_context = trace_context(request);
@@ -273,17 +277,31 @@ impl RequestCorrelationGenerator {
         Ok(seen.insert_if_new(fingerprint, self.max_seen_requests))
     }
 
-    fn should_suppress_for_otel_sdk(
+    fn span_suppression_reason(
         &self,
         request: &ProtocolRequestObservation,
-    ) -> CoreResult<bool> {
+    ) -> CoreResult<Option<SpanSuppressionReason>> {
+        if !self.application_span_ownership_labels.is_empty()
+            && let Some(kubernetes) = request.kubernetes.as_ref().filter(|kubernetes| {
+                self.application_span_ownership_labels
+                    .iter()
+                    .all(|(key, value)| kubernetes.labels.get(key) == Some(value))
+            })
+        {
+            return Ok(Some(SpanSuppressionReason::ApplicationOwner {
+                namespace: kubernetes.namespace.clone(),
+                pod_name: kubernetes.pod_name.clone(),
+                pod_uid: kubernetes.pod_uid.clone(),
+            }));
+        }
         let (Some(detector), Some(process)) = (&self.otel_sdk_detector, &request.process) else {
-            return Ok(false);
+            return Ok(None);
         };
-        detector
-            .lock()
-            .map_err(module_error)
-            .map(|mut detector| detector.has_supported_zero_code_trace_agent(process))
+        detector.lock().map_err(module_error).map(|mut detector| {
+            detector
+                .has_supported_zero_code_trace_agent(process)
+                .then_some(SpanSuppressionReason::DetectedOtelSdk)
+        })
     }
 
     fn warning(
@@ -323,16 +341,30 @@ impl RequestCorrelationGenerator {
         )))
     }
 
-    fn otel_sdk_suppression_warning(
+    fn span_suppression_warning(
         &self,
         signal: &SignalEnvelope,
         request: &ProtocolRequestObservation,
+        reason: SpanSuppressionReason,
     ) -> CoreResult<Option<SignalEnvelope>> {
-        let warning_type = "otel_sdk_span_suppressed";
-        let fingerprint = WarningFingerprint::OtelSdkSuppression {
-            source_signal_kind: signal.kind().to_string(),
-            source_module: signal.source.clone(),
-            pid: request.process.as_ref().map(|process| process.pid),
+        let warning_type = reason.warning_type();
+        let fingerprint = match reason {
+            SpanSuppressionReason::ApplicationOwner {
+                namespace,
+                pod_name,
+                pod_uid,
+            } => WarningFingerprint::ApplicationSpanOwnership {
+                source_signal_kind: signal.kind().to_string(),
+                source_module: signal.source.clone(),
+                namespace,
+                pod_name,
+                pod_uid,
+            },
+            SpanSuppressionReason::DetectedOtelSdk => WarningFingerprint::OtelSdkSuppression {
+                source_signal_kind: signal.kind().to_string(),
+                source_module: signal.source.clone(),
+                pid: request.process.as_ref().map(|process| process.pid),
+            },
         };
         let mut seen = self.seen_warnings()?;
         if !seen.insert_if_new(fingerprint, self.max_warnings) {
@@ -516,6 +548,32 @@ enum WarningFingerprint {
         source_module: String,
         pid: Option<u32>,
     },
+    ApplicationSpanOwnership {
+        source_signal_kind: String,
+        source_module: String,
+        namespace: String,
+        pod_name: String,
+        pod_uid: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SpanSuppressionReason {
+    ApplicationOwner {
+        namespace: String,
+        pod_name: String,
+        pod_uid: Option<String>,
+    },
+    DetectedOtelSdk,
+}
+
+impl SpanSuppressionReason {
+    fn warning_type(&self) -> &'static str {
+        match self {
+            Self::ApplicationOwner { .. } => "application_span_owner_suppressed",
+            Self::DetectedOtelSdk => "otel_sdk_span_suppressed",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -758,6 +816,9 @@ fn warning_message(warning_type: &str) -> &'static str {
         "missing_attribution" => "protocol request has no container or Kubernetes context",
         "otel_sdk_span_suppressed" => {
             "request span suppressed because the process has a supported OpenTelemetry zero-code agent"
+        }
+        "application_span_owner_suppressed" => {
+            "request span suppressed because matching Kubernetes labels declare application ownership"
         }
         _ => "request correlation warning",
     }
