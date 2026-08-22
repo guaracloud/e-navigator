@@ -9,12 +9,14 @@ const OP_MSG_FLAG_CHECKSUM_PRESENT: i32 = 0x01;
 const OP_MSG_KIND_BODY: u8 = 0;
 const OP_MSG_KIND_SEQUENCE: u8 = 1;
 const MAX_MONGODB_OPERATION_BYTES: usize = 128;
+const MAX_MONGODB_COLLECTION_BYTES: usize = 256;
 const MAX_MONGODB_NAMESPACE_BYTES: usize = 256;
 const MAX_MONGODB_REPLY_DOCUMENTS: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedMongodbCommand {
     pub protocol: ProtocolKind,
+    pub request_id: i32,
     pub operation: Option<String>,
     pub warning: Option<String>,
     pub attributes: Vec<TraceAttribute>,
@@ -23,6 +25,7 @@ pub struct ParsedMongodbCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedMongodbResponse {
     pub protocol: ProtocolKind,
+    pub response_to: i32,
     pub status_code: String,
     pub error_type: Option<String>,
     pub attributes: Vec<TraceAttribute>,
@@ -46,7 +49,7 @@ pub fn parse_mongodb_message(
         return Err(MongodbExtraction::FrameTooLong);
     }
     let frame = frame_body(bytes, config.max_header_bytes)?;
-    let operation = match frame.opcode {
+    let command = match frame.opcode {
         MONGODB_OP_MSG => parse_op_msg_command(frame.body, config.max_request_line_bytes)?,
         MONGODB_OP_QUERY => parse_op_query_command(frame.body, config.max_request_line_bytes)?,
         _ => return Err(MongodbExtraction::UnsupportedOpcode),
@@ -63,7 +66,13 @@ pub fn parse_mongodb_message(
         &mut attributes,
         config.max_attributes,
         "db.operation.name",
-        operation.as_deref(),
+        command.operation.as_deref(),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "db.collection.name",
+        command.collection.as_deref(),
     );
     push_attribute(
         &mut attributes,
@@ -74,7 +83,8 @@ pub fn parse_mongodb_message(
 
     Ok(ParsedMongodbCommand {
         protocol: ProtocolKind::Mongodb,
-        operation,
+        request_id: frame.request_id,
+        operation: command.operation,
         warning: None,
         attributes,
     })
@@ -127,6 +137,7 @@ pub fn parse_mongodb_response(
 
     Ok(ParsedMongodbResponse {
         protocol: ProtocolKind::Mongodb,
+        response_to: frame.response_to,
         status_code,
         error_type,
         attributes,
@@ -135,6 +146,8 @@ pub fn parse_mongodb_response(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MongodbFrame<'a> {
+    request_id: i32,
+    response_to: i32,
     opcode: i32,
     body: &'a [u8],
 }
@@ -143,6 +156,12 @@ struct MongodbFrame<'a> {
 struct MongodbResponse {
     ok: Option<bool>,
     code: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MongodbCommand {
+    operation: Option<String>,
+    collection: Option<String>,
 }
 
 fn frame_body(bytes: &[u8], max_frame_bytes: usize) -> Result<MongodbFrame<'_>, MongodbExtraction> {
@@ -161,6 +180,8 @@ fn frame_body(bytes: &[u8], max_frame_bytes: usize) -> Result<MongodbFrame<'_>, 
         return Err(MongodbExtraction::MalformedFrame);
     }
     Ok(MongodbFrame {
+        request_id: read_i32_le(bytes, 4)?,
+        response_to: read_i32_le(bytes, 8)?,
         opcode: read_i32_le(bytes, 12)?,
         body: &bytes[16..message_len],
     })
@@ -169,15 +190,15 @@ fn frame_body(bytes: &[u8], max_frame_bytes: usize) -> Result<MongodbFrame<'_>, 
 fn parse_op_msg_command(
     body: &[u8],
     max_document_bytes: usize,
-) -> Result<Option<String>, MongodbExtraction> {
+) -> Result<MongodbCommand, MongodbExtraction> {
     let document = op_msg_body_document(body, max_document_bytes)?;
-    document_command_name(document)
+    document_command(document)
 }
 
 fn parse_op_query_command(
     body: &[u8],
     max_document_bytes: usize,
-) -> Result<Option<String>, MongodbExtraction> {
+) -> Result<MongodbCommand, MongodbExtraction> {
     if body.len() < 13 {
         return Err(MongodbExtraction::MalformedFrame);
     }
@@ -191,7 +212,7 @@ fn parse_op_query_command(
     if cursor != body.len() {
         return Err(MongodbExtraction::MalformedFrame);
     }
-    document_command_name(document)
+    document_command(document)
 }
 
 fn parse_op_msg_response(
@@ -320,20 +341,81 @@ fn read_document<'a>(
     Ok(document)
 }
 
-fn document_command_name(document: &[u8]) -> Result<Option<String>, MongodbExtraction> {
+fn document_command(document: &[u8]) -> Result<MongodbCommand, MongodbExtraction> {
     if document.len() < 6 {
         return Err(MongodbExtraction::MalformedFrame);
     }
     let mut cursor = 4;
     if document[cursor] == 0 {
-        return Ok(None);
+        return Ok(MongodbCommand {
+            operation: None,
+            collection: None,
+        });
     }
+    let value_type = document[cursor];
     cursor += 1;
     let key = read_cstring(document, &mut cursor, MAX_MONGODB_OPERATION_BYTES)?;
     if key.is_empty() || key.bytes().any(|byte| !is_command_key_byte(byte)) {
-        return Ok(None);
+        return Ok(MongodbCommand {
+            operation: None,
+            collection: None,
+        });
     }
-    Ok(Some(key.to_ascii_lowercase()))
+    let operation = key.to_ascii_lowercase();
+    let collection = if value_type == 0x02 && command_uses_collection_value(&operation) {
+        Some(read_bson_string(document, &mut cursor, MAX_MONGODB_COLLECTION_BYTES)?.to_string())
+    } else {
+        None
+    };
+    Ok(MongodbCommand {
+        operation: Some(operation),
+        collection,
+    })
+}
+
+fn command_uses_collection_value(operation: &str) -> bool {
+    matches!(
+        operation,
+        "aggregate"
+            | "count"
+            | "create"
+            | "delete"
+            | "distinct"
+            | "drop"
+            | "find"
+            | "findandmodify"
+            | "insert"
+            | "mapreduce"
+            | "update"
+    )
+}
+
+fn read_bson_string<'a>(
+    bytes: &'a [u8],
+    cursor: &mut usize,
+    max_bytes: usize,
+) -> Result<&'a str, MongodbExtraction> {
+    let len = read_i32_le_cursor(bytes, cursor)? as isize;
+    if len <= 0 {
+        return Err(MongodbExtraction::MalformedFrame);
+    }
+    let len = len as usize;
+    if len.saturating_sub(1) > max_bytes {
+        return Err(MongodbExtraction::DocumentTooLong);
+    }
+    let end = cursor
+        .checked_add(len)
+        .ok_or(MongodbExtraction::MalformedFrame)?;
+    let value_end = end
+        .checked_sub(1)
+        .ok_or(MongodbExtraction::MalformedFrame)?;
+    if end > bytes.len() || bytes[value_end] != 0 {
+        return Err(MongodbExtraction::MalformedFrame);
+    }
+    let value = std::str::from_utf8(&bytes[*cursor..value_end])
+        .map_err(|_| MongodbExtraction::InvalidUtf8)?;
+    *cursor = end;
+    Ok(value)
 }
 
 fn document_response_status(document: &[u8]) -> Result<MongodbResponse, MongodbExtraction> {
