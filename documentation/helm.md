@@ -141,6 +141,7 @@ lock_min_duration_micros = 1000
 max_off_cpu_events_per_second_per_cpu = 64
 max_lock_events_per_second_per_cpu = 64
 max_kernel_frames_per_sample = 64
+cpp_demangle = "simplified"
 ```
 
 Each minimum duration must be 1 through 60,000,000 microseconds. Each event
@@ -152,6 +153,12 @@ requires a known architecture-specific futex syscall number. Unsupported or
 unreadable layouts fail source startup. Keep both modes disabled until their
 node-wide hook cost and expected signal volume have been measured on the target
 workload.
+
+`cpu_profile_source.cpp_demangle` controls bounded Itanium C++ ABI symbol
+rendering after ELF lookup. It accepts `none`, `simplified`, `templates`, or
+`full`. The default `simplified` mode removes parameters, return types, and
+template arguments; invalid symbols and expansions beyond `max_symbol_bytes`
+preserve the original bounded name.
 
 `kernel_stacks_enabled` adds one separately bounded kernel stack to each
 eligible periodic, off-CPU, and futex-wait sample while retaining the existing

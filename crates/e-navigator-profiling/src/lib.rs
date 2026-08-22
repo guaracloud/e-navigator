@@ -2,6 +2,7 @@
 #![warn(missing_debug_implementations, rust_2018_idioms, unreachable_pub)]
 //! Profile models, normalization, symbolization, JIT support, and unwind logic.
 
+pub mod demangle;
 pub mod jit;
 pub mod kernel;
 pub mod model;

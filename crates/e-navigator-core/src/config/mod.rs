@@ -28,7 +28,7 @@ pub use attribution::AttributionConfig;
 pub use capture_filter::{
     CaptureFilterConfig, CapturePosture, CgroupDiscoveryMode, WorkloadSelectorConfig,
 };
-pub use cpu_profile::{CpuProfileBackpressure, CpuProfileSourceConfig};
+pub use cpu_profile::{CpuProfileBackpressure, CpuProfileCppDemangle, CpuProfileSourceConfig};
 pub use dns_metrics::DnsMetricsConfig;
 pub use dns_source::DnsSourceConfig;
 pub use ebpf::{EbpfConfig, EbpfEventTransport, EbpfNetworkIoHook};

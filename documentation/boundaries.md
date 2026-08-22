@@ -80,7 +80,9 @@ E-Navigator does not currently claim:
   budgets with counters, terminal frames in modules that do not CFI-mark
   their outermost function classify conservatively as `no_mapping`, and
   stacks that fill the configured budget are flagged and counted, never
-  silently truncated);
+  silently truncated. Resolved Itanium C++ ABI names are demangled in bounded
+  userspace with configurable Alloy-compatible detail; demangling does not
+  extend unwind coverage);
 - broad runtime proof for the opt-in kernel-stack path (the separately
   bounded raw ABI, combined decoder, typed frame domain, identity-bound
   kallsyms cache, address-free restricted-symbol fallback, pprof, OTLP, and

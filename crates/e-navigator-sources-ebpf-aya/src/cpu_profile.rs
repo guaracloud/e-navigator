@@ -1,11 +1,12 @@
-#[cfg(any(target_os = "linux", test))]
-use e_navigator_core::CpuProfileBackpressure;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_core::CpuProfileSourceConfig;
+#[cfg(any(target_os = "linux", test))]
+use e_navigator_core::{CpuProfileBackpressure, CpuProfileCppDemangle};
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_profiling::model::{NormalizationLimits, RawProfileFrame, RawProfileSample};
 #[cfg(any(target_os = "linux", test))]
 use e_navigator_profiling::{
+    demangle::{CppDemangleMode, demangle_cpp_symbol},
     jit::JitSymbolMap,
     kernel::{KernelSymbolLimits, KernelSymbolTable},
     symbolize::{ElfSymbolTable, ProcessModuleMap},
@@ -53,6 +54,16 @@ pub(crate) const RAW_KERNEL_PROFILE_FLAG_TRUNCATED: u32 = 1;
 pub(crate) const RAW_KERNEL_PROFILE_FLAG_CAPTURE_FAILED: u32 = 2;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_PROFILE_KIND_CPU: u32 = 1;
+
+#[cfg(any(target_os = "linux", test))]
+fn cpp_demangle_mode(mode: CpuProfileCppDemangle) -> CppDemangleMode {
+    match mode {
+        CpuProfileCppDemangle::None => CppDemangleMode::None,
+        CpuProfileCppDemangle::Simplified => CppDemangleMode::Simplified,
+        CpuProfileCppDemangle::Templates => CppDemangleMode::Templates,
+        CpuProfileCppDemangle::Full => CppDemangleMode::Full,
+    }
+}
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const RAW_PROFILE_KIND_LOCK: u32 = 3;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -231,6 +242,8 @@ impl FrameResolver for RawAddressResolver {
 pub(crate) struct ProcfsSymbolizer {
     procfs_root: std::path::PathBuf,
     resolve_symbols: bool,
+    cpp_demangle: CppDemangleMode,
+    max_symbol_bytes: usize,
     max_cached_pids: usize,
     max_cached_modules: usize,
     maps: std::collections::BTreeMap<u32, ProcessModuleMap>,
@@ -355,6 +368,8 @@ impl ProcfsSymbolizer {
         Self::with_shared_symbols(
             procfs_root,
             resolve_symbols,
+            CppDemangleMode::Simplified,
+            CpuProfileSourceConfig::default().max_symbol_bytes,
             std::sync::Arc::new(std::sync::Mutex::new(SharedSymbolTables::default())),
         )
     }
@@ -362,11 +377,15 @@ impl ProcfsSymbolizer {
     pub(crate) fn with_shared_symbols(
         procfs_root: std::path::PathBuf,
         resolve_symbols: bool,
+        cpp_demangle: CppDemangleMode,
+        max_symbol_bytes: usize,
         symbols: std::sync::Arc<std::sync::Mutex<SharedSymbolTables>>,
     ) -> Self {
         Self {
             procfs_root,
             resolve_symbols,
+            cpp_demangle,
+            max_symbol_bytes,
             max_cached_pids: 1024,
             max_cached_modules: 512,
             maps: std::collections::BTreeMap::new(),
@@ -496,7 +515,11 @@ impl ProcfsSymbolizer {
             }
             shared.tables.get(&identity).and_then(Clone::clone)
         };
-        table.and_then(|table| table.resolve(offset).map(ToString::to_string))
+        table.and_then(|table| {
+            table.resolve(offset).map(|symbol| {
+                demangle_cpp_symbol(symbol, self.cpp_demangle, self.max_symbol_bytes).into_owned()
+            })
+        })
     }
 
     fn module_image_path(&self, pid: u32, module: &str) -> Option<std::path::PathBuf> {
@@ -1804,6 +1827,8 @@ mod platform {
                         let mut resolver = super::ProcfsSymbolizer::with_shared_symbols(
                             self.procfs_root.clone(),
                             config.resolve_symbol_names,
+                            super::cpp_demangle_mode(config.cpp_demangle),
+                            config.max_symbol_bytes,
                             shared_symbols.clone(),
                         );
                         let symbolize = config.symbolize;
@@ -1904,6 +1929,8 @@ mod platform {
                     let mut resolver = super::ProcfsSymbolizer::with_shared_symbols(
                         self.procfs_root.clone(),
                         config.resolve_symbol_names,
+                        super::cpp_demangle_mode(config.cpp_demangle),
+                        config.max_symbol_bytes,
                         shared_symbols.clone(),
                     );
                     let symbolize = config.symbolize;
@@ -2626,6 +2653,21 @@ mod tests {
         SignalPayload,
     };
     use proptest::prelude::*;
+
+    #[test]
+    fn runtime_cpp_demangle_config_maps_without_losing_modes() {
+        for (configured, expected) in [
+            (CpuProfileCppDemangle::None, CppDemangleMode::None),
+            (
+                CpuProfileCppDemangle::Simplified,
+                CppDemangleMode::Simplified,
+            ),
+            (CpuProfileCppDemangle::Templates, CppDemangleMode::Templates),
+            (CpuProfileCppDemangle::Full, CppDemangleMode::Full),
+        ] {
+            assert_eq!(cpp_demangle_mode(configured), expected);
+        }
+    }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(64))]
@@ -3360,8 +3402,20 @@ mod tests {
         )
         .expect("write kallsyms fixture");
         let shared = std::sync::Arc::new(std::sync::Mutex::new(SharedSymbolTables::default()));
-        let mut first = ProcfsSymbolizer::with_shared_symbols(dir.clone(), true, shared.clone());
-        let mut second = ProcfsSymbolizer::with_shared_symbols(dir.clone(), true, shared);
+        let mut first = ProcfsSymbolizer::with_shared_symbols(
+            dir.clone(),
+            true,
+            CppDemangleMode::Simplified,
+            256,
+            shared.clone(),
+        );
+        let mut second = ProcfsSymbolizer::with_shared_symbols(
+            dir.clone(),
+            true,
+            CppDemangleMode::Simplified,
+            256,
+            shared,
+        );
 
         assert_eq!(
             first.resolve_kernel_frame(0x8100_0118).symbol.as_deref(),

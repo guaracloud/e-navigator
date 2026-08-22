@@ -64,6 +64,10 @@ pub struct CpuProfileSourceConfig {
     /// export only module-relative offsets for offline symbolization.
     #[serde(default = "default_cpu_profile_resolve_symbol_names")]
     pub resolve_symbol_names: bool,
+    /// Detail retained when demangling Itanium C++ ABI symbols. The default
+    /// matches Alloy and removes parameters, return types, and templates.
+    #[serde(default)]
+    pub cpp_demangle: CpuProfileCppDemangle,
     /// Build `.eh_frame` unwind tables for running processes and unwind
     /// their stacks in-kernel via DWARF/CFI rules; processes without
     /// tables keep frame-pointer unwinding, with per-sample accounting
@@ -99,6 +103,16 @@ pub enum CpuProfileBackpressure {
     StopSource,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpuProfileCppDemangle {
+    None,
+    #[default]
+    Simplified,
+    Templates,
+    Full,
+}
+
 impl Default for CpuProfileSourceConfig {
     fn default() -> Self {
         Self {
@@ -122,6 +136,7 @@ impl Default for CpuProfileSourceConfig {
             backpressure: CpuProfileBackpressure::default(),
             symbolize: default_cpu_profile_symbolize(),
             resolve_symbol_names: default_cpu_profile_resolve_symbol_names(),
+            cpp_demangle: CpuProfileCppDemangle::default(),
             dwarf_unwind: default_cpu_profile_dwarf_unwind(),
             max_unwind_processes: default_cpu_profile_max_unwind_processes(),
         }
