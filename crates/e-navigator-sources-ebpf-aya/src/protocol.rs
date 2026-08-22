@@ -5,6 +5,7 @@ use e_navigator_core::ProtocolSourceConfig;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
+    discovery::classify_protocol_prefix,
     grpc_web::{parse_grpc_web_request, parse_grpc_web_response},
     http::{parse_http_request, parse_http_response},
     http2::{
@@ -396,6 +397,9 @@ pub(crate) struct ProtocolRegistryCounters {
     pub unparsed_responses: u64,
     pub kafka_correlation_mismatches: u64,
     pub mongodb_correlation_mismatches: u64,
+    pub discovered_connections: u64,
+    pub discovery_unclassified_events: u64,
+    pub discovery_candidate_evictions: u64,
     pub response_continuations: u64,
     pub unmatched_overflow: u64,
     pub unmatched_expired: u64,
@@ -409,12 +413,15 @@ pub(crate) struct ProtocolRegistryCounters {
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 impl ProtocolRegistryCounters {
-    pub(crate) fn protocol_surface_counts(self) -> [u64; 4] {
+    pub(crate) fn protocol_surface_counts(self) -> [u64; 7] {
         [
             self.websocket_upgrades,
             self.websocket_frames,
             self.websocket_transition_rejections,
             self.grpc_web_requests,
+            self.discovered_connections,
+            self.discovery_unclassified_events,
+            self.discovery_candidate_evictions,
         ]
     }
 }
@@ -607,6 +614,27 @@ struct SegmentProgress {
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 #[derive(Debug)]
+struct ProtocolDiscoveryCandidate {
+    context: ObservationContext,
+    direction: StreamDirection,
+    bytes: Vec<u8>,
+    started_unix_nanos: u64,
+    last_seen_unix_nanos: u64,
+    segments: Option<SegmentProgress>,
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug)]
+struct ProtocolDiscoveryMatch {
+    protocol: StreamProtocol,
+    direction: StreamDirection,
+    bytes: Vec<u8>,
+    started_unix_nanos: u64,
+    context: ObservationContext,
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug)]
 struct ConnectionStream {
     protocol: StreamProtocol,
     request_decoder: ProtocolStreamDecoder,
@@ -627,10 +655,12 @@ pub struct ProtocolStreamRegistry {
     host: Option<String>,
     procfs_root: std::path::PathBuf,
     ports: ProtocolPortMap,
+    discovery_enabled: bool,
     extraction: ProtocolExtractionConfig,
     limits: StreamDecodeLimits,
     max_tracked_connections: usize,
     connections: std::collections::HashMap<ConnectionId, ConnectionStream>,
+    discovery_candidates: std::collections::HashMap<ConnectionId, ProtocolDiscoveryCandidate>,
     frames: Vec<StreamFrame>,
     counters: ProtocolRegistryCounters,
 }
@@ -656,6 +686,7 @@ impl ProtocolStreamRegistry {
             host,
             procfs_root,
             ports: ProtocolPortMap::from_config(config),
+            discovery_enabled: config.discovery_enabled,
             extraction: ProtocolExtractionConfig {
                 max_header_bytes: config.max_buffered_bytes_per_connection,
                 max_attributes: config.max_attributes,
@@ -667,6 +698,7 @@ impl ProtocolStreamRegistry {
             },
             max_tracked_connections: config.max_tracked_connections.max(1),
             connections: std::collections::HashMap::new(),
+            discovery_candidates: std::collections::HashMap::new(),
             frames: Vec::new(),
             counters: ProtocolRegistryCounters::default(),
         }
@@ -739,15 +771,18 @@ impl ProtocolStreamRegistry {
             raw.local_port_be = local_port_be;
         }
 
+        if self
+            .connections
+            .get(&connection_id)
+            .is_some_and(|stream| !stream.context.matches_connection(&raw))
+        {
+            self.evict_connection(connection_id, signals);
+        }
+
         let capture_port = if raw.role == RAW_PROTOCOL_ROLE_SERVER {
             u16::from_be(raw.local_port_be)
         } else {
             u16::from_be(raw.remote_port_be)
-        };
-        let Some(protocol) = self.ports.lookup(capture_port) else {
-            return Err(RawProtocolDecodeError::UnmappedPort {
-                sample: RawProtocolInvalidSampleMetadata::from_raw(&raw),
-            });
         };
 
         // NATS commands are fire-and-forget; server-to-client traffic is
@@ -757,20 +792,51 @@ impl ProtocolStreamRegistry {
             || (raw.role == RAW_PROTOCOL_ROLE_SERVER
                 && raw.direction == RAW_PROTOCOL_DIRECTION_READ);
 
+        let direction = if is_request_direction {
+            StreamDirection::Request
+        } else {
+            StreamDirection::Response
+        };
+        let configured_protocol = self.ports.lookup(capture_port);
+        let existing_protocol = self
+            .connections
+            .get(&connection_id)
+            .map(|stream| stream.protocol);
+        let mut discovery_match = None;
+        let protocol = if let Some(protocol) = existing_protocol.or(configured_protocol) {
+            protocol
+        } else if self.discovery_enabled {
+            let payload = &raw.payload[..raw.payload_len as usize];
+            let Some(discovered) = self.discover_protocol(
+                connection_id,
+                &raw,
+                payload,
+                direction,
+                observed_unix_nanos,
+            ) else {
+                self.counters.discovery_unclassified_events += 1;
+                return Ok(());
+            };
+            let protocol = discovered.protocol;
+            discovery_match = Some(discovered);
+            protocol
+        } else {
+            return Err(RawProtocolDecodeError::UnmappedPort {
+                sample: RawProtocolInvalidSampleMetadata::from_raw(&raw),
+            });
+        };
+
         if !is_request_direction && protocol == StreamProtocol::Nats {
             self.counters.ignored_read_events += 1;
             return Ok(());
         }
 
-        if self
-            .connections
-            .get(&connection_id)
-            .is_some_and(|stream| !stream.context.matches_connection(&raw))
-        {
-            self.evict_connection(connection_id, signals);
-        }
         self.evict_if_needed(connection_id, signals);
         let limits = self.limits;
+        let context = discovery_match.as_ref().map_or_else(
+            || ObservationContext::from_raw(&raw, &self.procfs_root, self.source),
+            |discovered| discovered.context.clone(),
+        );
         let stream = self
             .connections
             .entry(connection_id)
@@ -797,9 +863,12 @@ impl ProtocolStreamRegistry {
                     request_headers_started_unix_nanos: None,
                     streams: Http2InFlightRequests::default(),
                 }),
-                context: ObservationContext::from_raw(&raw, &self.procfs_root, self.source),
+                context,
                 last_seen_unix_nanos: observed_unix_nanos,
             });
+        if discovery_match.is_some() {
+            self.counters.discovered_connections += 1;
+        }
         stream.last_seen_unix_nanos = observed_unix_nanos;
 
         let payload = &raw.payload[..raw.payload_len as usize];
@@ -810,14 +879,25 @@ impl ProtocolStreamRegistry {
         } else {
             (&mut stream.response_decoder, &mut stream.response_segments)
         };
-        feed_segment(
-            decoder,
-            pending_segments,
-            &raw,
-            payload,
-            &mut self.counters,
-            &mut frames,
-        );
+        let frame_started_unix_nanos = if let Some(discovered) = discovery_match {
+            debug_assert_eq!(discovered.direction, direction);
+            decoder.push_chunk(
+                &discovered.bytes,
+                discovered.bytes.len() as u64,
+                &mut frames,
+            );
+            discovered.started_unix_nanos
+        } else {
+            feed_segment(
+                decoder,
+                pending_segments,
+                &raw,
+                payload,
+                &mut self.counters,
+                &mut frames,
+            );
+            observed_unix_nanos
+        };
 
         if stream.protocol == StreamProtocol::Http2 {
             handle_http2_frames(
@@ -827,7 +907,7 @@ impl ProtocolStreamRegistry {
                 &self.extraction,
                 &self.host,
                 &mut self.counters,
-                observed_unix_nanos,
+                frame_started_unix_nanos,
                 signals,
             );
         } else if is_request_direction {
@@ -837,7 +917,7 @@ impl ProtocolStreamRegistry {
                 &self.extraction,
                 &self.host,
                 &mut self.counters,
-                observed_unix_nanos,
+                frame_started_unix_nanos,
                 signals,
             );
         } else {
@@ -847,13 +927,79 @@ impl ProtocolStreamRegistry {
                 &self.extraction,
                 &self.host,
                 &mut self.counters,
-                observed_unix_nanos,
+                frame_started_unix_nanos,
                 signals,
             );
         }
         frames.clear();
         self.frames = frames;
         Ok(())
+    }
+
+    fn discover_protocol(
+        &mut self,
+        connection_id: ConnectionId,
+        raw: &RawProtocolDataEvent,
+        payload: &[u8],
+        direction: StreamDirection,
+        observed_unix_nanos: u64,
+    ) -> Option<ProtocolDiscoveryMatch> {
+        if self
+            .discovery_candidates
+            .get(&connection_id)
+            .is_some_and(|candidate| !candidate.context.matches_connection(raw))
+        {
+            self.discovery_candidates.remove(&connection_id);
+        }
+        if !self.discovery_candidates.contains_key(&connection_id)
+            && self.discovery_candidates.len() >= self.max_tracked_connections
+            && let Some(oldest) = self
+                .discovery_candidates
+                .iter()
+                .min_by_key(|(_, candidate)| candidate.last_seen_unix_nanos)
+                .map(|(id, _)| *id)
+        {
+            self.discovery_candidates.remove(&oldest);
+            self.counters.discovery_candidate_evictions += 1;
+        }
+
+        let max_bytes = self
+            .extraction
+            .max_header_bytes
+            .min(RAW_PROTOCOL_MAX_CAPTURE_BYTES as usize);
+        let candidate = self
+            .discovery_candidates
+            .entry(connection_id)
+            .or_insert_with(|| ProtocolDiscoveryCandidate {
+                context: ObservationContext::from_raw(raw, &self.procfs_root, self.source),
+                direction,
+                bytes: Vec::new(),
+                started_unix_nanos: observed_unix_nanos,
+                last_seen_unix_nanos: observed_unix_nanos,
+                segments: None,
+            });
+        candidate.last_seen_unix_nanos = observed_unix_nanos;
+        if !append_discovery_payload(
+            candidate,
+            raw,
+            payload,
+            direction,
+            observed_unix_nanos,
+            max_bytes,
+        ) {
+            self.discovery_candidates.remove(&connection_id);
+            return None;
+        }
+
+        let protocol = classify_protocol_prefix(&candidate.bytes, direction, &self.extraction)?;
+        let candidate = self.discovery_candidates.remove(&connection_id)?;
+        Some(ProtocolDiscoveryMatch {
+            protocol,
+            direction,
+            bytes: candidate.bytes,
+            started_unix_nanos: candidate.started_unix_nanos,
+            context: candidate.context,
+        })
     }
 
     fn evict_if_needed(&mut self, incoming: ConnectionId, signals: &mut Vec<SignalEnvelope>) {
@@ -873,6 +1019,7 @@ impl ProtocolStreamRegistry {
     }
 
     fn evict_connection(&mut self, id: ConnectionId, signals: &mut Vec<SignalEnvelope>) {
+        self.discovery_candidates.remove(&id);
         let Some(mut stream) = self.connections.remove(&id) else {
             return;
         };
@@ -900,6 +1047,58 @@ impl ProtocolStreamRegistry {
             ));
         }
     }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn append_discovery_payload(
+    candidate: &mut ProtocolDiscoveryCandidate,
+    raw: &RawProtocolDataEvent,
+    payload: &[u8],
+    direction: StreamDirection,
+    observed_unix_nanos: u64,
+    max_bytes: usize,
+) -> bool {
+    if candidate.direction != direction {
+        candidate.direction = direction;
+        candidate.bytes.clear();
+        candidate.started_unix_nanos = observed_unix_nanos;
+        candidate.segments = None;
+    }
+    if raw.payload_captured_len != raw.payload_total_len {
+        return false;
+    }
+
+    let continues = candidate.segments.is_some_and(|progress| {
+        raw.timestamp_unix_nanos == progress.timestamp_unix_nanos
+            && raw.payload_offset == progress.next_offset
+            && raw.payload_captured_len == progress.captured_len
+            && raw.payload_total_len == progress.total_len
+    });
+    if raw.payload_offset == 0 {
+        if candidate.segments.take().is_some() {
+            candidate.bytes.clear();
+            candidate.started_unix_nanos = observed_unix_nanos;
+        }
+    } else if !continues {
+        return false;
+    }
+
+    let Some(new_len) = candidate.bytes.len().checked_add(payload.len()) else {
+        return false;
+    };
+    if new_len > max_bytes {
+        return false;
+    }
+    candidate.bytes.extend_from_slice(payload);
+
+    let segment_end = raw.payload_offset.saturating_add(raw.payload_len);
+    candidate.segments = (segment_end < raw.payload_captured_len).then_some(SegmentProgress {
+        timestamp_unix_nanos: raw.timestamp_unix_nanos,
+        next_offset: segment_end,
+        captured_len: raw.payload_captured_len,
+        total_len: raw.payload_total_len,
+    });
+    true
 }
 
 /// Feeds one captured segment into the stream decoder, splicing contiguous
@@ -2639,6 +2838,7 @@ mod platform {
             ));
 
             populate_capture_ports(&mut ebpf, &self.config)?;
+            populate_capture_all(&mut ebpf, &self.config)?;
             populate_capture_limit(&mut ebpf, &self.config)?;
             populate_capture_inbound(&mut ebpf, &self.config)?;
             setup_protocol_iovec_emitter(&mut ebpf)?;
@@ -2957,7 +3157,7 @@ mod platform {
                     reader_count,
                     super::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
                 );
-                let mut last_protocol_surface_counts = [0_u64; 4];
+                let mut last_protocol_surface_counts = [0_u64; 7];
 
                 let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
@@ -3087,6 +3287,18 @@ mod platform {
             ProtocolSourceConfig::MAX_CAPTURE_BYTES_PER_SYSCALL,
         ) as u32;
         limit.set(0, capture_bytes, 0).map_err(module_error)?;
+        Ok(())
+    }
+
+    fn populate_capture_all(ebpf: &mut Ebpf, config: &ProtocolSourceConfig) -> CoreResult<()> {
+        let map = ebpf
+            .map_mut("PROTOCOL_CAPTURE_ALL")
+            .ok_or_else(|| module_error("missing PROTOCOL_CAPTURE_ALL map"))?;
+        let mut capture_all: AyaArray<&mut MapData, u32> =
+            AyaArray::try_from(map).map_err(module_error)?;
+        capture_all
+            .set(0, u32::from(config.discovery_enabled), 0)
+            .map_err(module_error)?;
         Ok(())
     }
 
@@ -3504,6 +3716,18 @@ mod tests {
     fn http_registry(port: u16) -> ProtocolStreamRegistry {
         let config = ProtocolSourceConfig {
             http1_ports: vec![port],
+            ..ProtocolSourceConfig::default()
+        };
+        ProtocolStreamRegistry::new(
+            Some("test-host".to_string()),
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
+        )
+    }
+
+    fn discovery_registry() -> ProtocolStreamRegistry {
+        let config = ProtocolSourceConfig {
+            discovery_enabled: true,
             ..ProtocolSourceConfig::default()
         };
         ProtocolStreamRegistry::new(
@@ -4080,6 +4304,89 @@ mod tests {
         assert_eq!(signals.len(), 1);
         assert_eq!(observation(&signals[0]).duration_nanos, Some(2_000));
         assert_eq!(registry.counters().matched_responses, 1);
+    }
+
+    #[test]
+    fn dynamic_discovery_matches_redis_on_an_unconfigured_port() {
+        let mut registry = discovery_registry();
+        let request = raw_event(16_379, b"*1\r\n$4\r\nPING\r\n", 14);
+        assert!(handle_at(&mut registry, &request, 5_000).is_empty());
+
+        let response = response_event(16_379, b"+OK\r\n");
+        let signals = handle_at(&mut registry, &response, 7_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).protocol, ProtocolKind::Redis);
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(2_000));
+        assert_eq!(registry.counters().discovered_connections, 1);
+    }
+
+    #[test]
+    fn dynamic_discovery_does_not_guess_an_ambiguous_prefix() {
+        let mut registry = discovery_registry();
+        let request = raw_event(16_379, b"PING\r\n", 6);
+
+        assert!(handle_at(&mut registry, &request, 5_000).is_empty());
+        assert_eq!(registry.tracked_connections(), 0);
+        assert_eq!(registry.counters().discovery_unclassified_events, 1);
+    }
+
+    #[test]
+    fn dynamic_discovery_reassembles_a_request_across_syscalls() {
+        let mut registry = discovery_registry();
+        let first = raw_event(16_379, b"*1\r\n", 4);
+        assert!(handle_at(&mut registry, &first, 5_000).is_empty());
+
+        let mut second = raw_event(16_379, b"$4\r\nPING\r\n", 10);
+        second.timestamp_unix_nanos = 2_000;
+        assert!(handle_at(&mut registry, &second, 6_000).is_empty());
+
+        let response = response_event(16_379, b"+OK\r\n");
+        let signals = handle_at(&mut registry, &response, 7_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).protocol, ProtocolKind::Redis);
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(2_000));
+        assert_eq!(registry.counters().discovered_connections, 1);
+    }
+
+    #[test]
+    fn configured_port_precedes_dynamic_discovery() {
+        let config = ProtocolSourceConfig {
+            discovery_enabled: true,
+            nats_ports: vec![16_379],
+            ..ProtocolSourceConfig::default()
+        };
+        let mut registry = ProtocolStreamRegistry::new(
+            Some("test-host".to_string()),
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
+        );
+
+        let signals = handle_at(&mut registry, &raw_event(16_379, b"PING\r\n", 6), 5_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).protocol, ProtocolKind::Nats);
+        assert_eq!(registry.counters().discovered_connections, 0);
+        assert_eq!(registry.counters().discovery_unclassified_events, 0);
+    }
+
+    #[test]
+    fn dynamic_discovery_candidate_count_is_bounded() {
+        let config = ProtocolSourceConfig {
+            discovery_enabled: true,
+            max_tracked_connections: 1,
+            ..ProtocolSourceConfig::default()
+        };
+        let mut registry = ProtocolStreamRegistry::new(
+            Some("test-host".to_string()),
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
+        );
+        assert!(handle_at(&mut registry, &raw_event(16_379, b"PING\r\n", 6), 5_000,).is_empty());
+        let mut second = raw_event(16_380, b"PING\r\n", 6);
+        second.fd = 10;
+        assert!(handle_at(&mut registry, &second, 6_000).is_empty());
+
+        assert_eq!(registry.discovery_candidates.len(), 1);
+        assert_eq!(registry.counters().discovery_candidate_evictions, 1);
     }
 
     #[test]

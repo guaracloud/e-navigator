@@ -432,6 +432,18 @@ fn aya_source_telemetry_lines(
                     "e_navigator_ebpf_source_protocol_grpc_web_requests_total",
                     snapshot.protocol_grpc_web_requests,
                 ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_discovered_connections_total",
+                    snapshot.protocol_discovered_connections,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_discovery_unclassified_events_total",
+                    snapshot.protocol_discovery_unclassified_events,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_discovery_candidate_evictions_total",
+                    snapshot.protocol_discovery_candidate_evictions,
+                ),
             ];
             lines.push(PrometheusMetricLine {
                 name: "e_navigator_ebpf_source_event_transport".to_string(),
@@ -868,11 +880,14 @@ mod tests {
                 protocol_websocket_frames: 7,
                 protocol_websocket_transition_rejections: 1,
                 protocol_grpc_web_requests: 8,
+                protocol_discovered_connections: 9,
+                protocol_discovery_unclassified_events: 10,
+                protocol_discovery_candidate_evictions: 2,
             }]
             .into_iter(),
         );
 
-        assert_eq!(lines.len(), 40);
+        assert_eq!(lines.len(), 43);
         assert!(
             lines.iter().all(
                 |line| line.labels.get("source").map(String::as_str) == Some("source.aya_exec")
@@ -912,6 +927,10 @@ mod tests {
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_protocol_grpc_web_requests_total"
                 && line.value == "8"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_protocol_discovered_connections_total"
+                && line.value == "9"
         }));
     }
 

@@ -2,6 +2,7 @@
 #![warn(missing_debug_implementations, rust_2018_idioms, unreachable_pub)]
 //! Bounded application-protocol, stream, and trace-context parsers.
 
+pub mod discovery;
 pub mod grpc;
 pub mod grpc_web;
 pub mod http;

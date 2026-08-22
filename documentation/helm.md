@@ -321,6 +321,29 @@ remaining delta on close. Exact peer series with no observation for
 reclaimed before a new identity is sent to `__other__`; zero-delta snapshots
 refresh a still-active identity without increasing its counter.
 
+Arbitrary-port protocol discovery is a separate, disabled-by-default capture
+surface:
+
+```toml
+[protocol_source]
+discovery_enabled = true
+inbound_enabled = false
+
+[[modules]]
+name = "source.aya_protocol"
+enabled = true
+```
+
+Configured protocol port lists remain authoritative and retain their combined
+64-port bound. Discovery causes the eBPF source to capture its configured
+bounded prefix from all outbound TCP ports; accepted sockets are included only
+when `inbound_enabled = true`. Userspace retains at most
+`max_tracked_connections` discovery candidates, considers no more than 4 KiB
+per candidate, and selects a parser only for a unique supported plaintext
+signature. Qualify CPU, event volume, and plaintext exposure against the exact
+workload before enabling this setting. Ambiguous, encrypted, gapped,
+truncated, oversized, and unsupported traffic remains unclassified.
+
 Active W3C propagation is a separate, disabled-by-default mutation surface:
 
 ```toml
@@ -581,7 +604,12 @@ monitor `e_navigator_ebpf_source_protocol_websocket_upgrades_total`,
 `e_navigator_ebpf_source_protocol_websocket_transition_rejections_total`, and
 `e_navigator_ebpf_source_protocol_grpc_web_requests_total`. Valid traffic should
 make the first, second, and fourth counters increase; any transition rejection
-is an explicit fail-closed event to investigate. TLS candidates are accepted
+is an explicit fail-closed event to investigate. For arbitrary-port discovery,
+monitor `e_navigator_ebpf_source_protocol_discovered_connections_total`,
+`e_navigator_ebpf_source_protocol_discovery_unclassified_events_total`, and
+`e_navigator_ebpf_source_protocol_discovery_candidate_evictions_total`; an
+eviction indicates the bounded candidate budget was saturated. TLS candidates
+are accepted
 only for the documented OpenSSL 1.1.1/3 and GnuTLS ABI 30 surfaces after
 architecture and
 complete-export preflight, or for unstripped Linux/amd64 Go 1.24 through 1.26

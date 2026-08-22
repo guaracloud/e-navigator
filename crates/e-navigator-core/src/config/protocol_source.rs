@@ -5,6 +5,11 @@ use super::{ConfigError, ConfigResult};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProtocolSourceConfig {
+    /// Capture bounded TCP payload prefixes on unconfigured ports and select
+    /// a parser only when content identifies exactly one supported protocol.
+    /// Disabled by default because it expands the kernel capture surface.
+    #[serde(default)]
+    pub discovery_enabled: bool,
     /// Capture accepted server sockets in addition to outbound client
     /// connections. Disabled by default because it expands the syscall
     /// capture surface to configured server ports.
@@ -44,6 +49,7 @@ pub struct ProtocolSourceConfig {
 impl Default for ProtocolSourceConfig {
     fn default() -> Self {
         Self {
+            discovery_enabled: false,
             inbound_enabled: false,
             http1_ports: Vec::new(),
             http2_ports: Vec::new(),

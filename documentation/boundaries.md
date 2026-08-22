@@ -57,6 +57,16 @@ E-Navigator does not currently claim:
   unit-tested, and selected ordinary matching has homelab evidence);
 - live NATS, MongoDB, MySQL, or PostgreSQL protocol capture proof (implemented
   and unit-tested, not yet runtime-proven);
+- universal protocol recognition from the disabled-by-default arbitrary-port
+  discovery path. Explicit configured-port mappings always take precedence.
+  Discovery considers at most 4 KiB of contiguous captured plaintext per
+  bounded candidate and emits semantics only when exactly one supported parser
+  matches. Ambiguous prefixes (including inline `PING` shared by NATS and
+  Redis), capture gaps, oversized prefixes, encrypted traffic, server-first
+  protocols without a unique response signature, and unsupported protocols
+  remain unclassified. The 64-port limit still applies to explicit mappings,
+  while discovery expands the capture surface and requires a target workload
+  overhead and privacy qualification before production enablement;
 - on-the-wire TLS decryption (the claimed `source.aya_tls` surface is
   userspace library-boundary plaintext interception for dynamically linked
   OpenSSL 1.1.1/3 with the complete required read/write/fd-association export

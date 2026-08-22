@@ -16,6 +16,17 @@ All notable changes to E-Navigator are documented here. The format follows
   BSON command value unambiguously names a collection; database namespaces,
   arbitrary BSON values, and collection names from unknown commands remain
   unexported.
+- Add disabled-by-default protocol discovery for arbitrary TCP ports. Explicit
+  port assignments remain authoritative; otherwise bounded userspace prefixes
+  select a parser only when exactly one supported protocol matches. Candidate
+  buffers, evictions, unclassified events, and discovered connections are
+  bounded and exported as native health counters.
+
+### Security
+
+- Keep arbitrary-port capture opt-in because it expands the kernel plaintext
+  capture surface. Ambiguous, gapped, truncated, oversized, encrypted, and
+  unsupported prefixes fail closed without emitting protocol semantics.
 
 ## [0.5.0-rc.2] - 2026-08-22
 
