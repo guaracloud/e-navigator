@@ -56,13 +56,13 @@ pub fn parse_mongodb_message(
     push_attribute(
         &mut attributes,
         config.max_attributes,
-        "db.system",
+        "db.system.name",
         Some("mongodb"),
     );
     push_attribute(
         &mut attributes,
         config.max_attributes,
-        "db.operation",
+        "db.operation.name",
         operation.as_deref(),
     );
     push_attribute(
@@ -109,7 +109,7 @@ pub fn parse_mongodb_response(
     push_attribute(
         &mut attributes,
         config.max_attributes,
-        "db.system",
+        "db.system.name",
         Some("mongodb"),
     );
     push_attribute(

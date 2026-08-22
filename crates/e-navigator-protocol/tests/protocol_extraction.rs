@@ -1361,13 +1361,13 @@ fn extracts_redis_resp_command_without_raw_key_or_value() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.system" && attribute.value == "redis")
+            .any(|attribute| attribute.key == "db.system.name" && attribute.value == "redis")
     );
     assert!(
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.operation" && attribute.value == "SET")
+            .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "SET")
     );
     assert!(
         extraction
@@ -1399,7 +1399,7 @@ fn extracts_redis_inline_command_without_raw_arguments() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.operation" && attribute.value == "GET")
+            .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "GET")
     );
     assert!(
         !extraction
@@ -1424,7 +1424,7 @@ fn extracts_redis_simple_response_status_without_message_values() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.system" && attribute.value == "redis")
+            .any(|attribute| attribute.key == "db.system.name" && attribute.value == "redis")
     );
     assert!(
         extraction
@@ -18938,13 +18938,13 @@ fn extracts_postgres_simple_query_operation_without_raw_sql() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.system" && attribute.value == "postgresql")
+            .any(|attribute| attribute.key == "db.system.name" && attribute.value == "postgresql")
     );
     assert!(
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.operation" && attribute.value == "SELECT")
+            .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "SELECT")
     );
     assert!(extraction.attributes.iter().any(|attribute| attribute.key
         == "db.postgresql.message.type"
@@ -19004,7 +19004,7 @@ fn extracts_postgres_bind_message_without_portal_statement_or_parameter_values()
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.operation" && attribute.value == "BIND")
+            .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "BIND")
     );
     assert!(extraction.attributes.iter().any(|attribute| attribute.key
         == "db.postgresql.message.type"
@@ -19035,7 +19035,8 @@ fn extracts_postgres_describe_message_without_statement_or_portal_name() {
             extraction
                 .attributes
                 .iter()
-                .any(|attribute| attribute.key == "db.operation" && attribute.value == "DESCRIBE")
+                .any(|attribute| attribute.key == "db.operation.name"
+                    && attribute.value == "DESCRIBE")
         );
         assert!(
             extraction
@@ -19075,7 +19076,7 @@ fn extracts_postgres_close_message_without_statement_or_portal_name() {
             extraction
                 .attributes
                 .iter()
-                .any(|attribute| attribute.key == "db.operation" && attribute.value == "CLOSE")
+                .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "CLOSE")
         );
         assert!(
             extraction
@@ -19107,7 +19108,7 @@ fn extracts_postgres_password_message_without_password_value() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.operation" && attribute.value == "PASSWORD")
+            .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "PASSWORD")
     );
     assert!(
         extraction
@@ -19141,7 +19142,7 @@ fn extracts_postgres_execute_message_without_portal_name() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.operation" && attribute.value == "EXECUTE")
+            .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "EXECUTE")
     );
     assert!(
         extraction
@@ -19177,12 +19178,9 @@ fn extracts_postgres_function_call_message_without_argument_values() {
 
     assert_eq!(extraction.protocol, ProtocolKind::Postgresql);
     assert_eq!(extraction.operation.as_deref(), Some("FUNCTION_CALL"));
-    assert!(
-        extraction
-            .attributes
-            .iter()
-            .any(|attribute| attribute.key == "db.operation" && attribute.value == "FUNCTION_CALL")
-    );
+    assert!(extraction.attributes.iter().any(
+        |attribute| attribute.key == "db.operation.name" && attribute.value == "FUNCTION_CALL"
+    ));
     assert!(
         extraction
             .attributes
@@ -19251,7 +19249,8 @@ fn extracts_postgres_copy_messages_without_payload_values() {
             extraction
                 .attributes
                 .iter()
-                .any(|attribute| attribute.key == "db.operation" && attribute.value == operation)
+                .any(|attribute| attribute.key == "db.operation.name"
+                    && attribute.value == operation)
         );
         assert!(
             extraction
@@ -19329,7 +19328,7 @@ fn extracts_postgres_sync_message_without_payload_values() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.operation" && attribute.value == "SYNC")
+            .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "SYNC")
     );
     assert!(extraction.attributes.iter().any(|attribute| attribute.key
         == "db.postgresql.message.type"
@@ -19349,7 +19348,7 @@ fn extracts_postgres_flush_message_without_payload_values() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.operation" && attribute.value == "FLUSH")
+            .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "FLUSH")
     );
     assert!(extraction.attributes.iter().any(|attribute| attribute.key
         == "db.postgresql.message.type"
@@ -19369,7 +19368,7 @@ fn extracts_postgres_terminate_message_without_payload_values() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.operation" && attribute.value == "TERMINATE")
+            .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "TERMINATE")
     );
     assert!(
         extraction
@@ -19407,7 +19406,7 @@ fn extracts_postgres_command_complete_without_raw_tag() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.system" && attribute.value == "postgresql")
+            .any(|attribute| attribute.key == "db.system.name" && attribute.value == "postgresql")
     );
     assert!(extraction.attributes.iter().any(|attribute| {
         attribute.key == "db.response.status_code" && attribute.value == "OK"
@@ -19707,7 +19706,7 @@ fn extracts_postgres_error_response_without_raw_message_fields() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.system" && attribute.value == "postgresql")
+            .any(|attribute| attribute.key == "db.system.name" && attribute.value == "postgresql")
     );
     assert!(extraction.attributes.iter().any(|attribute| {
         attribute.key == "db.response.status_code" && attribute.value == "23505"
@@ -20321,13 +20320,13 @@ fn extracts_mysql_query_operation_without_raw_sql() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.system" && attribute.value == "mysql")
+            .any(|attribute| attribute.key == "db.system.name" && attribute.value == "mysql")
     );
     assert!(
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.operation" && attribute.value == "SELECT")
+            .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "SELECT")
     );
     assert!(
         extraction
@@ -20358,7 +20357,8 @@ fn extracts_mysql_connection_commands_without_schema_values() {
             extraction
                 .attributes
                 .iter()
-                .any(|attribute| attribute.key == "db.operation" && attribute.value == operation)
+                .any(|attribute| attribute.key == "db.operation.name"
+                    && attribute.value == operation)
         );
         assert!(extraction.attributes.iter().any(
             |attribute| attribute.key == "db.mysql.command" && attribute.value == command_name
@@ -20413,7 +20413,7 @@ fn extracts_mysql_stmt_execute_operation_without_statement_or_parameter_values()
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.operation" && attribute.value == "EXECUTE")
+            .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "EXECUTE")
     );
     assert!(
         extraction
@@ -20446,7 +20446,7 @@ fn extracts_mysql_stmt_send_long_data_without_parameter_values() {
     assert_eq!(extraction.protocol, ProtocolKind::Mysql);
     assert_eq!(extraction.operation.as_deref(), Some("SEND_LONG_DATA"));
     assert!(extraction.attributes.iter().any(|attribute| {
-        attribute.key == "db.operation" && attribute.value == "SEND_LONG_DATA"
+        attribute.key == "db.operation.name" && attribute.value == "SEND_LONG_DATA"
     }));
     assert!(extraction.attributes.iter().any(|attribute| {
         attribute.key == "db.mysql.command" && attribute.value == "stmt_send_long_data"
@@ -20485,7 +20485,8 @@ fn extracts_mysql_stmt_lifecycle_operations_without_statement_ids() {
             extraction
                 .attributes
                 .iter()
-                .any(|attribute| attribute.key == "db.operation" && attribute.value == operation)
+                .any(|attribute| attribute.key == "db.operation.name"
+                    && attribute.value == operation)
         );
         assert!(extraction.attributes.iter().any(
             |attribute| attribute.key == "db.mysql.command" && attribute.value == command_name
@@ -20514,7 +20515,7 @@ fn extracts_mysql_ping_operation_without_payload_values() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.operation" && attribute.value == "PING")
+            .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "PING")
     );
     assert!(
         extraction
@@ -20551,7 +20552,7 @@ fn extracts_mysql_ok_response_without_raw_session_state() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.system" && attribute.value == "mysql")
+            .any(|attribute| attribute.key == "db.system.name" && attribute.value == "mysql")
     );
     assert!(
         extraction
@@ -20587,7 +20588,7 @@ fn extracts_mysql_eof_response_without_raw_status_flags() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.system" && attribute.value == "mysql")
+            .any(|attribute| attribute.key == "db.system.name" && attribute.value == "mysql")
     );
     assert!(
         extraction
@@ -20617,7 +20618,7 @@ fn extracts_mysql_error_response_without_raw_message() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.system" && attribute.value == "mysql")
+            .any(|attribute| attribute.key == "db.system.name" && attribute.value == "mysql")
     );
     assert!(extraction.attributes.iter().any(|attribute| {
         attribute.key == "db.response.status_code" && attribute.value == "42000/1064"
@@ -20880,13 +20881,13 @@ fn extracts_mongodb_op_msg_command_without_raw_bson_values() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.system" && attribute.value == "mongodb")
+            .any(|attribute| attribute.key == "db.system.name" && attribute.value == "mongodb")
     );
     assert!(
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.operation" && attribute.value == "find")
+            .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "find")
     );
     assert!(
         extraction
@@ -20977,7 +20978,7 @@ fn extracts_mongodb_ok_response_status() {
         extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.key == "db.system" && attribute.value == "mongodb")
+            .any(|attribute| attribute.key == "db.system.name" && attribute.value == "mongodb")
     );
     assert!(
         extraction

@@ -81,13 +81,13 @@ pub fn parse_mysql_command(
     push_attribute(
         &mut attributes,
         config.max_attributes,
-        "db.system",
+        "db.system.name",
         Some("mysql"),
     );
     push_attribute(
         &mut attributes,
         config.max_attributes,
-        "db.operation",
+        "db.operation.name",
         operation.as_deref(),
     );
     push_attribute(
@@ -237,7 +237,12 @@ fn mysql_response_attributes(
     max_attributes: usize,
 ) -> Vec<TraceAttribute> {
     let mut attributes = Vec::new();
-    push_attribute(&mut attributes, max_attributes, "db.system", Some("mysql"));
+    push_attribute(
+        &mut attributes,
+        max_attributes,
+        "db.system.name",
+        Some("mysql"),
+    );
     push_attribute(
         &mut attributes,
         max_attributes,

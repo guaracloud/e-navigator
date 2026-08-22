@@ -137,11 +137,11 @@ async fn redis_protocol_request_generates_named_request_span() {
     request.status_code = None;
     request.attributes = vec![
         TraceAttribute {
-            key: "db.system".to_string(),
+            key: "db.system.name".to_string(),
             value: "redis".to_string(),
         },
         TraceAttribute {
-            key: "db.operation".to_string(),
+            key: "db.operation.name".to_string(),
             value: "GET".to_string(),
         },
     ];
@@ -154,7 +154,7 @@ async fn redis_protocol_request_generates_named_request_span() {
     assert_eq!(span.name, "redis command");
     assert_eq!(span.protocol, ProtocolKind::Redis);
     assert_eq!(span.method.as_deref(), Some("GET"));
-    assert!(has_attribute(&span.attributes, "db.operation", "GET"));
+    assert!(has_attribute(&span.attributes, "db.operation.name", "GET"));
 }
 
 #[tokio::test]
@@ -282,11 +282,11 @@ async fn postgresql_protocol_request_generates_named_request_span() {
     request.status_code = None;
     request.attributes = vec![
         TraceAttribute {
-            key: "db.system".to_string(),
+            key: "db.system.name".to_string(),
             value: "postgresql".to_string(),
         },
         TraceAttribute {
-            key: "db.operation".to_string(),
+            key: "db.operation.name".to_string(),
             value: "SELECT".to_string(),
         },
     ];
@@ -299,7 +299,11 @@ async fn postgresql_protocol_request_generates_named_request_span() {
     assert_eq!(span.name, "postgresql query");
     assert_eq!(span.protocol, ProtocolKind::Postgresql);
     assert_eq!(span.method.as_deref(), Some("SELECT"));
-    assert!(has_attribute(&span.attributes, "db.operation", "SELECT"));
+    assert!(has_attribute(
+        &span.attributes,
+        "db.operation.name",
+        "SELECT"
+    ));
 }
 
 #[tokio::test]
@@ -314,11 +318,11 @@ async fn mysql_protocol_request_generates_named_request_span() {
     request.status_code = None;
     request.attributes = vec![
         TraceAttribute {
-            key: "db.system".to_string(),
+            key: "db.system.name".to_string(),
             value: "mysql".to_string(),
         },
         TraceAttribute {
-            key: "db.operation".to_string(),
+            key: "db.operation.name".to_string(),
             value: "SELECT".to_string(),
         },
     ];
@@ -331,7 +335,11 @@ async fn mysql_protocol_request_generates_named_request_span() {
     assert_eq!(span.name, "mysql query");
     assert_eq!(span.protocol, ProtocolKind::Mysql);
     assert_eq!(span.method.as_deref(), Some("SELECT"));
-    assert!(has_attribute(&span.attributes, "db.operation", "SELECT"));
+    assert!(has_attribute(
+        &span.attributes,
+        "db.operation.name",
+        "SELECT"
+    ));
 }
 
 #[tokio::test]
@@ -346,11 +354,11 @@ async fn mongodb_protocol_request_generates_named_request_span() {
     request.status_code = None;
     request.attributes = vec![
         TraceAttribute {
-            key: "db.system".to_string(),
+            key: "db.system.name".to_string(),
             value: "mongodb".to_string(),
         },
         TraceAttribute {
-            key: "db.operation".to_string(),
+            key: "db.operation.name".to_string(),
             value: "find".to_string(),
         },
     ];
@@ -363,7 +371,7 @@ async fn mongodb_protocol_request_generates_named_request_span() {
     assert_eq!(span.name, "mongodb command");
     assert_eq!(span.protocol, ProtocolKind::Mongodb);
     assert_eq!(span.method.as_deref(), Some("find"));
-    assert!(has_attribute(&span.attributes, "db.operation", "find"));
+    assert!(has_attribute(&span.attributes, "db.operation.name", "find"));
 }
 
 #[tokio::test]

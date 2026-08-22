@@ -257,8 +257,8 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
             port: 27017,
             domain: "mongodb.example.com",
             attributes: vec![
-                attr("db.system", "mongodb"),
-                attr("db.operation", "find"),
+                attr("db.system.name", "mongodb"),
+                attr("db.operation.name", "find"),
                 attr("trace.synthetic.fixture", "mongodb_protocol_request"),
             ],
         },
@@ -269,7 +269,7 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
             port: 27017,
             domain: "mongodb.example.com",
             attributes: vec![
-                attr("db.system", "mongodb"),
+                attr("db.system.name", "mongodb"),
                 attr("db.response.status_code", "13"),
                 attr("error.type", "13"),
                 attr("trace.synthetic.fixture", "mongodb_protocol_error"),
@@ -282,8 +282,8 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
             port: 3306,
             domain: "mysql.example.com",
             attributes: vec![
-                attr("db.system", "mysql"),
-                attr("db.operation", "SELECT"),
+                attr("db.system.name", "mysql"),
+                attr("db.operation.name", "SELECT"),
                 attr("trace.synthetic.fixture", "mysql_protocol_request"),
             ],
         },
@@ -294,7 +294,7 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
             port: 3306,
             domain: "mysql.example.com",
             attributes: vec![
-                attr("db.system", "mysql"),
+                attr("db.system.name", "mysql"),
                 attr("db.response.status_code", "42000/1064"),
                 attr("error.type", "42000/1064"),
                 attr("trace.synthetic.fixture", "mysql_protocol_error"),
@@ -333,8 +333,8 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
             port: 5432,
             domain: "postgresql.example.com",
             attributes: vec![
-                attr("db.system", "postgresql"),
-                attr("db.operation", "SELECT"),
+                attr("db.system.name", "postgresql"),
+                attr("db.operation.name", "SELECT"),
                 attr("trace.synthetic.fixture", "postgresql_protocol_request"),
             ],
         },
@@ -345,7 +345,7 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
             port: 5432,
             domain: "postgresql.example.com",
             attributes: vec![
-                attr("db.system", "postgresql"),
+                attr("db.system.name", "postgresql"),
                 attr("db.response.status_code", "23505"),
                 attr("error.type", "23505"),
                 attr("trace.synthetic.fixture", "postgresql_protocol_error"),
@@ -358,8 +358,8 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
             port: 6379,
             domain: "redis.example.com",
             attributes: vec![
-                attr("db.system", "redis"),
-                attr("db.operation", "GET"),
+                attr("db.system.name", "redis"),
+                attr("db.operation.name", "GET"),
                 attr("db.redis.key_present", "true"),
                 attr("trace.synthetic.fixture", "redis_protocol_request"),
             ],
@@ -371,7 +371,7 @@ fn protocol_fixtures() -> Vec<ProtocolFixture> {
             port: 6379,
             domain: "redis.example.com",
             attributes: vec![
-                attr("db.system", "redis"),
+                attr("db.system.name", "redis"),
                 attr("db.response.status_code", "WRONGTYPE"),
                 attr("error.type", "redis_wrongtype"),
                 attr("trace.synthetic.fixture", "redis_protocol_error"),
