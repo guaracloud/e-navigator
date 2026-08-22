@@ -6,6 +6,17 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Correlate MongoDB replies to the unique bounded in-flight request identified
+  by the wire-level `responseTo` field, including out-of-order replies. Unknown,
+  truncated, malformed, or ambiguous identifiers leave queued requests
+  untouched and are explicitly counted.
+- Emit `db.collection.name` for bounded MongoDB commands only when the first
+  BSON command value unambiguously names a collection; database namespaces,
+  arbitrary BSON values, and collection names from unknown commands remain
+  unexported.
+
 ## [0.5.0-rc.2] - 2026-08-22
 
 ### Changed

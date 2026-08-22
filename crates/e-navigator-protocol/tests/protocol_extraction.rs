@@ -20910,14 +20910,15 @@ fn rejects_malformed_and_unsupported_mysql_fixtures() {
 }
 
 #[test]
-fn extracts_mongodb_op_msg_command_without_raw_bson_values() {
+fn extracts_mongodb_op_msg_command_and_unambiguous_collection() {
     let document = bson_command_document("find", "customers-secret");
-    let bytes = mongodb_op_msg(&document);
+    let bytes = mongodb_op_msg_with_ids(&document, 73, 0);
 
     let extraction =
         parse_mongodb_message(&bytes, &ProtocolExtractionConfig::default()).expect("mongo parses");
 
     assert_eq!(extraction.protocol, ProtocolKind::Mongodb);
+    assert_eq!(extraction.request_id, 73);
     assert_eq!(extraction.operation.as_deref(), Some("find"));
     assert!(
         extraction
@@ -20931,15 +20932,23 @@ fn extracts_mongodb_op_msg_command_without_raw_bson_values() {
             .iter()
             .any(|attribute| attribute.key == "db.operation.name" && attribute.value == "find")
     );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.collection.name" && attribute.value == "customers-secret"
+    }));
     assert!(
         extraction
             .attributes
             .iter()
             .any(|attribute| attribute.key == "db.mongodb.opcode" && attribute.value == "op_msg")
     );
-    assert!(!extraction.attributes.iter().any(
-        |attribute| attribute.value.contains("customers") || attribute.value.contains("secret")
-    ));
+    assert_eq!(
+        extraction
+            .attributes
+            .iter()
+            .filter(|attribute| attribute.value.contains("customers-secret"))
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -20958,12 +20967,14 @@ fn extracts_mongodb_op_msg_with_checksum_without_raw_values() {
             .iter()
             .any(|attribute| attribute.key == "db.mongodb.opcode" && attribute.value == "op_msg")
     );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.collection.name" && attribute.value == "customers-secret"
+    }));
     assert!(
         !extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.value.contains("customers")
-                || attribute.value.contains("305419896"))
+            .any(|attribute| attribute.value.contains("305419896"))
     );
 
     let response = mongodb_op_msg_with_checksum(&bson_mongodb_ok_document(), 0x8765_4321);
@@ -20982,7 +20993,7 @@ fn extracts_mongodb_op_msg_with_checksum_without_raw_values() {
 }
 
 #[test]
-fn extracts_mongodb_op_query_command_without_namespace_or_values() {
+fn extracts_mongodb_op_query_collection_without_legacy_namespace() {
     let document = bson_command_document("insert", "orders-secret");
     let bytes = mongodb_op_query("secret-db.$cmd", &document);
 
@@ -20996,24 +21007,26 @@ fn extracts_mongodb_op_query_command_without_namespace_or_values() {
             .iter()
             .any(|attribute| attribute.key == "db.mongodb.opcode" && attribute.value == "op_query")
     );
+    assert!(extraction.attributes.iter().any(|attribute| {
+        attribute.key == "db.collection.name" && attribute.value == "orders-secret"
+    }));
     assert!(
         !extraction
             .attributes
             .iter()
-            .any(|attribute| attribute.value.contains("orders")
-                || attribute.value.contains("secret-db")
-                || attribute.value.contains("secret"))
+            .any(|attribute| attribute.value.contains("secret-db"))
     );
 }
 
 #[test]
 fn extracts_mongodb_ok_response_status() {
-    let bytes = mongodb_op_msg(&bson_mongodb_ok_document());
+    let bytes = mongodb_op_msg_with_ids(&bson_mongodb_ok_document(), 74, 73);
 
     let extraction = parse_mongodb_response(&bytes, &ProtocolExtractionConfig::default())
         .expect("mongo response parses");
 
     assert_eq!(extraction.protocol, ProtocolKind::Mongodb);
+    assert_eq!(extraction.response_to, 73);
     assert_eq!(extraction.status_code, "1");
     assert_eq!(extraction.error_type, None);
     assert!(
@@ -26737,11 +26750,15 @@ fn push_unsigned_varint(bytes: &mut Vec<u8>, mut value: usize) {
 }
 
 fn mongodb_frame(opcode: i32, body: &[u8]) -> Vec<u8> {
+    mongodb_frame_with_ids(opcode, body, 1, 0)
+}
+
+fn mongodb_frame_with_ids(opcode: i32, body: &[u8], request_id: i32, response_to: i32) -> Vec<u8> {
     let message_len = body.len() + 16;
     let mut frame = Vec::with_capacity(message_len);
     frame.extend_from_slice(&(message_len as i32).to_le_bytes());
-    frame.extend_from_slice(&1_i32.to_le_bytes());
-    frame.extend_from_slice(&0_i32.to_le_bytes());
+    frame.extend_from_slice(&request_id.to_le_bytes());
+    frame.extend_from_slice(&response_to.to_le_bytes());
     frame.extend_from_slice(&opcode.to_le_bytes());
     frame.extend_from_slice(body);
     frame
@@ -26749,6 +26766,13 @@ fn mongodb_frame(opcode: i32, body: &[u8]) -> Vec<u8> {
 
 fn mongodb_op_msg(document: &[u8]) -> Vec<u8> {
     mongodb_op_msg_with_extra_section(document, &[])
+}
+
+fn mongodb_op_msg_with_ids(document: &[u8], request_id: i32, response_to: i32) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&0_u32.to_le_bytes());
+    body.extend_from_slice(&mongodb_op_msg_body_section(document));
+    mongodb_frame_with_ids(2013, &body, request_id, response_to)
 }
 
 fn mongodb_op_msg_with_checksum(document: &[u8], checksum: u32) -> Vec<u8> {

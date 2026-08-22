@@ -395,6 +395,7 @@ pub(crate) struct ProtocolRegistryCounters {
     pub orphan_responses: u64,
     pub unparsed_responses: u64,
     pub kafka_correlation_mismatches: u64,
+    pub mongodb_correlation_mismatches: u64,
     pub response_continuations: u64,
     pub unmatched_overflow: u64,
     pub unmatched_expired: u64,
@@ -496,6 +497,7 @@ struct InFlightRequest {
     kafka_api_key: i16,
     kafka_api_version: i16,
     kafka_correlation_id: Option<i32>,
+    mongodb_request_id: Option<i32>,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -559,6 +561,7 @@ pub fn bench_http2_in_flight_index_cycle() -> u64 {
             kafka_api_key: -1,
             kafka_api_version: -1,
             kafka_correlation_id: None,
+            mongodb_request_id: None,
         }
     }
 
@@ -1035,6 +1038,10 @@ fn handle_request_frames(
             .map_or((-1, -1, None), |(api_key, api_version, correlation_id)| {
                 (api_key, api_version, Some(correlation_id))
             });
+        let mongodb_request_id = frame_bytes
+            .filter(|_| stream.protocol == StreamProtocol::Mongodb)
+            .and_then(|frame| parse_mongodb_message(frame, extraction).ok())
+            .map(|parsed| parsed.request_id);
 
         expire_in_flight(stream, host, counters, observed_unix_nanos, signals);
         if stream.in_flight.len() >= MAX_IN_FLIGHT_REQUESTS
@@ -1055,6 +1062,7 @@ fn handle_request_frames(
             kafka_api_key,
             kafka_api_version,
             kafka_correlation_id,
+            mongodb_request_id,
         });
     }
 }
@@ -1078,15 +1086,15 @@ enum ResponseAction {
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn response_action(protocol: StreamProtocol, frame: &[u8]) -> ResponseAction {
     match protocol {
-        // HTTP/2 and Kafka use their own keyed matching paths, never FIFO.
-        StreamProtocol::Http2 | StreamProtocol::Kafka | StreamProtocol::WebSocket => {
-            ResponseAction::Ignore
-        }
+        // HTTP/2, Kafka, and MongoDB use their own keyed matching paths,
+        // never FIFO.
+        StreamProtocol::Http2
+        | StreamProtocol::Kafka
+        | StreamProtocol::Mongodb
+        | StreamProtocol::WebSocket => ResponseAction::Ignore,
         // HTTP/1 is strict request/response over one connection; each framed
         // response completes exactly the oldest in-flight request.
-        StreamProtocol::Http1 | StreamProtocol::Mongodb | StreamProtocol::Redis => {
-            ResponseAction::PopOne
-        }
+        StreamProtocol::Http1 | StreamProtocol::Redis => ResponseAction::PopOne,
         // MySQL response packets to one command increment the sequence id;
         // only the first packet (sequence 1) marks the response start.
         StreamProtocol::Mysql => {
@@ -1200,6 +1208,19 @@ fn handle_response_frames(
 
         if stream.protocol == StreamProtocol::Kafka {
             handle_kafka_response_frame(
+                stream,
+                frame_bytes,
+                truncated,
+                extraction,
+                host,
+                counters,
+                observed_unix_nanos,
+                signals,
+            );
+            continue;
+        }
+        if stream.protocol == StreamProtocol::Mongodb {
+            handle_mongodb_response_frame(
                 stream,
                 frame_bytes,
                 truncated,
@@ -1341,6 +1362,74 @@ fn handle_kafka_response_frame(
             parsed.warning.get_or_insert_with(|| reason.to_string());
         }
     }
+    signals.push(build_observation(
+        host.clone(),
+        &stream.context,
+        parsed,
+        entry.started_unix_nanos,
+        Some(observed_unix_nanos),
+    ));
+}
+
+/// Completes the MongoDB request identified by the wire-level `responseTo`
+/// field. A missing or ambiguous match retains the queue so a later valid
+/// response can still be attributed to the correct request.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[allow(clippy::too_many_arguments)]
+fn handle_mongodb_response_frame(
+    stream: &mut ConnectionStream,
+    frame: &[u8],
+    truncated: bool,
+    extraction: &ProtocolExtractionConfig,
+    host: &Option<String>,
+    counters: &mut ProtocolRegistryCounters,
+    observed_unix_nanos: u64,
+    signals: &mut Vec<SignalEnvelope>,
+) {
+    if truncated {
+        counters.unparsed_responses += 1;
+        return;
+    }
+    let Ok(response) = parse_mongodb_response(frame, extraction) else {
+        counters.unparsed_responses += 1;
+        return;
+    };
+
+    let mut matching_positions =
+        stream
+            .in_flight
+            .iter()
+            .enumerate()
+            .filter_map(|(position, entry)| {
+                (entry.mongodb_request_id == Some(response.response_to)).then_some(position)
+            });
+    let Some(position) = matching_positions.next() else {
+        if stream.in_flight.is_empty() {
+            counters.orphan_responses += 1;
+        } else {
+            counters.mongodb_correlation_mismatches += 1;
+        }
+        return;
+    };
+    if matching_positions.next().is_some() {
+        counters.mongodb_correlation_mismatches += 1;
+        return;
+    }
+
+    let Some(entry) = stream.in_flight.remove(position) else {
+        counters.mongodb_correlation_mismatches += 1;
+        return;
+    };
+    let mut parsed = entry.parsed;
+    counters.matched_responses += 1;
+    let response = ParsedResponseFrame {
+        protocol: None,
+        signal_status_code: None,
+        status_code: Some(response.status_code),
+        error_type: response.error_type,
+        attributes: response.attributes,
+    };
+    merge_response_attributes(&mut parsed, &response, extraction.max_attributes);
     signals.push(build_observation(
         host.clone(),
         &stream.context,
@@ -1681,6 +1770,7 @@ fn handle_http2_frames(
                     kafka_api_key: -1,
                     kafka_api_version: -1,
                     kafka_correlation_id: None,
+                    mongodb_request_id: None,
                 },
             );
             continue;
@@ -3465,6 +3555,39 @@ mod tests {
         frame
     }
 
+    fn mongodb_op_msg(request_id: i32, response_to: i32, document: &[u8]) -> Vec<u8> {
+        let message_len = 16 + 4 + 1 + document.len();
+        let mut frame = Vec::with_capacity(message_len);
+        frame.extend_from_slice(&(message_len as i32).to_le_bytes());
+        frame.extend_from_slice(&request_id.to_le_bytes());
+        frame.extend_from_slice(&response_to.to_le_bytes());
+        frame.extend_from_slice(&2013_i32.to_le_bytes());
+        frame.extend_from_slice(&0_u32.to_le_bytes());
+        frame.push(0);
+        frame.extend_from_slice(document);
+        frame
+    }
+
+    fn mongodb_find_document(collection: &str) -> Vec<u8> {
+        let value_len = collection.len() + 1;
+        let document_len = 4 + 1 + 5 + 4 + value_len + 1;
+        let mut document = Vec::with_capacity(document_len);
+        document.extend_from_slice(&(document_len as i32).to_le_bytes());
+        document.push(0x02);
+        document.extend_from_slice(b"find\0");
+        document.extend_from_slice(&(value_len as i32).to_le_bytes());
+        document.extend_from_slice(collection.as_bytes());
+        document.push(0);
+        document.push(0);
+        document
+    }
+
+    fn mongodb_ok_document() -> Vec<u8> {
+        let mut document = 10_i32.to_le_bytes().to_vec();
+        document.extend_from_slice(&[0x08, b'o', b'k', 0, 1, 0]);
+        document
+    }
+
     #[test]
     fn protocol_perf_watermarks_merge_cross_cpu_samples_by_kernel_time() {
         let mut later = raw_event(6379, b"later", 5);
@@ -3878,6 +4001,85 @@ mod tests {
         assert_eq!(observation(&signals[0]).duration_nanos, Some(3_000));
         assert_eq!(registry.counters().matched_responses, 2);
         assert_eq!(registry.counters().kafka_correlation_mismatches, 0);
+    }
+
+    #[test]
+    fn mongodb_response_to_matches_out_of_order_requests() {
+        let mut registry = registry();
+        for (request_id, collection, observed_at) in [(7, "customers", 5_000), (8, "orders", 6_000)]
+        {
+            let request = mongodb_op_msg(request_id, 0, &mongodb_find_document(collection));
+            assert!(
+                handle_at(
+                    &mut registry,
+                    &raw_event(27017, &request, request.len() as u32),
+                    observed_at,
+                )
+                .is_empty()
+            );
+        }
+
+        let response_eight = mongodb_op_msg(80, 8, &mongodb_ok_document());
+        let signals = handle_at(
+            &mut registry,
+            &response_event(27017, &response_eight),
+            7_000,
+        );
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(1_000));
+        assert!(observation(&signals[0]).attributes.iter().any(|attribute| {
+            attribute.key == "db.collection.name" && attribute.value == "orders"
+        }));
+
+        let response_seven = mongodb_op_msg(70, 7, &mongodb_ok_document());
+        let signals = handle_at(
+            &mut registry,
+            &response_event(27017, &response_seven),
+            8_000,
+        );
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(3_000));
+        assert!(observation(&signals[0]).attributes.iter().any(|attribute| {
+            attribute.key == "db.collection.name" && attribute.value == "customers"
+        }));
+        assert_eq!(registry.counters().matched_responses, 2);
+        assert_eq!(registry.counters().mongodb_correlation_mismatches, 0);
+    }
+
+    #[test]
+    fn mongodb_response_to_mismatch_retains_the_request() {
+        let mut registry = registry();
+        let request = mongodb_op_msg(7, 0, &mongodb_find_document("customers"));
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(27017, &request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let mismatched_response = mongodb_op_msg(60, 6, &mongodb_ok_document());
+        assert!(
+            handle_at(
+                &mut registry,
+                &response_event(27017, &mismatched_response),
+                6_000,
+            )
+            .is_empty()
+        );
+        assert_eq!(registry.counters().matched_responses, 0);
+        assert_eq!(registry.counters().mongodb_correlation_mismatches, 1);
+
+        let matched_response = mongodb_op_msg(70, 7, &mongodb_ok_document());
+        let signals = handle_at(
+            &mut registry,
+            &response_event(27017, &matched_response),
+            7_000,
+        );
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(2_000));
+        assert_eq!(registry.counters().matched_responses, 1);
     }
 
     #[test]

@@ -1169,6 +1169,7 @@ mod platform {
             orphan_responses = counters.orphan_responses,
             unparsed_responses = counters.unparsed_responses,
             kafka_correlation_mismatches = counters.kafka_correlation_mismatches,
+            mongodb_correlation_mismatches = counters.mongodb_correlation_mismatches,
             segment_gaps = counters.segment_gaps,
             websocket_upgrades = counters.websocket_upgrades,
             websocket_frames = counters.websocket_frames,
