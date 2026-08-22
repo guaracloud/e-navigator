@@ -9,8 +9,7 @@ RUN apt-get update \
 RUN rustup toolchain install "${BPF_RUST_TOOLCHAIN}" --component rust-src \
     && cargo install bpf-linker --version 0.10.3 --locked
 
-# Keep the host build on the compiler shipped by the builder image instead of
-# letting rust-toolchain.toml update the moving `stable` channel during builds.
+# Keep the host build explicitly aligned with the checked-in compiler pin.
 ENV RUSTUP_TOOLCHAIN=${RUST_VERSION}
 ENV E_NAVIGATOR_BPF_TOOLCHAIN=${BPF_RUST_TOOLCHAIN}
 
