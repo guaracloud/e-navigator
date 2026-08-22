@@ -6,6 +6,8 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0-rc.3] - 2026-08-22
+
 ### Added
 
 - Correlate MongoDB replies to the unique bounded in-flight request identified
@@ -708,7 +710,10 @@ All notable changes to E-Navigator are documented here. The format follows
   reduced-privilege operation, and universal protocol/profile coverage remain
   explicit non-claims documented in `documentation/boundaries.md`.
 
-[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.3...HEAD
+[0.5.0-rc.3]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.2...v0.5.0-rc.3
+[0.5.0-rc.2]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.1...v0.5.0-rc.2
+[0.5.0-rc.1]: https://github.com/guaracloud/e-navigator/compare/v0.4.0...v0.5.0-rc.1
 [0.4.0]: https://github.com/guaracloud/e-navigator/compare/v0.4.0-rc.1...v0.4.0
 [0.4.0-rc.1]: https://github.com/guaracloud/e-navigator/compare/v0.3.1...v0.4.0-rc.1
 [0.3.1]: https://github.com/guaracloud/e-navigator/compare/v0.3.0...v0.3.1
