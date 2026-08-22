@@ -492,24 +492,20 @@ fn parse_hex(input: &[u8], output: &mut [u8]) -> Option<()> {
     if input.len() != output.len().checked_mul(2)? {
         return None;
     }
-    let mut pairs = input.chunks_exact(2);
-    for destination in output {
-        let pair = pairs.next()?;
-        let high = parse_hex_digit(pair.first().copied()?)?;
-        let low = parse_hex_digit(pair.get(1).copied()?)?;
+    let (pairs, remainder) = input.as_chunks::<2>();
+    for (destination, pair) in output.iter_mut().zip(pairs) {
+        let high = parse_hex_digit(pair[0])?;
+        let low = parse_hex_digit(pair[1])?;
         *destination = (high << 4) | low;
     }
-    pairs.remainder().is_empty().then_some(())
+    remainder.is_empty().then_some(())
 }
 
 fn write_hex(input: &[u8], output: &mut [u8]) {
-    for (source, pair) in input.iter().copied().zip(output.chunks_exact_mut(2)) {
-        if let Some(high) = pair.first_mut() {
-            *high = hex_digit(source >> 4);
-        }
-        if let Some(low) = pair.get_mut(1) {
-            *low = hex_digit(source & 0x0f);
-        }
+    let (pairs, _) = output.as_chunks_mut::<2>();
+    for (source, pair) in input.iter().copied().zip(pairs) {
+        pair[0] = hex_digit(source >> 4);
+        pair[1] = hex_digit(source & 0x0f);
     }
 }
 
