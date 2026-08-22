@@ -180,7 +180,7 @@ fn parses_aarch64_leaf_and_saved_lr_rows() {
 }
 
 #[test]
-fn cfa_expression_becomes_explicit_unsupported_row() {
+fn folds_simple_cfa_expression_into_existing_sp_rule() {
     let mut eh = x86_64_cie(&[0x0c, 0x07, 0x08, 0x90, 0x01]);
     push_fde(
         &mut eh,
@@ -199,6 +199,84 @@ fn cfa_expression_becomes_explicit_unsupported_row() {
     );
     assert_eq!(
         table.lookup(FUNC + 1).expect("expression row").cfa,
+        CfaRule::SpOffset(8)
+    );
+}
+
+#[test]
+fn folds_signed_frame_pointer_and_bregx_cfa_expressions() {
+    let mut eh = x86_64_cie(&[0x0c, 0x07, 0x08, 0x90, 0x01]);
+    push_fde(
+        &mut eh,
+        FUNC,
+        0x20,
+        &[
+            0x41, // advance_loc 1
+            0x0f, 0x02, 0x76, 0x70, // DW_OP_breg6 -16
+            0x41, // advance_loc 1
+            0x0f, 0x03, 0x92, 0x07, 0x20, // DW_OP_bregx rsp +32
+        ],
+    );
+    let table = ElfUnwindTable::parse(&build_elf(&eh, EM_X86_64));
+
+    assert_eq!(
+        table.lookup(FUNC + 1).expect("frame-pointer row").cfa,
+        CfaRule::FpOffset(-16)
+    );
+    assert_eq!(
+        table.lookup(FUNC + 2).expect("bregx row").cfa,
+        CfaRule::SpOffset(32)
+    );
+}
+
+#[test]
+fn folds_aarch64_stack_pointer_cfa_expression() {
+    let mut eh = aarch64_cie(&[0x0c, 0x1f, 0x00]);
+    push_fde(
+        &mut eh,
+        FUNC,
+        0x20,
+        &[
+            0x44, // advance_loc 4
+            0x0f, 0x02, 0x8f, 0x10, // DW_OP_breg31 +16
+        ],
+    );
+    let table = ElfUnwindTable::parse(&build_elf(&eh, EM_AARCH64));
+
+    assert_eq!(
+        table.lookup(FUNC + 4).expect("expression row").cfa,
+        CfaRule::SpOffset(16)
+    );
+}
+
+#[test]
+fn dynamic_or_non_cfa_register_expressions_remain_unsupported() {
+    let mut eh = x86_64_cie(&[0x0c, 0x07, 0x08, 0x90, 0x01]);
+    push_fde(
+        &mut eh,
+        FUNC,
+        0x20,
+        &[
+            0x41, // advance_loc 1
+            0x0f, 0x03, 0x77, 0x08, 0x06, // breg7 +8, then DW_OP_deref
+            0x41, // advance_loc 1
+            0x0f, 0x02, 0x70, 0x00, // DW_OP_breg0 +0
+            0x41, // advance_loc 1
+            0x0f, 0x01, 0x77, // truncated DW_OP_breg7
+        ],
+    );
+    let table = ElfUnwindTable::parse(&build_elf(&eh, EM_X86_64));
+
+    assert_eq!(
+        table.lookup(FUNC + 1).expect("dynamic row").cfa,
+        CfaRule::Unsupported
+    );
+    assert_eq!(
+        table.lookup(FUNC + 2).expect("untracked register row").cfa,
+        CfaRule::Unsupported
+    );
+    assert_eq!(
+        table.lookup(FUNC + 3).expect("malformed row").cfa,
         CfaRule::Unsupported
     );
 }

@@ -2,12 +2,13 @@
 //!
 //! Parses the call-frame-information subset needed for stack unwinding into
 //! flat, pc-sorted rows an eBPF program can binary-search. The supported subset
-//! covers CFA as a signed offset from the stack or frame pointer, plus the
-//! return address and frame pointer as CFA-relative slots. Rules this subset
-//! cannot express (DWARF expressions, exotic CFA registers) become
-//! explicit `Unsupported` rows so an unwinder stops with accounting
-//! instead of fabricating frames. Parsing never panics on malformed
-//! input; anything unreadable yields an empty table or a skipped FDE.
+//! covers CFA as a signed offset from the stack or frame pointer, including
+//! direct `DW_OP_bregN`/`DW_OP_bregx` CFA expressions, plus the return address
+//! and frame pointer as CFA-relative slots. Rules this subset cannot express
+//! (dynamic or dereferencing DWARF expressions, exotic CFA registers) become
+//! explicit `Unsupported` rows so an unwinder stops with accounting instead of
+//! fabricating frames. Parsing never panics on malformed input; anything
+//! unreadable yields an empty table or a skipped FDE.
 
 /// ELF machine id for x86-64.
 pub const EM_X86_64: u16 = 62;
@@ -687,9 +688,9 @@ impl<'a> CfiInterpreter<'a> {
             }
             0x0f => {
                 // DW_CFA_def_cfa_expression
-                let length = cursor.read_uleb128()? as usize;
-                cursor.take(length)?;
-                self.state.cfa = CfaRule::Unsupported;
+                let length = usize::try_from(cursor.read_uleb128()?).ok()?;
+                let expression = cursor.take(length)?;
+                self.state.cfa = self.cfa_expression_rule(expression);
             }
             0x10 | 0x16 => {
                 // DW_CFA_expression / DW_CFA_val_expression
@@ -757,6 +758,32 @@ impl<'a> CfiInterpreter<'a> {
         } else {
             CfaRule::Unsupported
         }
+    }
+
+    fn cfa_expression_rule(&self, expression: &[u8]) -> CfaRule {
+        const DW_OP_BREG0: u8 = 0x70;
+        const DW_OP_BREG31: u8 = 0x8f;
+        const DW_OP_BREGX: u8 = 0x92;
+
+        let mut cursor = Cursor::new(expression);
+        let Some(opcode) = cursor.read_u8() else {
+            return CfaRule::Unsupported;
+        };
+        let register = match opcode {
+            DW_OP_BREG0..=DW_OP_BREG31 => u64::from(opcode - DW_OP_BREG0),
+            DW_OP_BREGX => match cursor.read_uleb128() {
+                Some(register) => register,
+                None => return CfaRule::Unsupported,
+            },
+            _ => return CfaRule::Unsupported,
+        };
+        let Some(offset) = cursor.read_sleb128() else {
+            return CfaRule::Unsupported;
+        };
+        if !cursor.rest().is_empty() {
+            return CfaRule::Unsupported;
+        }
+        self.cfa_rule(register, offset)
     }
 
     fn offset_rule(&self, offset: i64, frame_pointer: bool) -> CfaRule {

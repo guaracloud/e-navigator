@@ -85,10 +85,13 @@ E-Navigator does not currently claim:
   DWARF/CFI rules parsed from `.eh_frame` for registered processes, with
   frame-pointer unwinding as the fallback, up to 128 configurable frames and
   the kernel `kernel.perf_event_max_stack` sysctl bound of 127 for the
-  frame-pointer path; DWARF-expression CFI rules are not evaluated, so they
-  stop the unwind with accounting. Coverage is bounded by row/module/process
-  budgets with counters, terminal frames in modules that do not CFI-mark
-  their outermost function classify conservatively as `no_mapping`, and
+  frame-pointer path; direct `DW_OP_bregN` and `DW_OP_bregx`
+  register-plus-signed-offset CFA expressions are normalized into those same
+  bounded rules, while dynamic, dereferencing, multi-operation, and register
+  recovery expressions stop the unwind with accounting. Coverage is bounded
+  by row/module/process budgets with counters, terminal frames in modules that
+  do not CFI-mark their outermost function classify conservatively as
+  `no_mapping`, and
   stacks that fill the configured budget are flagged and counted, never
   silently truncated. Resolved Itanium C++ ABI names are demangled in bounded
   userspace with configurable Alloy-compatible detail; demangling does not
