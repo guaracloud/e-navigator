@@ -733,9 +733,10 @@ These areas remain explicitly partial:
   coordinator keys, consumer group/member identifiers, assignment payloads,
   offset metadata, protocol metadata, software names, topics, record payloads,
   broker hosts, cluster IDs, or response body values,
-  but runtime capture, request/response matching, broad response coverage,
-  flexible-version body semantics beyond ApiVersions, and live Kafka proof are
-  not implemented or proven.
+  while runtime capture and bounded, non-exported correlation-id
+  request/response matching (including out-of-order responses) are implemented
+  and unit-tested. Broad response coverage, flexible-version body semantics
+  beyond ApiVersions, and live correlation-mismatch proof remain unproven.
 - **MongoDB protocol observability:** bounded `OP_MSG` including
   checksum-present messages, command `OP_QUERY`, OP_MSG response-error parsing,
   and OP_REPLY response parsing is locally tested without exporting raw BSON

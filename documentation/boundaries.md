@@ -52,9 +52,9 @@ E-Navigator does not currently claim:
   The parser accepts bounded binary and base64-text HTTP/1 envelopes, records
   RPC method/message counts and trailer status, and exports no application
   bytes;
-- live Kafka protocol capture proof (capture, reassembly, and request/response
-  matching are implemented and unit-tested; only Redis and HTTP/2 are live
-  proven);
+- live Kafka protocol capture proof for correlation mismatch and out-of-order
+  response cases (bounded correlation-id matching is implemented and
+  unit-tested, and selected ordinary matching has homelab evidence);
 - live NATS, MongoDB, MySQL, or PostgreSQL protocol capture proof (implemented
   and unit-tested, not yet runtime-proven);
 - on-the-wire TLS decryption (the claimed `source.aya_tls` surface is

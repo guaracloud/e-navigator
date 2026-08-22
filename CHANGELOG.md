@@ -21,6 +21,10 @@ All notable changes to E-Navigator are documented here. The format follows
   Node.js, .NET, and Python zero-code agents. Matching processes suppress only
   generated request spans and emit a bounded coexistence warning; L4 signals
   and profiles remain unaffected.
+- Verify Kafka response correlation ids against the bounded in-flight request
+  queue, including out-of-order responses, without exporting correlation ids.
+  Unknown, truncated, or ambiguous ids leave queued requests untouched and are
+  explicitly counted.
 
 ## [0.5.0-rc.1] - 2026-08-11
 
