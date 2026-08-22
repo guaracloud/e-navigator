@@ -11,6 +11,9 @@ All notable changes to E-Navigator are documented here. The format follows
 - Emit the stable OpenTelemetry database semantic-convention attributes
   `db.system.name` and `db.operation.name` for MongoDB, MySQL, PostgreSQL, and
   Redis observations and correlated request spans.
+- Demangle bounded Itanium C++ ABI symbols during native profile
+  symbolization with Alloy-compatible `none`, `simplified`, `templates`, and
+  `full` modes; `simplified` remains the default.
 
 ## [0.5.0-rc.1] - 2026-08-11
 

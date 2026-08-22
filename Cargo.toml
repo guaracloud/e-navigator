@@ -54,6 +54,7 @@ aya-log-ebpf = { git = "https://github.com/aya-rs/aya", rev = "b277f74443d4befde
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 criterion = "0.5"
+cpp_demangle = "0.5.1"
 flate2 = "1"
 getrandom = "0.3"
 iced-x86 = { version = "1.21", default-features = false, features = ["decoder", "std"] }

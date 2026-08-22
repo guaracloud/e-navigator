@@ -2545,9 +2545,37 @@ fn cpu_profile_source_defaults_are_bounded_and_disabled() {
     assert_eq!(config.cpu_profile_source.max_module_bytes, 256);
     assert_eq!(config.cpu_profile_source.max_file_bytes, 256);
     assert_eq!(
+        config.cpu_profile_source.cpp_demangle,
+        CpuProfileCppDemangle::Simplified
+    );
+    assert_eq!(
         config.cpu_profile_source.backpressure,
         CpuProfileBackpressure::DropNewest
     );
+}
+
+#[test]
+fn cpu_profile_cpp_demangle_deserializes_alloy_compatible_modes() {
+    for (value, expected) in [
+        ("none", CpuProfileCppDemangle::None),
+        ("simplified", CpuProfileCppDemangle::Simplified),
+        ("templates", CpuProfileCppDemangle::Templates),
+        ("full", CpuProfileCppDemangle::Full),
+    ] {
+        let config: RuntimeConfig = toml::from_str(&format!(
+            r#"
+            [[modules]]
+            name = "sink.json_stdout"
+            enabled = true
+
+            [cpu_profile_source]
+            cpp_demangle = "{value}"
+            "#,
+        ))
+        .expect("demangle mode parses");
+
+        assert_eq!(config.cpu_profile_source.cpp_demangle, expected);
+    }
 }
 
 #[test]

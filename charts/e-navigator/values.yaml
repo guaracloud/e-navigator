@@ -127,6 +127,7 @@ config:
     max_module_bytes = 256
     max_file_bytes = 256
     backpressure = "drop_newest"
+    cpp_demangle = "simplified"
 
     [resource_metrics]
     max_keys = 4096
