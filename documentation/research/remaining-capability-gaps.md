@@ -2,9 +2,12 @@
 
 Status: research and implementation boundary
 
-Date: 2026-08-22
+Date: 2026-08-23
 
-Repository baseline: `e93856d` (`v0.5.0-rc.2`)
+Repository baseline: `07b3269` (`v0.5.0-rc.3`)
+
+Local implementation series: `ebfcd18`, `1982ed3`, `89c75f1`, `9377f1e`,
+and `93a6919` (not pushed)
 
 ## Scope and method
 
@@ -30,6 +33,31 @@ contracts to copy.
 | OTel coexistence | **NO-GO as universal automatic detection** | Explicit ownership plus conservative runtime-specific positive evidence | Programmatic/custom SDK configuration makes static-marker completeness impossible |
 | Universal L4 accounting | **NO-GO under one byte semantic** | Define supported TCP application bytes; add message-batch and `io_uring` paths without double counting; specify UDP/packet metrics separately | Syscall, application, TLS-plaintext, and packet bytes are different measurements |
 | Universal native unwinding | **NO-GO as a universal claim; GO for broader CFI** | Normalize more CFI expressions in userspace and preserve explicit bounded fallbacks | Valid DWARF expressions and finite BPF/map/cache budgets prevent an unbounded guarantee |
+
+## 2026-08-23 execution outcome
+
+The request contains several compatibility programs, not single features. This
+execution implements only slices whose semantics and local evidence can be
+bounded honestly. A row marked deferred is an explicit quality decision, not
+an assertion that the gap is solved elsewhere.
+
+| Requested gap | Outcome in this series | Evidence and remaining boundary |
+| --- | --- | --- |
+| Broad managed-runtime profiling | **Deferred; per-runtime GO, universal claim NO-GO.** | Existing exact CPython 3.11/3.12 walking and conditional perf-map names do not establish Node/V8, HotSpot, .NET, Ruby, PHP, Perl, or other Python support. Each runtime/version/build/architecture needs a descriptor, dedicated BPF walker, userspace symbolizer, negative detection, coredump replay, verifier proof, and live backend query. |
+| Broad TLS/HTTPS tracing | **Deferred; per-adapter GO, universal claim NO-GO.** | Existing OpenSSL 1.1.1/3, GnuTLS ABI 30, and version-gated unstripped Linux/amd64 Go adapters remain the only claimed plaintext seams. Bundled Node/JVM TLS, BoringSSL, rustls, custom transports, stripped Go, and non-amd64 Go require independent identity/ABI/return-site/socket-association matrices. |
+| HTTPS context propagation | **Deferred; cannot be implemented at ciphertext.** | TLS 1.3 authenticates encrypted records, so injection must happen at a validated library/runtime plaintext header seam before encryption. No such universal seam exists; each future adapter needs transactional attachment, compare-before-mutate behavior, rollback, and live peer-tree proof. |
+| Complete HTTP/1 context propagation | **Deferred beyond the existing bounded subset.** | The current disabled-by-default path retains its documented small-iovec, bounded `Content-Length`, configured-port, post-attachment envelope. Segmented headers, pipelining, chunked bodies, larger vectors, pre-existing sockets, and logical async continuation require separate stream and runtime state machines plus verifier/live-wire matrices. |
+| Complete MySQL correlation | **Material bounded implementation: `ebfcd18`.** | Sequence-checked command state now covers immediate responses, text/binary rows, short EOF and modern OK terminators, multi-results, prepared metadata, cursor fetches, no-response commands, malformed/truncated packets, and sequence gaps. `LOCAL INFILE`, compression, capability-negotiated optional metadata/EOF, 16 MiB logical-packet continuation, handshake/authentication, live server/version proof, and production soak remain open. |
+| Complete database and messaging response semantics | **Material protocol slices, not a blanket completion claim.** | MySQL uses the lifecycle above; PostgreSQL simple queries (`9377f1e`) and typed extended pipelines (`93a6919`) use protocol terminals and skip-to-Sync recovery; Redis RESP3 push/attribute frames (`1982ed3`) no longer consume FIFO replies. Kafka broad per-API bodies, MongoDB broad outcomes, Redis streamed/PubSub states, NATS request/reply and JetStream semantics, PostgreSQL startup/COPY-in control state, live matrices, and retry semantics remain open. |
+| Database collection naming beyond MongoDB | **Deliberately not implemented from query text or Redis keys.** | OpenTelemetry says `db.collection.name` should not be extracted from `db.query.text`; a Redis key is not a collection. E-Navigator keeps MongoDB's explicit command collection field and omits guessed SQL table/key names. A future driver/runtime adapter may emit a table only when it receives an already-parsed, single-collection value without raw query export. |
+| HTTP route-template discovery | **Not implemented from wire paths.** | A concrete URL cannot reliably reveal whether `/users/42` maps to `/users/:id`, `/users/{userId}`, or a literal route. E-Navigator therefore omits `http.route` unless a future framework adapter supplies the framework-owned template; heuristic path generalization would violate cardinality and semantic accuracy. |
+| Automatic detection of all application-owned OTel spans | **Universal claim NO-GO.** | Manual/custom SDKs can configure exporters and samplers programmatically with no stable static marker. Existing conservative zero-code markers plus explicit exact Kubernetes ownership labels remain the contract; unknown evidence fails open and suppresses no request spans. Exporter-activity probes can add runtime-specific positive evidence but cannot prove all SDK ownership. |
+| General `io_uring` network accounting | **Deferred.** | General send/receive paths can run outside the submitting task and use registered, provided, bundled, multishot, vectored, or zero-copy buffers. One canonical socket-generation seam plus an origin/deduplication contract is required before adding it; combining syscall and deeper hooks without that contract can double count. |
+| Complete message-batch accounting | **Native LP64 ceiling implemented: `89c75f1`.** | A verifier-bounded `bpf_loop` reads every kernel-written `mmsghdr.msg_len` through Linux's 1,024-entry `UIO_MAXIOV` limit, fails closed on invalid counts or unreadable memory, and passed exact 32- and 1,024-entry arm64 OrbStack smokes. Compatibility ABIs remain unsupported and explicitly counted. |
+| UDP flow observability | **Deferred as a separate signal domain.** | Current peer-flow state is TCP connection-generation state. UDP needs datagram/socket identity, role and peer rules for connected and unconnected sockets, batch accounting, expiry/cardinality policy, and distinct metrics; adding UDP bytes to TCP flow series would change their meaning. |
+| Packet-level byte accounting | **Deferred as a separate packet metric.** | Application syscall bytes intentionally exclude headers, retransmissions, segmentation, and encrypted packet sizes. Packet truth requires a TC/cgroup-SKB or equivalent host-network seam, direction/namespace attribution, offload-aware tests, and deduplication from syscall metrics; it must not redefine `network.flow.bytes`. |
+| Pre-attachment flow history | **Historical reconstruction is impossible.** | Existing listener discovery and later payload observation can establish state going forward, but no observer can recover bytes, headers, latency, retransmissions, or context that occurred before attachment. Future existing-socket discovery may emit explicitly partial observations from the attach timestamp; it cannot claim flow-from-beginning history. |
+| Universal native stack unwinding | **Universal claim NO-GO; broader bounded CFI remains GO.** | Existing direct register-plus-offset CFA folding is a bounded subset. Dynamic/dereferencing expressions, multi-operation CFA, broader register recovery, signal trampolines, and row/map budget exhaustion require typed fallback and differential compiler corpora; finite verifier, tail-call, stack, and map budgets prevent universal coverage. |
 
 ## Primary findings
 

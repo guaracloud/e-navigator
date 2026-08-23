@@ -6,6 +6,35 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Add sequence-checked MySQL request/response lifecycle state for text and
+  binary result sets, prepared metadata, cursor fetches, modern and legacy
+  terminators, multi-result commands, and protocol-defined no-response
+  commands. Malformed, truncated, missing, and out-of-order packets fail
+  closed without consuming the request.
+- Add PostgreSQL request-specific lifecycle state for simple Query, Parse,
+  Bind, statement/portal Describe, Close, Execute, Sync, Password, and legacy
+  FunctionCall cycles. Extended-query errors mark dependent requests skipped
+  only through the next captured Sync; COPY/control messages do not displace
+  the initiating operation.
+- Account every native-LP64 `sendmmsg`/`recvmmsg` result through Linux's
+  1,024-entry `UIO_MAXIOV` ceiling with verifier-bounded `bpf_loop` traversal
+  and fail-closed ABI, count, and user-memory checks.
+
+### Fixed
+
+- Keep RESP3 push and attribute frames out of the Redis FIFO reply queue, and
+  accept PostgreSQL's numeric ParseComplete, BindComplete, and CloseComplete
+  backend tags in stream framing.
+
+### Security
+
+- Keep SQL table names, Redis keys, framework route templates, encrypted trace
+  injection, universal OTel ownership, pre-attachment history, and unsupported
+  runtime/TLS/unwind combinations as explicit non-claims instead of inferring
+  sensitive or semantically unstable values.
+
 ## [0.5.0-rc.3] - 2026-08-22
 
 ### Added
