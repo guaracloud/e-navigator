@@ -123,7 +123,8 @@ or chart rendering:
   build-checked parser fuzz
   coverage, and Redis RESP command plus
   simple/integer/bulk/RESP3-scalar/RESP3-blob-error/verbatim/flat-array/
-  nested-array/RESP3-map/RESP3-set/RESP3-push/error response parsing with
+  nested-array/RESP3-map/RESP3-set/RESP3-push/error response parsing, bounded
+  RESP3 attribute maps, and out-of-band push/attribute queue preservation with
   declared frame-length bounds,
   bounded response-status token validation, and build-checked parser fuzz
   coverage;
@@ -792,11 +793,14 @@ These areas remain explicitly partial:
   simple/integer/bulk/RESP3-scalar/RESP3-blob-error/verbatim/flat-array/
   nested-array/RESP3-map/RESP3-set/RESP3-push/error response parsing is locally
   tested without exporting raw key/value payloads or raw error messages,
-  including declared frame-length bounds and bounded response-status token
-  validation. Runtime capture and request/response matching have local
+  including declared frame-length bounds, bounded response-status token
+  validation, and coalesced RESP3 push/attribute frames that preserve the
+  following command reply in the FIFO queue. Runtime capture and
+  request/response matching have local
   OrbStack proof for plain TCP and OpenSSL Redis, including pipelining and
-  multi-segment payloads, but broad production/Kubernetes coverage and longer
-  live soaks are not proven.
+  multi-segment payloads, but RESP2 Pub/Sub array disambiguation, streamed
+  RESP3 aggregates, live out-of-band interleaving, broad production/Kubernetes
+  coverage, and longer live soaks are not proven.
 - **DNS capture:** selected UDP paths work, but symmetric all-node capture and
   lossless DNS coverage are not proven.
 - **Network byte accounting:** a privileged local OrbStack

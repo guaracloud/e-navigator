@@ -1060,8 +1060,9 @@ fn resp_value_end(
             *cursor = end;
             RespWalk::Complete
         }
-        // Aggregates: array, set, push, map (map counts pairs).
-        b'*' | b'~' | b'>' | b'%' => {
+        // Aggregates: array, set, push, map, and attribute (the last two
+        // count key/value pairs).
+        b'*' | b'~' | b'>' | b'%' | b'|' => {
             let count = match read_signed_decimal_line(bytes, cursor) {
                 SignedDecimalLine::Value(value) => value,
                 SignedDecimalLine::NeedMoreBytes => return RespWalk::NeedMoreBytes,
@@ -1075,7 +1076,7 @@ fn resp_value_end(
             if count > MAX_REDIS_BOUNDARY_ITEMS {
                 return RespWalk::Invalid;
             }
-            let items = if type_byte == b'%' {
+            let items = if matches!(type_byte, b'%' | b'|') {
                 match count.checked_mul(2) {
                     Some(items) if items <= MAX_REDIS_BOUNDARY_ITEMS => items,
                     _ => return RespWalk::Invalid,
