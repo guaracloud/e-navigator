@@ -107,7 +107,9 @@ or chart rendering:
   validation, bounded OP_REPLY response parsing, and non-negative response-code validation,
   MySQL command packet parsing for quit/init-db/query/ping/prepare/execute/
   send-long-data/close/reset/fetch/reset-connection plus OK/EOF/ERR response
-  parsing with canonical SQLSTATE validation and build-checked parser fuzz coverage, NATS text command
+  parsing, sequence-checked text/binary result-set lifecycles, prepared metadata,
+  multi-result status, no-response command handling, fail-closed sequence gaps,
+  canonical SQLSTATE validation, and build-checked parser fuzz coverage, NATS text command
   parsing with canonical command-token and exact non-payload frame validation
   plus OK/error response parsing,
   PostgreSQL Query/Parse/Bind/Describe/Close/Execute/FunctionCall/CopyData/
@@ -757,9 +759,16 @@ These areas remain explicitly partial:
   `COM_STMT_RESET`, `COM_STMT_FETCH`, `COM_RESET_CONNECTION`, and OK/EOF/ERR
   response parsing is locally tested without exporting raw SQL text, schema names,
   statement IDs, parameter values, long parameter data, or raw error messages,
-  including canonical SQLSTATE validation for error responses, but runtime
-  capture, request/response matching, broad
-  response coverage, and live MySQL proof are not implemented or proven.
+  including canonical SQLSTATE validation for error responses. The local stream
+  registry now keeps sequence-checked text and binary result sets in flight
+  through metadata and rows, handles short EOF and modern `0xfe` OK terminators,
+  preserves multi-result commands, follows prepared metadata and cursor fetch
+  rows, and excludes protocol-defined no-response commands from the correlation
+  queue. Malformed, truncated, or out-of-order response packets fail closed.
+  Live MySQL capture, compressed protocol, `LOCAL INFILE`, optional-resultset
+  metadata, prepared metadata with capability-negotiated omitted EOF, logical
+  packets split at the 16 MiB boundary, and a server/version matrix are not yet
+  implemented or proven.
 - **PostgreSQL protocol observability:** bounded simple Query, Parse, Bind,
   Describe, Close, Execute, FunctionCall, CopyData, CopyDone, CopyFail,
   PasswordMessage, Flush, Sync, Terminate, Authentication, BackendKeyData,

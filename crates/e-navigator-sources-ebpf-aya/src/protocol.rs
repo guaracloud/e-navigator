@@ -18,7 +18,9 @@ use e_navigator_protocol::{
         parse_kafka_response_correlation_id, parse_kafka_response_for_api_key,
     },
     mongodb::{parse_mongodb_message, parse_mongodb_response},
-    mysql::{parse_mysql_command, parse_mysql_response},
+    mysql::{
+        MysqlResponseLifecycle, MysqlResponseProgress, parse_mysql_command, parse_mysql_response,
+    },
     nats::parse_nats_command,
     postgres::{parse_postgres_message, parse_postgres_response},
     redis::{parse_redis_command, parse_redis_response},
@@ -505,6 +507,7 @@ struct InFlightRequest {
     kafka_api_version: i16,
     kafka_correlation_id: Option<i32>,
     mongodb_request_id: Option<i32>,
+    mysql_response: Option<MysqlResponseLifecycle>,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -569,6 +572,7 @@ pub fn bench_http2_in_flight_index_cycle() -> u64 {
             kafka_api_version: -1,
             kafka_correlation_id: None,
             mongodb_request_id: None,
+            mysql_response: None,
         }
     }
 
@@ -1241,6 +1245,22 @@ fn handle_request_frames(
             .filter(|_| stream.protocol == StreamProtocol::Mongodb)
             .and_then(|frame| parse_mongodb_message(frame, extraction).ok())
             .map(|parsed| parsed.request_id);
+        let mysql_response = frame_bytes
+            .filter(|_| stream.protocol == StreamProtocol::Mysql)
+            .and_then(|frame| MysqlResponseLifecycle::from_request(frame, extraction).ok());
+        if mysql_response
+            .as_ref()
+            .is_some_and(|lifecycle| !lifecycle.expects_response())
+        {
+            signals.push(build_observation(
+                host.clone(),
+                &stream.context,
+                parsed,
+                observed_unix_nanos,
+                None,
+            ));
+            continue;
+        }
 
         expire_in_flight(stream, host, counters, observed_unix_nanos, signals);
         if stream.in_flight.len() >= MAX_IN_FLIGHT_REQUESTS
@@ -1262,6 +1282,7 @@ fn handle_request_frames(
             kafka_api_version,
             kafka_correlation_id,
             mongodb_request_id,
+            mysql_response,
         });
     }
 }
@@ -1285,24 +1306,16 @@ enum ResponseAction {
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 fn response_action(protocol: StreamProtocol, frame: &[u8]) -> ResponseAction {
     match protocol {
-        // HTTP/2, Kafka, and MongoDB use their own keyed matching paths,
-        // never FIFO.
+        // HTTP/2, Kafka, MongoDB, and MySQL use dedicated matching/lifecycle
+        // paths, never this generic FIFO policy.
         StreamProtocol::Http2
         | StreamProtocol::Kafka
         | StreamProtocol::Mongodb
+        | StreamProtocol::Mysql
         | StreamProtocol::WebSocket => ResponseAction::Ignore,
         // HTTP/1 is strict request/response over one connection; each framed
         // response completes exactly the oldest in-flight request.
         StreamProtocol::Http1 | StreamProtocol::Redis => ResponseAction::PopOne,
-        // MySQL response packets to one command increment the sequence id;
-        // only the first packet (sequence 1) marks the response start.
-        StreamProtocol::Mysql => {
-            if frame.len() >= 4 && frame[3] == 1 {
-                ResponseAction::PopOne
-            } else {
-                ResponseAction::Ignore
-            }
-        }
         // PostgreSQL answers one frontend batch with many backend messages;
         // ErrorResponse completes the current request, ReadyForQuery closes
         // the batch, everything else is response payload.
@@ -1420,6 +1433,19 @@ fn handle_response_frames(
         }
         if stream.protocol == StreamProtocol::Mongodb {
             handle_mongodb_response_frame(
+                stream,
+                frame_bytes,
+                truncated,
+                extraction,
+                host,
+                counters,
+                observed_unix_nanos,
+                signals,
+            );
+            continue;
+        }
+        if stream.protocol == StreamProtocol::Mysql {
+            handle_mysql_response_frame(
                 stream,
                 frame_bytes,
                 truncated,
@@ -1617,6 +1643,73 @@ fn handle_mongodb_response_frame(
 
     let Some(entry) = stream.in_flight.remove(position) else {
         counters.mongodb_correlation_mismatches += 1;
+        return;
+    };
+    let mut parsed = entry.parsed;
+    counters.matched_responses += 1;
+    let response = ParsedResponseFrame {
+        protocol: None,
+        signal_status_code: None,
+        status_code: Some(response.status_code),
+        error_type: response.error_type,
+        attributes: response.attributes,
+    };
+    merge_response_attributes(&mut parsed, &response, extraction.max_attributes);
+    signals.push(build_observation(
+        host.clone(),
+        &stream.context,
+        parsed,
+        entry.started_unix_nanos,
+        Some(observed_unix_nanos),
+    ));
+}
+
+/// Advances the lifecycle of the oldest MySQL command. Intermediate result
+/// metadata and row packets retain the request; only a protocol-defined
+/// terminal packet emits the correlated observation.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[allow(clippy::too_many_arguments)]
+fn handle_mysql_response_frame(
+    stream: &mut ConnectionStream,
+    frame: &[u8],
+    truncated: bool,
+    extraction: &ProtocolExtractionConfig,
+    host: &Option<String>,
+    counters: &mut ProtocolRegistryCounters,
+    observed_unix_nanos: u64,
+    signals: &mut Vec<SignalEnvelope>,
+) {
+    if stream.in_flight.is_empty() {
+        counters.orphan_responses += 1;
+        return;
+    }
+    if truncated {
+        counters.unparsed_responses += 1;
+        return;
+    }
+
+    let Some(lifecycle) = stream
+        .in_flight
+        .front_mut()
+        .and_then(|entry| entry.mysql_response.as_mut())
+    else {
+        counters.unparsed_responses += 1;
+        return;
+    };
+    let response = match lifecycle.observe_packet(frame, extraction) {
+        Ok(MysqlResponseProgress::Continue) => {
+            counters.response_continuations += 1;
+            return;
+        }
+        Ok(MysqlResponseProgress::Complete(response)) => response,
+        Err(_) => {
+            counters.unparsed_responses += 1;
+            return;
+        }
+    };
+
+    let Some(entry) = stream.in_flight.pop_front() else {
+        counters.orphan_responses += 1;
         return;
     };
     let mut parsed = entry.parsed;
@@ -1970,6 +2063,7 @@ fn handle_http2_frames(
                     kafka_api_version: -1,
                     kafka_correlation_id: None,
                     mongodb_request_id: None,
+                    mysql_response: None,
                 },
             );
             continue;
@@ -5254,23 +5348,243 @@ mod tests {
     }
 
     #[test]
-    fn mysql_response_pops_only_on_first_sequence_packet() {
+    fn mysql_result_set_completes_only_at_the_terminal_packet() {
         let mut registry = registry();
-        // COM_QUERY packet, then a two-packet response: sequence 1 (OK-ish
-        // header) pops the request, sequence 2 must be ignored.
-        let request = [6, 0, 0, 0, 3, b's', b'e', b'l', b'e', b'c'];
+        let request = [7, 0, 0, 0, 3, b's', b'e', b'l', b'e', b'c', b't'];
         let event = raw_event(3306, &request, request.len() as u32);
         assert!(handle_at(&mut registry, &event, 5_000).is_empty());
 
-        let mut response_payload = Vec::new();
-        response_payload.extend_from_slice(&[5, 0, 0, 1, 0, 0, 0, 2, 0]);
-        response_payload.extend_from_slice(&[1, 0, 0, 2, 0xfe]);
-        let response = response_event(3306, &response_payload);
-        let signals = handle_at(&mut registry, &response, 6_000);
+        // One column, its definition, the metadata terminator, and one text
+        // row are all continuations of the same command lifecycle.
+        for packet in [
+            &[1, 0, 0, 1, 1][..],
+            &[3, 0, 0, 2, b'd', b'e', b'f'][..],
+            &[5, 0, 0, 3, 0xfe, 0, 0, 2, 0][..],
+            &[2, 0, 0, 4, 1, b'x'][..],
+        ] {
+            assert!(
+                handle_at(&mut registry, &response_event(3306, packet), 6_000).is_empty(),
+                "intermediate result-set packet completed the request"
+            );
+        }
+
+        let terminal = [5, 0, 0, 5, 0xfe, 0, 0, 2, 0];
+        let signals = handle_at(&mut registry, &response_event(3306, &terminal), 9_000);
 
         assert_eq!(signals.len(), 1);
-        assert_eq!(registry.counters().response_continuations, 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.protocol, ProtocolKind::Mysql);
+        assert_eq!(observation.method.as_deref(), Some("SELECT"));
+        assert_eq!(observation.duration_nanos, Some(4_000));
+        assert!(observation.attributes.iter().any(|attribute| {
+            attribute.key == "db.response.status_code" && attribute.value == "EOF"
+        }));
+        assert_eq!(registry.counters().response_continuations, 4);
         assert_eq!(registry.counters().orphan_responses, 0);
+    }
+
+    #[test]
+    fn mysql_result_set_accepts_deprecated_eof_ok_terminator() {
+        let mut registry = registry();
+        let request = [7, 0, 0, 0, 3, b's', b'e', b'l', b'e', b'c', b't'];
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        for packet in [
+            &[1, 0, 0, 1, 1][..],
+            &[3, 0, 0, 2, b'd', b'e', b'f'][..],
+            &[2, 0, 0, 3, 1, b'x'][..],
+        ] {
+            assert!(handle_at(&mut registry, &response_event(3306, packet), 6_000).is_empty());
+        }
+
+        // Header 0xfe with a nine-byte payload is an OK packet, not the
+        // legacy short EOF packet. The two trailing bytes model bounded info.
+        let terminal = [9, 0, 0, 4, 0xfe, 0, 0, 2, 0, 0, 0, 0, 0];
+        let signals = handle_at(&mut registry, &response_event(3306, &terminal), 8_000);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.duration_nanos, Some(3_000));
+        assert!(observation.attributes.iter().any(|attribute| {
+            attribute.key == "db.response.status_code" && attribute.value == "OK"
+        }));
+    }
+
+    #[test]
+    fn mysql_prepare_completes_after_parameter_and_column_metadata() {
+        let mut registry = registry();
+        let request = [
+            9, 0, 0, 0, 0x16, b'S', b'E', b'L', b'E', b'C', b'T', b' ', b'?',
+        ];
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let prepare_ok = [12, 0, 0, 1, 0, 7, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0];
+        for packet in [
+            &prepare_ok[..],
+            &[3, 0, 0, 2, b'p', b'a', b'r'][..],
+            &[5, 0, 0, 3, 0xfe, 0, 0, 2, 0][..],
+            &[3, 0, 0, 4, b'c', b'o', b'l'][..],
+        ] {
+            assert!(
+                handle_at(&mut registry, &response_event(3306, packet), 6_000).is_empty(),
+                "prepared statement completed before all metadata arrived"
+            );
+        }
+
+        let terminal = [5, 0, 0, 5, 0xfe, 0, 0, 2, 0];
+        let signals = handle_at(&mut registry, &response_event(3306, &terminal), 8_000);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method.as_deref(), Some("SELECT"));
+        assert_eq!(observation.duration_nanos, Some(3_000));
+        assert_eq!(registry.counters().response_continuations, 4);
+    }
+
+    #[test]
+    fn mysql_statement_execute_does_not_treat_binary_row_as_ok() {
+        let mut registry = registry();
+        let request = [10, 0, 0, 0, 0x17, 7, 0, 0, 0, 0, 1, 0, 0, 0];
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        for packet in [
+            &[1, 0, 0, 1, 1][..],
+            &[3, 0, 0, 2, b'd', b'e', b'f'][..],
+            &[5, 0, 0, 3, 0xfe, 0, 0, 2, 0][..],
+            &[8, 0, 0, 4, 0, 0, 6, b'f', b'o', b'o', b'b', b'a'][..],
+        ] {
+            assert!(
+                handle_at(&mut registry, &response_event(3306, packet), 6_000).is_empty(),
+                "binary row completed the prepared execution"
+            );
+        }
+
+        let terminal = [5, 0, 0, 5, 0xfe, 0, 0, 2, 0];
+        let signals = handle_at(&mut registry, &response_event(3306, &terminal), 8_000);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method.as_deref(), Some("EXECUTE"));
+        assert_eq!(observation.duration_nanos, Some(3_000));
+    }
+
+    #[test]
+    fn mysql_no_response_command_never_enters_the_correlation_queue() {
+        let mut registry = registry();
+        let request = [5, 0, 0, 0, 0x19, 7, 0, 0, 0];
+        let signals = handle_at(
+            &mut registry,
+            &raw_event(3306, &request, request.len() as u32),
+            5_000,
+        );
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method.as_deref(), Some("CLOSE"));
+        assert_eq!(observation.end_unix_nanos, None);
+        assert_eq!(registry.counters().matched_responses, 0);
+
+        let orphan = [7, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0];
+        assert!(handle_at(&mut registry, &response_event(3306, &orphan), 6_000).is_empty());
+        assert_eq!(registry.counters().orphan_responses, 1);
+    }
+
+    #[test]
+    fn mysql_statement_fetch_waits_for_terminal_packet_after_binary_rows() {
+        let mut registry = registry();
+        let request = [9, 0, 0, 0, 0x1c, 7, 0, 0, 0, 1, 0, 0, 0];
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let row = [8, 0, 0, 1, 0, 0, 6, b'f', b'o', b'o', b'b', b'a'];
+        assert!(
+            handle_at(&mut registry, &response_event(3306, &row), 6_000).is_empty(),
+            "binary fetch row completed the request"
+        );
+
+        let terminal = [5, 0, 0, 2, 0xfe, 0, 0, 2, 0];
+        let signals = handle_at(&mut registry, &response_event(3306, &terminal), 8_000);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method.as_deref(), Some("FETCH"));
+        assert_eq!(observation.duration_nanos, Some(3_000));
+    }
+
+    #[test]
+    fn mysql_more_results_flag_keeps_the_command_in_flight() {
+        let mut registry = registry();
+        let request = [7, 0, 0, 0, 3, b's', b'e', b'l', b'e', b'c', b't'];
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let more_results = [7, 0, 0, 1, 0, 0, 0, 0x0a, 0, 0, 0];
+        assert!(handle_at(&mut registry, &response_event(3306, &more_results), 6_000,).is_empty());
+
+        let terminal = [7, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0];
+        let signals = handle_at(&mut registry, &response_event(3306, &terminal), 8_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(3_000));
+        assert_eq!(registry.counters().response_continuations, 1);
+    }
+
+    #[test]
+    fn mysql_sequence_gap_is_non_destructive() {
+        let mut registry = registry();
+        let request = [1, 0, 0, 0, 0x0e];
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let wrong_sequence = [7, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0];
+        assert!(
+            handle_at(&mut registry, &response_event(3306, &wrong_sequence), 6_000,).is_empty()
+        );
+        assert_eq!(registry.counters().unparsed_responses, 1);
+
+        let terminal = [7, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0];
+        let signals = handle_at(&mut registry, &response_event(3306, &terminal), 7_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("PING"));
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(2_000));
     }
 
     #[test]
