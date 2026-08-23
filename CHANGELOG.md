@@ -12,7 +12,10 @@ All notable changes to E-Navigator are documented here. The format follows
   binary result sets, prepared metadata, cursor fetches, modern and legacy
   terminators, multi-result commands, and protocol-defined no-response
   commands. Malformed, truncated, missing, and out-of-order packets fail
-  closed without consuming the request.
+  closed without consuming the request. Protocol 4.1 OK packets and column
+  definitions are structurally validated; parameter-only prepares complete at
+  their sole metadata terminator, and cursor executions complete when the
+  server advertises an open cursor in the legacy metadata terminator.
 - Add PostgreSQL request-specific lifecycle state for simple Query, Parse,
   Bind, statement/portal Describe, Close, Execute, Sync, Password, and legacy
   FunctionCall cycles. Extended-query errors mark dependent requests skipped
@@ -24,9 +27,12 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ### Fixed
 
-- Keep RESP3 push and attribute frames out of the Redis FIFO reply queue, and
-  accept PostgreSQL's numeric ParseComplete, BindComplete, and CloseComplete
-  backend tags in stream framing.
+- Keep ordinary RESP3 push and attribute frames out of the Redis FIFO reply
+  queue, correlate explicit RESP2/RESP3 subscribe and unsubscribe
+  confirmations without exporting channel values, and avoid FIFO-correlating
+  zero-argument unsubscribe commands whose confirmation count is unknowable.
+  Also accept PostgreSQL's numeric ParseComplete, BindComplete, and
+  CloseComplete backend tags in stream framing.
 
 ### Security
 
