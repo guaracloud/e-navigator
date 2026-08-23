@@ -202,3 +202,84 @@ fn redis_string_at<'a>(
         None => Err(RedisExtraction::MalformedFrame),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SUBSCRIBE_TWO: &[u8] = b"*3\r\n$9\r\nSUBSCRIBE\r\n$1\r\na\r\n$1\r\nb\r\n";
+
+    #[test]
+    fn explicit_subscribe_completes_after_every_confirmation() {
+        let config = ProtocolExtractionConfig::default();
+        let mut lifecycle = RedisResponseLifecycle::from_request(SUBSCRIBE_TWO, &config)
+            .expect("subscribe starts lifecycle");
+
+        assert_eq!(
+            lifecycle.observe_response(b">3\r\n$9\r\nsubscribe\r\n$1\r\na\r\n:1\r\n", &config,),
+            Ok(RedisResponseProgress::Continue)
+        );
+        assert!(matches!(
+            lifecycle.observe_response(b">3\r\n$9\r\nsubscribe\r\n$1\r\nb\r\n:2\r\n", &config,),
+            Ok(RedisResponseProgress::Complete(_))
+        ));
+    }
+
+    #[test]
+    fn resp2_subscription_confirmation_is_correlated() {
+        let config = ProtocolExtractionConfig::default();
+        let request = b"*2\r\n$9\r\nSUBSCRIBE\r\n$1\r\na\r\n";
+        let mut lifecycle = RedisResponseLifecycle::from_request(request, &config)
+            .expect("subscribe starts lifecycle");
+
+        assert!(matches!(
+            lifecycle.observe_response(b"*3\r\n$9\r\nsubscribe\r\n$1\r\na\r\n:1\r\n", &config,),
+            Ok(RedisResponseProgress::Complete(_))
+        ));
+    }
+
+    #[test]
+    fn ordinary_push_and_attribute_frames_remain_out_of_band() {
+        let config = ProtocolExtractionConfig::default();
+        let mut lifecycle = RedisResponseLifecycle::from_request(b"*1\r\n$4\r\nPING\r\n", &config)
+            .expect("ping starts lifecycle");
+
+        assert_eq!(
+            lifecycle.observe_response(b">2\r\n+notice\r\n+value\r\n", &config),
+            Ok(RedisResponseProgress::Continue)
+        );
+        assert_eq!(
+            lifecycle.observe_response(b"|1\r\n+meta\r\n+value\r\n", &config),
+            Ok(RedisResponseProgress::Continue)
+        );
+        assert!(matches!(
+            lifecycle.observe_response(b"+PONG\r\n", &config),
+            Ok(RedisResponseProgress::Complete(_))
+        ));
+    }
+
+    #[test]
+    fn zero_argument_unsubscribe_is_not_fifo_correlated() {
+        let config = ProtocolExtractionConfig::default();
+        let lifecycle =
+            RedisResponseLifecycle::from_request(b"*1\r\n$11\r\nUNSUBSCRIBE\r\n", &config)
+                .expect("unsubscribe command parses");
+
+        assert!(!lifecycle.expects_response());
+    }
+
+    #[test]
+    fn subscription_error_is_terminal() {
+        let config = ProtocolExtractionConfig::default();
+        let mut lifecycle = RedisResponseLifecycle::from_request(SUBSCRIBE_TWO, &config)
+            .expect("subscribe starts lifecycle");
+
+        assert!(matches!(
+            lifecycle.observe_response(b"-ERR subscription rejected\r\n", &config),
+            Ok(RedisResponseProgress::Complete(ParsedRedisResponse {
+                error_type: Some(_),
+                ..
+            }))
+        ));
+    }
+}
