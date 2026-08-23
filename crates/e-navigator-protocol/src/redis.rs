@@ -2,6 +2,10 @@ use e_navigator_signals::{ProtocolKind, TraceAttribute};
 
 use crate::ProtocolExtractionConfig;
 
+mod lifecycle;
+
+pub use lifecycle::{RedisResponseLifecycle, RedisResponseProgress};
+
 const MAX_REDIS_COMMAND_BYTES: usize = 64;
 const MAX_REDIS_BULK_STRING_BYTES: usize = 1024;
 const MAX_REDIS_ARRAY_ITEMS: usize = 64;
@@ -57,18 +61,7 @@ pub fn parse_redis_command(
     bytes: &[u8],
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedRedisCommand, RedisExtraction> {
-    if bytes.len() > config.max_header_bytes {
-        return Err(RedisExtraction::FrameTooLong);
-    }
-    if bytes.is_empty() {
-        return Err(RedisExtraction::MalformedFrame);
-    }
-
-    let frame = if bytes[0] == b'*' {
-        parse_resp_array(bytes, config.max_header_bytes)?
-    } else {
-        parse_inline_command(bytes, config.max_request_line_bytes)?
-    };
+    let frame = parse_redis_command_frame(bytes, config)?;
     let command = bounded_command(frame.command.as_deref());
     let mut attributes = Vec::new();
     push_attribute(
@@ -103,6 +96,24 @@ pub fn parse_redis_command(
         warning: None,
         attributes,
     })
+}
+
+fn parse_redis_command_frame(
+    bytes: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<RedisFrame, RedisExtraction> {
+    if bytes.len() > config.max_header_bytes {
+        return Err(RedisExtraction::FrameTooLong);
+    }
+    if bytes.is_empty() {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+
+    if bytes[0] == b'*' {
+        parse_resp_array(bytes, config.max_header_bytes)
+    } else {
+        parse_inline_command(bytes, config.max_request_line_bytes)
+    }
 }
 
 pub fn parse_redis_response(
@@ -186,7 +197,7 @@ pub fn parse_redis_response(
             }
         }
         b'*' => parse_array_response(bytes, config.max_header_bytes)?,
-        b'%' => parse_aggregate_response(bytes, config.max_header_bytes, true)?,
+        b'%' | b'|' => parse_aggregate_response(bytes, config.max_header_bytes, true)?,
         b'~' => parse_aggregate_response(bytes, config.max_header_bytes, false)?,
         b'>' => parse_aggregate_response(bytes, config.max_header_bytes, false)?,
         b'-' => {

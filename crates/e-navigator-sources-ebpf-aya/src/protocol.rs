@@ -26,7 +26,10 @@ use e_navigator_protocol::{
         PostgresRequestLifecycle, PostgresRequestProgress, PostgresSimpleQueryLifecycle,
         PostgresSimpleQueryProgress, parse_postgres_message, parse_postgres_response,
     },
-    redis::{RedisResponseRole, parse_redis_command, parse_redis_response, redis_response_role},
+    redis::{
+        RedisResponseLifecycle, RedisResponseProgress, RedisResponseRole, parse_redis_command,
+        parse_redis_response, redis_response_role,
+    },
     stream::{
         ProtocolStreamDecoder, StreamDecodeLimits, StreamDirection, StreamFrame, StreamProtocol,
     },
@@ -514,6 +517,7 @@ struct InFlightRequest {
     kafka_correlation_id: Option<i32>,
     mongodb_request_id: Option<i32>,
     mysql_response: Option<MysqlResponseLifecycle>,
+    redis_response: Option<RedisResponseLifecycle>,
     postgres_simple_response: Option<PostgresSimpleQueryLifecycle>,
     postgres_request_response: Option<PostgresRequestLifecycle>,
 }
@@ -581,6 +585,7 @@ pub fn bench_http2_in_flight_index_cycle() -> u64 {
             kafka_correlation_id: None,
             mongodb_request_id: None,
             mysql_response: None,
+            redis_response: None,
             postgres_simple_response: None,
             postgres_request_response: None,
         }
@@ -1260,6 +1265,9 @@ fn handle_request_frames(
         let mysql_response = frame_bytes
             .filter(|_| stream.protocol == StreamProtocol::Mysql)
             .and_then(|frame| MysqlResponseLifecycle::from_request(frame, extraction).ok());
+        let redis_response = frame_bytes
+            .filter(|_| stream.protocol == StreamProtocol::Redis)
+            .and_then(|frame| RedisResponseLifecycle::from_request(frame, extraction).ok());
         let postgres_simple_response = frame_bytes
             .filter(|_| stream.protocol == StreamProtocol::Postgresql)
             .and_then(|frame| PostgresSimpleQueryLifecycle::from_request(frame, extraction).ok());
@@ -1302,6 +1310,9 @@ fn handle_request_frames(
         if mysql_response
             .as_ref()
             .is_some_and(|lifecycle| !lifecycle.expects_response())
+            || redis_response
+                .as_ref()
+                .is_some_and(|lifecycle| !lifecycle.expects_response())
             || postgres_request_response
                 .as_ref()
                 .is_some_and(|lifecycle| !lifecycle.expects_response())
@@ -1337,6 +1348,7 @@ fn handle_request_frames(
             kafka_correlation_id,
             mongodb_request_id,
             mysql_response,
+            redis_response,
             postgres_simple_response,
             postgres_request_response,
         });
@@ -1505,6 +1517,19 @@ fn handle_response_frames(
             );
             continue;
         }
+        if stream.protocol == StreamProtocol::Redis {
+            handle_redis_response_frame(
+                stream,
+                frame_bytes,
+                truncated,
+                extraction,
+                host,
+                counters,
+                observed_unix_nanos,
+                signals,
+            );
+            continue;
+        }
         if stream.protocol == StreamProtocol::Mysql {
             handle_mysql_response_frame(
                 stream,
@@ -1613,6 +1638,78 @@ fn handle_response_frames(
             ));
         }
     }
+}
+
+/// Advances the oldest Redis command while keeping unrelated RESP3 pushes and
+/// attributes out of the FIFO queue. Explicit Pub/Sub subscriptions complete
+/// only after every pushed acknowledgement has arrived.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[allow(clippy::too_many_arguments)]
+fn handle_redis_response_frame(
+    stream: &mut ConnectionStream,
+    frame: &[u8],
+    truncated: bool,
+    extraction: &ProtocolExtractionConfig,
+    host: &Option<String>,
+    counters: &mut ProtocolRegistryCounters,
+    observed_unix_nanos: u64,
+    signals: &mut Vec<SignalEnvelope>,
+) {
+    if stream.in_flight.is_empty() {
+        match redis_response_role(frame) {
+            Ok(RedisResponseRole::Push | RedisResponseRole::Attribute) => {
+                counters.response_continuations += 1;
+            }
+            Ok(RedisResponseRole::Reply) | Err(_) => counters.orphan_responses += 1,
+        }
+        return;
+    }
+    if truncated {
+        counters.unparsed_responses += 1;
+        return;
+    }
+
+    let Some(lifecycle) = stream
+        .in_flight
+        .front_mut()
+        .and_then(|entry| entry.redis_response.as_mut())
+    else {
+        counters.unparsed_responses += 1;
+        return;
+    };
+    let response = match lifecycle.observe_response(frame, extraction) {
+        Ok(RedisResponseProgress::Continue) => {
+            counters.response_continuations += 1;
+            return;
+        }
+        Ok(RedisResponseProgress::Complete(response)) => response,
+        Err(_) => {
+            counters.unparsed_responses += 1;
+            return;
+        }
+    };
+
+    let Some(entry) = stream.in_flight.pop_front() else {
+        counters.orphan_responses += 1;
+        return;
+    };
+    let mut parsed = entry.parsed;
+    counters.matched_responses += 1;
+    let response = ParsedResponseFrame {
+        protocol: None,
+        signal_status_code: None,
+        status_code: response.status_code,
+        error_type: response.error_type,
+        attributes: response.attributes,
+    };
+    merge_response_attributes(&mut parsed, &response, extraction.max_attributes);
+    signals.push(build_observation(
+        host.clone(),
+        &stream.context,
+        parsed,
+        entry.started_unix_nanos,
+        Some(observed_unix_nanos),
+    ));
 }
 
 /// Completes the Kafka request identified by the response correlation id.
@@ -2343,6 +2440,7 @@ fn handle_http2_frames(
                     kafka_correlation_id: None,
                     mongodb_request_id: None,
                     mysql_response: None,
+                    redis_response: None,
                     postgres_simple_response: None,
                     postgres_request_response: None,
                 },
@@ -4155,6 +4253,29 @@ mod tests {
         postgres_frame(b'E', &body)
     }
 
+    fn mysql_column_definition_packet(sequence: u8) -> Vec<u8> {
+        let mut payload = Vec::new();
+        for value in [b"def".as_slice(), b"", b"", b"", b"value", b""] {
+            payload.push(value.len() as u8);
+            payload.extend_from_slice(value);
+        }
+        payload.push(0x0c);
+        payload.extend_from_slice(&0x0021_u16.to_le_bytes());
+        payload.extend_from_slice(&11_u32.to_le_bytes());
+        payload.push(0x03);
+        payload.extend_from_slice(&0_u16.to_le_bytes());
+        payload.push(0);
+        payload.extend_from_slice(&[0, 0]);
+
+        let mut packet = Vec::with_capacity(payload.len() + 4);
+        packet.push((payload.len() & 0xff) as u8);
+        packet.push(((payload.len() >> 8) & 0xff) as u8);
+        packet.push(((payload.len() >> 16) & 0xff) as u8);
+        packet.push(sequence);
+        packet.extend_from_slice(&payload);
+        packet
+    }
+
     fn kafka_api_versions_request(correlation_id: i32) -> Vec<u8> {
         let mut body = vec![0, 18, 0, 0];
         body.extend_from_slice(&correlation_id.to_be_bytes());
@@ -4316,6 +4437,52 @@ mod tests {
         let serialized = serde_json::to_string(&signals).expect("signals serialize");
         assert!(!serialized.contains("secret-key"));
         assert!(!serialized.contains("hello"));
+    }
+
+    #[test]
+    fn redis_resp3_subscription_pushes_complete_only_the_subscribe_command() {
+        let mut registry = registry();
+        let requests = b"*3\r\n$9\r\nSUBSCRIBE\r\n$10\r\nsecret-one\r\n$10\r\nsecret-two\r\n*1\r\n$4\r\nPING\r\n";
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(6379, requests, requests.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let first_confirmation = b">3\r\n$9\r\nsubscribe\r\n$10\r\nsecret-one\r\n:1\r\n";
+        assert!(
+            handle_at(
+                &mut registry,
+                &response_event(6379, first_confirmation),
+                7_000,
+            )
+            .is_empty(),
+            "one confirmation must not complete a two-channel subscription"
+        );
+
+        let second_confirmation = b">3\r\n$9\r\nsubscribe\r\n$10\r\nsecret-two\r\n:2\r\n";
+        let signals = handle_at(
+            &mut registry,
+            &response_event(6379, second_confirmation),
+            8_000,
+        );
+        assert_eq!(signals.len(), 1);
+        assert_eq!(
+            observation(&signals[0]).method.as_deref(),
+            Some("SUBSCRIBE")
+        );
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(3_000));
+
+        let signals = handle_at(&mut registry, &response_event(6379, b"+PONG\r\n"), 9_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("PING"));
+        assert_eq!(registry.counters().matched_responses, 2);
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        assert!(!serialized.contains("secret-one"));
+        assert!(!serialized.contains("secret-two"));
     }
 
     #[test]
@@ -6025,12 +6192,13 @@ mod tests {
         let request = [7, 0, 0, 0, 3, b's', b'e', b'l', b'e', b'c', b't'];
         let event = raw_event(3306, &request, request.len() as u32);
         assert!(handle_at(&mut registry, &event, 5_000).is_empty());
+        let column_definition = mysql_column_definition_packet(2);
 
         // One column, its definition, the metadata terminator, and one text
         // row are all continuations of the same command lifecycle.
         for packet in [
             &[1, 0, 0, 1, 1][..],
-            &[3, 0, 0, 2, b'd', b'e', b'f'][..],
+            column_definition.as_slice(),
             &[5, 0, 0, 3, 0xfe, 0, 0, 2, 0][..],
             &[2, 0, 0, 4, 1, b'x'][..],
         ] {
@@ -6067,10 +6235,11 @@ mod tests {
             )
             .is_empty()
         );
+        let column_definition = mysql_column_definition_packet(2);
 
         for packet in [
             &[1, 0, 0, 1, 1][..],
-            &[3, 0, 0, 2, b'd', b'e', b'f'][..],
+            column_definition.as_slice(),
             &[2, 0, 0, 3, 1, b'x'][..],
         ] {
             assert!(handle_at(&mut registry, &response_event(3306, packet), 6_000).is_empty());
@@ -6105,11 +6274,13 @@ mod tests {
         );
 
         let prepare_ok = [12, 0, 0, 1, 0, 7, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0];
+        let parameter_definition = mysql_column_definition_packet(2);
+        let column_definition = mysql_column_definition_packet(4);
         for packet in [
             &prepare_ok[..],
-            &[3, 0, 0, 2, b'p', b'a', b'r'][..],
+            parameter_definition.as_slice(),
             &[5, 0, 0, 3, 0xfe, 0, 0, 2, 0][..],
-            &[3, 0, 0, 4, b'c', b'o', b'l'][..],
+            column_definition.as_slice(),
         ] {
             assert!(
                 handle_at(&mut registry, &response_event(3306, packet), 6_000).is_empty(),
@@ -6139,10 +6310,11 @@ mod tests {
             )
             .is_empty()
         );
+        let column_definition = mysql_column_definition_packet(2);
 
         for packet in [
             &[1, 0, 0, 1, 1][..],
-            &[3, 0, 0, 2, b'd', b'e', b'f'][..],
+            column_definition.as_slice(),
             &[5, 0, 0, 3, 0xfe, 0, 0, 2, 0][..],
             &[8, 0, 0, 4, 0, 0, 6, b'f', b'o', b'o', b'b', b'a'][..],
         ] {
