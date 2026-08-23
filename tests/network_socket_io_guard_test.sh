@@ -5,7 +5,13 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 program="crates/e-navigator-ebpf-programs/src/main.rs"
+message_batch="crates/e-navigator-ebpf-programs/src/network_mmsg.rs"
 source_file="crates/e-navigator-sources-ebpf-aya/src/network.rs"
+
+if ! grep -Fq "NETWORK_MMSG_MAX_MESSAGES: u32 = 1_024" "$message_batch"; then
+  printf 'expected %s to cover the Linux native UIO_MAXIOV limit\n' "$message_batch" >&2
+  exit 1
+fi
 
 for expected in \
   "try_tracepoint_dns_sendto_enter" \
@@ -29,7 +35,9 @@ for expected in \
   "try_tracepoint_network_mmsg_enter(&ctx, NETWORK_IO_WRITE)" \
   "try_tracepoint_network_mmsg_enter(&ctx, NETWORK_IO_READ)" \
   "native_mmsg_syscall(ctx, direction)?" \
-  "completed > NETWORK_MMSG_MAX_MESSAGES" \
+  "completed_messages(retval, pending.vlen)" \
+  "bpf_loop(completed, callback, context, 0)" \
+  "message_length_offset(index, state.completed)" \
   "NETWORK_MMSG_DIAG_UNSUPPORTED" \
   "try_tracepoint_network_mmsg_exit(&ctx)" \
   "try_tracepoint_network_io_exit(&ctx)"; do

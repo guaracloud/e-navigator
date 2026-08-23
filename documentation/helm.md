@@ -338,9 +338,10 @@ refresh a still-active identity without increasing its counter.
 For native-LP64 TCP message batches, monitor
 `e_navigator_ebpf_source_network_mmsg_accounted_batches_total` alongside
 `e_navigator_ebpf_source_network_mmsg_unsupported_batches_total`. The latter
-increases when a completed batch exceeds the 16-message traversal bound, the
-process uses a compat syscall ABI, or a kernel-written `mmsghdr.msg_len` cannot
-be read. Those batches are omitted rather than misreported as byte totals.
+increases when the process uses a compat syscall ABI, the kernel reports an
+impossible count outside the native 1,024-entry `UIO_MAXIOV` contract, or a
+kernel-written `mmsghdr.msg_len` cannot be read. Those batches are omitted
+rather than misreported as byte totals.
 
 Arbitrary-port protocol discovery is a separate, disabled-by-default capture
 surface:

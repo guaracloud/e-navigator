@@ -214,6 +214,11 @@ OBI itself documents a different host-perspective
 [packet-aware byte semantic](https://opentelemetry.io/docs/zero-code/obi/network/)
 that includes network-stack overhead.
 
+Implementation update (2026-08-23): native LP64 `sendmmsg`/`recvmmsg`
+traversal now covers Linux's full 1,024-entry `UIO_MAXIOV` ceiling through a
+bounded `bpf_loop`, with exact 32-entry and maximum-vector local arm64 smokes.
+Compatibility ABIs remain unsupported and explicitly counted.
+
 ### Native unwinding remains bounded even with full names
 
 Demangling cannot recover a missing frame. DWARF 5 call-frame information can

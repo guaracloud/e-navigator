@@ -10,6 +10,7 @@ compile_error!("one event transport feature must be enabled");
 
 mod capture_policy;
 mod dns_peer;
+mod network_mmsg;
 
 #[cfg(feature = "ring-buffer")]
 use aya_ebpf::maps::RingBuf;
@@ -44,6 +45,7 @@ use dns_peer::is_dns_ipv4_peer;
 use e_navigator_context_propagation::{
     MAX_TRACESTATE_BYTES, TraceContext, format_traceparent_header,
 };
+use network_mmsg::{completed_messages, message_length_offset};
 
 /// Source-stage diagnostics are intentionally opt-in. The userspace loader
 /// overrides this read-only global before loading an object when diagnostic
@@ -179,7 +181,6 @@ const TCP_RESET_DIRECTION_RECEIVE: u32 = 2;
 const AF_INET_U16: u16 = 2;
 const NETWORK_IO_READ: u32 = 1;
 const NETWORK_IO_WRITE: u32 = 2;
-const NETWORK_MMSG_MAX_MESSAGES: u32 = 16;
 #[cfg(bpf_target_arch = "aarch64")]
 const NETWORK_RECVMMSG_SYSCALL: i32 = 243;
 #[cfg(bpf_target_arch = "aarch64")]
@@ -188,9 +189,6 @@ const NETWORK_SENDMMSG_SYSCALL: i32 = 269;
 const NETWORK_RECVMMSG_SYSCALL: i32 = 299;
 #[cfg(bpf_target_arch = "x86_64")]
 const NETWORK_SENDMMSG_SYSCALL: i32 = 307;
-// Linux LP64 `struct mmsghdr`: 56-byte `msghdr`, then `msg_len`.
-const NETWORK_MMSG_HEADER_BYTES: usize = 64;
-const NETWORK_MMSG_LENGTH_OFFSET: usize = 56;
 const NETWORK_MMSG_DIAGNOSTIC_COUNTERS_LEN: u32 = 2;
 const NETWORK_MMSG_DIAG_ACCOUNTED: u32 = 0;
 const NETWORK_MMSG_DIAG_UNSUPPORTED: u32 = 1;
@@ -748,6 +746,14 @@ pub struct PendingNetworkMmsg {
     pub direction: u32,
     pub vlen: u32,
     pub messages_ptr: u64,
+}
+
+#[repr(C)]
+struct NetworkMmsgSumState {
+    messages: *const u8,
+    total: u64,
+    completed: u32,
+    failed: u32,
 }
 
 #[repr(C)]
@@ -4121,35 +4127,46 @@ fn try_tracepoint_network_mmsg_exit(ctx: &TracePointContext) -> Result<u32, i64>
     if retval <= 0 {
         return Ok(0);
     }
-    let completed = (retval as u32).min(pending.vlen);
-    if completed > NETWORK_MMSG_MAX_MESSAGES {
+    let Some(completed) = completed_messages(retval, pending.vlen) else {
+        record_network_mmsg_diagnostic(NETWORK_MMSG_DIAG_UNSUPPORTED);
+        return Ok(0);
+    };
+    let mut state = NetworkMmsgSumState {
+        messages: pending.messages_ptr as *const u8,
+        total: 0,
+        completed,
+        failed: 0,
+    };
+    let callback = bpf_network_mmsg_sum_step as *const () as *mut c_void;
+    let context = (&mut state as *mut NetworkMmsgSumState).cast::<c_void>();
+    let loops = unsafe { bpf_loop(completed, callback, context, 0) };
+    if loops != i64::from(completed) || state.failed != 0 {
         record_network_mmsg_diagnostic(NETWORK_MMSG_DIAG_UNSUPPORTED);
         return Ok(0);
     }
-    let messages = pending.messages_ptr as *const u8;
-    let mut total = 0_u64;
-    let mut index = 0_u32;
-    while index < NETWORK_MMSG_MAX_MESSAGES {
-        if index >= completed {
-            break;
-        }
-        let offset = index as usize * NETWORK_MMSG_HEADER_BYTES + NETWORK_MMSG_LENGTH_OFFSET;
-        let length = match unsafe { bpf_probe_read_user::<u32>(messages.add(offset).cast::<u32>()) }
-        {
-            Ok(length) => length,
-            Err(_) => {
-                record_network_mmsg_diagnostic(NETWORK_MMSG_DIAG_UNSUPPORTED);
-                return Ok(0);
-            }
-        };
-        total = total.saturating_add(u64::from(length));
-        index += 1;
-    }
-    if total > 0 {
-        add_network_io_bytes(pending.tgid, pending.fd, pending.direction, total)?;
+    if state.total > 0 {
+        add_network_io_bytes(pending.tgid, pending.fd, pending.direction, state.total)?;
     }
     record_network_mmsg_diagnostic(NETWORK_MMSG_DIAG_ACCOUNTED);
     Ok(0)
+}
+
+unsafe extern "C" fn bpf_network_mmsg_sum_step(index: u64, context: *mut c_void) -> i64 {
+    let state = unsafe { &mut *context.cast::<NetworkMmsgSumState>() };
+    let Some(offset) = message_length_offset(index, state.completed) else {
+        state.failed = 1;
+        return 1;
+    };
+    let length =
+        match unsafe { bpf_probe_read_user::<u32>(state.messages.add(offset).cast::<u32>()) } {
+            Ok(length) => length,
+            Err(_) => {
+                state.failed = 1;
+                return 1;
+            }
+        };
+    state.total = state.total.saturating_add(u64::from(length));
+    0
 }
 
 #[inline(always)]
