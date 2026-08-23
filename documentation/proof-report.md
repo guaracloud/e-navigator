@@ -765,7 +765,11 @@ These areas remain explicitly partial:
   through metadata and rows, handles short EOF and modern `0xfe` OK terminators,
   preserves multi-result commands, follows prepared metadata and cursor fetch
   rows, and excludes protocol-defined no-response commands from the correlation
-  queue. Malformed, truncated, or out-of-order response packets fail closed.
+  queue. Protocol 4.1 OK and ColumnDefinition41 packets are structurally
+  validated before advancing the state machine. Parameter-only prepares finish
+  at the parameter terminator, and cursor executions finish when a legacy
+  metadata EOF carries `SERVER_STATUS_CURSOR_EXISTS`. Malformed, truncated, or
+  out-of-order response packets fail closed without advancing sequence state.
   Live MySQL capture, compressed protocol, `LOCAL INFILE`, optional-resultset
   metadata, prepared metadata with capability-negotiated omitted EOF, logical
   packets split at the 16 MiB boundary, and a server/version matrix are not yet
@@ -804,13 +808,17 @@ These areas remain explicitly partial:
   nested-array/RESP3-map/RESP3-set/RESP3-push/error response parsing is locally
   tested without exporting raw key/value payloads or raw error messages,
   including declared frame-length bounds, bounded response-status token
-  validation, and coalesced RESP3 push/attribute frames that preserve the
-  following command reply in the FIFO queue. Runtime capture and
+  validation, ordinary coalesced RESP3 push/attribute frames that preserve the
+  following command reply in the FIFO queue, and explicit RESP2/RESP3
+  subscribe/unsubscribe commands that complete only after their bounded
+  acknowledgement count. Zero-argument unsubscribe commands are emitted
+  without response latency because the expected confirmation count cannot be
+  known safely from the request. Runtime capture and
   request/response matching have local
   OrbStack proof for plain TCP and OpenSSL Redis, including pipelining and
-  multi-segment payloads, but RESP2 Pub/Sub array disambiguation, streamed
-  RESP3 aggregates, live out-of-band interleaving, broad production/Kubernetes
-  coverage, and longer live soaks are not proven.
+  multi-segment payloads, but arbitrary RESP2 Pub/Sub delivery interleaving,
+  streamed RESP3 aggregates, live subscription/out-of-band interleaving, broad
+  production/Kubernetes coverage, and longer live soaks are not proven.
 - **DNS capture:** selected UDP paths work, but symmetric all-node capture and
   lossless DNS coverage are not proven.
 - **Network byte accounting:** a privileged local OrbStack
