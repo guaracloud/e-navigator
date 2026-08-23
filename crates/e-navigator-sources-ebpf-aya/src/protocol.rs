@@ -1,6 +1,12 @@
 #![allow(dead_code)]
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+mod database_response;
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+use database_response::{DatabaseResponseContext, handle_database_response};
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_core::ProtocolSourceConfig;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 use e_navigator_protocol::{
@@ -1517,66 +1523,18 @@ fn handle_response_frames(
             );
             continue;
         }
-        if stream.protocol == StreamProtocol::Redis {
-            handle_redis_response_frame(
-                stream,
-                frame_bytes,
-                truncated,
+        if handle_database_response(
+            stream,
+            frame_bytes,
+            truncated,
+            &mut DatabaseResponseContext {
                 extraction,
                 host,
                 counters,
                 observed_unix_nanos,
                 signals,
-            );
-            continue;
-        }
-        if stream.protocol == StreamProtocol::Mysql {
-            handle_mysql_response_frame(
-                stream,
-                frame_bytes,
-                truncated,
-                extraction,
-                host,
-                counters,
-                observed_unix_nanos,
-                signals,
-            );
-            continue;
-        }
-        if stream.protocol == StreamProtocol::Postgresql
-            && stream
-                .in_flight
-                .front()
-                .is_some_and(|entry| entry.postgres_simple_response.is_some())
-        {
-            handle_postgres_simple_query_response_frame(
-                stream,
-                frame_bytes,
-                truncated,
-                extraction,
-                host,
-                counters,
-                observed_unix_nanos,
-                signals,
-            );
-            continue;
-        }
-        if stream.protocol == StreamProtocol::Postgresql
-            && stream
-                .in_flight
-                .front()
-                .is_some_and(|entry| entry.postgres_request_response.is_some())
-        {
-            handle_postgres_request_response_frame(
-                stream,
-                frame_bytes,
-                truncated,
-                extraction,
-                host,
-                counters,
-                observed_unix_nanos,
-                signals,
-            );
+            },
+        ) {
             continue;
         }
 
@@ -1638,78 +1596,6 @@ fn handle_response_frames(
             ));
         }
     }
-}
-
-/// Advances the oldest Redis command while keeping unrelated RESP3 pushes and
-/// attributes out of the FIFO queue. Explicit Pub/Sub subscriptions complete
-/// only after every pushed acknowledgement has arrived.
-#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-#[allow(clippy::too_many_arguments)]
-fn handle_redis_response_frame(
-    stream: &mut ConnectionStream,
-    frame: &[u8],
-    truncated: bool,
-    extraction: &ProtocolExtractionConfig,
-    host: &Option<String>,
-    counters: &mut ProtocolRegistryCounters,
-    observed_unix_nanos: u64,
-    signals: &mut Vec<SignalEnvelope>,
-) {
-    if stream.in_flight.is_empty() {
-        match redis_response_role(frame) {
-            Ok(RedisResponseRole::Push | RedisResponseRole::Attribute) => {
-                counters.response_continuations += 1;
-            }
-            Ok(RedisResponseRole::Reply) | Err(_) => counters.orphan_responses += 1,
-        }
-        return;
-    }
-    if truncated {
-        counters.unparsed_responses += 1;
-        return;
-    }
-
-    let Some(lifecycle) = stream
-        .in_flight
-        .front_mut()
-        .and_then(|entry| entry.redis_response.as_mut())
-    else {
-        counters.unparsed_responses += 1;
-        return;
-    };
-    let response = match lifecycle.observe_response(frame, extraction) {
-        Ok(RedisResponseProgress::Continue) => {
-            counters.response_continuations += 1;
-            return;
-        }
-        Ok(RedisResponseProgress::Complete(response)) => response,
-        Err(_) => {
-            counters.unparsed_responses += 1;
-            return;
-        }
-    };
-
-    let Some(entry) = stream.in_flight.pop_front() else {
-        counters.orphan_responses += 1;
-        return;
-    };
-    let mut parsed = entry.parsed;
-    counters.matched_responses += 1;
-    let response = ParsedResponseFrame {
-        protocol: None,
-        signal_status_code: None,
-        status_code: response.status_code,
-        error_type: response.error_type,
-        attributes: response.attributes,
-    };
-    merge_response_attributes(&mut parsed, &response, extraction.max_attributes);
-    signals.push(build_observation(
-        host.clone(),
-        &stream.context,
-        parsed,
-        entry.started_unix_nanos,
-        Some(observed_unix_nanos),
-    ));
 }
 
 /// Completes the Kafka request identified by the response correlation id.
@@ -1851,256 +1737,6 @@ fn handle_mongodb_response_frame(
     signals.push(build_observation(
         host.clone(),
         &stream.context,
-        parsed,
-        entry.started_unix_nanos,
-        Some(observed_unix_nanos),
-    ));
-}
-
-/// Advances the lifecycle of the oldest MySQL command. Intermediate result
-/// metadata and row packets retain the request; only a protocol-defined
-/// terminal packet emits the correlated observation.
-#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-#[allow(clippy::too_many_arguments)]
-fn handle_mysql_response_frame(
-    stream: &mut ConnectionStream,
-    frame: &[u8],
-    truncated: bool,
-    extraction: &ProtocolExtractionConfig,
-    host: &Option<String>,
-    counters: &mut ProtocolRegistryCounters,
-    observed_unix_nanos: u64,
-    signals: &mut Vec<SignalEnvelope>,
-) {
-    if stream.in_flight.is_empty() {
-        counters.orphan_responses += 1;
-        return;
-    }
-    if truncated {
-        counters.unparsed_responses += 1;
-        return;
-    }
-
-    let Some(lifecycle) = stream
-        .in_flight
-        .front_mut()
-        .and_then(|entry| entry.mysql_response.as_mut())
-    else {
-        counters.unparsed_responses += 1;
-        return;
-    };
-    let response = match lifecycle.observe_packet(frame, extraction) {
-        Ok(MysqlResponseProgress::Continue) => {
-            counters.response_continuations += 1;
-            return;
-        }
-        Ok(MysqlResponseProgress::Complete(response)) => response,
-        Err(_) => {
-            counters.unparsed_responses += 1;
-            return;
-        }
-    };
-
-    let Some(entry) = stream.in_flight.pop_front() else {
-        counters.orphan_responses += 1;
-        return;
-    };
-    let mut parsed = entry.parsed;
-    counters.matched_responses += 1;
-    let response = ParsedResponseFrame {
-        protocol: None,
-        signal_status_code: None,
-        status_code: Some(response.status_code),
-        error_type: response.error_type,
-        attributes: response.attributes,
-    };
-    merge_response_attributes(&mut parsed, &response, extraction.max_attributes);
-    signals.push(build_observation(
-        host.clone(),
-        &stream.context,
-        parsed,
-        entry.started_unix_nanos,
-        Some(observed_unix_nanos),
-    ));
-}
-
-/// Advances a PostgreSQL simple-query cycle through every backend message and
-/// emits only when `ReadyForQuery` closes the cycle.
-#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-#[allow(clippy::too_many_arguments)]
-fn handle_postgres_simple_query_response_frame(
-    stream: &mut ConnectionStream,
-    frame: &[u8],
-    truncated: bool,
-    extraction: &ProtocolExtractionConfig,
-    host: &Option<String>,
-    counters: &mut ProtocolRegistryCounters,
-    observed_unix_nanos: u64,
-    signals: &mut Vec<SignalEnvelope>,
-) {
-    if truncated {
-        counters.unparsed_responses += 1;
-        return;
-    }
-
-    let Some(lifecycle) = stream
-        .in_flight
-        .front_mut()
-        .and_then(|entry| entry.postgres_simple_response.as_mut())
-    else {
-        counters.unparsed_responses += 1;
-        return;
-    };
-    let response = match lifecycle.observe_response(frame, extraction) {
-        Ok(PostgresSimpleQueryProgress::Continue) => {
-            counters.response_continuations += 1;
-            return;
-        }
-        Ok(PostgresSimpleQueryProgress::Complete(response)) => response,
-        Err(_) => {
-            counters.unparsed_responses += 1;
-            return;
-        }
-    };
-
-    let Some(entry) = stream.in_flight.pop_front() else {
-        counters.orphan_responses += 1;
-        return;
-    };
-    emit_completed_postgres_request(
-        entry,
-        response,
-        &stream.context,
-        extraction,
-        host,
-        counters,
-        observed_unix_nanos,
-        signals,
-    );
-}
-
-/// Advances one typed PostgreSQL request through its exact protocol terminal.
-#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-#[allow(clippy::too_many_arguments)]
-fn handle_postgres_request_response_frame(
-    stream: &mut ConnectionStream,
-    frame: &[u8],
-    truncated: bool,
-    extraction: &ProtocolExtractionConfig,
-    host: &Option<String>,
-    counters: &mut ProtocolRegistryCounters,
-    observed_unix_nanos: u64,
-    signals: &mut Vec<SignalEnvelope>,
-) {
-    if truncated {
-        counters.unparsed_responses += 1;
-        return;
-    }
-
-    let Some(lifecycle) = stream
-        .in_flight
-        .front_mut()
-        .and_then(|entry| entry.postgres_request_response.as_mut())
-    else {
-        counters.unparsed_responses += 1;
-        return;
-    };
-    let (response, discard_until_sync) = match lifecycle.observe_response(frame, extraction) {
-        Ok(PostgresRequestProgress::Continue) => {
-            counters.response_continuations += 1;
-            return;
-        }
-        Ok(PostgresRequestProgress::Complete {
-            response,
-            discard_until_sync,
-        }) => (response, discard_until_sync),
-        Err(_) => {
-            counters.unparsed_responses += 1;
-            return;
-        }
-    };
-
-    let Some(entry) = stream.in_flight.pop_front() else {
-        counters.orphan_responses += 1;
-        return;
-    };
-    emit_completed_postgres_request(
-        entry,
-        response,
-        &stream.context,
-        extraction,
-        host,
-        counters,
-        observed_unix_nanos,
-        signals,
-    );
-    if discard_until_sync {
-        discard_postgres_pipeline_until_sync(stream, host, counters, signals);
-    }
-}
-
-#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-fn discard_postgres_pipeline_until_sync(
-    stream: &mut ConnectionStream,
-    host: &Option<String>,
-    counters: &mut ProtocolRegistryCounters,
-    signals: &mut Vec<SignalEnvelope>,
-) {
-    while stream.in_flight.front().is_some_and(|entry| {
-        !entry
-            .postgres_request_response
-            .as_ref()
-            .is_some_and(PostgresRequestLifecycle::is_sync)
-    }) {
-        let Some(mut skipped) = stream.in_flight.pop_front() else {
-            break;
-        };
-        skipped
-            .parsed
-            .warning
-            .get_or_insert_with(|| POSTGRES_SKIPPED_AFTER_ERROR_WARNING.to_string());
-        counters.postgres_skipped_requests += 1;
-        signals.push(build_observation(
-            host.clone(),
-            &stream.context,
-            skipped.parsed,
-            skipped.started_unix_nanos,
-            None,
-        ));
-    }
-    stream.postgres_discarding_until_sync = stream.in_flight.front().is_none_or(|entry| {
-        !entry
-            .postgres_request_response
-            .as_ref()
-            .is_some_and(PostgresRequestLifecycle::is_sync)
-    });
-}
-
-#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
-#[allow(clippy::too_many_arguments)]
-fn emit_completed_postgres_request(
-    entry: InFlightRequest,
-    response: e_navigator_protocol::postgres::ParsedPostgresResponse,
-    context: &ObservationContext,
-    extraction: &ProtocolExtractionConfig,
-    host: &Option<String>,
-    counters: &mut ProtocolRegistryCounters,
-    observed_unix_nanos: u64,
-    signals: &mut Vec<SignalEnvelope>,
-) {
-    let mut parsed = entry.parsed;
-    counters.matched_responses += 1;
-    let response = ParsedResponseFrame {
-        protocol: None,
-        signal_status_code: None,
-        status_code: Some(response.status_code),
-        error_type: response.error_type,
-        attributes: response.attributes,
-    };
-    merge_response_attributes(&mut parsed, &response, extraction.max_attributes);
-    signals.push(build_observation(
-        host.clone(),
-        context,
         parsed,
         entry.started_unix_nanos,
         Some(observed_unix_nanos),
@@ -5247,7 +4883,7 @@ mod tests {
         assert!(handle_at(&mut registry, &event, 5_000).is_empty());
         assert_eq!(registry.counters().unparsed_frames, 1);
 
-        let response = response_event(3306, &[5, 0, 0, 1, 0, 0, 0, 2, 0]);
+        let response = response_event(3306, &[7, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0]);
         let signals = handle_at(&mut registry, &response, 6_000);
         assert_eq!(signals.len(), 1);
         let observation = observation(&signals[0]);

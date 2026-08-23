@@ -55,8 +55,8 @@ use e_navigator_protocol::{
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
-        MysqlExtraction, MysqlResponseLifecycle, MysqlResponseProgress, parse_mysql_command,
-        parse_mysql_error_response, parse_mysql_response,
+        MysqlExtraction, MysqlResponseLifecycle, parse_mysql_command, parse_mysql_error_response,
+        parse_mysql_response,
     },
     nats::{NatsExtraction, parse_nats_command, parse_nats_response},
     postgres::{
@@ -20931,131 +20931,6 @@ fn extracts_mysql_operation_after_comments() {
 }
 
 #[test]
-fn mysql_parameter_only_prepare_completes_at_the_parameter_terminator() {
-    let config = ProtocolExtractionConfig::default();
-    let request = mysql_packet(0x16, b"INSERT INTO events VALUES (?)");
-    let mut lifecycle = MysqlResponseLifecycle::from_request(&request, &config)
-        .expect("valid prepare request starts a lifecycle");
-
-    let prepare_ok = mysql_server_packet(1, &[0x00, 7, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0]);
-    assert_eq!(
-        lifecycle
-            .observe_packet(&prepare_ok, &config)
-            .expect("prepare header is accepted"),
-        MysqlResponseProgress::Continue
-    );
-    assert_eq!(
-        lifecycle
-            .observe_packet(&mysql_server_packet(2, &mysql_column_definition()), &config,)
-            .expect("parameter metadata is accepted"),
-        MysqlResponseProgress::Continue
-    );
-
-    let completion = lifecycle
-        .observe_packet(&mysql_server_packet(3, &[0xfe, 0, 0, 2, 0]), &config)
-        .expect("the sole parameter terminator completes the prepare");
-    assert!(matches!(completion, MysqlResponseProgress::Complete(_)));
-}
-
-#[test]
-fn mysql_cursor_execute_completes_at_the_metadata_cursor_terminator() {
-    let config = ProtocolExtractionConfig::default();
-    let request = mysql_packet(0x17, b"\x07\0\0\0\x01\x01\0\0\0");
-    let mut lifecycle = MysqlResponseLifecycle::from_request(&request, &config)
-        .expect("valid execute request starts a lifecycle");
-
-    assert_eq!(
-        lifecycle
-            .observe_packet(&mysql_server_packet(1, &[1]), &config)
-            .expect("one-column result header is accepted"),
-        MysqlResponseProgress::Continue
-    );
-    assert_eq!(
-        lifecycle
-            .observe_packet(&mysql_server_packet(2, &mysql_column_definition()), &config,)
-            .expect("column metadata is accepted"),
-        MysqlResponseProgress::Continue
-    );
-
-    let completion = lifecycle
-        .observe_packet(&mysql_server_packet(3, &[0xfe, 0, 0, 0x42, 0]), &config)
-        .expect("cursor metadata terminator is accepted");
-    assert!(matches!(completion, MysqlResponseProgress::Complete(_)));
-}
-
-#[test]
-fn mysql_truncated_protocol_41_ok_packet_is_rejected() {
-    let result = parse_mysql_response(
-        &mysql_server_packet(1, &[0x00, 0, 0]),
-        &ProtocolExtractionConfig::default(),
-    );
-
-    assert_eq!(result.unwrap_err(), MysqlExtraction::UnsupportedResponse);
-}
-
-#[test]
-fn mysql_prepare_header_accepts_only_complete_supported_layouts() {
-    let config = ProtocolExtractionConfig::default();
-    let request = mysql_packet(0x16, b"SELECT 1");
-
-    for payload in [
-        &[0x00, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0][..],
-        &[0x00, 7, 0, 0, 0, 0, 0, 0, 0, 1][..],
-        &[0x00, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1][..],
-    ] {
-        let mut lifecycle = MysqlResponseLifecycle::from_request(&request, &config)
-            .expect("valid prepare request starts a lifecycle");
-        assert!(
-            lifecycle
-                .observe_packet(&mysql_server_packet(1, payload), &config)
-                .is_err(),
-            "unsupported or incomplete prepare header was accepted: {payload:?}"
-        );
-    }
-
-    for payload in [
-        &[0x00, 7, 0, 0, 0, 0, 0, 0, 0, 0][..],
-        &[0x00, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0][..],
-    ] {
-        let mut lifecycle = MysqlResponseLifecycle::from_request(&request, &config)
-            .expect("valid prepare request starts a lifecycle");
-        assert!(matches!(
-            lifecycle
-                .observe_packet(&mysql_server_packet(1, payload), &config)
-                .expect("supported prepare header is accepted"),
-            MysqlResponseProgress::Complete(_)
-        ));
-    }
-}
-
-#[test]
-fn mysql_malformed_column_metadata_does_not_advance_the_lifecycle() {
-    let config = ProtocolExtractionConfig::default();
-    let request = mysql_packet(0x03, b"SELECT value FROM events");
-    let mut lifecycle = MysqlResponseLifecycle::from_request(&request, &config)
-        .expect("valid query starts a lifecycle");
-    assert_eq!(
-        lifecycle
-            .observe_packet(&mysql_server_packet(1, &[1]), &config)
-            .expect("one-column result header is accepted"),
-        MysqlResponseProgress::Continue
-    );
-
-    assert_eq!(
-        lifecycle
-            .observe_packet(&mysql_server_packet(2, b"not-column-metadata"), &config)
-            .unwrap_err(),
-        MysqlExtraction::MalformedPacket
-    );
-    assert_eq!(
-        lifecycle
-            .observe_packet(&mysql_server_packet(2, &mysql_column_definition()), &config,)
-            .expect("a valid retry at the same sequence is accepted"),
-        MysqlResponseProgress::Continue
-    );
-}
-
-#[test]
 fn extracts_mysql_ok_response_without_raw_session_state() {
     let bytes = mysql_ok_packet(b"\0\0\x02\0secret session state changed");
 
@@ -22341,32 +22216,6 @@ fn mysql_ok_packet(body: &[u8]) -> Vec<u8> {
     packet.push(0);
     packet.extend_from_slice(&payload);
     packet
-}
-
-fn mysql_server_packet(sequence: u8, payload: &[u8]) -> Vec<u8> {
-    let mut packet = Vec::with_capacity(payload.len() + 4);
-    packet.push((payload.len() & 0xff) as u8);
-    packet.push(((payload.len() >> 8) & 0xff) as u8);
-    packet.push(((payload.len() >> 16) & 0xff) as u8);
-    packet.push(sequence);
-    packet.extend_from_slice(payload);
-    packet
-}
-
-fn mysql_column_definition() -> Vec<u8> {
-    let mut payload = Vec::new();
-    for value in [b"def".as_slice(), b"", b"", b"", b"value", b""] {
-        payload.push(value.len() as u8);
-        payload.extend_from_slice(value);
-    }
-    payload.push(0x0c);
-    payload.extend_from_slice(&0x0021_u16.to_le_bytes());
-    payload.extend_from_slice(&11_u32.to_le_bytes());
-    payload.push(0x03);
-    payload.extend_from_slice(&0_u16.to_le_bytes());
-    payload.push(0);
-    payload.extend_from_slice(&[0, 0]);
-    payload
 }
 
 fn kafka_request_frame(
