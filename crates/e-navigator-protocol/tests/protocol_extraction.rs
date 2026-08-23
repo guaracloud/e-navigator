@@ -55,7 +55,8 @@ use e_navigator_protocol::{
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
-        MysqlExtraction, parse_mysql_command, parse_mysql_error_response, parse_mysql_response,
+        MysqlExtraction, MysqlResponseLifecycle, parse_mysql_command, parse_mysql_error_response,
+        parse_mysql_response,
     },
     nats::{NatsExtraction, parse_nats_command, parse_nats_response},
     postgres::{
@@ -496,6 +497,23 @@ proptest! {
 
         let _ = parse_mysql_response(&bytes, &config);
         let _ = parse_mysql_error_response(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_mysql_lifecycle_packet_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 4,
+            max_tracestate_bytes: 32,
+        };
+        let mut lifecycle = MysqlResponseLifecycle::from_request(
+            &[1, 0, 0, 0, 0x0e],
+            &config,
+        )
+        .expect("bounded PING request starts a lifecycle");
+
+        let _ = lifecycle.observe_packet(&bytes, &config);
     }
 
     #[test]
@@ -20877,11 +20895,15 @@ fn rejects_malformed_and_unsupported_mysql_fixtures() {
         MysqlExtraction::UnsupportedResponse
     );
     assert_eq!(
+        parse_mysql_response(&mysql_packet(0x00, b""), &config).unwrap_err(),
+        MysqlExtraction::UnsupportedResponse
+    );
+    assert_eq!(
         parse_mysql_response(&mysql_packet(0x03, b"select 1"), &config).unwrap_err(),
         MysqlExtraction::UnsupportedResponse
     );
     assert_eq!(
-        parse_mysql_response(&mysql_packet(0xfe, b"secret-payload"), &config).unwrap_err(),
+        parse_mysql_response(&mysql_packet(0xfe, b"\xfbsecret-payload"), &config).unwrap_err(),
         MysqlExtraction::UnsupportedResponse
     );
     assert_eq!(
