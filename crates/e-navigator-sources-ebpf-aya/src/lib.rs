@@ -13,6 +13,9 @@ pub mod dns;
 mod ebpf_capture_policy;
 #[cfg(target_os = "linux")]
 mod ebpf_maps;
+#[cfg(test)]
+#[path = "../../e-navigator-ebpf-programs/src/network_mmsg.rs"]
+mod ebpf_network_mmsg;
 mod event_transport;
 pub mod exec;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]

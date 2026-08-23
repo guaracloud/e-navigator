@@ -200,9 +200,11 @@ E-Navigator does not currently claim:
   observed covered vectored syscalls and no io_uring use. A privileged arm64
   OrbStack smoke proved exact `readv`/`writev`, bounded native-LP64
   `sendmmsg`/`recvmmsg`, `sendfile`, and bidirectional `splice` totals. Message
-  batches are supported only when at most 16 messages complete; larger
-  completed batches, compat ABIs, and unreadable `mmsghdr.msg_len` values fail
-  closed with a native counter. io_uring submission and completion remain
+  batches traverse every successful native entry through Linux's 1,024-entry
+  `UIO_MAXIOV` ceiling; exact 32-entry and 1,024-entry batches passed the local
+  live smoke. Compat ABIs, impossible out-of-contract counts, and unreadable
+  `mmsghdr.msg_len` values fail closed with a native counter. io_uring
+  submission and completion remain
   decoupled, while fixed-file and SQPOLL modes do not preserve the current
   tgid/fd identity seam;
 - universal W3C propagation from the disabled-by-default plaintext HTTP/1

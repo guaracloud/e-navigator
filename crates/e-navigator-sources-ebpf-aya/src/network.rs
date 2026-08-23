@@ -1362,7 +1362,7 @@ mod platform {
             warn!(
                 source = "source.aya_network",
                 unsupported_batches = deltas[1],
-                max_messages = 16,
+                max_messages = 1_024,
                 "network message-batch accounting skipped unsupported batches"
             );
         }

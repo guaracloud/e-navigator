@@ -15,8 +15,18 @@ SENDFILE_PAYLOAD = b"f" * 131
 SPLICE_SEND_PAYLOAD = b"s" * 151
 READV_PAYLOAD = b"r" * 173
 SPLICE_RECEIVE_PAYLOAD = b"i" * 179
-SENDMMSG_PAYLOADS = (b"m" * 107, b"n" * 109)
-RECVMMSG_PAYLOAD = b"b" * 211
+MMSG_BATCH_SIZE = int(os.environ.get("E_NAVIGATOR_MMSG_BATCH_SIZE", "32"))
+if not 1 <= MMSG_BATCH_SIZE <= 1_024:
+    raise ValueError("E_NAVIGATOR_MMSG_BATCH_SIZE must be between 1 and 1024")
+
+SENDMMSG_PAYLOADS = tuple(
+    bytes((65 + index % 32,)) * (17 + index % 32)
+    for index in range(MMSG_BATCH_SIZE)
+)
+RECVMMSG_PAYLOADS = tuple(
+    bytes((97 + index % 32,)) * (23 + index % 32)
+    for index in range(MMSG_BATCH_SIZE)
+)
 
 
 class Iovec(ctypes.Structure):
@@ -87,20 +97,31 @@ def send_message_batch(connection: socket.socket, payloads: tuple[bytes, ...]) -
         raise RuntimeError("sendmmsg reported unexpected per-message lengths")
 
 
-def receive_message_batch(connection: socket.socket, expected: bytes) -> None:
-    buffer = ctypes.create_string_buffer(len(expected))
-    iovec = Iovec(ctypes.cast(buffer, ctypes.c_void_p), len(expected))
-    messages = (Mmsghdr * 1)()
-    messages[0].msg_hdr.msg_iov = ctypes.pointer(iovec)
-    messages[0].msg_hdr.msg_iovlen = 1
+def receive_message_batch(
+    connection: socket.socket, expected_payloads: tuple[bytes, ...]
+) -> None:
+    buffers = [ctypes.create_string_buffer(payload) for payload in expected_payloads]
+    iovecs = [
+        Iovec(ctypes.cast(buffer, ctypes.c_void_p), len(payload))
+        for buffer, payload in zip(buffers, expected_payloads, strict=True)
+    ]
+    messages = (Mmsghdr * len(expected_payloads))()
+    for index, iovec in enumerate(iovecs):
+        messages[index].msg_hdr.msg_iov = ctypes.pointer(iovec)
+        messages[index].msg_hdr.msg_iovlen = 1
 
-    completed = LIBC.recvmmsg(connection.fileno(), messages, 1, 0, None)
-    if completed != 1:
+    completed = LIBC.recvmmsg(
+        connection.fileno(), messages, len(messages), 0, None
+    )
+    if completed != len(messages):
         error = ctypes.get_errno()
         raise OSError(error, f"recvmmsg completed {completed} messages")
-    received = messages[0].msg_len
-    if received != len(expected) or buffer.raw[:received] != expected:
-        raise RuntimeError("recvmmsg did not return the expected payload")
+    for message, buffer, expected in zip(
+        messages, buffers, expected_payloads, strict=True
+    ):
+        received = message.msg_len
+        if received != len(expected) or buffer.raw[:received] != expected:
+            raise RuntimeError("recvmmsg did not return the expected payload batch")
 
 
 def main() -> None:
@@ -170,8 +191,8 @@ def main() -> None:
                     os.close(pipe_read)
                     os.close(pipe_write)
 
-                server.sendall(RECVMMSG_PAYLOAD)
-                receive_message_batch(client, RECVMMSG_PAYLOAD)
+                server.sendall(b"".join(RECVMMSG_PAYLOADS))
+                receive_message_batch(client, RECVMMSG_PAYLOADS)
 
                 # Keep the socket open long enough to require at least one
                 # active-flow snapshot before the final close event.
@@ -180,7 +201,7 @@ def main() -> None:
     print(
         "network-io-workload-ok "
         f"sent={len(WRITEV_PAYLOAD) + len(SENDFILE_PAYLOAD) + len(SPLICE_SEND_PAYLOAD) + sum(map(len, SENDMMSG_PAYLOADS))} "
-        f"received={len(READV_PAYLOAD) + len(SPLICE_RECEIVE_PAYLOAD) + len(RECVMMSG_PAYLOAD)}"
+        f"received={len(READV_PAYLOAD) + len(SPLICE_RECEIVE_PAYLOAD) + sum(map(len, RECVMMSG_PAYLOADS))}"
     )
 
 
