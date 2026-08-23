@@ -803,7 +803,7 @@ fn postgres_boundary(bytes: &[u8], max_frame_bytes: usize) -> FrameBoundary {
         }
         return checked_frame(declared, max_frame_bytes);
     }
-    if !bytes[0].is_ascii_alphabetic() {
+    if !bytes[0].is_ascii_alphabetic() && !matches!(bytes[0], b'1' | b'2' | b'3') {
         return FrameBoundary::Invalid;
     }
     if bytes.len() < 5 {
@@ -1268,6 +1268,17 @@ mod tests {
             request_frame_boundary(StreamProtocol::Postgresql, &startup, 1024),
             FrameBoundary::Frame { total_len: 8 },
         );
+
+        for message_type in [b'1', b'2', b'3'] {
+            assert_eq!(
+                request_frame_boundary(
+                    StreamProtocol::Postgresql,
+                    &[message_type, 0, 0, 0, 4],
+                    1024,
+                ),
+                FrameBoundary::Frame { total_len: 5 },
+            );
+        }
 
         assert_eq!(
             request_frame_boundary(StreamProtocol::Postgresql, &[0xff, 0, 0, 0, 4], 1024),

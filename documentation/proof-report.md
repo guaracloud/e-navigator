@@ -788,10 +788,17 @@ These areas remain explicitly partial:
   canonical SQLSTATE validation for notice and error responses. The local
   stream registry retains a simple Query across any number of response
   messages, preserves the first SQLSTATE error, and emits only at terminal
-  ReadyForQuery with its transaction state. Extended-query pipeline
-  completion, skip-to-Sync recovery, complete COPY/authentication lifecycles,
-  broad live error coverage, and production PostgreSQL proof are not
-  implemented or proven.
+  ReadyForQuery with its transaction state. Parse, Bind, statement and portal
+  Describe, Close, Execute, Password, and Sync now use their protocol-defined
+  terminals; FunctionCall retains its result/error through ReadyForQuery.
+  Extended-query errors fail already-sent dependent requests without invented
+  latency, discard only through the next captured Sync, and preserve subsequent
+  pipeline segments. COPY data/control messages and Flush/Terminate do not
+  enter the response queue. Numeric ParseComplete, BindComplete, and
+  CloseComplete tags are accepted by stream framing. Startup correlation, the
+  COPY-in Sync/Flush exception state, truncated-frame prefix semantics, broad
+  live error/COPY coverage, and production PostgreSQL proof are not implemented
+  or proven.
 - **Redis protocol observability:** bounded RESP command and
   simple/integer/bulk/RESP3-scalar/RESP3-blob-error/verbatim/flat-array/
   nested-array/RESP3-map/RESP3-set/RESP3-push/error response parsing is locally
