@@ -52,6 +52,51 @@ pub enum PostgresSimpleQueryProgress {
     Complete(ParsedPostgresResponse),
 }
 
+/// Bounded response state for one typed PostgreSQL frontend message.
+///
+/// PostgreSQL assigns different terminal backend messages to Parse, Bind,
+/// Describe, Execute, Close, Sync, authentication, and the legacy function
+/// call cycle. Keeping that distinction here prevents a payload frame or a
+/// later pipeline response from being attributed to the wrong request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostgresRequestLifecycle {
+    kind: PostgresRequestKind,
+    phase: PostgresRequestPhase,
+    pending_response: Option<ParsedPostgresResponse>,
+}
+
+/// Observable progress for one typed PostgreSQL frontend message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PostgresRequestProgress {
+    Continue,
+    Complete {
+        response: ParsedPostgresResponse,
+        /// Extended-query errors make the backend discard subsequent
+        /// frontend messages until the next Sync message.
+        discard_until_sync: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PostgresRequestKind {
+    Parse,
+    Bind,
+    DescribeStatement,
+    DescribePortal,
+    Close,
+    Execute,
+    FunctionCall,
+    Password,
+    Sync,
+    NoResponse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PostgresRequestPhase {
+    Initial,
+    ParameterDescription,
+}
+
 impl PostgresSimpleQueryLifecycle {
     /// Creates lifecycle state from one complete frontend Query frame.
     pub fn from_request(
@@ -97,6 +142,191 @@ impl PostgresSimpleQueryLifecycle {
             Some(_) => Ok(PostgresSimpleQueryProgress::Continue),
             None => Err(PostgresExtraction::MalformedFrame),
         }
+    }
+}
+
+impl PostgresRequestLifecycle {
+    /// Creates lifecycle state from one complete, non-Query frontend frame.
+    pub fn from_request(
+        bytes: &[u8],
+        config: &ProtocolExtractionConfig,
+    ) -> Result<Self, PostgresExtraction> {
+        parse_postgres_message(bytes, config)?;
+        let kind = match bytes.first() {
+            Some(b'P') => PostgresRequestKind::Parse,
+            Some(b'B') => PostgresRequestKind::Bind,
+            Some(b'D') => match frame_body(bytes, config.max_header_bytes)?.first() {
+                Some(b'S') => PostgresRequestKind::DescribeStatement,
+                Some(b'P') => PostgresRequestKind::DescribePortal,
+                _ => return Err(PostgresExtraction::MalformedFrame),
+            },
+            Some(b'C') => PostgresRequestKind::Close,
+            Some(b'E') => PostgresRequestKind::Execute,
+            Some(b'F') => PostgresRequestKind::FunctionCall,
+            Some(b'p') => PostgresRequestKind::Password,
+            Some(b'S') => PostgresRequestKind::Sync,
+            Some(b'd' | b'c' | b'f' | b'H' | b'X') => PostgresRequestKind::NoResponse,
+            Some(b'Q') => return Err(PostgresExtraction::UnsupportedMessage),
+            Some(_) => return Err(PostgresExtraction::UnsupportedMessage),
+            None => return Err(PostgresExtraction::MalformedFrame),
+        };
+        Ok(Self {
+            kind,
+            phase: PostgresRequestPhase::Initial,
+            pending_response: None,
+        })
+    }
+
+    /// Whether the frontend message has a distinct backend response.
+    #[must_use]
+    pub fn expects_response(&self) -> bool {
+        self.kind != PostgresRequestKind::NoResponse
+    }
+
+    /// Whether this message is the extended-query resynchronization point.
+    #[must_use]
+    pub fn is_sync(&self) -> bool {
+        self.kind == PostgresRequestKind::Sync
+    }
+
+    /// Consumes one complete backend frame without retaining response data.
+    pub fn observe_response(
+        &mut self,
+        bytes: &[u8],
+        config: &ProtocolExtractionConfig,
+    ) -> Result<PostgresRequestProgress, PostgresExtraction> {
+        let response = parse_postgres_response(bytes, config)?;
+        let message_type = *bytes.first().ok_or(PostgresExtraction::MalformedFrame)?;
+
+        if matches!(message_type, b'A' | b'K' | b'N' | b'S') {
+            return Ok(PostgresRequestProgress::Continue);
+        }
+
+        if message_type == b'E' {
+            return match self.kind {
+                PostgresRequestKind::Parse
+                | PostgresRequestKind::Bind
+                | PostgresRequestKind::DescribeStatement
+                | PostgresRequestKind::DescribePortal
+                | PostgresRequestKind::Close
+                | PostgresRequestKind::Execute => Ok(PostgresRequestProgress::Complete {
+                    response,
+                    discard_until_sync: true,
+                }),
+                PostgresRequestKind::FunctionCall | PostgresRequestKind::Sync => {
+                    self.retain_cycle_response(response)?;
+                    Ok(PostgresRequestProgress::Continue)
+                }
+                PostgresRequestKind::Password => Ok(PostgresRequestProgress::Complete {
+                    response,
+                    discard_until_sync: false,
+                }),
+                PostgresRequestKind::NoResponse => Err(PostgresExtraction::UnexpectedMessage),
+            };
+        }
+
+        match self.kind {
+            PostgresRequestKind::Parse if message_type == b'1' => {
+                Ok(complete_postgres_request(response))
+            }
+            PostgresRequestKind::Bind if message_type == b'2' => {
+                Ok(complete_postgres_request(response))
+            }
+            PostgresRequestKind::DescribeStatement => {
+                self.observe_statement_description(message_type, response)
+            }
+            PostgresRequestKind::DescribePortal if matches!(message_type, b'T' | b'n') => {
+                Ok(complete_postgres_request(response))
+            }
+            PostgresRequestKind::Close if message_type == b'3' => {
+                Ok(complete_postgres_request(response))
+            }
+            PostgresRequestKind::Execute if matches!(message_type, b'C' | b'I' | b's') => {
+                Ok(complete_postgres_request(response))
+            }
+            PostgresRequestKind::Execute
+                if matches!(message_type, b'D' | b'G' | b'H' | b'W' | b'c' | b'd') =>
+            {
+                Ok(PostgresRequestProgress::Continue)
+            }
+            PostgresRequestKind::FunctionCall if message_type == b'V' => {
+                self.retain_cycle_response(response)?;
+                Ok(PostgresRequestProgress::Continue)
+            }
+            PostgresRequestKind::FunctionCall | PostgresRequestKind::Sync
+                if message_type == b'Z' =>
+            {
+                self.complete_cycle(response, config.max_attributes)
+            }
+            PostgresRequestKind::Password if message_type == b'R' => {
+                Ok(complete_postgres_request(response))
+            }
+            _ => Err(PostgresExtraction::UnexpectedMessage),
+        }
+    }
+
+    fn observe_statement_description(
+        &mut self,
+        message_type: u8,
+        response: ParsedPostgresResponse,
+    ) -> Result<PostgresRequestProgress, PostgresExtraction> {
+        match (self.phase, message_type) {
+            (PostgresRequestPhase::Initial, b't') => {
+                self.phase = PostgresRequestPhase::ParameterDescription;
+                Ok(PostgresRequestProgress::Continue)
+            }
+            (PostgresRequestPhase::ParameterDescription, b'T' | b'n') => {
+                Ok(complete_postgres_request(response))
+            }
+            _ => Err(PostgresExtraction::UnexpectedMessage),
+        }
+    }
+
+    fn retain_cycle_response(
+        &mut self,
+        response: ParsedPostgresResponse,
+    ) -> Result<(), PostgresExtraction> {
+        if self.pending_response.is_some() {
+            return Err(PostgresExtraction::UnexpectedMessage);
+        }
+        self.pending_response = Some(response);
+        Ok(())
+    }
+
+    fn complete_cycle(
+        &mut self,
+        ready: ParsedPostgresResponse,
+        max_attributes: usize,
+    ) -> Result<PostgresRequestProgress, PostgresExtraction> {
+        let response = match self.kind {
+            PostgresRequestKind::Sync => match self.pending_response.take() {
+                Some(mut pending) => {
+                    merge_unique_attributes(
+                        &mut pending.attributes,
+                        ready.attributes,
+                        max_attributes,
+                    );
+                    pending
+                }
+                None => ready,
+            },
+            PostgresRequestKind::FunctionCall => {
+                let Some(mut pending) = self.pending_response.take() else {
+                    return Err(PostgresExtraction::UnexpectedMessage);
+                };
+                merge_unique_attributes(&mut pending.attributes, ready.attributes, max_attributes);
+                pending
+            }
+            _ => return Err(PostgresExtraction::UnexpectedMessage),
+        };
+        Ok(complete_postgres_request(response))
+    }
+}
+
+fn complete_postgres_request(response: ParsedPostgresResponse) -> PostgresRequestProgress {
+    PostgresRequestProgress::Complete {
+        response,
+        discard_until_sync: false,
     }
 }
 

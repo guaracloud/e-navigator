@@ -174,10 +174,17 @@ At the repository baseline, PostgreSQL, MySQL, MongoDB, and Redis already have
 and MySQL response parsing exists. The remaining work is a request-kind and
 terminal-outcome audit, not one blanket response patch.
 
-Implementation update (2026-08-23): PostgreSQL simple Query correlation now
-retains intermediate responses and the first SQLSTATE error through terminal
-`ReadyForQuery`, preserving the terminal transaction state. Extended-query
-pipelining and error recovery through `Sync` remain a separate state machine.
+Implementation update (2026-08-23): PostgreSQL simple Query correlation retains
+intermediate responses and the first SQLSTATE error through terminal
+`ReadyForQuery`, preserving the terminal transaction state. A separate typed
+state machine now matches Parse, Bind, both Describe variants, Close, Execute,
+Password, Sync, and legacy FunctionCall to their protocol-defined terminal
+messages. Extended-query errors mark dependent operations skipped until the
+next captured Sync without fabricating response latency, while commands after
+that Sync remain eligible for matching. COPY data/control and no-response
+messages do not displace the initiating query. Startup correlation, the
+COPY-in rule that ignores already-sent Sync/Flush messages, truncated-prefix
+semantics, and live extended/COPY proof remain open and are not claimed.
 
 ### Universal OTel coexistence detection is impossible from static markers
 

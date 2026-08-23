@@ -23,8 +23,8 @@ use e_navigator_protocol::{
     },
     nats::parse_nats_command,
     postgres::{
-        PostgresSimpleQueryLifecycle, PostgresSimpleQueryProgress, parse_postgres_message,
-        parse_postgres_response,
+        PostgresRequestLifecycle, PostgresRequestProgress, PostgresSimpleQueryLifecycle,
+        PostgresSimpleQueryProgress, parse_postgres_message, parse_postgres_response,
     },
     redis::{RedisResponseRole, parse_redis_command, parse_redis_response, redis_response_role},
     stream::{
@@ -60,6 +60,8 @@ pub(crate) const RAW_PROTOCOL_AF_INET6: u32 = 10;
 pub(crate) const MAX_IN_FLIGHT_REQUESTS: usize = 32;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) const REQUEST_MATCH_TIMEOUT_NANOS: u64 = 30_000_000_000;
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+const POSTGRES_SKIPPED_AFTER_ERROR_WARNING: &str = "postgres_skipped_after_error";
 #[cfg(any(target_os = "linux", test))]
 const PERF_BUFFER_PAGE_COUNT: usize = 64;
 #[cfg(any(target_os = "linux", test))]
@@ -414,6 +416,7 @@ pub(crate) struct ProtocolRegistryCounters {
     pub websocket_frames: u64,
     pub websocket_transition_rejections: u64,
     pub grpc_web_requests: u64,
+    pub postgres_skipped_requests: u64,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -511,7 +514,8 @@ struct InFlightRequest {
     kafka_correlation_id: Option<i32>,
     mongodb_request_id: Option<i32>,
     mysql_response: Option<MysqlResponseLifecycle>,
-    postgres_response: Option<PostgresSimpleQueryLifecycle>,
+    postgres_simple_response: Option<PostgresSimpleQueryLifecycle>,
+    postgres_request_response: Option<PostgresRequestLifecycle>,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -577,7 +581,8 @@ pub fn bench_http2_in_flight_index_cycle() -> u64 {
             kafka_correlation_id: None,
             mongodb_request_id: None,
             mysql_response: None,
-            postgres_response: None,
+            postgres_simple_response: None,
+            postgres_request_response: None,
         }
     }
 
@@ -652,6 +657,7 @@ struct ConnectionStream {
     response_segments: Option<SegmentProgress>,
     in_flight: std::collections::VecDeque<InFlightRequest>,
     http2: Option<Http2ConnectionState>,
+    postgres_discarding_until_sync: bool,
     context: ObservationContext,
     last_seen_unix_nanos: u64,
 }
@@ -872,6 +878,7 @@ impl ProtocolStreamRegistry {
                     request_headers_started_unix_nanos: None,
                     streams: Http2InFlightRequests::default(),
                 }),
+                postgres_discarding_until_sync: false,
                 context,
                 last_seen_unix_nanos: observed_unix_nanos,
             });
@@ -1195,7 +1202,7 @@ fn handle_request_frames(
             );
             continue;
         }
-        let (parsed, frame_bytes) = match frame {
+        let (mut parsed, frame_bytes) = match frame {
             StreamFrame::Complete(frame_bytes) => {
                 match parse_request_frame(stream.protocol, frame_bytes, extraction) {
                     Ok(parsed) => (parsed, Some(frame_bytes.as_slice())),
@@ -1253,12 +1260,51 @@ fn handle_request_frames(
         let mysql_response = frame_bytes
             .filter(|_| stream.protocol == StreamProtocol::Mysql)
             .and_then(|frame| MysqlResponseLifecycle::from_request(frame, extraction).ok());
-        let postgres_response = frame_bytes
+        let postgres_simple_response = frame_bytes
             .filter(|_| stream.protocol == StreamProtocol::Postgresql)
             .and_then(|frame| PostgresSimpleQueryLifecycle::from_request(frame, extraction).ok());
+        let postgres_request_response = frame_bytes
+            .filter(|_| stream.protocol == StreamProtocol::Postgresql)
+            .and_then(|frame| PostgresRequestLifecycle::from_request(frame, extraction).ok());
+        let postgres_is_sync = postgres_request_response
+            .as_ref()
+            .is_some_and(PostgresRequestLifecycle::is_sync);
+        if stream.protocol == StreamProtocol::Postgresql
+            && stream.postgres_discarding_until_sync
+            && !postgres_is_sync
+        {
+            parsed
+                .warning
+                .get_or_insert_with(|| POSTGRES_SKIPPED_AFTER_ERROR_WARNING.to_string());
+            counters.postgres_skipped_requests += 1;
+            signals.push(build_observation(
+                host.clone(),
+                &stream.context,
+                parsed,
+                observed_unix_nanos,
+                None,
+            ));
+            continue;
+        }
+        if stream.protocol == StreamProtocol::Postgresql
+            && postgres_simple_response.is_none()
+            && postgres_request_response.is_none()
+        {
+            signals.push(build_observation(
+                host.clone(),
+                &stream.context,
+                parsed,
+                observed_unix_nanos,
+                None,
+            ));
+            continue;
+        }
         if mysql_response
             .as_ref()
             .is_some_and(|lifecycle| !lifecycle.expects_response())
+            || postgres_request_response
+                .as_ref()
+                .is_some_and(|lifecycle| !lifecycle.expects_response())
         {
             signals.push(build_observation(
                 host.clone(),
@@ -1291,8 +1337,12 @@ fn handle_request_frames(
             kafka_correlation_id,
             mongodb_request_id,
             mysql_response,
-            postgres_response,
+            postgres_simple_response,
+            postgres_request_response,
         });
+        if postgres_is_sync {
+            stream.postgres_discarding_until_sync = false;
+        }
     }
 }
 
@@ -1302,9 +1352,6 @@ fn handle_request_frames(
 enum ResponseAction {
     /// The frame completes exactly the oldest in-flight request.
     PopOne,
-    /// The frame completes every queued request (PostgreSQL ReadyForQuery
-    /// ends a pipelined batch).
-    PopAll,
     /// The frame continues an already-completed or in-progress response and
     /// must not consume a queued request.
     Ignore,
@@ -1331,13 +1378,12 @@ fn response_action(protocol: StreamProtocol, frame: &[u8]) -> ResponseAction {
                 ResponseAction::Ignore
             }
         },
-        // PostgreSQL answers one frontend batch with many backend messages;
-        // ErrorResponse completes the current request, ReadyForQuery closes
-        // the batch, everything else is response payload.
+        // Every parsed PostgreSQL request uses a dedicated lifecycle. These
+        // asynchronous frames are not responses to the queue front; any
+        // other frame without lifecycle state is an orphan candidate.
         StreamProtocol::Postgresql => match frame.first() {
-            Some(b'E') => ResponseAction::PopOne,
-            Some(b'Z') => ResponseAction::PopAll,
-            _ => ResponseAction::Ignore,
+            Some(b'A' | b'K' | b'N' | b'R' | b'S' | b'v') => ResponseAction::Ignore,
+            _ => ResponseAction::PopOne,
         },
         StreamProtocol::Nats => ResponseAction::Ignore,
     }
@@ -1476,9 +1522,27 @@ fn handle_response_frames(
             && stream
                 .in_flight
                 .front()
-                .is_some_and(|entry| entry.postgres_response.is_some())
+                .is_some_and(|entry| entry.postgres_simple_response.is_some())
         {
             handle_postgres_simple_query_response_frame(
+                stream,
+                frame_bytes,
+                truncated,
+                extraction,
+                host,
+                counters,
+                observed_unix_nanos,
+                signals,
+            );
+            continue;
+        }
+        if stream.protocol == StreamProtocol::Postgresql
+            && stream
+                .in_flight
+                .front()
+                .is_some_and(|entry| entry.postgres_request_response.is_some())
+        {
+            handle_postgres_request_response_frame(
                 stream,
                 frame_bytes,
                 truncated,
@@ -1519,7 +1583,6 @@ fn handle_response_frames(
 
         let pop_count = match action {
             ResponseAction::PopOne => 1,
-            ResponseAction::PopAll => stream.in_flight.len(),
             ResponseAction::Ignore => 0,
         };
         for _ in 0..pop_count {
@@ -1786,7 +1849,7 @@ fn handle_postgres_simple_query_response_frame(
     let Some(lifecycle) = stream
         .in_flight
         .front_mut()
-        .and_then(|entry| entry.postgres_response.as_mut())
+        .and_then(|entry| entry.postgres_simple_response.as_mut())
     else {
         counters.unparsed_responses += 1;
         return;
@@ -1807,6 +1870,127 @@ fn handle_postgres_simple_query_response_frame(
         counters.orphan_responses += 1;
         return;
     };
+    emit_completed_postgres_request(
+        entry,
+        response,
+        &stream.context,
+        extraction,
+        host,
+        counters,
+        observed_unix_nanos,
+        signals,
+    );
+}
+
+/// Advances one typed PostgreSQL request through its exact protocol terminal.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[allow(clippy::too_many_arguments)]
+fn handle_postgres_request_response_frame(
+    stream: &mut ConnectionStream,
+    frame: &[u8],
+    truncated: bool,
+    extraction: &ProtocolExtractionConfig,
+    host: &Option<String>,
+    counters: &mut ProtocolRegistryCounters,
+    observed_unix_nanos: u64,
+    signals: &mut Vec<SignalEnvelope>,
+) {
+    if truncated {
+        counters.unparsed_responses += 1;
+        return;
+    }
+
+    let Some(lifecycle) = stream
+        .in_flight
+        .front_mut()
+        .and_then(|entry| entry.postgres_request_response.as_mut())
+    else {
+        counters.unparsed_responses += 1;
+        return;
+    };
+    let (response, discard_until_sync) = match lifecycle.observe_response(frame, extraction) {
+        Ok(PostgresRequestProgress::Continue) => {
+            counters.response_continuations += 1;
+            return;
+        }
+        Ok(PostgresRequestProgress::Complete {
+            response,
+            discard_until_sync,
+        }) => (response, discard_until_sync),
+        Err(_) => {
+            counters.unparsed_responses += 1;
+            return;
+        }
+    };
+
+    let Some(entry) = stream.in_flight.pop_front() else {
+        counters.orphan_responses += 1;
+        return;
+    };
+    emit_completed_postgres_request(
+        entry,
+        response,
+        &stream.context,
+        extraction,
+        host,
+        counters,
+        observed_unix_nanos,
+        signals,
+    );
+    if discard_until_sync {
+        discard_postgres_pipeline_until_sync(stream, host, counters, signals);
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn discard_postgres_pipeline_until_sync(
+    stream: &mut ConnectionStream,
+    host: &Option<String>,
+    counters: &mut ProtocolRegistryCounters,
+    signals: &mut Vec<SignalEnvelope>,
+) {
+    while stream.in_flight.front().is_some_and(|entry| {
+        !entry
+            .postgres_request_response
+            .as_ref()
+            .is_some_and(PostgresRequestLifecycle::is_sync)
+    }) {
+        let Some(mut skipped) = stream.in_flight.pop_front() else {
+            break;
+        };
+        skipped
+            .parsed
+            .warning
+            .get_or_insert_with(|| POSTGRES_SKIPPED_AFTER_ERROR_WARNING.to_string());
+        counters.postgres_skipped_requests += 1;
+        signals.push(build_observation(
+            host.clone(),
+            &stream.context,
+            skipped.parsed,
+            skipped.started_unix_nanos,
+            None,
+        ));
+    }
+    stream.postgres_discarding_until_sync = stream.in_flight.front().is_none_or(|entry| {
+        !entry
+            .postgres_request_response
+            .as_ref()
+            .is_some_and(PostgresRequestLifecycle::is_sync)
+    });
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[allow(clippy::too_many_arguments)]
+fn emit_completed_postgres_request(
+    entry: InFlightRequest,
+    response: e_navigator_protocol::postgres::ParsedPostgresResponse,
+    context: &ObservationContext,
+    extraction: &ProtocolExtractionConfig,
+    host: &Option<String>,
+    counters: &mut ProtocolRegistryCounters,
+    observed_unix_nanos: u64,
+    signals: &mut Vec<SignalEnvelope>,
+) {
     let mut parsed = entry.parsed;
     counters.matched_responses += 1;
     let response = ParsedResponseFrame {
@@ -1819,7 +2003,7 @@ fn handle_postgres_simple_query_response_frame(
     merge_response_attributes(&mut parsed, &response, extraction.max_attributes);
     signals.push(build_observation(
         host.clone(),
-        &stream.context,
+        context,
         parsed,
         entry.started_unix_nanos,
         Some(observed_unix_nanos),
@@ -2159,7 +2343,8 @@ fn handle_http2_frames(
                     kafka_correlation_id: None,
                     mongodb_request_id: None,
                     mysql_response: None,
-                    postgres_response: None,
+                    postgres_simple_response: None,
+                    postgres_request_response: None,
                 },
             );
             continue;
@@ -5566,6 +5751,272 @@ mod tests {
         assert!(!serialized.contains("secret"));
         assert!(!serialized.contains("constraint"));
         assert!(!serialized.contains("accounts"));
+    }
+
+    #[test]
+    fn postgres_extended_pipeline_matches_each_protocol_terminal() {
+        let mut registry = registry();
+        let requests = [
+            postgres_frame(b'P', b"\0SELECT secret_value\0\0\0"),
+            postgres_frame(b'B', &[0; 8]),
+            postgres_frame(b'D', b"S\0"),
+            postgres_frame(b'E', &[0; 5]),
+            postgres_frame(b'S', b""),
+        ];
+        for (index, request) in requests.iter().enumerate() {
+            assert!(
+                handle_at(
+                    &mut registry,
+                    &raw_event(5432, request, request.len() as u32),
+                    5_000 + index as u64,
+                )
+                .is_empty()
+            );
+        }
+        let stream = registry
+            .connections
+            .values()
+            .next()
+            .expect("postgres connection is tracked");
+        assert_eq!(stream.in_flight.len(), requests.len());
+        assert!(
+            stream
+                .in_flight
+                .front()
+                .is_some_and(|entry| entry.postgres_request_response.is_some())
+        );
+
+        for (response, expected_method) in [
+            (postgres_frame(b'1', b""), "SELECT"),
+            (postgres_frame(b'2', b""), "BIND"),
+        ] {
+            let signals = handle_at(&mut registry, &response_event(5432, &response), 8_000);
+            assert_eq!(signals.len(), 1, "counters: {:?}", registry.counters());
+            assert_eq!(
+                observation(&signals[0]).method.as_deref(),
+                Some(expected_method)
+            );
+        }
+
+        let parameter_description = postgres_frame(b't', &[0, 0]);
+        assert!(
+            handle_at(
+                &mut registry,
+                &response_event(5432, &parameter_description),
+                8_000,
+            )
+            .is_empty()
+        );
+        let no_data = postgres_frame(b'n', b"");
+        let signals = handle_at(&mut registry, &response_event(5432, &no_data), 8_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("DESCRIBE"));
+
+        let command_complete = postgres_frame(b'C', b"SELECT 1\0");
+        let signals = handle_at(
+            &mut registry,
+            &response_event(5432, &command_complete),
+            8_000,
+        );
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("EXECUTE"));
+
+        let ready = postgres_frame(b'Z', b"I");
+        let signals = handle_at(&mut registry, &response_event(5432, &ready), 8_000);
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method.as_deref(), Some("SYNC"));
+        assert!(observation.attributes.iter().any(|attribute| {
+            attribute.key == "db.postgresql.transaction.status" && attribute.value == "idle"
+        }));
+        assert_eq!(registry.counters().matched_responses, 5);
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        assert!(!serialized.contains("secret_value"));
+    }
+
+    #[test]
+    fn postgres_extended_error_discards_pipeline_until_sync() {
+        let mut registry = registry();
+        let requests = [
+            postgres_frame(b'P', b"\0SELECT secret_value\0\0\0"),
+            postgres_frame(b'B', &[0; 8]),
+            postgres_frame(b'E', &[0; 5]),
+            postgres_frame(b'S', b""),
+            postgres_frame(b'P', b"\0SELECT another_secret\0\0\0"),
+        ];
+        for (index, request) in requests.iter().enumerate() {
+            assert!(
+                handle_at(
+                    &mut registry,
+                    &raw_event(5432, request, request.len() as u32),
+                    5_000 + index as u64,
+                )
+                .is_empty()
+            );
+        }
+
+        let error = postgres_error(b"23505", b"secret constraint detail");
+        let signals = handle_at(&mut registry, &response_event(5432, &error), 8_000);
+        assert_eq!(signals.len(), 3);
+        let parse = observation(&signals[0]);
+        assert_eq!(parse.method.as_deref(), Some("SELECT"));
+        assert_eq!(parse.duration_nanos, Some(3_000));
+        assert!(
+            parse
+                .attributes
+                .iter()
+                .any(|attribute| { attribute.key == "error.type" && attribute.value == "23505" })
+        );
+        for skipped in &signals[1..] {
+            let skipped = observation(skipped);
+            assert_eq!(skipped.duration_nanos, None);
+            assert_eq!(skipped.confidence, TraceConfidence::Low);
+        }
+        assert_eq!(registry.counters().postgres_skipped_requests, 2);
+        let ready = postgres_frame(b'Z', b"I");
+        let signals = handle_at(&mut registry, &response_event(5432, &ready), 9_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("SYNC"));
+
+        let parse_complete = postgres_frame(b'1', b"");
+        let signals = handle_at(
+            &mut registry,
+            &response_event(5432, &parse_complete),
+            11_000,
+        );
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("SELECT"));
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        assert!(!serialized.contains("secret"));
+    }
+
+    #[test]
+    fn postgres_copy_control_frames_do_not_displace_the_initiating_query() {
+        let mut registry = registry();
+        let query = postgres_frame(b'Q', b"COPY secret_table FROM STDIN\0");
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(5432, &query, query.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let copy_in = postgres_frame(b'G', &[0, 0, 0]);
+        assert!(handle_at(&mut registry, &response_event(5432, &copy_in), 6_000,).is_empty());
+        for (request, method) in [
+            (postgres_frame(b'd', b"secret-copy-row"), "COPY_DATA"),
+            (postgres_frame(b'c', b""), "COPY_DONE"),
+        ] {
+            let signals = handle_at(
+                &mut registry,
+                &raw_event(5432, &request, request.len() as u32),
+                7_000,
+            );
+            assert_eq!(signals.len(), 1);
+            let observation = observation(&signals[0]);
+            assert_eq!(observation.method.as_deref(), Some(method));
+            assert_eq!(observation.duration_nanos, None);
+            let serialized = serde_json::to_string(&signals).expect("signals serialize");
+            assert!(!serialized.contains("secret-copy-row"));
+        }
+        assert_eq!(
+            registry
+                .connections
+                .values()
+                .next()
+                .expect("postgres connection is tracked")
+                .in_flight
+                .len(),
+            1
+        );
+
+        let command_complete = postgres_frame(b'C', b"COPY 1\0");
+        assert!(
+            handle_at(
+                &mut registry,
+                &response_event(5432, &command_complete),
+                8_000,
+            )
+            .is_empty()
+        );
+        let ready = postgres_frame(b'Z', b"I");
+        let signals = handle_at(&mut registry, &response_event(5432, &ready), 9_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("COPY"));
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(4_000));
+        assert!(
+            registry
+                .connections
+                .values()
+                .next()
+                .expect("postgres connection is tracked")
+                .in_flight
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn postgres_late_pipeline_requests_resume_immediately_after_sync_is_sent() {
+        let mut registry = registry();
+        let parse = postgres_frame(b'P', b"\0SELECT secret_value\0\0\0");
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(5432, &parse, parse.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+        let error = postgres_error(b"23505", b"secret constraint detail");
+        let signals = handle_at(&mut registry, &response_event(5432, &error), 6_000);
+        assert_eq!(signals.len(), 1);
+
+        let skipped_bind = postgres_frame(b'B', &[0; 8]);
+        let signals = handle_at(
+            &mut registry,
+            &raw_event(5432, &skipped_bind, skipped_bind.len() as u32),
+            7_000,
+        );
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("BIND"));
+        assert_eq!(observation(&signals[0]).confidence, TraceConfidence::Low);
+        assert_eq!(observation(&signals[0]).duration_nanos, None);
+
+        let sync = postgres_frame(b'S', b"");
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(5432, &sync, sync.len() as u32),
+                8_000,
+            )
+            .is_empty()
+        );
+        let next_parse = postgres_frame(b'P', b"\0SELECT another_secret\0\0\0");
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(5432, &next_parse, next_parse.len() as u32),
+                9_000,
+            )
+            .is_empty(),
+            "messages after the observed Sync belong to the next pipeline segment"
+        );
+
+        let ready = postgres_frame(b'Z', b"I");
+        let signals = handle_at(&mut registry, &response_event(5432, &ready), 10_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("SYNC"));
+        let parse_complete = postgres_frame(b'1', b"");
+        let signals = handle_at(
+            &mut registry,
+            &response_event(5432, &parse_complete),
+            11_000,
+        );
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("SELECT"));
+        assert_eq!(registry.counters().postgres_skipped_requests, 1);
     }
 
     #[test]

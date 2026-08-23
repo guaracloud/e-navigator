@@ -60,8 +60,9 @@ use e_navigator_protocol::{
     },
     nats::{NatsExtraction, parse_nats_command, parse_nats_response},
     postgres::{
-        PostgresExtraction, PostgresSimpleQueryLifecycle, PostgresSimpleQueryProgress,
-        parse_postgres_error_response, parse_postgres_message, parse_postgres_response,
+        PostgresExtraction, PostgresRequestLifecycle, PostgresRequestProgress,
+        PostgresSimpleQueryLifecycle, PostgresSimpleQueryProgress, parse_postgres_error_response,
+        parse_postgres_message, parse_postgres_response,
     },
     redis::{
         RedisExtraction, RedisResponseRole, parse_redis_command, parse_redis_response,
@@ -464,6 +465,21 @@ proptest! {
         let request = postgres_frame(b'Q', b"SELECT 1\0");
         let mut lifecycle = PostgresSimpleQueryLifecycle::from_request(&request, &config)
             .expect("bounded Query fixture parses");
+
+        let _ = lifecycle.observe_response(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_postgres_request_lifecycle_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 4,
+            max_tracestate_bytes: 32,
+        };
+        let request = postgres_frame(b'E', &[0; 5]);
+        let mut lifecycle = PostgresRequestLifecycle::from_request(&request, &config)
+            .expect("bounded Execute fixture parses");
 
         let _ = lifecycle.observe_response(&bytes, &config);
     }
@@ -19118,6 +19134,216 @@ fn postgres_simple_query_lifecycle_retains_first_error_until_readiness() {
             || attribute.value.contains("constraint")
             || attribute.value.contains("accounts")
     }));
+}
+
+#[test]
+fn postgres_extended_lifecycles_require_their_exact_terminals() {
+    let config = ProtocolExtractionConfig::default();
+
+    let mut parse = PostgresRequestLifecycle::from_request(
+        &postgres_frame(b'P', b"\0SELECT secret_value\0\0\0"),
+        &config,
+    )
+    .expect("Parse lifecycle starts");
+    assert_eq!(
+        parse.observe_response(&postgres_frame(b'2', b""), &config),
+        Err(PostgresExtraction::UnexpectedMessage)
+    );
+    assert!(matches!(
+        parse.observe_response(&postgres_frame(b'1', b""), &config),
+        Ok(PostgresRequestProgress::Complete {
+            discard_until_sync: false,
+            ..
+        })
+    ));
+
+    let mut bind = PostgresRequestLifecycle::from_request(&postgres_frame(b'B', &[0; 8]), &config)
+        .expect("Bind lifecycle starts");
+    assert!(matches!(
+        bind.observe_response(&postgres_frame(b'2', b""), &config),
+        Ok(PostgresRequestProgress::Complete {
+            discard_until_sync: false,
+            ..
+        })
+    ));
+
+    let mut statement_description =
+        PostgresRequestLifecycle::from_request(&postgres_frame(b'D', b"S\0"), &config)
+            .expect("statement Describe lifecycle starts");
+    assert_eq!(
+        statement_description.observe_response(&postgres_frame(b't', &[0, 0]), &config),
+        Ok(PostgresRequestProgress::Continue)
+    );
+    assert_eq!(
+        statement_description.observe_response(&postgres_frame(b't', &[0, 0]), &config),
+        Err(PostgresExtraction::UnexpectedMessage)
+    );
+    assert!(matches!(
+        statement_description.observe_response(&postgres_frame(b'n', b""), &config),
+        Ok(PostgresRequestProgress::Complete {
+            discard_until_sync: false,
+            ..
+        })
+    ));
+
+    let mut portal_description =
+        PostgresRequestLifecycle::from_request(&postgres_frame(b'D', b"P\0"), &config)
+            .expect("portal Describe lifecycle starts");
+    assert!(matches!(
+        portal_description.observe_response(
+            &postgres_row_description_frame(&[b"secret_column_name"]),
+            &config,
+        ),
+        Ok(PostgresRequestProgress::Complete {
+            discard_until_sync: false,
+            ..
+        })
+    ));
+
+    let mut close = PostgresRequestLifecycle::from_request(&postgres_frame(b'C', b"P\0"), &config)
+        .expect("Close lifecycle starts");
+    assert!(matches!(
+        close.observe_response(&postgres_frame(b'3', b""), &config),
+        Ok(PostgresRequestProgress::Complete {
+            discard_until_sync: false,
+            ..
+        })
+    ));
+
+    let mut execute =
+        PostgresRequestLifecycle::from_request(&postgres_frame(b'E', &[0; 5]), &config)
+            .expect("Execute lifecycle starts");
+    assert_eq!(
+        execute.observe_response(&postgres_data_row_frame(&[Some(b"secret-cell")]), &config),
+        Ok(PostgresRequestProgress::Continue)
+    );
+    assert!(matches!(
+        execute.observe_response(&postgres_frame(b's', b""), &config),
+        Ok(PostgresRequestProgress::Complete {
+            discard_until_sync: false,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn postgres_extended_errors_discard_only_until_sync() {
+    let config = ProtocolExtractionConfig::default();
+    let error = postgres_error_response_frame(b"23505", b"secret constraint detail");
+    let mut execute =
+        PostgresRequestLifecycle::from_request(&postgres_frame(b'E', &[0; 5]), &config)
+            .expect("Execute lifecycle starts");
+    let PostgresRequestProgress::Complete {
+        response,
+        discard_until_sync,
+    } = execute
+        .observe_response(&error, &config)
+        .expect("Execute error is terminal")
+    else {
+        panic!("expected terminal Execute error");
+    };
+    assert!(discard_until_sync);
+    assert_eq!(response.error_type.as_deref(), Some("23505"));
+
+    let mut sync = PostgresRequestLifecycle::from_request(&postgres_frame(b'S', b""), &config)
+        .expect("Sync lifecycle starts");
+    assert_eq!(
+        sync.observe_response(&error, &config),
+        Ok(PostgresRequestProgress::Continue)
+    );
+    assert_eq!(
+        sync.observe_response(&postgres_frame(b'Z', b"X"), &config),
+        Err(PostgresExtraction::MalformedFrame)
+    );
+    let PostgresRequestProgress::Complete {
+        response,
+        discard_until_sync,
+    } = sync
+        .observe_response(&postgres_frame(b'Z', b"E"), &config)
+        .expect("ReadyForQuery completes Sync")
+    else {
+        panic!("expected terminal Sync response");
+    };
+    assert!(!discard_until_sync);
+    assert_eq!(response.error_type.as_deref(), Some("23505"));
+    assert!(response.attributes.iter().any(|attribute| {
+        attribute.key == "db.postgresql.transaction.status"
+            && attribute.value == "failed_transaction"
+    }));
+    assert!(!response.attributes.iter().any(|attribute| {
+        attribute.value.contains("secret") || attribute.value.contains("constraint")
+    }));
+}
+
+#[test]
+fn postgres_function_call_and_authentication_follow_their_own_cycles() {
+    let config = ProtocolExtractionConfig::default();
+    let mut function =
+        PostgresRequestLifecycle::from_request(&postgres_frame(b'F', &[0; 10]), &config)
+            .expect("FunctionCall lifecycle starts");
+    assert_eq!(
+        function.observe_response(&postgres_frame(b'V', &[0xff; 4]), &config),
+        Ok(PostgresRequestProgress::Continue)
+    );
+    assert!(matches!(
+        function.observe_response(&postgres_frame(b'Z', b"I"), &config),
+        Ok(PostgresRequestProgress::Complete {
+            discard_until_sync: false,
+            ..
+        })
+    ));
+
+    let mut password = PostgresRequestLifecycle::from_request(
+        &postgres_frame(b'p', b"secret-password\0"),
+        &config,
+    )
+    .expect("Password lifecycle starts");
+    let PostgresRequestProgress::Complete {
+        response,
+        discard_until_sync,
+    } = password
+        .observe_response(
+            &postgres_authentication_frame(11, b"secret-challenge"),
+            &config,
+        )
+        .expect("one authentication exchange completes")
+    else {
+        panic!("expected authentication response");
+    };
+    assert!(!discard_until_sync);
+    assert_eq!(response.status_code, "AUTHENTICATION_REQUIRED");
+    assert!(
+        !response
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn postgres_control_messages_explicitly_expect_no_response() {
+    let config = ProtocolExtractionConfig::default();
+    for request in [
+        postgres_frame(b'd', b"secret-copy-row"),
+        postgres_frame(b'c', b""),
+        postgres_frame(b'f', b"secret-copy-error\0"),
+        postgres_frame(b'H', b""),
+        postgres_frame(b'X', b""),
+    ] {
+        let lifecycle = PostgresRequestLifecycle::from_request(&request, &config)
+            .expect("control message lifecycle starts");
+        assert!(!lifecycle.expects_response());
+        assert!(!lifecycle.is_sync());
+    }
+
+    let sync = PostgresRequestLifecycle::from_request(&postgres_frame(b'S', b""), &config)
+        .expect("Sync lifecycle starts");
+    assert!(sync.expects_response());
+    assert!(sync.is_sync());
+    assert_eq!(
+        PostgresRequestLifecycle::from_request(&postgres_frame(b'Q', b"SELECT 1\0"), &config,),
+        Err(PostgresExtraction::UnsupportedMessage)
+    );
 }
 
 #[test]
