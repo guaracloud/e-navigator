@@ -23,7 +23,7 @@ use e_navigator_protocol::{
     },
     nats::parse_nats_command,
     postgres::{parse_postgres_message, parse_postgres_response},
-    redis::{parse_redis_command, parse_redis_response},
+    redis::{RedisResponseRole, parse_redis_command, parse_redis_response, redis_response_role},
     stream::{
         ProtocolStreamDecoder, StreamDecodeLimits, StreamDirection, StreamFrame, StreamProtocol,
     },
@@ -1315,7 +1315,13 @@ fn response_action(protocol: StreamProtocol, frame: &[u8]) -> ResponseAction {
         | StreamProtocol::WebSocket => ResponseAction::Ignore,
         // HTTP/1 is strict request/response over one connection; each framed
         // response completes exactly the oldest in-flight request.
-        StreamProtocol::Http1 | StreamProtocol::Redis => ResponseAction::PopOne,
+        StreamProtocol::Http1 => ResponseAction::PopOne,
+        StreamProtocol::Redis => match redis_response_role(frame) {
+            Ok(RedisResponseRole::Reply) => ResponseAction::PopOne,
+            Ok(RedisResponseRole::Push | RedisResponseRole::Attribute) | Err(_) => {
+                ResponseAction::Ignore
+            }
+        },
         // PostgreSQL answers one frontend batch with many backend messages;
         // ErrorResponse completes the current request, ReadyForQuery closes
         // the batch, everything else is response payload.
@@ -3989,6 +3995,63 @@ mod tests {
         let serialized = serde_json::to_string(&signals[0]).expect("signal serializes");
         assert!(!serialized.contains("secret-key"));
         assert!(!serialized.contains("hello"));
+    }
+
+    #[test]
+    fn redis_resp3_push_does_not_consume_the_command_reply() {
+        let mut registry = registry();
+        let request = b"*2\r\n$3\r\nGET\r\n$10\r\nsecret-key\r\n";
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(6379, request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let response = b">2\r\n+invalidate\r\n$10\r\nsecret-key\r\n$5\r\nhello\r\n";
+        let signals = handle_at(&mut registry, &response_event(6379, response), 7_500);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method.as_deref(), Some("GET"));
+        assert_eq!(observation.duration_nanos, Some(2_500));
+        assert_eq!(registry.counters().matched_responses, 1);
+        assert_eq!(registry.counters().response_continuations, 1);
+        assert_eq!(registry.counters().orphan_responses, 0);
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        assert!(!serialized.contains("secret-key"));
+        assert!(!serialized.contains("hello"));
+    }
+
+    #[test]
+    fn redis_resp3_attributes_do_not_consume_the_decorated_reply() {
+        let mut registry = registry();
+        let request = b"*2\r\n$3\r\nGET\r\n$10\r\nsecret-key\r\n";
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(6379, request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let response = b"|1\r\n+ttl\r\n:10\r\n$5\r\nhello\r\n";
+        let signals = handle_at(&mut registry, &response_event(6379, response), 7_500);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method.as_deref(), Some("GET"));
+        assert_eq!(observation.duration_nanos, Some(2_500));
+        assert_eq!(registry.counters().matched_responses, 1);
+        assert_eq!(registry.counters().response_continuations, 1);
+        assert_eq!(registry.counters().orphan_responses, 0);
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        assert!(!serialized.contains("secret-key"));
+        assert!(!serialized.contains("hello"));
+        assert!(!serialized.contains("ttl"));
     }
 
     #[test]

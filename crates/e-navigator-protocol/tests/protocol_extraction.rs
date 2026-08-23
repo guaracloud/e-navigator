@@ -63,7 +63,10 @@ use e_navigator_protocol::{
         PostgresExtraction, parse_postgres_error_response, parse_postgres_message,
         parse_postgres_response,
     },
-    redis::{RedisExtraction, parse_redis_command, parse_redis_response},
+    redis::{
+        RedisExtraction, RedisResponseRole, parse_redis_command, parse_redis_response,
+        redis_response_role,
+    },
     trace_context::{TraceContextError, parse_traceparent},
 };
 use e_navigator_signals::ProtocolKind;
@@ -1726,6 +1729,26 @@ fn extracts_redis_resp3_push_response_without_raw_values() {
             || attribute.value.contains("customer")
             || attribute.value.contains("secret")
     }));
+}
+
+#[test]
+fn classifies_redis_resp3_out_of_band_frames_without_parsing_values() {
+    assert_eq!(
+        redis_response_role(b">2\r\n+invalidate\r\n$3\r\nkey\r\n"),
+        Ok(RedisResponseRole::Push)
+    );
+    assert_eq!(
+        redis_response_role(b"|1\r\n+ttl\r\n:10\r\n"),
+        Ok(RedisResponseRole::Attribute)
+    );
+    assert_eq!(
+        redis_response_role(b"$5\r\nvalue\r\n"),
+        Ok(RedisResponseRole::Reply)
+    );
+    assert_eq!(
+        redis_response_role(b""),
+        Err(RedisExtraction::MalformedFrame)
+    );
 }
 
 #[test]

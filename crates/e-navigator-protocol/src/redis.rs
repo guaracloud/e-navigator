@@ -32,6 +32,27 @@ pub enum RedisExtraction {
     UnsupportedFrame,
 }
 
+/// How a RESP3 server frame relates to the command/reply queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RedisResponseRole {
+    Reply,
+    Push,
+    Attribute,
+}
+
+/// Classifies queue semantics without retaining or exporting frame contents.
+pub fn redis_response_role(bytes: &[u8]) -> Result<RedisResponseRole, RedisExtraction> {
+    match bytes.first() {
+        Some(b'>') => Ok(RedisResponseRole::Push),
+        Some(b'|') => Ok(RedisResponseRole::Attribute),
+        Some(b'+') | Some(b'-') | Some(b':') | Some(b'$') | Some(b'*') | Some(b'_')
+        | Some(b'#') | Some(b',') | Some(b'(') | Some(b'=') | Some(b'!') | Some(b'%')
+        | Some(b'~') => Ok(RedisResponseRole::Reply),
+        Some(_) => Err(RedisExtraction::UnsupportedFrame),
+        None => Err(RedisExtraction::MalformedFrame),
+    }
+}
+
 pub fn parse_redis_command(
     bytes: &[u8],
     config: &ProtocolExtractionConfig,
