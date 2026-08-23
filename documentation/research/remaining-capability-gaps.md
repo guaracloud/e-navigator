@@ -174,6 +174,11 @@ At the repository baseline, PostgreSQL, MySQL, MongoDB, and Redis already have
 and MySQL response parsing exists. The remaining work is a request-kind and
 terminal-outcome audit, not one blanket response patch.
 
+Implementation update (2026-08-23): PostgreSQL simple Query correlation now
+retains intermediate responses and the first SQLSTATE error through terminal
+`ReadyForQuery`, preserving the terminal transaction state. Extended-query
+pipelining and error recovery through `Sync` remain a separate state machine.
+
 ### Universal OTel coexistence detection is impossible from static markers
 
 OpenTelemetry requires a

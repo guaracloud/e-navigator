@@ -60,8 +60,8 @@ use e_navigator_protocol::{
     },
     nats::{NatsExtraction, parse_nats_command, parse_nats_response},
     postgres::{
-        PostgresExtraction, parse_postgres_error_response, parse_postgres_message,
-        parse_postgres_response,
+        PostgresExtraction, PostgresSimpleQueryLifecycle, PostgresSimpleQueryProgress,
+        parse_postgres_error_response, parse_postgres_message, parse_postgres_response,
     },
     redis::{
         RedisExtraction, RedisResponseRole, parse_redis_command, parse_redis_response,
@@ -451,6 +451,21 @@ proptest! {
 
         let _ = parse_postgres_response(&bytes, &config);
         let _ = parse_postgres_error_response(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_postgres_simple_query_lifecycle_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 256,
+            max_request_line_bytes: 64,
+            max_attributes: 4,
+            max_tracestate_bytes: 32,
+        };
+        let request = postgres_frame(b'Q', b"SELECT 1\0");
+        let mut lifecycle = PostgresSimpleQueryLifecycle::from_request(&request, &config)
+            .expect("bounded Query fixture parses");
+
+        let _ = lifecycle.observe_response(&bytes, &config);
     }
 
     #[test]
@@ -19035,6 +19050,74 @@ fn extracts_postgres_simple_query_operation_without_raw_sql() {
     assert!(!extraction.attributes.iter().any(
         |attribute| attribute.value.contains("customers") || attribute.value.contains("secret")
     ));
+}
+
+#[test]
+fn postgres_simple_query_lifecycle_completes_only_at_ready_for_query() {
+    let config = ProtocolExtractionConfig::default();
+    let request = postgres_frame(b'Q', b"SELECT secret_value\0");
+    let mut lifecycle = PostgresSimpleQueryLifecycle::from_request(&request, &config)
+        .expect("postgres Query lifecycle starts");
+
+    let command_complete = postgres_frame(b'C', b"SELECT 1\0");
+    assert_eq!(
+        lifecycle.observe_response(&command_complete, &config),
+        Ok(PostgresSimpleQueryProgress::Continue)
+    );
+
+    let ready = postgres_frame(b'Z', b"I");
+    let PostgresSimpleQueryProgress::Complete(response) = lifecycle
+        .observe_response(&ready, &config)
+        .expect("ReadyForQuery completes the cycle")
+    else {
+        panic!("expected terminal PostgreSQL response");
+    };
+    assert_eq!(response.status_code, "OK");
+    assert_eq!(response.error_type, None);
+    assert!(!response.attributes.iter().any(|attribute| {
+        attribute.value.contains("secret") || attribute.value.contains("SELECT 1")
+    }));
+}
+
+#[test]
+fn postgres_simple_query_lifecycle_retains_first_error_until_readiness() {
+    let config = ProtocolExtractionConfig::default();
+    let request = postgres_frame(b'Q', b"INSERT INTO accounts VALUES (1)\0");
+    let mut lifecycle = PostgresSimpleQueryLifecycle::from_request(&request, &config)
+        .expect("postgres Query lifecycle starts");
+    let error = postgres_error_response_frame(b"23505", b"secret constraint detail");
+
+    assert_eq!(
+        lifecycle.observe_response(&error, &config),
+        Ok(PostgresSimpleQueryProgress::Continue)
+    );
+    assert_eq!(
+        lifecycle.observe_response(&error, &config),
+        Err(PostgresExtraction::UnexpectedMessage)
+    );
+    assert_eq!(
+        lifecycle.observe_response(&postgres_frame(b'Z', b"X"), &config),
+        Err(PostgresExtraction::MalformedFrame)
+    );
+
+    let ready = postgres_frame(b'Z', b"E");
+    let PostgresSimpleQueryProgress::Complete(response) = lifecycle
+        .observe_response(&ready, &config)
+        .expect("ReadyForQuery completes the failed cycle")
+    else {
+        panic!("expected terminal PostgreSQL error");
+    };
+    assert_eq!(response.status_code, "23505");
+    assert_eq!(response.error_type.as_deref(), Some("23505"));
+    assert!(response.attributes.iter().any(|attribute| {
+        attribute.key == "db.postgresql.transaction.status"
+            && attribute.value == "failed_transaction"
+    }));
+    assert!(!response.attributes.iter().any(|attribute| {
+        attribute.value.contains("secret")
+            || attribute.value.contains("constraint")
+            || attribute.value.contains("accounts")
+    }));
 }
 
 #[test]
