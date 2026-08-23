@@ -4139,6 +4139,9 @@ fn try_tracepoint_network_mmsg_exit(ctx: &TracePointContext) -> Result<u32, i64>
     };
     let callback = bpf_network_mmsg_sum_step as *const () as *mut c_void;
     let context = (&mut state as *mut NetworkMmsgSumState).cast::<c_void>();
+    // SAFETY: `state` remains live and exclusively borrowed for the synchronous
+    // helper call. The callback receives this exact pointer, runs serially, and
+    // never stores it beyond `bpf_loop`.
     let loops = unsafe { bpf_loop(completed, callback, context, 0) };
     if loops != i64::from(completed) || state.failed != 0 {
         record_network_mmsg_diagnostic(NETWORK_MMSG_DIAG_UNSUPPORTED);
@@ -4152,19 +4155,27 @@ fn try_tracepoint_network_mmsg_exit(ctx: &TracePointContext) -> Result<u32, i64>
 }
 
 unsafe extern "C" fn bpf_network_mmsg_sum_step(index: u64, context: *mut c_void) -> i64 {
+    // SAFETY: the only caller passes a live, exclusively borrowed
+    // `NetworkMmsgSumState` for the full synchronous `bpf_loop` invocation.
     let state = unsafe { &mut *context.cast::<NetworkMmsgSumState>() };
     let Some(offset) = message_length_offset(index, state.completed) else {
         state.failed = 1;
         return 1;
     };
-    let length =
-        match unsafe { bpf_probe_read_user::<u32>(state.messages.add(offset).cast::<u32>()) } {
-            Ok(length) => length,
-            Err(_) => {
-                state.failed = 1;
-                return 1;
-            }
-        };
+    // `wrapping_add` avoids asserting that an untrusted userspace allocation is
+    // a Rust in-bounds object. The offset is bounded to one native LP64
+    // `mmsghdr` slot; `bpf_probe_read_user` performs the checked copy and
+    // returns an error for an unreadable address.
+    let length_ptr = state.messages.wrapping_add(offset).cast::<u32>();
+    // SAFETY: `length_ptr` is intentionally treated as an untrusted userspace
+    // address and is dereferenced only by the kernel's checked probe helper.
+    let length = match unsafe { bpf_probe_read_user::<u32>(length_ptr) } {
+        Ok(length) => length,
+        Err(_) => {
+            state.failed = 1;
+            return 1;
+        }
+    };
     state.total = state.total.saturating_add(u64::from(length));
     0
 }
