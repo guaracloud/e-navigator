@@ -21,6 +21,7 @@ const MAX_MYSQL_OPERATION_BYTES: usize = 64;
 const MAX_MYSQL_RESULT_COLUMNS: u64 = 4096;
 const MYSQL_SQLSTATE_BYTES: usize = 5;
 const MYSQL_SERVER_MORE_RESULTS_EXISTS: u16 = 0x0008;
+const MYSQL_SERVER_STATUS_CURSOR_EXISTS: u16 = 0x0040;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedMysqlCommand {
@@ -319,6 +320,7 @@ fn response_transition(
             ))
         }
         MysqlResponsePhase::Columns { remaining, total } => {
+            validate_column_definition_41(payload, config.max_request_line_bytes)?;
             let remaining = remaining
                 .checked_sub(1)
                 .ok_or(MysqlExtraction::MalformedPacket)?;
@@ -337,6 +339,12 @@ fn response_transition(
             metadata_terminated,
         } => {
             if !metadata_terminated && is_eof_packet(payload) {
+                if kind == MysqlResponseKind::BinaryResultset
+                    && mysql_status_flags(payload)
+                        .is_some_and(|flags| flags & MYSQL_SERVER_STATUS_CURSOR_EXISTS != 0)
+                {
+                    return terminal_transition(packet, payload, config);
+                }
                 return Ok(MysqlResponseTransition::Continue(
                     MysqlResponsePhase::Rows {
                         columns,
@@ -371,6 +379,7 @@ fn response_transition(
             Err(MysqlExtraction::UnsupportedResponse)
         }
         MysqlResponsePhase::PrepareParameters { remaining, columns } => {
+            validate_column_definition_41(payload, config.max_request_line_bytes)?;
             let remaining = remaining
                 .checked_sub(1)
                 .ok_or(MysqlExtraction::MalformedPacket)?;
@@ -385,14 +394,16 @@ fn response_transition(
             if !is_eof_packet(payload) {
                 return Err(MysqlExtraction::UnsupportedResponse);
             }
-            let phase = if columns == 0 {
-                MysqlResponsePhase::PrepareFinalTerminator
+            if columns == 0 {
+                terminal_transition(packet, payload, config)
             } else {
-                MysqlResponsePhase::PrepareColumns { remaining: columns }
-            };
-            Ok(MysqlResponseTransition::Continue(phase))
+                Ok(MysqlResponseTransition::Continue(
+                    MysqlResponsePhase::PrepareColumns { remaining: columns },
+                ))
+            }
         }
         MysqlResponsePhase::PrepareColumns { remaining } => {
+            validate_column_definition_41(payload, config.max_request_line_bytes)?;
             let remaining = remaining
                 .checked_sub(1)
                 .ok_or(MysqlExtraction::MalformedPacket)?;
@@ -428,6 +439,12 @@ fn prepare_initial_transition(
     config: &ProtocolExtractionConfig,
 ) -> Result<MysqlResponseTransition, MysqlExtraction> {
     if payload.first() != Some(&MYSQL_OK_PACKET) || payload.len() < 10 {
+        return Err(MysqlExtraction::UnsupportedResponse);
+    }
+    if payload[9] != 0 || payload.len() == 11 {
+        return Err(MysqlExtraction::MalformedPacket);
+    }
+    if !matches!(payload.len(), 10 | 12) {
         return Err(MysqlExtraction::UnsupportedResponse);
     }
     let columns = u16::from_le_bytes([payload[5], payload[6]]);
@@ -467,7 +484,7 @@ fn terminal_transition(
 
 fn is_ok_packet(payload: &[u8]) -> bool {
     let minimum_len = match payload.first() {
-        Some(&MYSQL_OK_PACKET) => 3,
+        Some(&MYSQL_OK_PACKET) => 7,
         Some(&MYSQL_EOF_PACKET) => 9,
         _ => return false,
     };
@@ -477,7 +494,13 @@ fn is_ok_packet(payload: &[u8]) -> bool {
     let Ok((_, after_affected_rows)) = read_length_encoded_integer(payload, 1) else {
         return false;
     };
-    read_length_encoded_integer(payload, after_affected_rows).is_ok()
+    let Ok((_, after_last_insert_id)) = read_length_encoded_integer(payload, after_affected_rows)
+    else {
+        return false;
+    };
+    after_last_insert_id
+        .checked_add(4)
+        .is_some_and(|fixed_fields_end| fixed_fields_end <= payload.len())
 }
 
 fn is_eof_packet(payload: &[u8]) -> bool {
@@ -527,6 +550,37 @@ fn is_text_resultset_row(payload: &[u8], columns: u64) -> bool {
         cursor = value_end;
     }
     cursor == payload.len()
+}
+
+fn validate_column_definition_41(
+    payload: &[u8],
+    max_component_bytes: usize,
+) -> Result<(), MysqlExtraction> {
+    let mut cursor = 0;
+    for _ in 0..6 {
+        let (component_len, component_start) = read_length_encoded_integer(payload, cursor)?;
+        let component_len =
+            usize::try_from(component_len).map_err(|_| MysqlExtraction::MalformedPacket)?;
+        if component_len > max_component_bytes {
+            return Err(MysqlExtraction::QueryTooLong);
+        }
+        cursor = component_start
+            .checked_add(component_len)
+            .filter(|end| *end <= payload.len())
+            .ok_or(MysqlExtraction::MalformedPacket)?;
+    }
+
+    let (fixed_fields_len, fixed_fields_start) = read_length_encoded_integer(payload, cursor)?;
+    if fixed_fields_len != 0x0c {
+        return Err(MysqlExtraction::MalformedPacket);
+    }
+    let fixed_fields_end = fixed_fields_start
+        .checked_add(12)
+        .ok_or(MysqlExtraction::MalformedPacket)?;
+    if fixed_fields_end != payload.len() {
+        return Err(MysqlExtraction::MalformedPacket);
+    }
+    Ok(())
 }
 
 fn read_length_encoded_integer(
