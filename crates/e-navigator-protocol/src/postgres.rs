@@ -30,7 +30,74 @@ pub enum PostgresExtraction {
     MalformedFrame,
     QueryTooLong,
     UnsupportedMessage,
+    UnexpectedMessage,
     MissingSqlstate,
+}
+
+/// Bounded response state for one PostgreSQL simple-query command cycle.
+///
+/// A Query message can contain multiple SQL statements. `CommandComplete` and
+/// `ErrorResponse` therefore do not end the frontend command cycle;
+/// `ReadyForQuery` does. The first error is retained without its message text
+/// and emitted only when readiness closes the cycle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostgresSimpleQueryLifecycle {
+    pending_error: Option<ParsedPostgresResponse>,
+}
+
+/// Observable progress of one PostgreSQL simple-query response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PostgresSimpleQueryProgress {
+    Continue,
+    Complete(ParsedPostgresResponse),
+}
+
+impl PostgresSimpleQueryLifecycle {
+    /// Creates lifecycle state from one complete frontend Query frame.
+    pub fn from_request(
+        bytes: &[u8],
+        config: &ProtocolExtractionConfig,
+    ) -> Result<Self, PostgresExtraction> {
+        if bytes.first() != Some(&b'Q') {
+            return Err(PostgresExtraction::UnsupportedMessage);
+        }
+        parse_postgres_message(bytes, config)?;
+        Ok(Self {
+            pending_error: None,
+        })
+    }
+
+    /// Consumes one complete backend frame without retaining response text.
+    pub fn observe_response(
+        &mut self,
+        bytes: &[u8],
+        config: &ProtocolExtractionConfig,
+    ) -> Result<PostgresSimpleQueryProgress, PostgresExtraction> {
+        let response = parse_postgres_response(bytes, config)?;
+        match bytes.first() {
+            Some(b'E') if self.pending_error.is_none() => {
+                self.pending_error = Some(response);
+                Ok(PostgresSimpleQueryProgress::Continue)
+            }
+            Some(b'E') => Err(PostgresExtraction::UnexpectedMessage),
+            Some(b'Z') => {
+                let response = match self.pending_error.take() {
+                    Some(mut error) => {
+                        merge_unique_attributes(
+                            &mut error.attributes,
+                            response.attributes,
+                            config.max_attributes,
+                        );
+                        error
+                    }
+                    None => response,
+                };
+                Ok(PostgresSimpleQueryProgress::Complete(response))
+            }
+            Some(_) => Ok(PostgresSimpleQueryProgress::Continue),
+            None => Err(PostgresExtraction::MalformedFrame),
+        }
+    }
 }
 
 pub fn parse_postgres_message(
@@ -951,5 +1018,23 @@ fn push_attribute(
             key: key.to_string(),
             value: value.to_string(),
         });
+    }
+}
+
+fn merge_unique_attributes(
+    attributes: &mut Vec<TraceAttribute>,
+    additions: Vec<TraceAttribute>,
+    max_attributes: usize,
+) {
+    for attribute in additions {
+        if attributes.len() >= max_attributes {
+            return;
+        }
+        if !attributes
+            .iter()
+            .any(|existing| existing.key == attribute.key)
+        {
+            attributes.push(attribute);
+        }
     }
 }

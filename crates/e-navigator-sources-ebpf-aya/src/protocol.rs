@@ -22,7 +22,10 @@ use e_navigator_protocol::{
         MysqlResponseLifecycle, MysqlResponseProgress, parse_mysql_command, parse_mysql_response,
     },
     nats::parse_nats_command,
-    postgres::{parse_postgres_message, parse_postgres_response},
+    postgres::{
+        PostgresSimpleQueryLifecycle, PostgresSimpleQueryProgress, parse_postgres_message,
+        parse_postgres_response,
+    },
     redis::{RedisResponseRole, parse_redis_command, parse_redis_response, redis_response_role},
     stream::{
         ProtocolStreamDecoder, StreamDecodeLimits, StreamDirection, StreamFrame, StreamProtocol,
@@ -508,6 +511,7 @@ struct InFlightRequest {
     kafka_correlation_id: Option<i32>,
     mongodb_request_id: Option<i32>,
     mysql_response: Option<MysqlResponseLifecycle>,
+    postgres_response: Option<PostgresSimpleQueryLifecycle>,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -573,6 +577,7 @@ pub fn bench_http2_in_flight_index_cycle() -> u64 {
             kafka_correlation_id: None,
             mongodb_request_id: None,
             mysql_response: None,
+            postgres_response: None,
         }
     }
 
@@ -1248,6 +1253,9 @@ fn handle_request_frames(
         let mysql_response = frame_bytes
             .filter(|_| stream.protocol == StreamProtocol::Mysql)
             .and_then(|frame| MysqlResponseLifecycle::from_request(frame, extraction).ok());
+        let postgres_response = frame_bytes
+            .filter(|_| stream.protocol == StreamProtocol::Postgresql)
+            .and_then(|frame| PostgresSimpleQueryLifecycle::from_request(frame, extraction).ok());
         if mysql_response
             .as_ref()
             .is_some_and(|lifecycle| !lifecycle.expects_response())
@@ -1283,6 +1291,7 @@ fn handle_request_frames(
             kafka_correlation_id,
             mongodb_request_id,
             mysql_response,
+            postgres_response,
         });
     }
 }
@@ -1452,6 +1461,24 @@ fn handle_response_frames(
         }
         if stream.protocol == StreamProtocol::Mysql {
             handle_mysql_response_frame(
+                stream,
+                frame_bytes,
+                truncated,
+                extraction,
+                host,
+                counters,
+                observed_unix_nanos,
+                signals,
+            );
+            continue;
+        }
+        if stream.protocol == StreamProtocol::Postgresql
+            && stream
+                .in_flight
+                .front()
+                .is_some_and(|entry| entry.postgres_response.is_some())
+        {
+            handle_postgres_simple_query_response_frame(
                 stream,
                 frame_bytes,
                 truncated,
@@ -1708,6 +1735,68 @@ fn handle_mysql_response_frame(
             return;
         }
         Ok(MysqlResponseProgress::Complete(response)) => response,
+        Err(_) => {
+            counters.unparsed_responses += 1;
+            return;
+        }
+    };
+
+    let Some(entry) = stream.in_flight.pop_front() else {
+        counters.orphan_responses += 1;
+        return;
+    };
+    let mut parsed = entry.parsed;
+    counters.matched_responses += 1;
+    let response = ParsedResponseFrame {
+        protocol: None,
+        signal_status_code: None,
+        status_code: Some(response.status_code),
+        error_type: response.error_type,
+        attributes: response.attributes,
+    };
+    merge_response_attributes(&mut parsed, &response, extraction.max_attributes);
+    signals.push(build_observation(
+        host.clone(),
+        &stream.context,
+        parsed,
+        entry.started_unix_nanos,
+        Some(observed_unix_nanos),
+    ));
+}
+
+/// Advances a PostgreSQL simple-query cycle through every backend message and
+/// emits only when `ReadyForQuery` closes the cycle.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[allow(clippy::too_many_arguments)]
+fn handle_postgres_simple_query_response_frame(
+    stream: &mut ConnectionStream,
+    frame: &[u8],
+    truncated: bool,
+    extraction: &ProtocolExtractionConfig,
+    host: &Option<String>,
+    counters: &mut ProtocolRegistryCounters,
+    observed_unix_nanos: u64,
+    signals: &mut Vec<SignalEnvelope>,
+) {
+    if truncated {
+        counters.unparsed_responses += 1;
+        return;
+    }
+
+    let Some(lifecycle) = stream
+        .in_flight
+        .front_mut()
+        .and_then(|entry| entry.postgres_response.as_mut())
+    else {
+        counters.unparsed_responses += 1;
+        return;
+    };
+    let response = match lifecycle.observe_response(frame, extraction) {
+        Ok(PostgresSimpleQueryProgress::Continue) => {
+            counters.response_continuations += 1;
+            return;
+        }
+        Ok(PostgresSimpleQueryProgress::Complete(response)) => response,
         Err(_) => {
             counters.unparsed_responses += 1;
             return;
@@ -2070,6 +2159,7 @@ fn handle_http2_frames(
                     kafka_correlation_id: None,
                     mongodb_request_id: None,
                     mysql_response: None,
+                    postgres_response: None,
                 },
             );
             continue;
@@ -3862,6 +3952,24 @@ mod tests {
         event
     }
 
+    fn postgres_frame(message_type: u8, body: &[u8]) -> Vec<u8> {
+        let mut frame = Vec::with_capacity(body.len() + 5);
+        frame.push(message_type);
+        frame.extend_from_slice(&((body.len() + 4) as u32).to_be_bytes());
+        frame.extend_from_slice(body);
+        frame
+    }
+
+    fn postgres_error(sqlstate: &[u8], message: &[u8]) -> Vec<u8> {
+        let mut body = b"SERROR\0C".to_vec();
+        body.extend_from_slice(sqlstate);
+        body.push(0);
+        body.push(b'M');
+        body.extend_from_slice(message);
+        body.extend_from_slice(&[0, 0]);
+        postgres_frame(b'E', &body)
+    }
+
     fn kafka_api_versions_request(correlation_id: i32) -> Vec<u8> {
         let mut body = vec![0, 18, 0, 0];
         body.extend_from_slice(&correlation_id.to_be_bytes());
@@ -5408,6 +5516,56 @@ mod tests {
         assert_eq!(registry.counters().response_continuations, 1);
         let serialized = serde_json::to_string(&signals[0]).expect("signal serializes");
         assert!(!serialized.contains("SELECT 1"));
+    }
+
+    #[test]
+    fn postgres_query_retains_error_until_ready_for_query() {
+        let mut registry = registry();
+        let request = postgres_frame(
+            b'Q',
+            b"INSERT INTO accounts VALUES (1); SELECT secret_value\0",
+        );
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(5432, &request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let error = postgres_error(b"23505", b"secret constraint detail");
+        assert!(
+            handle_at(&mut registry, &response_event(5432, &error), 7_000).is_empty(),
+            "ErrorResponse is not the simple-query cycle terminator"
+        );
+
+        let ready = postgres_frame(b'Z', b"E");
+        let signals = handle_at(&mut registry, &response_event(5432, &ready), 9_000);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method.as_deref(), Some("INSERT"));
+        assert_eq!(observation.duration_nanos, Some(4_000));
+        assert!(observation.attributes.iter().any(|attribute| {
+            attribute.key == "db.response.status_code" && attribute.value == "23505"
+        }));
+        assert!(
+            observation
+                .attributes
+                .iter()
+                .any(|attribute| { attribute.key == "error.type" && attribute.value == "23505" })
+        );
+        assert!(observation.attributes.iter().any(|attribute| {
+            attribute.key == "db.postgresql.transaction.status"
+                && attribute.value == "failed_transaction"
+        }));
+        assert_eq!(registry.counters().matched_responses, 1);
+        assert_eq!(registry.counters().orphan_responses, 0);
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        assert!(!serialized.contains("secret"));
+        assert!(!serialized.contains("constraint"));
+        assert!(!serialized.contains("accounts"));
     }
 
     #[test]

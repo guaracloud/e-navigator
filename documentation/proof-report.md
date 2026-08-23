@@ -785,10 +785,13 @@ These areas remain explicitly partial:
   failure text, negotiated protocol versions or option names, notification
   channel or payload values, password values, row field names, notice text,
   parameter status values, or raw error messages, including
-  canonical SQLSTATE validation for notice and error responses, but runtime
-  capture,
-  request/response matching, broad
-  response coverage, and live PostgreSQL proof are not implemented or proven.
+  canonical SQLSTATE validation for notice and error responses. The local
+  stream registry retains a simple Query across any number of response
+  messages, preserves the first SQLSTATE error, and emits only at terminal
+  ReadyForQuery with its transaction state. Extended-query pipeline
+  completion, skip-to-Sync recovery, complete COPY/authentication lifecycles,
+  broad live error coverage, and production PostgreSQL proof are not
+  implemented or proven.
 - **Redis protocol observability:** bounded RESP command and
   simple/integer/bulk/RESP3-scalar/RESP3-blob-error/verbatim/flat-array/
   nested-array/RESP3-map/RESP3-set/RESP3-push/error response parsing is locally
