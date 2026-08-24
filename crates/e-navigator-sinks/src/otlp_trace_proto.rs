@@ -11,19 +11,6 @@ use prost::Message;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-pub(crate) fn trace_record_has_valid_ids(record: &OtelTraceRecord) -> bool {
-    record
-        .trace_id
-        .as_deref()
-        .and_then(|trace_id| hex_to_bytes(trace_id, 16))
-        .is_some()
-        && record
-            .span_id
-            .as_deref()
-            .and_then(|span_id| hex_to_bytes(span_id, 8))
-            .is_some()
-}
-
 pub(crate) fn encode_trace_export_request(
     records: &[OtelTraceRecord],
 ) -> Result<Vec<u8>, ExporterError> {
@@ -34,6 +21,14 @@ pub(crate) fn encode_trace_export_request(
         .encode(&mut bytes)
         .map_err(|err| ExporterError::Encode(err.to_string()))?;
     Ok(bytes)
+}
+
+/// Benchmark seam for the complete trace-record to OTLP protobuf path.
+#[doc(hidden)]
+pub fn bench_encode_trace_export_request(
+    records: &[OtelTraceRecord],
+) -> Result<Vec<u8>, ExporterError> {
+    encode_trace_export_request(records)
 }
 
 fn resource_spans_from_records(records: &[OtelTraceRecord]) -> Vec<ResourceSpans> {
@@ -174,14 +169,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_all_zero_trace_and_span_ids() {
+    fn encoder_drops_all_zero_trace_and_span_ids() {
         let mut record = trace_record();
         record.trace_id = Some("00000000000000000000000000000000".to_string());
-        assert!(!trace_record_has_valid_ids(&record));
+        let bytes = encode_trace_export_request(&[record.clone()]).expect("trace request encodes");
+        let request =
+            ExportTraceServiceRequest::decode(bytes.as_slice()).expect("trace request decodes");
+        assert!(request.resource_spans.is_empty());
 
         record.trace_id = Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string());
         record.span_id = Some("0000000000000000".to_string());
-        assert!(!trace_record_has_valid_ids(&record));
+        let bytes = encode_trace_export_request(&[record]).expect("trace request encodes");
+        let request =
+            ExportTraceServiceRequest::decode(bytes.as_slice()).expect("trace request decodes");
+        assert!(request.resource_spans.is_empty());
+    }
+
+    #[test]
+    fn decoder_accepts_mixed_case_ids_and_rejects_malformed_ids() {
+        assert!(hex_to_bytes("4BF92F3577B34DA6A3CE929D0E0E4736", 16).is_some());
+        assert!(hex_to_bytes("00f067aa0ba902bg", 8).is_none());
+        assert!(hex_to_bytes("00f067aa", 8).is_none());
     }
 
     #[test]

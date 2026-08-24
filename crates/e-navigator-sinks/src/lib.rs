@@ -32,6 +32,8 @@ pub use otel_trace::{
 pub use otlp_http::{
     ExportWorkerTelemetry, MetricTimestampTelemetry, OtlpHttpSink, OtlpHttpTelemetry,
 };
+#[doc(hidden)]
+pub use otlp_trace_proto::bench_encode_trace_export_request;
 pub use pprof_profile::{format_pprof_profile, format_pprof_profile_batch};
 pub use profile_format::{
     E_NAVIGATOR_CPU_PROFILE_METRIC_NAME, ProfileRecord, format_profile_record,

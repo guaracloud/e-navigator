@@ -6,17 +6,19 @@ const MAX_OTLP_ATTRIBUTE_KEY_BYTES: usize = 128;
 const MAX_OTLP_STRING_VALUE_BYTES: usize = 256;
 
 pub(crate) fn key_values(attributes: &BTreeMap<String, Value>) -> Vec<KeyValue> {
-    attributes
-        .iter()
-        .filter_map(|(key, value)| {
-            let key = bounded_attribute_key(key);
-            (!key.is_empty()).then(|| KeyValue {
-                key,
-                value: Some(to_any_value(value)),
-                key_strindex: 0,
-            })
-        })
-        .collect()
+    let mut values = Vec::with_capacity(attributes.len());
+    for (key, value) in attributes {
+        let key = bounded_attribute_key(key);
+        if key.is_empty() {
+            continue;
+        }
+        values.push(KeyValue {
+            key,
+            value: Some(to_any_value(value)),
+            key_strindex: 0,
+        });
+    }
+    values
 }
 
 pub(crate) fn to_any_value(value: &Value) -> AnyValue {

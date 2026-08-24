@@ -129,6 +129,30 @@ local whole-agent pairs and a fresh 33-arm homelab run; the full method and
 exact non-claims are in
 `documentation/proof/optimization6-20260823/report.md`.
 
+### Optimization campaign 8, 2026-08-24
+
+Campaign 8 retained two profile-backed OTLP trace-export simplifications:
+preallocate the bounded attribute vector, and trust the formatter's validated
+trace-identity invariant at enqueue instead of decoding both IDs twice. The
+complete protocol-error trace payload improved from 2.225948 us to 2.042134 us,
+an estimated -8.257775% mean change with a 95% interval from -10.205169% to
+-6.353444%. Defensive ID validation remains in the standalone protobuf encoder,
+and the permanent Criterion case plus encode/decode tests guard the boundary.
+
+One uncontaminated local whole-agent pair was directionally favorable for CPU
+(-7.160083%) with nearly flat RSS (+0.234821%); three later arms were excluded
+for measured host contamination, so no aggregate or latency claim is made. A
+fresh, explicitly approved 33-arm `kubectl --context homelab` comparison
+completed 591,030 measured operations with zero errors and zero hard loss. It
+measured E-Navigator at +15.545410% CPU and -6.379006% RSS versus Beyla plus
+Alloy. The replacement target therefore remains a CPU NO-GO.
+
+The 45-second allocation windows remain diagnostic only because the Rust libc,
+Beyla Go-runtime, and Alloy Go-metric probes have different semantics. Exact
+CPU, RSS, allocation, throughput, latency, signal, image identity, size,
+quality, drift, exclusion, and cleanup evidence is in
+`documentation/proof/optimization8-20260824/report.md`.
+
 ### Optimization campaign 7, 2026-08-24
 
 Campaign 7 retained one allocation-free sensitive-key hot-path simplification:

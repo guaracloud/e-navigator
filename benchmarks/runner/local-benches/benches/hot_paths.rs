@@ -45,8 +45,8 @@ use e_navigator_signals::{
 };
 use e_navigator_sinks::{
     HttpExporterConfig, HttpJsonExporter, OtlpHttpSink, PrometheusHttpSink,
-    format_otel_metric_record, format_otel_trace_record, format_pprof_profile,
-    format_profile_record, serialize_signal_line,
+    bench_encode_trace_export_request, format_otel_metric_record, format_otel_trace_record,
+    format_pprof_profile, format_profile_record, serialize_signal_line,
 };
 use e_navigator_sources_ebpf_aya::{
     bench_inline_sample, bench_perf_sample_into_owned, bench_ring_sample_handoff,
@@ -1016,6 +1016,16 @@ fn bench_serialization_and_exporter(c: &mut Criterion) {
     });
     c.bench_function("formatter/otel_protocol_error_trace_record", |b| {
         b.iter(|| format_otel_trace_record(black_box(&request_error_span)).unwrap())
+    });
+    let request_error_record =
+        format_otel_trace_record(&request_error_span).expect("trace fixture formats");
+    c.bench_function("formatter/otlp_protocol_error_trace_payload", |b| {
+        b.iter(|| {
+            bench_encode_trace_export_request(std::slice::from_ref(black_box(
+                &request_error_record,
+            )))
+            .unwrap()
+        })
     });
     c.bench_function("sink/otlp_no_identity_warning", |b| {
         b.iter(|| {
