@@ -698,6 +698,7 @@ fn bench_generators(c: &mut Criterion) {
         TraceCorrelationGenerator::with_limits(8192, 8192, 4096),
         trace_signals(),
     );
+    bench_trace_correlation_unique_at_capacity(c);
     bench_generator(
         c,
         "generator/request_correlation",
@@ -718,6 +719,34 @@ fn bench_generators(c: &mut Criterion) {
         RuntimeSecurityGenerator::with_kubernetes_api_endpoints([("10.43.0.1".to_string(), 443)]),
         security_signals(),
     );
+}
+
+fn bench_trace_correlation_unique_at_capacity(c: &mut Criterion) {
+    let runtime = Runtime::new().unwrap();
+    let generator = TraceCorrelationGenerator::with_limits(8192, 8192, 4096);
+    for index in 0..8192 {
+        let signal = network_close_signal(index);
+        black_box(observe_generator_like_runner(&runtime, &generator, &signal));
+    }
+    let index = Cell::new(8192_u64);
+
+    c.bench_function("generator/trace_correlation_unique_at_capacity", |b| {
+        b.iter_batched(
+            || {
+                let next = index.get().wrapping_add(1);
+                index.set(next);
+                network_close_signal(next)
+            },
+            |signal| {
+                black_box(observe_generator_like_runner(
+                    &runtime,
+                    &generator,
+                    black_box(&signal),
+                ));
+            },
+            BatchSize::SmallInput,
+        )
+    });
 }
 
 fn bench_request_correlation_unique_at_capacity(c: &mut Criterion) {
