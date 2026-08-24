@@ -6,6 +6,22 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+### Performance
+
+- Construct protocol observation context only when a protocol connection stream
+  is created, avoiding repeated procfs cgroup opens for established requests
+  while preserving source-time attribution, discovery context, and bounds.
+- Insert bounded request-correlation fingerprints once instead of hashing each
+  new fingerprint through both `contains` and `insert`, preserving duplicate and
+  deterministic oldest-entry eviction behavior.
+
+### Validation
+
+- Record the profile-first local and 33-arm homelab optimization campaign,
+  including CPU, RSS, allocations, throughput, latency, signal completeness,
+  bundle size, rejected experiments, and the remaining CPU NO-GO against
+  combined Beyla plus Alloy.
+
 ## [0.5.0-rc.4] - 2026-08-23
 
 ### Added

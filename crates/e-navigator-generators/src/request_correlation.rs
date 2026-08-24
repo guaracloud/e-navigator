@@ -420,21 +420,20 @@ where
     T: Eq + Hash,
 {
     fn insert_if_new(&mut self, fingerprint: T, max_entries: usize) -> bool {
-        if self.entries.contains(&fingerprint) {
+        let fingerprint = Arc::new(fingerprint);
+        if !self.entries.insert(fingerprint.clone()) {
             return false;
         }
 
         let max_entries = max_entries.max(1);
-        while self.entries.len() >= max_entries {
+        while self.entries.len() > max_entries {
             let Some(oldest) = self.insertion_order.pop_front() else {
                 break;
             };
             self.entries.remove(oldest.as_ref());
         }
 
-        let fingerprint = Arc::new(fingerprint);
-        self.insertion_order.push_back(fingerprint.clone());
-        self.entries.insert(fingerprint);
+        self.insertion_order.push_back(fingerprint);
         true
     }
 }
