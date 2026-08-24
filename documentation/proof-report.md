@@ -198,6 +198,18 @@ or chart rendering:
 
 Guarded Linux/Kubernetes runs have recorded these slices:
 
+- Optimization campaign 6 CPU NO-GO (2026-08-23 to 2026-08-24, homelab k3s
+  amd64). Profile-first work retained connection-scoped protocol context
+  construction and a single-hash bounded request-fingerprint insert. Final
+  E-Navigator CPU fell 11.833132% from the clean `v0.5.0-rc.4` baseline,
+  106.312703 to 93.732580 millicores. All 33 final arms passed without retry,
+  completed 591,030 of 591,030 measured operations with zero errors, and
+  reported zero hard loss. E-Navigator still used 17.387054% more CPU than
+  combined Beyla plus Alloy while using 12.380561% less RSS, so the dual
+  objective remains unmet. Exact inputs, focused and whole-agent qualification,
+  allocation caveats, latency, signal, size, cleanup, and remaining bottleneck
+  evidence is in `documentation/proof/optimization6-20260823/report.md`.
+
 - Dual BPF event transport proof (2026-07-21, homelab k3s v1.30, kernel 6.6,
   amd64, two NixOS nodes). A locally built, never-pushed image was loaded into
   the homelab only. Three counterbalanced 180-second runs each compared no

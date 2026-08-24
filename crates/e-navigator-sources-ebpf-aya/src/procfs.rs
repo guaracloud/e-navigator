@@ -12,6 +12,16 @@ use tracing::{debug, warn};
 const MAX_CGROUP_BYTES: u64 = 4096;
 const ESRCH: i32 = 3;
 
+#[cfg(test)]
+std::thread_local! {
+    static CONTAINER_CGROUP_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn container_cgroup_read_count() -> usize {
+    CONTAINER_CGROUP_READS.with(std::cell::Cell::get)
+}
+
 /// Bounded source-time container attribution keyed by both PID and cgroup.
 ///
 /// Hot protocol sources can emit many observations for one long-lived
@@ -66,6 +76,9 @@ impl ContainerContextCache {
 }
 
 pub(crate) fn container_from_pid_cgroup(procfs_root: &Path, pid: u32) -> Option<ContainerContext> {
+    #[cfg(test)]
+    CONTAINER_CGROUP_READS.with(|reads| reads.set(reads.get().saturating_add(1)));
+
     let path = procfs_root.join(pid.to_string()).join("cgroup");
     match read_bounded_to_string(&path, MAX_CGROUP_BYTES) {
         Ok(contents) => parse_container_from_cgroup(&contents),

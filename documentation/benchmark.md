@@ -109,6 +109,26 @@ Treat local Criterion output as:
 - **not valid** as live eBPF, Kubernetes, collector, or production overhead
   proof.
 
+### Optimization campaign 6, 2026-08-23 to 2026-08-24
+
+The existing permanent benchmarks qualified two retained changes:
+
+| Benchmark | Before | After | Criterion result |
+| --- | ---: | ---: | ---: |
+| `protocol_stream/request_response_match` | 2.6724-2.8288 us | 1.0223-1.0576 us | mean -58.132%, 95% interval -59.469% to -56.704%, `p = 0` |
+| `generator/request_correlation_unique_at_capacity` | 1.3306-1.4517 us | 1.1216-1.1544 us | mean -10.840%, 95% interval -14.265% to -7.3425%, `p = 0` |
+| `generator/request_correlation` duplicate path | 155.25-160.70 ns | 150.64-154.94 ns | mean -2.0333%, 95% interval -3.2472% to -0.8885%, `p = 0`; within Criterion's practical noise threshold |
+
+The first benchmark exercises matched request/response decode on a persistent
+registry and now has a regression assertion that the established connection
+opens its procfs cgroup file only once. The second keeps the 8,192-entry
+request-fingerprint set at capacity with unique inputs and exercises bounded
+oldest-entry eviction. The third cycles fixed request fixtures after warmup and
+guards duplicate rejection. Focused results were followed by counterbalanced
+local whole-agent pairs and a fresh 33-arm homelab run; the full method and
+exact non-claims are in
+`documentation/proof/optimization6-20260823/report.md`.
+
 ### Immediate generator dispatch, 2026-07-20
 
 The built-in generators perform bounded synchronous derivation. The runner

@@ -859,14 +859,12 @@ impl ProtocolStreamRegistry {
 
         self.evict_if_needed(connection_id, signals);
         let limits = self.limits;
-        let context = discovery_match.as_ref().map_or_else(
-            || ObservationContext::from_raw(&raw, &self.procfs_root, self.source),
-            |discovered| discovered.context.clone(),
-        );
-        let stream = self
-            .connections
-            .entry(connection_id)
-            .or_insert_with(|| ConnectionStream {
+        let stream = self.connections.entry(connection_id).or_insert_with(|| {
+            let context = discovery_match.as_ref().map_or_else(
+                || ObservationContext::from_raw(&raw, &self.procfs_root, self.source),
+                |discovered| discovered.context.clone(),
+            );
+            ConnectionStream {
                 protocol,
                 request_decoder: ProtocolStreamDecoder::new(
                     protocol,
@@ -892,7 +890,8 @@ impl ProtocolStreamRegistry {
                 postgres_discarding_until_sync: false,
                 context,
                 last_seen_unix_nanos: observed_unix_nanos,
-            });
+            }
+        });
         if discovery_match.is_some() {
             self.counters.discovered_connections += 1;
         }
@@ -4333,6 +4332,7 @@ mod tests {
             procfs_root.clone(),
             &ProtocolSourceConfig::default(),
         );
+        let reads_before = crate::procfs::container_cgroup_read_count();
 
         let request = raw_event(6379, b"*1\r\n$4\r\nPING\r\n", 14);
         assert!(handle_at(&mut registry, &request, 5_000).is_empty());
@@ -4341,6 +4341,11 @@ mod tests {
         let response = response_event(6379, b"+PONG\r\n");
         let signals = handle_at(&mut registry, &response, 6_000);
 
+        assert_eq!(
+            crate::procfs::container_cgroup_read_count() - reads_before,
+            1,
+            "an established connection must not reopen its procfs cgroup file"
+        );
         let container = observation(&signals[0])
             .container
             .as_ref()

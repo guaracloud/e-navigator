@@ -1,0 +1,183 @@
+{
+  "schema": "e-navigator.optimization-campaign.v1",
+  "campaign": 6,
+  "dates": {
+    "started": "2026-08-23",
+    "completed": "2026-08-24"
+  },
+  "status": "NO_GO_CPU",
+  "retained_changes": [
+    "construct protocol observation context only when a connection stream is created",
+    "insert bounded request fingerprints once instead of contains plus insert"
+  ],
+  "baseline_revision": "2a6d7ac",
+  "homelab": {
+    "context": "homelab",
+    "kernel": "6.6.68",
+    "kubernetes": "v1.30.4+k3s1",
+    "architecture": "amd64",
+    "nodes": 2,
+    "arms": 33,
+    "validated_arms": 33,
+    "repetitions": 3,
+    "measured_successes": 591030,
+    "measured_scheduled": 591030,
+    "measured_errors": 0,
+    "warmup_successes": 197010,
+    "warmup_errors": 0,
+    "baseline_final_stage": {
+      "e_navigator_cpu_cores_mean": 0.106312703,
+      "e_navigator_cpu_cores_stdev": 0.002718569,
+      "e_navigator_rss_bytes_mean": 119028849.77777778,
+      "e_navigator_rss_bytes_stdev": 11757054.06307393,
+      "beyla_alloy_cpu_cores_mean": 0.07654599,
+      "beyla_alloy_cpu_cores_stdev": 0.000444073,
+      "beyla_alloy_rss_bytes_mean": 136470072.88888887,
+      "beyla_alloy_rss_bytes_stdev": 1662150.953154008,
+      "e_navigator_cpu_change_vs_reference_percent": 38.887358,
+      "e_navigator_rss_change_vs_reference_percent": -12.780255
+    },
+    "procfs_candidate_final_stage": {
+      "e_navigator_cpu_cores_mean": 0.099291049,
+      "e_navigator_cpu_cores_stdev": 0.00558298,
+      "e_navigator_rss_bytes_mean": 122878634.66666667,
+      "e_navigator_rss_bytes_stdev": 1665617.693798645,
+      "beyla_alloy_cpu_cores_mean": 0.0774109,
+      "beyla_alloy_cpu_cores_stdev": 0.001713757,
+      "beyla_alloy_rss_bytes_mean": 145510400.0,
+      "beyla_alloy_rss_bytes_stdev": 4247777.355213315,
+      "e_navigator_cpu_change_vs_reference_percent": 28.264946,
+      "e_navigator_rss_change_vs_reference_percent": -15.553366
+    },
+    "final_stage": {
+      "e_navigator_cpu_cores_mean": 0.09373258,
+      "e_navigator_cpu_cores_stdev": 0.004702499,
+      "e_navigator_rss_bytes_mean": 127035619.55555557,
+      "e_navigator_rss_bytes_stdev": 7667371.428967106,
+      "beyla_alloy_cpu_cores_mean": 0.079849163,
+      "beyla_alloy_cpu_cores_stdev": 0.000964537,
+      "beyla_alloy_rss_bytes_mean": 144985656.88888887,
+      "beyla_alloy_rss_bytes_stdev": 3881413.423488195,
+      "e_navigator_cpu_change_vs_reference_percent": 17.387054,
+      "e_navigator_rss_change_vs_reference_percent": -12.380561,
+      "e_navigator_cpu_change_vs_baseline_percent": -11.833132490291398,
+      "e_navigator_rss_change_vs_baseline_percent": 6.726747164847957
+    },
+    "latency_and_throughput_change_vs_reference_percent": {
+      "http": {
+        "throughput": -0.000953,
+        "p50": -1.684982,
+        "p95": -0.27946,
+        "p99": -0.305169
+      },
+      "grpc": {
+        "throughput": -0.000953,
+        "p50": -2.418992,
+        "p95": 3.177216,
+        "p99": -0.805489
+      },
+      "redis": {
+        "throughput": -0.000953,
+        "p50": -7.084309,
+        "p95": -0.273973,
+        "p99": 2.013058
+      },
+      "postgres": {
+        "throughput": -0.000953,
+        "p50": -4.064588,
+        "p95": -1.93415,
+        "p99": -7.85143
+      },
+      "python_cpu": {
+        "throughput": -0.000953,
+        "p50": 0.930329,
+        "p95": 0.90641,
+        "p99": -4.547606
+      }
+    },
+    "final_e_navigator_signal_summary": {
+      "hard_loss_total": 0.0,
+      "source_samples_decoded": 169814.0,
+      "source_signals_sent": 99288.0,
+      "profile_samples_decoded": 861.0,
+      "profile_signals_sent": 861.0,
+      "traces_enqueued": 98427.0,
+      "traces_sent": 98434.0,
+      "profiles_enqueued": 861.0,
+      "profiles_sent": 860.0
+    }
+  },
+  "focused_benchmarks": {
+    "protocol_stream_request_response_match": {
+      "before_us_low": 2.6724,
+      "before_us_high": 2.8288,
+      "after_us_low": 1.0223,
+      "after_us_high": 1.0576,
+      "mean_change_percent": -58.132,
+      "confidence_interval_percent": [-59.469, -56.704],
+      "p_value": 0.0
+    },
+    "request_correlation_unique_at_capacity": {
+      "before_us_low": 1.3306,
+      "before_us_high": 1.4517,
+      "after_us_low": 1.1216,
+      "after_us_high": 1.1544,
+      "mean_change_percent": -10.84,
+      "confidence_interval_percent": [-14.265, -7.3425],
+      "p_value": 0.0
+    },
+    "request_correlation_duplicate": {
+      "before_ns_low": 155.25,
+      "before_ns_high": 160.7,
+      "after_ns_low": 150.64,
+      "after_ns_high": 154.94,
+      "mean_change_percent": -2.0333,
+      "confidence_interval_percent": [-3.2472, -0.8885],
+      "p_value": 0.0,
+      "criterion_classification": "within_noise_threshold"
+    }
+  },
+  "allocation_diagnostics": {
+    "window_seconds": 45,
+    "baseline": {
+      "allocation_calls": 6523110,
+      "requested_bytes": 904274684,
+      "profile_samples_decoded": 417,
+      "source_samples_decoded": 103266
+    },
+    "procfs_candidate": {
+      "allocation_calls": 7114009,
+      "requested_bytes": 1033154681,
+      "profile_samples_decoded": 1360,
+      "source_samples_decoded": 104232
+    },
+    "directional_beyla_alloy": {
+      "allocation_calls": 2307711,
+      "requested_bytes": 296611891
+    },
+    "comparable": false
+  },
+  "sizes": {
+    "baseline_binary_bytes": 18455144,
+    "final_binary_bytes": 18453448,
+    "binary_change_bytes": -1696,
+    "baseline_image_bytes": 38029052,
+    "final_image_bytes": 38028049,
+    "image_change_bytes": -1003
+  },
+  "quality": {
+    "command": "scripts/quality.sh",
+    "skips": [],
+    "status": "PASS"
+  },
+  "cleanup": {
+    "disposable_namespaced_resources": 0,
+    "disposable_cluster_resources": 0,
+    "root_app": "Synced/Healthy",
+    "e_navigator_app": "Synced/Healthy",
+    "standing_daemonset_ready": "2/2",
+    "standing_image_restored": true
+  },
+  "pushed": false,
+  "deployed_to_standing_environment": false
+}
