@@ -1,0 +1,283 @@
+{
+  "schema": "e-navigator.optimization-campaign.v1",
+  "campaign": 8,
+  "dates": {
+    "started": "2026-08-24",
+    "completed": "2026-08-24"
+  },
+  "status": "RETAINED_FOCUSED_WINS_OVERALL_NO_GO_CPU",
+  "retained_changes": [
+    "reserve the exact OTLP attribute-vector upper bound before materialization",
+    "trust the trace formatter's validated identity invariant at enqueue time while retaining defensive validation in the protobuf encoder"
+  ],
+  "regression_coverage": [
+    "complete protocol-error trace-record to OTLP protobuf Criterion benchmark",
+    "encoder decode assertions for all-zero trace and span identifiers",
+    "direct decoder coverage for mixed-case and malformed identifiers",
+    "existing sink telemetry test for declared but invalid trace identity"
+  ],
+  "baseline_revision": "2f8c5fc394dcd6f5127404404d52be2663dd4a59",
+  "profile": {
+    "workload": "Redis at 800 operations per second, 8-second warmup, 5-second attach settle, 45-second measurement",
+    "frequency_hz": 997,
+    "baseline_samples": 1809,
+    "lost_samples": 0,
+    "baseline_selected_overhead_percent": {
+      "sip_hash_write": 3.21,
+      "sensitive_attribute_key": 2.93,
+      "tokio_kernel_wakeup": 2.71,
+      "malloc": 2.49,
+      "free": 1.99,
+      "otlp_hex_to_bytes": 1.82,
+      "key_values_reallocation_stack": 0.83
+    },
+    "qualification": "sampled local profile; the post-capacity profile removed the key_values growth stack, but separate short profiles are directional rather than a statistical A/B"
+  },
+  "focused_benchmarks": {
+    "trace_identity_enqueue_gate": {
+      "before_ns_mean": 53.790255,
+      "before_ns_confidence_interval": [52.930536, 54.671921],
+      "after_ns_mean": 0.384209,
+      "after_ns_confidence_interval": [0.379494, 0.389931],
+      "mean_change_percent": -99.285728,
+      "confidence_interval_percent": [-99.301348, -99.270858],
+      "p_value": 0,
+      "permanent_benchmark": false
+    },
+    "otlp_protocol_error_trace_payload": {
+      "before_ns_mean": 2225.948166,
+      "before_ns_confidence_interval": [2191.239018, 2266.174786],
+      "after_ns_mean": 2042.134365,
+      "after_ns_confidence_interval": [2018.23044, 2068.206703],
+      "mean_change_percent": -8.257775,
+      "confidence_interval_percent": [-10.205169, -6.353444],
+      "p_value": 0,
+      "permanent_benchmark": true
+    }
+  },
+  "local_whole_agent": {
+    "workload": "Redis at 800 operations per second, 8-second warmup, 5-second attach settle, 45-second measurement",
+    "accepted_pairs": 1,
+    "excluded_arms": 3,
+    "exclusion_reason": "host-wide fseventsd, unrelated coverage, syspolicyd, or OrbStack activity contaminated later arms",
+    "pre": {
+      "binary_sha256": "b3514398d2aa42fff79b4458938fa533f836fe1067eb102963a793a6fd94e9fb",
+      "cpu_millicores": 45.351025,
+      "rss_kib": 47696,
+      "rss_hwm_kib": 50488,
+      "protocol_samples_decoded": 84834,
+      "redis_successes": 36000,
+      "redis_errors": 0,
+      "redis_latency_us": {
+        "p50": 250,
+        "p95": 908,
+        "p99": 2147
+      }
+    },
+    "post": {
+      "binary_sha256": "89c17247968f6d20eda74f42710b2cf81c59a385a6839f43aab9f04e709dc9bf",
+      "cpu_millicores": 42.103854,
+      "rss_kib": 47808,
+      "rss_hwm_kib": 50532,
+      "protocol_samples_decoded": 84834,
+      "redis_successes": 36000,
+      "redis_errors": 0,
+      "redis_latency_us": {
+        "p50": 262,
+        "p95": 1010,
+        "p99": 2794
+      }
+    },
+    "changes_percent": {
+      "cpu": -7.160083,
+      "rss": 0.234821,
+      "rss_hwm": 0.087149,
+      "redis_latency_p50": 4.8,
+      "redis_latency_p95": 11.23348,
+      "redis_latency_p99": 30.135072
+    },
+    "qualification": "one uncontaminated shared-VM pair; directional corroboration only, with no latency claim"
+  },
+  "homelab": {
+    "context": "homelab",
+    "kernel": "6.6.68",
+    "kubernetes": "v1.30.4+k3s1",
+    "containerd": "1.7.20-k3s1",
+    "architecture": "amd64",
+    "nodes": 2,
+    "arms": 33,
+    "validated_arms": 33,
+    "repetitions": 3,
+    "warmup_seconds": 15,
+    "measurement_seconds": 45,
+    "measured_scheduled": 591030,
+    "measured_successes": 591030,
+    "measured_errors": 0,
+    "warmup_scheduled": 197010,
+    "warmup_successes": 197010,
+    "warmup_errors": 0,
+    "harness_decision": "PASS",
+    "replacement_decision": "NO_GO_CPU",
+    "current_final_stage": {
+      "e_navigator_cpu_cores_mean": 0.095116412,
+      "e_navigator_cpu_cores_stdev": 0.002878526,
+      "e_navigator_cpu_coefficient_of_variation_percent": 3.026319,
+      "e_navigator_rss_bytes_mean": 128231196.44444443,
+      "e_navigator_rss_bytes_stdev": 3092747.429006,
+      "e_navigator_rss_coefficient_of_variation_percent": 2.411853,
+      "beyla_alloy_cpu_cores_mean": 0.082319507,
+      "beyla_alloy_cpu_cores_stdev": 0.00275712,
+      "beyla_alloy_cpu_coefficient_of_variation_percent": 3.349291,
+      "beyla_alloy_rss_bytes_mean": 136968419.55555555,
+      "beyla_alloy_rss_bytes_stdev": 2596461.379701,
+      "beyla_alloy_rss_coefficient_of_variation_percent": 1.895664,
+      "e_navigator_cpu_change_vs_reference_percent": 15.54541,
+      "e_navigator_rss_change_vs_reference_percent": -6.379006
+    },
+    "previous_campaign_final_stage": {
+      "e_navigator_cpu_cores_mean": 0.096149058,
+      "e_navigator_rss_bytes_mean": 122683392,
+      "beyla_alloy_cpu_cores_mean": 0.076440016,
+      "beyla_alloy_rss_bytes_mean": 136827790.222222,
+      "e_navigator_cpu_change_vs_reference_percent": 25.783671,
+      "e_navigator_rss_change_vs_reference_percent": -10.337372
+    },
+    "current_change_vs_previous_campaign_percent": {
+      "e_navigator_cpu": -1.074005,
+      "e_navigator_rss": 4.52205,
+      "beyla_alloy_cpu": 7.69164,
+      "beyla_alloy_rss": 0.102778,
+      "cpu_gap_percentage_points": -10.238261,
+      "rss_gap_percentage_points": 3.958366
+    },
+    "latency_and_throughput_means": {
+      "http": {
+        "e_navigator_throughput_rps": 100.010582969,
+        "beyla_alloy_throughput_rps": 100.010136305,
+        "e_navigator_latency_us": {"p50": 1802.666667, "p95": 6448.666667, "p99": 6979.666667},
+        "beyla_alloy_latency_us": {"p50": 1836.333333, "p95": 6444.333333, "p99": 6982.666667}
+      },
+      "grpc": {
+        "e_navigator_throughput_rps": 80.008466375,
+        "beyla_alloy_throughput_rps": 80.008109044,
+        "e_navigator_latency_us": {"p50": 2908.666667, "p95": 4353, "p99": 6296.333333},
+        "beyla_alloy_latency_us": {"p50": 2952.333333, "p95": 4177, "p99": 5848}
+      },
+      "redis": {
+        "e_navigator_throughput_rps": 160.016932751,
+        "beyla_alloy_throughput_rps": 160.016218088,
+        "e_navigator_latency_us": {"p50": 1065.666667, "p95": 1961.666667, "p99": 3386.666667},
+        "beyla_alloy_latency_us": {"p50": 1132.333333, "p95": 2030, "p99": 3398.666667}
+      },
+      "postgres": {
+        "e_navigator_throughput_rps": 50.005291485,
+        "beyla_alloy_throughput_rps": 50.005068152,
+        "e_navigator_latency_us": {"p50": 1150.333333, "p95": 2281.333333, "p99": 4303},
+        "beyla_alloy_latency_us": {"p50": 1236, "p95": 2408.666667, "p99": 3945.666667}
+      },
+      "python_cpu": {
+        "e_navigator_throughput_rps": 8.000846638,
+        "beyla_alloy_throughput_rps": 8.000810904,
+        "e_navigator_latency_us": {"p50": 30708.666667, "p95": 47340.333333, "p99": 52161.333333},
+        "beyla_alloy_latency_us": {"p50": 30265.666667, "p95": 41193.333333, "p99": 52367.666667}
+      }
+    },
+    "latency_and_throughput_change_vs_reference_percent": {
+      "http": {"throughput": 0.000447, "p50": -1.833364, "p95": 0.067243, "p99": -0.042964},
+      "grpc": {"throughput": 0.000447, "p50": -1.479056, "p95": 4.21355, "p99": 7.666439},
+      "redis": {"throughput": 0.000447, "p50": -5.887548, "p95": -3.366174, "p99": -0.35308},
+      "postgres": {"throughput": 0.000447, "p50": -6.93096, "p95": -5.286466, "p99": 9.056349},
+      "python_cpu": {"throughput": 0.000447, "p50": 1.463705, "p95": 14.922318, "p99": -0.394009}
+    },
+    "final_e_navigator_signal_summary": {
+      "hard_loss_total": 0,
+      "source_samples_decoded": 170504,
+      "source_signals_sent": 99920,
+      "profile_samples_decoded": 1451,
+      "profile_signals_sent": 1451,
+      "traces_enqueued": 98469,
+      "traces_sent": 98448,
+      "profiles_enqueued": 1451,
+      "profiles_sent": 1450,
+      "invalid_trace_records": 0,
+      "retry_or_permanent_export_failures": 0
+    },
+    "candidate_tag": "e-navigator:campaign8-final-amd64",
+    "candidate_image_id": "sha256:57d277fa71555308119b331a343680a763a491ee301bdf8c49183f094bae680c",
+    "candidate_runtime_image_id": "sha256:0f1540fd814b9c57f046fd746a9b59d5522bd59b07accd1aafab2b5857df8cc1",
+    "candidate_binary_sha256": "b8ca8ab687a1228eff7a3f8f77f580f51b143566e50210e34ff028a05b30fdca",
+    "beyla_chart_version": "1.16.10",
+    "beyla_image": "docker.io/grafana/beyla@sha256:133b8d66190f21e20365d9972e1621513ea5e44518fb71e1c3e0180c64815566",
+    "alloy_image": "docker.io/grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308",
+    "workload_image_id": "sha256:d367537d6d186d755911f8039571ae8a0c23c7d7edf0ae61d161b03f59477b7d"
+  },
+  "allocation_diagnostics": {
+    "window_seconds": 45,
+    "e_navigator_libc": {
+      "allocation_calls": 6638208,
+      "requested_bytes": 969877909,
+      "change_vs_previous_campaign_percent": {
+        "allocation_calls": -3.542487,
+        "requested_bytes": -3.845093
+      }
+    },
+    "beyla_go_runtime": {
+      "allocation_calls": 2284366,
+      "requested_bytes": 288486536
+    },
+    "alloy_go_metrics_delta": {
+      "allocation_calls": 22711,
+      "requested_bytes": 4896888
+    },
+    "directional_beyla_alloy_total": {
+      "allocation_calls": 2307077,
+      "requested_bytes": 293383424,
+      "change_vs_previous_campaign_percent": {
+        "allocation_calls": -0.658679,
+        "requested_bytes": -0.788661
+      }
+    },
+    "directional_e_navigator_gap_percent": {
+      "allocation_calls": 187.732399,
+      "requested_bytes": 230.583745
+    },
+    "failed_reference_attempt": "bpftrace installation timed out after 300 seconds before the measured arm; the clean retry passed",
+    "comparable": false,
+    "limitation": "Rust libc uprobes, Beyla Go-runtime probes, and Alloy Go metrics have different semantics; successful probes logged post-counter tracefs detach warnings."
+  },
+  "sizes": {
+    "arm64": {
+      "pre_binary_bytes": 17192192,
+      "post_binary_bytes": 17192184,
+      "binary_change_bytes": -8,
+      "pre_image_bytes": 37498764,
+      "post_image_bytes": 37497961,
+      "image_change_bytes": -803
+    },
+    "amd64": {
+      "pre_binary_bytes": 18453400,
+      "post_binary_bytes": 18452528,
+      "binary_change_bytes": -872,
+      "pre_image_bytes": 38028204,
+      "post_image_bytes": 38027818,
+      "image_change_bytes": -386
+    }
+  },
+  "quality": {
+    "command": "scripts/quality.sh",
+    "skips": [],
+    "status": "PASS"
+  },
+  "cleanup": {
+    "disposable_namespaced_resources": 0,
+    "disposable_cluster_resources": 0,
+    "root_app": "Synced/Healthy",
+    "e_navigator_app": "Synced/Healthy",
+    "argocd_automation_restored": true,
+    "standing_daemonset_ready": "2/2",
+    "standing_image_restored": true,
+    "candidate_left_only_in_node_local_image_stores": true
+  },
+  "pushed": false,
+  "deployed_to_standing_environment": false
+}

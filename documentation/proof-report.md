@@ -198,6 +198,17 @@ or chart rendering:
 
 Guarded Linux/Kubernetes runs have recorded these slices:
 
+- Optimization campaign 8 CPU NO-GO (2026-08-24, homelab k3s amd64).
+  Profile-backed OTLP changes removed duplicate enqueue-time trace-ID decoding
+  and preallocated bounded attribute vectors. The complete trace-payload
+  Criterion case improved 8.257775%. All 33 final arms passed without retry,
+  completed 591,030 measured operations with zero errors, and reported zero
+  hard loss. E-Navigator still used 15.545410% more CPU than combined Beyla
+  plus Alloy while using 6.379006% less RSS. Exact focused and whole-agent
+  qualification, allocation caveats, latency, signal, size, drift, exclusion,
+  cleanup, and remaining bottleneck evidence is in
+  `documentation/proof/optimization8-20260824/report.md`.
+
 - Optimization campaign 6 CPU NO-GO (2026-08-23 to 2026-08-24, homelab k3s
   amd64). Profile-first work retained connection-scoped protocol context
   construction and a single-hash bounded request-fingerprint insert. Final

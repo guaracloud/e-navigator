@@ -27,7 +27,7 @@ use crate::{
     native_telemetry::{NativeTelemetryRegistry, NativeTelemetrySource},
     otlp_metric_proto::{encode_metric_export_request, metric_series_key},
     otlp_profile_proto::{decode_profile_export_response, encode_profile_export_request},
-    otlp_trace_proto::{encode_trace_export_request, trace_record_has_valid_ids},
+    otlp_trace_proto::encode_trace_export_request,
 };
 
 #[derive(Debug)]
@@ -325,7 +325,9 @@ impl OtlpHttpSink {
             let Some(exporter) = &self.trace_exporter else {
                 return Ok(());
             };
-            if !trace_record_has_valid_ids(&record) {
+            // The formatter validates and normalizes both identifiers as one
+            // unit. The encoder still validates public records defensively.
+            if record.trace_id.is_none() || record.span_id.is_none() {
                 self.invalid_trace_records.fetch_add(1, Ordering::Relaxed);
                 return Ok(());
             }

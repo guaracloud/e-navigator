@@ -8,6 +8,9 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ### Performance
 
+- Reserve bounded OTLP attribute vectors before materialization and remove
+  duplicate enqueue-time trace-ID decoding while retaining formatter and
+  protobuf-encoder validation.
 - Replace per-byte ASCII case folding in the allocation-free sensitive
   attribute-key matcher with equivalent direct ASCII dispatch, and add a
   property test plus a bounded trace-correlation capacity regression benchmark.
@@ -20,6 +23,10 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ### Validation
 
+- Record focused, local, allocation, size, and fresh 33-arm homelab evidence
+  for the OTLP trace-export changes. The complete payload improved 8.257775%,
+  but E-Navigator remained a CPU NO-GO at 15.545410% above Beyla plus Alloy
+  while using 6.379006% less RSS.
 - Record a fresh local and 33-arm homelab campaign for the sensitive-key
   hot-path change. It retained a focused 10.351363% Criterion win but remained
   a CPU NO-GO against Beyla plus Alloy despite a 10.337372% RSS reduction.
