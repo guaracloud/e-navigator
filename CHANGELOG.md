@@ -8,6 +8,9 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ### Performance
 
+- Replace per-byte ASCII case folding in the allocation-free sensitive
+  attribute-key matcher with equivalent direct ASCII dispatch, and add a
+  property test plus a bounded trace-correlation capacity regression benchmark.
 - Construct protocol observation context only when a protocol connection stream
   is created, avoiding repeated procfs cgroup opens for established requests
   while preserving source-time attribution, discovery context, and bounds.
@@ -17,6 +20,9 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ### Validation
 
+- Record a fresh local and 33-arm homelab campaign for the sensitive-key
+  hot-path change. It retained a focused 10.351363% Criterion win but remained
+  a CPU NO-GO against Beyla plus Alloy despite a 10.337372% RSS reduction.
 - Record the profile-first local and 33-arm homelab optimization campaign,
   including CPU, RSS, allocations, throughput, latency, signal completeness,
   bundle size, rejected experiments, and the remaining CPU NO-GO against

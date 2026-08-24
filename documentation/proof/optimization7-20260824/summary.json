@@ -1,0 +1,161 @@
+{
+  "schema": "e-navigator.optimization-campaign.v1",
+  "campaign": 7,
+  "dates": {
+    "started": "2026-08-24",
+    "completed": "2026-08-24"
+  },
+  "status": "NO_GO_CPU",
+  "retained_changes": [
+    "replace per-byte ASCII case folding in the sensitive attribute-key scan with equivalent direct ASCII dispatch"
+  ],
+  "regression_coverage": [
+    "property test comparing the sensitive-key matcher with the reference ASCII case-insensitive implementation",
+    "trace-correlation unique-at-capacity Criterion benchmark"
+  ],
+  "rejected_experiments": [
+    "HashSet-backed trace-correlation cache",
+    "shared cache abstraction for request and trace correlation"
+  ],
+  "baseline_revision": "1fcb0e7f42163813390734290a3b2f40af7db1b7",
+  "focused_benchmarks": {
+    "signal_sensitive_trace_key_checks": {
+      "before_ns_mean": 279.866,
+      "after_ns_mean": 250.896,
+      "mean_change_percent": -10.351363,
+      "confidence_interval_percent": [-12.257, -8.4]
+    },
+    "trace_correlation_unique_at_capacity": {
+      "after_us_confidence_interval": [1.5103, 1.6266],
+      "after_us_median": 1.5658
+    }
+  },
+  "local_whole_agent": {
+    "workload": "Redis at 800 operations per second, 8-second warmup, 5-second attach settle, 45-second measurement",
+    "repetitions_per_image": 3,
+    "pre": {
+      "cpu_millicores_mean": 49.398326,
+      "rss_kib_mean": 45121.333333,
+      "rss_hwm_kib_mean": 50540,
+      "redis_successes": 108000,
+      "redis_errors": 0,
+      "redis_latency_us_mean": {
+        "p50": 277.666667,
+        "p95": 1101.666667,
+        "p99": 3366.666667
+      }
+    },
+    "post": {
+      "cpu_millicores_mean": 48.772956,
+      "rss_kib_mean": 43968,
+      "rss_hwm_kib_mean": 50522.666667,
+      "redis_successes": 108000,
+      "redis_errors": 0,
+      "redis_latency_us_mean": {
+        "p50": 301.333333,
+        "p95": 1150.666667,
+        "p99": 3773.666667
+      }
+    },
+    "changes_percent": {
+      "cpu": -1.265974,
+      "rss": -2.556071,
+      "rss_hwm": -0.034296
+    },
+    "qualification": "directional shared-VM evidence; tail-latency variation is not a performance-win claim"
+  },
+  "homelab": {
+    "context": "homelab",
+    "kernel": "6.6.68",
+    "kubernetes": "v1.30.4+k3s1",
+    "architecture": "amd64",
+    "nodes": 2,
+    "arms": 33,
+    "validated_arms": 33,
+    "repetitions": 3,
+    "warmup_seconds": 15,
+    "measurement_seconds": 45,
+    "measured_scheduled": 591030,
+    "measured_successes": 591030,
+    "measured_errors": 0,
+    "warmup_scheduled": 197010,
+    "warmup_successes": 197010,
+    "warmup_errors": 0,
+    "final_stage": {
+      "e_navigator_cpu_cores_mean": 0.096149058,
+      "e_navigator_cpu_cores_stdev": 0.004292309,
+      "e_navigator_rss_bytes_mean": 122683392,
+      "e_navigator_rss_bytes_stdev": 532233.132517,
+      "beyla_alloy_cpu_cores_mean": 0.076440016,
+      "beyla_alloy_cpu_cores_stdev": 0.003632599,
+      "beyla_alloy_rss_bytes_mean": 136827790.222222,
+      "beyla_alloy_rss_bytes_stdev": 15781856.895395,
+      "e_navigator_cpu_change_vs_reference_percent": 25.783671,
+      "e_navigator_rss_change_vs_reference_percent": -10.337372
+    },
+    "latency_and_throughput_change_vs_reference_percent": {
+      "http": {"throughput": 0.000495, "p50": -2.033037, "p95": -0.388078, "p99": -0.834163},
+      "grpc": {"throughput": 0.000495, "p50": -2.422883, "p95": 1.191626, "p99": 0.005796},
+      "redis": {"throughput": 0.000495, "p50": -8.178654, "p95": -5.729252, "p99": -6.454474},
+      "postgres": {"throughput": 0.000495, "p50": -5.540467, "p95": -3.290993, "p99": -11.118627},
+      "python_cpu": {"throughput": 0.000495, "p50": 0.433534, "p95": -4.09033, "p99": -4.219361}
+    },
+    "final_e_navigator_signal_summary": {
+      "hard_loss_total": 0,
+      "source_samples_decoded": 169836,
+      "source_signals_sent": 99251,
+      "profile_samples_decoded": 775,
+      "profile_signals_sent": 775,
+      "traces_enqueued": 98474,
+      "traces_sent": 98474,
+      "profiles_enqueued": 775,
+      "profiles_sent": 776
+    },
+    "agent_runtime_image_id": "sha256:ad7d3b9b6f6805c9aa5402df26a81c628456f9ff8daeab79fe2c87aa8d75c60b",
+    "workload_runtime_image_id": "sha256:d367537d6d186d755911f8039571ae8a0c23c7d7edf0ae61d161b03f59477b7d"
+  },
+  "allocation_diagnostics": {
+    "window_seconds": 45,
+    "e_navigator_libc": {
+      "allocation_calls": 6882002,
+      "requested_bytes": 1008661895
+    },
+    "beyla_go_runtime": {
+      "allocation_calls": 2298103,
+      "requested_bytes": 289853667
+    },
+    "alloy_go_metrics_delta": {
+      "allocation_calls": 24271,
+      "requested_bytes": 5861952
+    },
+    "directional_beyla_alloy_total": {
+      "allocation_calls": 2322374,
+      "requested_bytes": 295715619
+    },
+    "comparable": false,
+    "limitation": "Rust libc uprobes and Go runtime/metric counters have different semantics; both probes logged tracefs uprobe-detach warnings."
+  },
+  "sizes": {
+    "amd64_pre_binary_bytes": 18453448,
+    "amd64_post_binary_bytes": 18453400,
+    "amd64_binary_change_bytes": -48,
+    "amd64_pre_image_bytes": 38028049,
+    "amd64_post_image_bytes": 38028204,
+    "amd64_image_change_bytes": 155
+  },
+  "quality": {
+    "command": "scripts/quality.sh",
+    "skips": [],
+    "status": "PASS"
+  },
+  "cleanup": {
+    "disposable_namespaced_resources": 0,
+    "disposable_cluster_resources": 0,
+    "root_app": "Synced/Healthy",
+    "e_navigator_app": "Synced/Healthy",
+    "standing_daemonset_ready": "2/2",
+    "standing_image_restored": true
+  },
+  "pushed": false,
+  "deployed_to_standing_environment": false
+}

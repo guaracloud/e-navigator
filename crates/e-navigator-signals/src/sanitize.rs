@@ -27,30 +27,27 @@ pub const SENSITIVE_ATTRIBUTE_KEY_PARTS: [&str; 12] = [
 /// Matching is an allocation-free, case-insensitive substring test because
 /// this runs for every attribute of every envelope on the capture hot path.
 pub fn is_sensitive_attribute_key(key: &str) -> bool {
-    key.as_bytes()
-        .iter()
-        .enumerate()
-        .any(|(index, byte)| match byte.to_ascii_lowercase() {
-            b'a' => {
-                matches_ascii_case_insensitive_at(key, index, "authorization")
-                    || matches_ascii_case_insensitive_at(key, index, "api_key")
-                    || matches_ascii_case_insensitive_at(key, index, "api-key")
-                    || matches_ascii_case_insensitive_at(key, index, "apikey")
-            }
-            b'c' => {
-                matches_ascii_case_insensitive_at(key, index, "cookie")
-                    || matches_ascii_case_insensitive_at(key, index, "credential")
-            }
-            b'j' => matches_ascii_case_insensitive_at(key, index, "jwt"),
-            b'p' => {
-                matches_ascii_case_insensitive_at(key, index, "password")
-                    || matches_ascii_case_insensitive_at(key, index, "passwd")
-                    || matches_ascii_case_insensitive_at(key, index, "private_key")
-            }
-            b's' => matches_ascii_case_insensitive_at(key, index, "secret"),
-            b't' => matches_ascii_case_insensitive_at(key, index, "token"),
-            _ => false,
-        })
+    key.bytes().enumerate().any(|(index, byte)| match byte {
+        b'a' | b'A' => {
+            matches_ascii_case_insensitive_at(key, index, "authorization")
+                || matches_ascii_case_insensitive_at(key, index, "api_key")
+                || matches_ascii_case_insensitive_at(key, index, "api-key")
+                || matches_ascii_case_insensitive_at(key, index, "apikey")
+        }
+        b'c' | b'C' => {
+            matches_ascii_case_insensitive_at(key, index, "cookie")
+                || matches_ascii_case_insensitive_at(key, index, "credential")
+        }
+        b'j' | b'J' => matches_ascii_case_insensitive_at(key, index, "jwt"),
+        b'p' | b'P' => {
+            matches_ascii_case_insensitive_at(key, index, "password")
+                || matches_ascii_case_insensitive_at(key, index, "passwd")
+                || matches_ascii_case_insensitive_at(key, index, "private_key")
+        }
+        b's' | b'S' => matches_ascii_case_insensitive_at(key, index, "secret"),
+        b't' | b'T' => matches_ascii_case_insensitive_at(key, index, "token"),
+        _ => false,
+    })
 }
 
 fn matches_ascii_case_insensitive_at(value: &str, start: usize, needle: &str) -> bool {
@@ -117,6 +114,7 @@ mod tests {
         SENSITIVE_ATTRIBUTE_KEY_PARTS, contains_ascii_case_insensitive, is_sensitive_attribute_key,
         sanitize_kubernetes_labels, truncate_utf8_in_place,
     };
+    use proptest::prelude::*;
     use std::collections::BTreeMap;
 
     #[test]
@@ -166,6 +164,18 @@ mod tests {
                 .iter()
                 .any(|fragment| contains_ascii_case_insensitive(key, fragment));
             assert_eq!(is_sensitive_attribute_key(key), reference, "{key}");
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn sensitive_key_matcher_matches_the_reference_for_ascii_input(bytes in prop::collection::vec(0_u8..=127, 0..128)) {
+            let key = bytes.into_iter().map(char::from).collect::<String>();
+            let reference = SENSITIVE_ATTRIBUTE_KEY_PARTS
+                .iter()
+                .any(|fragment| contains_ascii_case_insensitive(&key, fragment));
+
+            prop_assert_eq!(is_sensitive_attribute_key(&key), reference, "key={:?}", key);
         }
     }
 

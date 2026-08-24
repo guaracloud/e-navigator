@@ -129,6 +129,29 @@ local whole-agent pairs and a fresh 33-arm homelab run; the full method and
 exact non-claims are in
 `documentation/proof/optimization6-20260823/report.md`.
 
+### Optimization campaign 7, 2026-08-24
+
+Campaign 7 retained one allocation-free sensitive-key hot-path simplification:
+the representative request-span attribute mix improved from 279.866 ns to
+250.896 ns, an estimated -10.351363% mean change with a 95% interval from
+-12.257% to -8.400%. An ASCII property test preserves the reference matcher
+semantics, and `generator/trace_correlation_unique_at_capacity` now guards the
+bounded trace-cache unique-churn path.
+
+Three local whole-agent repetitions were directionally favorable for CPU
+(-1.265974%) and RSS (-2.556071%) at fixed 800 Redis operations/second, but
+tail latency varied and is not claimed as a win. A fresh, explicitly approved
+33-arm `kubectl --context homelab` comparison completed 591,030 measured
+operations with zero errors. It measured E-Navigator at +25.783671% CPU and
+-10.337372% RSS versus Beyla plus Alloy. The CPU target is therefore a NO-GO;
+the RSS result is a workload-specific tradeoff, not a replacement decision.
+
+The two 45-second allocation windows are diagnostic only because the Rust
+libc, Beyla Go-runtime, and Alloy Go-metric probes have different semantics.
+The full method, exact image identities, counters, cleanup evidence, and
+remaining bottleneck boundary are in
+`documentation/proof/optimization7-20260824/report.md`.
+
 ### Immediate generator dispatch, 2026-07-20
 
 The built-in generators perform bounded synchronous derivation. The runner
