@@ -10,8 +10,8 @@ use e_navigator_generators::RequestCorrelationGenerator;
 use e_navigator_signals::{
     ContainerContext, KubernetesContext, NetworkAddressFamily, NetworkConnectionCloseEvent,
     NetworkProcessIdentity, NetworkProtocol, ProtocolCaptureRole, ProtocolKind,
-    ProtocolRequestObservation, RequestCorrelationWarning, SignalEnvelope, SignalPayload,
-    TraceAttribute, TraceConfidence, TraceCorrelationKind, TracePeerContext,
+    ProtocolRequestObservation, SignalEnvelope, SignalPayload, TraceAttribute, TraceConfidence,
+    TraceCorrelationKind, TracePeerContext,
 };
 use std::collections::BTreeMap;
 use tokio::sync::mpsc;
@@ -1154,13 +1154,32 @@ async fn observe(
 }
 
 fn assert_request_warning(outputs: &[SignalEnvelope], warning_type: &str) {
-    assert!(outputs.iter().any(|signal| {
-        matches!(
-            &signal.payload,
-            SignalPayload::RequestCorrelationWarning(RequestCorrelationWarning { warning_type: found, .. })
-                if found == warning_type
-        )
-    }));
+    let warning = outputs
+        .iter()
+        .find_map(|signal| match &signal.payload {
+            SignalPayload::RequestCorrelationWarning(warning)
+                if warning.warning_type == warning_type =>
+            {
+                Some(warning)
+            }
+            _ => None,
+        })
+        .expect("expected request correlation warning");
+
+    let expected_message = match warning_type {
+        "missing_trace_context" => "protocol request had no observed trace context",
+        "malformed_trace_context" => "protocol request had malformed trace context",
+        "missing_attribution" => "protocol request has no container or Kubernetes context",
+        "otel_sdk_span_suppressed" => {
+            "request span suppressed because the process has a supported OpenTelemetry zero-code agent"
+        }
+        "application_span_owner_suppressed" => {
+            "request span suppressed because matching Kubernetes labels declare application ownership"
+        }
+        _ => panic!("unexpected request warning type: {warning_type}"),
+    };
+    assert_eq!(warning.message, expected_message);
+    assert_eq!(warning.source_signal_kind, "protocol_request_observation");
 }
 
 fn request_warning_count(outputs: &[SignalEnvelope]) -> usize {

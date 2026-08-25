@@ -8,6 +8,9 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ### Performance
 
+- Replace stringly internal request-warning identities with a closed enum and
+  remove allocated warning codes plus the invariant protocol-request source
+  kind from bounded warning fingerprints while preserving emitted contracts.
 - Reserve bounded OTLP attribute vectors before materialization and remove
   duplicate enqueue-time trace-ID decoding while retaining formatter and
   protobuf-encoder validation.
@@ -23,6 +26,10 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ### Validation
 
+- Record profile-first, focused, paired local, allocation, size, and fresh
+  33-arm homelab evidence for the request-warning fingerprint change. Three
+  clean local pairs improved CPU 7.617767%, but E-Navigator remained a CPU
+  NO-GO at 20.126790% above Beyla plus Alloy while using 17.653951% less RSS.
 - Record focused, local, allocation, size, and fresh 33-arm homelab evidence
   for the OTLP trace-export changes. The complete payload improved 8.257775%,
   but E-Navigator remained a CPU NO-GO at 15.545410% above Beyla plus Alloy

@@ -198,6 +198,17 @@ or chart rendering:
 
 Guarded Linux/Kubernetes runs have recorded these slices:
 
+- Optimization campaign 9 CPU NO-GO (2026-08-24 to 2026-08-25, homelab k3s
+  amd64). A typed private warning boundary removed allocated warning identity
+  and invariant source-kind data from request-warning fingerprints. The exact
+  warning path improved 22.202725%, and three clean local whole-agent pairs
+  improved CPU 7.617767%. All 33 final arms passed without retry, completed
+  591,030 measured operations with zero errors, and reported zero hard loss.
+  E-Navigator still used 20.126790% more CPU than combined Beyla plus Alloy
+  while using 17.653951% less RSS. Exact profile, focused, paired, allocation,
+  latency, signal, size, drift, exclusion, cleanup, and remaining bottleneck
+  evidence is in `documentation/proof/optimization9-20260825/report.md`.
+
 - Optimization campaign 8 CPU NO-GO (2026-08-24, homelab k3s amd64).
   Profile-backed OTLP changes removed duplicate enqueue-time trace-ID decoding
   and preallocated bounded attribute vectors. The complete trace-payload

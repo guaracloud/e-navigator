@@ -149,7 +149,7 @@ impl RequestCorrelationGenerator {
         if request.role == Some(ProtocolCaptureRole::Client)
             && trace_context.trace_id.is_some()
             && trace_context.span_id.is_some()
-            && trace_context.warning_type.is_none()
+            && trace_context.warning_kind.is_none()
             && request.correlation_kind != TraceCorrelationKind::GeneratedTraceContext
         {
             return Ok(Vec::new());
@@ -256,15 +256,16 @@ impl RequestCorrelationGenerator {
             },
         )];
 
-        if let Some(warning_type) = trace_context.warning_type
-            && let Some(warning) = self.warning(signal, request, warning_type)?
+        if let Some(warning_kind) = trace_context.warning_kind
+            && let Some(warning) = self.warning(signal, request, warning_kind)?
         {
             outputs.push(warning);
         }
 
         if request.container.is_none()
             && request.kubernetes.is_none()
-            && let Some(warning) = self.warning(signal, request, "missing_attribution")?
+            && let Some(warning) =
+                self.warning(signal, request, RequestWarningKind::MissingAttribution)?
         {
             outputs.push(warning);
         }
@@ -308,11 +309,10 @@ impl RequestCorrelationGenerator {
         &self,
         signal: &SignalEnvelope,
         request: &ProtocolRequestObservation,
-        warning_type: &str,
+        warning_kind: RequestWarningKind,
     ) -> CoreResult<Option<SignalEnvelope>> {
         let fingerprint = WarningFingerprint::Request {
-            warning_type: warning_type.to_string(),
-            source_signal_kind: signal.kind().to_string(),
+            warning_kind,
             source_module: signal.source.clone(),
             timestamp_unix_nanos: request.start_unix_nanos,
         };
@@ -326,8 +326,8 @@ impl RequestCorrelationGenerator {
             "generator.request_correlation",
             signal.host.clone(),
             RequestCorrelationWarning {
-                warning_type: warning_type.to_string(),
-                message: warning_message(warning_type).to_string(),
+                warning_type: warning_kind.code().to_string(),
+                message: warning_kind.message().to_string(),
                 timestamp_unix_nanos: request.start_unix_nanos,
                 source_signal_kind: signal.kind().to_string(),
                 source_module: signal.source.clone(),
@@ -347,21 +347,19 @@ impl RequestCorrelationGenerator {
         request: &ProtocolRequestObservation,
         reason: SpanSuppressionReason,
     ) -> CoreResult<Option<SignalEnvelope>> {
-        let warning_type = reason.warning_type();
+        let warning_kind = reason.warning_kind();
         let fingerprint = match reason {
             SpanSuppressionReason::ApplicationOwner {
                 namespace,
                 pod_name,
                 pod_uid,
             } => WarningFingerprint::ApplicationSpanOwnership {
-                source_signal_kind: signal.kind().to_string(),
                 source_module: signal.source.clone(),
                 namespace,
                 pod_name,
                 pod_uid,
             },
             SpanSuppressionReason::DetectedOtelSdk => WarningFingerprint::OtelSdkSuppression {
-                source_signal_kind: signal.kind().to_string(),
                 source_module: signal.source.clone(),
                 pid: request.process.as_ref().map(|process| process.pid),
             },
@@ -376,8 +374,8 @@ impl RequestCorrelationGenerator {
             "generator.request_correlation",
             signal.host.clone(),
             RequestCorrelationWarning {
-                warning_type: warning_type.to_string(),
-                message: warning_message(warning_type).to_string(),
+                warning_type: warning_kind.code().to_string(),
+                message: warning_kind.message().to_string(),
                 timestamp_unix_nanos: request.start_unix_nanos,
                 source_signal_kind: signal.kind().to_string(),
                 source_module: signal.source.clone(),
@@ -537,18 +535,15 @@ fn write_peer_fingerprint(
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum WarningFingerprint {
     Request {
-        warning_type: String,
-        source_signal_kind: String,
+        warning_kind: RequestWarningKind,
         source_module: String,
         timestamp_unix_nanos: u64,
     },
     OtelSdkSuppression {
-        source_signal_kind: String,
         source_module: String,
         pid: Option<u32>,
     },
     ApplicationSpanOwnership {
-        source_signal_kind: String,
         source_module: String,
         namespace: String,
         pod_name: String,
@@ -567,10 +562,45 @@ enum SpanSuppressionReason {
 }
 
 impl SpanSuppressionReason {
-    fn warning_type(&self) -> &'static str {
+    fn warning_kind(&self) -> RequestWarningKind {
         match self {
-            Self::ApplicationOwner { .. } => "application_span_owner_suppressed",
-            Self::DetectedOtelSdk => "otel_sdk_span_suppressed",
+            Self::ApplicationOwner { .. } => RequestWarningKind::ApplicationSpanOwnerSuppressed,
+            Self::DetectedOtelSdk => RequestWarningKind::OtelSdkSpanSuppressed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RequestWarningKind {
+    MissingTraceContext,
+    MalformedTraceContext,
+    MissingAttribution,
+    OtelSdkSpanSuppressed,
+    ApplicationSpanOwnerSuppressed,
+}
+
+impl RequestWarningKind {
+    fn code(self) -> &'static str {
+        match self {
+            Self::MissingTraceContext => "missing_trace_context",
+            Self::MalformedTraceContext => "malformed_trace_context",
+            Self::MissingAttribution => "missing_attribution",
+            Self::OtelSdkSpanSuppressed => "otel_sdk_span_suppressed",
+            Self::ApplicationSpanOwnerSuppressed => "application_span_owner_suppressed",
+        }
+    }
+
+    fn message(self) -> &'static str {
+        match self {
+            Self::MissingTraceContext => "protocol request had no observed trace context",
+            Self::MalformedTraceContext => "protocol request had malformed trace context",
+            Self::MissingAttribution => "protocol request has no container or Kubernetes context",
+            Self::OtelSdkSpanSuppressed => {
+                "request span suppressed because the process has a supported OpenTelemetry zero-code agent"
+            }
+            Self::ApplicationSpanOwnerSuppressed => {
+                "request span suppressed because matching Kubernetes labels declare application ownership"
+            }
         }
     }
 }
@@ -579,7 +609,7 @@ impl SpanSuppressionReason {
 struct RequestTraceContext {
     trace_id: Option<String>,
     span_id: Option<String>,
-    warning_type: Option<&'static str>,
+    warning_kind: Option<RequestWarningKind>,
     generated: bool,
 }
 
@@ -589,7 +619,7 @@ fn trace_context(request: &ProtocolRequestObservation) -> RequestTraceContext {
             return RequestTraceContext {
                 trace_id: Some(trace_id.clone()),
                 span_id: Some(span_id.clone()),
-                warning_type: None,
+                warning_kind: None,
                 generated: request.correlation_kind == TraceCorrelationKind::GeneratedTraceContext,
             };
         }
@@ -597,7 +627,7 @@ fn trace_context(request: &ProtocolRequestObservation) -> RequestTraceContext {
             return RequestTraceContext {
                 trace_id: None,
                 span_id: None,
-                warning_type: Some("malformed_trace_context"),
+                warning_kind: Some(RequestWarningKind::MalformedTraceContext),
                 generated: false,
             };
         }
@@ -608,13 +638,13 @@ fn trace_context(request: &ProtocolRequestObservation) -> RequestTraceContext {
             Ok(context) => RequestTraceContext {
                 trace_id: Some(context.trace_id),
                 span_id: Some(context.span_id),
-                warning_type: None,
+                warning_kind: None,
                 generated: request.correlation_kind == TraceCorrelationKind::GeneratedTraceContext,
             },
             Err(_) => RequestTraceContext {
                 trace_id: None,
                 span_id: None,
-                warning_type: Some("malformed_trace_context"),
+                warning_kind: Some(RequestWarningKind::MalformedTraceContext),
                 generated: false,
             },
         };
@@ -623,7 +653,7 @@ fn trace_context(request: &ProtocolRequestObservation) -> RequestTraceContext {
     RequestTraceContext {
         trace_id: None,
         span_id: None,
-        warning_type: Some("missing_trace_context"),
+        warning_kind: Some(RequestWarningKind::MissingTraceContext),
         generated: false,
     }
 }
@@ -806,21 +836,6 @@ fn stable_hash64(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
-}
-
-fn warning_message(warning_type: &str) -> &'static str {
-    match warning_type {
-        "missing_trace_context" => "protocol request had no observed trace context",
-        "malformed_trace_context" => "protocol request had malformed trace context",
-        "missing_attribution" => "protocol request has no container or Kubernetes context",
-        "otel_sdk_span_suppressed" => {
-            "request span suppressed because the process has a supported OpenTelemetry zero-code agent"
-        }
-        "application_span_owner_suppressed" => {
-            "request span suppressed because matching Kubernetes labels declare application ownership"
-        }
-        _ => "request correlation warning",
-    }
 }
 
 fn module_error<T>(err: std::sync::PoisonError<T>) -> CoreError {
