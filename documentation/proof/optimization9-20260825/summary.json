@@ -1,0 +1,330 @@
+{
+  "schema": "e-navigator.optimization-campaign.v1",
+  "campaign": 9,
+  "dates": [
+    "2026-08-24",
+    "2026-08-25"
+  ],
+  "baseline_revision": "80dfcafb77ed60e55bc482c8bf0c1f43e23a814f",
+  "status": "RETAINED_FOCUSED_WIN_OVERALL_NO_GO_CPU",
+  "pushed": false,
+  "deployed_to_standing_environment": false,
+  "retained_changes": [
+    "carry request warning identity as a private closed enum instead of an arbitrary string",
+    "remove allocated warning code and invariant source signal kind from bounded private fingerprints",
+    "preserve exact emitted warning codes, messages, source kind, bounds, and deduplication semantics"
+  ],
+  "profile": {
+    "workload": "Redis at 800 operations per second, 8-second warmup, 5-second attach settle, 45-second measurement",
+    "accepted_baseline": {
+      "samples": 1790,
+      "lost_samples": 0,
+      "agent_cpu_millicores": 48.962032,
+      "agent_rss_kib": 41736,
+      "agent_rss_hwm_kib": 50712,
+      "protocol_samples_decoded": 84834,
+      "redis_successes": 36000,
+      "redis_errors": 0,
+      "siphash_percent": 3.46,
+      "warning_fingerprint_percent": 1.73,
+      "request_fingerprint_percent": 1.73,
+      "malloc_percent": 3.07,
+      "sensitive_matcher_percent": 2.96
+    },
+    "post_change": {
+      "samples": 1847,
+      "lost_samples": 0,
+      "agent_cpu_millicores": 47.990233,
+      "agent_rss_kib": 45728,
+      "agent_rss_hwm_kib": 50364,
+      "protocol_samples_decoded": 84834,
+      "redis_successes": 36000,
+      "redis_errors": 0,
+      "siphash_percent": 1.79,
+      "warning_fingerprint_percent": 0.76,
+      "request_fingerprint_percent": 1.03,
+      "malloc_percent": 2.60,
+      "sensitive_matcher_percent": 2.71
+    },
+    "rejected_baseline": {
+      "reason": "unrelated host protocol traffic made procfs and readlink dominate",
+      "invalid_protocol_samples": 170495
+    },
+    "limitation": "separate short perf samples locate work but are not a statistical A/B"
+  },
+  "focused_benchmarks": {
+    "request_correlation_generated_identity": {
+      "before_ns_mean": 3296.001769,
+      "before_ns_confidence_interval": [
+        3210.825304,
+        3385.347570
+      ],
+      "after_ns_mean": 2564.199558,
+      "after_ns_confidence_interval": [
+        2508.765197,
+        2627.600688
+      ],
+      "mean_change_percent": -22.202725,
+      "confidence_interval_percent": [
+        -24.888257,
+        -19.344051
+      ],
+      "p_value": 0,
+      "permanent_benchmark": true
+    },
+    "request_correlation_unique_at_capacity_control": {
+      "before_ns_mean": 1416.009187,
+      "before_ns_confidence_interval": [
+        1379.899107,
+        1456.982332
+      ],
+      "after_ns_mean": 1329.748990,
+      "after_ns_confidence_interval": [
+        1283.077139,
+        1380.305182
+      ],
+      "mean_change_percent": -6.091782,
+      "confidence_interval_percent": [
+        -10.575993,
+        -1.698914
+      ],
+      "p_value": 0,
+      "permanent_benchmark": true
+    }
+  },
+  "regression_coverage": {
+    "request_correlation_integration_tests": 35,
+    "warning_kinds_checked": 5,
+    "exact_warning_messages_checked": true,
+    "exact_source_signal_kind_checked": true,
+    "bounded_oldest_warning_eviction_checked": true
+  },
+  "local_whole_agent": {
+    "workload": "Redis at 800 operations per second, 8-second warmup, 5-second attach settle, 45-second measurement",
+    "accepted_pairs": 3,
+    "excluded_pairs": 2,
+    "accepted_successes_per_binary": 108000,
+    "accepted_errors_per_binary": 0,
+    "protocol_samples_decoded_per_arm": 84834,
+    "pre": {
+      "binary_sha256": "89c17247968f6d20eda74f42710b2cf81c59a385a6839f43aab9f04e709dc9bf",
+      "cpu_millicores_mean": 44.335422,
+      "rss_kib_mean": 42878.666667,
+      "rss_hwm_kib_mean": 50605.333333,
+      "redis_latency_us_mean": {
+        "p50": 255.000000,
+        "p95": 896.000000,
+        "p99": 2802.333333
+      }
+    },
+    "post": {
+      "binary_sha256": "1697121b6719df35296c8312631c1a8f85583cd4a8914f2abc87a1730e4fd4fe",
+      "cpu_millicores_mean": 40.958053,
+      "rss_kib_mean": 43702.666667,
+      "rss_hwm_kib_mean": 50337.333333,
+      "redis_latency_us_mean": {
+        "p50": 260.333333,
+        "p95": 921.333333,
+        "p99": 2767.000000
+      }
+    },
+    "changes_percent": {
+      "cpu": -7.617767,
+      "rss": 1.921702,
+      "rss_hwm": -0.529588,
+      "redis_latency_p50": 2.091503,
+      "redis_latency_p95": 2.827381,
+      "redis_latency_p99": -1.260854
+    },
+    "paired_cpu_changes_percent": [
+      -4.563246,
+      -8.471838,
+      -9.591887
+    ],
+    "exclusion_reason": "unrelated host protocol traffic contaminated the candidate in pair 1 and the baseline in pair 4",
+    "qualification": "three clean shared-VM exact-binary pairs; CPU retention evidence, with no latency or instantaneous-RSS claim"
+  },
+  "homelab": {
+    "context": "homelab",
+    "kernel": "6.6.68",
+    "kubernetes": "v1.30.4+k3s1",
+    "containerd": "1.7.20-k3s1",
+    "architecture": "amd64",
+    "nodes": 2,
+    "arms": 33,
+    "validated_arms": 33,
+    "repetitions": 3,
+    "warmup_seconds": 15,
+    "measurement_seconds": 45,
+    "measured_scheduled": 591030,
+    "measured_successes": 591030,
+    "measured_errors": 0,
+    "warmup_scheduled": 197010,
+    "warmup_successes": 197010,
+    "warmup_errors": 0,
+    "harness_decision": "PASS",
+    "replacement_decision": "NO_GO_CPU",
+    "current_final_stage": {
+      "e_navigator_cpu_cores_mean": 0.090173085,
+      "e_navigator_cpu_cores_stdev": 0.000623998,
+      "e_navigator_cpu_coefficient_of_variation_percent": 0.692000,
+      "e_navigator_rss_bytes_mean": 116433806.22222221,
+      "e_navigator_rss_bytes_stdev": 4406600.660004,
+      "e_navigator_rss_coefficient_of_variation_percent": 3.784640,
+      "beyla_alloy_cpu_cores_mean": 0.075064925,
+      "beyla_alloy_cpu_cores_stdev": 0.003727863,
+      "beyla_alloy_cpu_coefficient_of_variation_percent": 4.966185,
+      "beyla_alloy_rss_bytes_mean": 141395740.44444445,
+      "beyla_alloy_rss_bytes_stdev": 8420749.350370,
+      "beyla_alloy_rss_coefficient_of_variation_percent": 5.955448,
+      "e_navigator_cpu_change_vs_reference_percent": 20.126790,
+      "e_navigator_rss_change_vs_reference_percent": -17.653951
+    },
+    "previous_campaign_final_stage": {
+      "e_navigator_cpu_cores_mean": 0.095116412,
+      "e_navigator_rss_bytes_mean": 128231196.44444443,
+      "beyla_alloy_cpu_cores_mean": 0.082319507,
+      "beyla_alloy_rss_bytes_mean": 136968419.55555555,
+      "e_navigator_cpu_change_vs_reference_percent": 15.545410,
+      "e_navigator_rss_change_vs_reference_percent": -6.379006
+    },
+    "current_change_vs_previous_campaign_percent": {
+      "e_navigator_cpu": -5.197134,
+      "e_navigator_rss": -9.200094,
+      "beyla_alloy_cpu": -8.812713,
+      "beyla_alloy_rss": 3.232366,
+      "cpu_gap_percentage_points": 4.581380,
+      "rss_gap_percentage_points": -11.274945
+    },
+    "latency_and_throughput_means": {
+      "http": {
+        "e_navigator_throughput_rps": 100.009435,
+        "beyla_alloy_throughput_rps": 100.009913,
+        "e_navigator_latency_us": {"p50": 1783.000000, "p95": 6421.333333, "p99": 6963.333333},
+        "beyla_alloy_latency_us": {"p50": 1827.666667, "p95": 6429.333333, "p99": 6992.666667}
+      },
+      "grpc": {
+        "e_navigator_throughput_rps": 80.007548,
+        "beyla_alloy_throughput_rps": 80.007931,
+        "e_navigator_latency_us": {"p50": 2902.000000, "p95": 4156.000000, "p99": 6038.333333},
+        "beyla_alloy_latency_us": {"p50": 2971.333333, "p95": 4137.666667, "p99": 5697.000000}
+      },
+      "redis": {
+        "e_navigator_throughput_rps": 160.015095,
+        "beyla_alloy_throughput_rps": 160.015861,
+        "e_navigator_latency_us": {"p50": 1049.666667, "p95": 1892.000000, "p99": 3230.666667},
+        "beyla_alloy_latency_us": {"p50": 1138.000000, "p95": 1987.000000, "p99": 3210.666667}
+      },
+      "postgres": {
+        "e_navigator_throughput_rps": 50.004717,
+        "beyla_alloy_throughput_rps": 50.004957,
+        "e_navigator_latency_us": {"p50": 1140.666667, "p95": 2147.333333, "p99": 3405.333333},
+        "beyla_alloy_latency_us": {"p50": 1221.000000, "p95": 2287.333333, "p99": 4253.000000}
+      },
+      "python_cpu": {
+        "e_navigator_throughput_rps": 8.000755,
+        "beyla_alloy_throughput_rps": 8.000793,
+        "e_navigator_latency_us": {"p50": 30576.666667, "p95": 40646.000000, "p99": 53628.333333},
+        "beyla_alloy_latency_us": {"p50": 30298.333333, "p95": 39679.333333, "p99": 49085.333333}
+      }
+    },
+    "latency_and_throughput_change_vs_reference_percent": {
+      "http": {"throughput": -0.000479, "p50": -2.443918, "p95": -0.124430, "p99": -0.419487},
+      "grpc": {"throughput": -0.000479, "p50": -2.333408, "p95": 0.443084, "p99": 5.991457},
+      "redis": {"throughput": -0.000479, "p50": -7.762156, "p95": -4.781077, "p99": 0.622924},
+      "postgres": {"throughput": -0.000479, "p50": -6.579307, "p95": -6.120665, "p99": -19.931029},
+      "python_cpu": {"throughput": -0.000479, "p50": 0.918642, "p95": 2.436197, "p99": 9.255310}
+    },
+    "final_e_navigator_signal_summary": {
+      "hard_loss_total": 0,
+      "source_samples_decoded": 169685,
+      "source_signals_sent": 99133,
+      "profile_samples_decoded": 692,
+      "profile_signals_sent": 692,
+      "traces_enqueued": 98440,
+      "traces_sent": 98433,
+      "profiles_enqueued": 692,
+      "profiles_sent": 692,
+      "invalid_trace_records": 0,
+      "retry_or_permanent_export_failures": 0
+    },
+    "candidate_tag": "e-navigator:campaign9-warning-candidate-amd64",
+    "candidate_image_id": "sha256:f43f1a2051d1eb5f42461dbf480c7e22a24e3b0e5b3c8e46db7b99d4472a43a9",
+    "candidate_runtime_image_id": "sha256:bd5fe0d0f5dee3e8f5b19ce13a7c698ef62dc951de52810c0c12cd7c40953c8b",
+    "candidate_binary_sha256": "0e20a58e322b41b71fbe785f2f608b0cbc409512d922621fb09b9691bb66e42b",
+    "candidate_tar_sha256": "1b4f3cc39fba0454b239375fed8bbe35b42ee93732fbea8ca1c2f7b11bffb839",
+    "beyla_chart_version": "1.16.10",
+    "beyla_image": "docker.io/grafana/beyla@sha256:133b8d66190f21e20365d9972e1621513ea5e44518fb71e1c3e0180c64815566",
+    "alloy_image": "docker.io/grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308",
+    "workload_image_id": "sha256:d367537d6d186d755911f8039571ae8a0c23c7d7edf0ae61d161b03f59477b7d"
+  },
+  "allocation_diagnostics": {
+    "window_seconds": 45,
+    "measurement_seconds": 90,
+    "measured_successes_per_stack": 35820,
+    "measured_errors_per_stack": 0,
+    "e_navigator_libc": {
+      "allocation_calls": 6849324,
+      "requested_bytes": 993052457,
+      "change_vs_previous_campaign_percent": {
+        "allocation_calls": 3.180316,
+        "requested_bytes": 2.389429
+      }
+    },
+    "beyla_go_runtime": {
+      "allocation_calls": 2289905,
+      "requested_bytes": 289369738
+    },
+    "alloy_go_metrics_delta": {
+      "allocation_calls": 27318,
+      "requested_bytes": 7366832
+    },
+    "directional_beyla_alloy_total": {
+      "allocation_calls": 2317223,
+      "requested_bytes": 296736570,
+      "change_vs_previous_campaign_percent": {
+        "allocation_calls": 0.439777,
+        "requested_bytes": 1.142923
+      }
+    },
+    "comparable": false,
+    "limitation": "Rust libc uprobes, Beyla Go-runtime probes, and Alloy Go metrics have different semantics; successful probes logged post-counter tracefs detach warnings."
+  },
+  "sizes": {
+    "arm64": {
+      "pre_binary_bytes": 17192184,
+      "post_binary_bytes": 17192024,
+      "binary_change_bytes": -160,
+      "pre_image_bytes": 37497961,
+      "post_image_bytes": 37497434,
+      "image_change_bytes": -527
+    },
+    "amd64": {
+      "pre_binary_bytes": 18452528,
+      "post_binary_bytes": 18450944,
+      "binary_change_bytes": -1584,
+      "pre_image_bytes": 38027818,
+      "post_image_bytes": 38027177,
+      "image_change_bytes": -641
+    }
+  },
+  "quality": {
+    "command": "scripts/quality.sh",
+    "skips": [],
+    "status": "PASS"
+  },
+  "cleanup": {
+    "disposable_namespaced_resources": 0,
+    "disposable_cluster_resources": 0,
+    "allocation_probe_pods": 0,
+    "image_loader_pods": 0,
+    "host_tar_files": 0,
+    "root_app": "Synced/Healthy",
+    "e_navigator_app": "Synced/Healthy",
+    "argocd_automation_restored": true,
+    "standing_daemonset_ready": "2/2",
+    "standing_image_restored": true,
+    "standing_image": "ghcr.io/guaracloud/e-navigator@sha256:62402d21b9cb02d59d63365c7e3716ffa0980bfea42d070b43fed618703a7df9",
+    "candidate_left_only_in_node_local_image_stores": true
+  }
+}

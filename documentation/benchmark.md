@@ -129,6 +129,31 @@ local whole-agent pairs and a fresh 33-arm homelab run; the full method and
 exact non-claims are in
 `documentation/proof/optimization6-20260823/report.md`.
 
+### Optimization campaign 9, 2026-08-24 to 2026-08-25
+
+Campaign 9 retained a private typed request-warning boundary. Warning
+fingerprints now store a closed enum instead of an allocated warning-code
+string and omit the invariant protocol-request source kind. Exact emitted
+codes, messages, source kind, bounded deduplication, and oldest-entry eviction
+remain covered. The permanent generated-identity warning benchmark improved
+from 3,296.002 ns to 2,564.200 ns, an estimated -22.202725% mean change with a
+95% interval from -24.888257% to -19.344051%. An unchanged capacity benchmark
+moved -6.091782% as a same-process control.
+
+Three uncontaminated exact-binary local pairs improved mean whole-agent CPU by
+7.617767% with nearly flat peak RSS (-0.529588%). Two pairs were excluded
+symmetrically for unrelated host protocol traffic. A fresh, explicitly approved
+33-arm `kubectl --context homelab` comparison completed all 591,030 measured
+operations with zero errors and zero hard loss. E-Navigator measured
++20.126790% CPU and -17.653951% RSS versus Beyla plus Alloy, so the combined
+replacement target remains a CPU NO-GO.
+
+The 45-second allocation windows remain directional because the Rust libc,
+Beyla Go-runtime, and Alloy Go-metric probes have different semantics. Exact
+profile, focused, paired, homelab, allocation, throughput, latency, signal,
+image identity, size, quality, drift, exclusion, and cleanup evidence is in
+`documentation/proof/optimization9-20260825/report.md`.
+
 ### Optimization campaign 8, 2026-08-24
 
 Campaign 8 retained two profile-backed OTLP trace-export simplifications:
