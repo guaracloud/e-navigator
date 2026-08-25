@@ -6,6 +6,8 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0-rc.5] - 2026-08-25
+
 ### Performance
 
 - Replace stringly internal request-warning identities with a closed enum and
