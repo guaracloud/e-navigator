@@ -87,13 +87,13 @@ are compared with the `SK_MSG` payload before mutation.
 A request body is supported with one valid `Content-Length` when the exact
 syscall length proves that no byte crosses the declared body boundary. The
 body may be only partly captured or may continue in later writes. Exact
-`Transfer-Encoding: chunked` is also supported when the captured chunk stream
-is structurally valid and incomplete or complete without trailing data. When
-the syscall has uncaptured chunked bytes, the captured prefix must end exactly
-at the header boundary so discontinuous framing is never interpreted. Chunk
-extensions and trailers are validated; a `traceparent` or `tracestate` trailer
-is rejected because injection would otherwise create ambiguous context. It
-bypasses:
+`Transfer-Encoding: chunked` is supported only when every byte in the current
+syscall is captured and the bounded chunk stream is structurally valid and
+incomplete or complete without trailing data. Any uncaptured chunked tail is
+ambiguous because it could contain a terminal chunk followed by a pipelined
+request, so it bypasses mutation. Chunk extensions and trailers are validated;
+a `traceparent` or `tracestate` trailer is rejected because injection would
+otherwise create ambiguous context. It bypasses:
 
 - an existing `traceparent`, regardless of header-name case;
 - incomplete or segmented headers, multiple requests, and bytes beyond a

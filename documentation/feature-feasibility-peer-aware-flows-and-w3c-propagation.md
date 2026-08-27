@@ -55,7 +55,8 @@ qualification matrix below. ADR 0015 fixes the public support contract.
 
 Follow-up (2026-08-27): the planner and eBPF capture path now accept a complete
 contiguous header prefix with a large exact-`Content-Length` tail or bounded
-chunked framing. A verifier-bounded loop length-accounts up to 40 iovecs while
+chunked framing when every byte in the current syscall is captured. A
+verifier-bounded loop length-accounts up to 40 iovecs while
 payload capture remains the first three 96-byte prefixes. Local property,
 integration, and optimized arm64 perf-buffer/x86-64 ring-buffer builds cover
 that extension, but no new privileged live-wire or Tempo run was performed.

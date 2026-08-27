@@ -391,8 +391,9 @@ socket state is bounded from 1 through 65,536; the CSPRNG pool is bounded from
 The path preserves existing context, forwards valid inbound `tracestate`, and
 requires the complete HTTP/1 header block in one contiguous captured prefix.
 It supports an exact `Content-Length` when the syscall cannot cross the
-declared body boundary and bounded exact chunked framing without a visible or
-provable trailing request. Vectored injection captures at most the first three
+declared body boundary. Chunked framing requires every byte in the current
+syscall to be captured and structurally valid, without a visible trailing
+request. Vectored injection captures at most the first three
 96-byte prefixes while length-accounting up to 40 iovecs; unsupported shapes
 bypass and increment `unsupported_iovec`. It bypasses segmented headers,
 multiple pipelined requests, ambiguous framing, tunnels, upgrades, TLS,

@@ -18,6 +18,8 @@ operational documentation. Start with the path that matches your goal.
   understand the workspace boundaries.
 - [Capabilities](capabilities.md), see the implemented and proven surface.
 - [Boundaries](boundaries.md), see explicit non-claims and unsupported cases.
+- [Guara workload qualification ledger](guara-workload-matrix.md), see the
+  undeclared workload cells and live evidence that block replacement.
 - [Signal and module authoring](module-authoring.md), extend the static module
   pipeline safely.
 - [Engineering invariants](engineering-invariants.md), preserve the contracts

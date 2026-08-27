@@ -753,7 +753,7 @@ These areas remain explicitly partial:
   `tracestate` preserved. This evidence is recorded in
   [`proof/http-propagation-20260811/report.md`](proof/http-propagation-20260811/report.md).
   A later local-only extension adds prefix planning for large exact
-  `Content-Length` writes, bounded chunked framing, and exact total-length
+  `Content-Length` writes, fully captured bounded chunked framing, and exact total-length
   accounting through 40 iovecs while retaining only the first three 96-byte
   capture prefixes. Shared property/integration tests and optimized arm64
   perf-buffer plus x86-64 ring-buffer eBPF builds pass for that extension, but
@@ -816,7 +816,9 @@ These areas remain explicitly partial:
   excludes protocol-defined no-response commands from the correlation queue.
   Protocol 4.1 OK and ColumnDefinition41 packets are structurally validated
   before advancing. Bounded protocol-v10 greeting/client-response state
-  negotiates zlib only after authentication OK. Seven-byte compressed frames,
+  negotiates zlib only after authentication OK and only when both capability
+  messages were observed; client-only compression evidence is rejected and
+  counted. Seven-byte compressed frames,
   compressed sequence resets, declared decompressed sizes, full zlib-input
   consumption, output bounds, and nested ordinary-packet continuation are
   checked before decoded bytes re-enter the ordinary lifecycle. Zstd,
@@ -869,15 +871,23 @@ These areas remain explicitly partial:
   including declared frame-length bounds, bounded response-status token
   validation, ordinary coalesced RESP3 push/attribute frames that preserve the
   following command reply in the FIFO queue, and explicit RESP2/RESP3
-  subscribe/unsubscribe commands that complete only after their bounded
-  acknowledgement count. Zero-argument unsubscribe commands are emitted
-  without response latency because the expected confirmation count cannot be
-  known safely from the request. The three structurally recognized RESP2
-  Pub/Sub delivery shapes are also treated as out of band and do not consume
-  an interleaved ordinary reply; channel and payload values remain unexported.
+  subscribe/unsubscribe commands with explicit arguments that complete only
+  after their bounded acknowledgement count. Malformed acknowledgements, null
+  names for explicit lifecycles, and impossible zero-count subscribe replies
+  do not advance that state. A request-matched successful `RESET` response
+  exits subscriber mode; an error preserves it. Zero-argument unsubscribe
+  commands fail the connection's Redis correlation closed because Redis's global count cannot
+  prove the last acknowledgement when another subscription kind remains;
+  queued work is emitted without response latency at low confidence and the
+  transition is counted. The three RESP2 Pub/Sub delivery shapes are treated
+  as out of band only after a request-matched confirmation establishes RESP2
+  subscriber state for the connection; identical arrays without that evidence
+  remain ordinary replies. They do not consume an interleaved ordinary reply,
+  and channel and payload values remain unexported.
   Runtime capture and request/response matching have local
   OrbStack proof for plain TCP and OpenSSL Redis, including pipelining and
-  multi-segment payloads, but the new RESP2 interleaving behavior, streamed
+  multi-segment payloads, but the new RESP2 interleaving, `RESET`, and
+  zero-argument fail-closed behavior, streamed
   RESP3 aggregates, live subscription/out-of-band interleaving, reconnect and
   pre-attachment state, broad production/Kubernetes coverage, and longer live
   soaks are not proven.

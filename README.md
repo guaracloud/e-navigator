@@ -57,9 +57,11 @@ E-Navigator runs as one node-local agent with a statically registered
 - A separately opt-in, disabled-by-default HTTP/1 propagation path can inject
   W3C `traceparent` and preserve valid inbound `tracestate` before TCP
   packetization when one contiguous captured prefix contains the complete
-  plaintext headers. It supports bounded exact `Content-Length` and chunked
-  framing, and length-accounts up to 40 iovecs while capturing only the first
-  three 96-byte prefixes. It is not a universal TLS, HTTP/2, HTTP/3,
+  plaintext headers. It supports bounded exact `Content-Length`; chunked
+  framing is supported only when every byte in the current syscall is captured
+  and its bounded framing prefix is valid. It length-accounts up to 40 iovecs
+  while capturing only the first three 96-byte prefixes. It is not a universal
+  TLS, HTTP/2, HTTP/3,
   segmented-header, multi-request pipeline, pre-existing-connection, or
   asynchronous propagation claim; see [ADR 0015](documentation/adr/0015-peer-flow-metrics-and-opt-in-http1-propagation.md).
 - An opt-in Helm profile removes `SYS_ADMIN` on the proven Linux 6.6.68
@@ -69,7 +71,10 @@ E-Navigator runs as one node-local agent with a statically registered
 Detailed implementation and proof status lives in
 [capabilities](documentation/capabilities.md). Unsupported libraries,
 unproven runtime combinations, and production non-claims live in
-[boundaries](documentation/boundaries.md).
+[boundaries](documentation/boundaries.md). Guara's undeclared support cells and
+qualification blockers are tracked in the
+[Guara workload ledger](documentation/guara-workload-matrix.md); it becomes a
+finite promotion matrix only after Guara supplies exact workload cells.
 
 ## Five-Minute Local Start
 
