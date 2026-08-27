@@ -2,10 +2,18 @@ use e_navigator_signals::{ProtocolKind, TraceAttribute};
 
 use crate::ProtocolExtractionConfig;
 
+mod lifecycle;
+
+pub use lifecycle::{MongodbResponseLifecycle, MongodbResponseProgress};
+
 const MONGODB_OP_QUERY: i32 = 2004;
 const MONGODB_OP_REPLY: i32 = 1;
 const MONGODB_OP_MSG: i32 = 2013;
-const OP_MSG_FLAG_CHECKSUM_PRESENT: i32 = 0x01;
+const OP_MSG_FLAG_CHECKSUM_PRESENT: u32 = 0x01;
+const OP_MSG_FLAG_MORE_TO_COME: u32 = 0x02;
+const OP_MSG_FLAG_EXHAUST_ALLOWED: u32 = 0x0001_0000;
+const OP_MSG_REQUIRED_FLAG_MASK: u32 = 0x0000_ffff;
+const OP_MSG_KNOWN_REQUIRED_FLAGS: u32 = OP_MSG_FLAG_CHECKSUM_PRESENT | OP_MSG_FLAG_MORE_TO_COME;
 const OP_MSG_KIND_BODY: u8 = 0;
 const OP_MSG_KIND_SEQUENCE: u8 = 1;
 const MAX_MONGODB_OPERATION_BYTES: usize = 128;
@@ -20,6 +28,8 @@ pub struct ParsedMongodbCommand {
     pub operation: Option<String>,
     pub warning: Option<String>,
     pub attributes: Vec<TraceAttribute>,
+    pub expects_response: bool,
+    pub allows_multiple_responses: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +39,7 @@ pub struct ParsedMongodbResponse {
     pub status_code: String,
     pub error_type: Option<String>,
     pub attributes: Vec<TraceAttribute>,
+    pub more_to_come: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +50,9 @@ pub enum MongodbExtraction {
     DocumentTooLong,
     UnsupportedOpcode,
     MissingStatus,
+    UnsupportedRequiredFlag,
+    InvalidFlags,
+    UnexpectedResponse,
 }
 
 pub fn parse_mongodb_message(
@@ -49,9 +63,13 @@ pub fn parse_mongodb_message(
         return Err(MongodbExtraction::FrameTooLong);
     }
     let frame = frame_body(bytes, config.max_header_bytes)?;
-    let command = match frame.opcode {
+    let (command, expects_response, allows_multiple_responses) = match frame.opcode {
         MONGODB_OP_MSG => parse_op_msg_command(frame.body, config.max_request_line_bytes)?,
-        MONGODB_OP_QUERY => parse_op_query_command(frame.body, config.max_request_line_bytes)?,
+        MONGODB_OP_QUERY => (
+            parse_op_query_command(frame.body, config.max_request_line_bytes)?,
+            true,
+            false,
+        ),
         _ => return Err(MongodbExtraction::UnsupportedOpcode),
     };
 
@@ -87,6 +105,8 @@ pub fn parse_mongodb_message(
         operation: command.operation,
         warning: None,
         attributes,
+        expects_response,
+        allows_multiple_responses,
     })
 }
 
@@ -98,22 +118,16 @@ pub fn parse_mongodb_response(
         return Err(MongodbExtraction::FrameTooLong);
     }
     let frame = frame_body(bytes, config.max_header_bytes)?;
-    let response = match frame.opcode {
+    let (response, more_to_come) = match frame.opcode {
         MONGODB_OP_MSG => parse_op_msg_response(frame.body, config.max_request_line_bytes)?,
-        MONGODB_OP_REPLY => parse_op_reply_response(frame.body, config.max_request_line_bytes)?,
+        MONGODB_OP_REPLY => (
+            parse_op_reply_response(frame.body, config.max_request_line_bytes)?,
+            false,
+        ),
         _ => return Err(MongodbExtraction::UnsupportedOpcode),
     };
-    let status_code = match (response.ok, response.code) {
-        (Some(false), Some(code)) if code < 0 => return Err(MongodbExtraction::MalformedFrame),
-        (Some(false), Some(code)) => code.to_string(),
-        (Some(false), None) => "0".to_string(),
-        (Some(true), _) => "1".to_string(),
-        (None, _) => return Err(MongodbExtraction::MissingStatus),
-    };
-    let error_type = response
-        .ok
-        .is_some_and(|ok| !ok)
-        .then(|| status_code.clone());
+    let (status_code, failed) = response_status(response)?;
+    let error_type = failed.then(|| status_code.clone());
 
     let mut attributes = Vec::new();
     push_attribute(
@@ -141,6 +155,7 @@ pub fn parse_mongodb_response(
         status_code,
         error_type,
         attributes,
+        more_to_come,
     })
 }
 
@@ -156,6 +171,14 @@ struct MongodbFrame<'a> {
 struct MongodbResponse {
     ok: Option<bool>,
     code: Option<i32>,
+    write_error_code: Option<i32>,
+    write_concern_error_code: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OpMsgBody<'a> {
+    flags: u32,
+    document: &'a [u8],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,9 +213,13 @@ fn frame_body(bytes: &[u8], max_frame_bytes: usize) -> Result<MongodbFrame<'_>, 
 fn parse_op_msg_command(
     body: &[u8],
     max_document_bytes: usize,
-) -> Result<MongodbCommand, MongodbExtraction> {
-    let document = op_msg_body_document(body, max_document_bytes)?;
-    document_command(document)
+) -> Result<(MongodbCommand, bool, bool), MongodbExtraction> {
+    let message = op_msg_body(body, max_document_bytes)?;
+    Ok((
+        document_command(message.document)?,
+        message.flags & OP_MSG_FLAG_MORE_TO_COME == 0,
+        message.flags & OP_MSG_FLAG_EXHAUST_ALLOWED != 0,
+    ))
 }
 
 fn parse_op_query_command(
@@ -218,9 +245,15 @@ fn parse_op_query_command(
 fn parse_op_msg_response(
     body: &[u8],
     max_document_bytes: usize,
-) -> Result<MongodbResponse, MongodbExtraction> {
-    let document = op_msg_body_document(body, max_document_bytes)?;
-    document_response_status(document)
+) -> Result<(MongodbResponse, bool), MongodbExtraction> {
+    let message = op_msg_body(body, max_document_bytes)?;
+    if message.flags & OP_MSG_FLAG_EXHAUST_ALLOWED != 0 {
+        return Err(MongodbExtraction::InvalidFlags);
+    }
+    Ok((
+        document_response_status(message.document)?,
+        message.flags & OP_MSG_FLAG_MORE_TO_COME != 0,
+    ))
 }
 
 fn parse_op_reply_response(
@@ -251,14 +284,14 @@ fn parse_op_reply_response(
     Ok(response)
 }
 
-fn op_msg_body_document(
-    body: &[u8],
-    max_document_bytes: usize,
-) -> Result<&[u8], MongodbExtraction> {
+fn op_msg_body(body: &[u8], max_document_bytes: usize) -> Result<OpMsgBody<'_>, MongodbExtraction> {
     if body.len() < 5 {
         return Err(MongodbExtraction::MalformedFrame);
     }
-    let flags = read_i32_le(body, 0)?;
+    let flags = read_i32_le(body, 0)? as u32;
+    if flags & OP_MSG_REQUIRED_FLAG_MASK & !OP_MSG_KNOWN_REQUIRED_FLAGS != 0 {
+        return Err(MongodbExtraction::UnsupportedRequiredFlag);
+    }
     let sections = if flags & OP_MSG_FLAG_CHECKSUM_PRESENT != 0 {
         if body.len() < 9 {
             return Err(MongodbExtraction::MalformedFrame);
@@ -285,7 +318,10 @@ fn op_msg_body_document(
             _ => return Err(MongodbExtraction::MalformedFrame),
         }
     }
-    body_document.ok_or(MongodbExtraction::MalformedFrame)
+    Ok(OpMsgBody {
+        flags,
+        document: body_document.ok_or(MongodbExtraction::MalformedFrame)?,
+    })
 }
 
 fn skip_document_sequence(
@@ -426,6 +462,8 @@ fn document_response_status(document: &[u8]) -> Result<MongodbResponse, MongodbE
     let mut response = MongodbResponse {
         ok: None,
         code: None,
+        write_error_code: None,
+        write_concern_error_code: None,
     };
     while cursor < document.len() - 1 {
         let value_type = document[cursor];
@@ -437,6 +475,18 @@ fn document_response_status(document: &[u8]) -> Result<MongodbResponse, MongodbE
             ("ok", 0x10) => response.ok = Some(read_i32_le_cursor(document, &mut cursor)? != 0),
             ("ok", 0x12) => response.ok = Some(read_i64_le(document, &mut cursor)? != 0),
             ("code", 0x10) => response.code = Some(read_i32_le_cursor(document, &mut cursor)?),
+            ("writeErrors", 0x04) => {
+                let errors = read_embedded_document(document, &mut cursor)?;
+                response.write_error_code = response
+                    .write_error_code
+                    .or(array_first_error_code(errors)?);
+            }
+            ("writeConcernError", 0x03) => {
+                let error = read_embedded_document(document, &mut cursor)?;
+                response.write_concern_error_code = response
+                    .write_concern_error_code
+                    .or(document_error_code(error)?);
+            }
             _ => skip_bson_value(document, &mut cursor, value_type)?,
         }
     }
@@ -444,6 +494,79 @@ fn document_response_status(document: &[u8]) -> Result<MongodbResponse, MongodbE
         return Err(MongodbExtraction::MalformedFrame);
     }
     Ok(response)
+}
+
+fn response_status(response: MongodbResponse) -> Result<(String, bool), MongodbExtraction> {
+    if [
+        response.code,
+        response.write_error_code,
+        response.write_concern_error_code,
+    ]
+    .into_iter()
+    .flatten()
+    .any(|code| code < 0)
+    {
+        return Err(MongodbExtraction::MalformedFrame);
+    }
+
+    match response.ok {
+        Some(false) => Ok((
+            response
+                .code
+                .map_or_else(|| "0".to_string(), |code| code.to_string()),
+            true,
+        )),
+        Some(true) => response
+            .write_error_code
+            .or(response.write_concern_error_code)
+            .map_or_else(
+                || Ok(("1".to_string(), false)),
+                |code| Ok((code.to_string(), true)),
+            ),
+        None => Err(MongodbExtraction::MissingStatus),
+    }
+}
+
+fn array_first_error_code(document: &[u8]) -> Result<Option<i32>, MongodbExtraction> {
+    let mut cursor = 4;
+    let mut code = None;
+    while cursor < document.len() - 1 {
+        let value_type = document[cursor];
+        cursor += 1;
+        let _index = read_cstring(document, &mut cursor, MAX_MONGODB_OPERATION_BYTES)?;
+        if value_type == 0x03 {
+            let error = read_embedded_document(document, &mut cursor)?;
+            code = code.or(document_error_code(error)?);
+        } else {
+            skip_bson_value(document, &mut cursor, value_type)?;
+        }
+    }
+    validate_document_end(document, cursor)?;
+    Ok(code)
+}
+
+fn document_error_code(document: &[u8]) -> Result<Option<i32>, MongodbExtraction> {
+    let mut cursor = 4;
+    let mut code = None;
+    while cursor < document.len() - 1 {
+        let value_type = document[cursor];
+        cursor += 1;
+        let key = read_cstring(document, &mut cursor, MAX_MONGODB_OPERATION_BYTES)?;
+        if key == "code" && value_type == 0x10 {
+            code = code.or(Some(read_i32_le_cursor(document, &mut cursor)?));
+        } else {
+            skip_bson_value(document, &mut cursor, value_type)?;
+        }
+    }
+    validate_document_end(document, cursor)?;
+    Ok(code)
+}
+
+fn validate_document_end(document: &[u8], cursor: usize) -> Result<(), MongodbExtraction> {
+    if document.len() < 5 || cursor != document.len() - 1 || document[cursor] != 0 {
+        return Err(MongodbExtraction::MalformedFrame);
+    }
+    Ok(())
 }
 
 fn read_cstring<'a>(
@@ -509,6 +632,14 @@ fn skip_bson_string(bytes: &[u8], cursor: &mut usize) -> Result<(), MongodbExtra
 }
 
 fn skip_bson_document(bytes: &[u8], cursor: &mut usize) -> Result<(), MongodbExtraction> {
+    let _ = read_embedded_document(bytes, cursor)?;
+    Ok(())
+}
+
+fn read_embedded_document<'a>(
+    bytes: &'a [u8],
+    cursor: &mut usize,
+) -> Result<&'a [u8], MongodbExtraction> {
     let len = read_i32_le(bytes, *cursor)? as isize;
     if len < 5 {
         return Err(MongodbExtraction::MalformedFrame);
@@ -520,8 +651,9 @@ fn skip_bson_document(bytes: &[u8], cursor: &mut usize) -> Result<(), MongodbExt
     if end > bytes.len() || bytes[end - 1] != 0 {
         return Err(MongodbExtraction::MalformedFrame);
     }
+    let document = &bytes[*cursor..end];
     *cursor = end;
-    Ok(())
+    Ok(document)
 }
 
 fn skip_bson_binary(bytes: &[u8], cursor: &mut usize) -> Result<(), MongodbExtraction> {

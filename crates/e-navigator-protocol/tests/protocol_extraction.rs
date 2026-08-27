@@ -53,7 +53,10 @@ use e_navigator_protocol::{
         parse_kafka_update_features_response, parse_kafka_update_raft_voter_response,
         parse_kafka_write_share_group_state_response, parse_kafka_write_txn_markers_response,
     },
-    mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
+    mongodb::{
+        MongodbExtraction, MongodbResponseLifecycle, MongodbResponseProgress,
+        parse_mongodb_message, parse_mongodb_response,
+    },
     mysql::{
         MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES, MysqlClientPacketProgress, MysqlExtraction,
         MysqlLogicalPacketProgress, MysqlResponseLifecycle, MysqlResponseProgress,
@@ -21754,6 +21757,110 @@ fn extracts_mongodb_op_msg_with_checksum_without_raw_values() {
 }
 
 #[test]
+fn extracts_mongodb_op_msg_response_lifecycle_flags() {
+    let config = ProtocolExtractionConfig::default();
+    let command_document = bson_command_document("find", "customers");
+
+    let fire_and_forget = mongodb_op_msg_with_flags_and_ids(&command_document, 0x02, 73, 0);
+    let parsed =
+        parse_mongodb_message(&fire_and_forget, &config).expect("fire-and-forget command parses");
+    assert!(!parsed.expects_response);
+    assert!(!parsed.allows_multiple_responses);
+
+    let exhaust = mongodb_op_msg_with_flags_and_ids(&command_document, 0x0001_0000, 74, 0);
+    let parsed = parse_mongodb_message(&exhaust, &config).expect("exhaust command parses");
+    assert!(parsed.expects_response);
+    assert!(parsed.allows_multiple_responses);
+
+    let optional_unknown = mongodb_op_msg_with_flags_and_ids(&command_document, 0x8000_0000, 75, 0);
+    let parsed = parse_mongodb_message(&optional_unknown, &config)
+        .expect("unknown optional flags are ignored");
+    assert!(parsed.expects_response);
+    assert!(!parsed.allows_multiple_responses);
+
+    let continued_response =
+        mongodb_op_msg_with_flags_and_ids(&bson_mongodb_ok_document(), 0x02, 76, 74);
+    let parsed = parse_mongodb_response(&continued_response, &config)
+        .expect("continued exhaust response parses");
+    assert!(parsed.more_to_come);
+}
+
+#[test]
+fn rejects_invalid_mongodb_op_msg_required_and_directional_flags() {
+    let config = ProtocolExtractionConfig::default();
+    let command_document = bson_command_document("find", "customers");
+
+    assert_eq!(
+        parse_mongodb_message(
+            &mongodb_op_msg_with_flags_and_ids(&command_document, 0x04, 73, 0),
+            &config,
+        ),
+        Err(MongodbExtraction::UnsupportedRequiredFlag)
+    );
+    assert_eq!(
+        parse_mongodb_response(
+            &mongodb_op_msg_with_flags_and_ids(&bson_mongodb_ok_document(), 0x0001_0000, 74, 73,),
+            &config,
+        ),
+        Err(MongodbExtraction::InvalidFlags)
+    );
+}
+
+#[test]
+fn mongodb_exhaust_lifecycle_completes_on_the_final_response() {
+    let config = ProtocolExtractionConfig::default();
+    let request = mongodb_op_msg_with_flags_and_ids(
+        &bson_command_document("find", "customers"),
+        0x0001_0000,
+        73,
+        0,
+    );
+    let mut lifecycle = MongodbResponseLifecycle::from_request(&request, &config)
+        .expect("exhaust lifecycle starts");
+
+    assert!(lifecycle.expects_response());
+    assert_eq!(lifecycle.request_id(), 73);
+    let continued = parse_mongodb_response(
+        &mongodb_op_msg_with_flags_and_ids(&bson_mongodb_ok_document(), 0x02, 74, 73),
+        &config,
+    )
+    .expect("continued response parses");
+    assert_eq!(
+        lifecycle.observe_response(continued),
+        Ok(MongodbResponseProgress::Continue)
+    );
+
+    let final_response = parse_mongodb_response(
+        &mongodb_op_msg_with_flags_and_ids(&bson_mongodb_ok_document(), 0, 75, 73),
+        &config,
+    )
+    .expect("final response parses");
+    assert!(matches!(
+        lifecycle.observe_response(final_response),
+        Ok(MongodbResponseProgress::Complete(response))
+            if response.status_code == "1" && !response.more_to_come
+    ));
+}
+
+#[test]
+fn mongodb_lifecycle_fails_closed_on_an_unexpected_continuation() {
+    let config = ProtocolExtractionConfig::default();
+    let request = mongodb_op_msg_with_ids(&bson_command_document("find", "customers"), 73, 0);
+    let mut lifecycle = MongodbResponseLifecycle::from_request(&request, &config)
+        .expect("single-response lifecycle starts");
+    let continued = parse_mongodb_response(
+        &mongodb_op_msg_with_flags_and_ids(&bson_mongodb_ok_document(), 0x02, 74, 73),
+        &config,
+    )
+    .expect("continued response parses");
+
+    assert_eq!(
+        lifecycle.observe_response(continued),
+        Err(MongodbExtraction::UnexpectedResponse)
+    );
+}
+
+#[test]
 fn extracts_mongodb_op_query_collection_without_legacy_namespace() {
     let document = bson_command_document("insert", "orders-secret");
     let bytes = mongodb_op_query("secret-db.$cmd", &document);
@@ -21858,6 +21965,47 @@ fn extracts_mongodb_error_without_code_as_generic_status() {
             .attributes
             .iter()
             .any(|attribute| attribute.value.contains("secret"))
+    );
+}
+
+#[test]
+fn extracts_mongodb_write_error_codes_without_raw_error_details() {
+    let bytes = mongodb_op_msg(&bson_mongodb_write_error_document(
+        11_000,
+        b"duplicate secret.customer key",
+        Some((64, b"secret replica timeout")),
+    ));
+
+    let extraction = parse_mongodb_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("write error response parses");
+
+    assert_eq!(extraction.status_code, "11000");
+    assert_eq!(extraction.error_type.as_deref(), Some("11000"));
+    assert!(extraction.attributes.iter().all(|attribute| {
+        !attribute.value.contains("duplicate")
+            && !attribute.value.contains("replica")
+            && !attribute.value.contains("secret")
+    }));
+}
+
+#[test]
+fn extracts_mongodb_write_concern_error_when_no_write_error_exists() {
+    let bytes = mongodb_op_msg(&bson_mongodb_write_error_document(
+        0,
+        b"",
+        Some((64, b"secret replica timeout")),
+    ));
+
+    let extraction = parse_mongodb_response(&bytes, &ProtocolExtractionConfig::default())
+        .expect("write concern response parses");
+
+    assert_eq!(extraction.status_code, "64");
+    assert_eq!(extraction.error_type.as_deref(), Some("64"));
+    assert!(
+        extraction
+            .attributes
+            .iter()
+            .all(|attribute| !attribute.value.contains("secret"))
     );
 }
 
@@ -27553,8 +27701,17 @@ fn mongodb_op_msg(document: &[u8]) -> Vec<u8> {
 }
 
 fn mongodb_op_msg_with_ids(document: &[u8], request_id: i32, response_to: i32) -> Vec<u8> {
+    mongodb_op_msg_with_flags_and_ids(document, 0, request_id, response_to)
+}
+
+fn mongodb_op_msg_with_flags_and_ids(
+    document: &[u8],
+    flags: u32,
+    request_id: i32,
+    response_to: i32,
+) -> Vec<u8> {
     let mut body = Vec::new();
-    body.extend_from_slice(&0_u32.to_le_bytes());
+    body.extend_from_slice(&flags.to_le_bytes());
     body.extend_from_slice(&mongodb_op_msg_body_section(document));
     mongodb_frame_with_ids(2013, &body, request_id, response_to)
 }
@@ -27650,6 +27807,38 @@ fn bson_mongodb_error_without_code_document(message: &[u8]) -> Vec<u8> {
     bson_document(elements)
 }
 
+fn bson_mongodb_write_error_document(
+    write_error_code: i32,
+    write_error_message: &[u8],
+    write_concern_error: Option<(i32, &[u8])>,
+) -> Vec<u8> {
+    let mut elements = Vec::new();
+    push_bson_bool(&mut elements, "ok", true);
+    if write_error_code != 0 {
+        let mut error = Vec::new();
+        push_bson_i32(&mut error, "index", 0);
+        push_bson_i32(&mut error, "code", write_error_code);
+        push_bson_string(&mut error, "errmsg", write_error_message);
+        let error = bson_document(error);
+
+        let mut array = Vec::new();
+        push_bson_document(&mut array, "0", &error, false);
+        push_bson_document(&mut elements, "writeErrors", &bson_document(array), true);
+    }
+    if let Some((code, message)) = write_concern_error {
+        let mut error = Vec::new();
+        push_bson_i32(&mut error, "code", code);
+        push_bson_string(&mut error, "errmsg", message);
+        push_bson_document(
+            &mut elements,
+            "writeConcernError",
+            &bson_document(error),
+            false,
+        );
+    }
+    bson_document(elements)
+}
+
 fn bson_document(elements: Vec<u8>) -> Vec<u8> {
     let document_len = elements.len() + 5;
     let mut document = Vec::with_capacity(document_len);
@@ -27671,6 +27860,13 @@ fn push_bson_i32(elements: &mut Vec<u8>, key: &str, value: i32) {
     elements.extend_from_slice(key.as_bytes());
     elements.push(0);
     elements.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_bson_document(elements: &mut Vec<u8>, key: &str, document: &[u8], array: bool) {
+    elements.push(if array { 0x04 } else { 0x03 });
+    elements.extend_from_slice(key.as_bytes());
+    elements.push(0);
+    elements.extend_from_slice(document);
 }
 
 fn push_bson_string(elements: &mut Vec<u8>, key: &str, value: &[u8]) {
