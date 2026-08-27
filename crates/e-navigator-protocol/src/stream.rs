@@ -24,6 +24,7 @@ pub enum StreamProtocol {
     Kafka,
     Mongodb,
     Mysql,
+    MysqlCompressed,
     Nats,
     Postgresql,
     Redis,
@@ -449,6 +450,7 @@ pub fn frame_boundary(
         (StreamProtocol::Kafka, _) => kafka_boundary(bytes, max_frame_bytes),
         (StreamProtocol::Mongodb, _) => mongodb_boundary(bytes, max_frame_bytes),
         (StreamProtocol::Mysql, _) => mysql_boundary(bytes, max_frame_bytes),
+        (StreamProtocol::MysqlCompressed, _) => mysql_compressed_boundary(bytes, max_frame_bytes),
         (StreamProtocol::Nats, StreamDirection::Request) => nats_boundary(bytes, max_frame_bytes),
         (StreamProtocol::Nats, StreamDirection::Response) => {
             nats_response_boundary(bytes, max_frame_bytes)
@@ -806,6 +808,15 @@ fn mysql_boundary(bytes: &[u8], max_frame_bytes: usize) -> FrameBoundary {
     let payload_len =
         usize::from(bytes[0]) | (usize::from(bytes[1]) << 8) | (usize::from(bytes[2]) << 16);
     checked_frame(payload_len + 4, max_frame_bytes)
+}
+
+fn mysql_compressed_boundary(bytes: &[u8], max_frame_bytes: usize) -> FrameBoundary {
+    if bytes.len() < 7 {
+        return FrameBoundary::NeedMoreBytes;
+    }
+    let payload_len =
+        usize::from(bytes[0]) | (usize::from(bytes[1]) << 8) | (usize::from(bytes[2]) << 16);
+    checked_frame(payload_len + 7, max_frame_bytes)
 }
 
 fn postgres_boundary(bytes: &[u8], max_frame_bytes: usize) -> FrameBoundary {
@@ -1279,6 +1290,19 @@ mod tests {
         assert_eq!(
             request_frame_boundary(StreamProtocol::Mysql, &[0, 0, 0, 0], 1024),
             FrameBoundary::Frame { total_len: 4 },
+        );
+    }
+
+    #[test]
+    fn mysql_compressed_boundary_reads_seven_byte_header() {
+        let frame = [5, 0, 0, 7, 9, 0, 0, 1, 2, 3, 4, 5];
+        assert_eq!(
+            request_frame_boundary(StreamProtocol::MysqlCompressed, &frame, 1024),
+            FrameBoundary::Frame { total_len: 12 },
+        );
+        assert_eq!(
+            request_frame_boundary(StreamProtocol::MysqlCompressed, &frame[..6], 1024),
+            FrameBoundary::NeedMoreBytes,
         );
     }
 
@@ -1913,6 +1937,7 @@ mod tests {
             StreamProtocol::Kafka,
             StreamProtocol::Mongodb,
             StreamProtocol::Mysql,
+            StreamProtocol::MysqlCompressed,
             StreamProtocol::Nats,
             StreamProtocol::Postgresql,
             StreamProtocol::Redis,

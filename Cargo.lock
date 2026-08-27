@@ -570,6 +570,7 @@ dependencies = [
  "base64",
  "e-navigator-context-propagation",
  "e-navigator-signals",
+ "flate2",
  "proptest",
 ]
 
