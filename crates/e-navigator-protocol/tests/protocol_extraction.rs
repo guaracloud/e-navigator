@@ -55,8 +55,8 @@ use e_navigator_protocol::{
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
-        MysqlExtraction, MysqlResponseLifecycle, parse_mysql_command, parse_mysql_error_response,
-        parse_mysql_response,
+        MysqlClientPacketProgress, MysqlExtraction, MysqlResponseLifecycle, MysqlResponseProgress,
+        parse_mysql_command, parse_mysql_error_response, parse_mysql_response,
     },
     nats::{NatsExtraction, parse_nats_command, parse_nats_response},
     postgres::{
@@ -560,6 +560,25 @@ proptest! {
         .expect("bounded PING request starts a lifecycle");
 
         let _ = lifecycle.observe_packet(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_mysql_local_infile_client_packet_never_panics(
+        bytes in prop::collection::vec(any::<u8>(), 0..=512),
+        declared_total_len in any::<u64>(),
+    ) {
+        let config = ProtocolExtractionConfig::default();
+        let request = mysql_packet(0x03, b"LOAD DATA LOCAL INFILE 'fixture'");
+        let mut lifecycle = MysqlResponseLifecycle::from_request(&request, &config)
+            .expect("fixture query starts lifecycle");
+        lifecycle
+            .observe_packet(
+                &mysql_packet_with_sequence(1, b"\xfbfixture"),
+                &config,
+            )
+            .expect("fixture enters upload state");
+
+        let _ = lifecycle.observe_client_packet(&bytes, declared_total_len);
     }
 
     #[test]
@@ -21189,6 +21208,80 @@ fn extracts_mysql_error_response_without_sqlstate_marker() {
 }
 
 #[test]
+fn mysql_local_infile_lifecycle_correlates_upload_without_retaining_file_bytes() {
+    let config = ProtocolExtractionConfig::default();
+    let request = mysql_packet(
+        0x03,
+        b"LOAD DATA LOCAL INFILE 'secret.csv' INTO TABLE private",
+    );
+    let mut lifecycle =
+        MysqlResponseLifecycle::from_request(&request, &config).expect("query starts lifecycle");
+
+    assert_eq!(
+        lifecycle.observe_packet(
+            &mysql_packet_with_sequence(1, b"\xfbsecret-server-path.csv"),
+            &config,
+        ),
+        Ok(MysqlResponseProgress::Continue)
+    );
+    let data = mysql_packet_with_sequence(2, b"secret-file-row\n");
+    assert_eq!(
+        lifecycle.observe_client_packet(&data, data.len() as u64),
+        Ok(MysqlClientPacketProgress::Continue)
+    );
+    let terminator = mysql_packet_with_sequence(3, b"");
+    assert_eq!(
+        lifecycle.observe_client_packet(&terminator, terminator.len() as u64),
+        Ok(MysqlClientPacketProgress::UploadComplete)
+    );
+    let extra = mysql_packet_with_sequence(4, b"unexpected-secret-row");
+    assert_eq!(
+        lifecycle.observe_client_packet(&extra, extra.len() as u64),
+        Err(MysqlExtraction::UnsupportedResponse)
+    );
+
+    let MysqlResponseProgress::Complete(response) = lifecycle
+        .observe_packet(
+            &mysql_packet_with_sequence(4, &[0, 0, 0, 2, 0, 0, 0]),
+            &config,
+        )
+        .expect("terminal response completes original query")
+    else {
+        panic!("expected terminal LOCAL INFILE response");
+    };
+    assert_eq!(response.status_code, "OK");
+    assert!(
+        !response
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret-file-row")
+                || attribute.value.contains("secret-server-path"))
+    );
+}
+
+#[test]
+fn mysql_local_infile_sequence_error_is_non_destructive() {
+    let config = ProtocolExtractionConfig::default();
+    let request = mysql_packet(0x03, b"LOAD DATA LOCAL INFILE 'secret.csv'");
+    let mut lifecycle =
+        MysqlResponseLifecycle::from_request(&request, &config).expect("query starts lifecycle");
+    lifecycle
+        .observe_packet(&mysql_packet_with_sequence(1, b"\xfbsecret.csv"), &config)
+        .expect("server requests upload");
+
+    let wrong = mysql_packet_with_sequence(3, b"secret");
+    assert_eq!(
+        lifecycle.observe_client_packet(&wrong, wrong.len() as u64),
+        Err(MysqlExtraction::UnexpectedSequence)
+    );
+    let correct = mysql_packet_with_sequence(2, b"secret");
+    assert_eq!(
+        lifecycle.observe_client_packet(&correct, correct.len() as u64),
+        Ok(MysqlClientPacketProgress::Continue)
+    );
+}
+
+#[test]
 fn enforces_mysql_packet_query_and_attribute_bounds() {
     let bounded = parse_mysql_command(
         &mysql_packet(0x03, b"select * from customers"),
@@ -22316,14 +22409,20 @@ fn postgres_authentication_frame(auth_code: u32, payload: &[u8]) -> Vec<u8> {
 }
 
 fn mysql_packet(command: u8, query: &[u8]) -> Vec<u8> {
-    let payload_len = query.len() + 1;
+    let mut payload = Vec::with_capacity(query.len() + 1);
+    payload.push(command);
+    payload.extend_from_slice(query);
+    mysql_packet_with_sequence(0, &payload)
+}
+
+fn mysql_packet_with_sequence(sequence: u8, payload: &[u8]) -> Vec<u8> {
+    let payload_len = payload.len();
     let mut packet = Vec::with_capacity(payload_len + 4);
     packet.push((payload_len & 0xff) as u8);
     packet.push(((payload_len >> 8) & 0xff) as u8);
     packet.push(((payload_len >> 16) & 0xff) as u8);
-    packet.push(0);
-    packet.push(command);
-    packet.extend_from_slice(query);
+    packet.push(sequence);
+    packet.extend_from_slice(payload);
     packet
 }
 

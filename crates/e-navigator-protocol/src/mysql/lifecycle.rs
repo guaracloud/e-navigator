@@ -54,6 +54,8 @@ enum MysqlResponsePhase {
     },
     PrepareFinalTerminator,
     StatementFetchRows,
+    LocalInfileUpload,
+    LocalInfileTerminal,
 }
 
 /// Observable progress of one MySQL command response.
@@ -61,6 +63,14 @@ enum MysqlResponsePhase {
 pub enum MysqlResponseProgress {
     Continue,
     Complete(ParsedMysqlResponse),
+}
+
+/// Progress while the client streams a `LOCAL INFILE` body. File bytes are
+/// never parsed or retained; only the physical packet header is consumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MysqlClientPacketProgress {
+    Continue,
+    UploadComplete,
 }
 
 impl MysqlResponseLifecycle {
@@ -129,6 +139,57 @@ impl MysqlResponseLifecycle {
             }
         }
     }
+
+    /// Consumes a client-side `LOCAL INFILE` packet from its bounded prefix.
+    ///
+    /// `declared_total_len` is the complete physical packet length reported
+    /// by stream reassembly. This permits correlation of file chunks larger
+    /// than the capture prefix without inspecting or retaining their bodies.
+    pub fn observe_client_packet(
+        &mut self,
+        prefix: &[u8],
+        declared_total_len: u64,
+    ) -> Result<MysqlClientPacketProgress, MysqlExtraction> {
+        if self.phase != MysqlResponsePhase::LocalInfileUpload || prefix.len() < 4 {
+            return Err(MysqlExtraction::UnsupportedResponse);
+        }
+        let payload_len =
+            usize::from(prefix[0]) | (usize::from(prefix[1]) << 8) | (usize::from(prefix[2]) << 16);
+        let total_len = payload_len
+            .checked_add(4)
+            .ok_or(MysqlExtraction::MalformedPacket)?;
+        if total_len as u64 != declared_total_len || prefix.len() > total_len {
+            return Err(MysqlExtraction::MalformedPacket);
+        }
+        if prefix[3] != self.next_sequence {
+            return Err(MysqlExtraction::UnexpectedSequence);
+        }
+
+        self.next_sequence = self.next_sequence.wrapping_add(1);
+        if payload_len == 0 {
+            self.phase = MysqlResponsePhase::LocalInfileTerminal;
+            Ok(MysqlClientPacketProgress::UploadComplete)
+        } else {
+            Ok(MysqlClientPacketProgress::Continue)
+        }
+    }
+
+    /// Whether the lifecycle currently owns client file-data packets.
+    #[must_use]
+    pub fn expects_local_infile_data(&self) -> bool {
+        self.phase == MysqlResponsePhase::LocalInfileUpload
+    }
+
+    /// Whether client packets still belong to this command's upload cycle.
+    /// This remains true after the zero-length terminator so unexpected extra
+    /// file packets cannot be misclassified as new commands.
+    #[must_use]
+    pub fn owns_local_infile_client_packets(&self) -> bool {
+        matches!(
+            self.phase,
+            MysqlResponsePhase::LocalInfileUpload | MysqlResponsePhase::LocalInfileTerminal
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,7 +230,12 @@ fn response_transition(
                 return terminal_transition(packet, payload, config);
             }
             if payload.first() == Some(&MYSQL_LOCAL_INFILE_PACKET) {
-                return Err(MysqlExtraction::UnsupportedResponse);
+                if kind != MysqlResponseKind::Command {
+                    return Err(MysqlExtraction::UnsupportedResponse);
+                }
+                return Ok(MysqlResponseTransition::Continue(
+                    MysqlResponsePhase::LocalInfileUpload,
+                ));
             }
             let (columns, consumed) = read_length_encoded_integer(payload, 0)?;
             if consumed != payload.len() || columns == 0 || columns > MAX_MYSQL_RESULT_COLUMNS {
@@ -290,6 +356,14 @@ fn response_transition(
                 Ok(MysqlResponseTransition::Continue(
                     MysqlResponsePhase::StatementFetchRows,
                 ))
+            } else {
+                Err(MysqlExtraction::UnsupportedResponse)
+            }
+        }
+        MysqlResponsePhase::LocalInfileUpload => Err(MysqlExtraction::UnsupportedResponse),
+        MysqlResponsePhase::LocalInfileTerminal => {
+            if is_ok_packet(payload) || is_eof_packet(payload) {
+                terminal_transition(packet, payload, config)
             } else {
                 Err(MysqlExtraction::UnsupportedResponse)
             }

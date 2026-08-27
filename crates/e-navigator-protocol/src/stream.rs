@@ -805,9 +805,6 @@ fn mysql_boundary(bytes: &[u8], max_frame_bytes: usize) -> FrameBoundary {
     }
     let payload_len =
         usize::from(bytes[0]) | (usize::from(bytes[1]) << 8) | (usize::from(bytes[2]) << 16);
-    if payload_len == 0 {
-        return FrameBoundary::Invalid;
-    }
     checked_frame(payload_len + 4, max_frame_bytes)
 }
 
@@ -1281,7 +1278,7 @@ mod tests {
         );
         assert_eq!(
             request_frame_boundary(StreamProtocol::Mysql, &[0, 0, 0, 0], 1024),
-            FrameBoundary::Invalid,
+            FrameBoundary::Frame { total_len: 4 },
         );
     }
 
