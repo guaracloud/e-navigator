@@ -6,7 +6,7 @@ keyless Cosign through GitHub OIDC.
 Set the release tag once:
 
 ```bash
-export VERSION=v0.5.0-rc.5
+export VERSION=v0.5.0-rc.6
 export REPO=guaracloud/e-navigator
 ```
 

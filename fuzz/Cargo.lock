@@ -194,11 +194,11 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-context-propagation"
-version = "0.5.0-rc.5"
+version = "0.5.0-rc.6"
 
 [[package]]
 name = "e-navigator-core"
-version = "0.5.0-rc.5"
+version = "0.5.0-rc.6"
 dependencies = [
  "async-trait",
  "serde",
@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-profiling"
-version = "0.5.0-rc.5"
+version = "0.5.0-rc.6"
 dependencies = [
  "cpp_demangle",
  "e-navigator-signals",
@@ -231,7 +231,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-protocol"
-version = "0.5.0-rc.5"
+version = "0.5.0-rc.6"
 dependencies = [
  "base64",
  "e-navigator-context-propagation",
@@ -241,7 +241,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-signals"
-version = "0.5.0-rc.5"
+version = "0.5.0-rc.6"
 dependencies = [
  "e-navigator-core",
  "serde",
@@ -250,7 +250,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-sources-ebpf-aya"
-version = "0.5.0-rc.5"
+version = "0.5.0-rc.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-sources-host"
-version = "0.5.0-rc.5"
+version = "0.5.0-rc.6"
 dependencies = [
  "async-trait",
  "e-navigator-core",
