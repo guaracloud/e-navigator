@@ -1,7 +1,19 @@
 use super::{
     ParsedPostgresResponse, PostgresExtraction, ProtocolExtractionConfig, frame_body,
     merge_unique_attributes, parse_postgres_message, parse_postgres_response,
+    parse_postgres_startup_message,
 };
+
+/// Bounded response state for PostgreSQL session startup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostgresStartupLifecycle;
+
+/// Observable progress of a PostgreSQL startup response sequence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PostgresStartupProgress {
+    Continue,
+    Complete(ParsedPostgresResponse),
+}
 
 /// Bounded response state for one PostgreSQL simple-query command cycle.
 ///
@@ -64,6 +76,36 @@ enum PostgresRequestKind {
 enum PostgresRequestPhase {
     Initial,
     ParameterDescription,
+}
+
+impl PostgresStartupLifecycle {
+    /// Creates lifecycle state from a protocol 3.0 `StartupMessage`.
+    pub fn from_request(
+        bytes: &[u8],
+        config: &ProtocolExtractionConfig,
+    ) -> Result<Self, PostgresExtraction> {
+        let startup = parse_postgres_startup_message(bytes, config)?;
+        if startup.kind != super::PostgresStartupKind::Startup {
+            return Err(PostgresExtraction::UnsupportedMessage);
+        }
+        Ok(Self)
+    }
+
+    /// Consumes one backend startup frame without retaining authentication,
+    /// parameter, notice, or backend-key values.
+    pub fn observe_response(
+        &mut self,
+        bytes: &[u8],
+        config: &ProtocolExtractionConfig,
+    ) -> Result<PostgresStartupProgress, PostgresExtraction> {
+        let response = parse_postgres_response(bytes, config)?;
+        match bytes.first() {
+            Some(b'E' | b'Z') => Ok(PostgresStartupProgress::Complete(response)),
+            Some(b'K' | b'N' | b'R' | b'S' | b'v') => Ok(PostgresStartupProgress::Continue),
+            Some(_) => Err(PostgresExtraction::UnexpectedMessage),
+            None => Err(PostgresExtraction::MalformedFrame),
+        }
+    }
 }
 
 impl PostgresSimpleQueryLifecycle {

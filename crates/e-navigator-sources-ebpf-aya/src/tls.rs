@@ -608,7 +608,7 @@ mod platform {
                     reader_count,
                     crate::protocol::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
                 );
-                let mut last_protocol_surface_counts = [0_u64; 7];
+                let mut last_protocol_surface_counts = [0_u64; 13];
 
                 let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
@@ -1178,6 +1178,12 @@ mod platform {
             websocket_frames = counters.websocket_frames,
             websocket_transition_rejections = counters.websocket_transition_rejections,
             grpc_web_requests = counters.grpc_web_requests,
+            postgres_startup_auth_messages = counters.postgres_startup_auth_messages,
+            postgres_encryption_negotiation_accepted = counters.postgres_encryption_negotiation_accepted,
+            postgres_encryption_negotiation_rejected = counters.postgres_encryption_negotiation_rejected,
+            postgres_negotiation_failures = counters.postgres_negotiation_failures,
+            postgres_encrypted_transport_events = counters.postgres_encrypted_transport_events,
+            postgres_copy_ignored_controls = counters.postgres_copy_ignored_controls,
             "source diagnostic TLS sample processed"
         );
         DiagnosticSampleDecision::Matched

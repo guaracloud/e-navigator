@@ -64,6 +64,12 @@ struct SourceCounters {
     protocol_discovered_connections: AtomicU64,
     protocol_discovery_unclassified_events: AtomicU64,
     protocol_discovery_candidate_evictions: AtomicU64,
+    protocol_postgres_startup_auth_messages: AtomicU64,
+    protocol_postgres_encryption_negotiation_accepted: AtomicU64,
+    protocol_postgres_encryption_negotiation_rejected: AtomicU64,
+    protocol_postgres_negotiation_failures: AtomicU64,
+    protocol_postgres_encrypted_transport_events: AtomicU64,
+    protocol_postgres_copy_ignored_controls: AtomicU64,
 }
 
 impl SourceCounters {
@@ -114,6 +120,12 @@ impl SourceCounters {
             protocol_discovered_connections: AtomicU64::new(0),
             protocol_discovery_unclassified_events: AtomicU64::new(0),
             protocol_discovery_candidate_evictions: AtomicU64::new(0),
+            protocol_postgres_startup_auth_messages: AtomicU64::new(0),
+            protocol_postgres_encryption_negotiation_accepted: AtomicU64::new(0),
+            protocol_postgres_encryption_negotiation_rejected: AtomicU64::new(0),
+            protocol_postgres_negotiation_failures: AtomicU64::new(0),
+            protocol_postgres_encrypted_transport_events: AtomicU64::new(0),
+            protocol_postgres_copy_ignored_controls: AtomicU64::new(0),
         }
     }
 }
@@ -166,6 +178,12 @@ pub struct SourceTelemetrySnapshot {
     pub protocol_discovered_connections: u64,
     pub protocol_discovery_unclassified_events: u64,
     pub protocol_discovery_candidate_evictions: u64,
+    pub protocol_postgres_startup_auth_messages: u64,
+    pub protocol_postgres_encryption_negotiation_accepted: u64,
+    pub protocol_postgres_encryption_negotiation_rejected: u64,
+    pub protocol_postgres_negotiation_failures: u64,
+    pub protocol_postgres_encrypted_transport_events: u64,
+    pub protocol_postgres_copy_ignored_controls: u64,
 }
 
 static SOURCE_COUNTERS: OnceLock<Mutex<BTreeMap<&'static str, Arc<SourceCounters>>>> =
@@ -377,7 +395,7 @@ impl SourceTelemetry {
         }
     }
 
-    pub(crate) fn record_protocol_surface_counter_deltas(&self, deltas: [u64; 7]) {
+    pub(crate) fn record_protocol_surface_counter_deltas(&self, deltas: [u64; 13]) {
         for (counter, delta) in [
             &self.counters.protocol_websocket_upgrades,
             &self.counters.protocol_websocket_frames,
@@ -386,6 +404,16 @@ impl SourceTelemetry {
             &self.counters.protocol_discovered_connections,
             &self.counters.protocol_discovery_unclassified_events,
             &self.counters.protocol_discovery_candidate_evictions,
+            &self.counters.protocol_postgres_startup_auth_messages,
+            &self
+                .counters
+                .protocol_postgres_encryption_negotiation_accepted,
+            &self
+                .counters
+                .protocol_postgres_encryption_negotiation_rejected,
+            &self.counters.protocol_postgres_negotiation_failures,
+            &self.counters.protocol_postgres_encrypted_transport_events,
+            &self.counters.protocol_postgres_copy_ignored_controls,
         ]
         .into_iter()
         .zip(deltas)
@@ -453,6 +481,12 @@ impl SourceTelemetry {
             protocol_discovered_connections = snapshot.protocol_discovered_connections,
             protocol_discovery_unclassified_events = snapshot.protocol_discovery_unclassified_events,
             protocol_discovery_candidate_evictions = snapshot.protocol_discovery_candidate_evictions,
+            protocol_postgres_startup_auth_messages = snapshot.protocol_postgres_startup_auth_messages,
+            protocol_postgres_encryption_negotiation_accepted = snapshot.protocol_postgres_encryption_negotiation_accepted,
+            protocol_postgres_encryption_negotiation_rejected = snapshot.protocol_postgres_encryption_negotiation_rejected,
+            protocol_postgres_negotiation_failures = snapshot.protocol_postgres_negotiation_failures,
+            protocol_postgres_encrypted_transport_events = snapshot.protocol_postgres_encrypted_transport_events,
+            protocol_postgres_copy_ignored_controls = snapshot.protocol_postgres_copy_ignored_controls,
             "source telemetry summary"
         );
     }
@@ -585,6 +619,24 @@ fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceT
         protocol_discovery_candidate_evictions: counters
             .protocol_discovery_candidate_evictions
             .load(Ordering::Relaxed),
+        protocol_postgres_startup_auth_messages: counters
+            .protocol_postgres_startup_auth_messages
+            .load(Ordering::Relaxed),
+        protocol_postgres_encryption_negotiation_accepted: counters
+            .protocol_postgres_encryption_negotiation_accepted
+            .load(Ordering::Relaxed),
+        protocol_postgres_encryption_negotiation_rejected: counters
+            .protocol_postgres_encryption_negotiation_rejected
+            .load(Ordering::Relaxed),
+        protocol_postgres_negotiation_failures: counters
+            .protocol_postgres_negotiation_failures
+            .load(Ordering::Relaxed),
+        protocol_postgres_encrypted_transport_events: counters
+            .protocol_postgres_encrypted_transport_events
+            .load(Ordering::Relaxed),
+        protocol_postgres_copy_ignored_controls: counters
+            .protocol_postgres_copy_ignored_controls
+            .load(Ordering::Relaxed),
     }
 }
 
@@ -637,6 +689,12 @@ impl SourceTelemetrySnapshot {
             protocol_discovered_connections: 0,
             protocol_discovery_unclassified_events: 0,
             protocol_discovery_candidate_evictions: 0,
+            protocol_postgres_startup_auth_messages: 0,
+            protocol_postgres_encryption_negotiation_accepted: 0,
+            protocol_postgres_encryption_negotiation_rejected: 0,
+            protocol_postgres_negotiation_failures: 0,
+            protocol_postgres_encrypted_transport_events: 0,
+            protocol_postgres_copy_ignored_controls: 0,
         }
     }
 
@@ -764,6 +822,24 @@ impl SourceTelemetrySnapshot {
             protocol_discovery_candidate_evictions: self
                 .protocol_discovery_candidate_evictions
                 .saturating_sub(previous.protocol_discovery_candidate_evictions),
+            protocol_postgres_startup_auth_messages: self
+                .protocol_postgres_startup_auth_messages
+                .saturating_sub(previous.protocol_postgres_startup_auth_messages),
+            protocol_postgres_encryption_negotiation_accepted: self
+                .protocol_postgres_encryption_negotiation_accepted
+                .saturating_sub(previous.protocol_postgres_encryption_negotiation_accepted),
+            protocol_postgres_encryption_negotiation_rejected: self
+                .protocol_postgres_encryption_negotiation_rejected
+                .saturating_sub(previous.protocol_postgres_encryption_negotiation_rejected),
+            protocol_postgres_negotiation_failures: self
+                .protocol_postgres_negotiation_failures
+                .saturating_sub(previous.protocol_postgres_negotiation_failures),
+            protocol_postgres_encrypted_transport_events: self
+                .protocol_postgres_encrypted_transport_events
+                .saturating_sub(previous.protocol_postgres_encrypted_transport_events),
+            protocol_postgres_copy_ignored_controls: self
+                .protocol_postgres_copy_ignored_controls
+                .saturating_sub(previous.protocol_postgres_copy_ignored_controls),
         }
     }
 
@@ -811,6 +887,12 @@ impl SourceTelemetrySnapshot {
             && self.protocol_discovered_connections == 0
             && self.protocol_discovery_unclassified_events == 0
             && self.protocol_discovery_candidate_evictions == 0
+            && self.protocol_postgres_startup_auth_messages == 0
+            && self.protocol_postgres_encryption_negotiation_accepted == 0
+            && self.protocol_postgres_encryption_negotiation_rejected == 0
+            && self.protocol_postgres_negotiation_failures == 0
+            && self.protocol_postgres_encrypted_transport_events == 0
+            && self.protocol_postgres_copy_ignored_controls == 0
     }
 }
 
@@ -862,7 +944,9 @@ mod tests {
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Exhausted);
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Disabled);
         telemetry.record_profile_counter_deltas([8, 1, 2, 3, 4, 5, 6]);
-        telemetry.record_protocol_surface_counter_deltas([9, 10, 1, 11, 12, 13, 14]);
+        telemetry.record_protocol_surface_counter_deltas([
+            9, 10, 1, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        ]);
 
         let snapshot = telemetry.snapshot_for_test();
         assert!(snapshot.initialized);
@@ -893,6 +977,18 @@ mod tests {
         assert_eq!(snapshot.protocol_discovered_connections, 12);
         assert_eq!(snapshot.protocol_discovery_unclassified_events, 13);
         assert_eq!(snapshot.protocol_discovery_candidate_evictions, 14);
+        assert_eq!(snapshot.protocol_postgres_startup_auth_messages, 15);
+        assert_eq!(
+            snapshot.protocol_postgres_encryption_negotiation_accepted,
+            16
+        );
+        assert_eq!(
+            snapshot.protocol_postgres_encryption_negotiation_rejected,
+            17
+        );
+        assert_eq!(snapshot.protocol_postgres_negotiation_failures, 18);
+        assert_eq!(snapshot.protocol_postgres_encrypted_transport_events, 19);
+        assert_eq!(snapshot.protocol_postgres_copy_ignored_controls, 20);
 
         let first_delta = telemetry.take_summary_delta();
         assert_eq!(first_delta.decoded_samples, 1);

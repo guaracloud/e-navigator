@@ -113,6 +113,7 @@ pub struct ProtocolStreamDecoder {
     buffer: Vec<u8>,
     pending_skip: u64,
     resync: bool,
+    postgres_negotiation_response: bool,
     stats: StreamDecodeStats,
 }
 
@@ -129,6 +130,7 @@ impl ProtocolStreamDecoder {
             buffer: Vec::new(),
             pending_skip: 0,
             resync: false,
+            postgres_negotiation_response: false,
             stats: StreamDecodeStats::default(),
         }
     }
@@ -147,7 +149,16 @@ impl ProtocolStreamDecoder {
         self.buffer.clear();
         self.pending_skip = 0;
         self.resync = false;
+        self.postgres_negotiation_response = false;
         self.protocol = protocol;
+    }
+
+    /// Arms the PostgreSQL response decoder for the single-byte SSL/GSS
+    /// negotiation result that precedes any ordinary backend frame.
+    pub fn expect_postgres_negotiation_response(&mut self) {
+        debug_assert_eq!(self.protocol, StreamProtocol::Postgresql);
+        debug_assert_eq!(self.direction, StreamDirection::Response);
+        self.postgres_negotiation_response = true;
     }
 
     pub fn stats(&self) -> StreamDecodeStats {
@@ -240,12 +251,20 @@ impl ProtocolStreamDecoder {
     fn extract_frames(&mut self, gap: u64, frames: &mut Vec<StreamFrame>) {
         let mut consumed = 0;
         for _ in 0..self.limits.max_frames_per_chunk {
-            match frame_boundary(
-                self.protocol,
-                self.direction,
-                &self.buffer[consumed..],
-                self.limits.max_frame_bytes,
-            ) {
+            let boundary = if self.postgres_negotiation_response {
+                postgres_negotiation_response_boundary(
+                    &self.buffer[consumed..],
+                    self.limits.max_frame_bytes,
+                )
+            } else {
+                frame_boundary(
+                    self.protocol,
+                    self.direction,
+                    &self.buffer[consumed..],
+                    self.limits.max_frame_bytes,
+                )
+            };
+            match boundary {
                 FrameBoundary::Frame { total_len } if total_len <= self.buffer.len() - consumed => {
                     let frame_end = consumed + total_len;
                     frames.push(StreamFrame::Complete(
@@ -253,6 +272,7 @@ impl ProtocolStreamDecoder {
                     ));
                     consumed = frame_end;
                     self.stats.complete_frames += 1;
+                    self.postgres_negotiation_response = false;
                     if consumed == self.buffer.len() && gap == 0 {
                         self.buffer.clear();
                         return;
@@ -819,6 +839,19 @@ fn postgres_boundary(bytes: &[u8], max_frame_bytes: usize) -> FrameBoundary {
     }
 }
 
+fn postgres_negotiation_response_boundary(bytes: &[u8], max_frame_bytes: usize) -> FrameBoundary {
+    let Some(message_type) = bytes.first() else {
+        return FrameBoundary::NeedMoreBytes;
+    };
+    if matches!(message_type, b'N' | b'S' | b'G') {
+        return checked_frame(1, max_frame_bytes);
+    }
+    if *message_type == b'E' {
+        return postgres_boundary(bytes, max_frame_bytes);
+    }
+    FrameBoundary::Invalid
+}
+
 fn nats_boundary(bytes: &[u8], max_frame_bytes: usize) -> FrameBoundary {
     let line_cap = bytes.len().min(max_frame_bytes);
     let Some(line_len) = find_crlf(&bytes[..line_cap]) else {
@@ -1284,6 +1317,22 @@ mod tests {
             request_frame_boundary(StreamProtocol::Postgresql, &[0xff, 0, 0, 0, 4], 1024),
             FrameBoundary::Invalid,
         );
+    }
+
+    #[test]
+    fn postgres_negotiation_response_is_exactly_one_frame() {
+        let mut decoder = ProtocolStreamDecoder::new(
+            StreamProtocol::Postgresql,
+            StreamDirection::Response,
+            StreamDecodeLimits::default(),
+        );
+        decoder.expect_postgres_negotiation_response();
+        let mut frames = Vec::new();
+
+        decoder.push_chunk(b"N", 1, &mut frames);
+
+        assert_eq!(frames, vec![StreamFrame::Complete(b"N".to_vec())]);
+        assert_eq!(decoder.stats().complete_frames, 1);
     }
 
     #[test]

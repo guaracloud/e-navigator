@@ -6,13 +6,18 @@ mod lifecycle;
 
 pub use lifecycle::{
     PostgresRequestLifecycle, PostgresRequestProgress, PostgresSimpleQueryLifecycle,
-    PostgresSimpleQueryProgress,
+    PostgresSimpleQueryProgress, PostgresStartupLifecycle, PostgresStartupProgress,
 };
 
 const MAX_POSTGRES_OPERATION_BYTES: usize = 64;
 const MAX_POSTGRES_STATEMENT_NAME_BYTES: usize = 128;
 const MAX_POSTGRES_BIND_ITEMS: usize = 1024;
 const POSTGRES_SQLSTATE_BYTES: usize = 5;
+const POSTGRES_PROTOCOL_3_0: u32 = 196_608;
+const POSTGRES_CANCEL_REQUEST_CODE: u32 = 80_877_102;
+const POSTGRES_SSL_REQUEST_CODE: u32 = 80_877_103;
+const POSTGRES_GSS_ENCRYPTION_REQUEST_CODE: u32 = 80_877_104;
+const MAX_POSTGRES_STARTUP_PARAMETERS: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedPostgresQuery {
@@ -30,6 +35,27 @@ pub struct ParsedPostgresResponse {
     pub attributes: Vec<TraceAttribute>,
 }
 
+/// A bounded PostgreSQL startup-protocol message classification.
+///
+/// Parameter values, cancel keys, and process identifiers are deliberately
+/// validated and discarded. They are never retained in the parsed result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedPostgresStartup {
+    pub protocol: ProtocolKind,
+    pub kind: PostgresStartupKind,
+    pub operation: Option<String>,
+    pub attributes: Vec<TraceAttribute>,
+}
+
+/// PostgreSQL frontend message kinds that precede typed protocol messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostgresStartupKind {
+    Startup,
+    SslRequest,
+    GssEncryptionRequest,
+    CancelRequest,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostgresExtraction {
     FrameTooLong,
@@ -39,6 +65,97 @@ pub enum PostgresExtraction {
     UnsupportedMessage,
     UnexpectedMessage,
     MissingSqlstate,
+}
+
+/// Parses one complete, untagged PostgreSQL startup-protocol message.
+///
+/// E-Navigator's declared PostgreSQL 15-17 matrix uses protocol 3.0. Newer
+/// minor versions fail closed until their semantics are explicitly added.
+pub fn parse_postgres_startup_message(
+    bytes: &[u8],
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedPostgresStartup, PostgresExtraction> {
+    if bytes.len() > config.max_header_bytes {
+        return Err(PostgresExtraction::FrameTooLong);
+    }
+    if bytes.len() < 8 {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    let declared_len = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    if declared_len != bytes.len() {
+        return Err(PostgresExtraction::MalformedFrame);
+    }
+    let code = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    let (kind, operation, message_type) = match code {
+        POSTGRES_PROTOCOL_3_0 => {
+            validate_startup_parameters(&bytes[8..], config.max_request_line_bytes)?;
+            (PostgresStartupKind::Startup, "CONNECT", "startup")
+        }
+        POSTGRES_SSL_REQUEST_CODE if bytes.len() == 8 => (
+            PostgresStartupKind::SslRequest,
+            "SSL_NEGOTIATE",
+            "ssl_request",
+        ),
+        POSTGRES_GSS_ENCRYPTION_REQUEST_CODE if bytes.len() == 8 => (
+            PostgresStartupKind::GssEncryptionRequest,
+            "GSS_NEGOTIATE",
+            "gss_encryption_request",
+        ),
+        POSTGRES_CANCEL_REQUEST_CODE if bytes.len() == 16 => (
+            PostgresStartupKind::CancelRequest,
+            "CANCEL",
+            "cancel_request",
+        ),
+        _ => return Err(PostgresExtraction::UnsupportedMessage),
+    };
+
+    let mut attributes = Vec::new();
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "db.system.name",
+        Some("postgresql"),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "db.operation.name",
+        Some(operation),
+    );
+    push_attribute(
+        &mut attributes,
+        config.max_attributes,
+        "db.postgresql.message.type",
+        Some(message_type),
+    );
+
+    Ok(ParsedPostgresStartup {
+        protocol: ProtocolKind::Postgresql,
+        kind,
+        operation: Some(operation.to_string()),
+        attributes,
+    })
+}
+
+fn validate_startup_parameters(
+    bytes: &[u8],
+    max_parameter_bytes: usize,
+) -> Result<(), PostgresExtraction> {
+    let mut cursor = 0;
+    for _ in 0..MAX_POSTGRES_STARTUP_PARAMETERS {
+        if bytes.get(cursor) == Some(&0) {
+            cursor += 1;
+            return (cursor == bytes.len())
+                .then_some(())
+                .ok_or(PostgresExtraction::MalformedFrame);
+        }
+        let key = parse_cstring(bytes, &mut cursor, max_parameter_bytes)?;
+        if key.is_empty() {
+            return Err(PostgresExtraction::MalformedFrame);
+        }
+        let _value = parse_cstring(bytes, &mut cursor, max_parameter_bytes)?;
+    }
+    Err(PostgresExtraction::QueryTooLong)
 }
 
 pub fn parse_postgres_message(

@@ -61,8 +61,9 @@ use e_navigator_protocol::{
     nats::{NatsExtraction, parse_nats_command, parse_nats_response},
     postgres::{
         PostgresExtraction, PostgresRequestLifecycle, PostgresRequestProgress,
-        PostgresSimpleQueryLifecycle, PostgresSimpleQueryProgress, parse_postgres_error_response,
-        parse_postgres_message, parse_postgres_response,
+        PostgresSimpleQueryLifecycle, PostgresSimpleQueryProgress, PostgresStartupKind,
+        PostgresStartupLifecycle, PostgresStartupProgress, parse_postgres_error_response,
+        parse_postgres_message, parse_postgres_response, parse_postgres_startup_message,
     },
     redis::{
         RedisExtraction, RedisResponseRole, parse_redis_command, parse_redis_response,
@@ -439,6 +440,17 @@ proptest! {
         };
 
         let _ = parse_postgres_message(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_postgres_startup_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..=512)) {
+        let config = ProtocolExtractionConfig {
+            max_header_bytes: 512,
+            max_request_line_bytes: 128,
+            max_attributes: 16,
+            ..ProtocolExtractionConfig::default()
+        };
+        let _ = parse_postgres_startup_message(&bytes, &config);
     }
 
     #[test]
@@ -19077,6 +19089,125 @@ fn extracts_postgres_simple_query_operation_without_raw_sql() {
     assert!(!extraction.attributes.iter().any(
         |attribute| attribute.value.contains("customers") || attribute.value.contains("secret")
     ));
+}
+
+#[test]
+fn postgres_startup_parser_identifies_bounded_variants_without_exporting_parameters() {
+    let config = ProtocolExtractionConfig::default();
+    let mut startup_body = 196_608_u32.to_be_bytes().to_vec();
+    startup_body.extend_from_slice(
+        b"user\0secret-user\0database\0secret-database\0application_name\0secret-app\0\0",
+    );
+    let mut startup = ((startup_body.len() + 4) as u32).to_be_bytes().to_vec();
+    startup.extend_from_slice(&startup_body);
+
+    let parsed =
+        parse_postgres_startup_message(&startup, &config).expect("protocol 3.0 startup parses");
+    assert_eq!(parsed.kind, PostgresStartupKind::Startup);
+    assert_eq!(parsed.operation.as_deref(), Some("CONNECT"));
+    assert!(parsed.attributes.iter().any(|attribute| {
+        attribute.key == "db.postgresql.message.type" && attribute.value == "startup"
+    }));
+    for secret in ["secret-user", "secret-database", "secret-app"] {
+        assert!(
+            !parsed
+                .attributes
+                .iter()
+                .any(|attribute| attribute.value.contains(secret))
+        );
+    }
+
+    for (code, kind, operation) in [
+        (
+            80877103_u32,
+            PostgresStartupKind::SslRequest,
+            "SSL_NEGOTIATE",
+        ),
+        (
+            80877104_u32,
+            PostgresStartupKind::GssEncryptionRequest,
+            "GSS_NEGOTIATE",
+        ),
+    ] {
+        let mut request = 8_u32.to_be_bytes().to_vec();
+        request.extend_from_slice(&code.to_be_bytes());
+        let parsed = parse_postgres_startup_message(&request, &config)
+            .expect("encryption negotiation parses");
+        assert_eq!(parsed.kind, kind);
+        assert_eq!(parsed.operation.as_deref(), Some(operation));
+    }
+
+    let mut cancel = 16_u32.to_be_bytes().to_vec();
+    cancel.extend_from_slice(&80877102_u32.to_be_bytes());
+    cancel.extend_from_slice(&1234_u32.to_be_bytes());
+    cancel.extend_from_slice(&0xfeed_beef_u32.to_be_bytes());
+    let parsed = parse_postgres_startup_message(&cancel, &config).expect("cancel request parses");
+    assert_eq!(parsed.kind, PostgresStartupKind::CancelRequest);
+    assert_eq!(parsed.operation.as_deref(), Some("CANCEL"));
+    assert!(
+        !parsed
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("feed"))
+    );
+}
+
+#[test]
+fn postgres_startup_parser_rejects_unsupported_versions_and_unpaired_parameters() {
+    let config = ProtocolExtractionConfig::default();
+    let mut unsupported = 8_u32.to_be_bytes().to_vec();
+    unsupported.extend_from_slice(&196_609_u32.to_be_bytes());
+    assert_eq!(
+        parse_postgres_startup_message(&unsupported, &config),
+        Err(PostgresExtraction::UnsupportedMessage)
+    );
+
+    let body = b"\0\x03\0\0user\0missing-value\0";
+    let mut malformed = ((body.len() + 4) as u32).to_be_bytes().to_vec();
+    malformed.extend_from_slice(body);
+    assert_eq!(
+        parse_postgres_startup_message(&malformed, &config),
+        Err(PostgresExtraction::MalformedFrame)
+    );
+}
+
+#[test]
+fn postgres_startup_lifecycle_owns_authentication_until_ready_for_query() {
+    let config = ProtocolExtractionConfig::default();
+    let mut body = 196_608_u32.to_be_bytes().to_vec();
+    body.extend_from_slice(b"user\0secret-user\0\0");
+    let mut startup = ((body.len() + 4) as u32).to_be_bytes().to_vec();
+    startup.extend_from_slice(&body);
+    let mut lifecycle = PostgresStartupLifecycle::from_request(&startup, &config)
+        .expect("startup lifecycle begins");
+
+    for response in [
+        postgres_authentication_frame(10, b"SCRAM-SHA-256\0\0"),
+        postgres_authentication_frame(11, b"secret-server-first"),
+        postgres_authentication_frame(12, b"secret-server-final"),
+        postgres_authentication_frame(0, b""),
+        postgres_frame(b'S', b"server_version\x0017.11\0"),
+        postgres_frame(b'K', &[0xaa; 8]),
+    ] {
+        assert_eq!(
+            lifecycle.observe_response(&response, &config),
+            Ok(PostgresStartupProgress::Continue)
+        );
+    }
+
+    let PostgresStartupProgress::Complete(response) = lifecycle
+        .observe_response(&postgres_frame(b'Z', b"I"), &config)
+        .expect("ready completes startup")
+    else {
+        panic!("expected completed startup");
+    };
+    assert_eq!(response.status_code, "OK");
+    assert!(
+        !response
+            .attributes
+            .iter()
+            .any(|attribute| attribute.value.contains("secret"))
+    );
 }
 
 #[test]
