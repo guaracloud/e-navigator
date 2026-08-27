@@ -389,11 +389,15 @@ unified cgroup v2 root. Port lists contain 1 through 32 unique nonzero ports;
 socket state is bounded from 1 through 65,536; the CSPRNG pool is bounded from
 128 through 65,536; and same-thread context lifetime is 1 through 300,000 ms.
 The path preserves existing context, forwards valid inbound `tracestate`, and
-supports a `Content-Length` body when the current syscall does not cross the
-declared boundary. Vectored injection is limited to three iovecs of at most 96
-bytes each. It bypasses segmented headers, pipelining/trailing messages,
-ambiguous framing, tunnels, upgrades, TLS, HTTP/2, HTTP/3, async thread hops,
-and sockets established before attachment. See
+requires the complete HTTP/1 header block in one contiguous captured prefix.
+It supports an exact `Content-Length` when the syscall cannot cross the
+declared body boundary and bounded exact chunked framing without a visible or
+provable trailing request. Vectored injection captures at most the first three
+96-byte prefixes while length-accounting up to 40 iovecs; unsupported shapes
+bypass and increment `unsupported_iovec`. It bypasses segmented headers,
+multiple pipelined requests, ambiguous framing, tunnels, upgrades, TLS,
+HTTP/2, HTTP/3, logical async-task hops, and sockets established before
+attachment. See
 [ADR 0015](adr/0015-peer-flow-metrics-and-opt-in-http1-propagation.md) before
 enabling it. The default and production example intentionally keep it off.
 

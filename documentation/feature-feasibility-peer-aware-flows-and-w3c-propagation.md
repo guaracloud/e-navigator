@@ -53,6 +53,16 @@ This promotes only that exact cell. Backend trace shape, other kernels and
 architectures, async runtimes, saturation, exhaustion, and soak remain in the
 qualification matrix below. ADR 0015 fixes the public support contract.
 
+Follow-up (2026-08-27): the planner and eBPF capture path now accept a complete
+contiguous header prefix with a large exact-`Content-Length` tail or bounded
+chunked framing. A verifier-bounded loop length-accounts up to 40 iovecs while
+payload capture remains the first three 96-byte prefixes. Local property,
+integration, and optimized arm64 perf-buffer/x86-64 ring-buffer builds cover
+that extension, but no new privileged live-wire or Tempo run was performed.
+The live proof above therefore remains the only promoted runtime cell;
+segmented headers, multiple pipelined requests, pre-attachment sockets, TLS,
+and logical async-task propagation remain outside the implementation claim.
+
 | Feature | Engineering decision | Main reason |
 | --- | --- | --- |
 | Peer-aware L4 byte metric | Implemented as a native bounded metric with active snapshots and idle exact-series reclamation | Kernel-owned cumulative connection counters, generated directional flow summaries, and Kubernetes endpoint attribution provide the required data without waiting for close |

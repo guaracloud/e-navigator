@@ -55,8 +55,12 @@ E-Navigator does not currently claim:
 - live Kafka protocol capture proof for correlation mismatch and out-of-order
   response cases (bounded correlation-id matching is implemented and
   unit-tested, and selected ordinary matching has homelab evidence);
-- live NATS, MongoDB, MySQL, or PostgreSQL protocol capture proof (implemented
-  and unit-tested, not yet runtime-proven);
+- current Guara-shaped NATS, MongoDB, MySQL, or PostgreSQL client/server/version
+  matrix proof. Selected older ordinary protocol matches exist, and the
+  current database lifecycle/compression changes are implemented and locally
+  tested, but they have not run as encrypted and cleartext fixtures under
+  concurrency, reconnects, restarts, retries, out-of-order traffic, or
+  sustained production-shaped load;
 - universal protocol recognition from the disabled-by-default arbitrary-port
   discovery path. Explicit configured-port mappings always take precedence.
   Discovery considers at most 4 KiB of contiguous captured plaintext per
@@ -207,13 +211,24 @@ E-Navigator does not currently claim:
   submission and completion remain
   decoupled, while fixed-file and SQPOLL modes do not preserve the current
   tgid/fd identity seam;
+- TCP connections established before E-Navigator attaches. Current connection
+  ownership and generation state begins at observed connect/accept callbacks;
+  procfs cannot safely reconstruct client ownership, direction, generation, or
+  bytes for an already-open file descriptor. No bytes from before attachment
+  can be recovered, and observation from the attachment point forward remains
+  unclaimed until an identity-safe existing-socket or canonical socket-level
+  seam is implemented without double counting;
 - universal W3C propagation from the disabled-by-default plaintext HTTP/1
-  injector. A privileged local OrbStack aarch64 run proved one bounded
-  three-iovec `sendmsg` request with a `Content-Length` body, child
-  `traceparent`, and preserved valid `tracestate`. It does not claim TLS,
-  HTTP/2/gRPC, HTTP/3/QUIC, segmented headers, more or larger iovecs,
-  transfer-encoded or pipelined messages, connections predating attachment,
-  async task/thread continuation, other kernels, or production load;
+  injector. Local planner, mutation, and optimized eBPF-build coverage now
+  includes complete contiguous headers with bounded exact `Content-Length` or
+  chunked framing and total-length accounting through 40 iovecs. A privileged
+  local OrbStack aarch64 run proves only the earlier bounded three-iovec
+  `sendmsg` request with a `Content-Length` body, child `traceparent`, and
+  preserved valid `tracestate`. The newly accepted large/chunked forms still
+  lack privileged live-wire and Tempo proof. The path does not claim TLS,
+  HTTP/2/gRPC, HTTP/3/QUIC, headers segmented across syscalls, multiple
+  pipelined requests, connections predating attachment, logical async-task
+  continuation, other kernels, or production load;
 - production collector/backend compatibility beyond recorded local or
   namespace-local Collector proof;
 - a RingBuf performance win over the perf-event transport (the 2026-07-21

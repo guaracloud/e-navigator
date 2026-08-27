@@ -752,8 +752,14 @@ These areas remain explicitly partial:
   regenerated child `traceparent`, and the valid inbound multi-member
   `tracestate` preserved. This evidence is recorded in
   [`proof/http-propagation-20260811/report.md`](proof/http-propagation-20260811/report.md).
-  TLS, HTTP/2 and gRPC, HTTP/3, segmented headers, larger iovec shapes,
-  pipelining, pre-attachment sockets, async continuation, other kernels,
+  A later local-only extension adds prefix planning for large exact
+  `Content-Length` writes, bounded chunked framing, and exact total-length
+  accounting through 40 iovecs while retaining only the first three 96-byte
+  capture prefixes. Shared property/integration tests and optimized arm64
+  perf-buffer plus x86-64 ring-buffer eBPF builds pass for that extension, but
+  it has no privileged live-wire or Tempo proof. TLS, HTTP/2 and gRPC, HTTP/3,
+  headers segmented across syscalls, multiple pipelined requests,
+  pre-attachment sockets, logical async-task continuation, other kernels,
   backend trace-tree proof, load, and production behavior remain explicit
   non-claims.
 - **Kafka protocol observability:** bounded request-header parsing for common
@@ -774,40 +780,53 @@ These areas remain explicitly partial:
   request/response matching (including out-of-order responses) are implemented
   and unit-tested. Broad response coverage, flexible-version body semantics
   beyond ApiVersions, and live correlation-mismatch proof remain unproven.
-- **MongoDB protocol observability:** bounded `OP_MSG` including
-  checksum-present messages, command `OP_QUERY`, OP_MSG response-error parsing,
-  and OP_REPLY response parsing is locally tested without exporting raw BSON
-  values, namespaces, checksums, or raw error messages, including bounded
-  OP_REPLY document counts and non-negative response-code validation, but runtime
-  capture, request/response matching, broad response coverage, and live MongoDB
-  proof are not implemented or proven.
+- **MongoDB protocol observability:** bounded `OP_MSG` including checksum,
+  `moreToCome`, and `exhaustAllowed` flags, command `OP_QUERY`, OP_MSG outcome
+  parsing, and OP_REPLY response parsing is locally tested without exporting
+  raw BSON values, namespaces, checksums, reply documents, or raw error
+  messages. The runtime registry correlates by `responseTo` out of order,
+  handles no-response requests and multi-response lifecycles, extracts bounded
+  top-level, write, and write-concern status codes, and fails closed on unknown
+  required flags, unsolicited responses, malformed identifiers, and truncated
+  frames without consuming another request. Selected older ordinary MongoDB
+  matching has homelab evidence; the new no-response, continuation, write-error,
+  mismatch, and sustained-load cases plus a complete Guara client/server/version
+  matrix are not live-proven.
 - **NATS protocol observability:** bounded text command parsing for common
   publish, subscribe, message, and control lines plus OK/error response parsing
   is locally tested with canonical command-token validation and without
   exporting raw subjects, payloads, or raw error messages, including exact
-  frame-end validation for non-payload commands and responses, but runtime
-  capture, request/response matching, broad response coverage, and live NATS
-  proof are not implemented or proven.
+  frame-end validation for non-payload commands and responses. Runtime capture
+  and bounded matching are implemented and selected older ordinary NATS
+  matching has homelab evidence, but request/reply, arbitrary delivery,
+  JetStream acknowledgement, reconnect, current failure/outcome, sustained
+  load, and Guara production-matrix proof remain unproven.
 - **MySQL protocol observability:** bounded `COM_QUERY`,
   `COM_QUIT`, `COM_INIT_DB`, `COM_PING`, `COM_STMT_PREPARE`,
   `COM_STMT_EXECUTE`, `COM_STMT_SEND_LONG_DATA`, `COM_STMT_CLOSE`,
   `COM_STMT_RESET`, `COM_STMT_FETCH`, `COM_RESET_CONNECTION`, and OK/EOF/ERR
-  response parsing is locally tested without exporting raw SQL text, schema names,
-  statement IDs, parameter values, long parameter data, or raw error messages,
-  including canonical SQLSTATE validation for error responses. The local stream
-  registry now keeps sequence-checked text and binary result sets in flight
-  through metadata and rows, handles short EOF and modern `0xfe` OK terminators,
-  preserves multi-result commands, follows prepared metadata and cursor fetch
-  rows, and excludes protocol-defined no-response commands from the correlation
-  queue. Protocol 4.1 OK and ColumnDefinition41 packets are structurally
-  validated before advancing the state machine. Parameter-only prepares finish
-  at the parameter terminator, and cursor executions finish when a legacy
-  metadata EOF carries `SERVER_STATUS_CURSOR_EXISTS`. Malformed, truncated, or
-  out-of-order response packets fail closed without advancing sequence state.
-  Live MySQL capture, compressed protocol, `LOCAL INFILE`, optional-resultset
-  metadata, prepared metadata with capability-negotiated omitted EOF, logical
-  packets split at the 16 MiB boundary, and a server/version matrix are not yet
-  implemented or proven.
+  response parsing is locally tested without exporting raw SQL text, schema
+  names, statement IDs, parameter values, long parameter data, authentication
+  data, server versions, session state, rows, or raw error messages, including
+  canonical SQLSTATE validation for error responses. The local stream registry
+  keeps sequence-checked text and binary result sets in flight through metadata
+  and rows, handles short EOF and modern `0xfe` OK terminators, preserves
+  multi-result commands, follows prepared metadata and cursor fetch rows, owns
+  `LOCAL INFILE` uploads, reassembles 16 MiB logical-packet continuations, and
+  excludes protocol-defined no-response commands from the correlation queue.
+  Protocol 4.1 OK and ColumnDefinition41 packets are structurally validated
+  before advancing. Bounded protocol-v10 greeting/client-response state
+  negotiates zlib only after authentication OK. Seven-byte compressed frames,
+  compressed sequence resets, declared decompressed sizes, full zlib-input
+  consumption, output bounds, and nested ordinary-packet continuation are
+  checked before decoded bytes re-enter the ordinary lifecycle. Zstd,
+  unsupported or ambiguous handshakes, malformed compression, decompression
+  mismatch, and sequence gaps make the connection opaque with native counters.
+  These lifecycle and compression cases are locally tested only. Live
+  cleartext/encrypted MySQL capture, optional-resultset metadata, prepared
+  metadata with capability-negotiated omitted EOF, zstd decoding,
+  reconnect/pre-attachment behavior, a server/version matrix, sustained load,
+  and production proof remain unproven.
 - **PostgreSQL protocol observability:** bounded simple Query, Parse, Bind,
   Describe, Close, Execute, FunctionCall, CopyData, CopyDone, CopyFail,
   PasswordMessage, Flush, Sync, Terminate, Authentication, BackendKeyData,
@@ -829,14 +848,20 @@ These areas remain explicitly partial:
   ReadyForQuery with its transaction state. Parse, Bind, statement and portal
   Describe, Close, Execute, Password, and Sync now use their protocol-defined
   terminals; FunctionCall retains its result/error through ReadyForQuery.
+  Untagged startup framing is bounded and one private `CONNECT` lifecycle owns
+  authentication and parameter setup through terminal readiness without
+  retaining connection parameters or authentication contents.
   Extended-query errors fail already-sent dependent requests without invented
   latency, discard only through the next captured Sync, and preserve subsequent
-  pipeline segments. COPY data/control messages and Flush/Terminate do not
-  enter the response queue. Numeric ParseComplete, BindComplete, and
-  CloseComplete tags are accepted by stream framing. Startup correlation, the
-  COPY-in Sync/Flush exception state, truncated-frame prefix semantics, broad
-  live error/COPY coverage, and production PostgreSQL proof are not implemented
-  or proven.
+  pipeline segments. COPY-in mode preserves its initiating query while
+  ignoring prequeued or in-mode Sync/Flush control messages through
+  CopyDone/CopyFail; other COPY data/control messages and Flush/Terminate do
+  not enter the response queue. Numeric ParseComplete, BindComplete, and
+  CloseComplete tags are accepted by stream framing. Startup and COPY-in state
+  are locally tested but not covered by the older selected homelab ordinary
+  matching. Truncated-frame prefix semantics, current live startup/extended/
+  error/COPY coverage, reconnect/pre-attachment behavior, a server/version
+  matrix, sustained load, and production PostgreSQL proof remain unproven.
 - **Redis protocol observability:** bounded RESP command and
   simple/integer/bulk/RESP3-scalar/RESP3-blob-error/verbatim/flat-array/
   nested-array/RESP3-map/RESP3-set/RESP3-push/error response parsing is locally
@@ -847,12 +872,15 @@ These areas remain explicitly partial:
   subscribe/unsubscribe commands that complete only after their bounded
   acknowledgement count. Zero-argument unsubscribe commands are emitted
   without response latency because the expected confirmation count cannot be
-  known safely from the request. Runtime capture and
-  request/response matching have local
+  known safely from the request. The three structurally recognized RESP2
+  Pub/Sub delivery shapes are also treated as out of band and do not consume
+  an interleaved ordinary reply; channel and payload values remain unexported.
+  Runtime capture and request/response matching have local
   OrbStack proof for plain TCP and OpenSSL Redis, including pipelining and
-  multi-segment payloads, but arbitrary RESP2 Pub/Sub delivery interleaving,
-  streamed RESP3 aggregates, live subscription/out-of-band interleaving, broad
-  production/Kubernetes coverage, and longer live soaks are not proven.
+  multi-segment payloads, but the new RESP2 interleaving behavior, streamed
+  RESP3 aggregates, live subscription/out-of-band interleaving, reconnect and
+  pre-attachment state, broad production/Kubernetes coverage, and longer live
+  soaks are not proven.
 - **DNS capture:** selected UDP paths work, but symmetric all-node capture and
   lossless DNS coverage are not proven.
 - **Network byte accounting:** a privileged local OrbStack

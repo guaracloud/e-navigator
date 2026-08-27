@@ -114,10 +114,13 @@
             into bounded native E-Navigator signals. A disabled-by-default
             plaintext HTTP/1 path can inject a child W3C
             <code>traceparent</code>, preserve valid inbound
-            <code>tracestate</code>, and handle bounded fixed-length bodies and
-            up to three small iovecs. TLS, HTTP/2, HTTP/3, segmented headers,
-            pipelining, pre-existing connections, and async continuation remain
-            explicit non-claims. An optional capture filter
+            <code>tracestate</code>, and handle bounded exact
+            <code>Content-Length</code> or chunked framing when complete headers
+            fit one contiguous captured prefix. It length-accounts as many as 40
+            iovecs while capturing only the first three 96-byte prefixes. TLS,
+            HTTP/2, HTTP/3, headers segmented across syscalls, multiple
+            pipelined requests, pre-existing connections, and async continuation
+            remain explicit non-claims. An optional capture filter
             scopes which workloads are probed by Kubernetes namespace and label
             on unified cgroup v2 nodes. Bounded inotify discovery wakes the
             controller for new cgroups, while a 2-second polling reconciliation
@@ -198,7 +201,7 @@
         <div class="status-grid">
           <article class="status">
             <h3>Automatic application visibility</h3>
-            <p>Correlate HTTP/1, HTTP/2, gRPC, extension-free WebSocket frame metadata, gRPC-Web, Kafka, MongoDB, MySQL, NATS, PostgreSQL, and Redis requests with responses to surface latency, status, errors, and service dependencies. Disabled-by-default arbitrary-port discovery classifies only unique bounded plaintext signatures; explicit port mappings remain authoritative and ambiguous traffic fails closed. Kafka and MongoDB use bounded wire-level correlation keys, including out-of-order responses. MySQL uses a sequence-checked command lifecycle with structural protocol 4.1 OK and column-metadata validation, so parameter-only prepares, cursor terminals, metadata, and text/binary rows remain in flight until a defined completion; missing and malformed packets fail closed. PostgreSQL simple queries retain multi-message results and SQLSTATE errors through terminal readiness; typed extended-query messages use their exact terminals and fail dependent pipeline operations only until the next captured Sync. Redis keeps ordinary RESP3 push and attribute frames out of the FIFO command/reply queue and correlates the bounded confirmation count for explicit RESP2/RESP3 subscription commands without exporting channel values; zero-argument unsubscribe commands intentionally carry no response latency. Database spans use stable OpenTelemetry <code>db.system.name</code> and <code>db.operation.name</code> attributes, with <code>db.collection.name</code> for unambiguous MongoDB collection commands. Opt-in zero-code agent recognition or explicit Kubernetes application-span ownership labels suppress matching duplicate request spans while retaining L4 and profile telemetry. HTTP/3 and QUIC semantics remain an explicit non-claim.</p>
+            <p>Correlate HTTP/1, HTTP/2, gRPC, extension-free WebSocket frame metadata, gRPC-Web, Kafka, MongoDB, MySQL, NATS, PostgreSQL, and Redis requests with responses to surface latency, status, errors, and service dependencies. Disabled-by-default arbitrary-port discovery classifies only unique bounded plaintext signatures; explicit port mappings remain authoritative and ambiguous traffic fails closed. Kafka uses bounded wire correlation keys. MongoDB also handles out-of-order replies, no-response requests, <code>moreToCome</code>/exhaust continuations, and write outcomes without exporting reply documents. MySQL uses sequence-checked logical-packet state for result sets, prepares, cursors, <code>LOCAL INFILE</code>, and 16 MiB continuations; protocol-v10 negotiation enables exact bounded zlib decoding only after authentication succeeds, while zstd and ambiguous state fail closed. PostgreSQL owns startup/authentication as one private connection operation, retains multi-message SQLSTATE outcomes through readiness, and preserves the initiating query across extended-pipeline and COPY-in control traffic. Redis keeps RESP3 push/attribute frames and recognized RESP2 Pub/Sub deliveries out of the FIFO command/reply queue while retaining bounded subscription confirmations without exporting channel values. Database spans use stable OpenTelemetry <code>db.system.name</code> and <code>db.operation.name</code> attributes, with <code>db.collection.name</code> only for unambiguous MongoDB collection commands; SQL tables are not guessed from raw queries and Redis keys are not collections. Opt-in zero-code agent recognition or explicit Kubernetes application-span ownership labels suppress matching duplicate request spans while retaining L4 and profile telemetry. HTTP/3 and QUIC semantics remain an explicit non-claim.</p>
           </article>
           <article class="status">
             <h3>Workload context on every signal</h3>
