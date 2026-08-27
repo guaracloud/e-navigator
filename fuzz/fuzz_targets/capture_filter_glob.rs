@@ -10,7 +10,10 @@ const MAX_INPUT_BYTES: usize = 512;
 // input into a pattern and a value at the first NUL (or midpoint) and match.
 fuzz_target!(|data: &[u8]| {
     let data = &data[..data.len().min(MAX_INPUT_BYTES)];
-    let split = data.iter().position(|&byte| byte == 0).unwrap_or(data.len() / 2);
+    let split = data
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(data.len() / 2);
     let (pattern, value) = data.split_at(split.min(data.len()));
     let pattern = String::from_utf8_lossy(pattern);
     let value = String::from_utf8_lossy(value.strip_prefix(&[0]).unwrap_or(value));

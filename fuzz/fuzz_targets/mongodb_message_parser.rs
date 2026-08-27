@@ -2,7 +2,7 @@
 
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
-    mongodb::{parse_mongodb_message, parse_mongodb_response},
+    mongodb::{MongodbResponseLifecycle, parse_mongodb_message, parse_mongodb_response},
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -19,4 +19,10 @@ fuzz_target!(|data: &[u8]| {
 
     let _ = parse_mongodb_message(data, &config);
     let _ = parse_mongodb_response(data, &config);
+    if let (Ok(mut lifecycle), Ok(response)) = (
+        MongodbResponseLifecycle::from_request(data, &config),
+        parse_mongodb_response(data, &config),
+    ) {
+        let _ = lifecycle.observe_response(response);
+    }
 });

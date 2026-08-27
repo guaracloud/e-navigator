@@ -608,7 +608,8 @@ mod platform {
                     reader_count,
                     crate::protocol::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
                 );
-                let mut last_protocol_surface_counts = [0_u64; 31];
+                let mut last_protocol_surface_counts =
+                    crate::protocol::ProtocolSurfaceCounters::default();
 
                 let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
@@ -618,10 +619,8 @@ mod platform {
                     let result =
                         registry.handle_event(sample.as_bytes(), now_unix_nanos(), &mut signals);
                     let protocol_surface_counts = registry.counters().protocol_surface_counts();
-                    let protocol_surface_deltas = std::array::from_fn(|index| {
-                        protocol_surface_counts[index]
-                            .saturating_sub(last_protocol_surface_counts[index])
-                    });
+                    let protocol_surface_deltas =
+                        protocol_surface_counts.delta_since(last_protocol_surface_counts);
                     last_protocol_surface_counts = protocol_surface_counts;
                     decoder_telemetry
                         .record_protocol_surface_counter_deltas(protocol_surface_deltas);
@@ -1194,7 +1193,7 @@ mod platform {
             mysql_auth_packets = counters.mysql_auth_packets,
             mysql_compression_zlib_connections = counters.mysql_compression_zlib_connections,
             mysql_compression_zstd_rejections = counters.mysql_compression_zstd_rejections,
-            mysql_compression_unverified_connections = counters.mysql_compression_unverified_connections,
+            mysql_compression_unverified_rejections = counters.mysql_compression_unverified_rejections,
             mysql_compressed_packets = counters.mysql_compressed_packets,
             mysql_compression_failures = counters.mysql_compression_failures,
             mysql_compression_opaque_events = counters.mysql_compression_opaque_events,

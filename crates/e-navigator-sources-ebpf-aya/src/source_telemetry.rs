@@ -61,6 +61,7 @@ struct SourceCounters {
     protocol_websocket_frames: AtomicU64,
     protocol_websocket_transition_rejections: AtomicU64,
     protocol_grpc_web_requests: AtomicU64,
+    protocol_redis_ambiguous_state_transitions: AtomicU64,
     protocol_discovered_connections: AtomicU64,
     protocol_discovery_unclassified_events: AtomicU64,
     protocol_discovery_candidate_evictions: AtomicU64,
@@ -80,7 +81,7 @@ struct SourceCounters {
     protocol_mysql_auth_packets: AtomicU64,
     protocol_mysql_compression_zlib_connections: AtomicU64,
     protocol_mysql_compression_zstd_rejections: AtomicU64,
-    protocol_mysql_compression_unverified_connections: AtomicU64,
+    protocol_mysql_compression_unverified_rejections: AtomicU64,
     protocol_mysql_compressed_packets: AtomicU64,
     protocol_mysql_compression_failures: AtomicU64,
     protocol_mysql_compression_opaque_events: AtomicU64,
@@ -135,6 +136,7 @@ impl SourceCounters {
             protocol_websocket_frames: AtomicU64::new(0),
             protocol_websocket_transition_rejections: AtomicU64::new(0),
             protocol_grpc_web_requests: AtomicU64::new(0),
+            protocol_redis_ambiguous_state_transitions: AtomicU64::new(0),
             protocol_discovered_connections: AtomicU64::new(0),
             protocol_discovery_unclassified_events: AtomicU64::new(0),
             protocol_discovery_candidate_evictions: AtomicU64::new(0),
@@ -154,7 +156,7 @@ impl SourceCounters {
             protocol_mysql_auth_packets: AtomicU64::new(0),
             protocol_mysql_compression_zlib_connections: AtomicU64::new(0),
             protocol_mysql_compression_zstd_rejections: AtomicU64::new(0),
-            protocol_mysql_compression_unverified_connections: AtomicU64::new(0),
+            protocol_mysql_compression_unverified_rejections: AtomicU64::new(0),
             protocol_mysql_compressed_packets: AtomicU64::new(0),
             protocol_mysql_compression_failures: AtomicU64::new(0),
             protocol_mysql_compression_opaque_events: AtomicU64::new(0),
@@ -211,6 +213,7 @@ pub struct SourceTelemetrySnapshot {
     pub protocol_websocket_frames: u64,
     pub protocol_websocket_transition_rejections: u64,
     pub protocol_grpc_web_requests: u64,
+    pub protocol_redis_ambiguous_state_transitions: u64,
     pub protocol_discovered_connections: u64,
     pub protocol_discovery_unclassified_events: u64,
     pub protocol_discovery_candidate_evictions: u64,
@@ -230,7 +233,7 @@ pub struct SourceTelemetrySnapshot {
     pub protocol_mysql_auth_packets: u64,
     pub protocol_mysql_compression_zlib_connections: u64,
     pub protocol_mysql_compression_zstd_rejections: u64,
-    pub protocol_mysql_compression_unverified_connections: u64,
+    pub protocol_mysql_compression_unverified_rejections: u64,
     pub protocol_mysql_compressed_packets: u64,
     pub protocol_mysql_compression_failures: u64,
     pub protocol_mysql_compression_opaque_events: u64,
@@ -449,51 +452,116 @@ impl SourceTelemetry {
         }
     }
 
-    pub(crate) fn record_protocol_surface_counter_deltas(&self, deltas: [u64; 31]) {
-        for (counter, delta) in [
-            &self.counters.protocol_websocket_upgrades,
-            &self.counters.protocol_websocket_frames,
-            &self.counters.protocol_websocket_transition_rejections,
-            &self.counters.protocol_grpc_web_requests,
-            &self.counters.protocol_discovered_connections,
-            &self.counters.protocol_discovery_unclassified_events,
-            &self.counters.protocol_discovery_candidate_evictions,
-            &self.counters.protocol_postgres_startup_auth_messages,
-            &self
-                .counters
-                .protocol_postgres_encryption_negotiation_accepted,
-            &self
-                .counters
-                .protocol_postgres_encryption_negotiation_rejected,
-            &self.counters.protocol_postgres_negotiation_failures,
-            &self.counters.protocol_postgres_encrypted_transport_events,
-            &self.counters.protocol_postgres_copy_ignored_controls,
-            &self.counters.protocol_mysql_local_infile_packets,
-            &self.counters.protocol_mysql_local_infile_bytes,
-            &self.counters.protocol_mysql_logical_request_continuations,
-            &self.counters.protocol_mysql_logical_response_continuations,
-            &self.counters.protocol_mysql_logical_sequence_failures,
-            &self.counters.protocol_mysql_server_greetings,
-            &self.counters.protocol_mysql_client_handshakes,
-            &self.counters.protocol_mysql_auth_packets,
-            &self.counters.protocol_mysql_compression_zlib_connections,
-            &self.counters.protocol_mysql_compression_zstd_rejections,
-            &self
-                .counters
-                .protocol_mysql_compression_unverified_connections,
-            &self.counters.protocol_mysql_compressed_packets,
-            &self.counters.protocol_mysql_compression_failures,
-            &self.counters.protocol_mysql_compression_opaque_events,
-            &self.counters.protocol_mysql_handshake_failures,
-            &self.counters.protocol_mongodb_fire_and_forget_requests,
-            &self.counters.protocol_mongodb_response_continuations,
-            &self.counters.protocol_mongodb_lifecycle_failures,
-        ]
-        .into_iter()
-        .zip(deltas)
-        {
-            counter.fetch_add(delta, Ordering::Relaxed);
+    pub(crate) fn record_protocol_surface_counter_deltas(
+        &self,
+        deltas: crate::protocol::ProtocolSurfaceCounters,
+    ) {
+        macro_rules! record {
+            ($counter:ident, $delta:ident) => {
+                self.counters
+                    .$counter
+                    .fetch_add(deltas.$delta, Ordering::Relaxed);
+            };
         }
+
+        record!(protocol_websocket_upgrades, websocket_upgrades);
+        record!(protocol_websocket_frames, websocket_frames);
+        record!(
+            protocol_websocket_transition_rejections,
+            websocket_transition_rejections
+        );
+        record!(protocol_grpc_web_requests, grpc_web_requests);
+        record!(
+            protocol_redis_ambiguous_state_transitions,
+            redis_ambiguous_state_transitions
+        );
+        record!(protocol_discovered_connections, discovered_connections);
+        record!(
+            protocol_discovery_unclassified_events,
+            discovery_unclassified_events
+        );
+        record!(
+            protocol_discovery_candidate_evictions,
+            discovery_candidate_evictions
+        );
+        record!(
+            protocol_postgres_startup_auth_messages,
+            postgres_startup_auth_messages
+        );
+        record!(
+            protocol_postgres_encryption_negotiation_accepted,
+            postgres_encryption_negotiation_accepted
+        );
+        record!(
+            protocol_postgres_encryption_negotiation_rejected,
+            postgres_encryption_negotiation_rejected
+        );
+        record!(
+            protocol_postgres_negotiation_failures,
+            postgres_negotiation_failures
+        );
+        record!(
+            protocol_postgres_encrypted_transport_events,
+            postgres_encrypted_transport_events
+        );
+        record!(
+            protocol_postgres_copy_ignored_controls,
+            postgres_copy_ignored_controls
+        );
+        record!(
+            protocol_mysql_local_infile_packets,
+            mysql_local_infile_packets
+        );
+        record!(protocol_mysql_local_infile_bytes, mysql_local_infile_bytes);
+        record!(
+            protocol_mysql_logical_request_continuations,
+            mysql_logical_request_continuations
+        );
+        record!(
+            protocol_mysql_logical_response_continuations,
+            mysql_logical_response_continuations
+        );
+        record!(
+            protocol_mysql_logical_sequence_failures,
+            mysql_logical_sequence_failures
+        );
+        record!(protocol_mysql_server_greetings, mysql_server_greetings);
+        record!(protocol_mysql_client_handshakes, mysql_client_handshakes);
+        record!(protocol_mysql_auth_packets, mysql_auth_packets);
+        record!(
+            protocol_mysql_compression_zlib_connections,
+            mysql_compression_zlib_connections
+        );
+        record!(
+            protocol_mysql_compression_zstd_rejections,
+            mysql_compression_zstd_rejections
+        );
+        record!(
+            protocol_mysql_compression_unverified_rejections,
+            mysql_compression_unverified_rejections
+        );
+        record!(protocol_mysql_compressed_packets, mysql_compressed_packets);
+        record!(
+            protocol_mysql_compression_failures,
+            mysql_compression_failures
+        );
+        record!(
+            protocol_mysql_compression_opaque_events,
+            mysql_compression_opaque_events
+        );
+        record!(protocol_mysql_handshake_failures, mysql_handshake_failures);
+        record!(
+            protocol_mongodb_fire_and_forget_requests,
+            mongodb_fire_and_forget_requests
+        );
+        record!(
+            protocol_mongodb_response_continuations,
+            mongodb_response_continuations
+        );
+        record!(
+            protocol_mongodb_lifecycle_failures,
+            mongodb_lifecycle_failures
+        );
     }
 
     pub(crate) fn maybe_log_summary(&self) {
@@ -552,6 +620,7 @@ impl SourceTelemetry {
             protocol_websocket_frames = snapshot.protocol_websocket_frames,
             protocol_websocket_transition_rejections = snapshot.protocol_websocket_transition_rejections,
             protocol_grpc_web_requests = snapshot.protocol_grpc_web_requests,
+            protocol_redis_ambiguous_state_transitions = snapshot.protocol_redis_ambiguous_state_transitions,
             protocol_discovered_connections = snapshot.protocol_discovered_connections,
             protocol_discovery_unclassified_events = snapshot.protocol_discovery_unclassified_events,
             protocol_discovery_candidate_evictions = snapshot.protocol_discovery_candidate_evictions,
@@ -571,7 +640,7 @@ impl SourceTelemetry {
             protocol_mysql_auth_packets = snapshot.protocol_mysql_auth_packets,
             protocol_mysql_compression_zlib_connections = snapshot.protocol_mysql_compression_zlib_connections,
             protocol_mysql_compression_zstd_rejections = snapshot.protocol_mysql_compression_zstd_rejections,
-            protocol_mysql_compression_unverified_connections = snapshot.protocol_mysql_compression_unverified_connections,
+            protocol_mysql_compression_unverified_rejections = snapshot.protocol_mysql_compression_unverified_rejections,
             protocol_mysql_compressed_packets = snapshot.protocol_mysql_compressed_packets,
             protocol_mysql_compression_failures = snapshot.protocol_mysql_compression_failures,
             protocol_mysql_compression_opaque_events = snapshot.protocol_mysql_compression_opaque_events,
@@ -702,6 +771,9 @@ fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceT
             .protocol_websocket_transition_rejections
             .load(Ordering::Relaxed),
         protocol_grpc_web_requests: counters.protocol_grpc_web_requests.load(Ordering::Relaxed),
+        protocol_redis_ambiguous_state_transitions: counters
+            .protocol_redis_ambiguous_state_transitions
+            .load(Ordering::Relaxed),
         protocol_discovered_connections: counters
             .protocol_discovered_connections
             .load(Ordering::Relaxed),
@@ -757,8 +829,8 @@ fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceT
         protocol_mysql_compression_zstd_rejections: counters
             .protocol_mysql_compression_zstd_rejections
             .load(Ordering::Relaxed),
-        protocol_mysql_compression_unverified_connections: counters
-            .protocol_mysql_compression_unverified_connections
+        protocol_mysql_compression_unverified_rejections: counters
+            .protocol_mysql_compression_unverified_rejections
             .load(Ordering::Relaxed),
         protocol_mysql_compressed_packets: counters
             .protocol_mysql_compressed_packets
@@ -830,6 +902,7 @@ impl SourceTelemetrySnapshot {
             protocol_websocket_frames: 0,
             protocol_websocket_transition_rejections: 0,
             protocol_grpc_web_requests: 0,
+            protocol_redis_ambiguous_state_transitions: 0,
             protocol_discovered_connections: 0,
             protocol_discovery_unclassified_events: 0,
             protocol_discovery_candidate_evictions: 0,
@@ -849,7 +922,7 @@ impl SourceTelemetrySnapshot {
             protocol_mysql_auth_packets: 0,
             protocol_mysql_compression_zlib_connections: 0,
             protocol_mysql_compression_zstd_rejections: 0,
-            protocol_mysql_compression_unverified_connections: 0,
+            protocol_mysql_compression_unverified_rejections: 0,
             protocol_mysql_compressed_packets: 0,
             protocol_mysql_compression_failures: 0,
             protocol_mysql_compression_opaque_events: 0,
@@ -975,6 +1048,9 @@ impl SourceTelemetrySnapshot {
             protocol_grpc_web_requests: self
                 .protocol_grpc_web_requests
                 .saturating_sub(previous.protocol_grpc_web_requests),
+            protocol_redis_ambiguous_state_transitions: self
+                .protocol_redis_ambiguous_state_transitions
+                .saturating_sub(previous.protocol_redis_ambiguous_state_transitions),
             protocol_discovered_connections: self
                 .protocol_discovered_connections
                 .saturating_sub(previous.protocol_discovered_connections),
@@ -1032,9 +1108,9 @@ impl SourceTelemetrySnapshot {
             protocol_mysql_compression_zstd_rejections: self
                 .protocol_mysql_compression_zstd_rejections
                 .saturating_sub(previous.protocol_mysql_compression_zstd_rejections),
-            protocol_mysql_compression_unverified_connections: self
-                .protocol_mysql_compression_unverified_connections
-                .saturating_sub(previous.protocol_mysql_compression_unverified_connections),
+            protocol_mysql_compression_unverified_rejections: self
+                .protocol_mysql_compression_unverified_rejections
+                .saturating_sub(previous.protocol_mysql_compression_unverified_rejections),
             protocol_mysql_compressed_packets: self
                 .protocol_mysql_compressed_packets
                 .saturating_sub(previous.protocol_mysql_compressed_packets),
@@ -1100,6 +1176,7 @@ impl SourceTelemetrySnapshot {
             && self.protocol_websocket_frames == 0
             && self.protocol_websocket_transition_rejections == 0
             && self.protocol_grpc_web_requests == 0
+            && self.protocol_redis_ambiguous_state_transitions == 0
             && self.protocol_discovered_connections == 0
             && self.protocol_discovery_unclassified_events == 0
             && self.protocol_discovery_candidate_evictions == 0
@@ -1119,7 +1196,7 @@ impl SourceTelemetrySnapshot {
             && self.protocol_mysql_auth_packets == 0
             && self.protocol_mysql_compression_zlib_connections == 0
             && self.protocol_mysql_compression_zstd_rejections == 0
-            && self.protocol_mysql_compression_unverified_connections == 0
+            && self.protocol_mysql_compression_unverified_rejections == 0
             && self.protocol_mysql_compressed_packets == 0
             && self.protocol_mysql_compression_failures == 0
             && self.protocol_mysql_compression_opaque_events == 0
@@ -1155,6 +1232,7 @@ pub fn bench_source_telemetry_summary_checks(
 mod tests {
     use super::{SourceTelemetry, source_telemetry_snapshots};
     use crate::diagnostics::DiagnosticSampleDecision;
+    use crate::protocol::ProtocolSurfaceCounters;
     use std::time::Duration;
 
     #[test]
@@ -1178,10 +1256,40 @@ mod tests {
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Exhausted);
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Disabled);
         telemetry.record_profile_counter_deltas([8, 1, 2, 3, 4, 5, 6]);
-        telemetry.record_protocol_surface_counter_deltas([
-            9, 10, 1, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
-            30, 31, 32, 33, 34, 35, 36, 37, 38,
-        ]);
+        telemetry.record_protocol_surface_counter_deltas(ProtocolSurfaceCounters {
+            websocket_upgrades: 9,
+            websocket_frames: 10,
+            websocket_transition_rejections: 1,
+            grpc_web_requests: 11,
+            redis_ambiguous_state_transitions: 12,
+            discovered_connections: 12,
+            discovery_unclassified_events: 13,
+            discovery_candidate_evictions: 14,
+            postgres_startup_auth_messages: 15,
+            postgres_encryption_negotiation_accepted: 16,
+            postgres_encryption_negotiation_rejected: 17,
+            postgres_negotiation_failures: 18,
+            postgres_encrypted_transport_events: 19,
+            postgres_copy_ignored_controls: 20,
+            mysql_local_infile_packets: 21,
+            mysql_local_infile_bytes: 22,
+            mysql_logical_request_continuations: 23,
+            mysql_logical_response_continuations: 24,
+            mysql_logical_sequence_failures: 25,
+            mysql_server_greetings: 26,
+            mysql_client_handshakes: 27,
+            mysql_auth_packets: 28,
+            mysql_compression_zlib_connections: 29,
+            mysql_compression_zstd_rejections: 30,
+            mysql_compression_unverified_rejections: 31,
+            mysql_compressed_packets: 32,
+            mysql_compression_failures: 33,
+            mysql_compression_opaque_events: 34,
+            mysql_handshake_failures: 35,
+            mongodb_fire_and_forget_requests: 36,
+            mongodb_response_continuations: 37,
+            mongodb_lifecycle_failures: 38,
+        });
 
         let snapshot = telemetry.snapshot_for_test();
         assert!(snapshot.initialized);
@@ -1209,6 +1317,7 @@ mod tests {
         assert_eq!(snapshot.protocol_websocket_frames, 10);
         assert_eq!(snapshot.protocol_websocket_transition_rejections, 1);
         assert_eq!(snapshot.protocol_grpc_web_requests, 11);
+        assert_eq!(snapshot.protocol_redis_ambiguous_state_transitions, 12);
         assert_eq!(snapshot.protocol_discovered_connections, 12);
         assert_eq!(snapshot.protocol_discovery_unclassified_events, 13);
         assert_eq!(snapshot.protocol_discovery_candidate_evictions, 14);
@@ -1235,7 +1344,7 @@ mod tests {
         assert_eq!(snapshot.protocol_mysql_compression_zlib_connections, 29);
         assert_eq!(snapshot.protocol_mysql_compression_zstd_rejections, 30);
         assert_eq!(
-            snapshot.protocol_mysql_compression_unverified_connections,
+            snapshot.protocol_mysql_compression_unverified_rejections,
             31
         );
         assert_eq!(snapshot.protocol_mysql_compressed_packets, 32);
