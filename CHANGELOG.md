@@ -6,6 +6,58 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0-rc.6] - 2026-08-27
+
+### Added
+
+- Add bounded PostgreSQL startup/authentication and COPY-in lifecycle state so
+  one private startup operation owns authentication through readiness and the
+  initiating request remains correlated across COPY control traffic.
+- Add MySQL logical-packet continuation through the 16 MiB packet boundary,
+  `LOCAL INFILE` upload ownership, protocol-v10 capability negotiation, and
+  exact bounded zlib frame decoding after bilateral negotiation and successful
+  authentication.
+- Add MongoDB request-specific no-response, write-outcome, and multi-response
+  lifecycles, including `moreToCome` and exhaust continuation handling without
+  exporting reply documents.
+- Extend the opt-in plaintext HTTP/1 propagation planner to length-account up
+  to 40 iovecs while capturing bounded prefixes, and accept fully captured,
+  structurally valid chunked writes and exact `Content-Length` bodies.
+- Export bounded native diagnostics for PostgreSQL startup/COPY, MongoDB
+  lifecycle, MySQL logical packets, `LOCAL INFILE`, handshake/compression, and
+  Redis ambiguous subscriber-state transitions.
+
+### Fixed
+
+- Make Redis Pub/Sub delivery classification connection-state aware, let only
+  matching request lifecycles change subscriber state, reject malformed or
+  impossible confirmations, handle `RESET`, and fail correlation closed after
+  zero-argument unsubscribe forms instead of guessing from global counts.
+- Reject client-only MySQL compression evidence, zstd, malformed compressed
+  sequences, inflated frames beyond the configured bound, and ambiguous
+  reconnect or pre-attachment state without consuming unrelated requests.
+- Reject HTTP propagation when uncaptured chunked tails, duplicate or
+  conflicting framing, trailers carrying context, unsupported vector shapes,
+  or trailing/pipelined messages make safe single-request mutation ambiguous.
+
+### Changed
+
+- Split large protocol fixtures and new HTTP, database lifecycle, MySQL
+  transport, PostgreSQL negotiation, and telemetry logic into focused modules
+  with unit, integration, property, fuzz-target build, and release eBPF build
+  coverage.
+- Add a Guara workload qualification ledger and align README, website,
+  capability, boundary, readiness, operations, and proof documentation with
+  the exact implemented surfaces and remaining promotion blockers.
+
+### Security
+
+- Preserve fail-closed boundaries for bundled Node.js and JVM TLS, asynchronous
+  trace continuation, segmented headers, multiple pipelined requests,
+  pre-attachment protocol state, general `io_uring`, and undeclared Guara
+  client/server/version cells; this candidate does not claim full Beyla and
+  Alloy replacement readiness.
+
 ## [0.5.0-rc.5] - 2026-08-25
 
 ### Performance
