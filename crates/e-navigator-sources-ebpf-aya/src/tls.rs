@@ -608,7 +608,7 @@ mod platform {
                     reader_count,
                     crate::protocol::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
                 );
-                let mut last_protocol_surface_counts = [0_u64; 21];
+                let mut last_protocol_surface_counts = [0_u64; 31];
 
                 let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
@@ -1189,6 +1189,16 @@ mod platform {
             mysql_logical_request_continuations = counters.mysql_logical_request_continuations,
             mysql_logical_response_continuations = counters.mysql_logical_response_continuations,
             mysql_logical_sequence_failures = counters.mysql_logical_sequence_failures,
+            mysql_server_greetings = counters.mysql_server_greetings,
+            mysql_client_handshakes = counters.mysql_client_handshakes,
+            mysql_auth_packets = counters.mysql_auth_packets,
+            mysql_compression_zlib_connections = counters.mysql_compression_zlib_connections,
+            mysql_compression_zstd_rejections = counters.mysql_compression_zstd_rejections,
+            mysql_compression_unverified_connections = counters.mysql_compression_unverified_connections,
+            mysql_compressed_packets = counters.mysql_compressed_packets,
+            mysql_compression_failures = counters.mysql_compression_failures,
+            mysql_compression_opaque_events = counters.mysql_compression_opaque_events,
+            mysql_handshake_failures = counters.mysql_handshake_failures,
             mongodb_fire_and_forget_requests = counters.mongodb_fire_and_forget_requests,
             mongodb_response_continuations = counters.mongodb_response_continuations,
             mongodb_lifecycle_failures = counters.mongodb_lifecycle_failures,

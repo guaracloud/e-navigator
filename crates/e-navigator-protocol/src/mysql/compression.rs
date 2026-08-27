@@ -46,6 +46,14 @@ pub struct MysqlCompressedPacket {
     pub payload: Vec<u8>,
 }
 
+/// Non-sensitive framing metadata for one exact ordinary MySQL packet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MysqlPacketMetadata {
+    pub sequence_id: u8,
+    pub payload_len: usize,
+    pub first_payload_byte: Option<u8>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MysqlCompressionExtraction {
     PacketTooLong,
@@ -152,6 +160,37 @@ pub fn negotiate_mysql_compression(
     } else {
         MysqlCompressionAlgorithm::Disabled
     }
+}
+
+/// Selects the algorithm advertised by a client HandshakeResponse when the
+/// server greeting was captured at a different plaintext boundary. The
+/// caller must retain that this negotiation was not independently verified
+/// against the server capability set.
+#[must_use]
+pub fn mysql_requested_compression(
+    client: MysqlClientHandshakeResponse,
+) -> MysqlCompressionAlgorithm {
+    if client.capabilities & MYSQL_CLIENT_COMPRESS != 0 {
+        MysqlCompressionAlgorithm::Zlib
+    } else if client.capabilities & MYSQL_CLIENT_ZSTD_COMPRESSION_ALGORITHM != 0 {
+        MysqlCompressionAlgorithm::Zstd
+    } else {
+        MysqlCompressionAlgorithm::Disabled
+    }
+}
+
+/// Returns framing-only metadata for one complete ordinary MySQL packet.
+/// Packet bodies are neither copied nor retained.
+pub fn parse_mysql_packet_metadata(
+    bytes: &[u8],
+    max_packet_bytes: usize,
+) -> Result<MysqlPacketMetadata, MysqlCompressionExtraction> {
+    let (sequence_id, payload) = exact_packet_parts(bytes, max_packet_bytes)?;
+    Ok(MysqlPacketMetadata {
+        sequence_id,
+        payload_len: payload.len(),
+        first_payload_byte: payload.first().copied(),
+    })
 }
 
 /// Decodes exactly one complete compressed-protocol frame.

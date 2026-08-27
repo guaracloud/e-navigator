@@ -59,4 +59,5 @@ aya-build = { workspace = true }
 
 [dev-dependencies]
 base64 = { workspace = true }
+flate2 = { workspace = true }
 proptest = { workspace = true }

@@ -631,6 +631,7 @@ dependencies = [
  "e-navigator-profiling",
  "e-navigator-protocol",
  "e-navigator-signals",
+ "flate2",
  "getrandom 0.3.4",
  "iced-x86",
  "inotify",

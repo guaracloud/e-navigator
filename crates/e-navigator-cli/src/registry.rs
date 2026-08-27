@@ -497,6 +497,46 @@ fn aya_source_telemetry_lines(
                     snapshot.protocol_mysql_logical_sequence_failures,
                 ),
                 metric(
+                    "e_navigator_ebpf_source_protocol_mysql_server_greetings_total",
+                    snapshot.protocol_mysql_server_greetings,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mysql_client_handshakes_total",
+                    snapshot.protocol_mysql_client_handshakes,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mysql_auth_packets_total",
+                    snapshot.protocol_mysql_auth_packets,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mysql_compression_zlib_connections_total",
+                    snapshot.protocol_mysql_compression_zlib_connections,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mysql_compression_zstd_rejections_total",
+                    snapshot.protocol_mysql_compression_zstd_rejections,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mysql_compression_unverified_connections_total",
+                    snapshot.protocol_mysql_compression_unverified_connections,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mysql_compressed_packets_total",
+                    snapshot.protocol_mysql_compressed_packets,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mysql_compression_failures_total",
+                    snapshot.protocol_mysql_compression_failures,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mysql_compression_opaque_events_total",
+                    snapshot.protocol_mysql_compression_opaque_events,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mysql_handshake_failures_total",
+                    snapshot.protocol_mysql_handshake_failures,
+                ),
+                metric(
                     "e_navigator_ebpf_source_protocol_mongodb_fire_and_forget_requests_total",
                     snapshot.protocol_mongodb_fire_and_forget_requests,
                 ),
@@ -960,14 +1000,24 @@ mod tests {
                 protocol_mysql_logical_request_continuations: 19,
                 protocol_mysql_logical_response_continuations: 20,
                 protocol_mysql_logical_sequence_failures: 21,
-                protocol_mongodb_fire_and_forget_requests: 22,
-                protocol_mongodb_response_continuations: 23,
-                protocol_mongodb_lifecycle_failures: 24,
+                protocol_mysql_server_greetings: 22,
+                protocol_mysql_client_handshakes: 23,
+                protocol_mysql_auth_packets: 24,
+                protocol_mysql_compression_zlib_connections: 25,
+                protocol_mysql_compression_zstd_rejections: 26,
+                protocol_mysql_compression_unverified_connections: 27,
+                protocol_mysql_compressed_packets: 28,
+                protocol_mysql_compression_failures: 29,
+                protocol_mysql_compression_opaque_events: 30,
+                protocol_mysql_handshake_failures: 31,
+                protocol_mongodb_fire_and_forget_requests: 32,
+                protocol_mongodb_response_continuations: 33,
+                protocol_mongodb_lifecycle_failures: 34,
             }]
             .into_iter(),
         );
 
-        assert_eq!(lines.len(), 59);
+        assert_eq!(lines.len(), 69);
         assert!(
             lines.iter().all(
                 |line| line.labels.get("source").map(String::as_str) == Some("source.aya_exec")
@@ -1018,7 +1068,7 @@ mod tests {
         }));
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_protocol_mongodb_fire_and_forget_requests_total"
-                && line.value == "22"
+                && line.value == "32"
         }));
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_protocol_postgres_negotiation_failures_total"
@@ -1027,6 +1077,14 @@ mod tests {
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_protocol_mysql_logical_sequence_failures_total"
                 && line.value == "21"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_protocol_mysql_compression_zlib_connections_total"
+                && line.value == "25"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_protocol_mysql_compression_failures_total"
+                && line.value == "29"
         }));
     }
 

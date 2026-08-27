@@ -28,9 +28,12 @@ use e_navigator_protocol::{
         parse_mongodb_response,
     },
     mysql::{
-        MysqlClientPacketProgress, MysqlLogicalPacketProgress, MysqlResponseLifecycle,
-        MysqlResponseProgress, parse_mysql_command, parse_mysql_command_prefix,
-        parse_mysql_response,
+        MysqlClientHandshakeResponse, MysqlClientPacketProgress, MysqlCompressionAlgorithm,
+        MysqlLogicalPacketProgress, MysqlResponseLifecycle, MysqlResponseProgress,
+        MysqlServerGreeting, decode_mysql_compressed_packet, mysql_requested_compression,
+        negotiate_mysql_compression, parse_mysql_client_handshake_response, parse_mysql_command,
+        parse_mysql_command_prefix, parse_mysql_packet_metadata, parse_mysql_response,
+        parse_mysql_server_greeting,
     },
     nats::parse_nats_command,
     postgres::{
@@ -444,6 +447,16 @@ pub(crate) struct ProtocolRegistryCounters {
     pub mysql_logical_request_continuations: u64,
     pub mysql_logical_response_continuations: u64,
     pub mysql_logical_sequence_failures: u64,
+    pub mysql_server_greetings: u64,
+    pub mysql_client_handshakes: u64,
+    pub mysql_auth_packets: u64,
+    pub mysql_compression_zlib_connections: u64,
+    pub mysql_compression_zstd_rejections: u64,
+    pub mysql_compression_unverified_connections: u64,
+    pub mysql_compressed_packets: u64,
+    pub mysql_compression_failures: u64,
+    pub mysql_compression_opaque_events: u64,
+    pub mysql_handshake_failures: u64,
     pub mongodb_fire_and_forget_requests: u64,
     pub mongodb_response_continuations: u64,
     pub mongodb_lifecycle_failures: u64,
@@ -451,7 +464,7 @@ pub(crate) struct ProtocolRegistryCounters {
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 impl ProtocolRegistryCounters {
-    pub(crate) fn protocol_surface_counts(self) -> [u64; 21] {
+    pub(crate) fn protocol_surface_counts(self) -> [u64; 31] {
         [
             self.websocket_upgrades,
             self.websocket_frames,
@@ -471,6 +484,16 @@ impl ProtocolRegistryCounters {
             self.mysql_logical_request_continuations,
             self.mysql_logical_response_continuations,
             self.mysql_logical_sequence_failures,
+            self.mysql_server_greetings,
+            self.mysql_client_handshakes,
+            self.mysql_auth_packets,
+            self.mysql_compression_zlib_connections,
+            self.mysql_compression_zstd_rejections,
+            self.mysql_compression_unverified_connections,
+            self.mysql_compressed_packets,
+            self.mysql_compression_failures,
+            self.mysql_compression_opaque_events,
+            self.mysql_handshake_failures,
             self.mongodb_fire_and_forget_requests,
             self.mongodb_response_continuations,
             self.mongodb_lifecycle_failures,
@@ -703,14 +726,87 @@ struct ConnectionStream {
     response_decoder: ProtocolStreamDecoder,
     request_segments: Option<SegmentProgress>,
     response_segments: Option<SegmentProgress>,
+    request_frame_started_unix_nanos: Option<u64>,
+    response_frame_started_unix_nanos: Option<u64>,
     in_flight: std::collections::VecDeque<InFlightRequest>,
     http2: Option<Http2ConnectionState>,
     postgres_discarding_until_sync: bool,
     postgres_negotiation: Option<PostgresNegotiation>,
     postgres_transport_opaque: bool,
     postgres_copy_in: bool,
+    mysql: Option<MysqlConnectionState>,
     context: ObservationContext,
     last_seen_unix_nanos: u64,
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug)]
+struct MysqlConnectionState {
+    phase: MysqlConnectionPhase,
+    compression: Option<MysqlCompressedTransport>,
+    limits: StreamDecodeLimits,
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+impl MysqlConnectionState {
+    fn new(limits: StreamDecodeLimits) -> Self {
+        Self {
+            phase: MysqlConnectionPhase::Unknown,
+            compression: None,
+            limits,
+        }
+    }
+
+    fn is_opaque(&self) -> bool {
+        self.phase == MysqlConnectionPhase::Opaque
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MysqlConnectionPhase {
+    Unknown,
+    AwaitClientHandshake {
+        server: MysqlServerGreeting,
+    },
+    Authenticating {
+        algorithm: MysqlCompressionAlgorithm,
+        next_sequence: u8,
+        server_verified: bool,
+    },
+    Command,
+    Opaque,
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug)]
+struct MysqlCompressedTransport {
+    request_decoder: ProtocolStreamDecoder,
+    response_decoder: ProtocolStreamDecoder,
+    request_frame_started_unix_nanos: Option<u64>,
+    response_frame_started_unix_nanos: Option<u64>,
+    next_sequence: u8,
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+impl MysqlCompressedTransport {
+    fn new(limits: StreamDecodeLimits) -> Self {
+        Self {
+            request_decoder: ProtocolStreamDecoder::new(
+                StreamProtocol::Mysql,
+                StreamDirection::Request,
+                limits,
+            ),
+            response_decoder: ProtocolStreamDecoder::new(
+                StreamProtocol::Mysql,
+                StreamDirection::Response,
+                limits,
+            ),
+            request_frame_started_unix_nanos: None,
+            response_frame_started_unix_nanos: None,
+            next_sequence: 0,
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -745,6 +841,7 @@ pub struct ProtocolStreamRegistry {
     connections: std::collections::HashMap<ConnectionId, ConnectionStream>,
     discovery_candidates: std::collections::HashMap<ConnectionId, ProtocolDiscoveryCandidate>,
     frames: Vec<StreamFrame>,
+    mysql_frames: Vec<StreamFrame>,
     counters: ProtocolRegistryCounters,
 }
 
@@ -783,6 +880,7 @@ impl ProtocolStreamRegistry {
             connections: std::collections::HashMap::new(),
             discovery_candidates: std::collections::HashMap::new(),
             frames: Vec::new(),
+            mysql_frames: Vec::new(),
             counters: ProtocolRegistryCounters::default(),
         }
     }
@@ -935,6 +1033,8 @@ impl ProtocolStreamRegistry {
                 ),
                 request_segments: None,
                 response_segments: None,
+                request_frame_started_unix_nanos: None,
+                response_frame_started_unix_nanos: None,
                 in_flight: std::collections::VecDeque::new(),
                 http2: (protocol == StreamProtocol::Http2).then(|| Http2ConnectionState {
                     request_hpack: HpackDecoder::new(),
@@ -948,6 +1048,8 @@ impl ProtocolStreamRegistry {
                 postgres_negotiation: None,
                 postgres_transport_opaque: false,
                 postgres_copy_in: false,
+                mysql: (protocol == StreamProtocol::Mysql)
+                    .then(|| MysqlConnectionState::new(limits)),
                 context,
                 last_seen_unix_nanos: observed_unix_nanos,
             }
@@ -958,6 +1060,15 @@ impl ProtocolStreamRegistry {
         stream.last_seen_unix_nanos = observed_unix_nanos;
 
         let payload = &raw.payload[..raw.payload_len as usize];
+        if stream.protocol == StreamProtocol::Mysql
+            && stream
+                .mysql
+                .as_ref()
+                .is_some_and(MysqlConnectionState::is_opaque)
+        {
+            self.counters.mysql_compression_opaque_events += 1;
+            return Ok(());
+        }
         if stream.protocol == StreamProtocol::Postgresql && stream.postgres_transport_opaque {
             self.counters.postgres_encrypted_transport_events += 1;
             return Ok(());
@@ -987,19 +1098,33 @@ impl ProtocolStreamRegistry {
         }
         let mut frames = std::mem::take(&mut self.frames);
         frames.clear();
-        let (decoder, pending_segments) = if is_request_direction {
-            (&mut stream.request_decoder, &mut stream.request_segments)
+        let (decoder, pending_segments, pending_frame_started) = if is_request_direction {
+            (
+                &mut stream.request_decoder,
+                &mut stream.request_segments,
+                &mut stream.request_frame_started_unix_nanos,
+            )
         } else {
-            (&mut stream.response_decoder, &mut stream.response_segments)
+            (
+                &mut stream.response_decoder,
+                &mut stream.response_segments,
+                &mut stream.response_frame_started_unix_nanos,
+            )
         };
-        let frame_started_unix_nanos = if let Some(discovered) = discovery_match {
+        let input_started_unix_nanos = discovery_match
+            .as_ref()
+            .map_or(observed_unix_nanos, |discovered| {
+                discovered.started_unix_nanos
+            });
+        let frame_started_unix_nanos = pending_frame_started.unwrap_or(input_started_unix_nanos);
+        let complete_frames_before = decoder.stats().complete_frames;
+        if let Some(discovered) = discovery_match {
             debug_assert_eq!(discovered.direction, direction);
             decoder.push_chunk(
                 &discovered.bytes,
                 discovered.bytes.len() as u64,
                 &mut frames,
             );
-            discovered.started_unix_nanos
         } else {
             feed_segment(
                 decoder,
@@ -1009,43 +1134,89 @@ impl ProtocolStreamRegistry {
                 &mut self.counters,
                 &mut frames,
             );
-            observed_unix_nanos
+        }
+        *pending_frame_started = if decoder.buffered_bytes() == 0 {
+            None
+        } else if decoder.stats().complete_frames > complete_frames_before {
+            Some(input_started_unix_nanos)
+        } else {
+            Some(frame_started_unix_nanos)
+        };
+
+        let mut mysql_frames = std::mem::take(&mut self.mysql_frames);
+        mysql_frames.clear();
+        let compressed_transport_active = stream.protocol == StreamProtocol::Mysql
+            && stream
+                .mysql
+                .as_ref()
+                .is_some_and(|mysql| mysql.compression.is_some());
+        let mut mysql_frame_started_unix_nanos = None;
+        let decoded_transport = !compressed_transport_active
+            || decode_mysql_compressed_transport_frames(
+                stream,
+                &frames,
+                is_request_direction,
+                frame_started_unix_nanos,
+                &mut mysql_frames,
+                &mut mysql_frame_started_unix_nanos,
+                &mut self.counters,
+            );
+        let handled_frames = if compressed_transport_active {
+            &mysql_frames
+        } else {
+            &frames
+        };
+
+        if !decoded_transport {
+            frames.clear();
+            self.frames = frames;
+            mysql_frames.clear();
+            self.mysql_frames = mysql_frames;
+            return Ok(());
+        }
+
+        let handled_frame_started_unix_nanos = if compressed_transport_active {
+            mysql_frame_started_unix_nanos.unwrap_or(frame_started_unix_nanos)
+        } else {
+            frame_started_unix_nanos
         };
 
         if stream.protocol == StreamProtocol::Http2 {
             handle_http2_frames(
                 stream,
-                &frames,
+                handled_frames,
                 is_request_direction,
                 &self.extraction,
                 &self.host,
                 &mut self.counters,
-                frame_started_unix_nanos,
+                handled_frame_started_unix_nanos,
                 signals,
             );
         } else if is_request_direction {
             handle_request_frames(
                 stream,
-                &frames,
+                handled_frames,
                 &self.extraction,
                 &self.host,
                 &mut self.counters,
-                frame_started_unix_nanos,
+                handled_frame_started_unix_nanos,
                 signals,
             );
         } else {
             handle_response_frames(
                 stream,
-                &frames,
+                handled_frames,
                 &self.extraction,
                 &self.host,
                 &mut self.counters,
-                frame_started_unix_nanos,
+                handled_frame_started_unix_nanos,
                 signals,
             );
         }
         frames.clear();
         self.frames = frames;
+        mysql_frames.clear();
+        self.mysql_frames = mysql_frames;
         Ok(())
     }
 
@@ -1271,6 +1442,340 @@ fn feed_segment(
     });
 }
 
+/// Decodes the negotiated MySQL compression layer into the existing bounded
+/// ordinary-packet reassembler. Any missing bytes, decompression mismatch, or
+/// compressed sequence ambiguity makes the connection opaque; a later frame
+/// is never guessed back into alignment.
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn decode_mysql_compressed_transport_frames(
+    stream: &mut ConnectionStream,
+    frames: &[StreamFrame],
+    is_request_direction: bool,
+    input_started_unix_nanos: u64,
+    decoded_frames: &mut Vec<StreamFrame>,
+    decoded_frame_started_unix_nanos: &mut Option<u64>,
+    counters: &mut ProtocolRegistryCounters,
+) -> bool {
+    for frame in frames {
+        let bytes = match frame {
+            StreamFrame::Complete(bytes) => bytes,
+            StreamFrame::Truncated { .. } => {
+                counters.truncated_frames += 1;
+                mark_mysql_transport_opaque(stream, counters);
+                return false;
+            }
+            StreamFrame::ProtocolSwitch { .. } => {
+                counters.unparsed_frames += 1;
+                mark_mysql_transport_opaque(stream, counters);
+                return false;
+            }
+        };
+
+        let max_payload_bytes = stream
+            .mysql
+            .as_ref()
+            .map_or(0, |mysql| mysql.limits.max_buffered_bytes);
+        let packet = match decode_mysql_compressed_packet(bytes, max_payload_bytes) {
+            Ok(packet) => packet,
+            Err(_) => {
+                mark_mysql_transport_opaque(stream, counters);
+                return false;
+            }
+        };
+
+        let exchange_idle = stream.in_flight.is_empty()
+            && stream.mysql.as_ref().is_some_and(|mysql| {
+                mysql.compression.as_ref().is_some_and(|transport| {
+                    transport.request_decoder.buffered_bytes() == 0
+                        && transport.response_decoder.buffered_bytes() == 0
+                })
+            });
+        let Some(transport) = stream
+            .mysql
+            .as_mut()
+            .and_then(|mysql| mysql.compression.as_mut())
+        else {
+            mark_mysql_transport_opaque(stream, counters);
+            return false;
+        };
+        let reset_for_new_command =
+            is_request_direction && exchange_idle && packet.sequence_id == 0;
+        if packet.sequence_id != transport.next_sequence && !reset_for_new_command {
+            mark_mysql_transport_opaque(stream, counters);
+            return false;
+        }
+        transport.next_sequence = packet.sequence_id.wrapping_add(1);
+        let (decoder, pending_frame_started) = if is_request_direction {
+            (
+                &mut transport.request_decoder,
+                &mut transport.request_frame_started_unix_nanos,
+            )
+        } else {
+            (
+                &mut transport.response_decoder,
+                &mut transport.response_frame_started_unix_nanos,
+            )
+        };
+        let frame_started_unix_nanos = pending_frame_started.unwrap_or(input_started_unix_nanos);
+        let complete_frames_before = decoder.stats().complete_frames;
+        let decoded_frames_before = decoded_frames.len();
+        decoder.push_chunk(&packet.payload, packet.payload.len() as u64, decoded_frames);
+        if decoded_frames.len() > decoded_frames_before
+            && decoded_frame_started_unix_nanos.is_none()
+        {
+            *decoded_frame_started_unix_nanos = Some(frame_started_unix_nanos);
+        }
+        *pending_frame_started = if decoder.buffered_bytes() == 0 {
+            None
+        } else if decoder.stats().complete_frames > complete_frames_before {
+            Some(input_started_unix_nanos)
+        } else {
+            Some(frame_started_unix_nanos)
+        };
+        counters.mysql_compressed_packets += 1;
+    }
+    true
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn mark_mysql_transport_opaque(
+    stream: &mut ConnectionStream,
+    counters: &mut ProtocolRegistryCounters,
+) {
+    mark_mysql_connection_opaque(stream);
+    counters.mysql_compression_failures += 1;
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn mark_mysql_handshake_opaque(
+    stream: &mut ConnectionStream,
+    counters: &mut ProtocolRegistryCounters,
+) {
+    mark_mysql_connection_opaque(stream);
+    counters.mysql_handshake_failures += 1;
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn mark_mysql_connection_opaque(stream: &mut ConnectionStream) {
+    if let Some(mysql) = stream.mysql.as_mut() {
+        mysql.phase = MysqlConnectionPhase::Opaque;
+        mysql.compression = None;
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn handle_mysql_connection_request_frame(
+    stream: &mut ConnectionStream,
+    frame: &StreamFrame,
+    extraction: &ProtocolExtractionConfig,
+    counters: &mut ProtocolRegistryCounters,
+) -> bool {
+    let Some(phase) = stream.mysql.as_ref().map(|mysql| mysql.phase) else {
+        return false;
+    };
+    match phase {
+        MysqlConnectionPhase::Command => false,
+        MysqlConnectionPhase::Opaque => true,
+        MysqlConnectionPhase::Unknown => {
+            let StreamFrame::Complete(bytes) = frame else {
+                if matches!(frame, StreamFrame::Truncated { .. }) {
+                    if let Some(mysql) = stream.mysql.as_mut() {
+                        mysql.phase = MysqlConnectionPhase::Command;
+                    }
+                    return false;
+                }
+                mark_mysql_handshake_opaque(stream, counters);
+                return true;
+            };
+            match parse_mysql_client_handshake_response(bytes, extraction.max_header_bytes) {
+                Ok(client) => {
+                    begin_mysql_authentication(stream, client, None, counters);
+                    true
+                }
+                Err(_) => {
+                    if parse_mysql_packet_metadata(bytes, extraction.max_header_bytes)
+                        .is_ok_and(|metadata| metadata.sequence_id == 0)
+                        && let Some(mysql) = stream.mysql.as_mut()
+                    {
+                        mysql.phase = MysqlConnectionPhase::Command;
+                    }
+                    false
+                }
+            }
+        }
+        MysqlConnectionPhase::AwaitClientHandshake { server } => {
+            let StreamFrame::Complete(bytes) = frame else {
+                mark_mysql_handshake_opaque(stream, counters);
+                return true;
+            };
+            match parse_mysql_client_handshake_response(bytes, extraction.max_header_bytes) {
+                Ok(client) => begin_mysql_authentication(stream, client, Some(server), counters),
+                Err(_) => mark_mysql_handshake_opaque(stream, counters),
+            }
+            true
+        }
+        MysqlConnectionPhase::Authenticating { next_sequence, .. } => {
+            let StreamFrame::Complete(bytes) = frame else {
+                mark_mysql_handshake_opaque(stream, counters);
+                return true;
+            };
+            let Ok(metadata) = parse_mysql_packet_metadata(bytes, extraction.max_header_bytes)
+            else {
+                mark_mysql_handshake_opaque(stream, counters);
+                return true;
+            };
+            if metadata.sequence_id != next_sequence {
+                mark_mysql_handshake_opaque(stream, counters);
+                return true;
+            }
+            if let Some(mysql) = stream.mysql.as_mut()
+                && let MysqlConnectionPhase::Authenticating { next_sequence, .. } = &mut mysql.phase
+            {
+                *next_sequence = next_sequence.wrapping_add(1);
+            }
+            counters.mysql_auth_packets += 1;
+            true
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn handle_mysql_connection_response_frame(
+    stream: &mut ConnectionStream,
+    frame: &StreamFrame,
+    extraction: &ProtocolExtractionConfig,
+    counters: &mut ProtocolRegistryCounters,
+) -> bool {
+    let Some(phase) = stream.mysql.as_ref().map(|mysql| mysql.phase) else {
+        return false;
+    };
+    match phase {
+        MysqlConnectionPhase::Command => false,
+        MysqlConnectionPhase::Opaque => true,
+        MysqlConnectionPhase::Unknown => {
+            let StreamFrame::Complete(bytes) = frame else {
+                return false;
+            };
+            let Ok(server) = parse_mysql_server_greeting(bytes, extraction.max_header_bytes) else {
+                return false;
+            };
+            if let Some(mysql) = stream.mysql.as_mut() {
+                mysql.phase = MysqlConnectionPhase::AwaitClientHandshake { server };
+            }
+            counters.mysql_server_greetings += 1;
+            true
+        }
+        MysqlConnectionPhase::AwaitClientHandshake { .. } => {
+            mark_mysql_handshake_opaque(stream, counters);
+            true
+        }
+        MysqlConnectionPhase::Authenticating {
+            next_sequence,
+            algorithm,
+            server_verified,
+        } => {
+            let StreamFrame::Complete(bytes) = frame else {
+                mark_mysql_handshake_opaque(stream, counters);
+                return true;
+            };
+            let Ok(metadata) = parse_mysql_packet_metadata(bytes, extraction.max_header_bytes)
+            else {
+                mark_mysql_handshake_opaque(stream, counters);
+                return true;
+            };
+            if metadata.sequence_id != next_sequence {
+                mark_mysql_handshake_opaque(stream, counters);
+                return true;
+            }
+            counters.mysql_auth_packets += 1;
+            match metadata.first_payload_byte {
+                Some(0x00)
+                    if parse_mysql_response(bytes, extraction)
+                        .is_ok_and(|response| response.error_type.is_none()) =>
+                {
+                    activate_mysql_compression(stream, algorithm, server_verified, counters);
+                }
+                Some(0xff)
+                    if parse_mysql_response(bytes, extraction)
+                        .is_ok_and(|response| response.error_type.is_some()) =>
+                {
+                    mark_mysql_connection_opaque(stream);
+                }
+                Some(0x01 | 0xfe) => {
+                    if let Some(mysql) = stream.mysql.as_mut()
+                        && let MysqlConnectionPhase::Authenticating { next_sequence, .. } =
+                            &mut mysql.phase
+                    {
+                        *next_sequence = next_sequence.wrapping_add(1);
+                    }
+                }
+                _ => mark_mysql_handshake_opaque(stream, counters),
+            }
+            true
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn begin_mysql_authentication(
+    stream: &mut ConnectionStream,
+    client: MysqlClientHandshakeResponse,
+    server: Option<MysqlServerGreeting>,
+    counters: &mut ProtocolRegistryCounters,
+) {
+    let (algorithm, server_verified) = server.map_or_else(
+        || (mysql_requested_compression(client), false),
+        |server| (negotiate_mysql_compression(server, client), true),
+    );
+    if let Some(mysql) = stream.mysql.as_mut() {
+        mysql.phase = MysqlConnectionPhase::Authenticating {
+            algorithm,
+            next_sequence: client.sequence_id.wrapping_add(1),
+            server_verified,
+        };
+    }
+    counters.mysql_client_handshakes += 1;
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn activate_mysql_compression(
+    stream: &mut ConnectionStream,
+    algorithm: MysqlCompressionAlgorithm,
+    server_verified: bool,
+    counters: &mut ProtocolRegistryCounters,
+) {
+    let Some(mysql) = stream.mysql.as_mut() else {
+        return;
+    };
+    match algorithm {
+        MysqlCompressionAlgorithm::Disabled => {
+            mysql.phase = MysqlConnectionPhase::Command;
+        }
+        MysqlCompressionAlgorithm::Zlib => {
+            mysql.phase = MysqlConnectionPhase::Command;
+            mysql.compression = Some(MysqlCompressedTransport::new(mysql.limits));
+            stream
+                .request_decoder
+                .switch_protocol(StreamProtocol::MysqlCompressed);
+            stream
+                .response_decoder
+                .switch_protocol(StreamProtocol::MysqlCompressed);
+            stream.request_segments = None;
+            stream.response_segments = None;
+            stream.request_frame_started_unix_nanos = None;
+            stream.response_frame_started_unix_nanos = None;
+            counters.mysql_compression_zlib_connections += 1;
+            if !server_verified {
+                counters.mysql_compression_unverified_connections += 1;
+            }
+        }
+        MysqlCompressionAlgorithm::Zstd => {
+            mysql.phase = MysqlConnectionPhase::Opaque;
+            counters.mysql_compression_zstd_rejections += 1;
+        }
+    }
+}
+
 /// Processes reassembled request frames: parsed requests join the bounded
 /// in-flight queue (NATS emits immediately); overflow and expiry emit
 /// unmatched observations rather than growing state.
@@ -1286,6 +1791,11 @@ fn handle_request_frames(
     signals: &mut Vec<SignalEnvelope>,
 ) {
     for frame in frames {
+        if stream.protocol == StreamProtocol::Mysql
+            && handle_mysql_connection_request_frame(stream, frame, extraction, counters)
+        {
+            continue;
+        }
         if stream.protocol == StreamProtocol::WebSocket {
             emit_websocket_observation(
                 frame,
@@ -1785,6 +2295,11 @@ fn handle_response_frames(
         }
         if matches!(frame, StreamFrame::ProtocolSwitch { .. }) {
             counters.websocket_transition_rejections += 1;
+            continue;
+        }
+        if stream.protocol == StreamProtocol::Mysql
+            && handle_mysql_connection_response_frame(stream, frame, extraction, counters)
+        {
             continue;
         }
         if stream.protocol == StreamProtocol::WebSocket {
@@ -3681,7 +4196,7 @@ mod platform {
                     reader_count,
                     super::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
                 );
-                let mut last_protocol_surface_counts = [0_u64; 21];
+                let mut last_protocol_surface_counts = [0_u64; 31];
 
                 let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
@@ -4180,6 +4695,8 @@ mod tests {
     use super::*;
     use crate::perf_sample::InlineSample;
     use e_navigator_signals::SignalPayload;
+    use flate2::{Compression, write::ZlibEncoder};
+    use std::io::Write as _;
 
     fn fixed_command(name: &str) -> [u8; 16] {
         let mut command = [0_u8; 16];
@@ -4356,6 +4873,53 @@ mod tests {
         packet
     }
 
+    fn mysql_server_greeting(capabilities: u32) -> Vec<u8> {
+        let mut payload = vec![0x0a];
+        payload.extend_from_slice(b"8.0.36\0");
+        payload.extend_from_slice(&42_u32.to_le_bytes());
+        payload.extend_from_slice(b"12345678");
+        payload.push(0);
+        payload.extend_from_slice(&(capabilities as u16).to_le_bytes());
+        payload.push(0x21);
+        payload.extend_from_slice(&2_u16.to_le_bytes());
+        payload.extend_from_slice(&((capabilities >> 16) as u16).to_le_bytes());
+        payload.push(21);
+        payload.extend_from_slice(&[0; 10]);
+        payload.extend_from_slice(b"abcdefghijkl\0");
+        mysql_wire_packet(0, &payload)
+    }
+
+    fn mysql_client_handshake_response(sequence: u8, capabilities: u32) -> Vec<u8> {
+        let mut payload = capabilities.to_le_bytes().to_vec();
+        payload.extend_from_slice(&16_777_216_u32.to_le_bytes());
+        payload.push(0x21);
+        payload.extend_from_slice(&[0; 23]);
+        payload.extend_from_slice(b"fixture-user\0");
+        payload.push(0);
+        mysql_wire_packet(sequence, &payload)
+    }
+
+    fn mysql_compressed_packet(sequence: u8, payload: &[u8], compress: bool) -> Vec<u8> {
+        let (body, uncompressed_len) = if compress {
+            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
+            encoder
+                .write_all(payload)
+                .expect("fixture zlib write succeeds");
+            let body = encoder.finish().expect("fixture zlib finish succeeds");
+            (body, payload.len())
+        } else {
+            (payload.to_vec(), 0)
+        };
+        let body_len = u32::try_from(body.len()).expect("fixture length fits u32");
+        let uncompressed_len = u32::try_from(uncompressed_len).expect("fixture length fits u32");
+        let mut packet = Vec::with_capacity(body.len() + 7);
+        packet.extend_from_slice(&body_len.to_le_bytes()[..3]);
+        packet.push(sequence);
+        packet.extend_from_slice(&uncompressed_len.to_le_bytes()[..3]);
+        packet.extend_from_slice(&body);
+        packet
+    }
+
     fn kafka_api_versions_request(correlation_id: i32) -> Vec<u8> {
         let mut body = vec![0, 18, 0, 0];
         body.extend_from_slice(&correlation_id.to_be_bytes());
@@ -4498,6 +5062,39 @@ mod tests {
         let serialized = serde_json::to_string(&signals[0]).expect("signal serializes");
         assert!(!serialized.contains("secret-key"));
         assert!(!serialized.contains("hello"));
+    }
+
+    #[test]
+    fn fragmented_request_latency_starts_at_the_first_observed_byte() {
+        let mut registry = registry();
+        let first = b"*2\r\n$3\r\nGET\r\n";
+        let second = b"$10\r\nsecret-key\r\n";
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(6379, first, first.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(6379, second, second.len() as u32),
+                5_500,
+            )
+            .is_empty()
+        );
+
+        let signals = handle_at(
+            &mut registry,
+            &response_event(6379, b"$5\r\nhello\r\n"),
+            9_000,
+        );
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.start_unix_nanos, 5_000);
+        assert_eq!(observation.duration_nanos, Some(4_000));
     }
 
     #[test]
@@ -4919,7 +5516,8 @@ mod tests {
         let observation = observation(&signals[0]);
         assert_eq!(observation.protocol, ProtocolKind::Kafka);
         assert_eq!(observation.method.as_deref(), Some("api_versions"));
-        assert_eq!(observation.duration_nanos, Some(4_000));
+        assert_eq!(observation.start_unix_nanos, 5_000);
+        assert_eq!(observation.duration_nanos, Some(4_100));
         assert_eq!(registry.counters().matched_responses, 1);
     }
 
@@ -6691,6 +7289,252 @@ mod tests {
         }));
         assert_eq!(registry.counters().response_continuations, 4);
         assert_eq!(registry.counters().orphan_responses, 0);
+    }
+
+    #[test]
+    fn mysql_zlib_handshake_activates_only_after_auth_ok_and_correlates_frames() {
+        let mut registry = registry();
+        let capabilities = (1 << 9) | (1 << 5);
+        let greeting = mysql_server_greeting(capabilities);
+        assert!(handle_at(&mut registry, &response_event(3306, &greeting), 1_000).is_empty());
+        let handshake = mysql_client_handshake_response(1, capabilities);
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &handshake, handshake.len() as u32),
+                2_000,
+            )
+            .is_empty()
+        );
+        let auth_ok = mysql_wire_packet(2, &[0, 0, 0, 2, 0, 0, 0]);
+        assert!(handle_at(&mut registry, &response_event(3306, &auth_ok), 3_000).is_empty());
+
+        let query = mysql_wire_packet(0, b"\x03SELECT secret FROM private_table");
+        let request = mysql_compressed_packet(0, &query, true);
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+        let ok = mysql_wire_packet(1, &[0, 0, 0, 2, 0, 0, 0]);
+        let response = mysql_compressed_packet(1, &ok, false);
+        let signals = handle_at(&mut registry, &response_event(3306, &response), 9_000);
+
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.protocol, ProtocolKind::Mysql);
+        assert_eq!(observation.method.as_deref(), Some("SELECT"));
+        assert_eq!(observation.duration_nanos, Some(4_000));
+        assert_eq!(registry.counters().mysql_server_greetings, 1);
+        assert_eq!(registry.counters().mysql_client_handshakes, 1);
+        assert_eq!(registry.counters().mysql_compression_zlib_connections, 1);
+        assert_eq!(registry.counters().mysql_compressed_packets, 2);
+        assert_eq!(registry.counters().mysql_compression_failures, 0);
+        assert_eq!(registry.counters().orphan_responses, 0);
+        assert_eq!(registry.counters().unparsed_frames, 0);
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        assert!(!serialized.contains("secret"));
+        assert!(!serialized.contains("private_table"));
+    }
+
+    #[test]
+    fn mysql_zlib_auth_switch_split_packets_and_sequence_reset_remain_correlated() {
+        let mut registry = registry();
+        let capabilities = (1 << 9) | (1 << 5);
+        let greeting = mysql_server_greeting(capabilities);
+        assert!(handle(&mut registry, &response_event(3306, &greeting)).is_empty());
+        let handshake = mysql_client_handshake_response(1, capabilities);
+        assert!(
+            handle(
+                &mut registry,
+                &raw_event(3306, &handshake, handshake.len() as u32),
+            )
+            .is_empty()
+        );
+        let auth_switch = mysql_wire_packet(2, b"\xfecaching_sha2_password\0salt\0");
+        assert!(handle(&mut registry, &response_event(3306, &auth_switch)).is_empty());
+        let auth_reply = mysql_wire_packet(3, b"private-auth-response");
+        assert!(
+            handle(
+                &mut registry,
+                &raw_event(3306, &auth_reply, auth_reply.len() as u32),
+            )
+            .is_empty()
+        );
+        let auth_ok = mysql_wire_packet(4, &[0, 0, 0, 2, 0, 0, 0]);
+        assert!(handle(&mut registry, &response_event(3306, &auth_ok)).is_empty());
+
+        let query = mysql_wire_packet(0, b"\x03SELECT secret FROM private_table");
+        let split_at = 9;
+        let first = mysql_compressed_packet(0, &query[..split_at], false);
+        let second = mysql_compressed_packet(1, &query[split_at..], true);
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &first, first.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &second, second.len() as u32),
+                5_500,
+            )
+            .is_empty()
+        );
+
+        let resultset = [
+            mysql_wire_packet(1, &[1]),
+            mysql_column_definition_packet(2),
+            mysql_wire_packet(3, &[0xfe, 0, 0, 2, 0]),
+            mysql_wire_packet(4, &[1, b'x']),
+            mysql_wire_packet(5, &[0xfe, 0, 0, 2, 0]),
+        ]
+        .concat();
+        let response = mysql_compressed_packet(2, &resultset, true);
+        let signals = handle_at(&mut registry, &response_event(3306, &response), 9_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("SELECT"));
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(4_000));
+
+        let ping = mysql_wire_packet(0, &[0x0e]);
+        let ping = mysql_compressed_packet(0, &ping, false);
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &ping, ping.len() as u32),
+                10_000,
+            )
+            .is_empty()
+        );
+        let pong = mysql_wire_packet(1, &[0, 0, 0, 2, 0, 0, 0]);
+        let pong = mysql_compressed_packet(1, &pong, false);
+        let signals = handle_at(&mut registry, &response_event(3306, &pong), 11_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("PING"));
+        assert_eq!(registry.counters().mysql_auth_packets, 3);
+        assert_eq!(registry.counters().mysql_compressed_packets, 5);
+        assert_eq!(registry.counters().mysql_compression_failures, 0);
+        assert_eq!(registry.counters().mysql_handshake_failures, 0);
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        assert!(!serialized.contains("private"));
+    }
+
+    #[test]
+    fn mysql_tls_boundary_handshake_is_counted_as_unverified_but_bounded() {
+        let mut registry = registry();
+        let capabilities = (1 << 9) | (1 << 5);
+        let handshake = mysql_client_handshake_response(2, capabilities);
+        assert!(
+            handle(
+                &mut registry,
+                &raw_event(3306, &handshake, handshake.len() as u32),
+            )
+            .is_empty()
+        );
+        let auth_ok = mysql_wire_packet(3, &[0, 0, 0, 2, 0, 0, 0]);
+        assert!(handle(&mut registry, &response_event(3306, &auth_ok)).is_empty());
+
+        let ping = mysql_compressed_packet(0, &mysql_wire_packet(0, &[0x0e]), false);
+        assert!(handle(&mut registry, &raw_event(3306, &ping, ping.len() as u32),).is_empty());
+        let pong = mysql_compressed_packet(1, &mysql_wire_packet(1, &[0, 0, 0, 2, 0, 0, 0]), false);
+        let signals = handle(&mut registry, &response_event(3306, &pong));
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("PING"));
+        assert_eq!(registry.counters().mysql_server_greetings, 0);
+        assert_eq!(registry.counters().mysql_compression_zlib_connections, 1);
+        assert_eq!(
+            registry.counters().mysql_compression_unverified_connections,
+            1
+        );
+    }
+
+    #[test]
+    fn mysql_compression_negotiation_falls_back_or_fails_closed_explicitly() {
+        let mut fallback = registry();
+        let protocol_41 = 1 << 9;
+        let greeting = mysql_server_greeting(protocol_41);
+        assert!(handle(&mut fallback, &response_event(3306, &greeting)).is_empty());
+        let handshake = mysql_client_handshake_response(1, protocol_41 | (1 << 5));
+        assert!(
+            handle(
+                &mut fallback,
+                &raw_event(3306, &handshake, handshake.len() as u32),
+            )
+            .is_empty()
+        );
+        let auth_ok = mysql_wire_packet(2, &[0, 0, 0, 2, 0, 0, 0]);
+        assert!(handle(&mut fallback, &response_event(3306, &auth_ok)).is_empty());
+        let ping = mysql_wire_packet(0, &[0x0e]);
+        assert!(handle(&mut fallback, &raw_event(3306, &ping, ping.len() as u32),).is_empty());
+        let pong = mysql_wire_packet(1, &[0, 0, 0, 2, 0, 0, 0]);
+        assert_eq!(handle(&mut fallback, &response_event(3306, &pong)).len(), 1);
+        assert_eq!(fallback.counters().mysql_compression_zlib_connections, 0);
+
+        let mut zstd = registry();
+        let zstd_capabilities = protocol_41 | (1 << 26);
+        let greeting = mysql_server_greeting(zstd_capabilities);
+        assert!(handle(&mut zstd, &response_event(3306, &greeting)).is_empty());
+        let handshake = mysql_client_handshake_response(1, zstd_capabilities);
+        assert!(
+            handle(
+                &mut zstd,
+                &raw_event(3306, &handshake, handshake.len() as u32),
+            )
+            .is_empty()
+        );
+        let auth_ok = mysql_wire_packet(2, &[0, 0, 0, 2, 0, 0, 0]);
+        assert!(handle(&mut zstd, &response_event(3306, &auth_ok)).is_empty());
+        assert_eq!(zstd.counters().mysql_compression_zstd_rejections, 1);
+        let opaque = mysql_compressed_packet(0, &mysql_wire_packet(0, &[0x0e]), false);
+        assert!(handle(&mut zstd, &raw_event(3306, &opaque, opaque.len() as u32),).is_empty());
+        assert_eq!(zstd.counters().mysql_compression_opaque_events, 1);
+        assert_eq!(zstd.counters().unparsed_frames, 0);
+    }
+
+    #[test]
+    fn mysql_compressed_sequence_mismatch_makes_transport_opaque() {
+        let mut registry = registry();
+        let capabilities = (1 << 9) | (1 << 5);
+        let greeting = mysql_server_greeting(capabilities);
+        assert!(handle(&mut registry, &response_event(3306, &greeting)).is_empty());
+        let handshake = mysql_client_handshake_response(1, capabilities);
+        assert!(
+            handle(
+                &mut registry,
+                &raw_event(3306, &handshake, handshake.len() as u32),
+            )
+            .is_empty()
+        );
+        let auth_ok = mysql_wire_packet(2, &[0, 0, 0, 2, 0, 0, 0]);
+        assert!(handle(&mut registry, &response_event(3306, &auth_ok)).is_empty());
+
+        let wrong_sequence = mysql_compressed_packet(1, &mysql_wire_packet(0, &[0x0e]), false);
+        assert!(
+            handle(
+                &mut registry,
+                &raw_event(3306, &wrong_sequence, wrong_sequence.len() as u32),
+            )
+            .is_empty()
+        );
+        assert_eq!(registry.counters().mysql_compression_failures, 1);
+        let valid = mysql_compressed_packet(0, &mysql_wire_packet(0, &[0x0e]), false);
+        assert!(handle(&mut registry, &raw_event(3306, &valid, valid.len() as u32),).is_empty());
+        assert_eq!(registry.counters().mysql_compression_opaque_events, 1);
+        assert!(
+            registry
+                .connections
+                .values()
+                .next()
+                .expect("mysql connection remains diagnosed")
+                .in_flight
+                .is_empty()
+        );
     }
 
     #[test]
