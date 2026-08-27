@@ -101,7 +101,7 @@ const HTTP_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_DIAGNOSTIC_COUNTERS_LEN] = [
     "non_http_connection_skip",
 ];
 #[cfg(any(target_os = "linux", test))]
-const HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN: usize = 15;
+const HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN: usize = 16;
 #[cfg(any(target_os = "linux", test))]
 const HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN] = [
     "socket_tracked",
@@ -119,6 +119,7 @@ const HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_PROPAGATION_DIAGNOS
     "mutation_mismatch",
     "inbound_activated",
     "inbound_rejected",
+    "unsupported_iovec",
 ];
 #[cfg(target_os = "linux")]
 const HTTP_CONTEXT_REFILL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
@@ -1588,6 +1589,7 @@ mod platform {
                             mutation_mismatch = delta.get(12),
                             inbound_activated = delta.get(13),
                             inbound_rejected = delta.get(14),
+                            unsupported_iovec = delta.get(15),
                             stage_names = ?super::HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES,
                             "HTTP context propagation counters"
                         );
@@ -2613,15 +2615,15 @@ mod tests {
     #[test]
     fn http_propagation_diagnostic_snapshot_covers_every_kernel_stage() {
         let previous = HttpPropagationDiagnosticSnapshot::from_counters([
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
         ]);
         let current = HttpPropagationDiagnosticSnapshot::from_counters([
-            2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30,
+            2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32,
         ]);
 
         let delta = current.delta_since(&previous);
 
-        assert_eq!(HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES.len(), 15);
+        assert_eq!(HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES.len(), 16);
         for index in 0..HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN {
             assert_eq!(delta.get(index), (index + 1) as u64);
         }

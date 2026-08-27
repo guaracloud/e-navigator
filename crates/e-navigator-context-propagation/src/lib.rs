@@ -44,8 +44,12 @@ pub enum PropagationBypass {
     OrphanTracestate,
     ProtocolUpgrade,
     UnsupportedTransferEncoding,
+    AmbiguousMessageFraming,
+    InvalidChunkedBody,
+    UncapturedChunkedBody,
     InvalidContentLength,
     AmbiguousContentLength,
+    InconsistentLength,
     TrailingData,
 }
 
@@ -60,11 +64,30 @@ pub enum TraceStateError {
 }
 
 pub fn plan_http1_propagation(message: &[u8]) -> PropagationDecision {
-    let (request_line_end, header_end) = match http1_boundaries(message) {
+    plan_http1_prefix_propagation(message, message.len())
+}
+
+/// Plans propagation from a bounded, contiguous syscall prefix and the full
+/// syscall payload length.
+///
+/// The prefix must contain every HTTP header. Bytes outside the prefix are
+/// eligible when a single `Content-Length` proves they remain inside the
+/// current request body, or when a chunked write's prefix ends exactly at the
+/// header boundary. A partially captured chunked body is never combined with
+/// an unseen tail. This permits bounded large writes without interpreting
+/// discontinuous framing bytes.
+pub fn plan_http1_prefix_propagation(
+    message_prefix: &[u8],
+    message_total_len: usize,
+) -> PropagationDecision {
+    if message_total_len < message_prefix.len() {
+        return PropagationDecision::Bypass(PropagationBypass::InconsistentLength);
+    }
+    let (request_line_end, header_end) = match http1_boundaries(message_prefix) {
         Ok(boundaries) => boundaries,
         Err(reason) => return PropagationDecision::Bypass(reason),
     };
-    let Some(request_line) = message.get(..request_line_end) else {
+    let Some(request_line) = message_prefix.get(..request_line_end) else {
         return PropagationDecision::Bypass(PropagationBypass::NotHttp1);
     };
     if let Err(reason) = validate_request_line(request_line) {
@@ -72,10 +95,11 @@ pub fn plan_http1_propagation(message: &[u8]) -> PropagationDecision {
     }
 
     let mut content_length = None;
+    let mut transfer_encoding_chunked = false;
     let mut saw_tracestate = false;
     let mut line_start = request_line_end + 2;
     while line_start + 2 <= header_end {
-        let Some(header_tail) = message.get(line_start..header_end) else {
+        let Some(header_tail) = message_prefix.get(line_start..header_end) else {
             return PropagationDecision::Bypass(PropagationBypass::NotHttp1);
         };
         let Some(relative_end) = find_crlf(header_tail) else {
@@ -85,7 +109,7 @@ pub fn plan_http1_propagation(message: &[u8]) -> PropagationDecision {
         if line_end == line_start {
             break;
         }
-        let Some(line) = message.get(line_start..line_end) else {
+        let Some(line) = message_prefix.get(line_start..line_end) else {
             return PropagationDecision::Bypass(PropagationBypass::NotHttp1);
         };
         let Some(colon) = find_byte(line, b':') else {
@@ -113,7 +137,10 @@ pub fn plan_http1_propagation(message: &[u8]) -> PropagationDecision {
             return PropagationDecision::Bypass(PropagationBypass::ProtocolUpgrade);
         }
         if ascii_eq_ignore_case(name, b"transfer-encoding") {
-            return PropagationDecision::Bypass(PropagationBypass::UnsupportedTransferEncoding);
+            if transfer_encoding_chunked || !ascii_eq_ignore_case(value, b"chunked") {
+                return PropagationDecision::Bypass(PropagationBypass::UnsupportedTransferEncoding);
+            }
+            transfer_encoding_chunked = true;
         }
         if ascii_eq_ignore_case(name, b"content-length") {
             if content_length.is_some() {
@@ -127,10 +154,32 @@ pub fn plan_http1_propagation(message: &[u8]) -> PropagationDecision {
         line_start = line_end + 2;
     }
 
-    let Some(body_bytes_in_message) = message.len().checked_sub(header_end) else {
+    if transfer_encoding_chunked && content_length.is_some() {
+        return PropagationDecision::Bypass(PropagationBypass::AmbiguousMessageFraming);
+    }
+    let Some(body_bytes_in_message) = message_total_len.checked_sub(header_end) else {
         return PropagationDecision::Bypass(PropagationBypass::NotHttp1);
     };
-    if content_length.map_or(body_bytes_in_message != 0, |declared| {
+    if transfer_encoding_chunked {
+        let Some(captured_body) = message_prefix.get(header_end..) else {
+            return PropagationDecision::Bypass(PropagationBypass::NotHttp1);
+        };
+        if message_total_len > message_prefix.len() {
+            if !captured_body.is_empty() {
+                return PropagationDecision::Bypass(PropagationBypass::UncapturedChunkedBody);
+            }
+        } else {
+            match chunked_body_status(captured_body) {
+                ChunkedBodyStatus::Incomplete | ChunkedBodyStatus::Complete => {}
+                ChunkedBodyStatus::TrailingData => {
+                    return PropagationDecision::Bypass(PropagationBypass::TrailingData);
+                }
+                ChunkedBodyStatus::Invalid => {
+                    return PropagationDecision::Bypass(PropagationBypass::InvalidChunkedBody);
+                }
+            }
+        }
+    } else if content_length.map_or(body_bytes_in_message != 0, |declared| {
         body_bytes_in_message > declared
     }) {
         return PropagationDecision::Bypass(PropagationBypass::TrailingData);
@@ -141,6 +190,196 @@ pub fn plan_http1_propagation(message: &[u8]) -> PropagationDecision {
 
     PropagationDecision::Inject {
         insert_at: request_line_end + 2,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChunkedBodyStatus {
+    Incomplete,
+    Complete,
+    TrailingData,
+    Invalid,
+}
+
+fn chunked_body_status(body: &[u8]) -> ChunkedBodyStatus {
+    let mut cursor = 0_usize;
+    loop {
+        let Some(remaining) = body.get(cursor..) else {
+            return ChunkedBodyStatus::Invalid;
+        };
+        let Some(relative_line_end) = find_crlf(remaining) else {
+            return if valid_chunk_size_prefix(remaining) {
+                ChunkedBodyStatus::Incomplete
+            } else {
+                ChunkedBodyStatus::Invalid
+            };
+        };
+        let Some(line) = remaining.get(..relative_line_end) else {
+            return ChunkedBodyStatus::Invalid;
+        };
+        let Some(chunk_size) = parse_chunk_size_line(line) else {
+            return ChunkedBodyStatus::Invalid;
+        };
+        cursor = match cursor.checked_add(relative_line_end + 2) {
+            Some(cursor) => cursor,
+            None => return ChunkedBodyStatus::Invalid,
+        };
+
+        if chunk_size == 0 {
+            return chunked_trailer_status(body, cursor);
+        }
+        let Some(chunk_end) = cursor.checked_add(chunk_size) else {
+            return ChunkedBodyStatus::Invalid;
+        };
+        if chunk_end > body.len() {
+            return ChunkedBodyStatus::Incomplete;
+        }
+        let Some(terminator) = body.get(chunk_end..chunk_end.saturating_add(2)) else {
+            return if chunk_end == body.len() || body.get(chunk_end) == Some(&b'\r') {
+                ChunkedBodyStatus::Incomplete
+            } else {
+                ChunkedBodyStatus::Invalid
+            };
+        };
+        if terminator != b"\r\n" {
+            return ChunkedBodyStatus::Invalid;
+        }
+        cursor = chunk_end + 2;
+    }
+}
+
+fn chunked_trailer_status(body: &[u8], mut cursor: usize) -> ChunkedBodyStatus {
+    loop {
+        let Some(remaining) = body.get(cursor..) else {
+            return ChunkedBodyStatus::Invalid;
+        };
+        let Some(relative_line_end) = find_crlf(remaining) else {
+            return if valid_trailer_prefix(remaining) {
+                ChunkedBodyStatus::Incomplete
+            } else {
+                ChunkedBodyStatus::Invalid
+            };
+        };
+        if relative_line_end == 0 {
+            cursor = match cursor.checked_add(2) {
+                Some(cursor) => cursor,
+                None => return ChunkedBodyStatus::Invalid,
+            };
+            return if cursor == body.len() {
+                ChunkedBodyStatus::Complete
+            } else {
+                ChunkedBodyStatus::TrailingData
+            };
+        }
+        let Some(line) = remaining.get(..relative_line_end) else {
+            return ChunkedBodyStatus::Invalid;
+        };
+        if !valid_trailer_line(line) {
+            return ChunkedBodyStatus::Invalid;
+        }
+        cursor = match cursor.checked_add(relative_line_end + 2) {
+            Some(cursor) => cursor,
+            None => return ChunkedBodyStatus::Invalid,
+        };
+    }
+}
+
+fn parse_chunk_size_line(line: &[u8]) -> Option<usize> {
+    let extension = find_byte(line, b';');
+    let size = line.get(..extension.unwrap_or(line.len()))?;
+    if size.is_empty() {
+        return None;
+    }
+    let mut parsed = 0_usize;
+    for byte in size.iter().copied() {
+        let digit = parse_hex_digit(byte)?;
+        parsed = parsed.checked_mul(16)?.checked_add(usize::from(digit))?;
+    }
+    if let Some(extension) = extension {
+        let extension = line.get(extension + 1..)?;
+        if extension.is_empty() || !valid_field_value(extension) {
+            return None;
+        }
+    }
+    Some(parsed)
+}
+
+fn valid_chunk_size_prefix(line: &[u8]) -> bool {
+    if line.is_empty() {
+        return true;
+    }
+    if line.iter().any(|byte| matches!(byte, b'\r' | b'\n')) {
+        return line.last() == Some(&b'\r')
+            && line[..line.len() - 1]
+                .iter()
+                .all(|byte| *byte != b'\r' && *byte != b'\n')
+            && valid_chunk_size_prefix(&line[..line.len() - 1]);
+    }
+    let extension = find_byte(line, b';');
+    let size = line
+        .get(..extension.unwrap_or(line.len()))
+        .unwrap_or_default();
+    !size.is_empty()
+        && size
+            .iter()
+            .copied()
+            .all(|byte| parse_hex_digit(byte).is_some())
+        && extension.is_none_or(|at| line.get(at + 1..).is_some_and(valid_field_value))
+}
+
+fn valid_trailer_line(line: &[u8]) -> bool {
+    let Some(colon) = find_byte(line, b':') else {
+        return false;
+    };
+    let Some(name) = line.get(..colon) else {
+        return false;
+    };
+    let Some(value) = line.get(colon + 1..) else {
+        return false;
+    };
+    valid_field_name(name)
+        && valid_field_value(trim_ows(value))
+        && !ascii_eq_ignore_case(name, b"traceparent")
+        && !ascii_eq_ignore_case(name, b"tracestate")
+}
+
+fn valid_trailer_prefix(line: &[u8]) -> bool {
+    if line.is_empty() {
+        return true;
+    }
+    if line.last() == Some(&b'\r') {
+        return valid_trailer_prefix(&line[..line.len() - 1]);
+    }
+    if line.iter().any(|byte| matches!(byte, b'\r' | b'\n')) {
+        return false;
+    }
+    match find_byte(line, b':') {
+        Some(colon) => {
+            line.get(..colon).is_some_and(valid_field_name)
+                && line
+                    .get(colon + 1..)
+                    .is_some_and(|value| valid_field_value(trim_ows(value)))
+        }
+        None => line.iter().copied().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'!' | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'*'
+                        | b'+'
+                        | b'-'
+                        | b'.'
+                        | b'^'
+                        | b'_'
+                        | b'`'
+                        | b'|'
+                        | b'~'
+                )
+        }),
     }
 }
 
@@ -474,16 +713,9 @@ fn parse_content_length(value: &[u8]) -> Option<usize> {
         if !byte.is_ascii_digit() {
             return None;
         }
-        // The planner only compares this value with a message bounded to
-        // `MAX_PROPAGATION_HEADER_BYTES`. Capping larger values avoids a
-        // target-dependent wide-multiply helper that BPF cannot call while
-        // retaining the exact framing decision for every eligible message.
-        if parsed <= MAX_PROPAGATION_HEADER_BYTES {
-            parsed = parsed * 10 + (byte - b'0') as usize;
-            if parsed > MAX_PROPAGATION_HEADER_BYTES {
-                parsed = MAX_PROPAGATION_HEADER_BYTES + 1;
-            }
-        }
+        parsed = parsed
+            .checked_mul(10)?
+            .checked_add(usize::from(byte - b'0'))?;
     }
     Some(parsed)
 }

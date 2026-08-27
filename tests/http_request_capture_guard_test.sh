@@ -18,8 +18,10 @@ for expected in \
   "tracepoint_http_sendto_enter" \
   "tracepoint_http_sendmsg_enter" \
   "HTTP_MAX_IOVECS" \
+  "HTTP_MAX_LENGTH_IOVECS" \
   "HTTP_IOVEC_CHUNK_BYTES" \
   "copy_http_request_iovecs" \
+  "http_request_iovec_total_len" \
   "copy_http_request_iovec_slot0" \
   "copy_http_request_iovec_slot1" \
   "copy_http_request_iovec_slot2" \
@@ -44,6 +46,9 @@ for expected in \
   "bpf_copy_inbound_tracestate" \
   "bpf_validate_tracestate" \
   "plan_bpf_http1_propagation_loop" \
+  "BpfHttpChunkedState" \
+  "HTTP_FIELD_TRANSFER_ENCODING" \
+  "bpf_http1_chunked_body" \
   "http_message_matches_capture" \
   "bpf_msg_push_data" \
   "bpf_msg_pull_data" \
@@ -104,6 +109,31 @@ fi
 
 if ! grep -Fq "HTTP_MAX_IOVECS: usize = 3" "$program"; then
   printf 'expected %s to keep split HTTP iovec verifier complexity bounded to three iovecs\n' "$program" >&2
+  exit 1
+fi
+
+if ! grep -Fq "HTTP_MAX_LENGTH_IOVECS: u64 = 40" "$program"; then
+  printf 'expected %s to sum complete writev/sendmsg lengths through a verifier-bounded vector limit\n' "$program" >&2
+  exit 1
+fi
+
+if ! grep -Fq "event.request_total_len < event.request_len" "$program"; then
+  printf 'expected %s to admit complete HTTP headers from a bounded prefix of a larger fixed-length write\n' "$program" >&2
+  exit 1
+fi
+
+if awk '
+  /fn prepare_http_context_propagation\(/ { in_planner = 1 }
+  in_planner && /^#\[repr\(C\)\]/ { in_planner = 0 }
+  in_planner && /event\.request_len != event\.request_total_len/ { found = 1 }
+  END { exit found ? 0 : 1 }
+' "$program"; then
+  printf 'expected %s not to require full body capture before safe header injection\n' "$program" >&2
+  exit 1
+fi
+
+if ! grep -Fq "capture_contiguous" "$program"; then
+  printf 'expected %s to stop split capture before splicing across a truncated iovec\n' "$program" >&2
   exit 1
 fi
 
