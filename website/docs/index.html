@@ -268,8 +268,9 @@ cargo run --locked -p e-navigator-cli -- \
               plaintext HTTP/1 mutation boundary using cgroup SOCK_OPS and
               SK_MSG before TCP packetization. Its qualified subset preserves
               valid inbound tracestate and covers complete headers in one
-              contiguous captured prefix plus bounded exact Content-Length or
-              chunked framing. It length-accounts up to 40 iovecs while
+              contiguous captured prefix plus bounded exact Content-Length, or
+              chunked framing only when every byte in the current syscall is
+              captured. It length-accounts up to 40 iovecs while
               capturing only the first three 96-byte prefixes; it is not a
               universal protocol, runtime, or kernel claim.
             </p>
@@ -330,8 +331,9 @@ cargo run --locked -p e-navigator-cli -- \
               allowlist, complete HTTP/1 headers in one syscall, and
               target-kernel qualification. It preserves valid inbound
               <code>tracestate</code>, supports bounded exact
-              <code>Content-Length</code> and chunked framing, and uses at most
-              three 96-byte iovec prefixes while length-accounting up to 40
+              <code>Content-Length</code>, or chunked framing only when every
+              byte in the current syscall is captured, and uses at most three
+              96-byte iovec prefixes while length-accounting up to 40
               vectors. Unsupported, ambiguous, segmented-header, and
               multi-request pipeline shapes remain unmodified and increment
               diagnostics; chart defaults keep propagation disabled.

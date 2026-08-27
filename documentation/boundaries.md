@@ -220,11 +220,13 @@ E-Navigator does not currently claim:
   seam is implemented without double counting;
 - universal W3C propagation from the disabled-by-default plaintext HTTP/1
   injector. Local planner, mutation, and optimized eBPF-build coverage now
-  includes complete contiguous headers with bounded exact `Content-Length` or
-  chunked framing and total-length accounting through 40 iovecs. A privileged
+  includes complete contiguous headers with bounded exact `Content-Length`, or
+  chunked framing only when every byte in the current syscall is captured,
+  plus total-length accounting through 40 iovecs. A privileged
   local OrbStack aarch64 run proves only the earlier bounded three-iovec
   `sendmsg` request with a `Content-Length` body, child `traceparent`, and
-  preserved valid `tracestate`. The newly accepted large/chunked forms still
+  preserved valid `tracestate`. The newly accepted
+  large/fully-captured-chunked forms still
   lack privileged live-wire and Tempo proof. The path does not claim TLS,
   HTTP/2/gRPC, HTTP/3/QUIC, headers segmented across syscalls, multiple
   pipelined requests, connections predating attachment, logical async-task
