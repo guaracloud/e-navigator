@@ -1,7 +1,7 @@
 use e_navigator_context_propagation::{
     MAX_TRACESTATE_BYTES, PropagationBypass, PropagationDecision, TRACEPARENT_HEADER_BYTES,
     TraceContext, TraceStateError, copy_tracestate, extract_traceparent, format_traceparent_header,
-    plan_http1_propagation, validate_tracestate,
+    plan_http1_prefix_propagation, plan_http1_propagation, validate_tracestate,
 };
 use proptest::prelude::*;
 
@@ -55,6 +55,42 @@ fn permits_content_length_bodies_when_the_current_message_cannot_cross_the_bound
 }
 
 #[test]
+fn plans_from_complete_headers_and_a_bounded_prefix_of_a_large_write() {
+    let prefix =
+        b"POST /orders HTTP/1.1\r\nHost: api\r\nContent-Length: 1048576\r\n\r\nbody-prefix";
+    let header_end = prefix
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("header terminator")
+        + 4;
+
+    assert_eq!(
+        plan_http1_prefix_propagation(prefix, header_end + 1_048_576),
+        PropagationDecision::Inject { insert_at: 23 }
+    );
+}
+
+#[test]
+fn rejects_a_hidden_pipeline_beyond_the_declared_body() {
+    let prefix = b"POST /orders HTTP/1.1\r\nHost: api\r\nContent-Length: 4\r\n\r\ndata";
+
+    assert_eq!(
+        plan_http1_prefix_propagation(prefix, prefix.len() + 32),
+        PropagationDecision::Bypass(PropagationBypass::TrailingData)
+    );
+}
+
+#[test]
+fn rejects_inconsistent_capture_and_total_lengths() {
+    let request = b"GET /orders HTTP/1.1\r\nHost: api\r\n\r\n";
+
+    assert_eq!(
+        plan_http1_prefix_propagation(request, request.len() - 1),
+        PropagationDecision::Bypass(PropagationBypass::InconsistentLength)
+    );
+}
+
+#[test]
 fn bypasses_fragmented_upgraded_tunneled_and_ambiguously_framed_messages() {
     for (request, reason) in [
         (
@@ -68,10 +104,6 @@ fn bypasses_fragmented_upgraded_tunneled_and_ambiguously_framed_messages() {
         (
             b"CONNECT api:443 HTTP/1.1\r\nHost: api\r\n\r\n".as_slice(),
             PropagationBypass::UnsupportedMethod,
-        ),
-        (
-            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n".as_slice(),
-            PropagationBypass::UnsupportedTransferEncoding,
         ),
         (
             b"POST / HTTP/1.1\r\nContent-Length: four\r\n\r\n".as_slice(),
@@ -96,6 +128,99 @@ fn bypasses_fragmented_upgraded_tunneled_and_ambiguously_framed_messages() {
             PropagationDecision::Bypass(reason)
         );
     }
+}
+
+#[test]
+fn permits_bounded_chunked_bodies_without_crossing_a_pipeline_boundary() {
+    for request in [
+        b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n".as_slice(),
+        b"POST / HTTP/1.1\r\nTransfer-Encoding:\t ChUnKeD \t\r\n\r\n".as_slice(),
+        b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nda".as_slice(),
+        b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n4;name=value\r\ndata\r\n0\r\n\r\n"
+            .as_slice(),
+        b"POST / HTTP/1.1\r\nTransfer-Encoding: ChUnKeD\r\n\r\n0\r\nX-Result: ok\r\n\r\n"
+            .as_slice(),
+    ] {
+        assert_eq!(
+            plan_http1_propagation(request),
+            PropagationDecision::Inject { insert_at: 17 }
+        );
+    }
+
+    let headers = b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n";
+    assert_eq!(
+        plan_http1_prefix_propagation(headers, headers.len() + 1_048_576),
+        PropagationDecision::Inject { insert_at: 17 }
+    );
+}
+
+#[test]
+fn rejects_ambiguous_malformed_or_uncaptured_chunked_framing() {
+    let complete = b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n4\r\ndata\r\n0\r\n\r\n";
+    let unsupported = b"POST / HTTP/1.1\r\nTransfer-Encoding: gzip\r\n\r\n";
+    let ambiguous =
+        b"POST / HTTP/1.1\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\ndata";
+    let malformed = b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nz\r\n";
+    let duplicate =
+        b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n";
+    let empty_extension = b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n4;\r\n";
+    let invalid_data_end = b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n1\r\naX";
+    let context_trailer =
+        b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\ntraceparent: opaque\r\n\r\n";
+    for (request, total_len, reason) in [
+        (
+            unsupported.as_slice(),
+            unsupported.len(),
+            PropagationBypass::UnsupportedTransferEncoding,
+        ),
+        (
+            ambiguous.as_slice(),
+            ambiguous.len(),
+            PropagationBypass::AmbiguousMessageFraming,
+        ),
+        (
+            malformed.as_slice(),
+            malformed.len(),
+            PropagationBypass::InvalidChunkedBody,
+        ),
+        (
+            duplicate.as_slice(),
+            duplicate.len(),
+            PropagationBypass::UnsupportedTransferEncoding,
+        ),
+        (
+            empty_extension.as_slice(),
+            empty_extension.len(),
+            PropagationBypass::InvalidChunkedBody,
+        ),
+        (
+            invalid_data_end.as_slice(),
+            invalid_data_end.len(),
+            PropagationBypass::InvalidChunkedBody,
+        ),
+        (
+            context_trailer.as_slice(),
+            context_trailer.len(),
+            PropagationBypass::InvalidChunkedBody,
+        ),
+        (
+            complete.as_slice(),
+            complete.len() + 32,
+            PropagationBypass::UncapturedChunkedBody,
+        ),
+    ] {
+        assert_eq!(
+            plan_http1_prefix_propagation(request, total_len),
+            PropagationDecision::Bypass(reason)
+        );
+    }
+
+    let mut pipelined = complete.to_vec();
+    pipelined.extend_from_slice(b"GET /next HTTP/1.1\r\nHost: api\r\n\r\n");
+    assert_eq!(
+        plan_http1_propagation(&pipelined),
+        PropagationDecision::Bypass(PropagationBypass::TrailingData)
+    );
 }
 
 #[test]
@@ -208,8 +333,12 @@ fn rejects_invalid_tracestate_without_invalidating_traceparent() {
 
 proptest! {
     #[test]
-    fn bounded_parsers_are_panic_free_for_arbitrary_wire_bytes(message in prop::collection::vec(any::<u8>(), 0..=1200)) {
+    fn bounded_parsers_are_panic_free_for_arbitrary_wire_bytes(
+        message in prop::collection::vec(any::<u8>(), 0..=1200),
+        total_len in any::<usize>(),
+    ) {
         let _ = plan_http1_propagation(&message);
+        let _ = plan_http1_prefix_propagation(&message, total_len);
         let _ = extract_traceparent(&message);
         let _ = validate_tracestate(&message);
         let mut output = [0_u8; MAX_TRACESTATE_BYTES];

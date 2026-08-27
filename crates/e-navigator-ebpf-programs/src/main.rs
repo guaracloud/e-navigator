@@ -72,6 +72,10 @@ const IPPROTO_TCP: u32 = 6;
 const IPPROTO_UDP: u32 = 17;
 const DNS_PACKET_BYTES: usize = 512;
 const HTTP_MAX_IOVECS: usize = 3;
+/// Maximum writev/sendmsg vector length whose complete byte count is summed
+/// before SK_MSG mutation. Payload capture remains bounded to the contiguous
+/// prefix held in the first three verifier-safe slots.
+const HTTP_MAX_LENGTH_IOVECS: u64 = 40;
 const HTTP_IOVEC_CHUNK_BYTES: usize = 96;
 const HTTP_REQUEST_BYTES: usize = 1024;
 const HTTP_DIAG_CONNECT_ENTER: u32 = 0;
@@ -95,7 +99,7 @@ const HTTP_DIAG_INBOUND_OUTPUT_ATTEMPT: u32 = 17;
 const HTTP_DIAG_SERVER_WRITE_SUPPRESSED: u32 = 18;
 const HTTP_DIAG_NON_HTTP_CONNECTION_SKIP: u32 = 19;
 const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 20;
-const HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN: u32 = 15;
+const HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN: u32 = 16;
 const HTTP_PROPAGATION_DIAG_SOCKET_TRACKED: u32 = 0;
 const HTTP_PROPAGATION_DIAG_SOCKET_TRACK_FAILED: u32 = 1;
 const HTTP_PROPAGATION_DIAG_PLANNED: u32 = 2;
@@ -111,6 +115,8 @@ const HTTP_PROPAGATION_DIAG_PLANNER_REJECTED: u32 = 11;
 const HTTP_PROPAGATION_DIAG_MUTATION_MISMATCH: u32 = 12;
 const HTTP_PROPAGATION_DIAG_INBOUND_ACTIVATED: u32 = 13;
 const HTTP_PROPAGATION_DIAG_INBOUND_REJECTED: u32 = 14;
+const HTTP_PROPAGATION_DIAG_UNSUPPORTED_IOVEC: u32 = 15;
+const HTTP_PROPAGATION_CAPTURE_UNSUPPORTED_IOVEC: u8 = 1;
 const HTTP_PROPAGATION_GENERATED: u32 = 1;
 const HTTP_PARSE_METHOD: u8 = 0;
 const HTTP_PARSE_TARGET: u8 = 1;
@@ -121,6 +127,17 @@ const HTTP_PARSE_HEADER_VALUE: u8 = 5;
 const HTTP_PARSE_HEADER_LF: u8 = 6;
 const HTTP_FIELD_OTHER: u8 = 0;
 const HTTP_FIELD_CONTENT_LENGTH: u8 = 1;
+const HTTP_FIELD_TRANSFER_ENCODING: u8 = 2;
+const HTTP_HEADER_PLAN_CHUNKED: u32 = 1 << 31;
+const HTTP_CHUNK_SIZE: u8 = 0;
+const HTTP_CHUNK_EXTENSION: u8 = 1;
+const HTTP_CHUNK_SIZE_LF: u8 = 2;
+const HTTP_CHUNK_DATA: u8 = 3;
+const HTTP_CHUNK_DATA_CR: u8 = 4;
+const HTTP_CHUNK_DATA_LF: u8 = 5;
+const HTTP_CHUNK_TRAILER_NAME: u8 = 6;
+const HTTP_CHUNK_TRAILER_VALUE: u8 = 7;
+const HTTP_CHUNK_TRAILER_LF: u8 = 8;
 const HTTP_FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const HTTP_FNV_PRIME: u64 = 0x100000001b3;
 const HTTP_TRACEPARENT_HASH: u64 = 0xa22e83ed935e6e5e;
@@ -4382,22 +4399,25 @@ fn try_sk_msg_http_context_propagation(ctx: &SkMsgContext) -> u32 {
     let size = ctx.size() as usize;
     let data = ctx.data();
     let data_end = ctx.data_end();
+    let pending_len = pending.request_len as usize;
     if size == 0
         || size != pending.request_total_len as usize
-        || data.checked_add(size).is_none_or(|end| end > data_end)
+        || pending_len > HTTP_REQUEST_BYTES
+        || data
+            .checked_add(pending_len)
+            .is_none_or(|end| end > data_end)
     {
         finish_pending_http_propagation(ctx, pid_tgid, false);
         record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_BYPASSED);
         record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_MUTATION_MISMATCH);
         return SK_PASS as u32;
     }
-    let pending_len = pending.request_len as usize;
-    if pending_len > HTTP_REQUEST_BYTES {
-        finish_pending_http_propagation(ctx, pid_tgid, false);
-        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_BYPASSED);
-        return SK_PASS as u32;
-    }
-    if !http_message_matches_capture(data as *const u8, data_end as *const u8, pending, size) {
+    if !http_message_matches_capture(
+        data as *const u8,
+        data_end as *const u8,
+        pending,
+        pending_len,
+    ) {
         finish_pending_http_propagation(ctx, pid_tgid, false);
         record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_BYPASSED);
         record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_MUTATION_MISMATCH);
@@ -4636,8 +4656,13 @@ fn prepare_http_context_propagation(event: &mut RawHttpRequestEvent) -> bool {
     if !http_context_propagation_enabled() {
         return false;
     }
+    if event.propagation.reserved == HTTP_PROPAGATION_CAPTURE_UNSUPPORTED_IOVEC {
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_PLANNING_INELIGIBLE);
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_UNSUPPORTED_IOVEC);
+        return false;
+    }
     if event.request_len == 0
-        || event.request_len != event.request_total_len
+        || event.request_total_len < event.request_len
         || event.request_len as usize > HTTP_REQUEST_BYTES
     {
         record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_PLANNING_INELIGIBLE);
@@ -4708,17 +4733,44 @@ struct BpfHttpHeaderState {
     request: *const u8,
     header_hash: u64,
     len: u32,
+    total_len: u32,
     start: u32,
     component_len: u32,
     content_length: u32,
+    header_end: u32,
     phase: u8,
     field_kind: u8,
     result: u8,
     content_length_name: bool,
     ending_headers: bool,
     saw_content_length: bool,
+    saw_transfer_encoding: bool,
     value_started: bool,
     value_trailing_ows: bool,
+}
+
+#[repr(C)]
+struct BpfHttpChunkedState {
+    request: *const u8,
+    trailer_hash: u64,
+    start: u32,
+    len: u32,
+    chunk_size: u32,
+    chunk_remaining: u32,
+    component_len: u32,
+    phase: u8,
+    result: u8,
+    size_started: bool,
+    extension_started: bool,
+    ending_trailers: bool,
+}
+
+#[repr(C)]
+struct BpfHttpIovecLengthState {
+    iov: *const u8,
+    iov_len: u64,
+    total_len: u64,
+    valid: bool,
 }
 
 #[repr(C)]
@@ -4893,24 +4945,27 @@ unsafe extern "C" fn bpf_http_request_line_step(index: u64, context: *mut c_void
 }
 
 #[inline(never)]
-fn bpf_http1_headers(event: &RawHttpRequestEvent, insert_at: u16) -> bool {
+fn bpf_http1_headers(event: &RawHttpRequestEvent, insert_at: u16) -> Option<u32> {
     let start = u32::from(insert_at);
     if start >= event.request_len {
-        return false;
+        return None;
     }
     let mut state = BpfHttpHeaderState {
         request: event.request.as_ptr(),
         header_hash: HTTP_FNV_OFFSET,
         len: event.request_len,
+        total_len: event.request_total_len,
         start,
         component_len: 0,
         content_length: 0,
+        header_end: 0,
         phase: HTTP_PARSE_HEADER_NAME,
         field_kind: HTTP_FIELD_OTHER,
         result: HTTP_PLAN_PENDING,
         content_length_name: true,
         ending_headers: false,
         saw_content_length: false,
+        saw_transfer_encoding: false,
         value_started: false,
         value_trailing_ows: false,
     };
@@ -4918,7 +4973,17 @@ fn bpf_http1_headers(event: &RawHttpRequestEvent, insert_at: u16) -> bool {
     let context = (&mut state as *mut BpfHttpHeaderState).cast::<c_void>();
     let remaining = event.request_len - start;
     let loops = unsafe { bpf_loop(remaining, callback, context, 0) };
-    loops >= 0 && state.result == HTTP_PLAN_VALID
+    if loops < 0 || state.result != HTTP_PLAN_VALID {
+        return None;
+    }
+    Some(
+        state.header_end
+            | if state.saw_transfer_encoding {
+                HTTP_HEADER_PLAN_CHUNKED
+            } else {
+                0
+            },
+    )
 }
 
 unsafe extern "C" fn bpf_http_header_step(relative: u64, context: *mut c_void) -> i64 {
@@ -4947,14 +5012,20 @@ unsafe extern "C" fn bpf_http_header_step(relative: u64, context: *mut c_void) -
             }
             state.field_kind = if state.component_len == 14 && state.content_length_name {
                 HTTP_FIELD_CONTENT_LENGTH
+            } else if state.component_len == 17 && state.header_hash == HTTP_TRANSFER_ENCODING_HASH
+            {
+                HTTP_FIELD_TRANSFER_ENCODING
             } else {
                 HTTP_FIELD_OTHER
             };
-            if state.field_kind == HTTP_FIELD_CONTENT_LENGTH && state.saw_content_length {
+            if (state.field_kind == HTTP_FIELD_CONTENT_LENGTH && state.saw_content_length)
+                || (state.field_kind == HTTP_FIELD_TRANSFER_ENCODING && state.saw_transfer_encoding)
+            {
                 state.result = HTTP_PLAN_INVALID;
                 return 1;
             }
             state.phase = HTTP_PARSE_HEADER_VALUE;
+            state.component_len = 0;
             state.value_started = false;
             state.value_trailing_ows = false;
         } else {
@@ -4977,6 +5048,12 @@ unsafe extern "C" fn bpf_http_header_step(relative: u64, context: *mut c_void) -
                     return 1;
                 }
                 state.saw_content_length = true;
+            } else if state.field_kind == HTTP_FIELD_TRANSFER_ENCODING {
+                if !state.value_started || state.component_len != 7 {
+                    state.result = HTTP_PLAN_INVALID;
+                    return 1;
+                }
+                state.saw_transfer_encoding = true;
             }
             state.ending_headers = false;
             state.phase = HTTP_PARSE_HEADER_LF;
@@ -4997,12 +5074,29 @@ unsafe extern "C" fn bpf_http_header_step(relative: u64, context: *mut c_void) -
                         return 1;
                     }
                     state.value_started = true;
-                    if state.content_length <= HTTP_REQUEST_BYTES as u32 {
-                        state.content_length = state.content_length * 10 + u32::from(byte - b'0');
-                        if state.content_length > HTTP_REQUEST_BYTES as u32 {
-                            state.content_length = HTTP_REQUEST_BYTES as u32 + 1;
-                        }
+                    state.content_length = state
+                        .content_length
+                        .checked_mul(10)
+                        .and_then(|value| value.checked_add(u32::from(byte - b'0')))
+                        .unwrap_or(u32::MAX);
+                }
+            } else if state.field_kind == HTTP_FIELD_TRANSFER_ENCODING {
+                let ows = byte == b' ' || byte == b'\t';
+                if ows {
+                    if state.value_started {
+                        state.value_trailing_ows = true;
                     }
+                } else {
+                    if state.value_trailing_ows
+                        || state.component_len >= 7
+                        || byte.to_ascii_lowercase()
+                            != bpf_transfer_encoding_value_byte(state.component_len)
+                    {
+                        state.result = HTTP_PLAN_INVALID;
+                        return 1;
+                    }
+                    state.value_started = true;
+                    state.component_len += 1;
                 }
             }
         }
@@ -5013,7 +5107,22 @@ unsafe extern "C" fn bpf_http_header_step(relative: u64, context: *mut c_void) -
         }
         if state.ending_headers {
             let header_end = index + 1;
-            let body_bytes = u64::from(state.len) - header_end;
+            if u64::from(state.total_len) < header_end {
+                state.result = HTTP_PLAN_INVALID;
+                return 1;
+            }
+            state.header_end = header_end as u32;
+            if state.saw_transfer_encoding {
+                if state.saw_content_length
+                    || (state.total_len > state.len && header_end != u64::from(state.len))
+                {
+                    state.result = HTTP_PLAN_INVALID;
+                    return 1;
+                }
+                state.result = HTTP_PLAN_VALID;
+                return 1;
+            }
+            let body_bytes = u64::from(state.total_len) - header_end;
             if (!state.saw_content_length && body_bytes != 0)
                 || (state.saw_content_length && body_bytes > u64::from(state.content_length))
             {
@@ -5034,6 +5143,182 @@ unsafe extern "C" fn bpf_http_header_step(relative: u64, context: *mut c_void) -
     0
 }
 
+#[inline(never)]
+fn bpf_http1_chunked_body(event: &RawHttpRequestEvent, header_end: u32) -> bool {
+    if header_end > event.request_len {
+        return false;
+    }
+    if header_end == event.request_len {
+        return true;
+    }
+    let mut state = BpfHttpChunkedState {
+        request: event.request.as_ptr(),
+        trailer_hash: HTTP_FNV_OFFSET,
+        start: header_end,
+        len: event.request_len,
+        chunk_size: 0,
+        chunk_remaining: 0,
+        component_len: 0,
+        phase: HTTP_CHUNK_SIZE,
+        result: HTTP_PLAN_PENDING,
+        size_started: false,
+        extension_started: false,
+        ending_trailers: false,
+    };
+    let callback = bpf_http_chunked_body_step as *const () as *mut c_void;
+    let context = (&mut state as *mut BpfHttpChunkedState).cast::<c_void>();
+    let remaining = event.request_len - header_end;
+    let loops = unsafe { bpf_loop(remaining, callback, context, 0) };
+    loops >= 0 && state.result != HTTP_PLAN_INVALID
+}
+
+unsafe extern "C" fn bpf_http_chunked_body_step(relative: u64, context: *mut c_void) -> i64 {
+    let state = unsafe { &mut *context.cast::<BpfHttpChunkedState>() };
+    let index = u64::from(state.start) + relative;
+    if index >= u64::from(state.len) || index >= HTTP_REQUEST_BYTES as u64 {
+        state.result = HTTP_PLAN_INVALID;
+        return 1;
+    }
+    let byte = unsafe { *state.request.add(index as usize) };
+    let phase = state.phase & 15;
+    if phase == HTTP_CHUNK_SIZE {
+        if let Some(digit) = bpf_http_hex_digit(byte) {
+            let Some(chunk_size) = state
+                .chunk_size
+                .checked_mul(16)
+                .and_then(|value| value.checked_add(u32::from(digit)))
+            else {
+                state.result = HTTP_PLAN_INVALID;
+                return 1;
+            };
+            state.chunk_size = chunk_size;
+            state.size_started = true;
+        } else if byte == b';' {
+            if !state.size_started {
+                state.result = HTTP_PLAN_INVALID;
+                return 1;
+            }
+            state.phase = HTTP_CHUNK_EXTENSION;
+            state.extension_started = false;
+        } else if byte == b'\r' {
+            if !state.size_started {
+                state.result = HTTP_PLAN_INVALID;
+                return 1;
+            }
+            state.phase = HTTP_CHUNK_SIZE_LF;
+        } else {
+            state.result = HTTP_PLAN_INVALID;
+            return 1;
+        }
+    } else if phase == HTTP_CHUNK_EXTENSION {
+        if byte == b'\r' {
+            if !state.extension_started {
+                state.result = HTTP_PLAN_INVALID;
+                return 1;
+            }
+            state.phase = HTTP_CHUNK_SIZE_LF;
+        } else if bpf_http_field_value_byte(byte) {
+            state.extension_started = true;
+        } else {
+            state.result = HTTP_PLAN_INVALID;
+            return 1;
+        }
+    } else if phase == HTTP_CHUNK_SIZE_LF {
+        if byte != b'\n' {
+            state.result = HTTP_PLAN_INVALID;
+            return 1;
+        }
+        if state.chunk_size == 0 {
+            state.phase = HTTP_CHUNK_TRAILER_NAME;
+            state.component_len = 0;
+            state.trailer_hash = HTTP_FNV_OFFSET;
+            state.ending_trailers = false;
+        } else {
+            state.chunk_remaining = state.chunk_size;
+            state.phase = HTTP_CHUNK_DATA;
+        }
+    } else if phase == HTTP_CHUNK_DATA {
+        if state.chunk_remaining == 0 {
+            state.result = HTTP_PLAN_INVALID;
+            return 1;
+        }
+        state.chunk_remaining -= 1;
+        if state.chunk_remaining == 0 {
+            state.phase = HTTP_CHUNK_DATA_CR;
+        }
+    } else if phase == HTTP_CHUNK_DATA_CR {
+        if byte != b'\r' {
+            state.result = HTTP_PLAN_INVALID;
+            return 1;
+        }
+        state.phase = HTTP_CHUNK_DATA_LF;
+    } else if phase == HTTP_CHUNK_DATA_LF {
+        if byte != b'\n' {
+            state.result = HTTP_PLAN_INVALID;
+            return 1;
+        }
+        state.phase = HTTP_CHUNK_SIZE;
+        state.chunk_size = 0;
+        state.size_started = false;
+        state.extension_started = false;
+    } else if phase == HTTP_CHUNK_TRAILER_NAME {
+        if byte == b'\r' {
+            if state.component_len != 0 {
+                state.result = HTTP_PLAN_INVALID;
+                return 1;
+            }
+            state.ending_trailers = true;
+            state.phase = HTTP_CHUNK_TRAILER_LF;
+        } else if byte == b':' {
+            if state.component_len == 0
+                || (state.component_len == 11 && state.trailer_hash == HTTP_TRACEPARENT_HASH)
+                || (state.component_len == 10 && state.trailer_hash == HTTP_TRACESTATE_HASH)
+            {
+                state.result = HTTP_PLAN_INVALID;
+                return 1;
+            }
+            state.ending_trailers = false;
+            state.phase = HTTP_CHUNK_TRAILER_VALUE;
+        } else if bpf_http_field_name_byte(byte) {
+            let lowercase = byte.to_ascii_lowercase();
+            state.trailer_hash =
+                (state.trailer_hash ^ u64::from(lowercase)).wrapping_mul(HTTP_FNV_PRIME);
+            state.component_len = state.component_len.saturating_add(1);
+        } else {
+            state.result = HTTP_PLAN_INVALID;
+            return 1;
+        }
+    } else if phase == HTTP_CHUNK_TRAILER_VALUE {
+        if byte == b'\r' {
+            state.ending_trailers = false;
+            state.phase = HTTP_CHUNK_TRAILER_LF;
+        } else if !bpf_http_field_value_byte(byte) {
+            state.result = HTTP_PLAN_INVALID;
+            return 1;
+        }
+    } else if phase == HTTP_CHUNK_TRAILER_LF {
+        if byte != b'\n' {
+            state.result = HTTP_PLAN_INVALID;
+            return 1;
+        }
+        if state.ending_trailers {
+            state.result = if index + 1 == u64::from(state.len) {
+                HTTP_PLAN_VALID
+            } else {
+                HTTP_PLAN_INVALID
+            };
+            return 1;
+        }
+        state.phase = HTTP_CHUNK_TRAILER_NAME;
+        state.component_len = 0;
+        state.trailer_hash = HTTP_FNV_OFFSET;
+    } else {
+        state.result = HTTP_PLAN_INVALID;
+        return 1;
+    }
+    0
+}
+
 /// Runs the byte state machine through `bpf_loop`, which verifies the parser
 /// body once rather than multiplying its state space by the 1,024-byte bound.
 #[inline(never)]
@@ -5042,7 +5327,16 @@ fn plan_bpf_http1_propagation_loop(event: &RawHttpRequestEvent) -> Option<u16> {
         return None;
     }
     let insert_at = bpf_http1_request_line(event)?;
-    bpf_http1_headers(event, insert_at).then_some(insert_at)
+    let header_plan = bpf_http1_headers(event, insert_at)?;
+    if header_plan & HTTP_HEADER_PLAN_CHUNKED != 0 {
+        let header_end = header_plan & !HTTP_HEADER_PLAN_CHUNKED;
+        if event.request_total_len == event.request_len
+            && !bpf_http1_chunked_body(event, header_end)
+        {
+            return None;
+        }
+    }
+    Some(insert_at)
 }
 
 #[inline(always)]
@@ -5104,6 +5398,30 @@ fn bpf_content_length_name_byte(index: u32) -> u8 {
 }
 
 #[inline(always)]
+fn bpf_transfer_encoding_value_byte(index: u32) -> u8 {
+    match index {
+        0 => b'c',
+        1 => b'h',
+        2 => b'u',
+        3 => b'n',
+        4 => b'k',
+        5 => b'e',
+        6 => b'd',
+        _ => 0,
+    }
+}
+
+#[inline(always)]
+fn bpf_http_hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+#[inline(always)]
 fn bpf_traceparent_name_byte(index: u32) -> Option<u8> {
     match index {
         0 => Some(b't'),
@@ -5126,7 +5444,6 @@ fn bpf_http_header_requires_bypass(len: u32, hash: u64) -> bool {
     (len == 11 && hash == HTTP_TRACEPARENT_HASH)
         || (len == 10 && hash == HTTP_TRACESTATE_HASH)
         || (len == 7 && hash == HTTP_UPGRADE_HASH)
-        || (len == 17 && hash == HTTP_TRANSFER_ENCODING_HASH)
 }
 
 #[inline(always)]
@@ -7391,6 +7708,7 @@ fn clear_raw_http_propagation_context(context: &mut RawHttpPropagationContext) {
     context.span_id = [0; 8];
     context.parent_span_id = [0; 8];
     context.trace_flags = 0;
+    context.reserved = 0;
     context.insert_at = 0;
     context.started_at_nanos = 0;
     context.tracestate_len = 0;
@@ -7601,7 +7919,11 @@ fn copy_http_request_iovecs(
     event: &mut RawHttpRequestEvent,
 ) -> Result<(), i64> {
     let mut output_index = 0;
-    let mut total_len = 0_u64;
+    let mut capture_contiguous = true;
+    let total_len = http_request_iovec_total_len(iov, iov_len);
+    if total_len.is_none() {
+        event.propagation.reserved = HTTP_PROPAGATION_CAPTURE_UNSUPPORTED_IOVEC;
+    }
 
     if iov_len > 0 {
         let iov_entry = iov;
@@ -7609,35 +7931,38 @@ fn copy_http_request_iovecs(
             .map_err(|err| err as i64)?;
         let len = unsafe { bpf_probe_read_user::<u64>(iov_entry.add(8).cast::<u64>()) }
             .map_err(|err| err as i64)?;
-        total_len = total_len.saturating_add(len);
         if !buffer.is_null() && len > 0 {
             let copied = copy_http_request_iovec_slot0(buffer, len, event)?;
             event.request_iovec_lens[0] = copied as u16;
             output_index += copied;
+            capture_contiguous = copied as u64 == len;
+        } else if len > 0 {
+            capture_contiguous = false;
         }
     }
 
-    if iov_len > 1 && output_index < HTTP_REQUEST_BYTES {
+    if iov_len > 1 && capture_contiguous && output_index < HTTP_REQUEST_BYTES {
         let iov_entry = unsafe { iov.add(16) };
         let buffer = unsafe { bpf_probe_read_user::<*const u8>(iov_entry.cast::<*const u8>()) }
             .map_err(|err| err as i64)?;
         let len = unsafe { bpf_probe_read_user::<u64>(iov_entry.add(8).cast::<u64>()) }
             .map_err(|err| err as i64)?;
-        total_len = total_len.saturating_add(len);
         if !buffer.is_null() && len > 0 {
             let copied = copy_http_request_iovec_slot1(buffer, len, event)?;
             event.request_iovec_lens[1] = copied as u16;
             output_index += copied;
+            capture_contiguous = copied as u64 == len;
+        } else if len > 0 {
+            capture_contiguous = false;
         }
     }
 
-    if iov_len > 2 && output_index < HTTP_REQUEST_BYTES {
+    if iov_len > 2 && capture_contiguous && output_index < HTTP_REQUEST_BYTES {
         let iov_entry = unsafe { iov.add(32) };
         let buffer = unsafe { bpf_probe_read_user::<*const u8>(iov_entry.cast::<*const u8>()) }
             .map_err(|err| err as i64)?;
         let len = unsafe { bpf_probe_read_user::<u64>(iov_entry.add(8).cast::<u64>()) }
             .map_err(|err| err as i64)?;
-        total_len = total_len.saturating_add(len);
         if !buffer.is_null() && len > 0 {
             let copied = copy_http_request_iovec_slot2(buffer, len, event)?;
             event.request_iovec_lens[2] = copied as u16;
@@ -7646,18 +7971,50 @@ fn copy_http_request_iovecs(
     }
 
     event.request_len = output_index as u32;
-    // More than three iovecs means an uncaptured tail even if the first three
-    // happen to fill the capture buffer. Mark it as a gap rather than
-    // allowing userspace to splice non-adjacent bytes.
-    if iov_len > HTTP_MAX_IOVECS as u64 {
-        total_len = total_len.max(output_index as u64 + 1);
-    }
-    event.request_total_len = if total_len > u32::MAX as u64 {
-        u32::MAX
-    } else {
-        total_len as u32
-    };
+    event.request_total_len = total_len.unwrap_or_else(|| (output_index as u32).saturating_add(1));
     Ok(())
+}
+
+#[inline(never)]
+fn http_request_iovec_total_len(iov: *const u8, iov_len: u64) -> Option<u32> {
+    if iov.is_null() || iov_len == 0 || iov_len > HTTP_MAX_LENGTH_IOVECS {
+        return None;
+    }
+    let mut state = BpfHttpIovecLengthState {
+        iov,
+        iov_len,
+        total_len: 0,
+        valid: true,
+    };
+    let callback = bpf_http_iovec_length_step as *const () as *mut c_void;
+    let context = (&mut state as *mut BpfHttpIovecLengthState).cast::<c_void>();
+    let loops = unsafe { bpf_loop(iov_len as u32, callback, context, 0) };
+    if loops < 0 || !state.valid || state.total_len > u64::from(u32::MAX) {
+        return None;
+    }
+    Some(state.total_len as u32)
+}
+
+unsafe extern "C" fn bpf_http_iovec_length_step(index: u64, context: *mut c_void) -> i64 {
+    let state = unsafe { &mut *context.cast::<BpfHttpIovecLengthState>() };
+    if index >= state.iov_len || index >= HTTP_MAX_LENGTH_IOVECS {
+        state.valid = false;
+        return 1;
+    }
+    let offset = index as usize * 16 + 8;
+    let len = match unsafe { bpf_probe_read_user::<u64>(state.iov.add(offset).cast::<u64>()) } {
+        Ok(len) => len,
+        Err(_) => {
+            state.valid = false;
+            return 1;
+        }
+    };
+    let Some(total_len) = state.total_len.checked_add(len) else {
+        state.valid = false;
+        return 1;
+    };
+    state.total_len = total_len;
+    0
 }
 
 #[inline(never)]
