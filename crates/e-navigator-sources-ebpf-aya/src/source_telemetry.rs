@@ -75,6 +75,16 @@ struct SourceCounters {
     protocol_mysql_logical_request_continuations: AtomicU64,
     protocol_mysql_logical_response_continuations: AtomicU64,
     protocol_mysql_logical_sequence_failures: AtomicU64,
+    protocol_mysql_server_greetings: AtomicU64,
+    protocol_mysql_client_handshakes: AtomicU64,
+    protocol_mysql_auth_packets: AtomicU64,
+    protocol_mysql_compression_zlib_connections: AtomicU64,
+    protocol_mysql_compression_zstd_rejections: AtomicU64,
+    protocol_mysql_compression_unverified_connections: AtomicU64,
+    protocol_mysql_compressed_packets: AtomicU64,
+    protocol_mysql_compression_failures: AtomicU64,
+    protocol_mysql_compression_opaque_events: AtomicU64,
+    protocol_mysql_handshake_failures: AtomicU64,
     protocol_mongodb_fire_and_forget_requests: AtomicU64,
     protocol_mongodb_response_continuations: AtomicU64,
     protocol_mongodb_lifecycle_failures: AtomicU64,
@@ -139,6 +149,16 @@ impl SourceCounters {
             protocol_mysql_logical_request_continuations: AtomicU64::new(0),
             protocol_mysql_logical_response_continuations: AtomicU64::new(0),
             protocol_mysql_logical_sequence_failures: AtomicU64::new(0),
+            protocol_mysql_server_greetings: AtomicU64::new(0),
+            protocol_mysql_client_handshakes: AtomicU64::new(0),
+            protocol_mysql_auth_packets: AtomicU64::new(0),
+            protocol_mysql_compression_zlib_connections: AtomicU64::new(0),
+            protocol_mysql_compression_zstd_rejections: AtomicU64::new(0),
+            protocol_mysql_compression_unverified_connections: AtomicU64::new(0),
+            protocol_mysql_compressed_packets: AtomicU64::new(0),
+            protocol_mysql_compression_failures: AtomicU64::new(0),
+            protocol_mysql_compression_opaque_events: AtomicU64::new(0),
+            protocol_mysql_handshake_failures: AtomicU64::new(0),
             protocol_mongodb_fire_and_forget_requests: AtomicU64::new(0),
             protocol_mongodb_response_continuations: AtomicU64::new(0),
             protocol_mongodb_lifecycle_failures: AtomicU64::new(0),
@@ -205,6 +225,16 @@ pub struct SourceTelemetrySnapshot {
     pub protocol_mysql_logical_request_continuations: u64,
     pub protocol_mysql_logical_response_continuations: u64,
     pub protocol_mysql_logical_sequence_failures: u64,
+    pub protocol_mysql_server_greetings: u64,
+    pub protocol_mysql_client_handshakes: u64,
+    pub protocol_mysql_auth_packets: u64,
+    pub protocol_mysql_compression_zlib_connections: u64,
+    pub protocol_mysql_compression_zstd_rejections: u64,
+    pub protocol_mysql_compression_unverified_connections: u64,
+    pub protocol_mysql_compressed_packets: u64,
+    pub protocol_mysql_compression_failures: u64,
+    pub protocol_mysql_compression_opaque_events: u64,
+    pub protocol_mysql_handshake_failures: u64,
     pub protocol_mongodb_fire_and_forget_requests: u64,
     pub protocol_mongodb_response_continuations: u64,
     pub protocol_mongodb_lifecycle_failures: u64,
@@ -419,7 +449,7 @@ impl SourceTelemetry {
         }
     }
 
-    pub(crate) fn record_protocol_surface_counter_deltas(&self, deltas: [u64; 21]) {
+    pub(crate) fn record_protocol_surface_counter_deltas(&self, deltas: [u64; 31]) {
         for (counter, delta) in [
             &self.counters.protocol_websocket_upgrades,
             &self.counters.protocol_websocket_frames,
@@ -443,6 +473,18 @@ impl SourceTelemetry {
             &self.counters.protocol_mysql_logical_request_continuations,
             &self.counters.protocol_mysql_logical_response_continuations,
             &self.counters.protocol_mysql_logical_sequence_failures,
+            &self.counters.protocol_mysql_server_greetings,
+            &self.counters.protocol_mysql_client_handshakes,
+            &self.counters.protocol_mysql_auth_packets,
+            &self.counters.protocol_mysql_compression_zlib_connections,
+            &self.counters.protocol_mysql_compression_zstd_rejections,
+            &self
+                .counters
+                .protocol_mysql_compression_unverified_connections,
+            &self.counters.protocol_mysql_compressed_packets,
+            &self.counters.protocol_mysql_compression_failures,
+            &self.counters.protocol_mysql_compression_opaque_events,
+            &self.counters.protocol_mysql_handshake_failures,
             &self.counters.protocol_mongodb_fire_and_forget_requests,
             &self.counters.protocol_mongodb_response_continuations,
             &self.counters.protocol_mongodb_lifecycle_failures,
@@ -524,6 +566,16 @@ impl SourceTelemetry {
             protocol_mysql_logical_request_continuations = snapshot.protocol_mysql_logical_request_continuations,
             protocol_mysql_logical_response_continuations = snapshot.protocol_mysql_logical_response_continuations,
             protocol_mysql_logical_sequence_failures = snapshot.protocol_mysql_logical_sequence_failures,
+            protocol_mysql_server_greetings = snapshot.protocol_mysql_server_greetings,
+            protocol_mysql_client_handshakes = snapshot.protocol_mysql_client_handshakes,
+            protocol_mysql_auth_packets = snapshot.protocol_mysql_auth_packets,
+            protocol_mysql_compression_zlib_connections = snapshot.protocol_mysql_compression_zlib_connections,
+            protocol_mysql_compression_zstd_rejections = snapshot.protocol_mysql_compression_zstd_rejections,
+            protocol_mysql_compression_unverified_connections = snapshot.protocol_mysql_compression_unverified_connections,
+            protocol_mysql_compressed_packets = snapshot.protocol_mysql_compressed_packets,
+            protocol_mysql_compression_failures = snapshot.protocol_mysql_compression_failures,
+            protocol_mysql_compression_opaque_events = snapshot.protocol_mysql_compression_opaque_events,
+            protocol_mysql_handshake_failures = snapshot.protocol_mysql_handshake_failures,
             protocol_mongodb_fire_and_forget_requests = snapshot.protocol_mongodb_fire_and_forget_requests,
             protocol_mongodb_response_continuations = snapshot.protocol_mongodb_response_continuations,
             protocol_mongodb_lifecycle_failures = snapshot.protocol_mongodb_lifecycle_failures,
@@ -692,6 +744,34 @@ fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceT
         protocol_mysql_logical_sequence_failures: counters
             .protocol_mysql_logical_sequence_failures
             .load(Ordering::Relaxed),
+        protocol_mysql_server_greetings: counters
+            .protocol_mysql_server_greetings
+            .load(Ordering::Relaxed),
+        protocol_mysql_client_handshakes: counters
+            .protocol_mysql_client_handshakes
+            .load(Ordering::Relaxed),
+        protocol_mysql_auth_packets: counters.protocol_mysql_auth_packets.load(Ordering::Relaxed),
+        protocol_mysql_compression_zlib_connections: counters
+            .protocol_mysql_compression_zlib_connections
+            .load(Ordering::Relaxed),
+        protocol_mysql_compression_zstd_rejections: counters
+            .protocol_mysql_compression_zstd_rejections
+            .load(Ordering::Relaxed),
+        protocol_mysql_compression_unverified_connections: counters
+            .protocol_mysql_compression_unverified_connections
+            .load(Ordering::Relaxed),
+        protocol_mysql_compressed_packets: counters
+            .protocol_mysql_compressed_packets
+            .load(Ordering::Relaxed),
+        protocol_mysql_compression_failures: counters
+            .protocol_mysql_compression_failures
+            .load(Ordering::Relaxed),
+        protocol_mysql_compression_opaque_events: counters
+            .protocol_mysql_compression_opaque_events
+            .load(Ordering::Relaxed),
+        protocol_mysql_handshake_failures: counters
+            .protocol_mysql_handshake_failures
+            .load(Ordering::Relaxed),
         protocol_mongodb_fire_and_forget_requests: counters
             .protocol_mongodb_fire_and_forget_requests
             .load(Ordering::Relaxed),
@@ -764,6 +844,16 @@ impl SourceTelemetrySnapshot {
             protocol_mysql_logical_request_continuations: 0,
             protocol_mysql_logical_response_continuations: 0,
             protocol_mysql_logical_sequence_failures: 0,
+            protocol_mysql_server_greetings: 0,
+            protocol_mysql_client_handshakes: 0,
+            protocol_mysql_auth_packets: 0,
+            protocol_mysql_compression_zlib_connections: 0,
+            protocol_mysql_compression_zstd_rejections: 0,
+            protocol_mysql_compression_unverified_connections: 0,
+            protocol_mysql_compressed_packets: 0,
+            protocol_mysql_compression_failures: 0,
+            protocol_mysql_compression_opaque_events: 0,
+            protocol_mysql_handshake_failures: 0,
             protocol_mongodb_fire_and_forget_requests: 0,
             protocol_mongodb_response_continuations: 0,
             protocol_mongodb_lifecycle_failures: 0,
@@ -927,6 +1017,36 @@ impl SourceTelemetrySnapshot {
             protocol_mysql_logical_sequence_failures: self
                 .protocol_mysql_logical_sequence_failures
                 .saturating_sub(previous.protocol_mysql_logical_sequence_failures),
+            protocol_mysql_server_greetings: self
+                .protocol_mysql_server_greetings
+                .saturating_sub(previous.protocol_mysql_server_greetings),
+            protocol_mysql_client_handshakes: self
+                .protocol_mysql_client_handshakes
+                .saturating_sub(previous.protocol_mysql_client_handshakes),
+            protocol_mysql_auth_packets: self
+                .protocol_mysql_auth_packets
+                .saturating_sub(previous.protocol_mysql_auth_packets),
+            protocol_mysql_compression_zlib_connections: self
+                .protocol_mysql_compression_zlib_connections
+                .saturating_sub(previous.protocol_mysql_compression_zlib_connections),
+            protocol_mysql_compression_zstd_rejections: self
+                .protocol_mysql_compression_zstd_rejections
+                .saturating_sub(previous.protocol_mysql_compression_zstd_rejections),
+            protocol_mysql_compression_unverified_connections: self
+                .protocol_mysql_compression_unverified_connections
+                .saturating_sub(previous.protocol_mysql_compression_unverified_connections),
+            protocol_mysql_compressed_packets: self
+                .protocol_mysql_compressed_packets
+                .saturating_sub(previous.protocol_mysql_compressed_packets),
+            protocol_mysql_compression_failures: self
+                .protocol_mysql_compression_failures
+                .saturating_sub(previous.protocol_mysql_compression_failures),
+            protocol_mysql_compression_opaque_events: self
+                .protocol_mysql_compression_opaque_events
+                .saturating_sub(previous.protocol_mysql_compression_opaque_events),
+            protocol_mysql_handshake_failures: self
+                .protocol_mysql_handshake_failures
+                .saturating_sub(previous.protocol_mysql_handshake_failures),
             protocol_mongodb_fire_and_forget_requests: self
                 .protocol_mongodb_fire_and_forget_requests
                 .saturating_sub(previous.protocol_mongodb_fire_and_forget_requests),
@@ -994,6 +1114,16 @@ impl SourceTelemetrySnapshot {
             && self.protocol_mysql_logical_request_continuations == 0
             && self.protocol_mysql_logical_response_continuations == 0
             && self.protocol_mysql_logical_sequence_failures == 0
+            && self.protocol_mysql_server_greetings == 0
+            && self.protocol_mysql_client_handshakes == 0
+            && self.protocol_mysql_auth_packets == 0
+            && self.protocol_mysql_compression_zlib_connections == 0
+            && self.protocol_mysql_compression_zstd_rejections == 0
+            && self.protocol_mysql_compression_unverified_connections == 0
+            && self.protocol_mysql_compressed_packets == 0
+            && self.protocol_mysql_compression_failures == 0
+            && self.protocol_mysql_compression_opaque_events == 0
+            && self.protocol_mysql_handshake_failures == 0
             && self.protocol_mongodb_fire_and_forget_requests == 0
             && self.protocol_mongodb_response_continuations == 0
             && self.protocol_mongodb_lifecycle_failures == 0
@@ -1049,7 +1179,8 @@ mod tests {
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Disabled);
         telemetry.record_profile_counter_deltas([8, 1, 2, 3, 4, 5, 6]);
         telemetry.record_protocol_surface_counter_deltas([
-            9, 10, 1, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
+            9, 10, 1, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+            30, 31, 32, 33, 34, 35, 36, 37, 38,
         ]);
 
         let snapshot = telemetry.snapshot_for_test();
@@ -1098,9 +1229,22 @@ mod tests {
         assert_eq!(snapshot.protocol_mysql_logical_request_continuations, 23);
         assert_eq!(snapshot.protocol_mysql_logical_response_continuations, 24);
         assert_eq!(snapshot.protocol_mysql_logical_sequence_failures, 25);
-        assert_eq!(snapshot.protocol_mongodb_fire_and_forget_requests, 26);
-        assert_eq!(snapshot.protocol_mongodb_response_continuations, 27);
-        assert_eq!(snapshot.protocol_mongodb_lifecycle_failures, 28);
+        assert_eq!(snapshot.protocol_mysql_server_greetings, 26);
+        assert_eq!(snapshot.protocol_mysql_client_handshakes, 27);
+        assert_eq!(snapshot.protocol_mysql_auth_packets, 28);
+        assert_eq!(snapshot.protocol_mysql_compression_zlib_connections, 29);
+        assert_eq!(snapshot.protocol_mysql_compression_zstd_rejections, 30);
+        assert_eq!(
+            snapshot.protocol_mysql_compression_unverified_connections,
+            31
+        );
+        assert_eq!(snapshot.protocol_mysql_compressed_packets, 32);
+        assert_eq!(snapshot.protocol_mysql_compression_failures, 33);
+        assert_eq!(snapshot.protocol_mysql_compression_opaque_events, 34);
+        assert_eq!(snapshot.protocol_mysql_handshake_failures, 35);
+        assert_eq!(snapshot.protocol_mongodb_fire_and_forget_requests, 36);
+        assert_eq!(snapshot.protocol_mongodb_response_continuations, 37);
+        assert_eq!(snapshot.protocol_mongodb_lifecycle_failures, 38);
 
         let first_delta = telemetry.take_summary_delta();
         assert_eq!(first_delta.decoded_samples, 1);

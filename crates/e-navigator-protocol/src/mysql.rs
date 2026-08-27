@@ -7,8 +7,9 @@ mod lifecycle;
 
 pub use compression::{
     MysqlClientHandshakeResponse, MysqlCompressedPacket, MysqlCompressionAlgorithm,
-    MysqlCompressionExtraction, MysqlServerGreeting, decode_mysql_compressed_packet,
-    negotiate_mysql_compression, parse_mysql_client_handshake_response,
+    MysqlCompressionExtraction, MysqlPacketMetadata, MysqlServerGreeting,
+    decode_mysql_compressed_packet, mysql_requested_compression, negotiate_mysql_compression,
+    parse_mysql_client_handshake_response, parse_mysql_packet_metadata,
     parse_mysql_server_greeting,
 };
 pub use lifecycle::{
