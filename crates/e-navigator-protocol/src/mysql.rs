@@ -4,7 +4,10 @@ use crate::ProtocolExtractionConfig;
 
 mod lifecycle;
 
-pub use lifecycle::{MysqlClientPacketProgress, MysqlResponseLifecycle, MysqlResponseProgress};
+pub use lifecycle::{
+    MysqlClientPacketProgress, MysqlLogicalPacketProgress, MysqlResponseLifecycle,
+    MysqlResponseProgress,
+};
 
 const MYSQL_COM_QUIT: u8 = 0x01;
 const MYSQL_COM_INIT_DB: u8 = 0x02;
@@ -26,6 +29,11 @@ const MAX_MYSQL_RESULT_COLUMNS: u64 = 4096;
 const MYSQL_SQLSTATE_BYTES: usize = 5;
 const MYSQL_SERVER_MORE_RESULTS_EXISTS: u16 = 0x0008;
 const MYSQL_SERVER_STATUS_CURSOR_EXISTS: u16 = 0x0040;
+const MYSQL_PACKET_HEADER_BYTES: usize = 4;
+
+/// Maximum payload carried by one physical MySQL packet. A payload with this
+/// exact length continues the same logical message in the next packet.
+pub const MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES: usize = 0x00ff_ffff;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedMysqlCommand {
@@ -86,6 +94,43 @@ pub fn parse_mysql_command(
         _ => return Err(MysqlExtraction::UnsupportedCommand),
     };
 
+    Ok(parsed_mysql_command(command, operation, config))
+}
+
+/// Parses the bounded prefix of the first physical packet in a multi-packet
+/// MySQL command.
+///
+/// Only the command byte and a bounded SQL operation token are inspected.
+/// The unseen command body is neither required nor retained. This entry point
+/// accepts only the protocol-defined maximum physical payload, which prevents
+/// an ordinary truncated packet from being promoted to a logical command.
+pub fn parse_mysql_command_prefix(
+    prefix: &[u8],
+    declared_total_len: u64,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedMysqlCommand, MysqlExtraction> {
+    if prefix.len() > config.max_header_bytes {
+        return Err(MysqlExtraction::PacketTooLong);
+    }
+    let (sequence, payload_len, payload_prefix) = packet_prefix_parts(prefix, declared_total_len)?;
+    if sequence != 0 {
+        return Err(MysqlExtraction::UnexpectedSequence);
+    }
+    if payload_len != MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES {
+        return Err(MysqlExtraction::MalformedPacket);
+    }
+    let command = *payload_prefix
+        .first()
+        .ok_or(MysqlExtraction::MalformedPacket)?;
+    let operation = mysql_large_command_operation(command, payload_prefix)?;
+    Ok(parsed_mysql_command(command, operation, config))
+}
+
+fn parsed_mysql_command(
+    command: u8,
+    operation: Option<String>,
+    config: &ProtocolExtractionConfig,
+) -> ParsedMysqlCommand {
     let mut attributes = Vec::new();
     push_attribute(
         &mut attributes,
@@ -106,12 +151,12 @@ pub fn parse_mysql_command(
         Some(command_name(command)),
     );
 
-    Ok(ParsedMysqlCommand {
+    ParsedMysqlCommand {
         protocol: ProtocolKind::Mysql,
         operation,
         warning: None,
         attributes,
-    })
+    }
 }
 
 pub fn parse_mysql_error_response(
@@ -405,12 +450,28 @@ fn packet_payload(bytes: &[u8], max_packet_bytes: usize) -> Result<&[u8], MysqlE
     packet_parts(bytes, max_packet_bytes).map(|(_, payload)| payload)
 }
 
+pub(crate) fn packet_prefix_parts(
+    prefix: &[u8],
+    declared_total_len: u64,
+) -> Result<(u8, usize, &[u8]), MysqlExtraction> {
+    if prefix.len() < MYSQL_PACKET_HEADER_BYTES {
+        return Err(MysqlExtraction::MalformedPacket);
+    }
+    let payload_len = mysql_payload_len(prefix);
+    let total_len = payload_len
+        .checked_add(MYSQL_PACKET_HEADER_BYTES)
+        .ok_or(MysqlExtraction::MalformedPacket)?;
+    if total_len as u64 != declared_total_len || prefix.len() > total_len {
+        return Err(MysqlExtraction::MalformedPacket);
+    }
+    Ok((prefix[3], payload_len, &prefix[MYSQL_PACKET_HEADER_BYTES..]))
+}
+
 fn packet_parts(bytes: &[u8], max_packet_bytes: usize) -> Result<(u8, &[u8]), MysqlExtraction> {
     if bytes.len() < 4 {
         return Err(MysqlExtraction::MalformedPacket);
     }
-    let payload_len =
-        usize::from(bytes[0]) | (usize::from(bytes[1]) << 8) | (usize::from(bytes[2]) << 16);
+    let payload_len = mysql_payload_len(bytes);
     let total_len = payload_len
         .checked_add(4)
         .ok_or(MysqlExtraction::MalformedPacket)?;
@@ -421,6 +482,10 @@ fn packet_parts(bytes: &[u8], max_packet_bytes: usize) -> Result<(u8, &[u8]), My
         return Err(MysqlExtraction::MalformedPacket);
     }
     Ok((bytes[3], &bytes[4..total_len]))
+}
+
+fn mysql_payload_len(bytes: &[u8]) -> usize {
+    usize::from(bytes[0]) | (usize::from(bytes[1]) << 8) | (usize::from(bytes[2]) << 16)
 }
 
 fn mysql_sqlstate(payload: &[u8]) -> Result<Option<&str>, MysqlExtraction> {
@@ -460,6 +525,55 @@ fn mysql_operation(query: &str) -> Option<String> {
         return None;
     }
     Some(query[..end].to_ascii_uppercase())
+}
+
+pub(crate) fn mysql_large_command_operation(
+    command: u8,
+    payload_prefix: &[u8],
+) -> Result<Option<String>, MysqlExtraction> {
+    match command {
+        MYSQL_COM_QUERY | MYSQL_COM_STMT_PREPARE => {
+            Ok(mysql_operation_prefix(&payload_prefix[1..]))
+        }
+        MYSQL_COM_INIT_DB if payload_prefix.len() >= 2 => Ok(Some("INIT_DB".to_string())),
+        MYSQL_COM_STMT_EXECUTE if payload_prefix.len() >= 10 => Ok(Some("EXECUTE".to_string())),
+        MYSQL_COM_STMT_SEND_LONG_DATA if payload_prefix.len() >= 7 => {
+            Ok(Some("SEND_LONG_DATA".to_string()))
+        }
+        MYSQL_COM_INIT_DB | MYSQL_COM_STMT_EXECUTE | MYSQL_COM_STMT_SEND_LONG_DATA => {
+            Err(MysqlExtraction::MalformedPacket)
+        }
+        _ => Err(MysqlExtraction::UnsupportedCommand),
+    }
+}
+
+fn mysql_operation_prefix(mut query: &[u8]) -> Option<String> {
+    loop {
+        query = &query[query
+            .iter()
+            .take_while(|byte| byte.is_ascii_whitespace())
+            .count()..];
+        if query.starts_with(b"--") || query.starts_with(b"#") {
+            let newline = query.iter().position(|byte| *byte == b'\n')?;
+            query = &query[newline + 1..];
+            continue;
+        }
+        if query.starts_with(b"/*") {
+            let comment_end = query.windows(2).position(|pair| pair == b"*/")?;
+            query = &query[comment_end + 2..];
+            continue;
+        }
+        let end = query
+            .iter()
+            .take_while(|byte| byte.is_ascii_alphabetic())
+            .count();
+        if end == 0 || end == query.len() || end > MAX_MYSQL_OPERATION_BYTES {
+            return None;
+        }
+        return std::str::from_utf8(&query[..end])
+            .ok()
+            .map(str::to_ascii_uppercase);
+    }
 }
 
 fn skip_sql_prefix(mut query: &str) -> &str {

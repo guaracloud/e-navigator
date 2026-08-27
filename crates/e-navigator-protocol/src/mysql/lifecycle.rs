@@ -1,11 +1,12 @@
 use super::{
     MAX_MYSQL_RESULT_COLUMNS, MYSQL_COM_QUIT, MYSQL_COM_STMT_CLOSE, MYSQL_COM_STMT_EXECUTE,
     MYSQL_COM_STMT_FETCH, MYSQL_COM_STMT_PREPARE, MYSQL_COM_STMT_SEND_LONG_DATA, MYSQL_EOF_PACKET,
-    MYSQL_ERR_PACKET, MYSQL_LOCAL_INFILE_PACKET, MYSQL_OK_PACKET, MYSQL_SERVER_MORE_RESULTS_EXISTS,
-    MYSQL_SERVER_STATUS_CURSOR_EXISTS, MysqlExtraction, ParsedMysqlResponse,
-    ProtocolExtractionConfig, is_eof_packet, is_ok_packet, is_text_resultset_row,
-    mysql_ok_response, mysql_status_flags, packet_parts, parse_mysql_response,
-    read_length_encoded_integer, validate_column_definition_41,
+    MYSQL_ERR_PACKET, MYSQL_LOCAL_INFILE_PACKET, MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES, MYSQL_OK_PACKET,
+    MYSQL_SERVER_MORE_RESULTS_EXISTS, MYSQL_SERVER_STATUS_CURSOR_EXISTS, MysqlExtraction,
+    ParsedMysqlResponse, ProtocolExtractionConfig, is_eof_packet, is_ok_packet,
+    is_text_resultset_row, mysql_large_command_operation, mysql_ok_response, mysql_status_flags,
+    packet_parts, packet_prefix_parts, parse_mysql_response, read_length_encoded_integer,
+    validate_column_definition_41,
 };
 
 /// Bounded state for one MySQL command response.
@@ -20,6 +21,8 @@ pub struct MysqlResponseLifecycle {
     kind: MysqlResponseKind,
     phase: MysqlResponsePhase,
     next_sequence: u8,
+    request_continuation: bool,
+    response_continuation: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +76,14 @@ pub enum MysqlClientPacketProgress {
     UploadComplete,
 }
 
+/// Progress through physical packets that form one large logical MySQL
+/// message. The packet bodies are never retained.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MysqlLogicalPacketProgress {
+    Continue,
+    Complete,
+}
+
 impl MysqlResponseLifecycle {
     /// Creates response state from one complete command packet.
     pub fn from_request(
@@ -87,19 +98,44 @@ impl MysqlResponseLifecycle {
             return Err(MysqlExtraction::UnexpectedSequence);
         }
         let command = *payload.first().ok_or(MysqlExtraction::MalformedPacket)?;
-        let kind = match command {
-            MYSQL_COM_STMT_PREPARE => MysqlResponseKind::StatementPrepare,
-            MYSQL_COM_STMT_EXECUTE => MysqlResponseKind::BinaryResultset,
-            MYSQL_COM_STMT_FETCH => MysqlResponseKind::StatementFetch,
-            MYSQL_COM_QUIT | MYSQL_COM_STMT_SEND_LONG_DATA | MYSQL_COM_STMT_CLOSE => {
-                MysqlResponseKind::NoResponse
-            }
-            _ => MysqlResponseKind::Command,
-        };
         Ok(Self {
-            kind,
+            kind: response_kind(command),
             phase: MysqlResponsePhase::Initial,
             next_sequence: 1,
+            request_continuation: false,
+            response_continuation: false,
+        })
+    }
+
+    /// Creates response state from the bounded first-packet prefix of a large
+    /// logical command. Only a sequence-zero maximum-sized physical packet is
+    /// accepted; ordinary truncation remains unsupported.
+    pub fn from_request_prefix(
+        prefix: &[u8],
+        declared_total_len: u64,
+        config: &ProtocolExtractionConfig,
+    ) -> Result<Self, MysqlExtraction> {
+        if prefix.len() > config.max_header_bytes {
+            return Err(MysqlExtraction::PacketTooLong);
+        }
+        let (sequence, payload_len, payload_prefix) =
+            packet_prefix_parts(prefix, declared_total_len)?;
+        if sequence != 0 {
+            return Err(MysqlExtraction::UnexpectedSequence);
+        }
+        if payload_len != MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES {
+            return Err(MysqlExtraction::MalformedPacket);
+        }
+        let command = *payload_prefix
+            .first()
+            .ok_or(MysqlExtraction::MalformedPacket)?;
+        let _operation = mysql_large_command_operation(command, payload_prefix)?;
+        Ok(Self {
+            kind: response_kind(command),
+            phase: MysqlResponsePhase::Initial,
+            next_sequence: 1,
+            request_continuation: true,
+            response_continuation: false,
         })
     }
 
@@ -115,12 +151,21 @@ impl MysqlResponseLifecycle {
         bytes: &[u8],
         config: &ProtocolExtractionConfig,
     ) -> Result<MysqlResponseProgress, MysqlExtraction> {
+        if self.request_continuation {
+            return Err(MysqlExtraction::UnsupportedResponse);
+        }
         if bytes.len() > config.max_header_bytes {
             return Err(MysqlExtraction::PacketTooLong);
         }
         let (sequence, payload) = packet_parts(bytes, config.max_header_bytes)?;
         if sequence != self.next_sequence {
             return Err(MysqlExtraction::UnexpectedSequence);
+        }
+
+        if self.response_continuation {
+            self.next_sequence = self.next_sequence.wrapping_add(1);
+            self.response_continuation = payload.len() == MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES;
+            return Ok(MysqlResponseProgress::Continue);
         }
 
         let transition = response_transition(self.kind, self.phase, payload, bytes, config)?;
@@ -138,6 +183,73 @@ impl MysqlResponseLifecycle {
                 Ok(MysqlResponseProgress::Complete(response))
             }
         }
+    }
+
+    /// Consumes a bounded continuation packet for the current large logical
+    /// request. The expected response sequence advances with every physical
+    /// request packet, as required by the MySQL packet protocol.
+    pub fn observe_request_continuation(
+        &mut self,
+        prefix: &[u8],
+        declared_total_len: u64,
+    ) -> Result<MysqlLogicalPacketProgress, MysqlExtraction> {
+        if !self.request_continuation {
+            return Err(MysqlExtraction::UnsupportedResponse);
+        }
+        let (sequence, payload_len, _) = packet_prefix_parts(prefix, declared_total_len)?;
+        if sequence != self.next_sequence {
+            return Err(MysqlExtraction::UnexpectedSequence);
+        }
+        self.next_sequence = self.next_sequence.wrapping_add(1);
+        if payload_len == MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES {
+            Ok(MysqlLogicalPacketProgress::Continue)
+        } else {
+            self.request_continuation = false;
+            Ok(MysqlLogicalPacketProgress::Complete)
+        }
+    }
+
+    /// Consumes the bounded prefix of a maximum-sized physical response
+    /// packet. Large packets are accepted only where row payloads are legal;
+    /// metadata, errors, and terminals still require complete parsing.
+    pub fn observe_response_prefix(
+        &mut self,
+        prefix: &[u8],
+        declared_total_len: u64,
+    ) -> Result<MysqlResponseProgress, MysqlExtraction> {
+        if self.request_continuation {
+            return Err(MysqlExtraction::UnsupportedResponse);
+        }
+        let (sequence, payload_len, _) = packet_prefix_parts(prefix, declared_total_len)?;
+        if sequence != self.next_sequence {
+            return Err(MysqlExtraction::UnexpectedSequence);
+        }
+        if payload_len != MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES {
+            return Err(MysqlExtraction::UnsupportedResponse);
+        }
+        if !self.response_continuation
+            && !matches!(
+                self.phase,
+                MysqlResponsePhase::Rows { .. } | MysqlResponsePhase::StatementFetchRows
+            )
+        {
+            return Err(MysqlExtraction::UnsupportedResponse);
+        }
+        self.next_sequence = self.next_sequence.wrapping_add(1);
+        self.response_continuation = true;
+        Ok(MysqlResponseProgress::Continue)
+    }
+
+    /// Whether more physical request packets belong to this logical command.
+    #[must_use]
+    pub fn owns_request_continuation(&self) -> bool {
+        self.request_continuation
+    }
+
+    /// Whether more physical response packets belong to one logical row.
+    #[must_use]
+    pub fn owns_response_continuation(&self) -> bool {
+        self.response_continuation
     }
 
     /// Consumes a client-side `LOCAL INFILE` packet from its bounded prefix.
@@ -189,6 +301,18 @@ impl MysqlResponseLifecycle {
             self.phase,
             MysqlResponsePhase::LocalInfileUpload | MysqlResponsePhase::LocalInfileTerminal
         )
+    }
+}
+
+fn response_kind(command: u8) -> MysqlResponseKind {
+    match command {
+        MYSQL_COM_STMT_PREPARE => MysqlResponseKind::StatementPrepare,
+        MYSQL_COM_STMT_EXECUTE => MysqlResponseKind::BinaryResultset,
+        MYSQL_COM_STMT_FETCH => MysqlResponseKind::StatementFetch,
+        MYSQL_COM_QUIT | MYSQL_COM_STMT_SEND_LONG_DATA | MYSQL_COM_STMT_CLOSE => {
+            MysqlResponseKind::NoResponse
+        }
+        _ => MysqlResponseKind::Command,
     }
 }
 

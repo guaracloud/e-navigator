@@ -608,7 +608,7 @@ mod platform {
                     reader_count,
                     crate::protocol::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
                 );
-                let mut last_protocol_surface_counts = [0_u64; 15];
+                let mut last_protocol_surface_counts = [0_u64; 18];
 
                 let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
@@ -1186,6 +1186,9 @@ mod platform {
             postgres_copy_ignored_controls = counters.postgres_copy_ignored_controls,
             mysql_local_infile_packets = counters.mysql_local_infile_packets,
             mysql_local_infile_bytes = counters.mysql_local_infile_bytes,
+            mysql_logical_request_continuations = counters.mysql_logical_request_continuations,
+            mysql_logical_response_continuations = counters.mysql_logical_response_continuations,
+            mysql_logical_sequence_failures = counters.mysql_logical_sequence_failures,
             "source diagnostic TLS sample processed"
         );
         DiagnosticSampleDecision::Matched

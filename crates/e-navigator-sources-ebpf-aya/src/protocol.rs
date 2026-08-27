@@ -25,8 +25,9 @@ use e_navigator_protocol::{
     },
     mongodb::{parse_mongodb_message, parse_mongodb_response},
     mysql::{
-        MysqlClientPacketProgress, MysqlResponseLifecycle, MysqlResponseProgress,
-        parse_mysql_command, parse_mysql_response,
+        MysqlClientPacketProgress, MysqlLogicalPacketProgress, MysqlResponseLifecycle,
+        MysqlResponseProgress, parse_mysql_command, parse_mysql_command_prefix,
+        parse_mysql_response,
     },
     nats::parse_nats_command,
     postgres::{
@@ -437,11 +438,14 @@ pub(crate) struct ProtocolRegistryCounters {
     pub postgres_copy_ignored_controls: u64,
     pub mysql_local_infile_packets: u64,
     pub mysql_local_infile_bytes: u64,
+    pub mysql_logical_request_continuations: u64,
+    pub mysql_logical_response_continuations: u64,
+    pub mysql_logical_sequence_failures: u64,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 impl ProtocolRegistryCounters {
-    pub(crate) fn protocol_surface_counts(self) -> [u64; 15] {
+    pub(crate) fn protocol_surface_counts(self) -> [u64; 18] {
         [
             self.websocket_upgrades,
             self.websocket_frames,
@@ -458,6 +462,9 @@ impl ProtocolRegistryCounters {
             self.postgres_copy_ignored_controls,
             self.mysql_local_infile_packets,
             self.mysql_local_infile_bytes,
+            self.mysql_logical_request_continuations,
+            self.mysql_logical_response_continuations,
+            self.mysql_logical_sequence_failures,
         ]
     }
 }
@@ -1284,6 +1291,59 @@ fn handle_request_frames(
             continue;
         }
         if stream.protocol == StreamProtocol::Mysql
+            && stream.in_flight.back().is_some_and(|entry| {
+                entry
+                    .mysql_response
+                    .as_ref()
+                    .is_some_and(MysqlResponseLifecycle::owns_request_continuation)
+            })
+        {
+            let (prefix, declared_len) = match frame {
+                StreamFrame::Complete(bytes) => (bytes.as_slice(), bytes.len() as u64),
+                StreamFrame::Truncated {
+                    prefix,
+                    declared_len,
+                } => {
+                    counters.truncated_frames += 1;
+                    (prefix.as_slice(), *declared_len)
+                }
+                StreamFrame::ProtocolSwitch { .. } => {
+                    counters.unparsed_frames += 1;
+                    continue;
+                }
+            };
+            let progress = stream
+                .in_flight
+                .back_mut()
+                .and_then(|entry| entry.mysql_response.as_mut())
+                .map(|lifecycle| lifecycle.observe_request_continuation(prefix, declared_len));
+            match progress {
+                Some(Ok(
+                    MysqlLogicalPacketProgress::Continue | MysqlLogicalPacketProgress::Complete,
+                )) => counters.mysql_logical_request_continuations += 1,
+                Some(Err(_)) | None => {
+                    counters.mysql_logical_sequence_failures += 1;
+                    continue;
+                }
+            }
+
+            let no_response_complete = stream.in_flight.back().is_some_and(|entry| {
+                entry.mysql_response.as_ref().is_some_and(|lifecycle| {
+                    !lifecycle.owns_request_continuation() && !lifecycle.expects_response()
+                })
+            });
+            if no_response_complete && let Some(entry) = stream.in_flight.pop_back() {
+                signals.push(build_observation(
+                    host.clone(),
+                    &stream.context,
+                    entry.parsed,
+                    entry.started_unix_nanos,
+                    None,
+                ));
+            }
+            continue;
+        }
+        if stream.protocol == StreamProtocol::Mysql
             && stream.in_flight.front().is_some_and(|entry| {
                 entry
                     .mysql_response
@@ -1401,6 +1461,34 @@ fn handle_request_frames(
                     }
                 }
             }
+            StreamFrame::Truncated {
+                prefix,
+                declared_len,
+            } if stream.protocol == StreamProtocol::Mysql => {
+                counters.truncated_frames += 1;
+                match parse_mysql_command_prefix(prefix, *declared_len, extraction) {
+                    Ok(parsed) => (
+                        ParsedRequestFrame {
+                            protocol: parsed.protocol,
+                            operation: parsed.operation,
+                            status_code: None,
+                            trace_id: None,
+                            span_id: None,
+                            warning: parsed.warning,
+                            attributes: parsed.attributes,
+                            websocket_upgrade: false,
+                        },
+                        Some(prefix.as_slice()),
+                    ),
+                    Err(_) => {
+                        counters.unparsed_frames += 1;
+                        (
+                            placeholder_request(stream.protocol, "truncated_request_frame"),
+                            Some(prefix.as_slice()),
+                        )
+                    }
+                }
+            }
             StreamFrame::Truncated { prefix, .. } => {
                 counters.truncated_frames += 1;
                 (
@@ -1443,9 +1531,21 @@ fn handle_request_frames(
             .filter(|_| stream.protocol == StreamProtocol::Mongodb)
             .and_then(|frame| parse_mongodb_message(frame, extraction).ok())
             .map(|parsed| parsed.request_id);
-        let mysql_response = frame_bytes
-            .filter(|_| stream.protocol == StreamProtocol::Mysql)
-            .and_then(|frame| MysqlResponseLifecycle::from_request(frame, extraction).ok());
+        let mysql_response = if stream.protocol == StreamProtocol::Mysql {
+            match frame {
+                StreamFrame::Complete(frame) => {
+                    MysqlResponseLifecycle::from_request(frame, extraction).ok()
+                }
+                StreamFrame::Truncated {
+                    prefix,
+                    declared_len,
+                } => MysqlResponseLifecycle::from_request_prefix(prefix, *declared_len, extraction)
+                    .ok(),
+                StreamFrame::ProtocolSwitch { .. } => None,
+            }
+        } else {
+            None
+        };
         let redis_response = frame_bytes
             .filter(|_| stream.protocol == StreamProtocol::Redis)
             .and_then(|frame| RedisResponseLifecycle::from_request(frame, extraction).ok());
@@ -1492,12 +1592,11 @@ fn handle_request_frames(
             ));
             continue;
         }
-        if mysql_response
+        if mysql_response.as_ref().is_some_and(|lifecycle| {
+            !lifecycle.expects_response() && !lifecycle.owns_request_continuation()
+        }) || redis_response
             .as_ref()
             .is_some_and(|lifecycle| !lifecycle.expects_response())
-            || redis_response
-                .as_ref()
-                .is_some_and(|lifecycle| !lifecycle.expects_response())
             || postgres_request_response
                 .as_ref()
                 .is_some_and(|lifecycle| !lifecycle.expects_response())
@@ -1685,11 +1784,16 @@ fn handle_response_frames(
             );
             continue;
         }
-        let (frame_bytes, truncated) = match frame {
-            StreamFrame::Complete(frame_bytes) => (frame_bytes.as_slice(), false),
-            StreamFrame::Truncated { prefix, .. } => {
+        let (frame_bytes, truncated, declared_len) = match frame {
+            StreamFrame::Complete(frame_bytes) => {
+                (frame_bytes.as_slice(), false, frame_bytes.len() as u64)
+            }
+            StreamFrame::Truncated {
+                prefix,
+                declared_len,
+            } => {
                 counters.truncated_frames += 1;
-                (prefix.as_slice(), true)
+                (prefix.as_slice(), true, *declared_len)
             }
             StreamFrame::ProtocolSwitch { .. } => continue,
         };
@@ -1730,6 +1834,7 @@ fn handle_response_frames(
             stream,
             frame_bytes,
             truncated,
+            declared_len,
             &mut DatabaseResponseContext {
                 extraction,
                 host,
@@ -3532,7 +3637,7 @@ mod platform {
                     reader_count,
                     super::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
                 );
-                let mut last_protocol_surface_counts = [0_u64; 15];
+                let mut last_protocol_surface_counts = [0_u64; 18];
 
                 let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
@@ -4133,6 +4238,16 @@ mod tests {
 
     fn response_event(remote_port: u16, payload: &[u8]) -> RawProtocolDataEvent {
         let mut event = raw_event(remote_port, payload, payload.len() as u32);
+        event.direction = RAW_PROTOCOL_DIRECTION_READ;
+        event
+    }
+
+    fn response_event_with_total(
+        remote_port: u16,
+        payload: &[u8],
+        total_len: u32,
+    ) -> RawProtocolDataEvent {
+        let mut event = raw_event(remote_port, payload, total_len);
         event.direction = RAW_PROTOCOL_DIRECTION_READ;
         event
     }
@@ -6516,6 +6631,101 @@ mod tests {
         ] {
             assert!(!serialized.contains(secret));
         }
+    }
+
+    #[test]
+    fn mysql_large_logical_request_is_correlated_once_from_its_bounded_prefix() {
+        let mut registry = registry();
+        let declared_len = 0x00ff_ffff_u32 + 4;
+        let first_prefix = [
+            0xff, 0xff, 0xff, 0, 0x03, b'S', b'E', b'L', b'E', b'C', b'T', b' ', b's', b'e', b'c',
+            b'r', b'e', b't',
+        ];
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &first_prefix, declared_len),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let final_packet = mysql_wire_packet(1, b"private-tail");
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &final_packet, final_packet.len() as u32),
+                6_000,
+            )
+            .is_empty()
+        );
+
+        let ok = mysql_wire_packet(2, &[0, 0, 0, 2, 0, 0, 0]);
+        let signals = handle_at(&mut registry, &response_event(3306, &ok), 9_000);
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method.as_deref(), Some("SELECT"));
+        assert_eq!(observation.duration_nanos, Some(4_000));
+        assert_eq!(registry.counters().mysql_logical_request_continuations, 1);
+        assert_eq!(registry.counters().mysql_logical_sequence_failures, 0);
+        assert_eq!(registry.counters().unmatched_overflow, 0);
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        assert!(!serialized.contains("secret"));
+        assert!(!serialized.contains("private-tail"));
+    }
+
+    #[test]
+    fn mysql_large_result_row_does_not_complete_or_displace_the_query() {
+        let mut registry = registry();
+        let request = mysql_wire_packet(0, b"\x03SELECT secret FROM private_table");
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+        for packet in [
+            mysql_wire_packet(1, &[1]),
+            mysql_column_definition_packet(2),
+            mysql_wire_packet(3, &[0xfe, 0, 0, 2, 0]),
+        ] {
+            assert!(handle_at(&mut registry, &response_event(3306, &packet), 6_000).is_empty());
+        }
+
+        let declared_len = 0x00ff_ffff_u32 + 4;
+        let row_prefix = [
+            0xff, 0xff, 0xff, 4, 0x03, b's', b'e', b'c', b'r', b'e', b't',
+        ];
+        assert!(
+            handle_at(
+                &mut registry,
+                &response_event_with_total(3306, &row_prefix, declared_len),
+                7_000,
+            )
+            .is_empty()
+        );
+        let final_row_packet = mysql_wire_packet(5, b"private-tail");
+        assert!(
+            handle_at(
+                &mut registry,
+                &response_event(3306, &final_row_packet),
+                8_000,
+            )
+            .is_empty()
+        );
+
+        let terminal = mysql_wire_packet(6, &[0xfe, 0, 0, 2, 0]);
+        let signals = handle_at(&mut registry, &response_event(3306, &terminal), 9_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("SELECT"));
+        assert_eq!(registry.counters().mysql_logical_response_continuations, 1);
+        assert_eq!(registry.counters().mysql_logical_sequence_failures, 0);
+        assert_eq!(registry.counters().unparsed_responses, 0);
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        assert!(!serialized.contains("secret"));
+        assert!(!serialized.contains("private-tail"));
     }
 
     #[test]
