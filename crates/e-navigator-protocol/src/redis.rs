@@ -10,6 +10,8 @@ const MAX_REDIS_COMMAND_BYTES: usize = 64;
 const MAX_REDIS_BULK_STRING_BYTES: usize = 1024;
 const MAX_REDIS_ARRAY_ITEMS: usize = 64;
 const MAX_REDIS_ARRAY_DEPTH: usize = 4;
+const MAX_REDIS_SUBSCRIPTION_CONFIRMATION_BYTES: usize =
+    MAX_REDIS_COMMAND_BYTES + MAX_REDIS_BULK_STRING_BYTES + 128;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedRedisCommand {
@@ -44,18 +46,104 @@ pub enum RedisResponseRole {
     Attribute,
 }
 
+/// RESP mode in which Pub/Sub delivery arrays are unambiguously out of band.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RedisSubscriptionState {
+    #[default]
+    None,
+    Resp2,
+    Resp3,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RedisSubscriptionKind {
+    Subscribe,
+    Psubscribe,
+    Ssubscribe,
+    Unsubscribe,
+    Punsubscribe,
+    Sunsubscribe,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RedisSubscriptionConfirmation {
+    kind: RedisSubscriptionKind,
+    state: RedisSubscriptionState,
+    has_name: bool,
+}
+
 /// Classifies queue semantics without retaining or exporting frame contents.
 pub fn redis_response_role(bytes: &[u8]) -> Result<RedisResponseRole, RedisExtraction> {
     match bytes.first() {
         Some(b'>') => Ok(RedisResponseRole::Push),
         Some(b'|') => Ok(RedisResponseRole::Attribute),
-        Some(b'*') if is_resp2_pubsub_delivery(bytes) => Ok(RedisResponseRole::Push),
         Some(b'+') | Some(b'-') | Some(b':') | Some(b'$') | Some(b'*') | Some(b'_')
         | Some(b'#') | Some(b',') | Some(b'(') | Some(b'=') | Some(b'!') | Some(b'%')
         | Some(b'~') => Ok(RedisResponseRole::Reply),
         Some(_) => Err(RedisExtraction::UnsupportedFrame),
         None => Err(RedisExtraction::MalformedFrame),
     }
+}
+
+/// Classifies a response with connection-level Pub/Sub evidence.
+///
+/// A RESP2 array shaped like a delivery is out of band only after a successful
+/// RESP2 subscription confirmation. The same array remains an ordinary reply
+/// before subscription and under RESP3, where Pub/Sub deliveries use `>`.
+pub fn redis_connection_response_role(
+    bytes: &[u8],
+    subscription: RedisSubscriptionState,
+) -> Result<RedisResponseRole, RedisExtraction> {
+    if subscription == RedisSubscriptionState::Resp2 && is_resp2_pubsub_delivery(bytes) {
+        return Ok(RedisResponseRole::Push);
+    }
+    redis_response_role(bytes)
+}
+
+fn parse_redis_subscription_confirmation(
+    bytes: &[u8],
+) -> Result<Option<RedisSubscriptionConfirmation>, RedisExtraction> {
+    if bytes.len() > MAX_REDIS_SUBSCRIPTION_CONFIRMATION_BYTES {
+        return Err(RedisExtraction::FrameTooLong);
+    }
+    let state = match bytes.first() {
+        Some(b'*') => RedisSubscriptionState::Resp2,
+        Some(b'>') => RedisSubscriptionState::Resp3,
+        _ => return Ok(None),
+    };
+    let mut cursor = 1;
+    let item_count = parse_decimal_line(bytes, &mut cursor)?;
+    if item_count != 3 {
+        return Ok(None);
+    }
+    let Some(kind) = resp_string_at(bytes, &mut cursor).and_then(subscription_confirmation_kind)
+    else {
+        return Ok(None);
+    };
+    let has_name = skip_resp_subscription_name(bytes, &mut cursor)?;
+    if bytes.get(cursor) != Some(&b':') {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+    cursor += 1;
+    let subscriptions = parse_decimal_line(bytes, &mut cursor)?;
+    if subscriptions < 0 || cursor != bytes.len() {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+    if subscriptions == 0 && kind.is_subscribe() {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+    if !has_name && (!kind.is_unsubscribe() || subscriptions != 0) {
+        return Err(RedisExtraction::MalformedFrame);
+    }
+    Ok(Some(RedisSubscriptionConfirmation {
+        kind,
+        state: if subscriptions == 0 {
+            RedisSubscriptionState::None
+        } else {
+            state
+        },
+        has_name,
+    }))
 }
 
 /// Recognizes the three RESP2 Pub/Sub delivery shapes without decoding or
@@ -79,7 +167,12 @@ fn resp_string_at<'a>(bytes: &'a [u8], cursor: &mut usize) -> Option<&'a [u8]> {
         Some(b'+') => {
             *cursor += 1;
             let end = line_end(bytes, *cursor)?;
-            bytes.get(*cursor..end)
+            let value = bytes.get(*cursor..end)?;
+            if value.len() > MAX_REDIS_COMMAND_BYTES {
+                return None;
+            }
+            *cursor = end.checked_add(2)?;
+            Some(value)
         }
         Some(b'$') => {
             *cursor += 1;
@@ -93,9 +186,77 @@ fn resp_string_at<'a>(bytes: &'a [u8], cursor: &mut usize) -> Option<&'a [u8]> {
             if bytes.get(end..frame_end) != Some(b"\r\n") {
                 return None;
             }
-            bytes.get(*cursor..end)
+            let value = bytes.get(*cursor..end)?;
+            *cursor = frame_end;
+            Some(value)
         }
         _ => None,
+    }
+}
+
+fn subscription_confirmation_kind(kind: &[u8]) -> Option<RedisSubscriptionKind> {
+    if kind.eq_ignore_ascii_case(b"subscribe") {
+        Some(RedisSubscriptionKind::Subscribe)
+    } else if kind.eq_ignore_ascii_case(b"psubscribe") {
+        Some(RedisSubscriptionKind::Psubscribe)
+    } else if kind.eq_ignore_ascii_case(b"ssubscribe") {
+        Some(RedisSubscriptionKind::Ssubscribe)
+    } else if kind.eq_ignore_ascii_case(b"unsubscribe") {
+        Some(RedisSubscriptionKind::Unsubscribe)
+    } else if kind.eq_ignore_ascii_case(b"punsubscribe") {
+        Some(RedisSubscriptionKind::Punsubscribe)
+    } else if kind.eq_ignore_ascii_case(b"sunsubscribe") {
+        Some(RedisSubscriptionKind::Sunsubscribe)
+    } else {
+        None
+    }
+}
+
+impl RedisSubscriptionKind {
+    fn is_subscribe(self) -> bool {
+        matches!(self, Self::Subscribe | Self::Psubscribe | Self::Ssubscribe)
+    }
+
+    fn is_unsubscribe(self) -> bool {
+        matches!(
+            self,
+            Self::Unsubscribe | Self::Punsubscribe | Self::Sunsubscribe
+        )
+    }
+}
+
+fn skip_resp_subscription_name(bytes: &[u8], cursor: &mut usize) -> Result<bool, RedisExtraction> {
+    match bytes.get(*cursor) {
+        Some(b'+') => {
+            *cursor += 1;
+            let end = line_end(bytes, *cursor).ok_or(RedisExtraction::MalformedFrame)?;
+            if end.saturating_sub(*cursor) > MAX_REDIS_BULK_STRING_BYTES {
+                return Err(RedisExtraction::BulkStringTooLong);
+            }
+            *cursor = end.checked_add(2).ok_or(RedisExtraction::MalformedFrame)?;
+            Ok(true)
+        }
+        Some(b'$') => {
+            *cursor += 1;
+            let len = parse_decimal_line(bytes, cursor)?;
+            if len == -1 {
+                return Ok(false);
+            }
+            let len = usize::try_from(len).map_err(|_| RedisExtraction::MalformedFrame)?;
+            if len > MAX_REDIS_BULK_STRING_BYTES {
+                return Err(RedisExtraction::BulkStringTooLong);
+            }
+            let end = cursor
+                .checked_add(len)
+                .ok_or(RedisExtraction::MalformedFrame)?;
+            let frame_end = end.checked_add(2).ok_or(RedisExtraction::MalformedFrame)?;
+            if bytes.get(end..frame_end) != Some(b"\r\n") {
+                return Err(RedisExtraction::MalformedFrame);
+            }
+            *cursor = frame_end;
+            Ok(true)
+        }
+        _ => Err(RedisExtraction::MalformedFrame),
     }
 }
 
@@ -760,5 +921,56 @@ fn push_attribute(
             key: key.to_string(),
             value: value.to_string(),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subscription_confirmation_parser_accepts_only_valid_state_evidence() {
+        let resp2 = parse_redis_subscription_confirmation(
+            b"*3\r\n$9\r\nsubscribe\r\n$7\r\nchannel\r\n:1\r\n",
+        )
+        .expect("RESP2 confirmation parses")
+        .expect("RESP2 confirmation is recognized");
+        assert_eq!(resp2.state, RedisSubscriptionState::Resp2);
+        assert!(resp2.has_name);
+
+        let resp3 = parse_redis_subscription_confirmation(
+            b">3\r\n$11\r\nunsubscribe\r\n$7\r\nchannel\r\n:0\r\n",
+        )
+        .expect("RESP3 confirmation parses")
+        .expect("RESP3 confirmation is recognized");
+        assert_eq!(resp3.state, RedisSubscriptionState::None);
+        assert!(resp3.has_name);
+
+        let zero_argument =
+            parse_redis_subscription_confirmation(b"*3\r\n$11\r\nunsubscribe\r\n$-1\r\n:0\r\n")
+                .expect("zero-argument unsubscribe confirmation parses")
+                .expect("zero-argument unsubscribe confirmation is recognized");
+        assert_eq!(zero_argument.state, RedisSubscriptionState::None);
+        assert!(!zero_argument.has_name);
+
+        for malformed in [
+            b"*3\r\n$9\r\nsubscribe\r\n:1\r\n:2\r\n".as_slice(),
+            b"*3\r\n$9\r\nsubscribe\r\n$7\r\nchannel\r\n:0\r\n".as_slice(),
+            b"*3\r\n$9\r\nsubscribe\r\n$-1\r\n:1\r\n".as_slice(),
+        ] {
+            assert_eq!(
+                parse_redis_subscription_confirmation(malformed),
+                Err(RedisExtraction::MalformedFrame)
+            );
+        }
+    }
+
+    #[test]
+    fn subscription_confirmation_parser_has_an_independent_size_bound() {
+        let oversized = vec![b'x'; MAX_REDIS_SUBSCRIPTION_CONFIRMATION_BYTES + 1];
+        assert_eq!(
+            parse_redis_subscription_confirmation(&oversized),
+            Err(RedisExtraction::FrameTooLong)
+        );
     }
 }

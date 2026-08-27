@@ -21,6 +21,10 @@ fuzz_target!(|data: &[u8]| {
 
     if let Some(pod_uid) = parse_pod_uid_from_cgroup_path(&path) {
         assert!((8..=64).contains(&pod_uid.len()));
-        assert!(pod_uid.bytes().all(|byte| byte.is_ascii_hexdigit() || byte == b'-'));
+        assert!(
+            pod_uid
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+        );
     }
 });

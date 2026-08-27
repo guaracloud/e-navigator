@@ -3,8 +3,9 @@
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
     postgres::{
-        PostgresRequestLifecycle, PostgresSimpleQueryLifecycle, parse_postgres_error_response,
-        parse_postgres_message, parse_postgres_response,
+        PostgresRequestLifecycle, PostgresSimpleQueryLifecycle, PostgresStartupLifecycle,
+        parse_postgres_error_response, parse_postgres_message, parse_postgres_response,
+        parse_postgres_startup_message,
     },
 };
 use libfuzzer_sys::fuzz_target;
@@ -23,11 +24,15 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_postgres_message(data, &config);
     let _ = parse_postgres_response(data, &config);
     let _ = parse_postgres_error_response(data, &config);
+    let _ = parse_postgres_startup_message(data, &config);
 
     if let Ok(mut lifecycle) = PostgresSimpleQueryLifecycle::from_request(data, &config) {
         let _ = lifecycle.observe_response(data, &config);
     }
     if let Ok(mut lifecycle) = PostgresRequestLifecycle::from_request(data, &config) {
+        let _ = lifecycle.observe_response(data, &config);
+    }
+    if let Ok(mut lifecycle) = PostgresStartupLifecycle::from_request(data, &config) {
         let _ = lifecycle.observe_response(data, &config);
     }
 

@@ -115,20 +115,31 @@ fn handle_redis_response(
     truncated: bool,
     context: &mut DatabaseResponseContext<'_>,
 ) {
-    if stream.in_flight.is_empty() {
-        match redis_response_role(frame) {
-            Ok(RedisResponseRole::Push | RedisResponseRole::Attribute) => {
-                context.counters.response_continuations += 1;
-            }
-            Ok(RedisResponseRole::Reply) | Err(_) => context.counters.orphan_responses += 1,
-        }
-        return;
-    }
     if truncated {
         context.counters.unparsed_responses += 1;
         return;
     }
-
+    if stream.redis_transport_opaque {
+        context.counters.unparsed_responses += 1;
+        return;
+    }
+    if stream.in_flight.is_empty() {
+        let role = match redis_connection_response_role(frame, stream.redis_subscription) {
+            Ok(role) => role,
+            Err(_) => {
+                context.counters.unparsed_responses += 1;
+                return;
+            }
+        };
+        match role {
+            RedisResponseRole::Push | RedisResponseRole::Attribute => {
+                context.counters.response_continuations += 1;
+            }
+            RedisResponseRole::Reply => context.counters.orphan_responses += 1,
+        }
+        return;
+    }
+    let subscription_state = stream.redis_subscription;
     let Some(lifecycle) = stream
         .in_flight
         .front_mut()
@@ -137,17 +148,27 @@ fn handle_redis_response(
         context.counters.unparsed_responses += 1;
         return;
     };
-    let response = match lifecycle.observe_response(frame, context.extraction) {
-        Ok(RedisResponseProgress::Continue) => {
-            context.counters.response_continuations += 1;
-            return;
-        }
-        Ok(RedisResponseProgress::Complete(response)) => response,
-        Err(_) => {
-            context.counters.unparsed_responses += 1;
-            return;
-        }
-    };
+    let (response, subscription_update) =
+        match lifecycle.observe_response(frame, subscription_state, context.extraction) {
+            Ok(RedisResponseProgress::Continue { subscription_state }) => {
+                if let Some(subscription) = subscription_state {
+                    stream.redis_subscription = subscription;
+                }
+                context.counters.response_continuations += 1;
+                return;
+            }
+            Ok(RedisResponseProgress::Complete {
+                response,
+                subscription_state,
+            }) => (response, subscription_state),
+            Err(_) => {
+                context.counters.unparsed_responses += 1;
+                return;
+            }
+        };
+    if let Some(subscription) = subscription_update {
+        stream.redis_subscription = subscription;
+    }
 
     let Some(entry) = stream.in_flight.pop_front() else {
         context.counters.orphan_responses += 1;

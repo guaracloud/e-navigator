@@ -69,8 +69,8 @@ pub enum PostgresExtraction {
 
 /// Parses one complete, untagged PostgreSQL startup-protocol message.
 ///
-/// E-Navigator's declared PostgreSQL 15-17 matrix uses protocol 3.0. Newer
-/// minor versions fail closed until their semantics are explicitly added.
+/// Protocol 3.0 identifies the wire grammar, not the PostgreSQL server release.
+/// Server/client version support remains an external qualification-matrix gate.
 pub fn parse_postgres_startup_message(
     bytes: &[u8],
     config: &ProtocolExtractionConfig,

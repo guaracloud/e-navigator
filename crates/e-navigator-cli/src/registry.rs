@@ -441,6 +441,10 @@ fn aya_source_telemetry_lines(
                     snapshot.protocol_grpc_web_requests,
                 ),
                 metric(
+                    "e_navigator_ebpf_source_protocol_redis_ambiguous_state_transitions_total",
+                    snapshot.protocol_redis_ambiguous_state_transitions,
+                ),
+                metric(
                     "e_navigator_ebpf_source_protocol_discovered_connections_total",
                     snapshot.protocol_discovered_connections,
                 ),
@@ -517,8 +521,8 @@ fn aya_source_telemetry_lines(
                     snapshot.protocol_mysql_compression_zstd_rejections,
                 ),
                 metric(
-                    "e_navigator_ebpf_source_protocol_mysql_compression_unverified_connections_total",
-                    snapshot.protocol_mysql_compression_unverified_connections,
+                    "e_navigator_ebpf_source_protocol_mysql_compression_unverified_rejections_total",
+                    snapshot.protocol_mysql_compression_unverified_rejections,
                 ),
                 metric(
                     "e_navigator_ebpf_source_protocol_mysql_compressed_packets_total",
@@ -986,6 +990,7 @@ mod tests {
                 protocol_websocket_frames: 7,
                 protocol_websocket_transition_rejections: 1,
                 protocol_grpc_web_requests: 8,
+                protocol_redis_ambiguous_state_transitions: 9,
                 protocol_discovered_connections: 9,
                 protocol_discovery_unclassified_events: 10,
                 protocol_discovery_candidate_evictions: 2,
@@ -1005,7 +1010,7 @@ mod tests {
                 protocol_mysql_auth_packets: 24,
                 protocol_mysql_compression_zlib_connections: 25,
                 protocol_mysql_compression_zstd_rejections: 26,
-                protocol_mysql_compression_unverified_connections: 27,
+                protocol_mysql_compression_unverified_rejections: 27,
                 protocol_mysql_compressed_packets: 28,
                 protocol_mysql_compression_failures: 29,
                 protocol_mysql_compression_opaque_events: 30,
@@ -1017,7 +1022,7 @@ mod tests {
             .into_iter(),
         );
 
-        assert_eq!(lines.len(), 69);
+        assert_eq!(lines.len(), 70);
         assert!(
             lines.iter().all(
                 |line| line.labels.get("source").map(String::as_str) == Some("source.aya_exec")
@@ -1085,6 +1090,15 @@ mod tests {
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_protocol_mysql_compression_failures_total"
                 && line.value == "29"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name
+                == "e_navigator_ebpf_source_protocol_mysql_compression_unverified_rejections_total"
+                && line.value == "27"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_protocol_redis_ambiguous_state_transitions_total"
+                && line.value == "9"
         }));
     }
 

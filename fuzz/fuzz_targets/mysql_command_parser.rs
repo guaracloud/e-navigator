@@ -3,8 +3,10 @@
 use e_navigator_protocol::{
     ProtocolExtractionConfig,
     mysql::{
-        MysqlResponseLifecycle, parse_mysql_command, parse_mysql_error_response,
-        parse_mysql_response,
+        MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES, MysqlResponseLifecycle, decode_mysql_compressed_packet,
+        parse_mysql_client_handshake_response, parse_mysql_command, parse_mysql_command_prefix,
+        parse_mysql_error_response, parse_mysql_packet_metadata, parse_mysql_response,
+        parse_mysql_server_greeting,
     },
 };
 use libfuzzer_sys::fuzz_target;
@@ -23,6 +25,12 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_mysql_command(data, &config);
     let _ = parse_mysql_response(data, &config);
     let _ = parse_mysql_error_response(data, &config);
+    let _ = parse_mysql_command_prefix(data, data.len() as u64, &config);
+    let _ = parse_mysql_command_prefix(data, MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES as u64 + 4, &config);
+    let _ = parse_mysql_packet_metadata(data, config.max_header_bytes);
+    let _ = parse_mysql_server_greeting(data, config.max_header_bytes);
+    let _ = parse_mysql_client_handshake_response(data, config.max_header_bytes);
+    let _ = decode_mysql_compressed_packet(data, config.max_header_bytes);
 
     if let Ok(mut lifecycle) = MysqlResponseLifecycle::from_request(data, &config) {
         let _ = lifecycle.observe_packet(data, &config);

@@ -12,8 +12,7 @@ fuzz_target!(|data: &[u8]| {
     let table = ElfSymbolTable::parse(data);
     let _ = table.resolve(0);
     let _ = table.resolve(u64::from_le_bytes(
-        <[u8; 8]>::try_from(&data[..data.len().min(8)])
-            .unwrap_or([0; 8]),
+        <[u8; 8]>::try_from(&data[..data.len().min(8)]).unwrap_or([0; 8]),
     ));
 
     // And, separately, as /proc/<pid>/maps text.
