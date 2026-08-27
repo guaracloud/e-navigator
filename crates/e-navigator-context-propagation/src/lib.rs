@@ -165,9 +165,7 @@ pub fn plan_http1_prefix_propagation(
             return PropagationDecision::Bypass(PropagationBypass::NotHttp1);
         };
         if message_total_len > message_prefix.len() {
-            if !captured_body.is_empty() {
-                return PropagationDecision::Bypass(PropagationBypass::UncapturedChunkedBody);
-            }
+            return PropagationDecision::Bypass(PropagationBypass::UncapturedChunkedBody);
         } else {
             match chunked_body_status(captured_body) {
                 ChunkedBodyStatus::Incomplete | ChunkedBodyStatus::Complete => {}
@@ -717,7 +715,7 @@ fn parse_content_length(value: &[u8]) -> Option<usize> {
             .checked_mul(10)?
             .checked_add(usize::from(byte - b'0'))?;
     }
-    Some(parsed)
+    (parsed <= u32::MAX as usize).then_some(parsed)
 }
 
 fn parse_hex(input: &[u8], output: &mut [u8]) -> Option<()> {
