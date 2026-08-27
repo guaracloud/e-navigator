@@ -452,6 +452,62 @@ fn aya_source_telemetry_lines(
                     "e_navigator_ebpf_source_protocol_discovery_candidate_evictions_total",
                     snapshot.protocol_discovery_candidate_evictions,
                 ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_postgres_startup_auth_messages_total",
+                    snapshot.protocol_postgres_startup_auth_messages,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_postgres_encryption_negotiation_accepted_total",
+                    snapshot.protocol_postgres_encryption_negotiation_accepted,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_postgres_encryption_negotiation_rejected_total",
+                    snapshot.protocol_postgres_encryption_negotiation_rejected,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_postgres_negotiation_failures_total",
+                    snapshot.protocol_postgres_negotiation_failures,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_postgres_encrypted_transport_events_total",
+                    snapshot.protocol_postgres_encrypted_transport_events,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_postgres_copy_ignored_controls_total",
+                    snapshot.protocol_postgres_copy_ignored_controls,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mysql_local_infile_packets_total",
+                    snapshot.protocol_mysql_local_infile_packets,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mysql_local_infile_bytes_total",
+                    snapshot.protocol_mysql_local_infile_bytes,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mysql_logical_request_continuations_total",
+                    snapshot.protocol_mysql_logical_request_continuations,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mysql_logical_response_continuations_total",
+                    snapshot.protocol_mysql_logical_response_continuations,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mysql_logical_sequence_failures_total",
+                    snapshot.protocol_mysql_logical_sequence_failures,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mongodb_fire_and_forget_requests_total",
+                    snapshot.protocol_mongodb_fire_and_forget_requests,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mongodb_response_continuations_total",
+                    snapshot.protocol_mongodb_response_continuations,
+                ),
+                metric(
+                    "e_navigator_ebpf_source_protocol_mongodb_lifecycle_failures_total",
+                    snapshot.protocol_mongodb_lifecycle_failures,
+                ),
             ];
             lines.push(PrometheusMetricLine {
                 name: "e_navigator_ebpf_source_event_transport".to_string(),
@@ -893,11 +949,25 @@ mod tests {
                 protocol_discovered_connections: 9,
                 protocol_discovery_unclassified_events: 10,
                 protocol_discovery_candidate_evictions: 2,
+                protocol_postgres_startup_auth_messages: 11,
+                protocol_postgres_encryption_negotiation_accepted: 12,
+                protocol_postgres_encryption_negotiation_rejected: 13,
+                protocol_postgres_negotiation_failures: 14,
+                protocol_postgres_encrypted_transport_events: 15,
+                protocol_postgres_copy_ignored_controls: 16,
+                protocol_mysql_local_infile_packets: 17,
+                protocol_mysql_local_infile_bytes: 18,
+                protocol_mysql_logical_request_continuations: 19,
+                protocol_mysql_logical_response_continuations: 20,
+                protocol_mysql_logical_sequence_failures: 21,
+                protocol_mongodb_fire_and_forget_requests: 22,
+                protocol_mongodb_response_continuations: 23,
+                protocol_mongodb_lifecycle_failures: 24,
             }]
             .into_iter(),
         );
 
-        assert_eq!(lines.len(), 45);
+        assert_eq!(lines.len(), 59);
         assert!(
             lines.iter().all(
                 |line| line.labels.get("source").map(String::as_str) == Some("source.aya_exec")
@@ -945,6 +1015,18 @@ mod tests {
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_ebpf_source_protocol_discovered_connections_total"
                 && line.value == "9"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_protocol_mongodb_fire_and_forget_requests_total"
+                && line.value == "22"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_protocol_postgres_negotiation_failures_total"
+                && line.value == "14"
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_ebpf_source_protocol_mysql_logical_sequence_failures_total"
+                && line.value == "21"
         }));
     }
 

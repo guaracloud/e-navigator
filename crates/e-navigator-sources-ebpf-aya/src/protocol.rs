@@ -23,7 +23,10 @@ use e_navigator_protocol::{
         parse_kafka_request, parse_kafka_request_correlation_id,
         parse_kafka_response_correlation_id, parse_kafka_response_for_api_key,
     },
-    mongodb::{parse_mongodb_message, parse_mongodb_response},
+    mongodb::{
+        MongodbResponseLifecycle, MongodbResponseProgress, parse_mongodb_message,
+        parse_mongodb_response,
+    },
     mysql::{
         MysqlClientPacketProgress, MysqlLogicalPacketProgress, MysqlResponseLifecycle,
         MysqlResponseProgress, parse_mysql_command, parse_mysql_command_prefix,
@@ -441,11 +444,14 @@ pub(crate) struct ProtocolRegistryCounters {
     pub mysql_logical_request_continuations: u64,
     pub mysql_logical_response_continuations: u64,
     pub mysql_logical_sequence_failures: u64,
+    pub mongodb_fire_and_forget_requests: u64,
+    pub mongodb_response_continuations: u64,
+    pub mongodb_lifecycle_failures: u64,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 impl ProtocolRegistryCounters {
-    pub(crate) fn protocol_surface_counts(self) -> [u64; 18] {
+    pub(crate) fn protocol_surface_counts(self) -> [u64; 21] {
         [
             self.websocket_upgrades,
             self.websocket_frames,
@@ -465,6 +471,9 @@ impl ProtocolRegistryCounters {
             self.mysql_logical_request_continuations,
             self.mysql_logical_response_continuations,
             self.mysql_logical_sequence_failures,
+            self.mongodb_fire_and_forget_requests,
+            self.mongodb_response_continuations,
+            self.mongodb_lifecycle_failures,
         ]
     }
 }
@@ -547,7 +556,7 @@ struct InFlightRequest {
     kafka_api_key: i16,
     kafka_api_version: i16,
     kafka_correlation_id: Option<i32>,
-    mongodb_request_id: Option<i32>,
+    mongodb_response: Option<MongodbResponseLifecycle>,
     mysql_response: Option<MysqlResponseLifecycle>,
     redis_response: Option<RedisResponseLifecycle>,
     postgres_simple_response: Option<PostgresSimpleQueryLifecycle>,
@@ -616,7 +625,7 @@ pub fn bench_http2_in_flight_index_cycle() -> u64 {
             kafka_api_key: -1,
             kafka_api_version: -1,
             kafka_correlation_id: None,
-            mongodb_request_id: None,
+            mongodb_response: None,
             mysql_response: None,
             redis_response: None,
             postgres_simple_response: None,
@@ -1527,10 +1536,9 @@ fn handle_request_frames(
             .map_or((-1, -1, None), |(api_key, api_version, correlation_id)| {
                 (api_key, api_version, Some(correlation_id))
             });
-        let mongodb_request_id = frame_bytes
+        let mongodb_response = frame_bytes
             .filter(|_| stream.protocol == StreamProtocol::Mongodb)
-            .and_then(|frame| parse_mongodb_message(frame, extraction).ok())
-            .map(|parsed| parsed.request_id);
+            .and_then(|frame| MongodbResponseLifecycle::from_request(frame, extraction).ok());
         let mysql_response = if stream.protocol == StreamProtocol::Mysql {
             match frame {
                 StreamFrame::Complete(frame) => {
@@ -1592,6 +1600,9 @@ fn handle_request_frames(
             ));
             continue;
         }
+        let mongodb_fire_and_forget = mongodb_response
+            .as_ref()
+            .is_some_and(|lifecycle| !lifecycle.expects_response());
         if mysql_response.as_ref().is_some_and(|lifecycle| {
             !lifecycle.expects_response() && !lifecycle.owns_request_continuation()
         }) || redis_response
@@ -1600,7 +1611,11 @@ fn handle_request_frames(
             || postgres_request_response
                 .as_ref()
                 .is_some_and(|lifecycle| !lifecycle.expects_response())
+            || mongodb_fire_and_forget
         {
+            if mongodb_fire_and_forget {
+                counters.mongodb_fire_and_forget_requests += 1;
+            }
             signals.push(build_observation(
                 host.clone(),
                 &stream.context,
@@ -1630,7 +1645,7 @@ fn handle_request_frames(
             kafka_api_key,
             kafka_api_version,
             kafka_correlation_id,
-            mongodb_request_id,
+            mongodb_response,
             mysql_response,
             redis_response,
             postgres_simple_response,
@@ -2054,7 +2069,11 @@ fn handle_mongodb_response_frame(
             .iter()
             .enumerate()
             .filter_map(|(position, entry)| {
-                (entry.mongodb_request_id == Some(response.response_to)).then_some(position)
+                entry
+                    .mongodb_response
+                    .as_ref()
+                    .is_some_and(|lifecycle| lifecycle.request_id() == response.response_to)
+                    .then_some(position)
             });
     let Some(position) = matching_positions.next() else {
         if stream.in_flight.is_empty() {
@@ -2069,6 +2088,28 @@ fn handle_mongodb_response_frame(
         return;
     }
 
+    let progress = {
+        let Some(lifecycle) = stream
+            .in_flight
+            .get_mut(position)
+            .and_then(|entry| entry.mongodb_response.as_mut())
+        else {
+            counters.mongodb_correlation_mismatches += 1;
+            return;
+        };
+        lifecycle.observe_response(response)
+    };
+    let response = match progress {
+        Ok(MongodbResponseProgress::Continue) => {
+            counters.mongodb_response_continuations += 1;
+            return;
+        }
+        Ok(MongodbResponseProgress::Complete(response)) => response,
+        Err(_) => {
+            counters.mongodb_lifecycle_failures += 1;
+            return;
+        }
+    };
     let Some(entry) = stream.in_flight.remove(position) else {
         counters.mongodb_correlation_mismatches += 1;
         return;
@@ -2423,7 +2464,7 @@ fn handle_http2_frames(
                     kafka_api_key: -1,
                     kafka_api_version: -1,
                     kafka_correlation_id: None,
-                    mongodb_request_id: None,
+                    mongodb_response: None,
                     mysql_response: None,
                     redis_response: None,
                     postgres_simple_response: None,
@@ -3637,7 +3678,7 @@ mod platform {
                     reader_count,
                     super::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
                 );
-                let mut last_protocol_surface_counts = [0_u64; 18];
+                let mut last_protocol_surface_counts = [0_u64; 21];
 
                 let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
@@ -4330,13 +4371,22 @@ mod tests {
     }
 
     fn mongodb_op_msg(request_id: i32, response_to: i32, document: &[u8]) -> Vec<u8> {
+        mongodb_op_msg_with_flags(request_id, response_to, 0, document)
+    }
+
+    fn mongodb_op_msg_with_flags(
+        request_id: i32,
+        response_to: i32,
+        flags: u32,
+        document: &[u8],
+    ) -> Vec<u8> {
         let message_len = 16 + 4 + 1 + document.len();
         let mut frame = Vec::with_capacity(message_len);
         frame.extend_from_slice(&(message_len as i32).to_le_bytes());
         frame.extend_from_slice(&request_id.to_le_bytes());
         frame.extend_from_slice(&response_to.to_le_bytes());
         frame.extend_from_slice(&2013_i32.to_le_bytes());
-        frame.extend_from_slice(&0_u32.to_le_bytes());
+        frame.extend_from_slice(&flags.to_le_bytes());
         frame.push(0);
         frame.extend_from_slice(document);
         frame
@@ -5001,6 +5051,78 @@ mod tests {
         assert_eq!(signals.len(), 1);
         assert_eq!(observation(&signals[0]).duration_nanos, Some(2_000));
         assert_eq!(registry.counters().matched_responses, 1);
+    }
+
+    #[test]
+    fn mongodb_fire_and_forget_request_emits_without_waiting_for_a_response() {
+        let mut registry = registry();
+        let request = mongodb_op_msg_with_flags(7, 0, 0x02, &mongodb_find_document("customers"));
+
+        let signals = handle_at(
+            &mut registry,
+            &raw_event(27017, &request, request.len() as u32),
+            5_000,
+        );
+
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).duration_nanos, None);
+        assert_eq!(registry.counters().mongodb_fire_and_forget_requests, 1);
+    }
+
+    #[test]
+    fn mongodb_exhaust_request_is_retained_until_the_final_response() {
+        let mut registry = registry();
+        let request =
+            mongodb_op_msg_with_flags(7, 0, 0x0001_0000, &mongodb_find_document("customers"));
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(27017, &request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let continued = mongodb_op_msg_with_flags(70, 7, 0x02, &mongodb_ok_document());
+        assert!(handle_at(&mut registry, &response_event(27017, &continued), 6_000,).is_empty());
+        assert_eq!(registry.counters().mongodb_response_continuations, 1);
+
+        let final_response = mongodb_op_msg(71, 7, &mongodb_ok_document());
+        let signals = handle_at(
+            &mut registry,
+            &response_event(27017, &final_response),
+            8_000,
+        );
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(3_000));
+        assert_eq!(registry.counters().matched_responses, 1);
+    }
+
+    #[test]
+    fn mongodb_unexpected_continuation_fails_closed_and_retains_request() {
+        let mut registry = registry();
+        let request = mongodb_op_msg(7, 0, &mongodb_find_document("customers"));
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(27017, &request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let unexpected = mongodb_op_msg_with_flags(70, 7, 0x02, &mongodb_ok_document());
+        assert!(handle_at(&mut registry, &response_event(27017, &unexpected), 6_000,).is_empty());
+        assert_eq!(registry.counters().mongodb_lifecycle_failures, 1);
+
+        let final_response = mongodb_op_msg(71, 7, &mongodb_ok_document());
+        let signals = handle_at(
+            &mut registry,
+            &response_event(27017, &final_response),
+            8_000,
+        );
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(3_000));
     }
 
     #[test]

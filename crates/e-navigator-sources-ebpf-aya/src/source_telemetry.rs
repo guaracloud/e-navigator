@@ -75,6 +75,9 @@ struct SourceCounters {
     protocol_mysql_logical_request_continuations: AtomicU64,
     protocol_mysql_logical_response_continuations: AtomicU64,
     protocol_mysql_logical_sequence_failures: AtomicU64,
+    protocol_mongodb_fire_and_forget_requests: AtomicU64,
+    protocol_mongodb_response_continuations: AtomicU64,
+    protocol_mongodb_lifecycle_failures: AtomicU64,
 }
 
 impl SourceCounters {
@@ -136,6 +139,9 @@ impl SourceCounters {
             protocol_mysql_logical_request_continuations: AtomicU64::new(0),
             protocol_mysql_logical_response_continuations: AtomicU64::new(0),
             protocol_mysql_logical_sequence_failures: AtomicU64::new(0),
+            protocol_mongodb_fire_and_forget_requests: AtomicU64::new(0),
+            protocol_mongodb_response_continuations: AtomicU64::new(0),
+            protocol_mongodb_lifecycle_failures: AtomicU64::new(0),
         }
     }
 }
@@ -199,6 +205,9 @@ pub struct SourceTelemetrySnapshot {
     pub protocol_mysql_logical_request_continuations: u64,
     pub protocol_mysql_logical_response_continuations: u64,
     pub protocol_mysql_logical_sequence_failures: u64,
+    pub protocol_mongodb_fire_and_forget_requests: u64,
+    pub protocol_mongodb_response_continuations: u64,
+    pub protocol_mongodb_lifecycle_failures: u64,
 }
 
 static SOURCE_COUNTERS: OnceLock<Mutex<BTreeMap<&'static str, Arc<SourceCounters>>>> =
@@ -410,7 +419,7 @@ impl SourceTelemetry {
         }
     }
 
-    pub(crate) fn record_protocol_surface_counter_deltas(&self, deltas: [u64; 18]) {
+    pub(crate) fn record_protocol_surface_counter_deltas(&self, deltas: [u64; 21]) {
         for (counter, delta) in [
             &self.counters.protocol_websocket_upgrades,
             &self.counters.protocol_websocket_frames,
@@ -434,6 +443,9 @@ impl SourceTelemetry {
             &self.counters.protocol_mysql_logical_request_continuations,
             &self.counters.protocol_mysql_logical_response_continuations,
             &self.counters.protocol_mysql_logical_sequence_failures,
+            &self.counters.protocol_mongodb_fire_and_forget_requests,
+            &self.counters.protocol_mongodb_response_continuations,
+            &self.counters.protocol_mongodb_lifecycle_failures,
         ]
         .into_iter()
         .zip(deltas)
@@ -512,6 +524,9 @@ impl SourceTelemetry {
             protocol_mysql_logical_request_continuations = snapshot.protocol_mysql_logical_request_continuations,
             protocol_mysql_logical_response_continuations = snapshot.protocol_mysql_logical_response_continuations,
             protocol_mysql_logical_sequence_failures = snapshot.protocol_mysql_logical_sequence_failures,
+            protocol_mongodb_fire_and_forget_requests = snapshot.protocol_mongodb_fire_and_forget_requests,
+            protocol_mongodb_response_continuations = snapshot.protocol_mongodb_response_continuations,
+            protocol_mongodb_lifecycle_failures = snapshot.protocol_mongodb_lifecycle_failures,
             "source telemetry summary"
         );
     }
@@ -677,6 +692,15 @@ fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceT
         protocol_mysql_logical_sequence_failures: counters
             .protocol_mysql_logical_sequence_failures
             .load(Ordering::Relaxed),
+        protocol_mongodb_fire_and_forget_requests: counters
+            .protocol_mongodb_fire_and_forget_requests
+            .load(Ordering::Relaxed),
+        protocol_mongodb_response_continuations: counters
+            .protocol_mongodb_response_continuations
+            .load(Ordering::Relaxed),
+        protocol_mongodb_lifecycle_failures: counters
+            .protocol_mongodb_lifecycle_failures
+            .load(Ordering::Relaxed),
     }
 }
 
@@ -740,6 +764,9 @@ impl SourceTelemetrySnapshot {
             protocol_mysql_logical_request_continuations: 0,
             protocol_mysql_logical_response_continuations: 0,
             protocol_mysql_logical_sequence_failures: 0,
+            protocol_mongodb_fire_and_forget_requests: 0,
+            protocol_mongodb_response_continuations: 0,
+            protocol_mongodb_lifecycle_failures: 0,
         }
     }
 
@@ -900,6 +927,15 @@ impl SourceTelemetrySnapshot {
             protocol_mysql_logical_sequence_failures: self
                 .protocol_mysql_logical_sequence_failures
                 .saturating_sub(previous.protocol_mysql_logical_sequence_failures),
+            protocol_mongodb_fire_and_forget_requests: self
+                .protocol_mongodb_fire_and_forget_requests
+                .saturating_sub(previous.protocol_mongodb_fire_and_forget_requests),
+            protocol_mongodb_response_continuations: self
+                .protocol_mongodb_response_continuations
+                .saturating_sub(previous.protocol_mongodb_response_continuations),
+            protocol_mongodb_lifecycle_failures: self
+                .protocol_mongodb_lifecycle_failures
+                .saturating_sub(previous.protocol_mongodb_lifecycle_failures),
         }
     }
 
@@ -958,6 +994,9 @@ impl SourceTelemetrySnapshot {
             && self.protocol_mysql_logical_request_continuations == 0
             && self.protocol_mysql_logical_response_continuations == 0
             && self.protocol_mysql_logical_sequence_failures == 0
+            && self.protocol_mongodb_fire_and_forget_requests == 0
+            && self.protocol_mongodb_response_continuations == 0
+            && self.protocol_mongodb_lifecycle_failures == 0
     }
 }
 
@@ -1010,7 +1049,7 @@ mod tests {
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Disabled);
         telemetry.record_profile_counter_deltas([8, 1, 2, 3, 4, 5, 6]);
         telemetry.record_protocol_surface_counter_deltas([
-            9, 10, 1, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+            9, 10, 1, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
         ]);
 
         let snapshot = telemetry.snapshot_for_test();
@@ -1059,6 +1098,9 @@ mod tests {
         assert_eq!(snapshot.protocol_mysql_logical_request_continuations, 23);
         assert_eq!(snapshot.protocol_mysql_logical_response_continuations, 24);
         assert_eq!(snapshot.protocol_mysql_logical_sequence_failures, 25);
+        assert_eq!(snapshot.protocol_mongodb_fire_and_forget_requests, 26);
+        assert_eq!(snapshot.protocol_mongodb_response_continuations, 27);
+        assert_eq!(snapshot.protocol_mongodb_lifecycle_failures, 28);
 
         let first_delta = telemetry.take_summary_delta();
         assert_eq!(first_delta.decoded_samples, 1);
