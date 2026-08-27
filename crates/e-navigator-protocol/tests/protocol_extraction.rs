@@ -1783,6 +1783,17 @@ fn classifies_redis_resp3_out_of_band_frames_without_parsing_values() {
 }
 
 #[test]
+fn classifies_resp2_pubsub_deliveries_as_out_of_band() {
+    for delivery in [
+        b"*3\r\n$7\r\nmessage\r\n$7\r\nchannel\r\n$7\r\npayload\r\n".as_slice(),
+        b"*4\r\n$8\r\npmessage\r\n$7\r\npattern\r\n$7\r\nchannel\r\n$7\r\npayload\r\n".as_slice(),
+        b"*3\r\n$8\r\nsmessage\r\n$7\r\nchannel\r\n$7\r\npayload\r\n".as_slice(),
+    ] {
+        assert_eq!(redis_response_role(delivery), Ok(RedisResponseRole::Push));
+    }
+}
+
+#[test]
 fn extracts_redis_error_type_without_raw_error_message() {
     let extraction = parse_redis_response(
         b"-WRONGTYPE Operation against a key holding the wrong kind of value secret-key\r\n",

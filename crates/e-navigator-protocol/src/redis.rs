@@ -49,11 +49,53 @@ pub fn redis_response_role(bytes: &[u8]) -> Result<RedisResponseRole, RedisExtra
     match bytes.first() {
         Some(b'>') => Ok(RedisResponseRole::Push),
         Some(b'|') => Ok(RedisResponseRole::Attribute),
+        Some(b'*') if is_resp2_pubsub_delivery(bytes) => Ok(RedisResponseRole::Push),
         Some(b'+') | Some(b'-') | Some(b':') | Some(b'$') | Some(b'*') | Some(b'_')
         | Some(b'#') | Some(b',') | Some(b'(') | Some(b'=') | Some(b'!') | Some(b'%')
         | Some(b'~') => Ok(RedisResponseRole::Reply),
         Some(_) => Err(RedisExtraction::UnsupportedFrame),
         None => Err(RedisExtraction::MalformedFrame),
+    }
+}
+
+/// Recognizes the three RESP2 Pub/Sub delivery shapes without decoding or
+/// retaining the channel, pattern, or payload. Subscription confirmations use
+/// different first tokens and remain eligible for their request lifecycle.
+fn is_resp2_pubsub_delivery(bytes: &[u8]) -> bool {
+    let mut cursor = 1;
+    let Ok(item_count) = parse_decimal_line(bytes, &mut cursor) else {
+        return false;
+    };
+    let Some(kind) = resp_string_at(bytes, &mut cursor) else {
+        return false;
+    };
+
+    (item_count == 3 && (kind == b"message" || kind == b"smessage"))
+        || (item_count == 4 && kind == b"pmessage")
+}
+
+fn resp_string_at<'a>(bytes: &'a [u8], cursor: &mut usize) -> Option<&'a [u8]> {
+    match bytes.get(*cursor) {
+        Some(b'+') => {
+            *cursor += 1;
+            let end = line_end(bytes, *cursor)?;
+            bytes.get(*cursor..end)
+        }
+        Some(b'$') => {
+            *cursor += 1;
+            let len = parse_decimal_line(bytes, cursor).ok()?;
+            let len = usize::try_from(len).ok()?;
+            if len > MAX_REDIS_COMMAND_BYTES {
+                return None;
+            }
+            let end = (*cursor).checked_add(len)?;
+            let frame_end = end.checked_add(2)?;
+            if bytes.get(end..frame_end) != Some(b"\r\n") {
+                return None;
+            }
+            bytes.get(*cursor..end)
+        }
+        _ => None,
     }
 }
 

@@ -4121,6 +4121,44 @@ mod tests {
     }
 
     #[test]
+    fn redis_resp2_pubsub_delivery_does_not_consume_an_interleaved_reply() {
+        let mut registry = registry();
+        let requests = b"*2\r\n$9\r\nSUBSCRIBE\r\n$7\r\nchannel\r\n*1\r\n$4\r\nPING\r\n";
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(6379, requests, requests.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let confirmation = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nchannel\r\n:1\r\n";
+        let signals = handle_at(&mut registry, &response_event(6379, confirmation), 6_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(
+            observation(&signals[0]).method.as_deref(),
+            Some("SUBSCRIBE")
+        );
+
+        let delivery = b"*3\r\n$7\r\nmessage\r\n$7\r\nchannel\r\n$14\r\nsecret-payload\r\n";
+        assert!(
+            handle_at(&mut registry, &response_event(6379, delivery), 7_000,).is_empty(),
+            "an out-of-band delivery must not complete PING"
+        );
+
+        let signals = handle_at(&mut registry, &response_event(6379, b"+PONG\r\n"), 8_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("PING"));
+        assert_eq!(observation(&signals[0]).duration_nanos, Some(3_000));
+        assert_eq!(registry.counters().matched_responses, 2);
+        assert_eq!(registry.counters().response_continuations, 1);
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        assert!(!serialized.contains("secret-payload"));
+        assert!(!serialized.contains("channel"));
+    }
+
+    #[test]
     fn redis_resp3_attributes_do_not_consume_the_decorated_reply() {
         let mut registry = registry();
         let request = b"*2\r\n$3\r\nGET\r\n$10\r\nsecret-key\r\n";
