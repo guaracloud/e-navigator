@@ -58,10 +58,12 @@ use e_navigator_protocol::{
         parse_mongodb_message, parse_mongodb_response,
     },
     mysql::{
-        MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES, MysqlClientPacketProgress, MysqlExtraction,
-        MysqlLogicalPacketProgress, MysqlResponseLifecycle, MysqlResponseProgress,
-        parse_mysql_command, parse_mysql_command_prefix, parse_mysql_error_response,
-        parse_mysql_response,
+        MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES, MysqlClientPacketProgress, MysqlCompressionAlgorithm,
+        MysqlCompressionExtraction, MysqlExtraction, MysqlLogicalPacketProgress,
+        MysqlResponseLifecycle, MysqlResponseProgress, decode_mysql_compressed_packet,
+        negotiate_mysql_compression, parse_mysql_client_handshake_response, parse_mysql_command,
+        parse_mysql_command_prefix, parse_mysql_error_response, parse_mysql_response,
+        parse_mysql_server_greeting,
     },
     nats::{NatsExtraction, parse_nats_command, parse_nats_response},
     postgres::{
@@ -77,7 +79,9 @@ use e_navigator_protocol::{
     trace_context::{TraceContextError, parse_traceparent},
 };
 use e_navigator_signals::ProtocolKind;
+use flate2::{Compression, write::ZlibEncoder};
 use proptest::prelude::*;
+use std::io::Write as _;
 
 const VALID_TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 
@@ -548,6 +552,16 @@ proptest! {
 
         let _ = parse_mysql_response(&bytes, &config);
         let _ = parse_mysql_error_response(&bytes, &config);
+    }
+
+    #[test]
+    fn arbitrary_mysql_handshake_and_compression_bytes_never_panic(
+        bytes in prop::collection::vec(any::<u8>(), 0..=512),
+        max_payload_bytes in 0usize..=512,
+    ) {
+        let _ = parse_mysql_server_greeting(&bytes, max_payload_bytes);
+        let _ = parse_mysql_client_handshake_response(&bytes, max_payload_bytes);
+        let _ = decode_mysql_compressed_packet(&bytes, max_payload_bytes);
     }
 
     #[test]
@@ -20923,6 +20937,101 @@ fn extracts_mysql_query_operation_without_raw_sql() {
 }
 
 #[test]
+fn parses_mysql_handshake_capabilities_and_prefers_mutual_zlib() {
+    let server = mysql_server_greeting((1 << 9) | (1 << 5) | (1 << 26));
+    let client = mysql_client_handshake_response(1, (1 << 9) | (1 << 5) | (1 << 26));
+
+    let server = parse_mysql_server_greeting(&server, 512).expect("server greeting parses");
+    let client =
+        parse_mysql_client_handshake_response(&client, 512).expect("client handshake parses");
+
+    assert_eq!(server.capabilities, (1 << 9) | (1 << 5) | (1 << 26));
+    assert_eq!(client.capabilities, (1 << 9) | (1 << 5) | (1 << 26));
+    assert_eq!(
+        negotiate_mysql_compression(server, client),
+        MysqlCompressionAlgorithm::Zlib,
+        "zlib has protocol-defined precedence when both algorithms are mutual",
+    );
+}
+
+#[test]
+fn mysql_compression_negotiation_requires_mutual_capabilities() {
+    let zstd_server =
+        parse_mysql_server_greeting(&mysql_server_greeting((1 << 9) | (1 << 26)), 512)
+            .expect("server greeting parses");
+    let zstd_client = parse_mysql_client_handshake_response(
+        &mysql_client_handshake_response(1, (1 << 9) | (1 << 26)),
+        512,
+    )
+    .expect("client handshake parses");
+    assert_eq!(
+        negotiate_mysql_compression(zstd_server, zstd_client),
+        MysqlCompressionAlgorithm::Zstd,
+    );
+
+    let no_compression_client =
+        parse_mysql_client_handshake_response(&mysql_client_handshake_response(1, 1 << 9), 512)
+            .expect("client handshake parses");
+    assert_eq!(
+        negotiate_mysql_compression(zstd_server, no_compression_client),
+        MysqlCompressionAlgorithm::Disabled,
+    );
+}
+
+#[test]
+fn decodes_bounded_mysql_zlib_and_passthrough_compressed_packets() {
+    let logical_packets = [
+        mysql_packet(0x03, b"SELECT secret FROM private_table"),
+        mysql_packet(0x0e, b""),
+    ]
+    .concat();
+    let compressed = mysql_compressed_packet(7, &logical_packets, true);
+    let decoded = decode_mysql_compressed_packet(&compressed, 4_096)
+        .expect("bounded zlib packet decompresses");
+    assert_eq!(decoded.sequence_id, 7);
+    assert_eq!(decoded.payload, logical_packets);
+
+    let passthrough = mysql_compressed_packet(8, &logical_packets, false);
+    let decoded = decode_mysql_compressed_packet(&passthrough, 4_096)
+        .expect("zero uncompressed length passes payload through");
+    assert_eq!(decoded.sequence_id, 8);
+    assert_eq!(decoded.payload, logical_packets);
+}
+
+#[test]
+fn rejects_ambiguous_or_unbounded_mysql_compression_frames() {
+    let ssl_request = mysql_client_ssl_request((1 << 9) | (1 << 11) | (1 << 5));
+    assert_eq!(
+        parse_mysql_client_handshake_response(&ssl_request, 512).unwrap_err(),
+        MysqlCompressionExtraction::MalformedHandshake,
+        "an SSLRequest is not a full HandshakeResponse",
+    );
+
+    let payload = mysql_packet(0x0e, b"");
+    let mut oversized = mysql_compressed_packet(0, &payload, true);
+    oversized[4..7].copy_from_slice(&4_097_u32.to_le_bytes()[..3]);
+    assert_eq!(
+        decode_mysql_compressed_packet(&oversized, 4_096).unwrap_err(),
+        MysqlCompressionExtraction::PacketTooLong,
+    );
+
+    let mut mismatched = mysql_compressed_packet(0, &payload, true);
+    let wrong_len = u32::try_from(payload.len() + 1).expect("fixture length fits u32");
+    mismatched[4..7].copy_from_slice(&wrong_len.to_le_bytes()[..3]);
+    assert_eq!(
+        decode_mysql_compressed_packet(&mismatched, 4_096).unwrap_err(),
+        MysqlCompressionExtraction::LengthMismatch,
+    );
+
+    let mut trailing = mysql_compressed_packet(0, &payload, false);
+    trailing.push(0);
+    assert_eq!(
+        decode_mysql_compressed_packet(&trailing, 4_096).unwrap_err(),
+        MysqlCompressionExtraction::MalformedPacket,
+    );
+}
+
+#[test]
 fn extracts_mysql_connection_commands_without_schema_values() {
     for (command, payload, operation, command_name) in [
         (0x01, b"".as_slice(), "QUIT", "quit"),
@@ -22743,6 +22852,61 @@ fn mysql_packet_with_sequence(sequence: u8, payload: &[u8]) -> Vec<u8> {
     packet.push(((payload_len >> 16) & 0xff) as u8);
     packet.push(sequence);
     packet.extend_from_slice(payload);
+    packet
+}
+
+fn mysql_server_greeting(capabilities: u32) -> Vec<u8> {
+    let mut payload = vec![0x0a];
+    payload.extend_from_slice(b"8.0.36\0");
+    payload.extend_from_slice(&42_u32.to_le_bytes());
+    payload.extend_from_slice(b"12345678");
+    payload.push(0);
+    payload.extend_from_slice(&(capabilities as u16).to_le_bytes());
+    payload.push(0x21);
+    payload.extend_from_slice(&2_u16.to_le_bytes());
+    payload.extend_from_slice(&((capabilities >> 16) as u16).to_le_bytes());
+    payload.push(21);
+    payload.extend_from_slice(&[0; 10]);
+    payload.extend_from_slice(b"abcdefghijkl\0");
+    mysql_packet_with_sequence(0, &payload)
+}
+
+fn mysql_client_handshake_response(sequence: u8, capabilities: u32) -> Vec<u8> {
+    let mut payload = capabilities.to_le_bytes().to_vec();
+    payload.extend_from_slice(&16_777_216_u32.to_le_bytes());
+    payload.push(0x21);
+    payload.extend_from_slice(&[0; 23]);
+    payload.extend_from_slice(b"fixture-user\0");
+    payload.push(0);
+    mysql_packet_with_sequence(sequence, &payload)
+}
+
+fn mysql_client_ssl_request(capabilities: u32) -> Vec<u8> {
+    let mut payload = capabilities.to_le_bytes().to_vec();
+    payload.extend_from_slice(&16_777_216_u32.to_le_bytes());
+    payload.push(0x21);
+    payload.extend_from_slice(&[0; 23]);
+    mysql_packet_with_sequence(1, &payload)
+}
+
+fn mysql_compressed_packet(sequence: u8, payload: &[u8], compress: bool) -> Vec<u8> {
+    let (body, uncompressed_len) = if compress {
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
+        encoder
+            .write_all(payload)
+            .expect("fixture zlib write succeeds");
+        let body = encoder.finish().expect("fixture zlib finish succeeds");
+        (body, payload.len())
+    } else {
+        (payload.to_vec(), 0)
+    };
+    let body_len = u32::try_from(body.len()).expect("fixture length fits u32");
+    let uncompressed_len = u32::try_from(uncompressed_len).expect("fixture length fits u32");
+    let mut packet = Vec::with_capacity(body.len() + 7);
+    packet.extend_from_slice(&body_len.to_le_bytes()[..3]);
+    packet.push(sequence);
+    packet.extend_from_slice(&uncompressed_len.to_le_bytes()[..3]);
+    packet.extend_from_slice(&body);
     packet
 }
 

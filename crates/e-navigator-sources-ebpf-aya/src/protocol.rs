@@ -1697,6 +1697,7 @@ fn response_action(protocol: StreamProtocol, frame: &[u8]) -> ResponseAction {
         | StreamProtocol::Kafka
         | StreamProtocol::Mongodb
         | StreamProtocol::Mysql
+        | StreamProtocol::MysqlCompressed
         | StreamProtocol::WebSocket => ResponseAction::Ignore,
         // HTTP/1 is strict request/response over one connection; each framed
         // response completes exactly the oldest in-flight request.
@@ -2631,7 +2632,7 @@ fn protocol_kind(protocol: StreamProtocol) -> ProtocolKind {
         StreamProtocol::WebSocket => ProtocolKind::Websocket,
         StreamProtocol::Kafka => ProtocolKind::Kafka,
         StreamProtocol::Mongodb => ProtocolKind::Mongodb,
-        StreamProtocol::Mysql => ProtocolKind::Mysql,
+        StreamProtocol::Mysql | StreamProtocol::MysqlCompressed => ProtocolKind::Mysql,
         StreamProtocol::Nats => ProtocolKind::Nats,
         StreamProtocol::Postgresql => ProtocolKind::Postgresql,
         StreamProtocol::Redis => ProtocolKind::Redis,
@@ -2769,6 +2770,7 @@ fn parse_request_frame(
                 websocket_upgrade: false,
             })
             .map_err(|_| "mysql_command"),
+        StreamProtocol::MysqlCompressed => Err("mysql_compression_handled_separately"),
         StreamProtocol::Nats => parse_nats_command(frame, config)
             .map(|parsed| ParsedRequestFrame {
                 protocol: parsed.protocol,
@@ -2953,6 +2955,7 @@ fn parse_response_frame(
                 attributes: parsed.attributes,
             })
             .map_err(|_| "mysql_response"),
+        StreamProtocol::MysqlCompressed => Err("mysql_compression_handled_separately"),
         StreamProtocol::Nats => Err("nats_response_unmatched"),
         StreamProtocol::Postgresql => parse_postgres_response(frame, config)
             .map(|parsed| ParsedResponseFrame {

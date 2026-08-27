@@ -2,8 +2,15 @@ use e_navigator_signals::{ProtocolKind, TraceAttribute};
 
 use crate::ProtocolExtractionConfig;
 
+mod compression;
 mod lifecycle;
 
+pub use compression::{
+    MysqlClientHandshakeResponse, MysqlCompressedPacket, MysqlCompressionAlgorithm,
+    MysqlCompressionExtraction, MysqlServerGreeting, decode_mysql_compressed_packet,
+    negotiate_mysql_compression, parse_mysql_client_handshake_response,
+    parse_mysql_server_greeting,
+};
 pub use lifecycle::{
     MysqlClientPacketProgress, MysqlLogicalPacketProgress, MysqlResponseLifecycle,
     MysqlResponseProgress,
