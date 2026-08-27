@@ -17,6 +17,7 @@ pub(super) fn handle_database_response(
     stream: &mut ConnectionStream,
     frame: &[u8],
     truncated: bool,
+    declared_len: u64,
     context: &mut DatabaseResponseContext<'_>,
 ) -> bool {
     match stream.protocol {
@@ -36,7 +37,7 @@ pub(super) fn handle_database_response(
                     .front()
                     .is_some_and(|entry| entry.mysql_response.is_some()) =>
         {
-            handle_mysql_response(stream, frame, truncated, context);
+            handle_mysql_response(stream, frame, truncated, declared_len, context);
         }
         StreamProtocol::Postgresql
             if stream
@@ -173,17 +174,13 @@ fn handle_mysql_response(
     stream: &mut ConnectionStream,
     frame: &[u8],
     truncated: bool,
+    declared_len: u64,
     context: &mut DatabaseResponseContext<'_>,
 ) {
     if stream.in_flight.is_empty() {
         context.counters.orphan_responses += 1;
         return;
     }
-    if truncated {
-        context.counters.unparsed_responses += 1;
-        return;
-    }
-
     let Some(lifecycle) = stream
         .in_flight
         .front_mut()
@@ -192,14 +189,25 @@ fn handle_mysql_response(
         context.counters.unparsed_responses += 1;
         return;
     };
-    let response = match lifecycle.observe_packet(frame, context.extraction) {
+    let progress = if truncated {
+        lifecycle.observe_response_prefix(frame, declared_len)
+    } else {
+        lifecycle.observe_packet(frame, context.extraction)
+    };
+    let response = match progress {
         Ok(MysqlResponseProgress::Continue) => {
             context.counters.response_continuations += 1;
+            if truncated {
+                context.counters.mysql_logical_response_continuations += 1;
+            }
             return;
         }
         Ok(MysqlResponseProgress::Complete(response)) => response,
         Err(_) => {
             context.counters.unparsed_responses += 1;
+            if truncated {
+                context.counters.mysql_logical_sequence_failures += 1;
+            }
             return;
         }
     };

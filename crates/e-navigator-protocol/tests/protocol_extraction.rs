@@ -55,8 +55,10 @@ use e_navigator_protocol::{
     },
     mongodb::{MongodbExtraction, parse_mongodb_message, parse_mongodb_response},
     mysql::{
-        MysqlClientPacketProgress, MysqlExtraction, MysqlResponseLifecycle, MysqlResponseProgress,
-        parse_mysql_command, parse_mysql_error_response, parse_mysql_response,
+        MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES, MysqlClientPacketProgress, MysqlExtraction,
+        MysqlLogicalPacketProgress, MysqlResponseLifecycle, MysqlResponseProgress,
+        parse_mysql_command, parse_mysql_command_prefix, parse_mysql_error_response,
+        parse_mysql_response,
     },
     nats::{NatsExtraction, parse_nats_command, parse_nats_response},
     postgres::{
@@ -579,6 +581,31 @@ proptest! {
             .expect("fixture enters upload state");
 
         let _ = lifecycle.observe_client_packet(&bytes, declared_total_len);
+    }
+
+    #[test]
+    fn arbitrary_mysql_logical_packet_prefix_never_panics(
+        bytes in prop::collection::vec(any::<u8>(), 0..=512),
+        declared_total_len in any::<u64>(),
+    ) {
+        let config = ProtocolExtractionConfig::default();
+        let _ = parse_mysql_command_prefix(&bytes, declared_total_len, &config);
+
+        let first_prefix = [0xff, 0xff, 0xff, 0, 0x03, b'S', b'E', b'L', b'E', b'C', b'T'];
+        let mut lifecycle = MysqlResponseLifecycle::from_request_prefix(
+            &first_prefix,
+            (MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES + 4) as u64,
+            &config,
+        )
+        .expect("bounded large query fixture starts a lifecycle");
+        let _ = lifecycle.observe_request_continuation(&bytes, declared_total_len);
+
+        let mut response_lifecycle = MysqlResponseLifecycle::from_request(
+            &mysql_packet(0x03, b"SELECT 1"),
+            &config,
+        )
+        .expect("bounded query fixture starts a response lifecycle");
+        let _ = response_lifecycle.observe_response_prefix(&bytes, declared_total_len);
     }
 
     #[test]
@@ -21282,6 +21309,151 @@ fn mysql_local_infile_sequence_error_is_non_destructive() {
 }
 
 #[test]
+fn mysql_large_logical_request_uses_one_lifecycle_and_advances_response_sequence() {
+    let config = ProtocolExtractionConfig::default();
+    let declared_len = (MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES + 4) as u64;
+    let first_prefix = [
+        0xff, 0xff, 0xff, 0, 0x03, b'S', b'E', b'L', b'E', b'C', b'T', b' ',
+    ];
+
+    let parsed = parse_mysql_command_prefix(&first_prefix, declared_len, &config)
+        .expect("bounded prefix identifies the first logical command");
+    assert_eq!(parsed.operation.as_deref(), Some("SELECT"));
+
+    let mut lifecycle =
+        MysqlResponseLifecycle::from_request_prefix(&first_prefix, declared_len, &config)
+            .expect("large query prefix starts one lifecycle");
+    assert!(lifecycle.owns_request_continuation());
+
+    let second_prefix = [0xff, 0xff, 0xff, 1, b's', b'e', b'c', b'r', b'e', b't'];
+    assert_eq!(
+        lifecycle.observe_request_continuation(&second_prefix, declared_len),
+        Ok(MysqlLogicalPacketProgress::Continue)
+    );
+    let final_packet = mysql_packet_with_sequence(2, b"tail");
+    assert_eq!(
+        lifecycle.observe_request_continuation(&final_packet, final_packet.len() as u64),
+        Ok(MysqlLogicalPacketProgress::Complete)
+    );
+    assert!(!lifecycle.owns_request_continuation());
+
+    let MysqlResponseProgress::Complete(response) = lifecycle
+        .observe_packet(
+            &mysql_packet_with_sequence(3, &[0, 0, 0, 2, 0, 0, 0]),
+            &config,
+        )
+        .expect("response starts after the final request packet sequence")
+    else {
+        panic!("expected the response to complete the logical query");
+    };
+    assert_eq!(response.status_code, "OK");
+}
+
+#[test]
+fn mysql_large_logical_request_sequence_error_is_non_destructive() {
+    let config = ProtocolExtractionConfig::default();
+    let declared_len = (MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES + 4) as u64;
+    let first_prefix = [
+        0xff, 0xff, 0xff, 0, 0x03, b'S', b'E', b'L', b'E', b'C', b'T',
+    ];
+    let mut lifecycle =
+        MysqlResponseLifecycle::from_request_prefix(&first_prefix, declared_len, &config)
+            .expect("large query prefix starts one lifecycle");
+
+    let wrong = mysql_packet_with_sequence(2, b"tail");
+    assert_eq!(
+        lifecycle.observe_request_continuation(&wrong, wrong.len() as u64),
+        Err(MysqlExtraction::UnexpectedSequence)
+    );
+    let correct = mysql_packet_with_sequence(1, b"tail");
+    assert_eq!(
+        lifecycle.observe_request_continuation(&correct, correct.len() as u64),
+        Ok(MysqlLogicalPacketProgress::Complete)
+    );
+}
+
+#[test]
+fn mysql_large_command_prefix_does_not_guess_a_split_operation_token() {
+    let config = ProtocolExtractionConfig::default();
+    let declared_len = (MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES + 4) as u64;
+    let prefix = [
+        0xff, 0xff, 0xff, 0, 0x03, b'S', b'E', b'L', b'E', b'C', b'T',
+    ];
+
+    let parsed = parse_mysql_command_prefix(&prefix, declared_len, &config)
+        .expect("bounded prefix is a valid logical command");
+    assert_eq!(parsed.operation, None);
+}
+
+#[test]
+fn mysql_large_no_response_command_completes_after_its_final_physical_packet() {
+    let config = ProtocolExtractionConfig::default();
+    let declared_len = (MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES + 4) as u64;
+    let first_prefix = [
+        0xff, 0xff, 0xff, 0, 0x18, 1, 0, 0, 0, 2, 0, b's', b'e', b'c', b'r', b'e', b't',
+    ];
+    let parsed = parse_mysql_command_prefix(&first_prefix, declared_len, &config)
+        .expect("long-data prefix identifies the command");
+    assert_eq!(parsed.operation.as_deref(), Some("SEND_LONG_DATA"));
+    let mut lifecycle =
+        MysqlResponseLifecycle::from_request_prefix(&first_prefix, declared_len, &config)
+            .expect("large long-data command starts a lifecycle");
+    assert!(!lifecycle.expects_response());
+    assert!(lifecycle.owns_request_continuation());
+
+    let final_packet = mysql_packet_with_sequence(1, b"tail");
+    assert_eq!(
+        lifecycle.observe_request_continuation(&final_packet, final_packet.len() as u64),
+        Ok(MysqlLogicalPacketProgress::Complete)
+    );
+    assert!(!lifecycle.owns_request_continuation());
+}
+
+#[test]
+fn mysql_large_result_row_continuations_do_not_complete_the_query() {
+    let config = ProtocolExtractionConfig::default();
+    let request = mysql_packet(0x03, b"SELECT secret_column FROM private_table");
+    let mut lifecycle =
+        MysqlResponseLifecycle::from_request(&request, &config).expect("query starts lifecycle");
+
+    assert_eq!(
+        lifecycle.observe_packet(&mysql_packet_with_sequence(1, &[1]), &config),
+        Ok(MysqlResponseProgress::Continue)
+    );
+    assert_eq!(
+        lifecycle.observe_packet(
+            &mysql_packet_with_sequence(2, &mysql_column_definition()),
+            &config,
+        ),
+        Ok(MysqlResponseProgress::Continue)
+    );
+    assert_eq!(
+        lifecycle.observe_packet(&mysql_packet_with_sequence(3, &[0xfe, 0, 0, 2, 0]), &config,),
+        Ok(MysqlResponseProgress::Continue)
+    );
+
+    let declared_len = (MYSQL_MAX_PHYSICAL_PAYLOAD_BYTES + 4) as u64;
+    let row_prefix = [
+        0xff, 0xff, 0xff, 4, 0x03, b's', b'e', b'c', b'r', b'e', b't',
+    ];
+    assert_eq!(
+        lifecycle.observe_response_prefix(&row_prefix, declared_len),
+        Ok(MysqlResponseProgress::Continue)
+    );
+    assert!(lifecycle.owns_response_continuation());
+    assert_eq!(
+        lifecycle.observe_packet(&mysql_packet_with_sequence(5, b"tail"), &config),
+        Ok(MysqlResponseProgress::Continue)
+    );
+    assert!(!lifecycle.owns_response_continuation());
+
+    assert!(matches!(
+        lifecycle.observe_packet(&mysql_packet_with_sequence(6, &[0xfe, 0, 0, 2, 0]), &config,),
+        Ok(MysqlResponseProgress::Complete(_))
+    ));
+}
+
+#[test]
 fn enforces_mysql_packet_query_and_attribute_bounds() {
     let bounded = parse_mysql_command(
         &mysql_packet(0x03, b"select * from customers"),
@@ -22424,6 +22596,23 @@ fn mysql_packet_with_sequence(sequence: u8, payload: &[u8]) -> Vec<u8> {
     packet.push(sequence);
     packet.extend_from_slice(payload);
     packet
+}
+
+fn mysql_column_definition() -> Vec<u8> {
+    let mut payload = Vec::new();
+    for value in [
+        b"def".as_slice(),
+        b"db",
+        b"table",
+        b"table",
+        b"name",
+        b"name",
+    ] {
+        payload.push(u8::try_from(value.len()).expect("fixture component length fits u8"));
+        payload.extend_from_slice(value);
+    }
+    payload.extend_from_slice(&[0x0c, 0x21, 0x00, 0, 0, 0, 0, 0xfd, 0, 0, 0, 0, 0]);
+    payload
 }
 
 fn mysql_error_packet(vendor_code: u16, sqlstate: Option<&[u8]>, message: &[u8]) -> Vec<u8> {
