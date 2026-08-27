@@ -70,6 +70,8 @@ struct SourceCounters {
     protocol_postgres_negotiation_failures: AtomicU64,
     protocol_postgres_encrypted_transport_events: AtomicU64,
     protocol_postgres_copy_ignored_controls: AtomicU64,
+    protocol_mysql_local_infile_packets: AtomicU64,
+    protocol_mysql_local_infile_bytes: AtomicU64,
 }
 
 impl SourceCounters {
@@ -126,6 +128,8 @@ impl SourceCounters {
             protocol_postgres_negotiation_failures: AtomicU64::new(0),
             protocol_postgres_encrypted_transport_events: AtomicU64::new(0),
             protocol_postgres_copy_ignored_controls: AtomicU64::new(0),
+            protocol_mysql_local_infile_packets: AtomicU64::new(0),
+            protocol_mysql_local_infile_bytes: AtomicU64::new(0),
         }
     }
 }
@@ -184,6 +188,8 @@ pub struct SourceTelemetrySnapshot {
     pub protocol_postgres_negotiation_failures: u64,
     pub protocol_postgres_encrypted_transport_events: u64,
     pub protocol_postgres_copy_ignored_controls: u64,
+    pub protocol_mysql_local_infile_packets: u64,
+    pub protocol_mysql_local_infile_bytes: u64,
 }
 
 static SOURCE_COUNTERS: OnceLock<Mutex<BTreeMap<&'static str, Arc<SourceCounters>>>> =
@@ -395,7 +401,7 @@ impl SourceTelemetry {
         }
     }
 
-    pub(crate) fn record_protocol_surface_counter_deltas(&self, deltas: [u64; 13]) {
+    pub(crate) fn record_protocol_surface_counter_deltas(&self, deltas: [u64; 15]) {
         for (counter, delta) in [
             &self.counters.protocol_websocket_upgrades,
             &self.counters.protocol_websocket_frames,
@@ -414,6 +420,8 @@ impl SourceTelemetry {
             &self.counters.protocol_postgres_negotiation_failures,
             &self.counters.protocol_postgres_encrypted_transport_events,
             &self.counters.protocol_postgres_copy_ignored_controls,
+            &self.counters.protocol_mysql_local_infile_packets,
+            &self.counters.protocol_mysql_local_infile_bytes,
         ]
         .into_iter()
         .zip(deltas)
@@ -487,6 +495,8 @@ impl SourceTelemetry {
             protocol_postgres_negotiation_failures = snapshot.protocol_postgres_negotiation_failures,
             protocol_postgres_encrypted_transport_events = snapshot.protocol_postgres_encrypted_transport_events,
             protocol_postgres_copy_ignored_controls = snapshot.protocol_postgres_copy_ignored_controls,
+            protocol_mysql_local_infile_packets = snapshot.protocol_mysql_local_infile_packets,
+            protocol_mysql_local_infile_bytes = snapshot.protocol_mysql_local_infile_bytes,
             "source telemetry summary"
         );
     }
@@ -637,6 +647,12 @@ fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceT
         protocol_postgres_copy_ignored_controls: counters
             .protocol_postgres_copy_ignored_controls
             .load(Ordering::Relaxed),
+        protocol_mysql_local_infile_packets: counters
+            .protocol_mysql_local_infile_packets
+            .load(Ordering::Relaxed),
+        protocol_mysql_local_infile_bytes: counters
+            .protocol_mysql_local_infile_bytes
+            .load(Ordering::Relaxed),
     }
 }
 
@@ -695,6 +711,8 @@ impl SourceTelemetrySnapshot {
             protocol_postgres_negotiation_failures: 0,
             protocol_postgres_encrypted_transport_events: 0,
             protocol_postgres_copy_ignored_controls: 0,
+            protocol_mysql_local_infile_packets: 0,
+            protocol_mysql_local_infile_bytes: 0,
         }
     }
 
@@ -840,6 +858,12 @@ impl SourceTelemetrySnapshot {
             protocol_postgres_copy_ignored_controls: self
                 .protocol_postgres_copy_ignored_controls
                 .saturating_sub(previous.protocol_postgres_copy_ignored_controls),
+            protocol_mysql_local_infile_packets: self
+                .protocol_mysql_local_infile_packets
+                .saturating_sub(previous.protocol_mysql_local_infile_packets),
+            protocol_mysql_local_infile_bytes: self
+                .protocol_mysql_local_infile_bytes
+                .saturating_sub(previous.protocol_mysql_local_infile_bytes),
         }
     }
 
@@ -893,6 +917,8 @@ impl SourceTelemetrySnapshot {
             && self.protocol_postgres_negotiation_failures == 0
             && self.protocol_postgres_encrypted_transport_events == 0
             && self.protocol_postgres_copy_ignored_controls == 0
+            && self.protocol_mysql_local_infile_packets == 0
+            && self.protocol_mysql_local_infile_bytes == 0
     }
 }
 
@@ -945,7 +971,7 @@ mod tests {
         telemetry.record_diagnostic_decision(DiagnosticSampleDecision::Disabled);
         telemetry.record_profile_counter_deltas([8, 1, 2, 3, 4, 5, 6]);
         telemetry.record_protocol_surface_counter_deltas([
-            9, 10, 1, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+            9, 10, 1, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
         ]);
 
         let snapshot = telemetry.snapshot_for_test();
@@ -989,6 +1015,8 @@ mod tests {
         assert_eq!(snapshot.protocol_postgres_negotiation_failures, 18);
         assert_eq!(snapshot.protocol_postgres_encrypted_transport_events, 19);
         assert_eq!(snapshot.protocol_postgres_copy_ignored_controls, 20);
+        assert_eq!(snapshot.protocol_mysql_local_infile_packets, 21);
+        assert_eq!(snapshot.protocol_mysql_local_infile_bytes, 22);
 
         let first_delta = telemetry.take_summary_delta();
         assert_eq!(first_delta.decoded_samples, 1);

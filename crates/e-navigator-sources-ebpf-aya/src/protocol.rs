@@ -25,7 +25,8 @@ use e_navigator_protocol::{
     },
     mongodb::{parse_mongodb_message, parse_mongodb_response},
     mysql::{
-        MysqlResponseLifecycle, MysqlResponseProgress, parse_mysql_command, parse_mysql_response,
+        MysqlClientPacketProgress, MysqlResponseLifecycle, MysqlResponseProgress,
+        parse_mysql_command, parse_mysql_response,
     },
     nats::parse_nats_command,
     postgres::{
@@ -434,11 +435,13 @@ pub(crate) struct ProtocolRegistryCounters {
     pub postgres_negotiation_failures: u64,
     pub postgres_encrypted_transport_events: u64,
     pub postgres_copy_ignored_controls: u64,
+    pub mysql_local_infile_packets: u64,
+    pub mysql_local_infile_bytes: u64,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 impl ProtocolRegistryCounters {
-    pub(crate) fn protocol_surface_counts(self) -> [u64; 13] {
+    pub(crate) fn protocol_surface_counts(self) -> [u64; 15] {
         [
             self.websocket_upgrades,
             self.websocket_frames,
@@ -453,6 +456,8 @@ impl ProtocolRegistryCounters {
             self.postgres_negotiation_failures,
             self.postgres_encrypted_transport_events,
             self.postgres_copy_ignored_controls,
+            self.mysql_local_infile_packets,
+            self.mysql_local_infile_bytes,
         ]
     }
 }
@@ -1276,6 +1281,54 @@ fn handle_request_frames(
                 observed_unix_nanos,
                 signals,
             );
+            continue;
+        }
+        if stream.protocol == StreamProtocol::Mysql
+            && stream.in_flight.front().is_some_and(|entry| {
+                entry
+                    .mysql_response
+                    .as_ref()
+                    .is_some_and(MysqlResponseLifecycle::owns_local_infile_client_packets)
+            })
+        {
+            let (prefix, declared_len) = match frame {
+                StreamFrame::Complete(bytes) => (bytes.as_slice(), bytes.len() as u64),
+                StreamFrame::Truncated {
+                    prefix,
+                    declared_len,
+                } => {
+                    counters.truncated_frames += 1;
+                    (prefix.as_slice(), *declared_len)
+                }
+                StreamFrame::ProtocolSwitch { .. } => {
+                    counters.unparsed_frames += 1;
+                    continue;
+                }
+            };
+            let Some(lifecycle) = stream
+                .in_flight
+                .front_mut()
+                .and_then(|entry| entry.mysql_response.as_mut())
+            else {
+                counters.unparsed_frames += 1;
+                continue;
+            };
+            let progress = lifecycle.observe_client_packet(prefix, declared_len);
+            match progress {
+                Ok(
+                    MysqlClientPacketProgress::Continue | MysqlClientPacketProgress::UploadComplete,
+                ) => {
+                    counters.mysql_local_infile_packets += 1;
+                    counters.mysql_local_infile_bytes += declared_len.saturating_sub(4);
+                }
+                Err(_) => counters.unparsed_frames += 1,
+            }
+            continue;
+        }
+        if stream.protocol == StreamProtocol::Mysql
+            && matches!(frame, StreamFrame::Complete(bytes) if bytes == &[0, 0, 0, 0])
+        {
+            counters.unparsed_frames += 1;
             continue;
         }
         if stream.protocol == StreamProtocol::Postgresql
@@ -3479,7 +3532,7 @@ mod platform {
                     reader_count,
                     super::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
                 );
-                let mut last_protocol_surface_counts = [0_u64; 13];
+                let mut last_protocol_surface_counts = [0_u64; 15];
 
                 let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
@@ -4130,6 +4183,17 @@ mod tests {
         packet.push(((payload.len() >> 16) & 0xff) as u8);
         packet.push(sequence);
         packet.extend_from_slice(&payload);
+        packet
+    }
+
+    fn mysql_wire_packet(sequence: u8, payload: &[u8]) -> Vec<u8> {
+        let payload_len = payload.len();
+        let mut packet = Vec::with_capacity(payload_len + 4);
+        packet.push((payload_len & 0xff) as u8);
+        packet.push(((payload_len >> 8) & 0xff) as u8);
+        packet.push(((payload_len >> 16) & 0xff) as u8);
+        packet.push(sequence);
+        packet.extend_from_slice(payload);
         packet
     }
 
@@ -6387,6 +6451,71 @@ mod tests {
         }));
         assert_eq!(registry.counters().response_continuations, 4);
         assert_eq!(registry.counters().orphan_responses, 0);
+    }
+
+    #[test]
+    fn mysql_local_infile_upload_remains_owned_by_the_original_query() {
+        let mut registry = registry();
+        let request = mysql_wire_packet(
+            0,
+            b"\x03LOAD DATA LOCAL INFILE 'secret.csv' INTO TABLE private_table",
+        );
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &request, request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let local_infile = mysql_wire_packet(1, b"\xfbsecret-server-path.csv");
+        assert!(handle_at(&mut registry, &response_event(3306, &local_infile), 6_000,).is_empty());
+
+        // Only a bounded prefix is captured from a 1024-byte file packet.
+        // The lifecycle needs its header and sequence, never the file body.
+        let mut large_prefix = vec![0, 4, 0, 2];
+        large_prefix.extend_from_slice(b"secret-file-prefix");
+        assert!(
+            handle_at(&mut registry, &raw_event(3306, &large_prefix, 1_028), 7_000,).is_empty()
+        );
+        let terminator = mysql_wire_packet(3, b"");
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(3306, &terminator, terminator.len() as u32),
+                8_000,
+            )
+            .is_empty()
+        );
+
+        let ok = mysql_wire_packet(4, &[0, 0, 0, 2, 0, 0, 0]);
+        let signals = handle_at(&mut registry, &response_event(3306, &ok), 10_000);
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method.as_deref(), Some("LOAD"));
+        assert_eq!(observation.duration_nanos, Some(5_000));
+        assert_eq!(registry.counters().mysql_local_infile_packets, 2);
+        assert_eq!(registry.counters().mysql_local_infile_bytes, 1_024);
+        assert_eq!(registry.counters().unparsed_frames, 0);
+        assert!(
+            registry
+                .connections
+                .values()
+                .next()
+                .expect("mysql connection is tracked")
+                .in_flight
+                .is_empty()
+        );
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        for secret in [
+            "secret.csv",
+            "private_table",
+            "secret-server-path",
+            "secret-file-prefix",
+        ] {
+            assert!(!serialized.contains(secret));
+        }
     }
 
     #[test]

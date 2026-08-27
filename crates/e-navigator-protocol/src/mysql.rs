@@ -4,7 +4,7 @@ use crate::ProtocolExtractionConfig;
 
 mod lifecycle;
 
-pub use lifecycle::{MysqlResponseLifecycle, MysqlResponseProgress};
+pub use lifecycle::{MysqlClientPacketProgress, MysqlResponseLifecycle, MysqlResponseProgress};
 
 const MYSQL_COM_QUIT: u8 = 0x01;
 const MYSQL_COM_INIT_DB: u8 = 0x02;
@@ -66,7 +66,7 @@ pub fn parse_mysql_command(
     }
 
     let payload = packet_payload(bytes, config.max_header_bytes)?;
-    let command = payload[0];
+    let command = *payload.first().ok_or(MysqlExtraction::MalformedPacket)?;
     let operation = match command {
         MYSQL_COM_QUERY | MYSQL_COM_STMT_PREPARE => {
             let query = parse_query_bytes(&payload[1..], config.max_request_line_bytes)?;
@@ -137,15 +137,19 @@ pub fn parse_mysql_response(
     }
 
     let payload = packet_payload(bytes, config.max_header_bytes)?;
-    match payload[0] {
-        MYSQL_OK_PACKET if is_ok_packet(payload) => Ok(mysql_ok_response(config.max_attributes)),
-        MYSQL_OK_PACKET => Err(MysqlExtraction::UnsupportedResponse),
-        MYSQL_EOF_PACKET if is_ok_packet(payload) => Ok(mysql_ok_response(config.max_attributes)),
-        MYSQL_EOF_PACKET if matches!(payload.len(), 1 | 5) => {
+    match payload.first().copied() {
+        Some(MYSQL_OK_PACKET) if is_ok_packet(payload) => {
+            Ok(mysql_ok_response(config.max_attributes))
+        }
+        Some(MYSQL_OK_PACKET) => Err(MysqlExtraction::UnsupportedResponse),
+        Some(MYSQL_EOF_PACKET) if is_ok_packet(payload) => {
+            Ok(mysql_ok_response(config.max_attributes))
+        }
+        Some(MYSQL_EOF_PACKET) if matches!(payload.len(), 1 | 5) => {
             Ok(mysql_eof_response(config.max_attributes))
         }
-        MYSQL_EOF_PACKET => Err(MysqlExtraction::UnsupportedResponse),
-        MYSQL_ERR_PACKET => mysql_error_response(payload, config.max_attributes),
+        Some(MYSQL_EOF_PACKET) => Err(MysqlExtraction::UnsupportedResponse),
+        Some(MYSQL_ERR_PACKET) => mysql_error_response(payload, config.max_attributes),
         _ => Err(MysqlExtraction::UnsupportedResponse),
     }
 }
@@ -413,7 +417,7 @@ fn packet_parts(bytes: &[u8], max_packet_bytes: usize) -> Result<(u8, &[u8]), My
     if total_len > max_packet_bytes {
         return Err(MysqlExtraction::PacketTooLong);
     }
-    if payload_len == 0 || bytes.len() < total_len {
+    if bytes.len() < total_len {
         return Err(MysqlExtraction::MalformedPacket);
     }
     Ok((bytes[3], &bytes[4..total_len]))
