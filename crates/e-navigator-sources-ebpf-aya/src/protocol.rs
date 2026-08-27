@@ -30,7 +30,9 @@ use e_navigator_protocol::{
     nats::parse_nats_command,
     postgres::{
         PostgresRequestLifecycle, PostgresRequestProgress, PostgresSimpleQueryLifecycle,
-        PostgresSimpleQueryProgress, parse_postgres_message, parse_postgres_response,
+        PostgresSimpleQueryProgress, PostgresStartupKind, PostgresStartupLifecycle,
+        PostgresStartupProgress, parse_postgres_message, parse_postgres_response,
+        parse_postgres_startup_message,
     },
     redis::{
         RedisResponseLifecycle, RedisResponseProgress, RedisResponseRole, parse_redis_command,
@@ -426,11 +428,17 @@ pub(crate) struct ProtocolRegistryCounters {
     pub websocket_transition_rejections: u64,
     pub grpc_web_requests: u64,
     pub postgres_skipped_requests: u64,
+    pub postgres_startup_auth_messages: u64,
+    pub postgres_encryption_negotiation_accepted: u64,
+    pub postgres_encryption_negotiation_rejected: u64,
+    pub postgres_negotiation_failures: u64,
+    pub postgres_encrypted_transport_events: u64,
+    pub postgres_copy_ignored_controls: u64,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 impl ProtocolRegistryCounters {
-    pub(crate) fn protocol_surface_counts(self) -> [u64; 7] {
+    pub(crate) fn protocol_surface_counts(self) -> [u64; 13] {
         [
             self.websocket_upgrades,
             self.websocket_frames,
@@ -439,6 +447,12 @@ impl ProtocolRegistryCounters {
             self.discovered_connections,
             self.discovery_unclassified_events,
             self.discovery_candidate_evictions,
+            self.postgres_startup_auth_messages,
+            self.postgres_encryption_negotiation_accepted,
+            self.postgres_encryption_negotiation_rejected,
+            self.postgres_negotiation_failures,
+            self.postgres_encrypted_transport_events,
+            self.postgres_copy_ignored_controls,
         ]
     }
 }
@@ -526,6 +540,7 @@ struct InFlightRequest {
     redis_response: Option<RedisResponseLifecycle>,
     postgres_simple_response: Option<PostgresSimpleQueryLifecycle>,
     postgres_request_response: Option<PostgresRequestLifecycle>,
+    postgres_startup_response: Option<PostgresStartupLifecycle>,
 }
 
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
@@ -594,6 +609,7 @@ pub fn bench_http2_in_flight_index_cycle() -> u64 {
             redis_response: None,
             postgres_simple_response: None,
             postgres_request_response: None,
+            postgres_startup_response: None,
         }
     }
 
@@ -669,8 +685,28 @@ struct ConnectionStream {
     in_flight: std::collections::VecDeque<InFlightRequest>,
     http2: Option<Http2ConnectionState>,
     postgres_discarding_until_sync: bool,
+    postgres_negotiation: Option<PostgresNegotiation>,
+    postgres_transport_opaque: bool,
+    postgres_copy_in: bool,
     context: ObservationContext,
     last_seen_unix_nanos: u64,
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PostgresNegotiation {
+    Ssl,
+    GssEncryption,
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+impl PostgresNegotiation {
+    fn accepts(self, response: u8) -> bool {
+        matches!(
+            (self, response),
+            (Self::Ssl, b'S') | (Self::GssEncryption, b'G')
+        )
+    }
 }
 
 /// Per-connection reassembly and parsing state for the protocol source.
@@ -888,6 +924,9 @@ impl ProtocolStreamRegistry {
                     streams: Http2InFlightRequests::default(),
                 }),
                 postgres_discarding_until_sync: false,
+                postgres_negotiation: None,
+                postgres_transport_opaque: false,
+                postgres_copy_in: false,
                 context,
                 last_seen_unix_nanos: observed_unix_nanos,
             }
@@ -898,6 +937,33 @@ impl ProtocolStreamRegistry {
         stream.last_seen_unix_nanos = observed_unix_nanos;
 
         let payload = &raw.payload[..raw.payload_len as usize];
+        if stream.protocol == StreamProtocol::Postgresql && stream.postgres_transport_opaque {
+            self.counters.postgres_encrypted_transport_events += 1;
+            return Ok(());
+        }
+        if stream.protocol == StreamProtocol::Postgresql
+            && !is_request_direction
+            && let Some(negotiation) = stream.postgres_negotiation
+        {
+            let invalid_offset = raw.payload_offset != 0;
+            let missing_payload = payload.is_empty() && raw.payload_total_len > 0;
+            let invalid_prefix = payload.first().is_some_and(|response| {
+                !negotiation.accepts(*response) && *response != b'N' && *response != b'E'
+            });
+            let invalid_single_byte_length = payload
+                .first()
+                .is_some_and(|response| negotiation.accepts(*response) || *response == b'N')
+                && raw.payload_total_len != 1;
+            if invalid_offset || missing_payload || invalid_prefix || invalid_single_byte_length {
+                // PostgreSQL requires an exact one-byte negotiation response.
+                // Treat missing, displaced, unexpected, or buffer-stuffed
+                // bytes as ambiguous and stop parsing the raw socket.
+                stream.postgres_negotiation = None;
+                stream.postgres_transport_opaque = true;
+                self.counters.postgres_negotiation_failures += 1;
+                return Ok(());
+            }
+        }
         let mut frames = std::mem::take(&mut self.frames);
         frames.clear();
         let (decoder, pending_segments) = if is_request_direction {
@@ -1212,6 +1278,63 @@ fn handle_request_frames(
             );
             continue;
         }
+        if stream.protocol == StreamProtocol::Postgresql
+            && let StreamFrame::Complete(frame_bytes) = frame
+        {
+            if frame_bytes.first() == Some(&0)
+                && let Ok(startup) = parse_postgres_startup_message(frame_bytes, extraction)
+            {
+                match startup.kind {
+                    PostgresStartupKind::SslRequest => {
+                        begin_postgres_negotiation(stream, PostgresNegotiation::Ssl, counters);
+                        continue;
+                    }
+                    PostgresStartupKind::GssEncryptionRequest => {
+                        begin_postgres_negotiation(
+                            stream,
+                            PostgresNegotiation::GssEncryption,
+                            counters,
+                        );
+                        continue;
+                    }
+                    PostgresStartupKind::CancelRequest => {
+                        let parsed = postgres_startup_request_frame(startup);
+                        signals.push(build_observation(
+                            host.clone(),
+                            &stream.context,
+                            parsed,
+                            observed_unix_nanos,
+                            None,
+                        ));
+                        continue;
+                    }
+                    PostgresStartupKind::Startup => {}
+                }
+            }
+
+            if stream
+                .in_flight
+                .front()
+                .is_some_and(|entry| entry.postgres_startup_response.is_some())
+                && frame_bytes.first() == Some(&b'p')
+            {
+                // Password, SASL, GSS, and SSPI responses all use `p`; their
+                // bodies are authentication secrets and belong to CONNECT.
+                counters.postgres_startup_auth_messages += 1;
+                continue;
+            }
+
+            if stream.postgres_copy_in {
+                match frame_bytes.first() {
+                    Some(b'S' | b'H') => {
+                        counters.postgres_copy_ignored_controls += 1;
+                        continue;
+                    }
+                    Some(b'c' | b'f') => stream.postgres_copy_in = false,
+                    _ => {}
+                }
+            }
+        }
         let (mut parsed, frame_bytes) = match frame {
             StreamFrame::Complete(frame_bytes) => {
                 match parse_request_frame(stream.protocol, frame_bytes, extraction) {
@@ -1279,6 +1402,9 @@ fn handle_request_frames(
         let postgres_request_response = frame_bytes
             .filter(|_| stream.protocol == StreamProtocol::Postgresql)
             .and_then(|frame| PostgresRequestLifecycle::from_request(frame, extraction).ok());
+        let postgres_startup_response = frame_bytes
+            .filter(|_| stream.protocol == StreamProtocol::Postgresql)
+            .and_then(|frame| PostgresStartupLifecycle::from_request(frame, extraction).ok());
         let postgres_is_sync = postgres_request_response
             .as_ref()
             .is_some_and(PostgresRequestLifecycle::is_sync);
@@ -1302,6 +1428,7 @@ fn handle_request_frames(
         if stream.protocol == StreamProtocol::Postgresql
             && postgres_simple_response.is_none()
             && postgres_request_response.is_none()
+            && postgres_startup_response.is_none()
         {
             signals.push(build_observation(
                 host.clone(),
@@ -1356,11 +1483,29 @@ fn handle_request_frames(
             redis_response,
             postgres_simple_response,
             postgres_request_response,
+            postgres_startup_response,
         });
         if postgres_is_sync {
             stream.postgres_discarding_until_sync = false;
         }
     }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn begin_postgres_negotiation(
+    stream: &mut ConnectionStream,
+    negotiation: PostgresNegotiation,
+    counters: &mut ProtocolRegistryCounters,
+) {
+    if stream.postgres_negotiation.is_some() || !stream.in_flight.is_empty() {
+        counters.postgres_negotiation_failures += 1;
+        stream.postgres_transport_opaque = true;
+        return;
+    }
+    stream.postgres_negotiation = Some(negotiation);
+    stream
+        .response_decoder
+        .expect_postgres_negotiation_response();
 }
 
 /// How a response frame interacts with the in-flight request queue.
@@ -1496,6 +1641,12 @@ fn handle_response_frames(
             StreamFrame::ProtocolSwitch { .. } => continue,
         };
 
+        if stream.protocol == StreamProtocol::Postgresql
+            && handle_postgres_negotiation_response(stream, frame_bytes, truncated, counters)
+        {
+            continue;
+        }
+
         if stream.protocol == StreamProtocol::Kafka {
             handle_kafka_response_frame(
                 stream,
@@ -1595,6 +1746,47 @@ fn handle_response_frames(
             ));
         }
     }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn handle_postgres_negotiation_response(
+    stream: &mut ConnectionStream,
+    frame: &[u8],
+    truncated: bool,
+    counters: &mut ProtocolRegistryCounters,
+) -> bool {
+    let Some(negotiation) = stream.postgres_negotiation else {
+        return false;
+    };
+    if truncated {
+        stream.postgres_negotiation = None;
+        stream.postgres_transport_opaque = true;
+        counters.postgres_negotiation_failures += 1;
+        return true;
+    }
+
+    match frame {
+        [b'N'] => {
+            stream.postgres_negotiation = None;
+            counters.postgres_encryption_negotiation_rejected += 1;
+        }
+        [response] if negotiation.accepts(*response) => {
+            stream.postgres_negotiation = None;
+            stream.postgres_transport_opaque = true;
+            counters.postgres_encryption_negotiation_accepted += 1;
+        }
+        bytes if bytes.first() == Some(&b'E') => {
+            stream.postgres_negotiation = None;
+            stream.postgres_transport_opaque = true;
+            counters.postgres_negotiation_failures += 1;
+        }
+        _ => {
+            stream.postgres_negotiation = None;
+            stream.postgres_transport_opaque = true;
+            counters.postgres_negotiation_failures += 1;
+        }
+    }
+    true
 }
 
 /// Completes the Kafka request identified by the response correlation id.
@@ -2078,6 +2270,7 @@ fn handle_http2_frames(
                     redis_response: None,
                     postgres_simple_response: None,
                     postgres_request_response: None,
+                    postgres_startup_response: None,
                 },
             );
             continue;
@@ -2389,6 +2582,11 @@ fn parse_request_frame(
                 websocket_upgrade: false,
             })
             .map_err(|_| "nats_command"),
+        StreamProtocol::Postgresql if frame.first() == Some(&0) => {
+            parse_postgres_startup_message(frame, config)
+                .map(postgres_startup_request_frame)
+                .map_err(|_| "postgres_startup_message")
+        }
         StreamProtocol::Postgresql => parse_postgres_message(frame, config)
             .map(|parsed| ParsedRequestFrame {
                 protocol: parsed.protocol,
@@ -2413,6 +2611,22 @@ fn parse_request_frame(
                 websocket_upgrade: false,
             })
             .map_err(|_| "redis_command"),
+    }
+}
+
+#[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
+fn postgres_startup_request_frame(
+    parsed: e_navigator_protocol::postgres::ParsedPostgresStartup,
+) -> ParsedRequestFrame {
+    ParsedRequestFrame {
+        protocol: parsed.protocol,
+        operation: parsed.operation,
+        status_code: None,
+        trace_id: None,
+        span_id: None,
+        warning: None,
+        attributes: parsed.attributes,
+        websocket_upgrade: false,
     }
 }
 
@@ -3265,7 +3479,7 @@ mod platform {
                     reader_count,
                     super::PROTOCOL_REORDER_MAX_PENDING_SAMPLES,
                 );
-                let mut last_protocol_surface_counts = [0_u64; 7];
+                let mut last_protocol_surface_counts = [0_u64; 13];
 
                 let mut decode_sample = |sample: InlineSample| -> bool {
                     if decoder_shutdown.is_stopped() {
@@ -3875,6 +4089,14 @@ mod tests {
         frame.push(message_type);
         frame.extend_from_slice(&((body.len() + 4) as u32).to_be_bytes());
         frame.extend_from_slice(body);
+        frame
+    }
+
+    fn postgres_startup(parameters: &[u8]) -> Vec<u8> {
+        let mut body = 196_608_u32.to_be_bytes().to_vec();
+        body.extend_from_slice(parameters);
+        let mut frame = ((body.len() + 4) as u32).to_be_bytes().to_vec();
+        frame.extend_from_slice(&body);
         frame
     }
 
@@ -5550,6 +5772,184 @@ mod tests {
     }
 
     #[test]
+    fn postgres_startup_owns_authentication_and_emits_one_private_connect_span() {
+        let mut registry = registry();
+        let startup = postgres_startup(b"user\0secret-user\0database\0secret-db\0\0");
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(5432, &startup, startup.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        let authentication_sasl = postgres_frame(
+            b'R',
+            &[
+                0, 0, 0, 10, b'S', b'C', b'R', b'A', b'M', b'-', b'S', b'H', b'A', b'-', b'2',
+                b'5', b'6', 0, 0,
+            ],
+        );
+        assert!(
+            handle_at(
+                &mut registry,
+                &response_event(5432, &authentication_sasl),
+                6_000,
+            )
+            .is_empty()
+        );
+
+        // SASL responses are opaque bytes, not necessarily C strings. The
+        // startup lifecycle owns them and must never emit their contents.
+        let sasl_response = postgres_frame(b'p', b"secret-client-proof");
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(5432, &sasl_response, sasl_response.len() as u32),
+                7_000,
+            )
+            .is_empty()
+        );
+
+        for response in [
+            postgres_frame(b'R', &[0, 0, 0, 0]),
+            postgres_frame(b'S', b"server_version\x0017.11\0"),
+            postgres_frame(b'K', &[0xaa; 8]),
+        ] {
+            assert!(handle_at(&mut registry, &response_event(5432, &response), 8_000,).is_empty());
+        }
+
+        let ready = postgres_frame(b'Z', b"I");
+        let signals = handle_at(&mut registry, &response_event(5432, &ready), 10_000);
+        assert_eq!(signals.len(), 1);
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method.as_deref(), Some("CONNECT"));
+        assert_eq!(observation.duration_nanos, Some(5_000));
+        assert_eq!(registry.counters().matched_responses, 1);
+        assert_eq!(registry.counters().unparsed_frames, 0);
+        assert!(
+            registry
+                .connections
+                .values()
+                .next()
+                .expect("postgres connection is tracked")
+                .in_flight
+                .is_empty()
+        );
+        let serialized = serde_json::to_string(&signals).expect("signals serialize");
+        for secret in ["secret-user", "secret-db", "secret-client-proof"] {
+            assert!(!serialized.contains(secret));
+        }
+    }
+
+    #[test]
+    fn postgres_ssl_rejection_keeps_cleartext_startup_aligned() {
+        let mut registry = registry();
+        let mut ssl_request = 8_u32.to_be_bytes().to_vec();
+        ssl_request.extend_from_slice(&80_877_103_u32.to_be_bytes());
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(5432, &ssl_request, ssl_request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+        assert!(handle_at(&mut registry, &response_event(5432, b"N"), 6_000).is_empty());
+
+        let startup = postgres_startup(b"user\0secret-user\0\0");
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(5432, &startup, startup.len() as u32),
+                7_000,
+            )
+            .is_empty()
+        );
+        let ready = postgres_frame(b'Z', b"I");
+        let signals = handle_at(&mut registry, &response_event(5432, &ready), 9_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("CONNECT"));
+        assert_eq!(
+            registry.counters().postgres_encryption_negotiation_rejected,
+            1
+        );
+        assert_eq!(registry.counters().unparsed_frames, 0);
+        assert_eq!(registry.counters().unparsed_responses, 0);
+    }
+
+    #[test]
+    fn postgres_accepted_ssl_marks_raw_transport_opaque() {
+        let mut registry = registry();
+        let mut ssl_request = 8_u32.to_be_bytes().to_vec();
+        ssl_request.extend_from_slice(&80_877_103_u32.to_be_bytes());
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(5432, &ssl_request, ssl_request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+        assert!(handle_at(&mut registry, &response_event(5432, b"S"), 6_000).is_empty());
+
+        let tls_record = [0x16, 0x03, 0x03, 0, 8, 0xaa, 0xbb, 0xcc];
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(5432, &tls_record, tls_record.len() as u32),
+                7_000,
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            registry.counters().postgres_encryption_negotiation_accepted,
+            1
+        );
+        assert_eq!(registry.counters().postgres_encrypted_transport_events, 1);
+        assert_eq!(registry.counters().unparsed_frames, 0);
+    }
+
+    #[test]
+    fn postgres_ssl_buffer_stuffing_fails_closed_with_diagnostic() {
+        let mut registry = registry();
+        let mut ssl_request = 8_u32.to_be_bytes().to_vec();
+        ssl_request.extend_from_slice(&80_877_103_u32.to_be_bytes());
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(5432, &ssl_request, ssl_request.len() as u32),
+                5_000,
+            )
+            .is_empty()
+        );
+
+        // PostgreSQL requires exactly one negotiation byte before the TLS
+        // library takes ownership. Extra bytes are ambiguous and must not be
+        // parsed as either backend messages or ciphertext.
+        let stuffed = [b'S', 0x16, 0x03, 0x03];
+        assert!(handle_at(&mut registry, &response_event(5432, &stuffed), 6_000,).is_empty());
+        assert_eq!(registry.counters().postgres_negotiation_failures, 1);
+        assert_eq!(
+            registry.counters().postgres_encryption_negotiation_accepted,
+            0
+        );
+        assert_eq!(registry.counters().unparsed_responses, 0);
+
+        let ciphertext = [0x16, 0x03, 0x03, 0, 1, 0];
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(5432, &ciphertext, ciphertext.len() as u32),
+                7_000,
+            )
+            .is_empty()
+        );
+        assert_eq!(registry.counters().postgres_encrypted_transport_events, 1);
+    }
+
+    #[test]
     fn postgres_query_retains_error_until_ready_for_query() {
         let mut registry = registry();
         let request = postgres_frame(
@@ -5792,6 +6192,93 @@ mod tests {
         assert_eq!(signals.len(), 1);
         assert_eq!(observation(&signals[0]).method.as_deref(), Some("COPY"));
         assert_eq!(observation(&signals[0]).duration_nanos, Some(4_000));
+        assert!(
+            registry
+                .connections
+                .values()
+                .next()
+                .expect("postgres connection is tracked")
+                .in_flight
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn postgres_copy_in_ignores_prequeued_and_in_mode_sync_without_displacing_query() {
+        let mut registry = registry();
+        let query = postgres_frame(b'Q', b"COPY secret_table FROM STDIN\0");
+        let sync = postgres_frame(b'S', b"");
+        for (timestamp, request) in [(5_000, &query), (5_100, &sync)] {
+            assert!(
+                handle_at(
+                    &mut registry,
+                    &raw_event(5432, request, request.len() as u32),
+                    timestamp,
+                )
+                .is_empty()
+            );
+        }
+        assert_eq!(
+            registry
+                .connections
+                .values()
+                .next()
+                .expect("postgres connection is tracked")
+                .in_flight
+                .len(),
+            2
+        );
+
+        let copy_in = postgres_frame(b'G', &[0, 0, 0]);
+        assert!(handle_at(&mut registry, &response_event(5432, &copy_in), 6_000).is_empty());
+        assert_eq!(
+            registry
+                .connections
+                .values()
+                .next()
+                .expect("postgres connection is tracked")
+                .in_flight
+                .len(),
+            1
+        );
+
+        // Sync and Flush received during copy-in are protocol-defined no-ops.
+        for request in [postgres_frame(b'S', b""), postgres_frame(b'H', b"")] {
+            assert!(
+                handle_at(
+                    &mut registry,
+                    &raw_event(5432, &request, request.len() as u32),
+                    6_500,
+                )
+                .is_empty()
+            );
+        }
+        assert_eq!(registry.counters().postgres_copy_ignored_controls, 3);
+
+        for request in [
+            postgres_frame(b'd', b"secret-copy-row"),
+            postgres_frame(b'c', b""),
+        ] {
+            let signals = handle_at(
+                &mut registry,
+                &raw_event(5432, &request, request.len() as u32),
+                7_000,
+            );
+            assert_eq!(signals.len(), 1);
+        }
+        let command_complete = postgres_frame(b'C', b"COPY 1\0");
+        assert!(
+            handle_at(
+                &mut registry,
+                &response_event(5432, &command_complete),
+                8_000,
+            )
+            .is_empty()
+        );
+        let ready = postgres_frame(b'Z', b"I");
+        let signals = handle_at(&mut registry, &response_event(5432, &ready), 9_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(observation(&signals[0]).method.as_deref(), Some("COPY"));
         assert!(
             registry
                 .connections

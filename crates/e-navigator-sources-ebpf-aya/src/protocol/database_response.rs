@@ -42,6 +42,14 @@ pub(super) fn handle_database_response(
             if stream
                 .in_flight
                 .front()
+                .is_some_and(|entry| entry.postgres_startup_response.is_some()) =>
+        {
+            handle_postgres_startup_response(stream, frame, truncated, context);
+        }
+        StreamProtocol::Postgresql
+            if stream
+                .in_flight
+                .front()
                 .is_some_and(|entry| entry.postgres_simple_response.is_some()) =>
         {
             handle_postgres_simple_query_response(stream, frame, truncated, context);
@@ -57,6 +65,44 @@ pub(super) fn handle_database_response(
         _ => return false,
     }
     true
+}
+
+/// Advances session startup through authentication and parameter setup, then
+/// emits one CONNECT observation at ReadyForQuery (or ErrorResponse).
+fn handle_postgres_startup_response(
+    stream: &mut ConnectionStream,
+    frame: &[u8],
+    truncated: bool,
+    context: &mut DatabaseResponseContext<'_>,
+) {
+    if truncated {
+        context.counters.unparsed_responses += 1;
+        return;
+    }
+    let Some(lifecycle) = stream
+        .in_flight
+        .front_mut()
+        .and_then(|entry| entry.postgres_startup_response.as_mut())
+    else {
+        context.counters.unparsed_responses += 1;
+        return;
+    };
+    let response = match lifecycle.observe_response(frame, context.extraction) {
+        Ok(PostgresStartupProgress::Continue) => {
+            context.counters.response_continuations += 1;
+            return;
+        }
+        Ok(PostgresStartupProgress::Complete(response)) => response,
+        Err(_) => {
+            context.counters.unparsed_responses += 1;
+            return;
+        }
+    };
+    let Some(entry) = stream.in_flight.pop_front() else {
+        context.counters.orphan_responses += 1;
+        return;
+    };
+    emit_completed_postgres_request(entry, response, &stream.context, context);
 }
 
 /// Advances the oldest Redis command while keeping unrelated RESP3 pushes and
@@ -184,6 +230,9 @@ fn handle_postgres_simple_query_response(
     truncated: bool,
     context: &mut DatabaseResponseContext<'_>,
 ) {
+    if frame.first() == Some(&b'E') {
+        stream.postgres_copy_in = false;
+    }
     if truncated {
         context.counters.unparsed_responses += 1;
         return;
@@ -199,6 +248,9 @@ fn handle_postgres_simple_query_response(
     };
     let response = match lifecycle.observe_response(frame, context.extraction) {
         Ok(PostgresSimpleQueryProgress::Continue) => {
+            if frame.first() == Some(&b'G') {
+                enter_postgres_copy_in(stream, context);
+            }
             context.counters.response_continuations += 1;
             return;
         }
@@ -223,6 +275,9 @@ fn handle_postgres_request_response(
     truncated: bool,
     context: &mut DatabaseResponseContext<'_>,
 ) {
+    if frame.first() == Some(&b'E') {
+        stream.postgres_copy_in = false;
+    }
     if truncated {
         context.counters.unparsed_responses += 1;
         return;
@@ -239,6 +294,9 @@ fn handle_postgres_request_response(
     let (response, discard_until_sync) = match lifecycle.observe_response(frame, context.extraction)
     {
         Ok(PostgresRequestProgress::Continue) => {
+            if frame.first() == Some(&b'G') {
+                enter_postgres_copy_in(stream, context);
+            }
             context.counters.response_continuations += 1;
             return;
         }
@@ -259,6 +317,25 @@ fn handle_postgres_request_response(
     emit_completed_postgres_request(entry, response, &stream.context, context);
     if discard_until_sync {
         discard_postgres_pipeline_until_sync(stream, context);
+    }
+}
+
+fn enter_postgres_copy_in(
+    stream: &mut ConnectionStream,
+    context: &mut DatabaseResponseContext<'_>,
+) {
+    stream.postgres_copy_in = true;
+    while stream.in_flight.len() > 1 {
+        let is_ignored_sync = stream
+            .in_flight
+            .get(1)
+            .and_then(|entry| entry.postgres_request_response.as_ref())
+            .is_some_and(PostgresRequestLifecycle::is_sync);
+        if !is_ignored_sync {
+            break;
+        }
+        let _ignored = stream.in_flight.remove(1);
+        context.counters.postgres_copy_ignored_controls += 1;
     }
 }
 
