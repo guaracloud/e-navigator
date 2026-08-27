@@ -56,9 +56,11 @@ E-Navigator runs as one node-local agent with a statically registered
   configured unknown posture and a periodic loss-recovery scan.
 - A separately opt-in, disabled-by-default HTTP/1 propagation path can inject
   W3C `traceparent` and preserve valid inbound `tracestate` before TCP
-  packetization for a strictly bounded plaintext request shape, including
-  fixed-length bodies and up to three small iovecs. It is not a universal TLS,
-  HTTP/2, HTTP/3, segmented-header, pipelined, pre-existing-connection, or
+  packetization when one contiguous captured prefix contains the complete
+  plaintext headers. It supports bounded exact `Content-Length` and chunked
+  framing, and length-accounts up to 40 iovecs while capturing only the first
+  three 96-byte prefixes. It is not a universal TLS, HTTP/2, HTTP/3,
+  segmented-header, multi-request pipeline, pre-existing-connection, or
   asynchronous propagation claim; see [ADR 0015](documentation/adr/0015-peer-flow-metrics-and-opt-in-http1-propagation.md).
 - An opt-in Helm profile removes `SYS_ADMIN` on the proven Linux 6.6.68
   homelab posture, using `BPF`, `PERFMON`, and `SYS_PTRACE` while retaining UID

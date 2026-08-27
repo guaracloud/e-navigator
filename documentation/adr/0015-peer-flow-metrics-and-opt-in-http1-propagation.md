@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-11
+- Amended: 2026-08-27
 
 ## Context
 
@@ -75,25 +76,36 @@ owns sequence numbers, acknowledgements, checksums, segmentation, retransmits,
 and application send-return semantics. E-Navigator does not implement a packet
 sequence translator.
 
-Injection is allowed only when the current syscall contains one complete
-HTTP/1.0 or HTTP/1.1 header block and its complete captured payload is bounded.
-Scalar writes may contribute at most 1,024 bytes. `writev` and `sendmsg` may
-contribute up to three iovecs of at most 96 bytes each; the fixed slots are
-compacted before planning and compared byte-for-byte with the `SK_MSG` payload
-before mutation. A request body is supported only with one valid
-`Content-Length`, and the bytes present in the current syscall must not exceed
-that declared length. The remaining body may follow in later writes. It
+Injection is allowed only when a bounded contiguous prefix of the current
+syscall contains one complete HTTP/1.0 or HTTP/1.1 header block. Scalar writes
+capture at most 1,024 prefix bytes. `writev` and `sendmsg` capture at most the
+first three verifier-safe iovecs of 96 bytes each; a bounded `bpf_loop` also
+sums the exact message length for up to 40 iovecs. The fixed capture slots are
+compacted before planning. The captured prefix and exact live message length
+are compared with the `SK_MSG` payload before mutation.
+
+A request body is supported with one valid `Content-Length` when the exact
+syscall length proves that no byte crosses the declared body boundary. The
+body may be only partly captured or may continue in later writes. Exact
+`Transfer-Encoding: chunked` is also supported when the captured chunk stream
+is structurally valid and incomplete or complete without trailing data. When
+the syscall has uncaptured chunked bytes, the captured prefix must end exactly
+at the header boundary so discontinuous framing is never interpreted. Chunk
+extensions and trailers are validated; a `traceparent` or `tracestate` trailer
+is rejected because injection would otherwise create ambiguous context. It
 bypasses:
 
 - an existing `traceparent`, regardless of header-name case;
-- incomplete or segmented headers, multiple requests, and bytes beyond the
-  declared message boundary;
-- absent, duplicate, invalid, or ambiguous body framing, and any
-  `Transfer-Encoding`;
+- incomplete or segmented headers, multiple requests, and bytes beyond a
+  declared or structurally proven message boundary;
+- absent body framing when body bytes are present; duplicate, invalid, or
+  ambiguous framing; unsupported transfer coding; malformed chunks; or
+  uncaptured chunk framing;
 - CONNECT, HTTP/2 prefaces, upgrades, TLS, and non-HTTP traffic;
-- vectored messages outside the three-by-96-byte bound, sockets established
-  before attachment, sockets outside the cgroup capture policy, and ports
-  outside the allowlist; and
+- vectored messages whose complete headers do not fit the three-by-96-byte
+  prefix, whose count exceeds 40, or whose exact total cannot be read; sockets
+  established before attachment; sockets outside the cgroup capture policy;
+  and ports outside the allowlist; and
 - an empty context pool, full pending map, or any pre-mutation helper failure.
 
 All decisions occur before `bpf_msg_push_data`. Immediately before mutation,
@@ -129,18 +141,22 @@ Async task/thread hops are not claimed.
 - Passive HTTP capture remains unchanged when propagation is disabled.
 - This closes multi-service traces only for the qualified plaintext,
   synchronous HTTP/1 subset. HTTPS, HTTP/2/gRPC, HTTP/3/QUIC, segmented header
-  writes, pre-existing connections, pipelining, and asynchronous continuation
-  require separate pre-encryption, runtime, or protocol-aware designs.
+  writes, pre-existing connections, multiple pipelined requests, and
+  asynchronous continuation require separate pre-encryption, runtime, or
+  protocol-aware designs.
 - Propagation counters report socket tracking, planning, injection, bypass,
   context exhaustion, contention, push failure, post-push failure, and thread
-  context failure. Any nonzero mutation-failure counter blocks capability
-  promotion.
+  context failure, plus unsupported iovec shapes. Any nonzero mutation-failure
+  counter blocks capability promotion.
 - Unit and integration tests prove deterministic planning, formatting,
   identity ownership, correlation, bounded aggregation, overflow, and sink
   formatting. A privileged local OrbStack run on aarch64 kernel
   `7.0.11-orbstack-00360-gc9bc4d96ac70` proved verifier acceptance, attachment,
   and live `sendmsg` injection across three iovecs with a fixed-length body and
-  preserved multi-member `tracestate`. That scoped result is not proof for
+  preserved multi-member `tracestate`. The amended large-write and chunked
+  forms have shared property/integration and optimized arm64 perf-buffer plus
+  x86-64 ring-buffer build evidence, but no new privileged live-wire or Tempo
+  proof. The earlier scoped result is not proof for those new forms or for
   another kernel, architecture, cgroup topology, runtime, or production load.
 
 ## Rejected alternatives

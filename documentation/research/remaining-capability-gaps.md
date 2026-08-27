@@ -2,12 +2,13 @@
 
 Status: research and implementation boundary
 
-Date: 2026-08-23
+Date: 2026-08-23; implementation update: 2026-08-27
 
 Repository baseline: `07b3269` (`v0.5.0-rc.3`)
 
 Local implementation series: `ebfcd18`, `1982ed3`, `89c75f1`, `9377f1e`,
-and `93a6919` (not pushed)
+`93a6919`, `b3a4565`, `06e3a3c`, `6c3891f`, `8dd7adb`, `5b979f7`,
+`307eadf`, `8123f02`, and `8c8aa6d` (not pushed)
 
 ## Scope and method
 
@@ -34,7 +35,7 @@ contracts to copy.
 | Universal L4 accounting | **NO-GO under one byte semantic** | Define supported TCP application bytes; add message-batch and `io_uring` paths without double counting; specify UDP/packet metrics separately | Syscall, application, TLS-plaintext, and packet bytes are different measurements |
 | Universal native unwinding | **NO-GO as a universal claim; GO for broader CFI** | Normalize more CFI expressions in userspace and preserve explicit bounded fallbacks | Valid DWARF expressions and finite BPF/map/cache budgets prevent an unbounded guarantee |
 
-## 2026-08-23 execution outcome
+## Execution outcome (2026-08-23, updated 2026-08-27)
 
 The request contains several compatibility programs, not single features. This
 execution implements only slices whose semantics and local evidence can be
@@ -46,9 +47,9 @@ an assertion that the gap is solved elsewhere.
 | Broad managed-runtime profiling | **Deferred; per-runtime GO, universal claim NO-GO.** | Existing exact CPython 3.11/3.12 walking and conditional perf-map names do not establish Node/V8, HotSpot, .NET, Ruby, PHP, Perl, or other Python support. Each runtime/version/build/architecture needs a descriptor, dedicated BPF walker, userspace symbolizer, negative detection, coredump replay, verifier proof, and live backend query. |
 | Broad TLS/HTTPS tracing | **Deferred; per-adapter GO, universal claim NO-GO.** | Existing OpenSSL 1.1.1/3, GnuTLS ABI 30, and version-gated unstripped Linux/amd64 Go adapters remain the only claimed plaintext seams. Bundled Node/JVM TLS, BoringSSL, rustls, custom transports, stripped Go, and non-amd64 Go require independent identity/ABI/return-site/socket-association matrices. |
 | HTTPS context propagation | **Deferred; cannot be implemented at ciphertext.** | TLS 1.3 authenticates encrypted records, so injection must happen at a validated library/runtime plaintext header seam before encryption. No such universal seam exists; each future adapter needs transactional attachment, compare-before-mutate behavior, rollback, and live peer-tree proof. |
-| Complete HTTP/1 context propagation | **Deferred beyond the existing bounded subset.** | The current disabled-by-default path retains its documented small-iovec, bounded `Content-Length`, configured-port, post-attachment envelope. Segmented headers, pipelining, chunked bodies, larger vectors, pre-existing sockets, and logical async continuation require separate stream and runtime state machines plus verifier/live-wire matrices. |
-| Complete MySQL correlation | **Material bounded implementation: `ebfcd18`, hardened by `14eca57`.** | Sequence-checked command state now covers immediate responses, text/binary rows, structurally validated protocol 4.1 OK and column metadata, short EOF and modern OK terminators, multi-results, parameter-only and column-bearing prepares, cursor execution/fetch terminals, no-response commands, malformed/truncated packets, and sequence gaps. `LOCAL INFILE`, compression, capability-negotiated optional resultset metadata/EOF, 16 MiB logical-packet continuation, handshake/authentication, live server/version proof, and production soak remain open. |
-| Complete database and messaging response semantics | **Material protocol slices, not a blanket completion claim.** | MySQL uses the lifecycle above; PostgreSQL simple queries (`9377f1e`) and typed extended pipelines (`93a6919`) use protocol terminals and skip-to-Sync recovery; Redis (`1982ed3`, `14eca57`) keeps ordinary RESP3 push/attribute frames out of FIFO matching and correlates the bounded acknowledgement count for explicit RESP2/RESP3 subscription commands. Kafka broad per-API bodies, MongoDB broad outcomes, arbitrary RESP2 Pub/Sub delivery interleaving, streamed RESP3 values, NATS request/reply and JetStream semantics, PostgreSQL startup/COPY-in control state, live matrices, and retry semantics remain open. |
+| Complete HTTP/1 context propagation | **Material bounded implementation: `307eadf`; blanket completion deferred.** | The disabled-by-default path now plans from a complete contiguous header prefix plus the exact syscall length. One exact `Content-Length` can prove a large unseen tail remains body data; bounded chunk framing, extensions, trailers, and incomplete bodies are accepted only without ambiguity or visible trailing requests. A bounded `bpf_loop` length-accounts up to 40 iovecs while capture remains the first three 96-byte prefixes. Segmented headers across syscalls, multiple pipelined requests, pre-existing sockets, logical async continuation, TLS plaintext mutation, and live proof of the new forms remain open. |
+| Complete MySQL correlation | **Material bounded implementation: `ebfcd18`, `14eca57`, `6c3891f`, `8dd7adb`, `8123f02`, and `8c8aa6d`.** | Sequence-checked logical-packet state covers immediate responses, text/binary rows, structurally validated protocol 4.1 OK and column metadata, short EOF and modern OK terminators, multi-results, parameter-only and column-bearing prepares, cursor execution/fetch terminals, no-response commands, `LOCAL INFILE`, 16 MiB continuation, and malformed/truncated/sequence-gap failure. Protocol-v10 capability negotiation activates exact bounded zlib framing only after authentication OK; zstd and ambiguous or invalid compression state fail closed with explicit counters. Optional-resultset metadata/EOF capability variants, zstd decoding, live cleartext/encrypted server-version proof, reconnect/pre-attachment state, and production soak remain open. |
+| Complete database and messaging response semantics | **Material protocol slices, not a blanket completion claim.** | PostgreSQL (`9377f1e`, `93a6919`, `06e3a3c`) now covers simple and typed terminals, startup/auth ownership, skip-to-Sync recovery, and COPY-in Sync/Flush exceptions. Redis (`1982ed3`, `14eca57`, `b3a4565`) keeps RESP3 push/attribute frames and recognized RESP2 Pub/Sub deliveries out of FIFO matching. MongoDB (`5b979f7`) handles no-response requests, `moreToCome`/exhaust lifecycles, required flags, and write/write-concern errors. Kafka per-API response bodies, streamed RESP3 values, NATS request/reply and JetStream semantics, unsupported MongoDB commands/versions, current live matrices, reconnect/pre-attachment behavior, retries, sustained load, and production proof remain open. |
 | Database collection naming beyond MongoDB | **Deliberately not implemented from query text or Redis keys.** | OpenTelemetry says `db.collection.name` should not be extracted from `db.query.text`; a Redis key is not a collection. E-Navigator keeps MongoDB's explicit command collection field and omits guessed SQL table/key names. A future driver/runtime adapter may emit a table only when it receives an already-parsed, single-collection value without raw query export. |
 | HTTP route-template discovery | **Not implemented from wire paths.** | A concrete URL cannot reliably reveal whether `/users/42` maps to `/users/:id`, `/users/{userId}`, or a literal route. E-Navigator therefore omits `http.route` unless a future framework adapter supplies the framework-owned template; heuristic path generalization would violate cardinality and semantic accuracy. |
 | Automatic detection of all application-owned OTel spans | **Universal claim NO-GO.** | Manual/custom SDKs can configure exporters and samplers programmatically with no stable static marker. Existing conservative zero-code markers plus explicit exact Kubernetes ownership labels remain the contract; unknown evidence fails open and suppresses no request spans. Exporter-activity probes can add runtime-specific positive evidence but cannot prove all SDK ownership. |
@@ -136,7 +137,12 @@ normally through library-specific interceptors.
 The wire program must independently support bounded segmented headers,
 multiple header fields, pipelining, fixed/chunked bodies, larger vectored I/O,
 pre-attachment loss accounting, exact compare-before-mutate, and fail-closed
-rollback. Linux verifier/state limits documented in the
+rollback. The 2026-08-27 slice now covers complete contiguous headers with
+large exact-`Content-Length` tails, bounded chunked framing, and exact total
+length accounting through 40 iovecs, while capturing only the first three
+96-byte verifier-safe prefixes. It deliberately does not infer headers split
+across syscalls, a second pipelined request, or bytes from before attachment.
+Linux verifier/state limits documented in the
 [BPF design Q&A](https://docs.kernel.org/bpf/bpf_design_QA.html) still require
 bounded logic even when using
 [SOCKMAP/SOCKHASH](https://docs.kernel.org/bpf/map_sockmap.html).
@@ -202,28 +208,30 @@ At the repository baseline, PostgreSQL, MySQL, MongoDB, and Redis already have
 and MySQL response parsing exists. The remaining work is a request-kind and
 terminal-outcome audit, not one blanket response patch.
 
-Implementation update (2026-08-23): PostgreSQL simple Query correlation retains
+Implementation update (2026-08-27): PostgreSQL simple Query correlation retains
 intermediate responses and the first SQLSTATE error through terminal
-`ReadyForQuery`, preserving the terminal transaction state. A separate typed
-state machine now matches Parse, Bind, both Describe variants, Close, Execute,
-Password, Sync, and legacy FunctionCall to their protocol-defined terminal
-messages. Extended-query errors mark dependent operations skipped until the
-next captured Sync without fabricating response latency, while commands after
-that Sync remain eligible for matching. COPY data/control and no-response
-messages do not displace the initiating query. Startup correlation, the
-COPY-in rule that ignores already-sent Sync/Flush messages, truncated-prefix
-semantics, and live extended/COPY proof remain open and are not claimed.
+`ReadyForQuery`, preserving the terminal transaction state. A typed state
+machine matches Parse, Bind, both Describe variants, Close, Execute, Password,
+Sync, and legacy FunctionCall to their protocol-defined terminals. One private
+`CONNECT` lifecycle now owns startup authentication and parameter setup without
+retaining connection parameters or authentication contents. Extended-query
+errors mark dependent operations skipped until the next captured Sync without
+fabricating latency, while COPY-in keeps its initiating query in flight and
+ignores already-sent and in-mode Sync/Flush control messages. Current live
+startup, extended, error, and COPY proof remains open.
 
-The same audit hardened MySQL terminal recognition and Redis push handling.
-MySQL now validates complete supported prepare headers, protocol 4.1 OK packets,
-and ColumnDefinition41 metadata before advancing; parameter-only prepares and
-cursor execution metadata terminals have dedicated completion tests. Redis
-ordinary pushes and attributes stay out of FIFO matching, while explicit
-subscription commands retain exactly their request-bounded acknowledgement
-count across RESP2 arrays or RESP3 pushes. A zero-argument unsubscribe has no
-request-bounded count, so it is deliberately emitted without correlated
-response latency. Arbitrary RESP2 Pub/Sub delivery interleaving and live
-subscription matrices remain open.
+The same audit hardened MySQL, Redis, and MongoDB lifecycle semantics. MySQL
+validates supported prepare headers, protocol 4.1 OK packets, and
+ColumnDefinition41 metadata; owns `LOCAL INFILE` uploads and 16 MiB logical
+packet continuations; and negotiates zlib compression from bounded protocol-v10
+handshakes before exact decompression into the ordinary lifecycle. Zstd and
+ambiguous state fail closed. Redis ordinary RESP3 pushes/attributes and the
+three recognized RESP2 Pub/Sub delivery shapes stay out of FIFO matching while
+explicit subscription commands retain only their bounded confirmation count.
+MongoDB handles no-response requests, `moreToCome`/exhaust continuations,
+required flags, and write/write-concern errors without exporting reply BSON or
+raw error messages. Live client/server/version matrices, reconnect and
+pre-attachment behavior, sustained load, and production proof remain open.
 
 ### Universal OTel coexistence detection is impossible from static markers
 
@@ -291,7 +299,7 @@ Finite stack, tail-call, map, row-pool, and cache budgets remain public limits.
 | 1 | Re-audit and close concrete protocol operation/outcome gaps | Golden request/response fixtures, malformed/property/fuzz tests, matcher replay, OTLP assertions, live protocol fixtures | Unseen operations/server versions |
 | 2 | `sendmmsg`/`recvmmsg` TCP application bytes | ABI and compat fixtures, partial/error/limit cases, mixed-hook no-double-count tests, privileged exact totals | Unusual kernel/compat paths |
 | 3 | Cleartext protocol discovery, disabled by default | Cross-protocol negative corpus, ambiguity/late/truncation/budget tests, arbitrary-port live fixtures, overhead A/B | TLS and weak early signatures |
-| 4 | HTTP/1 wire-framing completion | Model/property/differential tests, verifier matrix, segmented/pipelined/chunked live-wire tests, mutation failure injection | Kernel/proxy diversity and mutation blast radius |
+| 4 | Finish HTTP/1 wire framing beyond the bounded large/chunked slice | Model/property/differential tests, verifier matrix, segmented-header and pipelined-request live-wire tests, privileged proof for current large/chunked forms, mutation failure injection | Kernel/proxy diversity and mutation blast radius |
 | 5 | One demanded TLS and async-runtime family | Exact binary/runtime preflight, attach rollback, logical handoff replay, task reuse/expiry, amd64/arm64 live HTTPS | Release/build shapes outside matrix |
 | 6 | One demanded managed-runtime profiler | Negative detection, coredump replay, mixed stacks, verifier/kernel CI, amd64/arm64 runtime/build matrix, backend query | Runtime/JIT modes outside matrix |
 | 7 | `io_uring` TCP accounting and broader native CFI | Registered/provided/vector/bundle tests, no-double-count exact totals; DWARF differential corpus, fuzzing and map budgets | Kernel-version path changes and costly valid CFI |

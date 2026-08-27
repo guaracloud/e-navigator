@@ -267,9 +267,11 @@ cargo run --locked -p e-navigator-cli -- \
               Active W3C propagation is a separate, disabled-by-default
               plaintext HTTP/1 mutation boundary using cgroup SOCK_OPS and
               SK_MSG before TCP packetization. Its qualified subset preserves
-              valid inbound tracestate and covers bounded fixed-length bodies
-              plus three small iovecs; it is not a universal protocol, runtime,
-              or kernel claim.
+              valid inbound tracestate and covers complete headers in one
+              contiguous captured prefix plus bounded exact Content-Length or
+              chunked framing. It length-accounts up to 40 iovecs while
+              capturing only the first three 96-byte prefixes; it is not a
+              universal protocol, runtime, or kernel claim.
             </p>
             <a class="text-link" href="https://github.com/guaracloud/e-navigator/blob/main/documentation/architecture.md">Read the crate and lifecycle map</a>
           </div>
@@ -327,9 +329,12 @@ cargo run --locked -p e-navigator-cli -- \
               inbound capture, a cgroup v2 root, a bounded plaintext port
               allowlist, complete HTTP/1 headers in one syscall, and
               target-kernel qualification. It preserves valid inbound
-              <code>tracestate</code>, supports <code>Content-Length</code>
-              bodies, and bounds vectored writes to three 96-byte iovecs;
-              chart defaults keep it disabled.
+              <code>tracestate</code>, supports bounded exact
+              <code>Content-Length</code> and chunked framing, and uses at most
+              three 96-byte iovec prefixes while length-accounting up to 40
+              vectors. Unsupported, ambiguous, segmented-header, and
+              multi-request pipeline shapes remain unmodified and increment
+              diagnostics; chart defaults keep propagation disabled.
             </p>
             <div class="comparison-table" role="table" aria-label="Configuration boundaries">
               <div role="row">
