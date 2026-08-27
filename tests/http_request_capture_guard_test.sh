@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 program="crates/e-navigator-ebpf-programs/src/main.rs"
+propagation_program="crates/e-navigator-ebpf-programs/src/http_propagation.rs"
 source_file="crates/e-navigator-sources-ebpf-aya/src/http.rs"
 
 for expected in \
@@ -53,7 +54,7 @@ for expected in \
   "bpf_msg_push_data" \
   "bpf_msg_pull_data" \
   "HTTP_THREAD_TRACE_CONTEXTS"; do
-  if ! grep -Fq "$expected" "$program"; then
+  if ! grep -Fq "$expected" "$program" "$propagation_program"; then
     printf 'expected %s to preserve the verifier-bounded propagation contract: missing %s\n' "$program" "$expected" >&2
     exit 1
   fi

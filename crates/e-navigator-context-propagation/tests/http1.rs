@@ -91,6 +91,16 @@ fn rejects_inconsistent_capture_and_total_lengths() {
 }
 
 #[test]
+fn rejects_content_lengths_larger_than_the_kernel_accounting_width() {
+    let request = b"POST / HTTP/1.1\r\nContent-Length: 4294967296\r\n\r\n";
+
+    assert_eq!(
+        plan_http1_propagation(request),
+        PropagationDecision::Bypass(PropagationBypass::InvalidContentLength)
+    );
+}
+
+#[test]
 fn bypasses_fragmented_upgraded_tunneled_and_ambiguously_framed_messages() {
     for (request, reason) in [
         (
@@ -150,7 +160,17 @@ fn permits_bounded_chunked_bodies_without_crossing_a_pipeline_boundary() {
     let headers = b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n";
     assert_eq!(
         plan_http1_prefix_propagation(headers, headers.len() + 1_048_576),
-        PropagationDecision::Inject { insert_at: 17 }
+        PropagationDecision::Bypass(PropagationBypass::UncapturedChunkedBody)
+    );
+}
+
+#[test]
+fn rejects_an_unseen_chunked_tail_that_could_contain_a_pipelined_request() {
+    let headers = b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n";
+
+    assert_eq!(
+        plan_http1_prefix_propagation(headers, headers.len() + 36),
+        PropagationDecision::Bypass(PropagationBypass::UncapturedChunkedBody)
     );
 }
 
