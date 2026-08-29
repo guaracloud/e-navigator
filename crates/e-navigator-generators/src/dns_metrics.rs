@@ -6,7 +6,7 @@ use e_navigator_signals::{
     SignalPayload,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     sync::{
         Mutex, MutexGuard,
         atomic::{AtomicU64, Ordering},
@@ -14,6 +14,8 @@ use std::{
 };
 use tokio::sync::mpsc;
 use tracing::warn;
+
+use crate::bounded_fingerprints::BoundedFingerprints;
 
 const DEFAULT_MAX_DOMAINS: usize = 1024;
 const DEFAULT_MAX_DNS_STATE_KEYS: usize = 4096;
@@ -29,7 +31,7 @@ pub struct DnsMetricsGenerator {
     counters: Mutex<BTreeMap<CounterKey, CounterState>>,
     latencies: Mutex<BTreeMap<LatencyKey, LatencyState>>,
     edges: Mutex<BTreeMap<EdgeKey, EdgeState>>,
-    seen_events: Mutex<BoundedEventFingerprints>,
+    seen_events: Mutex<BoundedFingerprints<EventFingerprint>>,
     suppressed_counters: AtomicU64,
     suppressed_latencies: AtomicU64,
     suppressed_edges: AtomicU64,
@@ -66,7 +68,7 @@ impl DnsMetricsGenerator {
             counters: Mutex::new(BTreeMap::new()),
             latencies: Mutex::new(BTreeMap::new()),
             edges: Mutex::new(BTreeMap::new()),
-            seen_events: Mutex::new(BoundedEventFingerprints::default()),
+            seen_events: Mutex::new(BoundedFingerprints::default()),
             suppressed_counters: AtomicU64::new(0),
             suppressed_latencies: AtomicU64::new(0),
             suppressed_edges: AtomicU64::new(0),
@@ -327,7 +329,7 @@ impl DnsMetricsGenerator {
             return Ok(true);
         };
         let mut seen_events = self.seen_events()?;
-        if !seen_events.insert_if_new(fingerprint, self.max_domains.saturating_mul(4).max(1)) {
+        if !seen_events.insert_if_new(fingerprint, self.max_domains.saturating_mul(4)) {
             return Ok(false);
         }
         Ok(true)
@@ -349,7 +351,7 @@ impl DnsMetricsGenerator {
         self.edges.lock().map_err(module_error)
     }
 
-    fn seen_events(&self) -> CoreResult<MutexGuard<'_, BoundedEventFingerprints>> {
+    fn seen_events(&self) -> CoreResult<MutexGuard<'_, BoundedFingerprints<EventFingerprint>>> {
         self.seen_events.lock().map_err(module_error)
     }
 }
@@ -659,29 +661,6 @@ impl EventFingerprint {
             }),
             _ => None,
         }
-    }
-}
-
-#[derive(Debug, Default)]
-struct BoundedEventFingerprints {
-    members: BTreeSet<EventFingerprint>,
-    order: VecDeque<EventFingerprint>,
-}
-
-impl BoundedEventFingerprints {
-    fn insert_if_new(&mut self, fingerprint: EventFingerprint, limit: usize) -> bool {
-        if self.members.contains(&fingerprint) {
-            return false;
-        }
-        while self.members.len() >= limit {
-            let Some(oldest) = self.order.pop_front() else {
-                break;
-            };
-            self.members.remove(&oldest);
-        }
-        self.members.insert(fingerprint.clone());
-        self.order.push_back(fingerprint);
-        true
     }
 }
 
@@ -1036,16 +1015,18 @@ mod tests {
         assert_eq!(warned, vec![1, 2, 3, 4, 8, 16]);
     }
 
-    #[test]
-    fn bounded_seen_dns_event_state_evicts_oldest_inserted_fingerprint() {
-        let mut seen = BoundedEventFingerprints::default();
-        let first = event_fingerprint("z.example.com", 1_000);
-        let second = event_fingerprint("a.example.com", 2_000);
+    #[tokio::test]
+    async fn bounded_seen_dns_event_state_reaccepts_oldest_signal_after_fifo_eviction() {
+        let generator = DnsMetricsGenerator::with_limits(1, 8, 8, 8);
+        let first = dns_query_signal("api.example.com", DnsQueryType::A, 100);
 
-        assert!(seen.insert_if_new(first.clone(), 1));
-        assert!(seen.insert_if_new(second.clone(), 1));
-        assert!(!seen.insert_if_new(second, 1));
-        assert!(seen.insert_if_new(first, 1));
+        assert!(!observe(&generator, &first).await.is_empty());
+        assert!(observe(&generator, &first).await.is_empty());
+        for timestamp in 101..=104 {
+            let signal = dns_query_signal("api.example.com", DnsQueryType::A, timestamp);
+            assert!(!observe(&generator, &signal).await.is_empty());
+        }
+        assert!(!observe(&generator, &first).await.is_empty());
     }
 
     async fn observe(
@@ -1098,17 +1079,6 @@ mod tests {
                 _ => None,
             })
             .expect("dependency edge exists")
-    }
-
-    fn event_fingerprint(query_name: &str, timestamp: u64) -> EventFingerprint {
-        EventFingerprint {
-            kind: "query",
-            query_name: query_name.to_string(),
-            query_type: DnsQueryType::A,
-            transaction_id: None,
-            response_code: None,
-            timestamp,
-        }
     }
 
     fn dns_query_signal(

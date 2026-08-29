@@ -2,17 +2,16 @@ use e_navigator_core::{CoreError, CoreResult};
 use e_navigator_signals::{
     CgroupResourceContext, MetricAggregationWindow, SignalEnvelope, SignalPayload,
 };
-use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
-    sync::MutexGuard,
-};
+use std::{collections::BTreeMap, sync::MutexGuard};
+
+use crate::bounded_fingerprints::BoundedFingerprints;
 
 use super::generator::ResourceMetricsGenerator;
 
 impl ResourceMetricsGenerator {
     pub(super) fn mark_seen(&self, fingerprint: ObservationFingerprint) -> CoreResult<bool> {
         let mut seen = self.seen()?;
-        Ok(seen.insert_if_new(fingerprint, self.max_keys.saturating_mul(4).max(1)))
+        Ok(seen.insert_if_new(fingerprint, self.max_keys.saturating_mul(4)))
     }
 
     pub(super) fn counters(&self) -> CoreResult<MutexGuard<'_, BTreeMap<StateKey, CounterState>>> {
@@ -23,7 +22,9 @@ impl ResourceMetricsGenerator {
         self.gauges.lock().map_err(module_error)
     }
 
-    pub(super) fn seen(&self) -> CoreResult<MutexGuard<'_, BoundedObservationFingerprints>> {
+    pub(super) fn seen(
+        &self,
+    ) -> CoreResult<MutexGuard<'_, BoundedFingerprints<ObservationFingerprint>>> {
         self.seen.lock().map_err(module_error)
     }
 
@@ -33,29 +34,6 @@ impl ResourceMetricsGenerator {
 
     pub(super) fn gauge_len(&self) -> CoreResult<usize> {
         Ok(self.gauges()?.len())
-    }
-}
-
-#[derive(Debug, Default)]
-pub(super) struct BoundedObservationFingerprints {
-    members: BTreeSet<ObservationFingerprint>,
-    order: VecDeque<ObservationFingerprint>,
-}
-
-impl BoundedObservationFingerprints {
-    fn insert_if_new(&mut self, fingerprint: ObservationFingerprint, limit: usize) -> bool {
-        if self.members.contains(&fingerprint) {
-            return false;
-        }
-        while self.members.len() >= limit {
-            let Some(oldest) = self.order.pop_front() else {
-                break;
-            };
-            self.members.remove(&oldest);
-        }
-        self.members.insert(fingerprint.clone());
-        self.order.push_back(fingerprint);
-        true
     }
 }
 
@@ -265,32 +243,5 @@ fn module_error<T>(_: std::sync::PoisonError<T>) -> CoreError {
     CoreError::ModuleFailed {
         module: "generator.resource_metrics".to_string(),
         message: "state lock poisoned".to_string(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{BoundedObservationFingerprints, ObservationFingerprint};
-
-    #[test]
-    fn bounded_observation_fingerprints_evict_oldest_inserted_entry() {
-        let mut seen = BoundedObservationFingerprints::default();
-        let first = observation_fingerprint("z-scope", 1_000);
-        let second = observation_fingerprint("a-scope", 2_000);
-
-        assert!(seen.insert_if_new(first.clone(), 1));
-        assert!(seen.insert_if_new(second.clone(), 1));
-        assert!(!seen.insert_if_new(second, 1));
-        assert!(seen.insert_if_new(first, 1));
-    }
-
-    fn observation_fingerprint(scope: &str, timestamp: u64) -> ObservationFingerprint {
-        ObservationFingerprint {
-            kind: "node_memory_observation",
-            host: Some("node-a".to_string()),
-            timestamp,
-            scope: scope.to_string(),
-            value: "100:Some(50):None:None:None".to_string(),
-        }
     }
 }

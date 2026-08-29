@@ -4,9 +4,9 @@ use e_navigator_signals::{SignalEnvelope, SignalPayload};
 use std::{collections::BTreeMap, sync::Mutex};
 use tokio::sync::mpsc;
 
-use super::state::{
-    BoundedObservationFingerprints, CounterState, ObservationFingerprint, StateKey,
-};
+use crate::bounded_fingerprints::BoundedFingerprints;
+
+use super::state::{CounterState, ObservationFingerprint, StateKey};
 
 const DEFAULT_MAX_RESOURCE_KEYS: usize = 4096;
 
@@ -15,7 +15,7 @@ pub struct ResourceMetricsGenerator {
     pub(super) max_keys: usize,
     pub(super) counters: Mutex<BTreeMap<StateKey, CounterState>>,
     pub(super) gauges: Mutex<BTreeMap<StateKey, i64>>,
-    pub(super) seen: Mutex<BoundedObservationFingerprints>,
+    pub(super) seen: Mutex<BoundedFingerprints<ObservationFingerprint>>,
 }
 
 impl Default for ResourceMetricsGenerator {
@@ -30,7 +30,7 @@ impl ResourceMetricsGenerator {
             max_keys,
             counters: Mutex::new(BTreeMap::new()),
             gauges: Mutex::new(BTreeMap::new()),
-            seen: Mutex::new(BoundedObservationFingerprints::default()),
+            seen: Mutex::new(BoundedFingerprints::default()),
         }
     }
 }

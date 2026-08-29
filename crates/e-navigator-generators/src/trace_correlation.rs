@@ -8,10 +8,12 @@ use e_navigator_signals::{
     TraceConfidence, TraceCorrelationKind, TraceCorrelationWarning, TraceServicePathObservation,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::BTreeMap,
     sync::{Mutex, MutexGuard},
 };
 use tokio::sync::mpsc;
+
+use crate::bounded_fingerprints::BoundedFingerprints;
 
 const DEFAULT_MAX_SERVICE_PATHS: usize = 4096;
 const DEFAULT_MAX_SEEN_INTERACTIONS: usize = 8192;
@@ -413,44 +415,6 @@ impl TraceCorrelationGenerator {
 
     fn seen_warnings(&self) -> CoreResult<MutexGuard<'_, BoundedFingerprints<WarningFingerprint>>> {
         self.seen_warnings.lock().map_err(module_error)
-    }
-}
-
-#[derive(Debug)]
-struct BoundedFingerprints<T> {
-    entries: BTreeSet<T>,
-    insertion_order: VecDeque<T>,
-}
-
-impl<T> Default for BoundedFingerprints<T> {
-    fn default() -> Self {
-        Self {
-            entries: BTreeSet::new(),
-            insertion_order: VecDeque::new(),
-        }
-    }
-}
-
-impl<T> BoundedFingerprints<T>
-where
-    T: Clone + Ord,
-{
-    fn insert_if_new(&mut self, fingerprint: T, max_entries: usize) -> bool {
-        if self.entries.contains(&fingerprint) {
-            return false;
-        }
-
-        let max_entries = max_entries.max(1);
-        while self.entries.len() >= max_entries {
-            let Some(oldest) = self.insertion_order.pop_front() else {
-                break;
-            };
-            self.entries.remove(&oldest);
-        }
-
-        self.insertion_order.push_back(fingerprint.clone());
-        self.entries.insert(fingerprint);
-        true
     }
 }
 
