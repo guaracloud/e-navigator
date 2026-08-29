@@ -1669,7 +1669,7 @@ mod platform {
         }
 
         async fn run(self: Box<Self>, tx: mpsc::Sender<SignalEnvelope>) -> CoreResult<()> {
-            bump_memlock_rlimit();
+            crate::memlock::bump_memlock_rlimit();
             let shutdown = ReaderShutdown::new();
             let mut reader_handles = Vec::new();
             let drop_counters = std::sync::Arc::new(super::CpuProfileDropCounters::default());
@@ -2564,17 +2564,6 @@ mod platform {
             || pidns.set(1, metadata.st_ino(), 0).is_err()
         {
             warn!("failed to record pid namespace; pid namespace translation disabled");
-        }
-    }
-
-    fn bump_memlock_rlimit() {
-        let rlimit = libc::rlimit {
-            rlim_cur: libc::RLIM_INFINITY,
-            rlim_max: libc::RLIM_INFINITY,
-        };
-        let ret = unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlimit) };
-        if ret != 0 {
-            debug!("failed to raise RLIMIT_MEMLOCK");
         }
     }
 

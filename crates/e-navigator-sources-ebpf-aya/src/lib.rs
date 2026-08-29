@@ -22,6 +22,8 @@ pub mod exec;
 mod go_tls;
 pub mod http;
 mod kernel_hook;
+#[cfg(target_os = "linux")]
+mod memlock;
 pub mod network;
 #[cfg(target_os = "linux")]
 mod perf_reader;
