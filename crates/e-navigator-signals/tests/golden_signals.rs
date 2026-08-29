@@ -6,7 +6,7 @@
 )]
 
 use e_navigator_core::Signal;
-use e_navigator_signals::SignalEnvelope;
+use e_navigator_signals::{SignalEnvelope, SignalKind};
 use std::collections::BTreeSet;
 
 #[test]
@@ -72,4 +72,25 @@ fn golden_signal_families_round_trip_without_schema_drift() {
             "trace_span_observation".to_string(),
         ])
     );
+}
+
+#[test]
+fn replacing_public_payload_keeps_serialized_kind_in_sync() {
+    let fixtures =
+        serde_json::from_str::<Vec<serde_json::Value>>(include_str!("golden/signal_families.json"))
+            .expect("golden signal fixtures parse");
+    let mut signal = serde_json::from_value::<SignalEnvelope>(fixtures[0].clone())
+        .expect("exec fixture deserializes");
+    let replacement = serde_json::from_value::<SignalEnvelope>(fixtures[1].clone())
+        .expect("process exit fixture deserializes");
+
+    signal.payload = replacement.payload;
+
+    assert_eq!(signal.signal_kind(), SignalKind::ProcessExit);
+    assert_eq!(signal.kind(), "process_exit");
+    let encoded = serde_json::to_value(&signal).expect("replacement signal serializes");
+    assert_eq!(encoded["kind"], "process_exit");
+    let decoded = serde_json::from_value::<SignalEnvelope>(encoded)
+        .expect("replacement signal remains a valid envelope");
+    assert_eq!(decoded.kind(), "process_exit");
 }

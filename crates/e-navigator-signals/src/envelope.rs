@@ -159,13 +159,97 @@ pub enum SignalPayload {
     ResourceCounterMetric(ResourceCounterMetric),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+impl SignalPayload {
+    fn signal_kind(&self) -> SignalKind {
+        match self {
+            Self::Exec(_) => SignalKind::Exec,
+            Self::ProcessExit(_) => SignalKind::ProcessExit,
+            Self::ProcessLifecycleDuration(_) => SignalKind::ProcessLifecycleDuration,
+            Self::NetworkConnectionOpen(_) => SignalKind::NetworkConnectionOpen,
+            Self::NetworkConnectionClose(_) => SignalKind::NetworkConnectionClose,
+            Self::NetworkConnectionSnapshot(_) => SignalKind::NetworkConnectionSnapshot,
+            Self::NetworkConnectionFailure(_) => SignalKind::NetworkConnectionFailure,
+            Self::NetworkFlowSummary(_) => SignalKind::NetworkFlowSummary,
+            Self::NetworkFlowWarning(_) => SignalKind::NetworkFlowWarning,
+            Self::NetworkCounterMetric(_) => SignalKind::NetworkCounterMetric,
+            Self::NetworkPeerFlowMetric(_) => SignalKind::NetworkPeerFlowMetric,
+            Self::NetworkDurationMetric(_) => SignalKind::NetworkDurationMetric,
+            Self::NetworkGaugeMetric(_) => SignalKind::NetworkGaugeMetric,
+            Self::NetworkTcpStatObservation(_) => SignalKind::NetworkTcpStatObservation,
+            Self::DnsQuery(_) => SignalKind::DnsQuery,
+            Self::DnsResponse(_) => SignalKind::DnsResponse,
+            Self::DnsCounterMetric(_) => SignalKind::DnsCounterMetric,
+            Self::DnsLatencyMetric(_) => SignalKind::DnsLatencyMetric,
+            Self::RequestSpanObservation(_) => SignalKind::RequestSpanObservation,
+            Self::ProtocolRequestObservation(_) => SignalKind::ProtocolRequestObservation,
+            Self::ExtractedTraceContextObservation(_) => {
+                SignalKind::ExtractedTraceContextObservation
+            }
+            Self::RequestCorrelationWarning(_) => SignalKind::RequestCorrelationWarning,
+            Self::ProfileSampleObservation(_) => SignalKind::ProfileSampleObservation,
+            Self::ProfilingStackTraceObservation(_) => SignalKind::ProfilingStackTraceObservation,
+            Self::ProfilingSessionObservation(_) => SignalKind::ProfilingSessionObservation,
+            Self::ProfilingWarningObservation(_) => SignalKind::ProfilingWarningObservation,
+            Self::TraceSpanObservation(_) => SignalKind::TraceSpanObservation,
+            Self::ServiceInteractionSpanObservation(_) => {
+                SignalKind::ServiceInteractionSpanObservation
+            }
+            Self::TraceServicePathObservation(_) => SignalKind::TraceServicePathObservation,
+            Self::TraceCorrelationWarning(_) => SignalKind::TraceCorrelationWarning,
+            Self::DependencyEdge(_) => SignalKind::DependencyEdge,
+            Self::RuntimeSecurityFinding(_) => SignalKind::RuntimeSecurityFinding,
+            Self::NodeCpuObservation(_) => SignalKind::NodeCpuObservation,
+            Self::NodeLoadObservation(_) => SignalKind::NodeLoadObservation,
+            Self::NodeMemoryObservation(_) => SignalKind::NodeMemoryObservation,
+            Self::NodeFilesystemObservation(_) => SignalKind::NodeFilesystemObservation,
+            Self::NodeDiskIoObservation(_) => SignalKind::NodeDiskIoObservation,
+            Self::ProcessResourceObservation(_) => SignalKind::ProcessResourceObservation,
+            Self::CgroupCpuObservation(_) => SignalKind::CgroupCpuObservation,
+            Self::CgroupMemoryObservation(_) => SignalKind::CgroupMemoryObservation,
+            Self::CgroupPidsObservation(_) => SignalKind::CgroupPidsObservation,
+            Self::CgroupFileDescriptorObservation(_) => SignalKind::CgroupFileDescriptorObservation,
+            Self::ResourceGaugeMetric(_) => SignalKind::ResourceGaugeMetric,
+            Self::ResourceCounterMetric(_) => SignalKind::ResourceCounterMetric,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
 pub struct SignalEnvelope {
     pub schema_version: u16,
-    kind: SignalKind,
     pub source: String,
     pub host: Option<String>,
     pub payload: SignalPayload,
+}
+
+impl std::fmt::Debug for SignalEnvelope {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SignalEnvelope")
+            .field("schema_version", &self.schema_version)
+            .field("kind", &self.signal_kind())
+            .field("source", &self.source)
+            .field("host", &self.host)
+            .field("payload", &self.payload)
+            .finish()
+    }
+}
+
+impl Serialize for SignalEnvelope {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        let mut envelope = serializer.serialize_struct("SignalEnvelope", 5)?;
+        envelope.serialize_field("schema_version", &self.schema_version)?;
+        envelope.serialize_field("kind", &self.signal_kind())?;
+        envelope.serialize_field("source", &self.source)?;
+        envelope.serialize_field("host", &self.host)?;
+        envelope.serialize_field("payload", &self.payload)?;
+        envelope.end()
+    }
 }
 
 impl<'de> Deserialize<'de> for SignalEnvelope {
@@ -506,7 +590,6 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
 
         Ok(Self {
             schema_version: raw.schema_version,
-            kind: raw.kind,
             source: raw.source,
             host: raw.host,
             payload,
@@ -517,7 +600,7 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
 impl SignalEnvelope {
     pub fn exec(source: impl Into<String>, host: Option<String>, mut event: ExecEvent) -> Self {
         sanitize_exec_event(&mut event);
-        Self::new(source, host, SignalKind::Exec, SignalPayload::Exec(event))
+        Self::new(source, host, SignalPayload::Exec(event))
     }
 
     pub fn process_exit(
@@ -526,12 +609,7 @@ impl SignalEnvelope {
         mut event: ProcessExitEvent,
     ) -> Self {
         sanitize_process_exit_event(&mut event);
-        Self::new(
-            source,
-            host,
-            SignalKind::ProcessExit,
-            SignalPayload::ProcessExit(event),
-        )
+        Self::new(source, host, SignalPayload::ProcessExit(event))
     }
 
     pub fn process_lifecycle_duration(
@@ -540,12 +618,7 @@ impl SignalEnvelope {
         mut event: ProcessLifecycleDurationEvent,
     ) -> Self {
         sanitize_process_lifecycle_duration_event(&mut event);
-        Self::new(
-            source,
-            host,
-            SignalKind::ProcessLifecycleDuration,
-            SignalPayload::ProcessLifecycleDuration(event),
-        )
+        Self::new(source, host, SignalPayload::ProcessLifecycleDuration(event))
     }
 
     pub fn runtime_security_finding(
@@ -554,12 +627,7 @@ impl SignalEnvelope {
         mut finding: RuntimeSecurityFinding,
     ) -> Self {
         sanitize_runtime_security_finding(&mut finding);
-        Self::new(
-            source,
-            host,
-            SignalKind::RuntimeSecurityFinding,
-            SignalPayload::RuntimeSecurityFinding(finding),
-        )
+        Self::new(source, host, SignalPayload::RuntimeSecurityFinding(finding))
     }
 
     pub fn network_connection_open(
@@ -568,12 +636,7 @@ impl SignalEnvelope {
         mut event: NetworkConnectionOpenEvent,
     ) -> Self {
         sanitize_network_connection_open_event(&mut event);
-        Self::new(
-            source,
-            host,
-            SignalKind::NetworkConnectionOpen,
-            SignalPayload::NetworkConnectionOpen(event),
-        )
+        Self::new(source, host, SignalPayload::NetworkConnectionOpen(event))
     }
 
     pub fn network_connection_close(
@@ -582,12 +645,7 @@ impl SignalEnvelope {
         mut event: NetworkConnectionCloseEvent,
     ) -> Self {
         sanitize_network_connection_close_event(&mut event);
-        Self::new(
-            source,
-            host,
-            SignalKind::NetworkConnectionClose,
-            SignalPayload::NetworkConnectionClose(event),
-        )
+        Self::new(source, host, SignalPayload::NetworkConnectionClose(event))
     }
 
     pub fn network_connection_snapshot(
@@ -599,7 +657,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::NetworkConnectionSnapshot,
             SignalPayload::NetworkConnectionSnapshot(event),
         )
     }
@@ -610,12 +667,7 @@ impl SignalEnvelope {
         mut event: NetworkConnectionFailureEvent,
     ) -> Self {
         sanitize_network_connection_failure_event(&mut event);
-        Self::new(
-            source,
-            host,
-            SignalKind::NetworkConnectionFailure,
-            SignalPayload::NetworkConnectionFailure(event),
-        )
+        Self::new(source, host, SignalPayload::NetworkConnectionFailure(event))
     }
 
     pub fn network_tcp_stat_observation(
@@ -627,7 +679,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::NetworkTcpStatObservation,
             SignalPayload::NetworkTcpStatObservation(event),
         )
     }
@@ -638,12 +689,7 @@ impl SignalEnvelope {
         mut event: NetworkFlowSummaryEvent,
     ) -> Self {
         sanitize_network_flow_summary_event(&mut event);
-        Self::new(
-            source,
-            host,
-            SignalKind::NetworkFlowSummary,
-            SignalPayload::NetworkFlowSummary(event),
-        )
+        Self::new(source, host, SignalPayload::NetworkFlowSummary(event))
     }
 
     pub fn network_flow_warning(
@@ -652,12 +698,7 @@ impl SignalEnvelope {
         mut warning: NetworkFlowWarning,
     ) -> Self {
         sanitize_network_flow_warning(&mut warning);
-        Self::new(
-            source,
-            host,
-            SignalKind::NetworkFlowWarning,
-            SignalPayload::NetworkFlowWarning(warning),
-        )
+        Self::new(source, host, SignalPayload::NetworkFlowWarning(warning))
     }
 
     pub fn network_counter_metric(
@@ -666,12 +707,7 @@ impl SignalEnvelope {
         mut metric: NetworkCounterMetric,
     ) -> Self {
         sanitize_network_counter_metric(&mut metric);
-        Self::new(
-            source,
-            host,
-            SignalKind::NetworkCounterMetric,
-            SignalPayload::NetworkCounterMetric(metric),
-        )
+        Self::new(source, host, SignalPayload::NetworkCounterMetric(metric))
     }
 
     pub fn network_peer_flow_metric(
@@ -680,12 +716,7 @@ impl SignalEnvelope {
         mut metric: NetworkPeerFlowMetric,
     ) -> Self {
         sanitize_network_peer_flow_metric(&mut metric);
-        Self::new(
-            source,
-            host,
-            SignalKind::NetworkPeerFlowMetric,
-            SignalPayload::NetworkPeerFlowMetric(metric),
-        )
+        Self::new(source, host, SignalPayload::NetworkPeerFlowMetric(metric))
     }
 
     pub fn network_duration_metric(
@@ -694,12 +725,7 @@ impl SignalEnvelope {
         mut metric: NetworkDurationMetric,
     ) -> Self {
         sanitize_network_duration_metric(&mut metric);
-        Self::new(
-            source,
-            host,
-            SignalKind::NetworkDurationMetric,
-            SignalPayload::NetworkDurationMetric(metric),
-        )
+        Self::new(source, host, SignalPayload::NetworkDurationMetric(metric))
     }
 
     pub fn network_gauge_metric(
@@ -708,12 +734,7 @@ impl SignalEnvelope {
         mut metric: NetworkGaugeMetric,
     ) -> Self {
         sanitize_network_gauge_metric(&mut metric);
-        Self::new(
-            source,
-            host,
-            SignalKind::NetworkGaugeMetric,
-            SignalPayload::NetworkGaugeMetric(metric),
-        )
+        Self::new(source, host, SignalPayload::NetworkGaugeMetric(metric))
     }
 
     pub fn dns_query(
@@ -722,12 +743,7 @@ impl SignalEnvelope {
         mut event: DnsQueryEvent,
     ) -> Self {
         sanitize_dns_query_event(&mut event);
-        Self::new(
-            source,
-            host,
-            SignalKind::DnsQuery,
-            SignalPayload::DnsQuery(event),
-        )
+        Self::new(source, host, SignalPayload::DnsQuery(event))
     }
 
     pub fn dns_response(
@@ -736,12 +752,7 @@ impl SignalEnvelope {
         mut event: DnsResponseEvent,
     ) -> Self {
         sanitize_dns_response_event(&mut event);
-        Self::new(
-            source,
-            host,
-            SignalKind::DnsResponse,
-            SignalPayload::DnsResponse(event),
-        )
+        Self::new(source, host, SignalPayload::DnsResponse(event))
     }
 
     pub fn dns_counter_metric(
@@ -750,12 +761,7 @@ impl SignalEnvelope {
         mut metric: DnsCounterMetric,
     ) -> Self {
         sanitize_dns_counter_metric(&mut metric);
-        Self::new(
-            source,
-            host,
-            SignalKind::DnsCounterMetric,
-            SignalPayload::DnsCounterMetric(metric),
-        )
+        Self::new(source, host, SignalPayload::DnsCounterMetric(metric))
     }
 
     pub fn dns_latency_metric(
@@ -764,12 +770,7 @@ impl SignalEnvelope {
         mut metric: DnsLatencyMetric,
     ) -> Self {
         sanitize_dns_latency_metric(&mut metric);
-        Self::new(
-            source,
-            host,
-            SignalKind::DnsLatencyMetric,
-            SignalPayload::DnsLatencyMetric(metric),
-        )
+        Self::new(source, host, SignalPayload::DnsLatencyMetric(metric))
     }
 
     pub fn dependency_edge(
@@ -778,12 +779,7 @@ impl SignalEnvelope {
         mut event: DependencyEdgeEvent,
     ) -> Self {
         sanitize_dependency_edge_event(&mut event);
-        Self::new(
-            source,
-            host,
-            SignalKind::DependencyEdge,
-            SignalPayload::DependencyEdge(event),
-        )
+        Self::new(source, host, SignalPayload::DependencyEdge(event))
     }
 
     pub fn node_cpu_observation(
@@ -792,12 +788,7 @@ impl SignalEnvelope {
         mut observation: NodeCpuObservation,
     ) -> Self {
         sanitize_node_cpu_observation(&mut observation);
-        Self::new(
-            source,
-            host,
-            SignalKind::NodeCpuObservation,
-            SignalPayload::NodeCpuObservation(observation),
-        )
+        Self::new(source, host, SignalPayload::NodeCpuObservation(observation))
     }
 
     pub fn node_load_observation(
@@ -809,7 +800,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::NodeLoadObservation,
             SignalPayload::NodeLoadObservation(observation),
         )
     }
@@ -823,7 +813,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::NodeMemoryObservation,
             SignalPayload::NodeMemoryObservation(observation),
         )
     }
@@ -837,7 +826,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::NodeFilesystemObservation,
             SignalPayload::NodeFilesystemObservation(observation),
         )
     }
@@ -851,7 +839,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::NodeDiskIoObservation,
             SignalPayload::NodeDiskIoObservation(observation),
         )
     }
@@ -865,7 +852,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::ProcessResourceObservation,
             SignalPayload::ProcessResourceObservation(observation),
         )
     }
@@ -879,7 +865,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::CgroupCpuObservation,
             SignalPayload::CgroupCpuObservation(observation),
         )
     }
@@ -893,7 +878,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::CgroupMemoryObservation,
             SignalPayload::CgroupMemoryObservation(observation),
         )
     }
@@ -907,7 +891,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::CgroupPidsObservation,
             SignalPayload::CgroupPidsObservation(observation),
         )
     }
@@ -921,7 +904,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::CgroupFileDescriptorObservation,
             SignalPayload::CgroupFileDescriptorObservation(observation),
         )
     }
@@ -932,12 +914,7 @@ impl SignalEnvelope {
         mut metric: ResourceGaugeMetric,
     ) -> Self {
         sanitize_resource_gauge_metric(&mut metric);
-        Self::new(
-            source,
-            host,
-            SignalKind::ResourceGaugeMetric,
-            SignalPayload::ResourceGaugeMetric(metric),
-        )
+        Self::new(source, host, SignalPayload::ResourceGaugeMetric(metric))
     }
 
     pub fn resource_counter_metric(
@@ -946,12 +923,7 @@ impl SignalEnvelope {
         mut metric: ResourceCounterMetric,
     ) -> Self {
         sanitize_resource_counter_metric(&mut metric);
-        Self::new(
-            source,
-            host,
-            SignalKind::ResourceCounterMetric,
-            SignalPayload::ResourceCounterMetric(metric),
-        )
+        Self::new(source, host, SignalPayload::ResourceCounterMetric(metric))
     }
 
     pub fn trace_span_observation(
@@ -972,7 +944,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::TraceSpanObservation,
             SignalPayload::TraceSpanObservation(observation),
         )
     }
@@ -994,7 +965,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::ServiceInteractionSpanObservation,
             SignalPayload::ServiceInteractionSpanObservation(observation),
         )
     }
@@ -1011,7 +981,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::TraceServicePathObservation,
             SignalPayload::TraceServicePathObservation(observation),
         )
     }
@@ -1032,7 +1001,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::TraceCorrelationWarning,
             SignalPayload::TraceCorrelationWarning(warning),
         )
     }
@@ -1057,7 +1025,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::ProtocolRequestObservation,
             SignalPayload::ProtocolRequestObservation(observation),
         )
     }
@@ -1080,7 +1047,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::ExtractedTraceContextObservation,
             SignalPayload::ExtractedTraceContextObservation(observation),
         )
     }
@@ -1104,7 +1070,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::RequestSpanObservation,
             SignalPayload::RequestSpanObservation(observation),
         )
     }
@@ -1125,7 +1090,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::RequestCorrelationWarning,
             SignalPayload::RequestCorrelationWarning(warning),
         )
     }
@@ -1145,7 +1109,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::ProfileSampleObservation,
             SignalPayload::ProfileSampleObservation(observation),
         )
     }
@@ -1164,7 +1127,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::ProfilingStackTraceObservation,
             SignalPayload::ProfilingStackTraceObservation(observation),
         )
     }
@@ -1183,7 +1145,6 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::ProfilingSessionObservation,
             SignalPayload::ProfilingSessionObservation(observation),
         )
     }
@@ -1204,24 +1165,17 @@ impl SignalEnvelope {
         Self::new(
             source,
             host,
-            SignalKind::ProfilingWarningObservation,
             SignalPayload::ProfilingWarningObservation(observation),
         )
     }
 
-    fn new(
-        source: impl Into<String>,
-        host: Option<String>,
-        kind: SignalKind,
-        payload: SignalPayload,
-    ) -> Self {
+    fn new(source: impl Into<String>, host: Option<String>, payload: SignalPayload) -> Self {
         let mut source = source.into();
         let mut host = host;
         sanitize_envelope_string(&mut source);
         sanitize_optional_envelope_string(&mut host);
         Self {
             schema_version: SIGNAL_SCHEMA_VERSION,
-            kind,
             source,
             host,
             payload,
@@ -1229,7 +1183,7 @@ impl SignalEnvelope {
     }
 
     pub fn signal_kind(&self) -> SignalKind {
-        self.kind
+        self.payload.signal_kind()
     }
 }
 
@@ -1245,7 +1199,7 @@ fn sanitize_optional_envelope_string(value: &mut Option<String>) {
 
 impl Signal for SignalEnvelope {
     fn kind(&self) -> &'static str {
-        match self.kind {
+        match self.signal_kind() {
             SignalKind::Exec => "exec",
             SignalKind::ProcessExit => "process_exit",
             SignalKind::ProcessLifecycleDuration => "process_lifecycle_duration",
