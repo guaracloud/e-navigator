@@ -1,16 +1,20 @@
 use e_navigator_core::{
-    ConfigError, CoreError, CoreResult, ModuleMetadata, RuntimeConfig, Signal, SourceFailurePolicy,
+    ConfigError, CoreError, CoreResult, ModuleMetadata, RuntimeConfig, Signal, Source,
+    SourceFailurePolicy,
 };
 use e_navigator_signals::SignalEnvelope;
-use std::{collections::VecDeque, fmt};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    fmt,
+};
 use tokio::{
     sync::mpsc,
-    task::JoinHandle,
+    task::{Id as TaskId, JoinError, JoinSet},
     time::{Duration, timeout},
 };
 use tracing::{debug, warn};
 
-use crate::ModuleRegistry;
+use crate::{ModuleRegistry, SourceHealthRegistry};
 
 const MAX_DERIVED_SIGNALS_PER_GENERATOR: usize = 64;
 
@@ -58,65 +62,40 @@ impl Runner {
 
     async fn run_pipeline(&mut self) -> CoreResult<()> {
         let (tx, mut rx) = mpsc::channel::<SignalEnvelope>(self.config.queue_capacity);
-        let (source_result_tx, mut source_result_rx) =
-            mpsc::channel::<CoreResult<()>>(self.registry.sources().len());
-
-        let mut source_handles = Vec::new();
         let source_health = self.registry.source_health_registry();
+        let mut source_tasks = SourceTaskSet::new(source_health);
 
         for source in self.registry.drain_sources() {
-            let source_tx = tx.clone();
-            let result_tx = source_result_tx.clone();
-            let metadata = source.metadata();
-            let source_name = metadata.name;
-            let source_health = source_health.clone();
-            source_handles.push(tokio::spawn(async move {
-                source_health.record_start(source_name);
-                let result = source
-                    .run(source_tx)
-                    .await
-                    .map_err(|err| with_module_context(metadata, err));
-                source_health.record_result(source_name, result.is_ok());
-                let _ = result_tx.send(result).await;
-            }));
+            source_tasks.spawn(source, tx.clone());
         }
         drop(tx);
-        drop(source_result_tx);
-        let mut source_results_open = true;
         let mut isolated_source_failure = None;
 
         loop {
             tokio::select! {
-                source_result = source_result_rx.recv(), if source_results_open => {
-                    match source_result {
-                        Some(Ok(())) => debug!("source exited cleanly"),
-                        Some(Err(err)) => {
-                            if self.config.source_supervisor.failure_policy
-                                == SourceFailurePolicy::FailFast
-                            {
-                                abort_sources(&source_handles);
-                                return Err(err);
-                            }
-                            warn!(error = %err, "source failed in isolation; healthy sources remain active");
-                            if isolated_source_failure.is_none() {
-                                isolated_source_failure = Some(err);
-                            }
-                        }
-                        None => source_results_open = false,
+                source_result = source_tasks.join_next(), if !source_tasks.is_empty() => {
+                    if let Some(source_result) = source_result
+                        && let Err(err) = record_source_result(
+                            source_result,
+                            self.config.source_supervisor.failure_policy,
+                            &mut isolated_source_failure,
+                        )
+                    {
+                        source_tasks.abort_all();
+                        return Err(err);
                     }
                 }
                 signal = rx.recv() => {
                     match signal {
                         Some(signal) => {
                             if let Err(err) = self.handle_signal(signal).await {
-                                abort_sources(&source_handles);
+                                source_tasks.abort_all();
                                 return Err(err);
                             }
                         }
                         None => {
-                            return finish_source_results(
-                                &mut source_result_rx,
-                                &mut source_results_open,
+                            return finish_source_tasks(
+                                &mut source_tasks,
                                 self.config.source_supervisor.failure_policy,
                                 &mut isolated_source_failure,
                             )
@@ -373,23 +352,88 @@ fn generator_output_limit_error(metadata: ModuleMetadata) -> CoreError {
     }
 }
 
-async fn finish_source_results(
-    source_result_rx: &mut mpsc::Receiver<CoreResult<()>>,
-    source_results_open: &mut bool,
+struct SourceTaskSet {
+    tasks: JoinSet<CoreResult<()>>,
+    metadata: BTreeMap<TaskId, ModuleMetadata>,
+    health: SourceHealthRegistry,
+}
+
+impl SourceTaskSet {
+    fn new(health: SourceHealthRegistry) -> Self {
+        Self {
+            tasks: JoinSet::new(),
+            metadata: BTreeMap::new(),
+            health,
+        }
+    }
+
+    fn spawn(&mut self, source: Box<dyn Source<SignalEnvelope>>, tx: mpsc::Sender<SignalEnvelope>) {
+        let metadata = source.metadata();
+        let task_metadata = metadata.clone();
+        let source_name = metadata.name;
+        let health = self.health.clone();
+        let handle = self.tasks.spawn(async move {
+            health.record_start(source_name);
+            let result = source
+                .run(tx)
+                .await
+                .map_err(|err| with_module_context(task_metadata, err));
+            health.record_result(source_name, result.is_ok());
+            result
+        });
+        self.metadata.insert(handle.id(), metadata);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
+    }
+
+    async fn join_next(&mut self) -> Option<CoreResult<()>> {
+        let joined = self.tasks.join_next_with_id().await?;
+        Some(match joined {
+            Ok((task_id, result)) => {
+                self.metadata.remove(&task_id);
+                result
+            }
+            Err(err) => self.task_failure(err),
+        })
+    }
+
+    fn abort_all(&mut self) {
+        self.tasks.abort_all();
+    }
+
+    fn task_failure(&mut self, err: JoinError) -> CoreResult<()> {
+        let metadata = self.metadata.remove(&err.id());
+        let module = metadata
+            .as_ref()
+            .map_or("source.supervisor", |metadata| metadata.name);
+        if let Some(metadata) = metadata {
+            self.health.record_result(metadata.name, false);
+        }
+        let message = if err.is_panic() {
+            "source task panicked"
+        } else if err.is_cancelled() {
+            "source task was cancelled unexpectedly"
+        } else {
+            "source task failed before returning a result"
+        };
+        Err(CoreError::ModuleFailed {
+            module: module.to_string(),
+            message: message.to_string(),
+        })
+    }
+}
+
+async fn finish_source_tasks(
+    source_tasks: &mut SourceTaskSet,
     failure_policy: SourceFailurePolicy,
     isolated_source_failure: &mut Option<CoreError>,
 ) -> CoreResult<()> {
-    while *source_results_open {
-        match source_result_rx.recv().await {
-            Some(Ok(())) => debug!("source exited cleanly"),
-            Some(Err(err)) if failure_policy == SourceFailurePolicy::FailFast => return Err(err),
-            Some(Err(err)) => {
-                warn!(error = %err, "source failed in isolation while the pipeline drained");
-                if isolated_source_failure.is_none() {
-                    *isolated_source_failure = Some(err);
-                }
-            }
-            None => *source_results_open = false,
+    while let Some(result) = source_tasks.join_next().await {
+        if let Err(err) = record_source_result(result, failure_policy, isolated_source_failure) {
+            source_tasks.abort_all();
+            return Err(err);
         }
     }
 
@@ -399,10 +443,22 @@ async fn finish_source_results(
     }
 }
 
-fn abort_sources(source_handles: &[JoinHandle<()>]) {
-    for handle in source_handles {
-        handle.abort();
+fn record_source_result(
+    result: CoreResult<()>,
+    failure_policy: SourceFailurePolicy,
+    isolated_source_failure: &mut Option<CoreError>,
+) -> CoreResult<()> {
+    match result {
+        Ok(()) => debug!("source exited cleanly"),
+        Err(err) if failure_policy == SourceFailurePolicy::FailFast => return Err(err),
+        Err(err) => {
+            warn!(error = %err, "source failed in isolation");
+            if isolated_source_failure.is_none() {
+                *isolated_source_failure = Some(err);
+            }
+        }
     }
+    Ok(())
 }
 
 fn with_module_context(metadata: ModuleMetadata, err: CoreError) -> CoreError {
@@ -798,6 +854,20 @@ mod tests {
         }
     }
 
+    struct PanickingSource;
+
+    #[async_trait]
+    impl Source<SignalEnvelope> for PanickingSource {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("source.panicking", ModuleKind::Source)
+        }
+
+        async fn run(self: Box<Self>, tx: mpsc::Sender<SignalEnvelope>) -> CoreResult<()> {
+            drop(tx);
+            std::panic::resume_unwind(Box::new("source task panic"))
+        }
+    }
+
     struct SignalThenFailingSource;
 
     #[async_trait]
@@ -1167,6 +1237,33 @@ mod tests {
 
             assert!(err.to_string().contains("source.failing"));
         }
+    }
+
+    #[tokio::test]
+    async fn runner_reports_panicking_source_as_failure() {
+        let registry = ModuleRegistry::new()
+            .with_source(Box::new(PanickingSource))
+            .with_sink(Box::new(MemorySink {
+                seen: Arc::new(Mutex::new(Vec::new())),
+            }));
+        let source_health = registry.source_health_registry();
+        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
+
+        let err = timeout(Duration::from_secs(1), runner.run())
+            .await
+            .expect("runner returns")
+            .expect_err("source task panic propagates");
+
+        assert!(err.to_string().contains("source.panicking"));
+        let snapshot = source_health
+            .snapshots()
+            .into_iter()
+            .find(|snapshot| snapshot.source == "source.panicking")
+            .expect("panicking source health");
+        assert!(!snapshot.running);
+        assert_eq!(snapshot.starts, 1);
+        assert_eq!(snapshot.failures, 1);
+        assert_eq!(snapshot.clean_exits, 0);
     }
 
     #[tokio::test]
