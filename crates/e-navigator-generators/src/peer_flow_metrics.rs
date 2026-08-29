@@ -11,6 +11,8 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+use crate::send_outputs;
+
 const DEFAULT_MAX_PEER_FLOW_KEYS: usize = 4096;
 const DEFAULT_PEER_FLOW_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
@@ -176,12 +178,7 @@ impl Generator<SignalEnvelope> for PeerFlowMetricsGenerator {
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
-        for output in self.outputs_for_signal(signal)? {
-            tx.send(output)
-                .await
-                .map_err(|_| CoreError::PipelineClosed)?;
-        }
-        Ok(())
+        send_outputs(self.outputs_for_signal(signal)?, tx).await
     }
 }
 

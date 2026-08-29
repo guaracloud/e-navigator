@@ -16,7 +16,7 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-use crate::otel_coexistence::OtelSdkDetector;
+use crate::{otel_coexistence::OtelSdkDetector, send_outputs};
 
 const DEFAULT_MAX_SEEN_REQUESTS: usize = 8192;
 const DEFAULT_MAX_WARNINGS: usize = 1024;
@@ -105,15 +105,7 @@ impl Generator<SignalEnvelope> for RequestCorrelationGenerator {
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
-        let outputs = self.outputs_for_signal(signal)?;
-
-        for output in outputs {
-            tx.send(output)
-                .await
-                .map_err(|_| CoreError::PipelineClosed)?;
-        }
-
-        Ok(())
+        send_outputs(self.outputs_for_signal(signal)?, tx).await
     }
 }
 

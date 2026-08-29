@@ -11,6 +11,8 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+use crate::send_outputs;
+
 const DEFAULT_MAX_EDGES: usize = 4096;
 
 #[derive(Debug)]
@@ -59,11 +61,7 @@ impl Generator<SignalEnvelope> for DependencyGraphGenerator {
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
-        for edge in self.outputs_for_signal(signal)? {
-            tx.send(edge).await.map_err(|_| CoreError::PipelineClosed)?;
-        }
-
-        Ok(())
+        send_outputs(self.outputs_for_signal(signal)?, tx).await
     }
 }
 

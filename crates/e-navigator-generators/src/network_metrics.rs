@@ -18,7 +18,7 @@ use std::{
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::bounded_fingerprints::BoundedFingerprints;
+use crate::{bounded_fingerprints::BoundedFingerprints, send_outputs};
 
 const DEFAULT_MAX_METRIC_KEYS: usize = 4096;
 const DEFAULT_MAX_ACTIVE_CONNECTIONS: usize = 8192;
@@ -109,13 +109,7 @@ impl Generator<SignalEnvelope> for NetworkMetricsGenerator {
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
-        for metric in self.outputs_for_signal(signal)? {
-            tx.send(metric)
-                .await
-                .map_err(|_| CoreError::PipelineClosed)?;
-        }
-
-        Ok(())
+        send_outputs(self.outputs_for_signal(signal)?, tx).await
     }
 }
 

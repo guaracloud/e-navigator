@@ -2,6 +2,10 @@
 #![warn(missing_debug_implementations, rust_2018_idioms, unreachable_pub)]
 //! Bounded generators that derive metrics, traces, topology, profiles, and findings.
 
+use e_navigator_core::{CoreError, CoreResult};
+use e_navigator_signals::SignalEnvelope;
+use tokio::sync::mpsc;
+
 mod bounded_fingerprints;
 pub mod dependency_graph;
 pub mod dns_metrics;
@@ -23,3 +27,15 @@ pub use request_correlation::RequestCorrelationGenerator;
 pub use resource_metrics::ResourceMetricsGenerator;
 pub use runtime_security::RuntimeSecurityGenerator;
 pub use trace_correlation::TraceCorrelationGenerator;
+
+async fn send_outputs(
+    outputs: Vec<SignalEnvelope>,
+    tx: &mpsc::Sender<SignalEnvelope>,
+) -> CoreResult<()> {
+    for output in outputs {
+        tx.send(output)
+            .await
+            .map_err(|_| CoreError::PipelineClosed)?;
+    }
+    Ok(())
+}

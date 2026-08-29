@@ -5,6 +5,7 @@ use e_navigator_signals::{
     NetworkFlowSummaryEvent, NetworkProtocol, SignalEnvelope, SignalPayload,
 };
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 #[test]
 fn enriched_flow_emits_bounded_peer_byte_metric() {
@@ -57,6 +58,35 @@ fn enriched_flow_emits_bounded_peer_byte_metric() {
     assert_eq!(metric.destination.namespace, "payments");
     assert_eq!(metric.destination.owner_name, "payments/api");
     assert_eq!(metric.destination.owner_type, "service");
+}
+
+#[tokio::test]
+async fn async_observe_matches_immediate_output() {
+    let signal = peer_flow_signal(
+        "shop",
+        "shop/checkout",
+        "payments",
+        "payments/api",
+        512,
+        100,
+        200,
+    );
+    let immediate = PeerFlowMetricsGenerator::with_limit(8)
+        .observe_immediate(&signal)
+        .expect("peer-flow generator is synchronous")
+        .expect("peer-flow generation succeeds");
+
+    let generator = PeerFlowMetricsGenerator::with_limit(8);
+    let (tx, mut rx) = mpsc::channel(1);
+    generator
+        .observe(&signal, &tx)
+        .await
+        .expect("async peer-flow generation succeeds");
+    drop(tx);
+
+    let async_outputs: Vec<_> = rx.recv().await.into_iter().collect();
+    assert_eq!(async_outputs, immediate);
+    assert!(rx.recv().await.is_none());
 }
 
 #[test]
