@@ -17,230 +17,171 @@ pub(crate) struct SourceTelemetry {
     last_summary: Mutex<SourceTelemetrySnapshot>,
 }
 
-#[derive(Debug)]
-struct SourceCounters {
-    event_transport: &'static str,
-    initialized: AtomicU64,
-    decoded_samples: AtomicU64,
-    filtered_samples: AtomicU64,
-    invalid_samples: AtomicU64,
-    sent_signals: AtomicU64,
-    send_failures: AtomicU64,
-    lost_transport_events: AtomicU64,
-    lost_perf_events: AtomicU64,
-    ring_buffer_reservation_failures: AtomicU64,
-    network_mmsg_accounted_batches: AtomicU64,
-    network_mmsg_unsupported_batches: AtomicU64,
-    diagnostic_matches: AtomicU64,
-    diagnostic_filtered: AtomicU64,
-    diagnostic_exhausted: AtomicU64,
-    optional_targets_discovered: AtomicU64,
-    optional_targets_ready: AtomicU64,
-    optional_targets_unsupported: AtomicU64,
-    optional_probe_attachments: AtomicU64,
-    optional_attachment_failures: AtomicU64,
-    optional_rescans: AtomicU64,
-    optional_capacity_rejections: AtomicU64,
-    go_tls_entries: AtomicU64,
-    go_tls_exits: AtomicU64,
-    go_tls_layout_misses: AtomicU64,
-    go_tls_pending_misses: AtomicU64,
-    go_tls_state_update_failures: AtomicU64,
-    go_tls_fd_resolutions: AtomicU64,
-    go_tls_fd_resolution_failures: AtomicU64,
-    go_tls_output_attempts: AtomicU64,
-    go_tls_state_replacements: AtomicU64,
-    profile_events: AtomicU64,
-    profile_capture_failures: AtomicU64,
-    profile_state_replacements: AtomicU64,
-    profile_pending_misses: AtomicU64,
-    profile_below_min_duration: AtomicU64,
-    profile_rate_limited: AtomicU64,
-    profile_output_attempts: AtomicU64,
-    protocol_websocket_upgrades: AtomicU64,
-    protocol_websocket_frames: AtomicU64,
-    protocol_websocket_transition_rejections: AtomicU64,
-    protocol_grpc_web_requests: AtomicU64,
-    protocol_redis_ambiguous_state_transitions: AtomicU64,
-    protocol_discovered_connections: AtomicU64,
-    protocol_discovery_unclassified_events: AtomicU64,
-    protocol_discovery_candidate_evictions: AtomicU64,
-    protocol_postgres_startup_auth_messages: AtomicU64,
-    protocol_postgres_encryption_negotiation_accepted: AtomicU64,
-    protocol_postgres_encryption_negotiation_rejected: AtomicU64,
-    protocol_postgres_negotiation_failures: AtomicU64,
-    protocol_postgres_encrypted_transport_events: AtomicU64,
-    protocol_postgres_copy_ignored_controls: AtomicU64,
-    protocol_mysql_local_infile_packets: AtomicU64,
-    protocol_mysql_local_infile_bytes: AtomicU64,
-    protocol_mysql_logical_request_continuations: AtomicU64,
-    protocol_mysql_logical_response_continuations: AtomicU64,
-    protocol_mysql_logical_sequence_failures: AtomicU64,
-    protocol_mysql_server_greetings: AtomicU64,
-    protocol_mysql_client_handshakes: AtomicU64,
-    protocol_mysql_auth_packets: AtomicU64,
-    protocol_mysql_compression_zlib_connections: AtomicU64,
-    protocol_mysql_compression_zstd_rejections: AtomicU64,
-    protocol_mysql_compression_unverified_rejections: AtomicU64,
-    protocol_mysql_compressed_packets: AtomicU64,
-    protocol_mysql_compression_failures: AtomicU64,
-    protocol_mysql_compression_opaque_events: AtomicU64,
-    protocol_mysql_handshake_failures: AtomicU64,
-    protocol_mongodb_fire_and_forget_requests: AtomicU64,
-    protocol_mongodb_response_continuations: AtomicU64,
-    protocol_mongodb_lifecycle_failures: AtomicU64,
-}
-
-impl SourceCounters {
-    fn new(event_transport: &'static str) -> Self {
-        Self {
-            event_transport,
-            initialized: AtomicU64::new(0),
-            decoded_samples: AtomicU64::new(0),
-            filtered_samples: AtomicU64::new(0),
-            invalid_samples: AtomicU64::new(0),
-            sent_signals: AtomicU64::new(0),
-            send_failures: AtomicU64::new(0),
-            lost_transport_events: AtomicU64::new(0),
-            lost_perf_events: AtomicU64::new(0),
-            ring_buffer_reservation_failures: AtomicU64::new(0),
-            network_mmsg_accounted_batches: AtomicU64::new(0),
-            network_mmsg_unsupported_batches: AtomicU64::new(0),
-            diagnostic_matches: AtomicU64::new(0),
-            diagnostic_filtered: AtomicU64::new(0),
-            diagnostic_exhausted: AtomicU64::new(0),
-            optional_targets_discovered: AtomicU64::new(0),
-            optional_targets_ready: AtomicU64::new(0),
-            optional_targets_unsupported: AtomicU64::new(0),
-            optional_probe_attachments: AtomicU64::new(0),
-            optional_attachment_failures: AtomicU64::new(0),
-            optional_rescans: AtomicU64::new(0),
-            optional_capacity_rejections: AtomicU64::new(0),
-            go_tls_entries: AtomicU64::new(0),
-            go_tls_exits: AtomicU64::new(0),
-            go_tls_layout_misses: AtomicU64::new(0),
-            go_tls_pending_misses: AtomicU64::new(0),
-            go_tls_state_update_failures: AtomicU64::new(0),
-            go_tls_fd_resolutions: AtomicU64::new(0),
-            go_tls_fd_resolution_failures: AtomicU64::new(0),
-            go_tls_output_attempts: AtomicU64::new(0),
-            go_tls_state_replacements: AtomicU64::new(0),
-            profile_events: AtomicU64::new(0),
-            profile_capture_failures: AtomicU64::new(0),
-            profile_state_replacements: AtomicU64::new(0),
-            profile_pending_misses: AtomicU64::new(0),
-            profile_below_min_duration: AtomicU64::new(0),
-            profile_rate_limited: AtomicU64::new(0),
-            profile_output_attempts: AtomicU64::new(0),
-            protocol_websocket_upgrades: AtomicU64::new(0),
-            protocol_websocket_frames: AtomicU64::new(0),
-            protocol_websocket_transition_rejections: AtomicU64::new(0),
-            protocol_grpc_web_requests: AtomicU64::new(0),
-            protocol_redis_ambiguous_state_transitions: AtomicU64::new(0),
-            protocol_discovered_connections: AtomicU64::new(0),
-            protocol_discovery_unclassified_events: AtomicU64::new(0),
-            protocol_discovery_candidate_evictions: AtomicU64::new(0),
-            protocol_postgres_startup_auth_messages: AtomicU64::new(0),
-            protocol_postgres_encryption_negotiation_accepted: AtomicU64::new(0),
-            protocol_postgres_encryption_negotiation_rejected: AtomicU64::new(0),
-            protocol_postgres_negotiation_failures: AtomicU64::new(0),
-            protocol_postgres_encrypted_transport_events: AtomicU64::new(0),
-            protocol_postgres_copy_ignored_controls: AtomicU64::new(0),
-            protocol_mysql_local_infile_packets: AtomicU64::new(0),
-            protocol_mysql_local_infile_bytes: AtomicU64::new(0),
-            protocol_mysql_logical_request_continuations: AtomicU64::new(0),
-            protocol_mysql_logical_response_continuations: AtomicU64::new(0),
-            protocol_mysql_logical_sequence_failures: AtomicU64::new(0),
-            protocol_mysql_server_greetings: AtomicU64::new(0),
-            protocol_mysql_client_handshakes: AtomicU64::new(0),
-            protocol_mysql_auth_packets: AtomicU64::new(0),
-            protocol_mysql_compression_zlib_connections: AtomicU64::new(0),
-            protocol_mysql_compression_zstd_rejections: AtomicU64::new(0),
-            protocol_mysql_compression_unverified_rejections: AtomicU64::new(0),
-            protocol_mysql_compressed_packets: AtomicU64::new(0),
-            protocol_mysql_compression_failures: AtomicU64::new(0),
-            protocol_mysql_compression_opaque_events: AtomicU64::new(0),
-            protocol_mysql_handshake_failures: AtomicU64::new(0),
-            protocol_mongodb_fire_and_forget_requests: AtomicU64::new(0),
-            protocol_mongodb_response_continuations: AtomicU64::new(0),
-            protocol_mongodb_lifecycle_failures: AtomicU64::new(0),
+macro_rules! define_source_telemetry_counters {
+    ($($counter:ident),+ $(,)?) => {
+        #[derive(Debug)]
+        struct SourceCounters {
+            event_transport: &'static str,
+            initialized: AtomicU64,
+            $($counter: AtomicU64,)+
         }
-    }
+
+        impl SourceCounters {
+            fn new(event_transport: &'static str) -> Self {
+                Self {
+                    event_transport,
+                    initialized: AtomicU64::new(0),
+                    $($counter: AtomicU64::new(0),)+
+                }
+            }
+        }
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub struct SourceTelemetrySnapshot {
+            pub source: &'static str,
+            pub event_transport: &'static str,
+            pub initialized: bool,
+            $(pub $counter: u64,)+
+        }
+
+        impl SourceTelemetrySnapshot {
+            const fn empty(source: &'static str) -> Self {
+                Self {
+                    source,
+                    event_transport: "unknown",
+                    initialized: false,
+                    $($counter: 0,)+
+                }
+            }
+
+            fn delta_since(self, previous: Self) -> Self {
+                Self {
+                    source: self.source,
+                    event_transport: self.event_transport,
+                    initialized: self.initialized,
+                    $($counter: self.$counter.saturating_sub(previous.$counter),)+
+                }
+            }
+
+            fn is_empty(&self) -> bool {
+                true $(&& self.$counter == 0)+
+            }
+
+            /// Returns the fixed native metric name and cumulative value for every counter.
+            pub fn native_metric_values(
+                &self,
+            ) -> impl Iterator<Item = (&'static str, u64)> + '_ {
+                std::iter::once((
+                    "e_navigator_ebpf_source_initialized",
+                    u64::from(self.initialized),
+                ))
+                .chain([
+                    $((
+                        concat!(
+                            "e_navigator_ebpf_source_",
+                            stringify!($counter),
+                            "_total"
+                        ),
+                        self.$counter,
+                    ),)+
+                ])
+            }
+
+            fn log_summary(&self) {
+                info!(
+                    target: "e_navigator_sources_ebpf_aya::source_telemetry",
+                    source = self.source,
+                    event_transport = self.event_transport,
+                    initialized = self.initialized,
+                    $($counter = self.$counter,)+
+                    "source telemetry summary"
+                );
+            }
+        }
+
+        fn snapshot_counters(
+            source: &'static str,
+            counters: &SourceCounters,
+        ) -> SourceTelemetrySnapshot {
+            SourceTelemetrySnapshot {
+                source,
+                event_transport: counters.event_transport,
+                initialized: counters.initialized.load(Ordering::Relaxed) != 0,
+                $($counter: counters.$counter.load(Ordering::Relaxed),)+
+            }
+        }
+    };
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceTelemetrySnapshot {
-    pub source: &'static str,
-    pub event_transport: &'static str,
-    pub initialized: bool,
-    pub decoded_samples: u64,
-    pub filtered_samples: u64,
-    pub invalid_samples: u64,
-    pub sent_signals: u64,
-    pub send_failures: u64,
-    pub lost_transport_events: u64,
-    pub lost_perf_events: u64,
-    pub ring_buffer_reservation_failures: u64,
-    pub network_mmsg_accounted_batches: u64,
-    pub network_mmsg_unsupported_batches: u64,
-    pub diagnostic_matches: u64,
-    pub diagnostic_filtered: u64,
-    pub diagnostic_exhausted: u64,
-    pub optional_targets_discovered: u64,
-    pub optional_targets_ready: u64,
-    pub optional_targets_unsupported: u64,
-    pub optional_probe_attachments: u64,
-    pub optional_attachment_failures: u64,
-    pub optional_rescans: u64,
-    pub optional_capacity_rejections: u64,
-    pub go_tls_entries: u64,
-    pub go_tls_exits: u64,
-    pub go_tls_layout_misses: u64,
-    pub go_tls_pending_misses: u64,
-    pub go_tls_state_update_failures: u64,
-    pub go_tls_fd_resolutions: u64,
-    pub go_tls_fd_resolution_failures: u64,
-    pub go_tls_output_attempts: u64,
-    pub go_tls_state_replacements: u64,
-    pub profile_events: u64,
-    pub profile_capture_failures: u64,
-    pub profile_state_replacements: u64,
-    pub profile_pending_misses: u64,
-    pub profile_below_min_duration: u64,
-    pub profile_rate_limited: u64,
-    pub profile_output_attempts: u64,
-    pub protocol_websocket_upgrades: u64,
-    pub protocol_websocket_frames: u64,
-    pub protocol_websocket_transition_rejections: u64,
-    pub protocol_grpc_web_requests: u64,
-    pub protocol_redis_ambiguous_state_transitions: u64,
-    pub protocol_discovered_connections: u64,
-    pub protocol_discovery_unclassified_events: u64,
-    pub protocol_discovery_candidate_evictions: u64,
-    pub protocol_postgres_startup_auth_messages: u64,
-    pub protocol_postgres_encryption_negotiation_accepted: u64,
-    pub protocol_postgres_encryption_negotiation_rejected: u64,
-    pub protocol_postgres_negotiation_failures: u64,
-    pub protocol_postgres_encrypted_transport_events: u64,
-    pub protocol_postgres_copy_ignored_controls: u64,
-    pub protocol_mysql_local_infile_packets: u64,
-    pub protocol_mysql_local_infile_bytes: u64,
-    pub protocol_mysql_logical_request_continuations: u64,
-    pub protocol_mysql_logical_response_continuations: u64,
-    pub protocol_mysql_logical_sequence_failures: u64,
-    pub protocol_mysql_server_greetings: u64,
-    pub protocol_mysql_client_handshakes: u64,
-    pub protocol_mysql_auth_packets: u64,
-    pub protocol_mysql_compression_zlib_connections: u64,
-    pub protocol_mysql_compression_zstd_rejections: u64,
-    pub protocol_mysql_compression_unverified_rejections: u64,
-    pub protocol_mysql_compressed_packets: u64,
-    pub protocol_mysql_compression_failures: u64,
-    pub protocol_mysql_compression_opaque_events: u64,
-    pub protocol_mysql_handshake_failures: u64,
-    pub protocol_mongodb_fire_and_forget_requests: u64,
-    pub protocol_mongodb_response_continuations: u64,
-    pub protocol_mongodb_lifecycle_failures: u64,
+define_source_telemetry_counters! {
+    decoded_samples,
+    filtered_samples,
+    invalid_samples,
+    sent_signals,
+    send_failures,
+    lost_transport_events,
+    lost_perf_events,
+    ring_buffer_reservation_failures,
+    network_mmsg_accounted_batches,
+    network_mmsg_unsupported_batches,
+    diagnostic_matches,
+    diagnostic_filtered,
+    diagnostic_exhausted,
+    optional_targets_discovered,
+    optional_targets_ready,
+    optional_targets_unsupported,
+    optional_probe_attachments,
+    optional_attachment_failures,
+    optional_rescans,
+    optional_capacity_rejections,
+    go_tls_entries,
+    go_tls_exits,
+    go_tls_layout_misses,
+    go_tls_pending_misses,
+    go_tls_state_update_failures,
+    go_tls_fd_resolutions,
+    go_tls_fd_resolution_failures,
+    go_tls_output_attempts,
+    go_tls_state_replacements,
+    profile_events,
+    profile_capture_failures,
+    profile_state_replacements,
+    profile_pending_misses,
+    profile_below_min_duration,
+    profile_rate_limited,
+    profile_output_attempts,
+    protocol_websocket_upgrades,
+    protocol_websocket_frames,
+    protocol_websocket_transition_rejections,
+    protocol_grpc_web_requests,
+    protocol_redis_ambiguous_state_transitions,
+    protocol_discovered_connections,
+    protocol_discovery_unclassified_events,
+    protocol_discovery_candidate_evictions,
+    protocol_postgres_startup_auth_messages,
+    protocol_postgres_encryption_negotiation_accepted,
+    protocol_postgres_encryption_negotiation_rejected,
+    protocol_postgres_negotiation_failures,
+    protocol_postgres_encrypted_transport_events,
+    protocol_postgres_copy_ignored_controls,
+    protocol_mysql_local_infile_packets,
+    protocol_mysql_local_infile_bytes,
+    protocol_mysql_logical_request_continuations,
+    protocol_mysql_logical_response_continuations,
+    protocol_mysql_logical_sequence_failures,
+    protocol_mysql_server_greetings,
+    protocol_mysql_client_handshakes,
+    protocol_mysql_auth_packets,
+    protocol_mysql_compression_zlib_connections,
+    protocol_mysql_compression_zstd_rejections,
+    protocol_mysql_compression_unverified_rejections,
+    protocol_mysql_compressed_packets,
+    protocol_mysql_compression_failures,
+    protocol_mysql_compression_opaque_events,
+    protocol_mysql_handshake_failures,
+    protocol_mongodb_fire_and_forget_requests,
+    protocol_mongodb_response_continuations,
+    protocol_mongodb_lifecycle_failures,
 }
 
 static SOURCE_COUNTERS: OnceLock<Mutex<BTreeMap<&'static str, Arc<SourceCounters>>>> =
@@ -575,81 +516,7 @@ impl SourceTelemetry {
             return;
         }
 
-        info!(
-            target: "e_navigator_sources_ebpf_aya::source_telemetry",
-            source = self.source,
-            event_transport = snapshot.event_transport,
-            initialized = snapshot.initialized,
-            decoded_samples = snapshot.decoded_samples,
-            filtered_samples = snapshot.filtered_samples,
-            invalid_samples = snapshot.invalid_samples,
-            sent_signals = snapshot.sent_signals,
-            send_failures = snapshot.send_failures,
-            lost_transport_events = snapshot.lost_transport_events,
-            lost_perf_events = snapshot.lost_perf_events,
-            ring_buffer_reservation_failures = snapshot.ring_buffer_reservation_failures,
-            network_mmsg_accounted_batches = snapshot.network_mmsg_accounted_batches,
-            network_mmsg_unsupported_batches = snapshot.network_mmsg_unsupported_batches,
-            diagnostic_matches = snapshot.diagnostic_matches,
-            diagnostic_filtered = snapshot.diagnostic_filtered,
-            diagnostic_exhausted = snapshot.diagnostic_exhausted,
-            optional_targets_discovered = snapshot.optional_targets_discovered,
-            optional_targets_ready = snapshot.optional_targets_ready,
-            optional_targets_unsupported = snapshot.optional_targets_unsupported,
-            optional_probe_attachments = snapshot.optional_probe_attachments,
-            optional_attachment_failures = snapshot.optional_attachment_failures,
-            optional_rescans = snapshot.optional_rescans,
-            optional_capacity_rejections = snapshot.optional_capacity_rejections,
-            go_tls_entries = snapshot.go_tls_entries,
-            go_tls_exits = snapshot.go_tls_exits,
-            go_tls_layout_misses = snapshot.go_tls_layout_misses,
-            go_tls_pending_misses = snapshot.go_tls_pending_misses,
-            go_tls_state_update_failures = snapshot.go_tls_state_update_failures,
-            go_tls_fd_resolutions = snapshot.go_tls_fd_resolutions,
-            go_tls_fd_resolution_failures = snapshot.go_tls_fd_resolution_failures,
-            go_tls_output_attempts = snapshot.go_tls_output_attempts,
-            go_tls_state_replacements = snapshot.go_tls_state_replacements,
-            profile_events = snapshot.profile_events,
-            profile_capture_failures = snapshot.profile_capture_failures,
-            profile_state_replacements = snapshot.profile_state_replacements,
-            profile_pending_misses = snapshot.profile_pending_misses,
-            profile_below_min_duration = snapshot.profile_below_min_duration,
-            profile_rate_limited = snapshot.profile_rate_limited,
-            profile_output_attempts = snapshot.profile_output_attempts,
-            protocol_websocket_upgrades = snapshot.protocol_websocket_upgrades,
-            protocol_websocket_frames = snapshot.protocol_websocket_frames,
-            protocol_websocket_transition_rejections = snapshot.protocol_websocket_transition_rejections,
-            protocol_grpc_web_requests = snapshot.protocol_grpc_web_requests,
-            protocol_redis_ambiguous_state_transitions = snapshot.protocol_redis_ambiguous_state_transitions,
-            protocol_discovered_connections = snapshot.protocol_discovered_connections,
-            protocol_discovery_unclassified_events = snapshot.protocol_discovery_unclassified_events,
-            protocol_discovery_candidate_evictions = snapshot.protocol_discovery_candidate_evictions,
-            protocol_postgres_startup_auth_messages = snapshot.protocol_postgres_startup_auth_messages,
-            protocol_postgres_encryption_negotiation_accepted = snapshot.protocol_postgres_encryption_negotiation_accepted,
-            protocol_postgres_encryption_negotiation_rejected = snapshot.protocol_postgres_encryption_negotiation_rejected,
-            protocol_postgres_negotiation_failures = snapshot.protocol_postgres_negotiation_failures,
-            protocol_postgres_encrypted_transport_events = snapshot.protocol_postgres_encrypted_transport_events,
-            protocol_postgres_copy_ignored_controls = snapshot.protocol_postgres_copy_ignored_controls,
-            protocol_mysql_local_infile_packets = snapshot.protocol_mysql_local_infile_packets,
-            protocol_mysql_local_infile_bytes = snapshot.protocol_mysql_local_infile_bytes,
-            protocol_mysql_logical_request_continuations = snapshot.protocol_mysql_logical_request_continuations,
-            protocol_mysql_logical_response_continuations = snapshot.protocol_mysql_logical_response_continuations,
-            protocol_mysql_logical_sequence_failures = snapshot.protocol_mysql_logical_sequence_failures,
-            protocol_mysql_server_greetings = snapshot.protocol_mysql_server_greetings,
-            protocol_mysql_client_handshakes = snapshot.protocol_mysql_client_handshakes,
-            protocol_mysql_auth_packets = snapshot.protocol_mysql_auth_packets,
-            protocol_mysql_compression_zlib_connections = snapshot.protocol_mysql_compression_zlib_connections,
-            protocol_mysql_compression_zstd_rejections = snapshot.protocol_mysql_compression_zstd_rejections,
-            protocol_mysql_compression_unverified_rejections = snapshot.protocol_mysql_compression_unverified_rejections,
-            protocol_mysql_compressed_packets = snapshot.protocol_mysql_compressed_packets,
-            protocol_mysql_compression_failures = snapshot.protocol_mysql_compression_failures,
-            protocol_mysql_compression_opaque_events = snapshot.protocol_mysql_compression_opaque_events,
-            protocol_mysql_handshake_failures = snapshot.protocol_mysql_handshake_failures,
-            protocol_mongodb_fire_and_forget_requests = snapshot.protocol_mongodb_fire_and_forget_requests,
-            protocol_mongodb_response_continuations = snapshot.protocol_mongodb_response_continuations,
-            protocol_mongodb_lifecycle_failures = snapshot.protocol_mongodb_lifecycle_failures,
-            "source telemetry summary"
-        );
+        snapshot.log_summary();
     }
 
     fn try_claim_summary(&self, elapsed_nanos: u64) -> bool {
@@ -706,505 +573,6 @@ pub fn source_telemetry_snapshots() -> Vec<SourceTelemetrySnapshot> {
             },
         )
     })
-}
-
-fn snapshot_counters(source: &'static str, counters: &SourceCounters) -> SourceTelemetrySnapshot {
-    SourceTelemetrySnapshot {
-        source,
-        event_transport: counters.event_transport,
-        initialized: counters.initialized.load(Ordering::Relaxed) != 0,
-        decoded_samples: counters.decoded_samples.load(Ordering::Relaxed),
-        filtered_samples: counters.filtered_samples.load(Ordering::Relaxed),
-        invalid_samples: counters.invalid_samples.load(Ordering::Relaxed),
-        sent_signals: counters.sent_signals.load(Ordering::Relaxed),
-        send_failures: counters.send_failures.load(Ordering::Relaxed),
-        lost_transport_events: counters.lost_transport_events.load(Ordering::Relaxed),
-        lost_perf_events: counters.lost_perf_events.load(Ordering::Relaxed),
-        ring_buffer_reservation_failures: counters
-            .ring_buffer_reservation_failures
-            .load(Ordering::Relaxed),
-        network_mmsg_accounted_batches: counters
-            .network_mmsg_accounted_batches
-            .load(Ordering::Relaxed),
-        network_mmsg_unsupported_batches: counters
-            .network_mmsg_unsupported_batches
-            .load(Ordering::Relaxed),
-        diagnostic_matches: counters.diagnostic_matches.load(Ordering::Relaxed),
-        diagnostic_filtered: counters.diagnostic_filtered.load(Ordering::Relaxed),
-        diagnostic_exhausted: counters.diagnostic_exhausted.load(Ordering::Relaxed),
-        optional_targets_discovered: counters.optional_targets_discovered.load(Ordering::Relaxed),
-        optional_targets_ready: counters.optional_targets_ready.load(Ordering::Relaxed),
-        optional_targets_unsupported: counters
-            .optional_targets_unsupported
-            .load(Ordering::Relaxed),
-        optional_probe_attachments: counters.optional_probe_attachments.load(Ordering::Relaxed),
-        optional_attachment_failures: counters
-            .optional_attachment_failures
-            .load(Ordering::Relaxed),
-        optional_rescans: counters.optional_rescans.load(Ordering::Relaxed),
-        optional_capacity_rejections: counters
-            .optional_capacity_rejections
-            .load(Ordering::Relaxed),
-        go_tls_entries: counters.go_tls_entries.load(Ordering::Relaxed),
-        go_tls_exits: counters.go_tls_exits.load(Ordering::Relaxed),
-        go_tls_layout_misses: counters.go_tls_layout_misses.load(Ordering::Relaxed),
-        go_tls_pending_misses: counters.go_tls_pending_misses.load(Ordering::Relaxed),
-        go_tls_state_update_failures: counters
-            .go_tls_state_update_failures
-            .load(Ordering::Relaxed),
-        go_tls_fd_resolutions: counters.go_tls_fd_resolutions.load(Ordering::Relaxed),
-        go_tls_fd_resolution_failures: counters
-            .go_tls_fd_resolution_failures
-            .load(Ordering::Relaxed),
-        go_tls_output_attempts: counters.go_tls_output_attempts.load(Ordering::Relaxed),
-        go_tls_state_replacements: counters.go_tls_state_replacements.load(Ordering::Relaxed),
-        profile_events: counters.profile_events.load(Ordering::Relaxed),
-        profile_capture_failures: counters.profile_capture_failures.load(Ordering::Relaxed),
-        profile_state_replacements: counters.profile_state_replacements.load(Ordering::Relaxed),
-        profile_pending_misses: counters.profile_pending_misses.load(Ordering::Relaxed),
-        profile_below_min_duration: counters.profile_below_min_duration.load(Ordering::Relaxed),
-        profile_rate_limited: counters.profile_rate_limited.load(Ordering::Relaxed),
-        profile_output_attempts: counters.profile_output_attempts.load(Ordering::Relaxed),
-        protocol_websocket_upgrades: counters.protocol_websocket_upgrades.load(Ordering::Relaxed),
-        protocol_websocket_frames: counters.protocol_websocket_frames.load(Ordering::Relaxed),
-        protocol_websocket_transition_rejections: counters
-            .protocol_websocket_transition_rejections
-            .load(Ordering::Relaxed),
-        protocol_grpc_web_requests: counters.protocol_grpc_web_requests.load(Ordering::Relaxed),
-        protocol_redis_ambiguous_state_transitions: counters
-            .protocol_redis_ambiguous_state_transitions
-            .load(Ordering::Relaxed),
-        protocol_discovered_connections: counters
-            .protocol_discovered_connections
-            .load(Ordering::Relaxed),
-        protocol_discovery_unclassified_events: counters
-            .protocol_discovery_unclassified_events
-            .load(Ordering::Relaxed),
-        protocol_discovery_candidate_evictions: counters
-            .protocol_discovery_candidate_evictions
-            .load(Ordering::Relaxed),
-        protocol_postgres_startup_auth_messages: counters
-            .protocol_postgres_startup_auth_messages
-            .load(Ordering::Relaxed),
-        protocol_postgres_encryption_negotiation_accepted: counters
-            .protocol_postgres_encryption_negotiation_accepted
-            .load(Ordering::Relaxed),
-        protocol_postgres_encryption_negotiation_rejected: counters
-            .protocol_postgres_encryption_negotiation_rejected
-            .load(Ordering::Relaxed),
-        protocol_postgres_negotiation_failures: counters
-            .protocol_postgres_negotiation_failures
-            .load(Ordering::Relaxed),
-        protocol_postgres_encrypted_transport_events: counters
-            .protocol_postgres_encrypted_transport_events
-            .load(Ordering::Relaxed),
-        protocol_postgres_copy_ignored_controls: counters
-            .protocol_postgres_copy_ignored_controls
-            .load(Ordering::Relaxed),
-        protocol_mysql_local_infile_packets: counters
-            .protocol_mysql_local_infile_packets
-            .load(Ordering::Relaxed),
-        protocol_mysql_local_infile_bytes: counters
-            .protocol_mysql_local_infile_bytes
-            .load(Ordering::Relaxed),
-        protocol_mysql_logical_request_continuations: counters
-            .protocol_mysql_logical_request_continuations
-            .load(Ordering::Relaxed),
-        protocol_mysql_logical_response_continuations: counters
-            .protocol_mysql_logical_response_continuations
-            .load(Ordering::Relaxed),
-        protocol_mysql_logical_sequence_failures: counters
-            .protocol_mysql_logical_sequence_failures
-            .load(Ordering::Relaxed),
-        protocol_mysql_server_greetings: counters
-            .protocol_mysql_server_greetings
-            .load(Ordering::Relaxed),
-        protocol_mysql_client_handshakes: counters
-            .protocol_mysql_client_handshakes
-            .load(Ordering::Relaxed),
-        protocol_mysql_auth_packets: counters.protocol_mysql_auth_packets.load(Ordering::Relaxed),
-        protocol_mysql_compression_zlib_connections: counters
-            .protocol_mysql_compression_zlib_connections
-            .load(Ordering::Relaxed),
-        protocol_mysql_compression_zstd_rejections: counters
-            .protocol_mysql_compression_zstd_rejections
-            .load(Ordering::Relaxed),
-        protocol_mysql_compression_unverified_rejections: counters
-            .protocol_mysql_compression_unverified_rejections
-            .load(Ordering::Relaxed),
-        protocol_mysql_compressed_packets: counters
-            .protocol_mysql_compressed_packets
-            .load(Ordering::Relaxed),
-        protocol_mysql_compression_failures: counters
-            .protocol_mysql_compression_failures
-            .load(Ordering::Relaxed),
-        protocol_mysql_compression_opaque_events: counters
-            .protocol_mysql_compression_opaque_events
-            .load(Ordering::Relaxed),
-        protocol_mysql_handshake_failures: counters
-            .protocol_mysql_handshake_failures
-            .load(Ordering::Relaxed),
-        protocol_mongodb_fire_and_forget_requests: counters
-            .protocol_mongodb_fire_and_forget_requests
-            .load(Ordering::Relaxed),
-        protocol_mongodb_response_continuations: counters
-            .protocol_mongodb_response_continuations
-            .load(Ordering::Relaxed),
-        protocol_mongodb_lifecycle_failures: counters
-            .protocol_mongodb_lifecycle_failures
-            .load(Ordering::Relaxed),
-    }
-}
-
-impl SourceTelemetrySnapshot {
-    const fn empty(source: &'static str) -> Self {
-        Self {
-            source,
-            event_transport: "unknown",
-            initialized: false,
-            decoded_samples: 0,
-            filtered_samples: 0,
-            invalid_samples: 0,
-            sent_signals: 0,
-            send_failures: 0,
-            lost_transport_events: 0,
-            lost_perf_events: 0,
-            ring_buffer_reservation_failures: 0,
-            network_mmsg_accounted_batches: 0,
-            network_mmsg_unsupported_batches: 0,
-            diagnostic_matches: 0,
-            diagnostic_filtered: 0,
-            diagnostic_exhausted: 0,
-            optional_targets_discovered: 0,
-            optional_targets_ready: 0,
-            optional_targets_unsupported: 0,
-            optional_probe_attachments: 0,
-            optional_attachment_failures: 0,
-            optional_rescans: 0,
-            optional_capacity_rejections: 0,
-            go_tls_entries: 0,
-            go_tls_exits: 0,
-            go_tls_layout_misses: 0,
-            go_tls_pending_misses: 0,
-            go_tls_state_update_failures: 0,
-            go_tls_fd_resolutions: 0,
-            go_tls_fd_resolution_failures: 0,
-            go_tls_output_attempts: 0,
-            go_tls_state_replacements: 0,
-            profile_events: 0,
-            profile_capture_failures: 0,
-            profile_state_replacements: 0,
-            profile_pending_misses: 0,
-            profile_below_min_duration: 0,
-            profile_rate_limited: 0,
-            profile_output_attempts: 0,
-            protocol_websocket_upgrades: 0,
-            protocol_websocket_frames: 0,
-            protocol_websocket_transition_rejections: 0,
-            protocol_grpc_web_requests: 0,
-            protocol_redis_ambiguous_state_transitions: 0,
-            protocol_discovered_connections: 0,
-            protocol_discovery_unclassified_events: 0,
-            protocol_discovery_candidate_evictions: 0,
-            protocol_postgres_startup_auth_messages: 0,
-            protocol_postgres_encryption_negotiation_accepted: 0,
-            protocol_postgres_encryption_negotiation_rejected: 0,
-            protocol_postgres_negotiation_failures: 0,
-            protocol_postgres_encrypted_transport_events: 0,
-            protocol_postgres_copy_ignored_controls: 0,
-            protocol_mysql_local_infile_packets: 0,
-            protocol_mysql_local_infile_bytes: 0,
-            protocol_mysql_logical_request_continuations: 0,
-            protocol_mysql_logical_response_continuations: 0,
-            protocol_mysql_logical_sequence_failures: 0,
-            protocol_mysql_server_greetings: 0,
-            protocol_mysql_client_handshakes: 0,
-            protocol_mysql_auth_packets: 0,
-            protocol_mysql_compression_zlib_connections: 0,
-            protocol_mysql_compression_zstd_rejections: 0,
-            protocol_mysql_compression_unverified_rejections: 0,
-            protocol_mysql_compressed_packets: 0,
-            protocol_mysql_compression_failures: 0,
-            protocol_mysql_compression_opaque_events: 0,
-            protocol_mysql_handshake_failures: 0,
-            protocol_mongodb_fire_and_forget_requests: 0,
-            protocol_mongodb_response_continuations: 0,
-            protocol_mongodb_lifecycle_failures: 0,
-        }
-    }
-
-    fn delta_since(self, previous: Self) -> Self {
-        Self {
-            source: self.source,
-            event_transport: self.event_transport,
-            initialized: self.initialized,
-            decoded_samples: self
-                .decoded_samples
-                .saturating_sub(previous.decoded_samples),
-            filtered_samples: self
-                .filtered_samples
-                .saturating_sub(previous.filtered_samples),
-            invalid_samples: self
-                .invalid_samples
-                .saturating_sub(previous.invalid_samples),
-            sent_signals: self.sent_signals.saturating_sub(previous.sent_signals),
-            send_failures: self.send_failures.saturating_sub(previous.send_failures),
-            lost_transport_events: self
-                .lost_transport_events
-                .saturating_sub(previous.lost_transport_events),
-            lost_perf_events: self
-                .lost_perf_events
-                .saturating_sub(previous.lost_perf_events),
-            ring_buffer_reservation_failures: self
-                .ring_buffer_reservation_failures
-                .saturating_sub(previous.ring_buffer_reservation_failures),
-            network_mmsg_accounted_batches: self
-                .network_mmsg_accounted_batches
-                .saturating_sub(previous.network_mmsg_accounted_batches),
-            network_mmsg_unsupported_batches: self
-                .network_mmsg_unsupported_batches
-                .saturating_sub(previous.network_mmsg_unsupported_batches),
-            diagnostic_matches: self
-                .diagnostic_matches
-                .saturating_sub(previous.diagnostic_matches),
-            diagnostic_filtered: self
-                .diagnostic_filtered
-                .saturating_sub(previous.diagnostic_filtered),
-            diagnostic_exhausted: self
-                .diagnostic_exhausted
-                .saturating_sub(previous.diagnostic_exhausted),
-            optional_targets_discovered: self
-                .optional_targets_discovered
-                .saturating_sub(previous.optional_targets_discovered),
-            optional_targets_ready: self
-                .optional_targets_ready
-                .saturating_sub(previous.optional_targets_ready),
-            optional_targets_unsupported: self
-                .optional_targets_unsupported
-                .saturating_sub(previous.optional_targets_unsupported),
-            optional_probe_attachments: self
-                .optional_probe_attachments
-                .saturating_sub(previous.optional_probe_attachments),
-            optional_attachment_failures: self
-                .optional_attachment_failures
-                .saturating_sub(previous.optional_attachment_failures),
-            optional_rescans: self
-                .optional_rescans
-                .saturating_sub(previous.optional_rescans),
-            optional_capacity_rejections: self
-                .optional_capacity_rejections
-                .saturating_sub(previous.optional_capacity_rejections),
-            go_tls_entries: self.go_tls_entries.saturating_sub(previous.go_tls_entries),
-            go_tls_exits: self.go_tls_exits.saturating_sub(previous.go_tls_exits),
-            go_tls_layout_misses: self
-                .go_tls_layout_misses
-                .saturating_sub(previous.go_tls_layout_misses),
-            go_tls_pending_misses: self
-                .go_tls_pending_misses
-                .saturating_sub(previous.go_tls_pending_misses),
-            go_tls_state_update_failures: self
-                .go_tls_state_update_failures
-                .saturating_sub(previous.go_tls_state_update_failures),
-            go_tls_fd_resolutions: self
-                .go_tls_fd_resolutions
-                .saturating_sub(previous.go_tls_fd_resolutions),
-            go_tls_fd_resolution_failures: self
-                .go_tls_fd_resolution_failures
-                .saturating_sub(previous.go_tls_fd_resolution_failures),
-            go_tls_output_attempts: self
-                .go_tls_output_attempts
-                .saturating_sub(previous.go_tls_output_attempts),
-            go_tls_state_replacements: self
-                .go_tls_state_replacements
-                .saturating_sub(previous.go_tls_state_replacements),
-            profile_events: self.profile_events.saturating_sub(previous.profile_events),
-            profile_capture_failures: self
-                .profile_capture_failures
-                .saturating_sub(previous.profile_capture_failures),
-            profile_state_replacements: self
-                .profile_state_replacements
-                .saturating_sub(previous.profile_state_replacements),
-            profile_pending_misses: self
-                .profile_pending_misses
-                .saturating_sub(previous.profile_pending_misses),
-            profile_below_min_duration: self
-                .profile_below_min_duration
-                .saturating_sub(previous.profile_below_min_duration),
-            profile_rate_limited: self
-                .profile_rate_limited
-                .saturating_sub(previous.profile_rate_limited),
-            profile_output_attempts: self
-                .profile_output_attempts
-                .saturating_sub(previous.profile_output_attempts),
-            protocol_websocket_upgrades: self
-                .protocol_websocket_upgrades
-                .saturating_sub(previous.protocol_websocket_upgrades),
-            protocol_websocket_frames: self
-                .protocol_websocket_frames
-                .saturating_sub(previous.protocol_websocket_frames),
-            protocol_websocket_transition_rejections: self
-                .protocol_websocket_transition_rejections
-                .saturating_sub(previous.protocol_websocket_transition_rejections),
-            protocol_grpc_web_requests: self
-                .protocol_grpc_web_requests
-                .saturating_sub(previous.protocol_grpc_web_requests),
-            protocol_redis_ambiguous_state_transitions: self
-                .protocol_redis_ambiguous_state_transitions
-                .saturating_sub(previous.protocol_redis_ambiguous_state_transitions),
-            protocol_discovered_connections: self
-                .protocol_discovered_connections
-                .saturating_sub(previous.protocol_discovered_connections),
-            protocol_discovery_unclassified_events: self
-                .protocol_discovery_unclassified_events
-                .saturating_sub(previous.protocol_discovery_unclassified_events),
-            protocol_discovery_candidate_evictions: self
-                .protocol_discovery_candidate_evictions
-                .saturating_sub(previous.protocol_discovery_candidate_evictions),
-            protocol_postgres_startup_auth_messages: self
-                .protocol_postgres_startup_auth_messages
-                .saturating_sub(previous.protocol_postgres_startup_auth_messages),
-            protocol_postgres_encryption_negotiation_accepted: self
-                .protocol_postgres_encryption_negotiation_accepted
-                .saturating_sub(previous.protocol_postgres_encryption_negotiation_accepted),
-            protocol_postgres_encryption_negotiation_rejected: self
-                .protocol_postgres_encryption_negotiation_rejected
-                .saturating_sub(previous.protocol_postgres_encryption_negotiation_rejected),
-            protocol_postgres_negotiation_failures: self
-                .protocol_postgres_negotiation_failures
-                .saturating_sub(previous.protocol_postgres_negotiation_failures),
-            protocol_postgres_encrypted_transport_events: self
-                .protocol_postgres_encrypted_transport_events
-                .saturating_sub(previous.protocol_postgres_encrypted_transport_events),
-            protocol_postgres_copy_ignored_controls: self
-                .protocol_postgres_copy_ignored_controls
-                .saturating_sub(previous.protocol_postgres_copy_ignored_controls),
-            protocol_mysql_local_infile_packets: self
-                .protocol_mysql_local_infile_packets
-                .saturating_sub(previous.protocol_mysql_local_infile_packets),
-            protocol_mysql_local_infile_bytes: self
-                .protocol_mysql_local_infile_bytes
-                .saturating_sub(previous.protocol_mysql_local_infile_bytes),
-            protocol_mysql_logical_request_continuations: self
-                .protocol_mysql_logical_request_continuations
-                .saturating_sub(previous.protocol_mysql_logical_request_continuations),
-            protocol_mysql_logical_response_continuations: self
-                .protocol_mysql_logical_response_continuations
-                .saturating_sub(previous.protocol_mysql_logical_response_continuations),
-            protocol_mysql_logical_sequence_failures: self
-                .protocol_mysql_logical_sequence_failures
-                .saturating_sub(previous.protocol_mysql_logical_sequence_failures),
-            protocol_mysql_server_greetings: self
-                .protocol_mysql_server_greetings
-                .saturating_sub(previous.protocol_mysql_server_greetings),
-            protocol_mysql_client_handshakes: self
-                .protocol_mysql_client_handshakes
-                .saturating_sub(previous.protocol_mysql_client_handshakes),
-            protocol_mysql_auth_packets: self
-                .protocol_mysql_auth_packets
-                .saturating_sub(previous.protocol_mysql_auth_packets),
-            protocol_mysql_compression_zlib_connections: self
-                .protocol_mysql_compression_zlib_connections
-                .saturating_sub(previous.protocol_mysql_compression_zlib_connections),
-            protocol_mysql_compression_zstd_rejections: self
-                .protocol_mysql_compression_zstd_rejections
-                .saturating_sub(previous.protocol_mysql_compression_zstd_rejections),
-            protocol_mysql_compression_unverified_rejections: self
-                .protocol_mysql_compression_unverified_rejections
-                .saturating_sub(previous.protocol_mysql_compression_unverified_rejections),
-            protocol_mysql_compressed_packets: self
-                .protocol_mysql_compressed_packets
-                .saturating_sub(previous.protocol_mysql_compressed_packets),
-            protocol_mysql_compression_failures: self
-                .protocol_mysql_compression_failures
-                .saturating_sub(previous.protocol_mysql_compression_failures),
-            protocol_mysql_compression_opaque_events: self
-                .protocol_mysql_compression_opaque_events
-                .saturating_sub(previous.protocol_mysql_compression_opaque_events),
-            protocol_mysql_handshake_failures: self
-                .protocol_mysql_handshake_failures
-                .saturating_sub(previous.protocol_mysql_handshake_failures),
-            protocol_mongodb_fire_and_forget_requests: self
-                .protocol_mongodb_fire_and_forget_requests
-                .saturating_sub(previous.protocol_mongodb_fire_and_forget_requests),
-            protocol_mongodb_response_continuations: self
-                .protocol_mongodb_response_continuations
-                .saturating_sub(previous.protocol_mongodb_response_continuations),
-            protocol_mongodb_lifecycle_failures: self
-                .protocol_mongodb_lifecycle_failures
-                .saturating_sub(previous.protocol_mongodb_lifecycle_failures),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.decoded_samples == 0
-            && self.filtered_samples == 0
-            && self.invalid_samples == 0
-            && self.sent_signals == 0
-            && self.send_failures == 0
-            && self.lost_transport_events == 0
-            && self.lost_perf_events == 0
-            && self.ring_buffer_reservation_failures == 0
-            && self.network_mmsg_accounted_batches == 0
-            && self.network_mmsg_unsupported_batches == 0
-            && self.diagnostic_matches == 0
-            && self.diagnostic_filtered == 0
-            && self.diagnostic_exhausted == 0
-            && self.optional_targets_discovered == 0
-            && self.optional_targets_ready == 0
-            && self.optional_targets_unsupported == 0
-            && self.optional_probe_attachments == 0
-            && self.optional_attachment_failures == 0
-            && self.optional_rescans == 0
-            && self.optional_capacity_rejections == 0
-            && self.go_tls_entries == 0
-            && self.go_tls_exits == 0
-            && self.go_tls_layout_misses == 0
-            && self.go_tls_pending_misses == 0
-            && self.go_tls_state_update_failures == 0
-            && self.go_tls_fd_resolutions == 0
-            && self.go_tls_fd_resolution_failures == 0
-            && self.go_tls_output_attempts == 0
-            && self.go_tls_state_replacements == 0
-            && self.profile_events == 0
-            && self.profile_capture_failures == 0
-            && self.profile_state_replacements == 0
-            && self.profile_pending_misses == 0
-            && self.profile_below_min_duration == 0
-            && self.profile_rate_limited == 0
-            && self.profile_output_attempts == 0
-            && self.protocol_websocket_upgrades == 0
-            && self.protocol_websocket_frames == 0
-            && self.protocol_websocket_transition_rejections == 0
-            && self.protocol_grpc_web_requests == 0
-            && self.protocol_redis_ambiguous_state_transitions == 0
-            && self.protocol_discovered_connections == 0
-            && self.protocol_discovery_unclassified_events == 0
-            && self.protocol_discovery_candidate_evictions == 0
-            && self.protocol_postgres_startup_auth_messages == 0
-            && self.protocol_postgres_encryption_negotiation_accepted == 0
-            && self.protocol_postgres_encryption_negotiation_rejected == 0
-            && self.protocol_postgres_negotiation_failures == 0
-            && self.protocol_postgres_encrypted_transport_events == 0
-            && self.protocol_postgres_copy_ignored_controls == 0
-            && self.protocol_mysql_local_infile_packets == 0
-            && self.protocol_mysql_local_infile_bytes == 0
-            && self.protocol_mysql_logical_request_continuations == 0
-            && self.protocol_mysql_logical_response_continuations == 0
-            && self.protocol_mysql_logical_sequence_failures == 0
-            && self.protocol_mysql_server_greetings == 0
-            && self.protocol_mysql_client_handshakes == 0
-            && self.protocol_mysql_auth_packets == 0
-            && self.protocol_mysql_compression_zlib_connections == 0
-            && self.protocol_mysql_compression_zstd_rejections == 0
-            && self.protocol_mysql_compression_unverified_rejections == 0
-            && self.protocol_mysql_compressed_packets == 0
-            && self.protocol_mysql_compression_failures == 0
-            && self.protocol_mysql_compression_opaque_events == 0
-            && self.protocol_mysql_handshake_failures == 0
-            && self.protocol_mongodb_fire_and_forget_requests == 0
-            && self.protocol_mongodb_response_continuations == 0
-            && self.protocol_mongodb_lifecycle_failures == 0
-    }
 }
 
 #[cfg(feature = "fuzzing")]
