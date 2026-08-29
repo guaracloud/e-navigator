@@ -12,9 +12,11 @@ e-navigator-context-propagation = { path = "../crates/e-navigator-context-propag
 e-navigator-core = { path = "../crates/e-navigator-core" }
 e-navigator-profiling = { path = "../crates/e-navigator-profiling" }
 e-navigator-protocol = { path = "../crates/e-navigator-protocol" }
+e-navigator-signals = { path = "../crates/e-navigator-signals" }
 e-navigator-sources-ebpf-aya = { path = "../crates/e-navigator-sources-ebpf-aya", features = ["fuzzing"] }
 e-navigator-sources-host = { path = "../crates/e-navigator-sources-host" }
 libfuzzer-sys = "0.4"
+serde_json = "1"
 
 [[bin]]
 name = "capture_filter_glob"
@@ -43,6 +45,12 @@ doc = false
 [[bin]]
 name = "traceparent_parser"
 path = "fuzz_targets/traceparent_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "signal_envelope"
+path = "fuzz_targets/signal_envelope.rs"
 test = false
 doc = false
 
