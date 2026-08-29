@@ -288,6 +288,17 @@ async fn deterministic_duplicate_and_bounded_state_behavior() {
 }
 
 #[tokio::test]
+async fn duplicate_suppression_distinguishes_value_changes_at_the_same_timestamp() {
+    let generator = ResourceMetricsGenerator::with_limits(8);
+    let first = memory_signal("node-a", 2_000, 8_192, 4_096);
+    let changed = memory_signal("node-a", 2_000, 8_192, 2_048);
+
+    assert!(!collect(&generator, &first).await.is_empty());
+    assert!(!collect(&generator, &changed).await.is_empty());
+    assert!(collect(&generator, &changed).await.is_empty());
+}
+
+#[tokio::test]
 async fn bounded_seen_observation_state_reaccepts_oldest_signal_after_fifo_eviction() {
     let generator = ResourceMetricsGenerator::with_limits(1);
     let first = memory_signal("node-a", 100, 8_192, 4_096);
