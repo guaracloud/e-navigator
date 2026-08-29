@@ -206,6 +206,7 @@ define_signal_payload_inventory! {
 }
 
 #[derive(Clone, PartialEq)]
+#[non_exhaustive]
 pub struct SignalEnvelope {
     pub schema_version: u16,
     pub source: String,
