@@ -458,7 +458,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-cli"
-version = "0.5.0-rc.6"
+version = "0.5.0-rc.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -480,14 +480,14 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-context-propagation"
-version = "0.5.0-rc.6"
+version = "0.5.0-rc.7"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "e-navigator-core"
-version = "0.5.0-rc.6"
+version = "0.5.0-rc.7"
 dependencies = [
  "async-trait",
  "serde",
@@ -498,7 +498,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-ebpf-programs"
-version = "0.5.0-rc.6"
+version = "0.5.0-rc.7"
 dependencies = [
  "aya-ebpf",
  "e-navigator-context-propagation",
@@ -506,7 +506,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-generators"
-version = "0.5.0-rc.6"
+version = "0.5.0-rc.7"
 dependencies = [
  "e-navigator-core",
  "e-navigator-protocol",
@@ -517,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-local-benches"
-version = "0.5.0-rc.6"
+version = "0.5.0-rc.7"
 dependencies = [
  "criterion",
  "e-navigator-core",
@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-processors"
-version = "0.5.0-rc.6"
+version = "0.5.0-rc.7"
 dependencies = [
  "async-trait",
  "e-navigator-core",
@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-profiling"
-version = "0.5.0-rc.6"
+version = "0.5.0-rc.7"
 dependencies = [
  "cpp_demangle",
  "e-navigator-signals",
@@ -564,7 +564,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-protocol"
-version = "0.5.0-rc.6"
+version = "0.5.0-rc.7"
 dependencies = [
  "base64",
  "e-navigator-context-propagation",
@@ -575,7 +575,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-runner"
-version = "0.5.0-rc.6"
+version = "0.5.0-rc.7"
 dependencies = [
  "async-trait",
  "e-navigator-core",
@@ -588,7 +588,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-signals"
-version = "0.5.0-rc.6"
+version = "0.5.0-rc.7"
 dependencies = [
  "e-navigator-core",
  "proptest",
@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-sinks"
-version = "0.5.0-rc.6"
+version = "0.5.0-rc.7"
 dependencies = [
  "async-trait",
  "bytes",
@@ -617,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-sources-ebpf-aya"
-version = "0.5.0-rc.6"
+version = "0.5.0-rc.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -647,7 +647,7 @@ dependencies = [
 
 [[package]]
 name = "e-navigator-sources-host"
-version = "0.5.0-rc.6"
+version = "0.5.0-rc.7"
 dependencies = [
  "async-trait",
  "e-navigator-core",

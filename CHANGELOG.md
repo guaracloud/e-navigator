@@ -6,6 +6,33 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0-rc.7] - 2026-08-29
+
+### Changed
+
+- Consolidate bounded generator deduplication, fingerprints, output delivery,
+  profiling windows, and resource-observation identities behind their semantic
+  owners while preserving eviction, ordering, and emitted signal contracts.
+- Centralize numeric bounds, protocol-port validation, filesystem paths, Aya
+  memlock preparation and reader shutdown, plus workload and OTLP telemetry
+  inventories without changing configuration defaults or validation order.
+- Centralize Kafka response assembly and the 44-family signal payload inventory,
+  removing repeated internal mapping tables while preserving wire strings,
+  public variant order, typed deserialization, and the static pipeline.
+
+### Fixed
+
+- Report source-task panics as runtime failures instead of allowing a panicked
+  source to appear as a successful task completion.
+- Derive each serialized signal kind from its public typed payload so payload
+  replacement cannot produce a contradictory envelope, while retaining the
+  existing external construction boundary.
+
+### Validation
+
+- Add a bounded fuzz target that requires every accepted JSON signal envelope
+  to serialize, deserialize, and round-trip with full value equality.
+
 ## [0.5.0-rc.6] - 2026-08-27
 
 ### Added
@@ -837,7 +864,10 @@ All notable changes to E-Navigator are documented here. The format follows
   reduced-privilege operation, and universal protocol/profile coverage remain
   explicit non-claims documented in `documentation/boundaries.md`.
 
-[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.4...HEAD
+[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.7...HEAD
+[0.5.0-rc.7]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.6...v0.5.0-rc.7
+[0.5.0-rc.6]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.5...v0.5.0-rc.6
+[0.5.0-rc.5]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.4...v0.5.0-rc.5
 [0.5.0-rc.4]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.3...v0.5.0-rc.4
 [0.5.0-rc.3]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.2...v0.5.0-rc.3
 [0.5.0-rc.2]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.1...v0.5.0-rc.2
