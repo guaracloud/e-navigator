@@ -3340,6 +3340,13 @@ fn tls_source_rejects_duplicate_and_zero_ports() {
 
 #[test]
 fn tls_source_limits_are_validated() {
+    let mut too_many_ports = RuntimeConfig::default();
+    too_many_ports.tls_source.http1_ports = (1..=65_u16).collect();
+    assert_invalid(
+        too_many_ports,
+        "tls_source port lists declare 65 ports; at most 64 are supported",
+    );
+
     assert_invalid(
         RuntimeConfig {
             tls_source: TlsSourceConfig {

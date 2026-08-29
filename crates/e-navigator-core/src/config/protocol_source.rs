@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ConfigError, ConfigResult};
+use super::{ConfigError, ConfigResult, protocol_ports::validate_protocol_ports};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -95,36 +95,12 @@ impl ProtocolSourceConfig {
     }
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
-        let mut seen_ports = std::collections::BTreeMap::new();
-        let mut total_ports = 0_usize;
-        for (protocol, ports) in self.port_protocols() {
-            for port in ports {
-                if *port == 0 {
-                    return Err(ConfigError::invalid_value(
-                        port_field(protocol),
-                        format!("protocol_source.{protocol}_ports must not contain port 0"),
-                    ));
-                }
-                if let Some(existing) = seen_ports.insert(*port, protocol) {
-                    return Err(ConfigError::invalid_value(
-                        port_field(protocol),
-                        format!(
-                            "port {port} is assigned to both {existing} and {protocol}; each port must map to exactly one protocol"
-                        ),
-                    ));
-                }
-                total_ports += 1;
-            }
-        }
-        if total_ports > Self::MAX_TOTAL_PORTS {
-            return Err(ConfigError::invalid_value(
-                "protocol_source",
-                format!(
-                    "protocol_source port lists declare {total_ports} ports; at most {} are supported",
-                    Self::MAX_TOTAL_PORTS
-                ),
-            ));
-        }
+        validate_protocol_ports(
+            "protocol_source",
+            self.port_protocols(),
+            port_field,
+            Self::MAX_TOTAL_PORTS,
+        )?;
         if !(1..=Self::MAX_BUFFERED_BYTES_LIMIT).contains(&self.max_buffered_bytes_per_connection) {
             return Err(ConfigError::invalid_value(
                 "protocol_source.max_buffered_bytes_per_connection",
