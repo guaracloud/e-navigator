@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata};
 use e_navigator_signals::{
     DependencyEdgeEvent, DependencyEndpoint, DnsCounterMetric, DnsLatencyMetric, DnsQueryEvent,
@@ -12,10 +11,9 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
-use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::{bounded_fingerprints::BoundedFingerprints, send_outputs};
+use crate::bounded_fingerprints::BoundedFingerprints;
 
 const DEFAULT_MAX_DOMAINS: usize = 1024;
 const DEFAULT_MAX_DNS_STATE_KEYS: usize = 4096;
@@ -85,7 +83,6 @@ impl DnsMetricsGenerator {
     }
 }
 
-#[async_trait]
 impl Generator<SignalEnvelope> for DnsMetricsGenerator {
     fn metadata(&self) -> ModuleMetadata {
         ModuleMetadata::new("generator.dns_metrics", ModuleKind::Generator)
@@ -103,14 +100,6 @@ impl Generator<SignalEnvelope> for DnsMetricsGenerator {
         signal: &SignalEnvelope,
     ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
         Some(self.outputs_for_signal(signal))
-    }
-
-    async fn observe(
-        &self,
-        signal: &SignalEnvelope,
-        tx: &mpsc::Sender<SignalEnvelope>,
-    ) -> CoreResult<()> {
-        send_outputs(self.outputs_for_signal(signal)?, tx).await
     }
 }
 

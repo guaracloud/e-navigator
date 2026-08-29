@@ -28,8 +28,8 @@ security findings. A generator must:
 - bound memory and cardinality;
 - implement `accepts` when its input signal set is closed, so unrelated signals
   do not allocate a future or output channel;
-- implement `observe_immediate` when derivation is synchronous, while keeping
-  `observe` behavior equivalent for direct trait callers;
+- implement `observe_immediate` when derivation is synchronous; the trait's
+  default `observe` implementation keeps direct callers equivalent;
 - include tests for eviction and duplicate handling when relevant;
 - emit native metric and signal names.
 
