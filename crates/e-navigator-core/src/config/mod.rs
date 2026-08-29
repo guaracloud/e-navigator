@@ -14,6 +14,7 @@ mod network_metrics;
 mod otlp_http;
 mod profiling;
 mod prometheus_http;
+mod protocol_ports;
 mod protocol_source;
 mod request_correlation;
 mod resource_metrics;

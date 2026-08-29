@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ConfigError, ConfigResult};
+use super::{ConfigError, ConfigResult, protocol_ports::validate_protocol_ports};
 
 /// Configuration for the uprobe-based TLS plaintext capture source
 /// (`source.aya_tls`).
@@ -104,36 +104,12 @@ impl TlsSourceConfig {
     }
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
-        let mut seen_ports = std::collections::BTreeMap::new();
-        let mut total_ports = 0_usize;
-        for (protocol, ports) in self.port_protocols() {
-            for port in ports {
-                if *port == 0 {
-                    return Err(ConfigError::invalid_value(
-                        port_field(protocol),
-                        format!("tls_source.{protocol}_ports must not contain port 0"),
-                    ));
-                }
-                if let Some(existing) = seen_ports.insert(*port, protocol) {
-                    return Err(ConfigError::invalid_value(
-                        port_field(protocol),
-                        format!(
-                            "port {port} is assigned to both {existing} and {protocol}; each port must map to exactly one protocol"
-                        ),
-                    ));
-                }
-                total_ports += 1;
-            }
-        }
-        if total_ports > Self::MAX_TOTAL_PORTS {
-            return Err(ConfigError::invalid_value(
-                "tls_source",
-                format!(
-                    "tls_source port lists declare {total_ports} ports; at most {} are supported",
-                    Self::MAX_TOTAL_PORTS
-                ),
-            ));
-        }
+        validate_protocol_ports(
+            "tls_source",
+            self.port_protocols(),
+            port_field,
+            Self::MAX_TOTAL_PORTS,
+        )?;
         if !(Self::MIN_CAPTURE_BYTES_PER_CALL..=Self::MAX_CAPTURE_BYTES_PER_CALL)
             .contains(&self.capture_bytes_per_call)
         {
