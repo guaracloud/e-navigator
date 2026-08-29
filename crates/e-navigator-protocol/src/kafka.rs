@@ -115,22 +115,25 @@ pub fn parse_kafka_response_correlation_id(
     read_i32_be(body, 0)
 }
 
-pub fn parse_kafka_api_versions_response(
+fn parse_kafka_response_with_error_code(
     bytes: &[u8],
     api_version: i16,
     config: &ProtocolExtractionConfig,
+    api_version_supported: bool,
+    operation: &'static str,
+    api_key: &'static str,
+    parse_error_code: impl FnOnce(&[u8]) -> Result<i16, KafkaExtraction>,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version < 0 {
+    if !api_version_supported {
         return Err(KafkaExtraction::UnsupportedApiVersion);
     }
     if bytes.len() > config.max_header_bytes {
         return Err(KafkaExtraction::FrameTooLong);
     }
     let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = api_versions_response_error_code(body, api_version, config)?;
+    let error_code = parse_error_code(body)?;
     let status_code = error_code.to_string();
     let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_key = "18";
     let api_version = api_version.to_string();
 
     let mut attributes = Vec::new();
@@ -144,7 +147,7 @@ pub fn parse_kafka_api_versions_response(
         &mut attributes,
         config.max_attributes,
         "messaging.operation",
-        Some("api_versions"),
+        Some(operation),
     );
     push_attribute(
         &mut attributes,
@@ -173,11 +176,27 @@ pub fn parse_kafka_api_versions_response(
 
     Ok(ParsedKafkaResponse {
         protocol: ProtocolKind::Kafka,
-        operation: "api_versions".to_string(),
+        operation: operation.to_string(),
         status_code,
         error_type,
         attributes,
     })
+}
+
+pub fn parse_kafka_api_versions_response(
+    bytes: &[u8],
+    api_version: i16,
+    config: &ProtocolExtractionConfig,
+) -> Result<ParsedKafkaResponse, KafkaExtraction> {
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version >= 0,
+        "api_versions",
+        "18",
+        |body| api_versions_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_create_topics_response(
@@ -185,63 +204,15 @@ pub fn parse_kafka_create_topics_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(2..=4).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = create_topics_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("create_topics"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("19"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "create_topics".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (2..=4).contains(&api_version),
+        "create_topics",
+        "19",
+        |body| create_topics_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_create_partitions_response(
@@ -249,63 +220,15 @@ pub fn parse_kafka_create_partitions_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = create_partitions_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("create_partitions"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("37"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "create_partitions".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "create_partitions",
+        "37",
+        |body| create_partitions_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_create_acls_response(
@@ -313,63 +236,15 @@ pub fn parse_kafka_create_acls_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 1 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = create_acls_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("create_acls"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("30"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "create_acls".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 1,
+        "create_acls",
+        "30",
+        |body| create_acls_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_describe_acls_response(
@@ -377,63 +252,15 @@ pub fn parse_kafka_describe_acls_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 1 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = describe_acls_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("describe_acls"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("29"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "describe_acls".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 1,
+        "describe_acls",
+        "29",
+        |body| describe_acls_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_delete_acls_response(
@@ -441,63 +268,15 @@ pub fn parse_kafka_delete_acls_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 1 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = delete_acls_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("delete_acls"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("31"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "delete_acls".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 1,
+        "delete_acls",
+        "31",
+        |body| delete_acls_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_describe_configs_response(
@@ -505,63 +284,15 @@ pub fn parse_kafka_describe_configs_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(1..=3).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = describe_configs_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("describe_configs"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("32"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "describe_configs".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (1..=3).contains(&api_version),
+        "describe_configs",
+        "32",
+        |body| describe_configs_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_alter_configs_response(
@@ -569,63 +300,15 @@ pub fn parse_kafka_alter_configs_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = alter_configs_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("alter_configs"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("33"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "alter_configs".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "alter_configs",
+        "33",
+        |body| alter_configs_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_alter_replica_log_dirs_response(
@@ -633,63 +316,15 @@ pub fn parse_kafka_alter_replica_log_dirs_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 1 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = alter_replica_log_dirs_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("alter_replica_log_dirs"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("34"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "alter_replica_log_dirs".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 1,
+        "alter_replica_log_dirs",
+        "34",
+        |body| alter_replica_log_dirs_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_describe_log_dirs_response(
@@ -697,63 +332,15 @@ pub fn parse_kafka_describe_log_dirs_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 1 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = describe_log_dirs_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("describe_log_dirs"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("35"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "describe_log_dirs".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 1,
+        "describe_log_dirs",
+        "35",
+        |body| describe_log_dirs_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_create_delegation_token_response(
@@ -761,63 +348,15 @@ pub fn parse_kafka_create_delegation_token_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 1 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = create_delegation_token_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("create_delegation_token"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("38"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "create_delegation_token".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 1,
+        "create_delegation_token",
+        "38",
+        |body| create_delegation_token_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_renew_delegation_token_response(
@@ -825,63 +364,15 @@ pub fn parse_kafka_renew_delegation_token_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 1 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = renew_delegation_token_response_error_code(body)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("renew_delegation_token"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("39"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "renew_delegation_token".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 1,
+        "renew_delegation_token",
+        "39",
+        renew_delegation_token_response_error_code,
+    )
 }
 
 pub fn parse_kafka_expire_delegation_token_response(
@@ -889,63 +380,15 @@ pub fn parse_kafka_expire_delegation_token_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 1 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = expire_delegation_token_response_error_code(body)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("expire_delegation_token"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("40"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "expire_delegation_token".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 1,
+        "expire_delegation_token",
+        "40",
+        expire_delegation_token_response_error_code,
+    )
 }
 
 pub fn parse_kafka_describe_delegation_token_response(
@@ -953,63 +396,15 @@ pub fn parse_kafka_describe_delegation_token_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 1 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = describe_delegation_token_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("describe_delegation_token"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("41"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "describe_delegation_token".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 1,
+        "describe_delegation_token",
+        "41",
+        |body| describe_delegation_token_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_elect_leaders_response(
@@ -1017,63 +412,15 @@ pub fn parse_kafka_elect_leaders_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = elect_leaders_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("elect_leaders"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("43"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "elect_leaders".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "elect_leaders",
+        "43",
+        |body| elect_leaders_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_incremental_alter_configs_response(
@@ -1081,63 +428,15 @@ pub fn parse_kafka_incremental_alter_configs_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = incremental_alter_configs_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("incremental_alter_configs"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("44"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "incremental_alter_configs".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "incremental_alter_configs",
+        "44",
+        |body| incremental_alter_configs_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_alter_partition_reassignments_response(
@@ -1145,63 +444,15 @@ pub fn parse_kafka_alter_partition_reassignments_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = alter_partition_reassignments_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("alter_partition_reassignments"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("45"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "alter_partition_reassignments".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "alter_partition_reassignments",
+        "45",
+        |body| alter_partition_reassignments_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_list_partition_reassignments_response(
@@ -1209,63 +460,15 @@ pub fn parse_kafka_list_partition_reassignments_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = list_partition_reassignments_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("list_partition_reassignments"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("46"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "list_partition_reassignments".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "list_partition_reassignments",
+        "46",
+        |body| list_partition_reassignments_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_produce_response(
@@ -1273,63 +476,15 @@ pub fn parse_kafka_produce_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=7).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = produce_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("produce"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("0"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "produce".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=7).contains(&api_version),
+        "produce",
+        "0",
+        |body| produce_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_fetch_response(
@@ -1337,63 +492,15 @@ pub fn parse_kafka_fetch_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=5).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = fetch_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("fetch"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("1"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "fetch".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=5).contains(&api_version),
+        "fetch",
+        "1",
+        |body| fetch_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_list_offsets_response(
@@ -1401,63 +508,15 @@ pub fn parse_kafka_list_offsets_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(1..=5).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = list_offsets_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("list_offsets"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("2"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "list_offsets".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (1..=5).contains(&api_version),
+        "list_offsets",
+        "2",
+        |body| list_offsets_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_delete_records_response(
@@ -1465,63 +524,15 @@ pub fn parse_kafka_delete_records_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = delete_records_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("delete_records"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("21"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "delete_records".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "delete_records",
+        "21",
+        |body| delete_records_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_offset_for_leader_epoch_response(
@@ -1529,63 +540,15 @@ pub fn parse_kafka_offset_for_leader_epoch_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(2..=4).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = offset_for_leader_epoch_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("offset_for_leader_epoch"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("23"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "offset_for_leader_epoch".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (2..=4).contains(&api_version),
+        "offset_for_leader_epoch",
+        "23",
+        |body| offset_for_leader_epoch_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_delete_topics_response(
@@ -1593,63 +556,15 @@ pub fn parse_kafka_delete_topics_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(1..=3).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = delete_topics_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("delete_topics"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("20"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "delete_topics".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (1..=3).contains(&api_version),
+        "delete_topics",
+        "20",
+        |body| delete_topics_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_join_group_response(
@@ -1657,63 +572,15 @@ pub fn parse_kafka_join_group_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=5).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = join_group_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("join_group"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("11"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "join_group".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=5).contains(&api_version),
+        "join_group",
+        "11",
+        |body| join_group_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_find_coordinator_response(
@@ -1721,63 +588,15 @@ pub fn parse_kafka_find_coordinator_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=2).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = find_coordinator_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("find_coordinator"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("10"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "find_coordinator".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=2).contains(&api_version),
+        "find_coordinator",
+        "10",
+        |body| find_coordinator_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_heartbeat_response(
@@ -1785,63 +604,15 @@ pub fn parse_kafka_heartbeat_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=3).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = heartbeat_response_error_code(body, api_version)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("heartbeat"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("12"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "heartbeat".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=3).contains(&api_version),
+        "heartbeat",
+        "12",
+        |body| heartbeat_response_error_code(body, api_version),
+    )
 }
 
 pub fn parse_kafka_leave_group_response(
@@ -1849,63 +620,15 @@ pub fn parse_kafka_leave_group_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=3).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = leave_group_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("leave_group"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("13"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "leave_group".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=3).contains(&api_version),
+        "leave_group",
+        "13",
+        |body| leave_group_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_sync_group_response(
@@ -1913,63 +636,15 @@ pub fn parse_kafka_sync_group_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=3).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = sync_group_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("sync_group"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("14"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "sync_group".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=3).contains(&api_version),
+        "sync_group",
+        "14",
+        |body| sync_group_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_describe_groups_response(
@@ -1977,63 +652,15 @@ pub fn parse_kafka_describe_groups_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=4).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = describe_groups_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("describe_groups"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("15"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "describe_groups".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=4).contains(&api_version),
+        "describe_groups",
+        "15",
+        |body| describe_groups_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_delete_groups_response(
@@ -2041,63 +668,15 @@ pub fn parse_kafka_delete_groups_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = delete_groups_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("delete_groups"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("42"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "delete_groups".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "delete_groups",
+        "42",
+        |body| delete_groups_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_sasl_handshake_response(
@@ -2105,63 +684,15 @@ pub fn parse_kafka_sasl_handshake_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = sasl_handshake_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("sasl_handshake"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("17"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "sasl_handshake".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "sasl_handshake",
+        "17",
+        |body| sasl_handshake_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_init_producer_id_response(
@@ -2169,63 +700,15 @@ pub fn parse_kafka_init_producer_id_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = init_producer_id_response_error_code(body)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("init_producer_id"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("22"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "init_producer_id".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "init_producer_id",
+        "22",
+        init_producer_id_response_error_code,
+    )
 }
 
 pub fn parse_kafka_add_partitions_to_txn_response(
@@ -2233,63 +716,15 @@ pub fn parse_kafka_add_partitions_to_txn_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=2).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = add_partitions_to_txn_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("add_partitions_to_txn"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("24"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "add_partitions_to_txn".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=2).contains(&api_version),
+        "add_partitions_to_txn",
+        "24",
+        |body| add_partitions_to_txn_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_add_offsets_to_txn_response(
@@ -2297,63 +732,15 @@ pub fn parse_kafka_add_offsets_to_txn_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=2).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = throttled_response_error_code(body)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("add_offsets_to_txn"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("25"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "add_offsets_to_txn".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=2).contains(&api_version),
+        "add_offsets_to_txn",
+        "25",
+        throttled_response_error_code,
+    )
 }
 
 pub fn parse_kafka_end_txn_response(
@@ -2361,63 +748,15 @@ pub fn parse_kafka_end_txn_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=2).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = throttled_response_error_code(body)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("end_txn"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("26"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "end_txn".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=2).contains(&api_version),
+        "end_txn",
+        "26",
+        throttled_response_error_code,
+    )
 }
 
 pub fn parse_kafka_txn_offset_commit_response(
@@ -2425,63 +764,15 @@ pub fn parse_kafka_txn_offset_commit_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=2).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = txn_offset_commit_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("txn_offset_commit"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("28"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "txn_offset_commit".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=2).contains(&api_version),
+        "txn_offset_commit",
+        "28",
+        |body| txn_offset_commit_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_write_txn_markers_response(
@@ -2489,63 +780,15 @@ pub fn parse_kafka_write_txn_markers_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(1..=2).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = write_txn_markers_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("write_txn_markers"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("27"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "write_txn_markers".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (1..=2).contains(&api_version),
+        "write_txn_markers",
+        "27",
+        |body| write_txn_markers_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_sasl_authenticate_response(
@@ -2553,63 +796,15 @@ pub fn parse_kafka_sasl_authenticate_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = sasl_authenticate_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("sasl_authenticate"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("36"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "sasl_authenticate".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "sasl_authenticate",
+        "36",
+        |body| sasl_authenticate_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_offset_commit_response(
@@ -2617,63 +812,15 @@ pub fn parse_kafka_offset_commit_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(2..=7).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = offset_commit_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("offset_commit"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("8"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "offset_commit".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (2..=7).contains(&api_version),
+        "offset_commit",
+        "8",
+        |body| offset_commit_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_offset_fetch_response(
@@ -2681,63 +828,15 @@ pub fn parse_kafka_offset_fetch_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(1..=5).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = offset_fetch_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("offset_fetch"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("9"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "offset_fetch".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (1..=5).contains(&api_version),
+        "offset_fetch",
+        "9",
+        |body| offset_fetch_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_offset_delete_response(
@@ -2745,63 +844,15 @@ pub fn parse_kafka_offset_delete_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = offset_delete_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("offset_delete"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("47"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "offset_delete".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "offset_delete",
+        "47",
+        |body| offset_delete_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_describe_client_quotas_response(
@@ -2809,63 +860,15 @@ pub fn parse_kafka_describe_client_quotas_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = describe_client_quotas_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("describe_client_quotas"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("48"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "describe_client_quotas".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "describe_client_quotas",
+        "48",
+        |body| describe_client_quotas_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_alter_client_quotas_response(
@@ -2873,63 +876,15 @@ pub fn parse_kafka_alter_client_quotas_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = alter_client_quotas_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("alter_client_quotas"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("49"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "alter_client_quotas".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "alter_client_quotas",
+        "49",
+        |body| alter_client_quotas_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_describe_user_scram_credentials_response(
@@ -2937,63 +892,15 @@ pub fn parse_kafka_describe_user_scram_credentials_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = describe_user_scram_credentials_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("describe_user_scram_credentials"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("50"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "describe_user_scram_credentials".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "describe_user_scram_credentials",
+        "50",
+        |body| describe_user_scram_credentials_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_alter_user_scram_credentials_response(
@@ -3001,63 +908,15 @@ pub fn parse_kafka_alter_user_scram_credentials_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = alter_user_scram_credentials_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("alter_user_scram_credentials"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("51"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "alter_user_scram_credentials".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "alter_user_scram_credentials",
+        "51",
+        |body| alter_user_scram_credentials_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_describe_quorum_response(
@@ -3065,63 +924,15 @@ pub fn parse_kafka_describe_quorum_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=2).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = describe_quorum_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("describe_quorum"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("55"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "describe_quorum".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=2).contains(&api_version),
+        "describe_quorum",
+        "55",
+        |body| describe_quorum_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_update_features_response(
@@ -3129,63 +940,15 @@ pub fn parse_kafka_update_features_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=2).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = update_features_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("update_features"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("57"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "update_features".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=2).contains(&api_version),
+        "update_features",
+        "57",
+        |body| update_features_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_describe_cluster_response(
@@ -3193,63 +956,15 @@ pub fn parse_kafka_describe_cluster_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=2).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = describe_cluster_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("describe_cluster"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("60"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "describe_cluster".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=2).contains(&api_version),
+        "describe_cluster",
+        "60",
+        |body| describe_cluster_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_describe_producers_response(
@@ -3257,63 +972,15 @@ pub fn parse_kafka_describe_producers_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = describe_producers_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("describe_producers"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("61"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "describe_producers".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "describe_producers",
+        "61",
+        |body| describe_producers_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_broker_heartbeat_response(
@@ -3321,63 +988,15 @@ pub fn parse_kafka_broker_heartbeat_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=2).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = broker_heartbeat_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("broker_heartbeat"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("63"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "broker_heartbeat".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=2).contains(&api_version),
+        "broker_heartbeat",
+        "63",
+        |body| broker_heartbeat_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_unregister_broker_response(
@@ -3385,63 +1004,15 @@ pub fn parse_kafka_unregister_broker_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = unregister_broker_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("unregister_broker"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("64"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "unregister_broker".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "unregister_broker",
+        "64",
+        |body| unregister_broker_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_describe_transactions_response(
@@ -3449,63 +1020,15 @@ pub fn parse_kafka_describe_transactions_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = describe_transactions_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("describe_transactions"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("65"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "describe_transactions".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "describe_transactions",
+        "65",
+        |body| describe_transactions_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_list_transactions_response(
@@ -3513,63 +1036,15 @@ pub fn parse_kafka_list_transactions_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=2).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = list_transactions_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("list_transactions"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("66"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "list_transactions".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=2).contains(&api_version),
+        "list_transactions",
+        "66",
+        |body| list_transactions_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_allocate_producer_ids_response(
@@ -3577,63 +1052,15 @@ pub fn parse_kafka_allocate_producer_ids_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = allocate_producer_ids_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("allocate_producer_ids"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("67"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "allocate_producer_ids".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "allocate_producer_ids",
+        "67",
+        |body| allocate_producer_ids_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_consumer_group_heartbeat_response(
@@ -3641,63 +1068,15 @@ pub fn parse_kafka_consumer_group_heartbeat_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = consumer_group_heartbeat_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("consumer_group_heartbeat"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("68"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "consumer_group_heartbeat".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "consumer_group_heartbeat",
+        "68",
+        |body| consumer_group_heartbeat_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_share_group_heartbeat_response(
@@ -3705,63 +1084,15 @@ pub fn parse_kafka_share_group_heartbeat_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 1 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = share_group_heartbeat_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("share_group_heartbeat"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("76"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "share_group_heartbeat".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 1,
+        "share_group_heartbeat",
+        "76",
+        |body| share_group_heartbeat_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_controller_registration_response(
@@ -3769,63 +1100,15 @@ pub fn parse_kafka_controller_registration_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = controller_registration_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("controller_registration"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("70"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "controller_registration".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "controller_registration",
+        "70",
+        |body| controller_registration_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_consumer_group_describe_response(
@@ -3833,63 +1116,15 @@ pub fn parse_kafka_consumer_group_describe_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = consumer_group_describe_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("consumer_group_describe"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("69"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "consumer_group_describe".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "consumer_group_describe",
+        "69",
+        |body| consumer_group_describe_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_get_telemetry_subscriptions_response(
@@ -3897,63 +1132,15 @@ pub fn parse_kafka_get_telemetry_subscriptions_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = get_telemetry_subscriptions_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("get_telemetry_subscriptions"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("71"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "get_telemetry_subscriptions".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "get_telemetry_subscriptions",
+        "71",
+        |body| get_telemetry_subscriptions_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_push_telemetry_response(
@@ -3961,63 +1148,15 @@ pub fn parse_kafka_push_telemetry_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = push_telemetry_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("push_telemetry"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("72"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "push_telemetry".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "push_telemetry",
+        "72",
+        |body| push_telemetry_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_list_config_resources_response(
@@ -4025,63 +1164,15 @@ pub fn parse_kafka_list_config_resources_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = list_config_resources_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("list_config_resources"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("74"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "list_config_resources".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "list_config_resources",
+        "74",
+        |body| list_config_resources_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_describe_topic_partitions_response(
@@ -4089,63 +1180,15 @@ pub fn parse_kafka_describe_topic_partitions_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = describe_topic_partitions_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("describe_topic_partitions"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("75"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "describe_topic_partitions".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "describe_topic_partitions",
+        "75",
+        |body| describe_topic_partitions_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_add_raft_voter_response(
@@ -4153,63 +1196,15 @@ pub fn parse_kafka_add_raft_voter_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = add_raft_voter_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("add_raft_voter"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("80"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "add_raft_voter".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "add_raft_voter",
+        "80",
+        |body| add_raft_voter_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_remove_raft_voter_response(
@@ -4217,63 +1212,15 @@ pub fn parse_kafka_remove_raft_voter_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = remove_raft_voter_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("remove_raft_voter"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("81"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "remove_raft_voter".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "remove_raft_voter",
+        "81",
+        |body| remove_raft_voter_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_update_raft_voter_response(
@@ -4281,63 +1228,15 @@ pub fn parse_kafka_update_raft_voter_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = update_raft_voter_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("update_raft_voter"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("82"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "update_raft_voter".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "update_raft_voter",
+        "82",
+        |body| update_raft_voter_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_initialize_share_group_state_response(
@@ -4345,63 +1244,15 @@ pub fn parse_kafka_initialize_share_group_state_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = initialize_share_group_state_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("initialize_share_group_state"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("83"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "initialize_share_group_state".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "initialize_share_group_state",
+        "83",
+        |body| initialize_share_group_state_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_read_share_group_state_response(
@@ -4409,63 +1260,15 @@ pub fn parse_kafka_read_share_group_state_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = read_share_group_state_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("read_share_group_state"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("84"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "read_share_group_state".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "read_share_group_state",
+        "84",
+        |body| read_share_group_state_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_write_share_group_state_response(
@@ -4473,63 +1276,15 @@ pub fn parse_kafka_write_share_group_state_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = write_share_group_state_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("write_share_group_state"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("85"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "write_share_group_state".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "write_share_group_state",
+        "85",
+        |body| write_share_group_state_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_delete_share_group_state_response(
@@ -4537,63 +1292,15 @@ pub fn parse_kafka_delete_share_group_state_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = delete_share_group_state_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("delete_share_group_state"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("86"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "delete_share_group_state".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "delete_share_group_state",
+        "86",
+        |body| delete_share_group_state_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_read_share_group_state_summary_response(
@@ -4601,63 +1308,15 @@ pub fn parse_kafka_read_share_group_state_summary_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = read_share_group_state_summary_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("read_share_group_state_summary"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("87"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "read_share_group_state_summary".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "read_share_group_state_summary",
+        "87",
+        |body| read_share_group_state_summary_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_delete_share_group_offsets_response(
@@ -4665,63 +1324,15 @@ pub fn parse_kafka_delete_share_group_offsets_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if api_version != 0 {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = delete_share_group_offsets_response_error_code(body, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("delete_share_group_offsets"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("92"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "delete_share_group_offsets".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        api_version == 0,
+        "delete_share_group_offsets",
+        "92",
+        |body| delete_share_group_offsets_response_error_code(body, config),
+    )
 }
 
 pub fn parse_kafka_describe_share_group_offsets_response(
@@ -4729,63 +1340,15 @@ pub fn parse_kafka_describe_share_group_offsets_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=1).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = describe_share_group_offsets_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("describe_share_group_offsets"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("90"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "describe_share_group_offsets".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=1).contains(&api_version),
+        "describe_share_group_offsets",
+        "90",
+        |body| describe_share_group_offsets_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_list_groups_response(
@@ -4793,63 +1356,15 @@ pub fn parse_kafka_list_groups_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=3).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = list_groups_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("list_groups"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("16"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "list_groups".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=3).contains(&api_version),
+        "list_groups",
+        "16",
+        |body| list_groups_response_error_code(body, api_version, config),
+    )
 }
 
 pub fn parse_kafka_metadata_response(
@@ -4857,63 +1372,15 @@ pub fn parse_kafka_metadata_response(
     api_version: i16,
     config: &ProtocolExtractionConfig,
 ) -> Result<ParsedKafkaResponse, KafkaExtraction> {
-    if !(0..=8).contains(&api_version) {
-        return Err(KafkaExtraction::UnsupportedApiVersion);
-    }
-    if bytes.len() > config.max_header_bytes {
-        return Err(KafkaExtraction::FrameTooLong);
-    }
-    let body = frame_body(bytes, config.max_header_bytes)?;
-    let error_code = metadata_response_error_code(body, api_version, config)?;
-    let status_code = error_code.to_string();
-    let error_type = (error_code != 0).then(|| status_code.clone());
-    let api_version = api_version.to_string();
-
-    let mut attributes = Vec::new();
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.system",
-        Some("kafka"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.operation",
-        Some("metadata"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_key",
-        Some("3"),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.api_version",
-        Some(&api_version),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "messaging.kafka.response.error_code",
-        Some(&status_code),
-    );
-    push_attribute(
-        &mut attributes,
-        config.max_attributes,
-        "error.type",
-        error_type.as_deref(),
-    );
-
-    Ok(ParsedKafkaResponse {
-        protocol: ProtocolKind::Kafka,
-        operation: "metadata".to_string(),
-        status_code,
-        error_type,
-        attributes,
-    })
+    parse_kafka_response_with_error_code(
+        bytes,
+        api_version,
+        config,
+        (0..=8).contains(&api_version),
+        "metadata",
+        "3",
+        |body| metadata_response_error_code(body, api_version, config),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
