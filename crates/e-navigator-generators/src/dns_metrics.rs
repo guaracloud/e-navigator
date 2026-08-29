@@ -15,7 +15,7 @@ use std::{
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::bounded_fingerprints::BoundedFingerprints;
+use crate::{bounded_fingerprints::BoundedFingerprints, send_outputs};
 
 const DEFAULT_MAX_DOMAINS: usize = 1024;
 const DEFAULT_MAX_DNS_STATE_KEYS: usize = 4096;
@@ -110,13 +110,7 @@ impl Generator<SignalEnvelope> for DnsMetricsGenerator {
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
-        for output in self.outputs_for_signal(signal)? {
-            tx.send(output)
-                .await
-                .map_err(|_| CoreError::PipelineClosed)?;
-        }
-
-        Ok(())
+        send_outputs(self.outputs_for_signal(signal)?, tx).await
     }
 }
 

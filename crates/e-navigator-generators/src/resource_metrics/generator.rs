@@ -1,10 +1,10 @@
 use async_trait::async_trait;
-use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata};
+use e_navigator_core::{CoreResult, Generator, ModuleKind, ModuleMetadata};
 use e_navigator_signals::{SignalEnvelope, SignalPayload};
 use std::{collections::BTreeMap, sync::Mutex};
 use tokio::sync::mpsc;
 
-use crate::bounded_fingerprints::BoundedFingerprints;
+use crate::{bounded_fingerprints::BoundedFingerprints, send_outputs};
 
 use super::state::{CounterState, ObservationFingerprint, StateKey};
 
@@ -69,13 +69,7 @@ impl Generator<SignalEnvelope> for ResourceMetricsGenerator {
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
-        for metric in self.outputs_for_signal(signal)? {
-            tx.send(metric)
-                .await
-                .map_err(|_| CoreError::PipelineClosed)?;
-        }
-
-        Ok(())
+        send_outputs(self.outputs_for_signal(signal)?, tx).await
     }
 }
 

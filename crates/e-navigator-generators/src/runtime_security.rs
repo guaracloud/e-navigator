@@ -1,11 +1,13 @@
 use async_trait::async_trait;
-use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata};
+use e_navigator_core::{CoreResult, Generator, ModuleKind, ModuleMetadata};
 use e_navigator_signals::{
     ExecEvent, MatchedNetworkConnection, MatchedProcess, NetworkConnectionOpenEvent,
     RuntimeSecurityFinding, RuntimeSecuritySeverity, SignalEnvelope, SignalPayload,
 };
 use std::{collections::BTreeSet, net::IpAddr};
 use tokio::sync::mpsc;
+
+use crate::send_outputs;
 
 #[derive(Debug, Default)]
 pub struct RuntimeSecurityGenerator {
@@ -62,13 +64,7 @@ impl Generator<SignalEnvelope> for RuntimeSecurityGenerator {
         signal: &SignalEnvelope,
         tx: &mpsc::Sender<SignalEnvelope>,
     ) -> CoreResult<()> {
-        for finding in self.outputs_for_signal(signal) {
-            tx.send(finding)
-                .await
-                .map_err(|_| CoreError::PipelineClosed)?;
-        }
-
-        Ok(())
+        send_outputs(self.outputs_for_signal(signal), tx).await
     }
 }
 
