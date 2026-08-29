@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ConfigError, ConfigResult};
+use super::{ConfigResult, bounds::validate_inclusive};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -29,33 +29,24 @@ impl TraceCorrelationConfig {
     pub const MAX_WARNINGS_LIMIT: usize = 16_384;
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
-        if !(1..=Self::MAX_SERVICE_PATHS_LIMIT).contains(&self.max_service_paths) {
-            return Err(ConfigError::invalid_value(
-                "trace_correlation.max_service_paths",
-                format!(
-                    "trace_correlation.max_service_paths must be between 1 and {}",
-                    Self::MAX_SERVICE_PATHS_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_SEEN_INTERACTIONS_LIMIT).contains(&self.max_seen_interactions) {
-            return Err(ConfigError::invalid_value(
-                "trace_correlation.max_seen_interactions",
-                format!(
-                    "trace_correlation.max_seen_interactions must be between 1 and {}",
-                    Self::MAX_SEEN_INTERACTIONS_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_WARNINGS_LIMIT).contains(&self.max_warnings) {
-            return Err(ConfigError::invalid_value(
-                "trace_correlation.max_warnings",
-                format!(
-                    "trace_correlation.max_warnings must be between 1 and {}",
-                    Self::MAX_WARNINGS_LIMIT
-                ),
-            ));
-        }
+        validate_inclusive(
+            "trace_correlation.max_service_paths",
+            self.max_service_paths,
+            1,
+            Self::MAX_SERVICE_PATHS_LIMIT,
+        )?;
+        validate_inclusive(
+            "trace_correlation.max_seen_interactions",
+            self.max_seen_interactions,
+            1,
+            Self::MAX_SEEN_INTERACTIONS_LIMIT,
+        )?;
+        validate_inclusive(
+            "trace_correlation.max_warnings",
+            self.max_warnings,
+            1,
+            Self::MAX_WARNINGS_LIMIT,
+        )?;
         Ok(())
     }
 }

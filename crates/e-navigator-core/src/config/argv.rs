@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ConfigError, ConfigResult};
+use super::{ConfigResult, bounds::validate_inclusive};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -28,26 +28,18 @@ impl ArgvCaptureConfig {
     pub const MAX_BYTES_LIMIT: usize = 512;
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
-        if !(1..=Self::MAX_ARGS_LIMIT).contains(&self.max_args) {
-            return Err(ConfigError::invalid_value(
-                "argv_capture.max_args",
-                format!(
-                    "argv_capture.max_args must be between 1 and {}",
-                    Self::MAX_ARGS_LIMIT
-                ),
-            ));
-        }
-
-        if !(1..=Self::MAX_BYTES_LIMIT).contains(&self.max_bytes) {
-            return Err(ConfigError::invalid_value(
-                "argv_capture.max_bytes",
-                format!(
-                    "argv_capture.max_bytes must be between 1 and {}",
-                    Self::MAX_BYTES_LIMIT
-                ),
-            ));
-        }
-
+        validate_inclusive(
+            "argv_capture.max_args",
+            self.max_args,
+            1,
+            Self::MAX_ARGS_LIMIT,
+        )?;
+        validate_inclusive(
+            "argv_capture.max_bytes",
+            self.max_bytes,
+            1,
+            Self::MAX_BYTES_LIMIT,
+        )?;
         Ok(())
     }
 }

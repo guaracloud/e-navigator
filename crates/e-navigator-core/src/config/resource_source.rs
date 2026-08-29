@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::{ConfigError, ConfigResult, filesystem_paths};
+use super::{ConfigError, ConfigResult, bounds::validate_nonzero_bounded, filesystem_paths};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -69,81 +69,31 @@ impl ResourceSourceConfig {
             ));
         }
         filesystem_paths::validate_len("resource_source.cgroup_root", &self.cgroup_root)?;
-        if self.sample_interval_millis == 0 {
-            return Err(ConfigError::invalid_value(
-                "resource_source.sample_interval_millis",
-                "resource_source.sample_interval_millis must be greater than zero",
-            ));
-        }
-        if self.sample_interval_millis > Self::MAX_SAMPLE_INTERVAL_MILLIS_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "resource_source.sample_interval_millis",
-                format!(
-                    "resource_source.sample_interval_millis must be less than or equal to {}",
-                    Self::MAX_SAMPLE_INTERVAL_MILLIS_LIMIT
-                ),
-            ));
-        }
-        if self.max_processes == 0 {
-            return Err(ConfigError::invalid_value(
-                "resource_source.max_processes",
-                "resource_source.max_processes must be greater than zero",
-            ));
-        }
-        if self.max_processes > Self::MAX_PROCESSES_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "resource_source.max_processes",
-                format!(
-                    "resource_source.max_processes must be less than or equal to {}",
-                    Self::MAX_PROCESSES_LIMIT
-                ),
-            ));
-        }
-        if self.max_cgroups == 0 {
-            return Err(ConfigError::invalid_value(
-                "resource_source.max_cgroups",
-                "resource_source.max_cgroups must be greater than zero",
-            ));
-        }
-        if self.max_cgroups > Self::MAX_CGROUPS_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "resource_source.max_cgroups",
-                format!(
-                    "resource_source.max_cgroups must be less than or equal to {}",
-                    Self::MAX_CGROUPS_LIMIT
-                ),
-            ));
-        }
-        if self.max_fds_per_process == 0 {
-            return Err(ConfigError::invalid_value(
-                "resource_source.max_fds_per_process",
-                "resource_source.max_fds_per_process must be greater than zero",
-            ));
-        }
-        if self.max_fds_per_process > Self::MAX_FDS_PER_PROCESS_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "resource_source.max_fds_per_process",
-                format!(
-                    "resource_source.max_fds_per_process must be less than or equal to {}",
-                    Self::MAX_FDS_PER_PROCESS_LIMIT
-                ),
-            ));
-        }
-        if self.max_file_bytes == 0 {
-            return Err(ConfigError::invalid_value(
-                "resource_source.max_file_bytes",
-                "resource_source.max_file_bytes must be greater than zero",
-            ));
-        }
-        if self.max_file_bytes > Self::MAX_FILE_BYTES_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "resource_source.max_file_bytes",
-                format!(
-                    "resource_source.max_file_bytes must be less than or equal to {}",
-                    Self::MAX_FILE_BYTES_LIMIT
-                ),
-            ));
-        }
+        validate_nonzero_bounded(
+            "resource_source.sample_interval_millis",
+            self.sample_interval_millis,
+            Self::MAX_SAMPLE_INTERVAL_MILLIS_LIMIT,
+        )?;
+        validate_nonzero_bounded(
+            "resource_source.max_processes",
+            self.max_processes,
+            Self::MAX_PROCESSES_LIMIT,
+        )?;
+        validate_nonzero_bounded(
+            "resource_source.max_cgroups",
+            self.max_cgroups,
+            Self::MAX_CGROUPS_LIMIT,
+        )?;
+        validate_nonzero_bounded(
+            "resource_source.max_fds_per_process",
+            self.max_fds_per_process,
+            Self::MAX_FDS_PER_PROCESS_LIMIT,
+        )?;
+        validate_nonzero_bounded(
+            "resource_source.max_file_bytes",
+            self.max_file_bytes,
+            Self::MAX_FILE_BYTES_LIMIT,
+        )?;
         Ok(())
     }
 }

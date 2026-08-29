@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 
-use super::{ConfigError, ConfigResult};
+use super::{ConfigError, ConfigResult, bounds::validate_nonzero_bounded};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -90,56 +90,21 @@ impl NetworkMetricsConfig {
     pub const MAX_PEER_SERIES_IDLE_TIMEOUT_MILLIS: u64 = 24 * 60 * 60 * 1_000;
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
-        if self.max_metric_keys == 0 {
-            return Err(ConfigError::invalid_value(
-                "network_metrics.max_metric_keys",
-                "network_metrics.max_metric_keys must be greater than zero",
-            ));
-        }
-        if self.max_metric_keys > Self::MAX_METRIC_KEYS_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "network_metrics.max_metric_keys",
-                format!(
-                    "network_metrics.max_metric_keys must be less than or equal to {}",
-                    Self::MAX_METRIC_KEYS_LIMIT
-                ),
-            ));
-        }
-
-        if self.max_active_connections == 0 {
-            return Err(ConfigError::invalid_value(
-                "network_metrics.max_active_connections",
-                "network_metrics.max_active_connections must be greater than zero",
-            ));
-        }
-        if self.max_active_connections > Self::MAX_ACTIVE_CONNECTIONS_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "network_metrics.max_active_connections",
-                format!(
-                    "network_metrics.max_active_connections must be less than or equal to {}",
-                    Self::MAX_ACTIVE_CONNECTIONS_LIMIT
-                ),
-            ));
-        }
-
-        if self.active_flow_snapshot_interval_millis == 0 {
-            return Err(ConfigError::invalid_value(
-                "network_metrics.active_flow_snapshot_interval_millis",
-                "network_metrics.active_flow_snapshot_interval_millis must be greater than zero",
-            ));
-        }
-        if self.active_flow_snapshot_interval_millis
-            > Self::MAX_ACTIVE_FLOW_SNAPSHOT_INTERVAL_MILLIS
-        {
-            return Err(ConfigError::invalid_value(
-                "network_metrics.active_flow_snapshot_interval_millis",
-                format!(
-                    "network_metrics.active_flow_snapshot_interval_millis must be less than or equal to {}",
-                    Self::MAX_ACTIVE_FLOW_SNAPSHOT_INTERVAL_MILLIS
-                ),
-            ));
-        }
-
+        validate_nonzero_bounded(
+            "network_metrics.max_metric_keys",
+            self.max_metric_keys,
+            Self::MAX_METRIC_KEYS_LIMIT,
+        )?;
+        validate_nonzero_bounded(
+            "network_metrics.max_active_connections",
+            self.max_active_connections,
+            Self::MAX_ACTIVE_CONNECTIONS_LIMIT,
+        )?;
+        validate_nonzero_bounded(
+            "network_metrics.active_flow_snapshot_interval_millis",
+            self.active_flow_snapshot_interval_millis,
+            Self::MAX_ACTIVE_FLOW_SNAPSHOT_INTERVAL_MILLIS,
+        )?;
         if self.peer_series_idle_timeout_millis < self.active_flow_snapshot_interval_millis {
             return Err(ConfigError::invalid_value(
                 "network_metrics.peer_series_idle_timeout_millis",

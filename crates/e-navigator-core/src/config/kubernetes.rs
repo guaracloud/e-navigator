@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use super::{ConfigError, ConfigResult, filesystem_paths};
+use super::{ConfigError, ConfigResult, bounds::validate_nonzero_bounded, filesystem_paths};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -92,51 +92,21 @@ impl KubernetesAttributionConfig {
             ));
         }
         filesystem_paths::validate_len("attribution.kubernetes.ca_cert_path", &self.ca_cert_path)?;
-        if self.max_response_bytes == 0 {
-            return Err(ConfigError::invalid_value(
-                "attribution.kubernetes.max_response_bytes",
-                "attribution.kubernetes.max_response_bytes must be greater than zero",
-            ));
-        }
-        if self.max_response_bytes > Self::MAX_RESPONSE_BYTES_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "attribution.kubernetes.max_response_bytes",
-                format!(
-                    "attribution.kubernetes.max_response_bytes must be less than or equal to {}",
-                    Self::MAX_RESPONSE_BYTES_LIMIT
-                ),
-            ));
-        }
-        if self.max_pods == 0 {
-            return Err(ConfigError::invalid_value(
-                "attribution.kubernetes.max_pods",
-                "attribution.kubernetes.max_pods must be greater than zero",
-            ));
-        }
-        if self.max_pods > Self::MAX_PODS_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "attribution.kubernetes.max_pods",
-                format!(
-                    "attribution.kubernetes.max_pods must be less than or equal to {}",
-                    Self::MAX_PODS_LIMIT
-                ),
-            ));
-        }
-        if self.max_cache_entries == 0 {
-            return Err(ConfigError::invalid_value(
-                "attribution.kubernetes.max_cache_entries",
-                "attribution.kubernetes.max_cache_entries must be greater than zero",
-            ));
-        }
-        if self.max_cache_entries > Self::MAX_CACHE_ENTRIES_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "attribution.kubernetes.max_cache_entries",
-                format!(
-                    "attribution.kubernetes.max_cache_entries must be less than or equal to {}",
-                    Self::MAX_CACHE_ENTRIES_LIMIT
-                ),
-            ));
-        }
+        validate_nonzero_bounded(
+            "attribution.kubernetes.max_response_bytes",
+            self.max_response_bytes,
+            Self::MAX_RESPONSE_BYTES_LIMIT,
+        )?;
+        validate_nonzero_bounded(
+            "attribution.kubernetes.max_pods",
+            self.max_pods,
+            Self::MAX_PODS_LIMIT,
+        )?;
+        validate_nonzero_bounded(
+            "attribution.kubernetes.max_cache_entries",
+            self.max_cache_entries,
+            Self::MAX_CACHE_ENTRIES_LIMIT,
+        )?;
         if self.max_labels_per_pod == 0 && self.label_allowlist.is_empty() {
             return Err(ConfigError::invalid_value(
                 "attribution.kubernetes.max_labels_per_pod",
