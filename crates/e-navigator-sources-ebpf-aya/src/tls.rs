@@ -753,8 +753,9 @@ mod platform {
                     }
                 }
             }
-            shutdown.stop();
-            join_reader_handles(reader_handles).await
+            shutdown
+                .stop_and_join("source.aya_tls", reader_handles)
+                .await
         }
     }
 
@@ -1325,13 +1326,6 @@ mod platform {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_nanos().min(u128::from(u64::MAX)) as u64)
             .unwrap_or(0)
-    }
-
-    async fn join_reader_handles(handles: Vec<JoinHandle<()>>) -> CoreResult<()> {
-        for handle in handles {
-            handle.await.map_err(module_error)?;
-        }
-        Ok(())
     }
 
     fn module_error(err: impl ToString) -> CoreError {

@@ -3837,8 +3837,9 @@ mod platform {
             telemetry.mark_initialized();
             debug!("aya protocol source attached");
             crate::shutdown::signal().await.map_err(module_error)?;
-            shutdown.stop();
-            join_reader_handles(reader_handles).await
+            shutdown
+                .stop_and_join("source.aya_protocol", reader_handles)
+                .await
         }
     }
 
@@ -4147,14 +4148,6 @@ mod platform {
                 AyaProgramArray::try_from(map).map_err(module_error)?;
             programs.set(index, &program_fd, 0).map_err(module_error)?;
         }
-        Ok(())
-    }
-
-    async fn join_reader_handles(handles: Vec<JoinHandle<()>>) -> CoreResult<()> {
-        for handle in handles {
-            handle.await.map_err(module_error)?;
-        }
-
         Ok(())
     }
 

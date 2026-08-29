@@ -3,6 +3,11 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+#[cfg(target_os = "linux")]
+use e_navigator_core::{CoreError, CoreResult};
+#[cfg(target_os = "linux")]
+use tokio::task::JoinHandle;
+
 /// Shared stop flag for blocking reader tasks.
 ///
 /// Only the handle created by [`ReaderShutdown::new`] stops readers on drop.
@@ -28,6 +33,26 @@ impl ReaderShutdown {
 
     pub(crate) fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::SeqCst)
+    }
+
+    /// Stops standard reader tasks and waits for each one to exit.
+    ///
+    /// Sources with typed reader exits or additional failure accounting keep
+    /// their specialized join path.
+    #[cfg(target_os = "linux")]
+    pub(crate) async fn stop_and_join(
+        &self,
+        module: &'static str,
+        readers: Vec<JoinHandle<()>>,
+    ) -> CoreResult<()> {
+        self.stop();
+        for reader in readers {
+            reader.await.map_err(|err| CoreError::ModuleFailed {
+                module: module.to_owned(),
+                message: err.to_string(),
+            })?;
+        }
+        Ok(())
     }
 }
 
