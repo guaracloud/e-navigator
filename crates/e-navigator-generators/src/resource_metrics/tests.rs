@@ -288,6 +288,20 @@ async fn deterministic_duplicate_and_bounded_state_behavior() {
 }
 
 #[tokio::test]
+async fn bounded_seen_observation_state_reaccepts_oldest_signal_after_fifo_eviction() {
+    let generator = ResourceMetricsGenerator::with_limits(1);
+    let first = memory_signal("node-a", 100, 8_192, 4_096);
+
+    assert!(!collect(&generator, &first).await.is_empty());
+    assert!(collect(&generator, &first).await.is_empty());
+    for timestamp in 101..=104 {
+        let signal = memory_signal("node-a", timestamp, 8_192, 4_096);
+        assert!(!collect(&generator, &signal).await.is_empty());
+    }
+    assert!(!collect(&generator, &first).await.is_empty());
+}
+
+#[tokio::test]
 async fn unsupported_payloads_emit_no_resource_metrics() {
     let generator = ResourceMetricsGenerator::with_limits(64);
     let signal = SignalEnvelope::exec(

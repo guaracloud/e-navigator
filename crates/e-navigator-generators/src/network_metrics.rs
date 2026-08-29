@@ -9,7 +9,7 @@ use e_navigator_signals::{
     NetworkTcpState, SignalEnvelope, SignalPayload,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     sync::{
         Mutex, MutexGuard,
         atomic::{AtomicU64, Ordering},
@@ -17,6 +17,8 @@ use std::{
 };
 use tokio::sync::mpsc;
 use tracing::warn;
+
+use crate::bounded_fingerprints::BoundedFingerprints;
 
 const DEFAULT_MAX_METRIC_KEYS: usize = 4096;
 const DEFAULT_MAX_ACTIVE_CONNECTIONS: usize = 8192;
@@ -32,7 +34,7 @@ pub struct NetworkMetricsGenerator {
     active_counts: Mutex<BTreeMap<ActiveGaugeKey, ActiveGaugeState>>,
     flow_snapshots: Mutex<BTreeMap<ActiveConnectionKey, FlowSnapshotState>>,
     closed_connections: Mutex<ClosedConnectionCache>,
-    seen_events: Mutex<BoundedEventFingerprints>,
+    seen_events: Mutex<BoundedFingerprints<EventFingerprint>>,
     suppressed_counters: AtomicU64,
     suppressed_durations: AtomicU64,
     suppressed_active_connections: AtomicU64,
@@ -57,7 +59,7 @@ impl NetworkMetricsGenerator {
             active_counts: Mutex::new(BTreeMap::new()),
             flow_snapshots: Mutex::new(BTreeMap::new()),
             closed_connections: Mutex::new(ClosedConnectionCache::default()),
-            seen_events: Mutex::new(BoundedEventFingerprints::default()),
+            seen_events: Mutex::new(BoundedFingerprints::default()),
             suppressed_counters: AtomicU64::new(0),
             suppressed_durations: AtomicU64::new(0),
             suppressed_active_connections: AtomicU64::new(0),
@@ -616,7 +618,7 @@ impl NetworkMetricsGenerator {
             return Ok(true);
         };
         let mut seen_events = self.seen_events()?;
-        if !seen_events.insert_if_new(fingerprint, self.max_metric_keys.saturating_mul(4).max(1)) {
+        if !seen_events.insert_if_new(fingerprint, self.max_metric_keys.saturating_mul(4)) {
             return Ok(false);
         }
         Ok(true)
@@ -642,7 +644,7 @@ impl NetworkMetricsGenerator {
         self.active_counts.lock().map_err(module_error)
     }
 
-    fn seen_events(&self) -> CoreResult<MutexGuard<'_, BoundedEventFingerprints>> {
+    fn seen_events(&self) -> CoreResult<MutexGuard<'_, BoundedFingerprints<EventFingerprint>>> {
         self.seen_events.lock().map_err(module_error)
     }
 
@@ -1447,29 +1449,6 @@ impl EventFingerprint {
     }
 }
 
-#[derive(Debug, Default)]
-struct BoundedEventFingerprints {
-    members: BTreeSet<EventFingerprint>,
-    order: VecDeque<EventFingerprint>,
-}
-
-impl BoundedEventFingerprints {
-    fn insert_if_new(&mut self, fingerprint: EventFingerprint, limit: usize) -> bool {
-        if self.members.contains(&fingerprint) {
-            return false;
-        }
-        while self.members.len() >= limit {
-            let Some(oldest) = self.order.pop_front() else {
-                break;
-            };
-            self.members.remove(&oldest);
-        }
-        self.members.insert(fingerprint.clone());
-        self.order.push_back(fingerprint);
-        true
-    }
-}
-
 fn workload_key(context: &e_navigator_signals::KubernetesContext) -> String {
     format!(
         "{}/{}/{}",
@@ -2068,16 +2047,18 @@ mod tests {
         assert!(should_warn_network_suppression(8));
     }
 
-    #[test]
-    fn bounded_seen_event_state_evicts_oldest_inserted_fingerprint() {
-        let mut seen = BoundedEventFingerprints::default();
-        let first = event_fingerprint("203.0.113.250", 1_000);
-        let second = event_fingerprint("203.0.113.10", 2_000);
+    #[tokio::test]
+    async fn bounded_seen_event_state_reaccepts_oldest_signal_after_fifo_eviction() {
+        let generator = NetworkMetricsGenerator::with_limits(1, 8);
+        let first = network_open_signal("203.0.113.10", 443, 100, Some(7));
 
-        assert!(seen.insert_if_new(first.clone(), 1));
-        assert!(seen.insert_if_new(second.clone(), 1));
-        assert!(!seen.insert_if_new(second, 1));
-        assert!(seen.insert_if_new(first, 1));
+        assert!(!observe(&generator, &first).await.is_empty());
+        assert!(observe(&generator, &first).await.is_empty());
+        for timestamp in 101..=104 {
+            let signal = network_open_signal("203.0.113.10", 443, timestamp, Some(7));
+            assert!(!observe(&generator, &signal).await.is_empty());
+        }
+        assert!(!observe(&generator, &first).await.is_empty());
     }
 
     #[test]
@@ -2340,23 +2321,6 @@ mod tests {
         assert_eq!(flow.bytes, bytes);
         assert_eq!(flow.first_seen_unix_nanos, first_seen_unix_nanos);
         assert_eq!(flow.last_seen_unix_nanos, last_seen_unix_nanos);
-    }
-
-    fn event_fingerprint(remote_address: &str, timestamp: u64) -> EventFingerprint {
-        EventFingerprint {
-            kind: "open",
-            pid: 42,
-            fd: Some(7),
-            protocol: NetworkProtocol::Tcp,
-            address_family: NetworkAddressFamily::Ipv4,
-            local_address: Some("10.0.0.5".to_string()),
-            local_port: Some(43512),
-            remote_address: remote_address.to_string(),
-            remote_port: 443,
-            opened_at: None,
-            timestamp,
-            errno: None,
-        }
     }
 
     fn network_open_signal(
