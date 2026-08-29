@@ -40,28 +40,85 @@ pub struct OtlpHttpSink {
     metric_timestamp_guard: Option<Arc<MetricTimestampGuard>>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ExportWorkerTelemetry {
-    pub queue_capacity: usize,
-    pub queue_depth: usize,
-    pub enqueued: u64,
-    pub exported: u64,
-    pub dropped_queue_full: u64,
-    pub dropped_worker_closed: u64,
-    pub dropped_export_failure: u64,
-    pub dropped_circuit_open: u64,
-    pub failed_batches: u64,
-    pub retry_attempts: u64,
-    pub circuit_opened: u64,
-    pub request_attempts: u64,
-    pub request_duration_micros_sum: u64,
-    pub request_duration_buckets: [u64; EXPORT_REQUEST_DURATION_BUCKET_MICROS.len()],
-    pub partial_successes: u64,
-    pub partial_warnings: u64,
-    pub rejected_items: u64,
-    pub retryable_responses: u64,
-    pub permanent_responses: u64,
-    pub invalid_responses: u64,
+macro_rules! define_export_worker_telemetry {
+    (
+        before_latency { $($before:ident => $before_metric:literal,)+ }
+        after_latency { $($after:ident => $after_metric:literal,)+ }
+    ) => {
+        #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+        pub struct ExportWorkerTelemetry {
+            pub queue_capacity: usize,
+            pub queue_depth: usize,
+            $(pub $before: u64,)+
+            pub request_attempts: u64,
+            pub request_duration_micros_sum: u64,
+            pub request_duration_buckets: [u64; EXPORT_REQUEST_DURATION_BUCKET_MICROS.len()],
+            $(pub $after: u64,)+
+        }
+
+        #[derive(Debug, Default)]
+        struct AtomicExportWorkerTelemetry {
+            $($before: AtomicU64,)+
+            request_attempts: AtomicU64,
+            request_duration_micros_sum: AtomicU64,
+            request_duration_buckets: [AtomicU64; EXPORT_REQUEST_DURATION_BUCKET_MICROS.len()],
+            $($after: AtomicU64,)+
+        }
+
+        impl AtomicExportWorkerTelemetry {
+            fn snapshot(&self) -> ExportWorkerTelemetry {
+                ExportWorkerTelemetry {
+                    queue_capacity: 0,
+                    queue_depth: 0,
+                    $($before: self.$before.load(Ordering::Relaxed),)+
+                    request_attempts: self.request_attempts.load(Ordering::Relaxed),
+                    request_duration_micros_sum: self
+                        .request_duration_micros_sum
+                        .load(Ordering::Relaxed),
+                    request_duration_buckets: std::array::from_fn(|index| {
+                        self.request_duration_buckets[index].load(Ordering::Relaxed)
+                    }),
+                    $($after: self.$after.load(Ordering::Relaxed),)+
+                }
+            }
+        }
+
+        impl ExportWorkerTelemetry {
+            fn scalar_metric_values(
+                &self,
+            ) -> impl Iterator<Item = (&'static str, u64)> + '_ {
+                [
+                    ("e_navigator_export_queue_capacity", self.queue_capacity as u64),
+                    ("e_navigator_export_queue_depth", self.queue_depth as u64),
+                    $(($before_metric, self.$before),)+
+                    $(($after_metric, self.$after),)+
+                ]
+                .into_iter()
+            }
+        }
+    };
+}
+
+define_export_worker_telemetry! {
+    before_latency {
+        enqueued => "e_navigator_export_enqueued_total",
+        exported => "e_navigator_export_sent_total",
+        dropped_queue_full => "e_navigator_export_dropped_queue_full_total",
+        dropped_worker_closed => "e_navigator_export_dropped_worker_closed_total",
+        dropped_export_failure => "e_navigator_export_dropped_failure_total",
+        dropped_circuit_open => "e_navigator_export_dropped_circuit_open_total",
+        failed_batches => "e_navigator_export_failed_batches_total",
+        retry_attempts => "e_navigator_export_retry_attempts_total",
+        circuit_opened => "e_navigator_export_circuit_opened_total",
+    }
+    after_latency {
+        partial_successes => "e_navigator_export_partial_success_total",
+        partial_warnings => "e_navigator_export_partial_warning_total",
+        rejected_items => "e_navigator_export_rejected_items_total",
+        retryable_responses => "e_navigator_export_retryable_responses_total",
+        permanent_responses => "e_navigator_export_permanent_responses_total",
+        invalid_responses => "e_navigator_export_invalid_responses_total",
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -117,57 +174,6 @@ struct MetricTimestampGuard {
     accepting: AtomicBool,
     max_pending_series: usize,
     shutdown_timeout: Duration,
-}
-
-#[derive(Debug, Default)]
-struct AtomicExportWorkerTelemetry {
-    enqueued: AtomicU64,
-    exported: AtomicU64,
-    dropped_queue_full: AtomicU64,
-    dropped_worker_closed: AtomicU64,
-    dropped_export_failure: AtomicU64,
-    dropped_circuit_open: AtomicU64,
-    failed_batches: AtomicU64,
-    retry_attempts: AtomicU64,
-    circuit_opened: AtomicU64,
-    request_attempts: AtomicU64,
-    request_duration_micros_sum: AtomicU64,
-    request_duration_buckets: [AtomicU64; EXPORT_REQUEST_DURATION_BUCKET_MICROS.len()],
-    partial_successes: AtomicU64,
-    partial_warnings: AtomicU64,
-    rejected_items: AtomicU64,
-    retryable_responses: AtomicU64,
-    permanent_responses: AtomicU64,
-    invalid_responses: AtomicU64,
-}
-
-impl AtomicExportWorkerTelemetry {
-    fn snapshot(&self) -> ExportWorkerTelemetry {
-        ExportWorkerTelemetry {
-            queue_capacity: 0,
-            queue_depth: 0,
-            enqueued: self.enqueued.load(Ordering::Relaxed),
-            exported: self.exported.load(Ordering::Relaxed),
-            dropped_queue_full: self.dropped_queue_full.load(Ordering::Relaxed),
-            dropped_worker_closed: self.dropped_worker_closed.load(Ordering::Relaxed),
-            dropped_export_failure: self.dropped_export_failure.load(Ordering::Relaxed),
-            dropped_circuit_open: self.dropped_circuit_open.load(Ordering::Relaxed),
-            failed_batches: self.failed_batches.load(Ordering::Relaxed),
-            retry_attempts: self.retry_attempts.load(Ordering::Relaxed),
-            circuit_opened: self.circuit_opened.load(Ordering::Relaxed),
-            request_attempts: self.request_attempts.load(Ordering::Relaxed),
-            request_duration_micros_sum: self.request_duration_micros_sum.load(Ordering::Relaxed),
-            request_duration_buckets: std::array::from_fn(|index| {
-                self.request_duration_buckets[index].load(Ordering::Relaxed)
-            }),
-            partial_successes: self.partial_successes.load(Ordering::Relaxed),
-            partial_warnings: self.partial_warnings.load(Ordering::Relaxed),
-            rejected_items: self.rejected_items.load(Ordering::Relaxed),
-            retryable_responses: self.retryable_responses.load(Ordering::Relaxed),
-            permanent_responses: self.permanent_responses.load(Ordering::Relaxed),
-            invalid_responses: self.invalid_responses.load(Ordering::Relaxed),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -1086,70 +1092,10 @@ fn export_worker_prometheus_lines(
         labels: labels.clone(),
         value: value.to_string(),
     };
-    let mut lines = vec![
-        metric(
-            "e_navigator_export_queue_capacity",
-            telemetry.queue_capacity as u64,
-        ),
-        metric(
-            "e_navigator_export_queue_depth",
-            telemetry.queue_depth as u64,
-        ),
-        metric("e_navigator_export_enqueued_total", telemetry.enqueued),
-        metric("e_navigator_export_sent_total", telemetry.exported),
-        metric(
-            "e_navigator_export_dropped_queue_full_total",
-            telemetry.dropped_queue_full,
-        ),
-        metric(
-            "e_navigator_export_dropped_worker_closed_total",
-            telemetry.dropped_worker_closed,
-        ),
-        metric(
-            "e_navigator_export_dropped_failure_total",
-            telemetry.dropped_export_failure,
-        ),
-        metric(
-            "e_navigator_export_dropped_circuit_open_total",
-            telemetry.dropped_circuit_open,
-        ),
-        metric(
-            "e_navigator_export_failed_batches_total",
-            telemetry.failed_batches,
-        ),
-        metric(
-            "e_navigator_export_retry_attempts_total",
-            telemetry.retry_attempts,
-        ),
-        metric(
-            "e_navigator_export_circuit_opened_total",
-            telemetry.circuit_opened,
-        ),
-        metric(
-            "e_navigator_export_partial_success_total",
-            telemetry.partial_successes,
-        ),
-        metric(
-            "e_navigator_export_partial_warning_total",
-            telemetry.partial_warnings,
-        ),
-        metric(
-            "e_navigator_export_rejected_items_total",
-            telemetry.rejected_items,
-        ),
-        metric(
-            "e_navigator_export_retryable_responses_total",
-            telemetry.retryable_responses,
-        ),
-        metric(
-            "e_navigator_export_permanent_responses_total",
-            telemetry.permanent_responses,
-        ),
-        metric(
-            "e_navigator_export_invalid_responses_total",
-            telemetry.invalid_responses,
-        ),
-    ];
+    let mut lines = telemetry
+        .scalar_metric_values()
+        .map(|(name, value)| metric(name, value))
+        .collect::<Vec<_>>();
     for (index, boundary_micros) in EXPORT_REQUEST_DURATION_BUCKET_MICROS.iter().enumerate() {
         let mut bucket_labels = labels.clone();
         bucket_labels.insert(
@@ -1728,6 +1674,43 @@ mod tests {
         }
 
         let lines = export_worker_prometheus_lines("metrics", telemetry);
+        let names = lines
+            .iter()
+            .map(|line| line.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            &names[..17],
+            [
+                "e_navigator_export_queue_capacity",
+                "e_navigator_export_queue_depth",
+                "e_navigator_export_enqueued_total",
+                "e_navigator_export_sent_total",
+                "e_navigator_export_dropped_queue_full_total",
+                "e_navigator_export_dropped_worker_closed_total",
+                "e_navigator_export_dropped_failure_total",
+                "e_navigator_export_dropped_circuit_open_total",
+                "e_navigator_export_failed_batches_total",
+                "e_navigator_export_retry_attempts_total",
+                "e_navigator_export_circuit_opened_total",
+                "e_navigator_export_partial_success_total",
+                "e_navigator_export_partial_warning_total",
+                "e_navigator_export_rejected_items_total",
+                "e_navigator_export_retryable_responses_total",
+                "e_navigator_export_permanent_responses_total",
+                "e_navigator_export_invalid_responses_total",
+            ]
+        );
+        assert_eq!(
+            &names[17..29],
+            ["e_navigator_export_request_duration_seconds_bucket"; 12]
+        );
+        assert_eq!(
+            &names[29..],
+            [
+                "e_navigator_export_request_duration_seconds_sum",
+                "e_navigator_export_request_duration_seconds_count",
+            ]
+        );
         assert!(lines.iter().any(|line| {
             line.name == "e_navigator_export_request_duration_seconds_bucket"
                 && line.labels.get("signal_family").map(String::as_str) == Some("metrics")
