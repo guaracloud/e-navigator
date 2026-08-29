@@ -6,6 +6,7 @@ mod dns_metrics;
 mod dns_source;
 mod ebpf;
 mod error;
+mod filesystem_paths;
 mod http_source;
 mod json_stdout;
 mod kubernetes;

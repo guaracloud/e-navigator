@@ -1,14 +1,14 @@
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use super::{ConfigError, ConfigResult, KubernetesAttributionConfig};
+use super::{ConfigError, ConfigResult, KubernetesAttributionConfig, filesystem_paths};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AttributionConfig {
-    #[serde(default = "default_procfs_root")]
+    #[serde(default = "filesystem_paths::procfs_root")]
     pub procfs_root: PathBuf,
-    #[serde(default = "default_cgroup_root")]
+    #[serde(default = "filesystem_paths::cgroup_root")]
     pub cgroup_root: PathBuf,
     #[serde(default)]
     pub kubernetes: KubernetesAttributionConfig,
@@ -17,15 +17,15 @@ pub struct AttributionConfig {
 impl Default for AttributionConfig {
     fn default() -> Self {
         Self {
-            procfs_root: default_procfs_root(),
-            cgroup_root: default_cgroup_root(),
+            procfs_root: filesystem_paths::procfs_root(),
+            cgroup_root: filesystem_paths::cgroup_root(),
             kubernetes: KubernetesAttributionConfig::default(),
         }
     }
 }
 
 impl AttributionConfig {
-    pub const MAX_PATH_BYTES_LIMIT: usize = 4096;
+    pub const MAX_PATH_BYTES_LIMIT: usize = filesystem_paths::MAX_PATH_BYTES;
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
         if self.procfs_root.as_os_str().is_empty() {
@@ -34,36 +34,15 @@ impl AttributionConfig {
                 "attribution.procfs_root must not be empty",
             ));
         }
-        validate_path_len("attribution.procfs_root", &self.procfs_root)?;
+        filesystem_paths::validate_len("attribution.procfs_root", &self.procfs_root)?;
         if self.cgroup_root.as_os_str().is_empty() {
             return Err(ConfigError::invalid_value(
                 "attribution.cgroup_root",
                 "attribution.cgroup_root must not be empty",
             ));
         }
-        validate_path_len("attribution.cgroup_root", &self.cgroup_root)?;
+        filesystem_paths::validate_len("attribution.cgroup_root", &self.cgroup_root)?;
 
         self.kubernetes.validate()
     }
-}
-
-fn validate_path_len(path: &'static str, value: &Path) -> ConfigResult<()> {
-    if value.to_string_lossy().len() > AttributionConfig::MAX_PATH_BYTES_LIMIT {
-        return Err(ConfigError::invalid_value(
-            path,
-            format!(
-                "{path} must be at most {} bytes",
-                AttributionConfig::MAX_PATH_BYTES_LIMIT
-            ),
-        ));
-    }
-    Ok(())
-}
-
-fn default_procfs_root() -> PathBuf {
-    PathBuf::from("/proc")
-}
-
-fn default_cgroup_root() -> PathBuf {
-    PathBuf::from("/sys/fs/cgroup")
 }
