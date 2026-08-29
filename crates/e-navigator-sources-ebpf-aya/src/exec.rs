@@ -309,7 +309,6 @@ mod platform {
         sync::{Arc, Mutex},
     };
     use tokio::sync::mpsc;
-    use tokio::task::JoinHandle;
     use tracing::{debug, info};
 
     #[repr(C)]
@@ -591,8 +590,9 @@ mod platform {
                     module: "source.aya_exec".to_string(),
                     message: err.to_string(),
                 })?;
-            shutdown.stop();
-            join_reader_handles(reader_handles).await
+            shutdown
+                .stop_and_join("source.aya_exec", reader_handles)
+                .await
         }
     }
 
@@ -797,17 +797,6 @@ mod platform {
                 module: "source.aya_exec".to_string(),
                 message: err.to_string(),
             })
-    }
-
-    async fn join_reader_handles(handles: Vec<JoinHandle<()>>) -> CoreResult<()> {
-        for handle in handles {
-            handle.await.map_err(|err| CoreError::ModuleFailed {
-                module: "source.aya_exec".to_string(),
-                message: err.to_string(),
-            })?;
-        }
-
-        Ok(())
     }
 }
 

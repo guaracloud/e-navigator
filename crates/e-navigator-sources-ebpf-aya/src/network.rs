@@ -867,8 +867,9 @@ mod platform {
             telemetry.mark_initialized();
             debug!("aya network source attached");
             crate::shutdown::signal().await.map_err(module_error)?;
-            shutdown.stop();
-            join_reader_handles(reader_handles).await
+            shutdown
+                .stop_and_join("source.aya_network", reader_handles)
+                .await
         }
     }
 
@@ -1366,14 +1367,6 @@ mod platform {
                 "network message-batch accounting skipped unsupported batches"
             );
         }
-    }
-
-    async fn join_reader_handles(handles: Vec<JoinHandle<()>>) -> CoreResult<()> {
-        for handle in handles {
-            handle.await.map_err(module_error)?;
-        }
-
-        Ok(())
     }
 
     fn module_error(err: impl ToString) -> CoreError {

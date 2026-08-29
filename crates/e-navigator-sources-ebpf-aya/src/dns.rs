@@ -384,7 +384,6 @@ mod platform {
     use e_navigator_signals::SignalEnvelope;
     use std::{path::PathBuf, sync::Arc};
     use tokio::sync::mpsc;
-    use tokio::task::JoinHandle;
     use tracing::{debug, info};
 
     #[derive(Debug, Default)]
@@ -608,8 +607,9 @@ mod platform {
             telemetry.mark_initialized();
             debug!("aya dns source attached");
             crate::shutdown::signal().await.map_err(module_error)?;
-            shutdown.stop();
-            join_reader_handles(reader_handles).await
+            shutdown
+                .stop_and_join("source.aya_dns", reader_handles)
+                .await
         }
     }
 
@@ -681,14 +681,6 @@ mod platform {
             .map_err(module_error)?;
         program.load().map_err(module_error)?;
         program.attach(category, name).map_err(module_error)?;
-        Ok(())
-    }
-
-    async fn join_reader_handles(handles: Vec<JoinHandle<()>>) -> CoreResult<()> {
-        for handle in handles {
-            handle.await.map_err(module_error)?;
-        }
-
         Ok(())
     }
 

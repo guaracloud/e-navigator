@@ -1384,8 +1384,9 @@ mod platform {
             telemetry.mark_initialized();
             info!(source = "source.aya_http", "aya http source ready");
             crate::shutdown::signal().await.map_err(module_error)?;
-            shutdown.stop();
-            join_reader_handles(reader_handles).await
+            shutdown
+                .stop_and_join("source.aya_http", reader_handles)
+                .await
         }
     }
 
@@ -1828,14 +1829,6 @@ mod platform {
             max_attributes: config.max_attributes,
             max_tracestate_bytes: config.max_tracestate_bytes,
         }
-    }
-
-    async fn join_reader_handles(handles: Vec<JoinHandle<()>>) -> CoreResult<()> {
-        for handle in handles {
-            handle.await.map_err(module_error)?;
-        }
-
-        Ok(())
     }
 
     fn module_error(err: impl ToString) -> CoreError {
