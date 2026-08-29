@@ -370,74 +370,8 @@ impl CaptureFilterController {
     }
 
     fn telemetry(&self) -> WorkloadControllerTelemetrySnapshot {
-        WorkloadControllerTelemetrySnapshot {
-            relists: self.telemetry.relists.load(Ordering::Relaxed),
-            relist_failures: self.telemetry.relist_failures.load(Ordering::Relaxed),
-            watch_starts: self.telemetry.watch_starts.load(Ordering::Relaxed),
-            watch_failures: self.telemetry.watch_failures.load(Ordering::Relaxed),
-            expired_resource_versions: self
-                .telemetry
-                .expired_resource_versions
-                .load(Ordering::Relaxed),
-            reconciliations: self.telemetry.reconciliations.load(Ordering::Relaxed),
-            pod_count: self.telemetry.pod_count.load(Ordering::Relaxed),
-            service_count: self.telemetry.service_count.load(Ordering::Relaxed),
-            endpoint_slice_count: self.telemetry.endpoint_slice_count.load(Ordering::Relaxed),
-            allowed_cgroups: self.telemetry.allowed_cgroups.load(Ordering::Relaxed),
-            denied_cgroups: self.telemetry.denied_cgroups.load(Ordering::Relaxed),
-            unresolved_cgroups: self.telemetry.unresolved_cgroups.load(Ordering::Relaxed),
-            cgroup_hierarchy_mode: self.cgroup_hierarchy_mode,
-            capture_filter_fail_closed_total: self
-                .telemetry
-                .capture_filter_fail_closed
-                .load(Ordering::Relaxed),
-            discovery_mode: self.discovery_mode,
-            discovery_notifications_total: self
-                .telemetry
-                .discovery_notifications
-                .load(Ordering::Relaxed),
-            discovery_coalesced_total: self.telemetry.discovery_coalesced.load(Ordering::Relaxed),
-            event_reconciliations_total: self
-                .telemetry
-                .event_reconciliations
-                .load(Ordering::Relaxed),
-            fallback_reconciliations_total: self
-                .telemetry
-                .fallback_reconciliations
-                .load(Ordering::Relaxed),
-            inotify_events_total: self.telemetry.inotify_events.load(Ordering::Relaxed),
-            inotify_watches: self.telemetry.inotify_watches.load(Ordering::Relaxed),
-            inotify_watch_limit_drops_total: self
-                .telemetry
-                .inotify_watch_limit_drops
-                .load(Ordering::Relaxed),
-            inotify_failures_total: self.telemetry.inotify_failures.load(Ordering::Relaxed),
-            inotify_queue_overflows_total: self
-                .telemetry
-                .inotify_queue_overflows
-                .load(Ordering::Relaxed),
-            bootstrap_window_observations_total: self
-                .telemetry
-                .bootstrap_window_observations
-                .load(Ordering::Relaxed),
-            bootstrap_window_nanos_total: self
-                .telemetry
-                .bootstrap_window_nanos_total
-                .load(Ordering::Relaxed),
-            bootstrap_window_nanos_max: self
-                .telemetry
-                .bootstrap_window_nanos_max
-                .load(Ordering::Relaxed),
-            map_apply_failures_total: self.telemetry.map_apply_failures.load(Ordering::Relaxed),
-            last_success_unix_seconds: self
-                .telemetry
-                .last_success_unix_seconds
-                .load(Ordering::Relaxed),
-            last_resource_relist_unix_seconds: self
-                .telemetry
-                .last_resource_relist_unix_seconds
-                .load(Ordering::Relaxed),
-        }
+        self.telemetry
+            .snapshot(self.cgroup_hierarchy_mode, self.discovery_mode)
     }
 }
 
@@ -461,70 +395,208 @@ pub fn bench_refresh_coalescer(notification_count: usize) -> u64 {
     coalesced
 }
 
-#[derive(Debug, Default)]
-struct WorkloadControllerTelemetry {
-    relists: AtomicU64,
-    relist_failures: AtomicU64,
-    watch_starts: AtomicU64,
-    watch_failures: AtomicU64,
-    expired_resource_versions: AtomicU64,
-    reconciliations: AtomicU64,
-    pod_count: AtomicU64,
-    service_count: AtomicU64,
-    endpoint_slice_count: AtomicU64,
-    allowed_cgroups: AtomicU64,
-    denied_cgroups: AtomicU64,
-    unresolved_cgroups: AtomicU64,
-    capture_filter_fail_closed: AtomicU64,
-    discovery_notifications: AtomicU64,
-    discovery_coalesced: AtomicU64,
-    event_reconciliations: AtomicU64,
-    fallback_reconciliations: AtomicU64,
-    inotify_events: AtomicU64,
-    inotify_watches: AtomicU64,
-    inotify_watch_limit_drops: AtomicU64,
-    inotify_failures: AtomicU64,
-    inotify_queue_overflows: AtomicU64,
-    bootstrap_window_observations: AtomicU64,
-    bootstrap_window_nanos_total: AtomicU64,
-    bootstrap_window_nanos_max: AtomicU64,
-    map_apply_failures: AtomicU64,
-    last_success_unix_seconds: AtomicU64,
-    last_resource_relist_unix_seconds: AtomicU64,
+macro_rules! define_workload_controller_telemetry {
+    (
+        activity { $($activity_counter:ident => $activity_snapshot:ident : $activity_metric:literal,)+ }
+        inventory { $($inventory_counter:ident => $inventory_snapshot:ident : $inventory_metric:literal,)+ }
+        capture_scope { $($scope_counter:ident => $scope_snapshot:ident : $scope_metric:literal,)+ }
+        between_modes { $($middle_counter:ident => $middle_snapshot:ident : $middle_metric:literal,)+ }
+        discovery { $($discovery_counter:ident => $discovery_snapshot:ident : $discovery_metric:literal,)+ }
+        bootstrap {
+            $bootstrap_total_counter:ident => $bootstrap_total_snapshot:ident,
+            $bootstrap_max_counter:ident => $bootstrap_max_snapshot:ident,
+        }
+        after_bootstrap { $($after_counter:ident => $after_snapshot:ident : $after_metric:literal,)+ }
+        freshness { $($freshness_counter:ident => $freshness_snapshot:ident,)+ }
+    ) => {
+        #[derive(Debug, Default)]
+        struct WorkloadControllerTelemetry {
+            $($activity_counter: AtomicU64,)+
+            $($inventory_counter: AtomicU64,)+
+            $($scope_counter: AtomicU64,)+
+            $($middle_counter: AtomicU64,)+
+            $($discovery_counter: AtomicU64,)+
+            $bootstrap_total_counter: AtomicU64,
+            $bootstrap_max_counter: AtomicU64,
+            $($after_counter: AtomicU64,)+
+            $($freshness_counter: AtomicU64,)+
+        }
+
+        impl WorkloadControllerTelemetry {
+            fn snapshot(
+                &self,
+                cgroup_hierarchy_mode: CgroupHierarchyMode,
+                discovery_mode: CgroupDiscoveryMode,
+            ) -> WorkloadControllerTelemetrySnapshot {
+                WorkloadControllerTelemetrySnapshot {
+                    $($activity_snapshot: self.$activity_counter.load(Ordering::Relaxed),)+
+                    $($inventory_snapshot: self.$inventory_counter.load(Ordering::Relaxed),)+
+                    $($scope_snapshot: self.$scope_counter.load(Ordering::Relaxed),)+
+                    cgroup_hierarchy_mode,
+                    $($middle_snapshot: self.$middle_counter.load(Ordering::Relaxed),)+
+                    discovery_mode,
+                    $($discovery_snapshot: self.$discovery_counter.load(Ordering::Relaxed),)+
+                    $bootstrap_total_snapshot: self.$bootstrap_total_counter.load(Ordering::Relaxed),
+                    $bootstrap_max_snapshot: self.$bootstrap_max_counter.load(Ordering::Relaxed),
+                    $($after_snapshot: self.$after_counter.load(Ordering::Relaxed),)+
+                    $($freshness_snapshot: self.$freshness_counter.load(Ordering::Relaxed),)+
+                }
+            }
+        }
+
+        #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+        pub struct WorkloadControllerTelemetrySnapshot {
+            $(pub $activity_snapshot: u64,)+
+            $(pub $inventory_snapshot: u64,)+
+            $(pub $scope_snapshot: u64,)+
+            pub cgroup_hierarchy_mode: CgroupHierarchyMode,
+            $(pub $middle_snapshot: u64,)+
+            pub discovery_mode: CgroupDiscoveryMode,
+            $(pub $discovery_snapshot: u64,)+
+            pub $bootstrap_total_snapshot: u64,
+            pub $bootstrap_max_snapshot: u64,
+            $(pub $after_snapshot: u64,)+
+            $(pub $freshness_snapshot: u64,)+
+        }
+
+        impl WorkloadControllerTelemetrySnapshot {
+            /// Returns the fixed native workload-controller metrics in export order.
+            pub fn native_metric_values(
+                &self,
+                now_unix_seconds: u64,
+            ) -> impl Iterator<
+                Item = (
+                    &'static str,
+                    String,
+                    Option<(&'static str, &'static str)>,
+                ),
+            > {
+                let metric = |name: &'static str, value: u64| {
+                    (name, value.to_string(), None)
+                };
+                let info = |name: &'static str, value: &'static str| {
+                    (name, "1".to_string(), Some(("mode", value)))
+                };
+                let freshness = |last_success| {
+                    if last_success == 0 {
+                        0
+                    } else {
+                        now_unix_seconds.saturating_sub(last_success)
+                    }
+                };
+                let discovery_mode = match self.discovery_mode {
+                    CgroupDiscoveryMode::EventDriven => "event_driven",
+                    CgroupDiscoveryMode::Polling => "polling",
+                };
+
+                [
+                    metric(
+                        "e_navigator_kubernetes_controller_ready",
+                        u64::from(self.last_success_unix_seconds > 0),
+                    ),
+                    metric(
+                        "e_navigator_kubernetes_controller_freshness_seconds",
+                        freshness(self.last_success_unix_seconds),
+                    ),
+                    metric(
+                        "e_navigator_kubernetes_controller_resource_relist_freshness_seconds",
+                        freshness(self.last_resource_relist_unix_seconds),
+                    ),
+                    $(metric(
+                        concat!("e_navigator_kubernetes_controller_", $inventory_metric),
+                        self.$inventory_snapshot,
+                    ),)+
+                    $(metric(
+                        concat!("e_navigator_kubernetes_controller_", $activity_metric),
+                        self.$activity_snapshot,
+                    ),)+
+                    $(metric(
+                        concat!("e_navigator_capture_filter_", $scope_metric),
+                        self.$scope_snapshot,
+                    ),)+
+                    info(
+                        "e_navigator_capture_filter_cgroup_hierarchy_info",
+                        self.cgroup_hierarchy_mode.as_str(),
+                    ),
+                    metric(
+                        "e_navigator_capture_filter_cgroup_v2_compatible",
+                        u64::from(self.cgroup_hierarchy_mode.capture_filter_compatible()),
+                    ),
+                    $(metric(
+                        concat!("e_navigator_capture_filter_", $middle_metric),
+                        self.$middle_snapshot,
+                    ),)+
+                    info("e_navigator_capture_filter_discovery_info", discovery_mode),
+                    $(metric(
+                        concat!("e_navigator_capture_filter_", $discovery_metric),
+                        self.$discovery_snapshot,
+                    ),)+
+                    (
+                        "e_navigator_capture_filter_bootstrap_window_seconds_sum",
+                        format!("{:.9}", self.$bootstrap_total_snapshot as f64 / 1e9),
+                        None,
+                    ),
+                    (
+                        "e_navigator_capture_filter_bootstrap_window_seconds_max",
+                        format!("{:.9}", self.$bootstrap_max_snapshot as f64 / 1e9),
+                        None,
+                    ),
+                    $(metric(
+                        concat!("e_navigator_capture_filter_", $after_metric),
+                        self.$after_snapshot,
+                    ),)+
+                ]
+                .into_iter()
+            }
+        }
+    };
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct WorkloadControllerTelemetrySnapshot {
-    pub relists: u64,
-    pub relist_failures: u64,
-    pub watch_starts: u64,
-    pub watch_failures: u64,
-    pub expired_resource_versions: u64,
-    pub reconciliations: u64,
-    pub pod_count: u64,
-    pub service_count: u64,
-    pub endpoint_slice_count: u64,
-    pub allowed_cgroups: u64,
-    pub denied_cgroups: u64,
-    pub unresolved_cgroups: u64,
-    pub cgroup_hierarchy_mode: CgroupHierarchyMode,
-    pub capture_filter_fail_closed_total: u64,
-    pub discovery_mode: CgroupDiscoveryMode,
-    pub discovery_notifications_total: u64,
-    pub discovery_coalesced_total: u64,
-    pub event_reconciliations_total: u64,
-    pub fallback_reconciliations_total: u64,
-    pub inotify_events_total: u64,
-    pub inotify_watches: u64,
-    pub inotify_watch_limit_drops_total: u64,
-    pub inotify_failures_total: u64,
-    pub inotify_queue_overflows_total: u64,
-    pub bootstrap_window_observations_total: u64,
-    pub bootstrap_window_nanos_total: u64,
-    pub bootstrap_window_nanos_max: u64,
-    pub map_apply_failures_total: u64,
-    pub last_success_unix_seconds: u64,
-    pub last_resource_relist_unix_seconds: u64,
+define_workload_controller_telemetry! {
+    activity {
+        relists => relists: "relists_total",
+        relist_failures => relist_failures: "relist_failures_total",
+        watch_starts => watch_starts: "watch_starts_total",
+        watch_failures => watch_failures: "watch_failures_total",
+        expired_resource_versions => expired_resource_versions: "expired_resource_versions_total",
+        reconciliations => reconciliations: "reconciliations_total",
+    }
+    inventory {
+        pod_count => pod_count: "pods",
+        service_count => service_count: "services",
+        endpoint_slice_count => endpoint_slice_count: "endpoint_slices",
+    }
+    capture_scope {
+        allowed_cgroups => allowed_cgroups: "allowed_cgroups",
+        denied_cgroups => denied_cgroups: "denied_cgroups",
+        unresolved_cgroups => unresolved_cgroups: "unresolved_cgroups",
+    }
+    between_modes {
+        capture_filter_fail_closed => capture_filter_fail_closed_total: "fail_closed_total",
+    }
+    discovery {
+        discovery_notifications => discovery_notifications_total: "discovery_notifications_total",
+        discovery_coalesced => discovery_coalesced_total: "discovery_coalesced_total",
+        event_reconciliations => event_reconciliations_total: "event_reconciliations_total",
+        fallback_reconciliations => fallback_reconciliations_total: "fallback_reconciliations_total",
+        inotify_events => inotify_events_total: "inotify_events_total",
+        inotify_watches => inotify_watches: "inotify_watches",
+        inotify_watch_limit_drops => inotify_watch_limit_drops_total: "inotify_watch_limit_drops_total",
+        inotify_failures => inotify_failures_total: "inotify_failures_total",
+        inotify_queue_overflows => inotify_queue_overflows_total: "inotify_queue_overflows_total",
+        bootstrap_window_observations => bootstrap_window_observations_total: "bootstrap_window_observations_total",
+    }
+    bootstrap {
+        bootstrap_window_nanos_total => bootstrap_window_nanos_total,
+        bootstrap_window_nanos_max => bootstrap_window_nanos_max,
+    }
+    after_bootstrap {
+        map_apply_failures => map_apply_failures_total: "map_apply_failures_total",
+    }
+    freshness {
+        last_success_unix_seconds => last_success_unix_seconds,
+        last_resource_relist_unix_seconds => last_resource_relist_unix_seconds,
+    }
 }
 
 /// Process-global workload controller. `None` means both capture filtering and

@@ -337,164 +337,17 @@ impl NativeTelemetrySource for WorkloadControllerTelemetrySource {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |duration| duration.as_secs());
-        let freshness = if snapshot.last_success_unix_seconds == 0 {
-            0
-        } else {
-            now.saturating_sub(snapshot.last_success_unix_seconds)
-        };
-        let resource_relist_freshness = if snapshot.last_resource_relist_unix_seconds == 0 {
-            0
-        } else {
-            now.saturating_sub(snapshot.last_resource_relist_unix_seconds)
-        };
-        let metric = |name: &str, value: u64| PrometheusMetricLine {
-            name: name.to_string(),
-            labels: std::collections::BTreeMap::new(),
-            value: value.to_string(),
-        };
-        let hierarchy_info = PrometheusMetricLine {
-            name: "e_navigator_capture_filter_cgroup_hierarchy_info".to_string(),
-            labels: std::collections::BTreeMap::from([(
-                "mode".to_string(),
-                snapshot.cgroup_hierarchy_mode.as_str().to_string(),
-            )]),
-            value: "1".to_string(),
-        };
-        let discovery_info = PrometheusMetricLine {
-            name: "e_navigator_capture_filter_discovery_info".to_string(),
-            labels: std::collections::BTreeMap::from([(
-                "mode".to_string(),
-                match snapshot.discovery_mode {
-                    e_navigator_core::CgroupDiscoveryMode::EventDriven => "event_driven",
-                    e_navigator_core::CgroupDiscoveryMode::Polling => "polling",
-                }
-                .to_string(),
-            )]),
-            value: "1".to_string(),
-        };
-        vec![
-            metric(
-                "e_navigator_kubernetes_controller_ready",
-                u64::from(snapshot.last_success_unix_seconds > 0),
-            ),
-            metric(
-                "e_navigator_kubernetes_controller_freshness_seconds",
-                freshness,
-            ),
-            metric(
-                "e_navigator_kubernetes_controller_resource_relist_freshness_seconds",
-                resource_relist_freshness,
-            ),
-            metric("e_navigator_kubernetes_controller_pods", snapshot.pod_count),
-            metric(
-                "e_navigator_kubernetes_controller_services",
-                snapshot.service_count,
-            ),
-            metric(
-                "e_navigator_kubernetes_controller_endpoint_slices",
-                snapshot.endpoint_slice_count,
-            ),
-            metric(
-                "e_navigator_kubernetes_controller_relists_total",
-                snapshot.relists,
-            ),
-            metric(
-                "e_navigator_kubernetes_controller_relist_failures_total",
-                snapshot.relist_failures,
-            ),
-            metric(
-                "e_navigator_kubernetes_controller_watch_starts_total",
-                snapshot.watch_starts,
-            ),
-            metric(
-                "e_navigator_kubernetes_controller_watch_failures_total",
-                snapshot.watch_failures,
-            ),
-            metric(
-                "e_navigator_kubernetes_controller_expired_resource_versions_total",
-                snapshot.expired_resource_versions,
-            ),
-            metric(
-                "e_navigator_kubernetes_controller_reconciliations_total",
-                snapshot.reconciliations,
-            ),
-            metric(
-                "e_navigator_capture_filter_allowed_cgroups",
-                snapshot.allowed_cgroups,
-            ),
-            metric(
-                "e_navigator_capture_filter_denied_cgroups",
-                snapshot.denied_cgroups,
-            ),
-            metric(
-                "e_navigator_capture_filter_unresolved_cgroups",
-                snapshot.unresolved_cgroups,
-            ),
-            hierarchy_info,
-            metric(
-                "e_navigator_capture_filter_cgroup_v2_compatible",
-                u64::from(snapshot.cgroup_hierarchy_mode.capture_filter_compatible()),
-            ),
-            metric(
-                "e_navigator_capture_filter_fail_closed_total",
-                snapshot.capture_filter_fail_closed_total,
-            ),
-            discovery_info,
-            metric(
-                "e_navigator_capture_filter_discovery_notifications_total",
-                snapshot.discovery_notifications_total,
-            ),
-            metric(
-                "e_navigator_capture_filter_discovery_coalesced_total",
-                snapshot.discovery_coalesced_total,
-            ),
-            metric(
-                "e_navigator_capture_filter_event_reconciliations_total",
-                snapshot.event_reconciliations_total,
-            ),
-            metric(
-                "e_navigator_capture_filter_fallback_reconciliations_total",
-                snapshot.fallback_reconciliations_total,
-            ),
-            metric(
-                "e_navigator_capture_filter_inotify_events_total",
-                snapshot.inotify_events_total,
-            ),
-            metric(
-                "e_navigator_capture_filter_inotify_watches",
-                snapshot.inotify_watches,
-            ),
-            metric(
-                "e_navigator_capture_filter_inotify_watch_limit_drops_total",
-                snapshot.inotify_watch_limit_drops_total,
-            ),
-            metric(
-                "e_navigator_capture_filter_inotify_failures_total",
-                snapshot.inotify_failures_total,
-            ),
-            metric(
-                "e_navigator_capture_filter_inotify_queue_overflows_total",
-                snapshot.inotify_queue_overflows_total,
-            ),
-            metric(
-                "e_navigator_capture_filter_bootstrap_window_observations_total",
-                snapshot.bootstrap_window_observations_total,
-            ),
-            PrometheusMetricLine {
-                name: "e_navigator_capture_filter_bootstrap_window_seconds_sum".to_string(),
-                labels: std::collections::BTreeMap::new(),
-                value: format!("{:.9}", snapshot.bootstrap_window_nanos_total as f64 / 1e9),
-            },
-            PrometheusMetricLine {
-                name: "e_navigator_capture_filter_bootstrap_window_seconds_max".to_string(),
-                labels: std::collections::BTreeMap::new(),
-                value: format!("{:.9}", snapshot.bootstrap_window_nanos_max as f64 / 1e9),
-            },
-            metric(
-                "e_navigator_capture_filter_map_apply_failures_total",
-                snapshot.map_apply_failures_total,
-            ),
-        ]
+        snapshot
+            .native_metric_values(now)
+            .map(|(name, value, label)| PrometheusMetricLine {
+                name: name.to_string(),
+                labels: label
+                    .into_iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+                value,
+            })
+            .collect()
     }
 }
 
@@ -623,25 +476,53 @@ mod tests {
             .map(|line| line.name.as_str())
             .collect::<Vec<_>>();
 
-        assert!(names.contains(&"e_navigator_kubernetes_controller_ready"));
-        assert!(names.contains(&"e_navigator_kubernetes_controller_freshness_seconds"));
-        assert!(
-            names.contains(&"e_navigator_kubernetes_controller_resource_relist_freshness_seconds")
+        assert_eq!(
+            names,
+            vec![
+                "e_navigator_kubernetes_controller_ready",
+                "e_navigator_kubernetes_controller_freshness_seconds",
+                "e_navigator_kubernetes_controller_resource_relist_freshness_seconds",
+                "e_navigator_kubernetes_controller_pods",
+                "e_navigator_kubernetes_controller_services",
+                "e_navigator_kubernetes_controller_endpoint_slices",
+                "e_navigator_kubernetes_controller_relists_total",
+                "e_navigator_kubernetes_controller_relist_failures_total",
+                "e_navigator_kubernetes_controller_watch_starts_total",
+                "e_navigator_kubernetes_controller_watch_failures_total",
+                "e_navigator_kubernetes_controller_expired_resource_versions_total",
+                "e_navigator_kubernetes_controller_reconciliations_total",
+                "e_navigator_capture_filter_allowed_cgroups",
+                "e_navigator_capture_filter_denied_cgroups",
+                "e_navigator_capture_filter_unresolved_cgroups",
+                "e_navigator_capture_filter_cgroup_hierarchy_info",
+                "e_navigator_capture_filter_cgroup_v2_compatible",
+                "e_navigator_capture_filter_fail_closed_total",
+                "e_navigator_capture_filter_discovery_info",
+                "e_navigator_capture_filter_discovery_notifications_total",
+                "e_navigator_capture_filter_discovery_coalesced_total",
+                "e_navigator_capture_filter_event_reconciliations_total",
+                "e_navigator_capture_filter_fallback_reconciliations_total",
+                "e_navigator_capture_filter_inotify_events_total",
+                "e_navigator_capture_filter_inotify_watches",
+                "e_navigator_capture_filter_inotify_watch_limit_drops_total",
+                "e_navigator_capture_filter_inotify_failures_total",
+                "e_navigator_capture_filter_inotify_queue_overflows_total",
+                "e_navigator_capture_filter_bootstrap_window_observations_total",
+                "e_navigator_capture_filter_bootstrap_window_seconds_sum",
+                "e_navigator_capture_filter_bootstrap_window_seconds_max",
+                "e_navigator_capture_filter_map_apply_failures_total",
+            ]
         );
-        assert!(names.contains(&"e_navigator_capture_filter_unresolved_cgroups"));
-        assert!(names.contains(&"e_navigator_capture_filter_cgroup_hierarchy_info"));
-        assert!(names.contains(&"e_navigator_capture_filter_cgroup_v2_compatible"));
-        assert!(names.contains(&"e_navigator_capture_filter_fail_closed_total"));
-        assert!(names.contains(&"e_navigator_capture_filter_discovery_info"));
-        assert!(names.contains(&"e_navigator_capture_filter_inotify_queue_overflows_total"));
-        assert!(names.contains(&"e_navigator_capture_filter_bootstrap_window_seconds_max"));
-        assert!(names.contains(&"e_navigator_capture_filter_map_apply_failures_total"));
         assert!(lines.iter().all(|line| {
             line.labels.is_empty()
                 || ((line.name == "e_navigator_capture_filter_cgroup_hierarchy_info"
                     || line.name == "e_navigator_capture_filter_discovery_info")
                     && line.labels.len() == 1
                     && line.labels.contains_key("mode"))
+        }));
+        assert!(lines.iter().any(|line| {
+            line.name == "e_navigator_capture_filter_bootstrap_window_seconds_sum"
+                && line.value == "0.000000000"
         }));
     }
 
