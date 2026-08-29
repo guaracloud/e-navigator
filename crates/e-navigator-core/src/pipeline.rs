@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
-use crate::{CoreResult, ModuleMetadata};
+use crate::{CoreError, CoreResult, ModuleMetadata};
 
 pub trait Signal: Send + Sync + Clone + 'static {
     fn kind(&self) -> &'static str;
@@ -45,7 +45,26 @@ pub trait Generator<S: Signal>: Send + Sync + 'static {
         None
     }
 
-    async fn observe(&self, signal: &S, tx: &mpsc::Sender<S>) -> CoreResult<()>;
+    /// Generates output asynchronously.
+    ///
+    /// The default forwards the result of `observe_immediate`, keeping the two
+    /// public entry points equivalent for synchronous generators. Generators
+    /// whose derivation itself awaits can override this method instead.
+    async fn observe(&self, signal: &S, tx: &mpsc::Sender<S>) -> CoreResult<()> {
+        let Some(outputs) = self.observe_immediate(signal) else {
+            return Err(CoreError::ModuleFailed {
+                module: self.metadata().name.to_owned(),
+                message: "generator implements neither observe nor observe_immediate".to_owned(),
+            });
+        };
+
+        for output in outputs? {
+            tx.send(output)
+                .await
+                .map_err(|_| CoreError::PipelineClosed)?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -73,5 +92,84 @@ pub trait Sink<S: Signal>: Send + Sync + 'static {
 
     async fn shutdown(&self) -> CoreResult<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct TestSignal(&'static str);
+
+    impl Signal for TestSignal {
+        fn kind(&self) -> &'static str {
+            "test"
+        }
+    }
+
+    #[derive(Debug)]
+    struct ImmediateGenerator {
+        outputs: Option<Vec<TestSignal>>,
+    }
+
+    impl Generator<TestSignal> for ImmediateGenerator {
+        fn metadata(&self) -> ModuleMetadata {
+            ModuleMetadata::new("generator.test", crate::ModuleKind::Generator)
+        }
+
+        fn observe_immediate(&self, _signal: &TestSignal) -> Option<CoreResult<Vec<TestSignal>>> {
+            self.outputs.clone().map(Ok)
+        }
+    }
+
+    #[tokio::test]
+    async fn generator_default_observe_forwards_immediate_outputs() {
+        let generator = ImmediateGenerator {
+            outputs: Some(vec![TestSignal("first"), TestSignal("second")]),
+        };
+        let (tx, mut rx) = mpsc::channel(2);
+
+        generator
+            .observe(&TestSignal("input"), &tx)
+            .await
+            .expect("default observe forwards immediate outputs");
+
+        assert_eq!(rx.recv().await, Some(TestSignal("first")));
+        assert_eq!(rx.recv().await, Some(TestSignal("second")));
+    }
+
+    #[tokio::test]
+    async fn generator_default_observe_rejects_missing_generation_path() {
+        let generator = ImmediateGenerator { outputs: None };
+        let (tx, _rx) = mpsc::channel(1);
+
+        let err = generator
+            .observe(&TestSignal("input"), &tx)
+            .await
+            .expect_err("a generator must implement one generation path");
+
+        assert!(matches!(
+            err,
+            CoreError::ModuleFailed { module, message }
+                if module == "generator.test"
+                    && message == "generator implements neither observe nor observe_immediate"
+        ));
+    }
+
+    #[tokio::test]
+    async fn generator_default_observe_reports_closed_pipeline() {
+        let generator = ImmediateGenerator {
+            outputs: Some(vec![TestSignal("output")]),
+        };
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+
+        let err = generator
+            .observe(&TestSignal("input"), &tx)
+            .await
+            .expect_err("a closed output channel must fail");
+
+        assert!(matches!(err, CoreError::PipelineClosed));
     }
 }

@@ -1,4 +1,4 @@
-use async_trait::async_trait;
+use crate::bounded_fingerprints::BoundedFingerprints;
 use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata, Signal};
 use e_navigator_signals::{
     MetricAggregationWindow, ProfileSampleObservation, ProfilingAttribute, ProfilingConfidence,
@@ -9,9 +9,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Mutex, MutexGuard},
 };
-use tokio::sync::mpsc;
-
-use crate::{bounded_fingerprints::BoundedFingerprints, send_outputs};
 
 const DEFAULT_MAX_WINDOWS: usize = 4096;
 const DEFAULT_MAX_SEEN_SAMPLES: usize = 8192;
@@ -71,7 +68,6 @@ impl ProfilingGenerator {
     }
 }
 
-#[async_trait]
 impl Generator<SignalEnvelope> for ProfilingGenerator {
     fn metadata(&self) -> ModuleMetadata {
         ModuleMetadata::new("generator.profiling", ModuleKind::Generator)
@@ -86,14 +82,6 @@ impl Generator<SignalEnvelope> for ProfilingGenerator {
         signal: &SignalEnvelope,
     ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
         Some(self.outputs_for_signal(signal))
-    }
-
-    async fn observe(
-        &self,
-        signal: &SignalEnvelope,
-        tx: &mpsc::Sender<SignalEnvelope>,
-    ) -> CoreResult<()> {
-        send_outputs(self.outputs_for_signal(signal)?, tx).await
     }
 }
 

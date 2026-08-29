@@ -1,4 +1,4 @@
-use async_trait::async_trait;
+use crate::bounded_fingerprints::BoundedFingerprints;
 use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata, Signal};
 use e_navigator_signals::{
     ContainerContext, DependencyEdgeEvent, DependencyEndpoint, DnsResponseCode, DnsResponseEvent,
@@ -11,9 +11,6 @@ use std::{
     collections::BTreeMap,
     sync::{Mutex, MutexGuard},
 };
-use tokio::sync::mpsc;
-
-use crate::{bounded_fingerprints::BoundedFingerprints, send_outputs};
 
 const DEFAULT_MAX_SERVICE_PATHS: usize = 4096;
 const DEFAULT_MAX_SEEN_INTERACTIONS: usize = 8192;
@@ -58,7 +55,6 @@ impl TraceCorrelationGenerator {
     }
 }
 
-#[async_trait]
 impl Generator<SignalEnvelope> for TraceCorrelationGenerator {
     fn metadata(&self) -> ModuleMetadata {
         ModuleMetadata::new("generator.trace_correlation", ModuleKind::Generator)
@@ -79,14 +75,6 @@ impl Generator<SignalEnvelope> for TraceCorrelationGenerator {
         signal: &SignalEnvelope,
     ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
         Some(self.outputs_for_signal(signal))
-    }
-
-    async fn observe(
-        &self,
-        signal: &SignalEnvelope,
-        tx: &mpsc::Sender<SignalEnvelope>,
-    ) -> CoreResult<()> {
-        send_outputs(self.outputs_for_signal(signal)?, tx).await
     }
 }
 

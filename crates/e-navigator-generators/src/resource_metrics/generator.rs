@@ -1,10 +1,7 @@
-use async_trait::async_trait;
+use crate::bounded_fingerprints::BoundedFingerprints;
 use e_navigator_core::{CoreResult, Generator, ModuleKind, ModuleMetadata};
 use e_navigator_signals::{SignalEnvelope, SignalPayload};
 use std::{collections::BTreeMap, sync::Mutex};
-use tokio::sync::mpsc;
-
-use crate::{bounded_fingerprints::BoundedFingerprints, send_outputs};
 
 use super::state::{CounterState, ObservationFingerprint, StateKey};
 
@@ -35,7 +32,6 @@ impl ResourceMetricsGenerator {
     }
 }
 
-#[async_trait]
 impl Generator<SignalEnvelope> for ResourceMetricsGenerator {
     fn metadata(&self) -> ModuleMetadata {
         ModuleMetadata::new("generator.resource_metrics", ModuleKind::Generator)
@@ -62,14 +58,6 @@ impl Generator<SignalEnvelope> for ResourceMetricsGenerator {
         signal: &SignalEnvelope,
     ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
         Some(self.outputs_for_signal(signal))
-    }
-
-    async fn observe(
-        &self,
-        signal: &SignalEnvelope,
-        tx: &mpsc::Sender<SignalEnvelope>,
-    ) -> CoreResult<()> {
-        send_outputs(self.outputs_for_signal(signal)?, tx).await
     }
 }
 

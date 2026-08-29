@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata};
 use e_navigator_signals::{
     MetricAggregationWindow, NetworkAddressFamily, NetworkFlowEndpoint, NetworkFlowSummaryEvent,
@@ -9,10 +8,6 @@ use std::{
     sync::{Mutex, MutexGuard},
     time::Duration,
 };
-use tokio::sync::mpsc;
-
-use crate::send_outputs;
-
 const DEFAULT_MAX_PEER_FLOW_KEYS: usize = 4096;
 const DEFAULT_PEER_FLOW_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
@@ -156,7 +151,6 @@ impl PeerFlowMetricsGenerator {
     }
 }
 
-#[async_trait]
 impl Generator<SignalEnvelope> for PeerFlowMetricsGenerator {
     fn metadata(&self) -> ModuleMetadata {
         ModuleMetadata::new("generator.peer_flow_metrics", ModuleKind::Generator)
@@ -171,14 +165,6 @@ impl Generator<SignalEnvelope> for PeerFlowMetricsGenerator {
         signal: &SignalEnvelope,
     ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
         Some(self.outputs_for_signal(signal))
-    }
-
-    async fn observe(
-        &self,
-        signal: &SignalEnvelope,
-        tx: &mpsc::Sender<SignalEnvelope>,
-    ) -> CoreResult<()> {
-        send_outputs(self.outputs_for_signal(signal)?, tx).await
     }
 }
 

@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use e_navigator_core::{CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata};
 use e_navigator_signals::{
     ContainerContext, DependencyEdgeEvent, DependencyEndpoint, KubernetesContext,
@@ -9,10 +8,6 @@ use std::{
     collections::BTreeMap,
     sync::{Mutex, MutexGuard},
 };
-use tokio::sync::mpsc;
-
-use crate::send_outputs;
-
 const DEFAULT_MAX_EDGES: usize = 4096;
 
 #[derive(Debug)]
@@ -36,7 +31,6 @@ impl DependencyGraphGenerator {
     }
 }
 
-#[async_trait]
 impl Generator<SignalEnvelope> for DependencyGraphGenerator {
     fn metadata(&self) -> ModuleMetadata {
         ModuleMetadata::new("generator.dependency_graph", ModuleKind::Generator)
@@ -54,14 +48,6 @@ impl Generator<SignalEnvelope> for DependencyGraphGenerator {
         signal: &SignalEnvelope,
     ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
         Some(self.outputs_for_signal(signal))
-    }
-
-    async fn observe(
-        &self,
-        signal: &SignalEnvelope,
-        tx: &mpsc::Sender<SignalEnvelope>,
-    ) -> CoreResult<()> {
-        send_outputs(self.outputs_for_signal(signal)?, tx).await
     }
 }
 

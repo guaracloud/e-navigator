@@ -1,4 +1,4 @@
-use async_trait::async_trait;
+use crate::otel_coexistence::OtelSdkDetector;
 use e_navigator_core::{
     CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata, RequestCorrelationConfig, Signal,
 };
@@ -14,9 +14,6 @@ use std::{
     hash::Hash,
     sync::{Arc, Mutex, MutexGuard},
 };
-use tokio::sync::mpsc;
-
-use crate::{otel_coexistence::OtelSdkDetector, send_outputs};
 
 const DEFAULT_MAX_SEEN_REQUESTS: usize = 8192;
 const DEFAULT_MAX_WARNINGS: usize = 1024;
@@ -80,7 +77,6 @@ impl RequestCorrelationGenerator {
     }
 }
 
-#[async_trait]
 impl Generator<SignalEnvelope> for RequestCorrelationGenerator {
     fn metadata(&self) -> ModuleMetadata {
         ModuleMetadata::new("generator.request_correlation", ModuleKind::Generator)
@@ -98,14 +94,6 @@ impl Generator<SignalEnvelope> for RequestCorrelationGenerator {
         signal: &SignalEnvelope,
     ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
         Some(self.outputs_for_signal(signal))
-    }
-
-    async fn observe(
-        &self,
-        signal: &SignalEnvelope,
-        tx: &mpsc::Sender<SignalEnvelope>,
-    ) -> CoreResult<()> {
-        send_outputs(self.outputs_for_signal(signal)?, tx).await
     }
 }
 

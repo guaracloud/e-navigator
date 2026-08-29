@@ -508,7 +508,6 @@ dependencies = [
 name = "e-navigator-generators"
 version = "0.5.0-rc.6"
 dependencies = [
- "async-trait",
  "e-navigator-core",
  "e-navigator-protocol",
  "e-navigator-signals",
