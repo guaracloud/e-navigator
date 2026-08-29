@@ -214,9 +214,11 @@ dependencies = [
  "e-navigator-core",
  "e-navigator-profiling",
  "e-navigator-protocol",
+ "e-navigator-signals",
  "e-navigator-sources-ebpf-aya",
  "e-navigator-sources-host",
  "libfuzzer-sys",
+ "serde_json",
 ]
 
 [[package]]
