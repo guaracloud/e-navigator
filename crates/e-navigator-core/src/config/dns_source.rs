@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ConfigError, ConfigResult};
+use super::{ConfigError, ConfigResult, bounds::validate_inclusive};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,28 +26,18 @@ impl DnsSourceConfig {
     pub const MAX_PREVIEW_BYTES_LIMIT: usize = 160;
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
-        if !(Self::MIN_PACKET_BYTES_LIMIT..=Self::MAX_PACKET_BYTES_LIMIT)
-            .contains(&self.max_packet_bytes)
-        {
-            return Err(ConfigError::invalid_value(
-                "dns_source.max_packet_bytes",
-                format!(
-                    "dns_source.max_packet_bytes must be between {} and {}",
-                    Self::MIN_PACKET_BYTES_LIMIT,
-                    Self::MAX_PACKET_BYTES_LIMIT
-                ),
-            ));
-        }
-
-        if !(1..=Self::MAX_PREVIEW_BYTES_LIMIT).contains(&self.max_preview_bytes) {
-            return Err(ConfigError::invalid_value(
-                "dns_source.max_preview_bytes",
-                format!(
-                    "dns_source.max_preview_bytes must be between 1 and {}",
-                    Self::MAX_PREVIEW_BYTES_LIMIT
-                ),
-            ));
-        }
+        validate_inclusive(
+            "dns_source.max_packet_bytes",
+            self.max_packet_bytes,
+            Self::MIN_PACKET_BYTES_LIMIT,
+            Self::MAX_PACKET_BYTES_LIMIT,
+        )?;
+        validate_inclusive(
+            "dns_source.max_preview_bytes",
+            self.max_preview_bytes,
+            1,
+            Self::MAX_PREVIEW_BYTES_LIMIT,
+        )?;
         if self.max_preview_bytes > self.max_packet_bytes {
             return Err(ConfigError::invalid_value(
                 "dns_source.max_preview_bytes",

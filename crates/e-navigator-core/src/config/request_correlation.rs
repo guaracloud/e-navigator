@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use super::{
-    ConfigError, ConfigResult,
+    ConfigResult,
+    bounds::validate_inclusive,
     capture_filter::{CaptureFilterConfig, validate_label_selector},
 };
 
@@ -52,24 +53,18 @@ impl RequestCorrelationConfig {
             "request_correlation.application_span_ownership_labels",
             &self.application_span_ownership_labels,
         )?;
-        if !(1..=Self::MAX_SEEN_REQUESTS_LIMIT).contains(&self.max_seen_requests) {
-            return Err(ConfigError::invalid_value(
-                "request_correlation.max_seen_requests",
-                format!(
-                    "request_correlation.max_seen_requests must be between 1 and {}",
-                    Self::MAX_SEEN_REQUESTS_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_WARNINGS_LIMIT).contains(&self.max_warnings) {
-            return Err(ConfigError::invalid_value(
-                "request_correlation.max_warnings",
-                format!(
-                    "request_correlation.max_warnings must be between 1 and {}",
-                    Self::MAX_WARNINGS_LIMIT
-                ),
-            ));
-        }
+        validate_inclusive(
+            "request_correlation.max_seen_requests",
+            self.max_seen_requests,
+            1,
+            Self::MAX_SEEN_REQUESTS_LIMIT,
+        )?;
+        validate_inclusive(
+            "request_correlation.max_warnings",
+            self.max_warnings,
+            1,
+            Self::MAX_WARNINGS_LIMIT,
+        )?;
         Ok(())
     }
 }

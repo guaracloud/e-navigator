@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ConfigError, ConfigResult};
+use super::{ConfigResult, bounds::validate_nonzero_bounded};
 
 /// Policy applied when one registered source returns an error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,21 +36,11 @@ impl SourceSupervisorConfig {
     pub const MAX_SHUTDOWN_TIMEOUT_MILLIS: u64 = 300_000;
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
-        if self.shutdown_timeout_millis == 0 {
-            return Err(ConfigError::invalid_value(
-                "source_supervisor.shutdown_timeout_millis",
-                "source_supervisor.shutdown_timeout_millis must be greater than zero",
-            ));
-        }
-        if self.shutdown_timeout_millis > Self::MAX_SHUTDOWN_TIMEOUT_MILLIS {
-            return Err(ConfigError::invalid_value(
-                "source_supervisor.shutdown_timeout_millis",
-                format!(
-                    "source_supervisor.shutdown_timeout_millis must be less than or equal to {}",
-                    Self::MAX_SHUTDOWN_TIMEOUT_MILLIS
-                ),
-            ));
-        }
+        validate_nonzero_bounded(
+            "source_supervisor.shutdown_timeout_millis",
+            self.shutdown_timeout_millis,
+            Self::MAX_SHUTDOWN_TIMEOUT_MILLIS,
+        )?;
         Ok(())
     }
 }

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ConfigError, ConfigResult};
+use super::{ConfigResult, bounds::validate_nonzero_bounded};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -21,21 +21,11 @@ impl ResourceMetricsConfig {
     pub const MAX_KEYS_LIMIT: usize = 262_144;
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
-        if self.max_keys == 0 {
-            return Err(ConfigError::invalid_value(
-                "resource_metrics.max_keys",
-                "resource_metrics.max_keys must be greater than zero",
-            ));
-        }
-        if self.max_keys > Self::MAX_KEYS_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "resource_metrics.max_keys",
-                format!(
-                    "resource_metrics.max_keys must be less than or equal to {}",
-                    Self::MAX_KEYS_LIMIT
-                ),
-            ));
-        }
+        validate_nonzero_bounded(
+            "resource_metrics.max_keys",
+            self.max_keys,
+            Self::MAX_KEYS_LIMIT,
+        )?;
         Ok(())
     }
 }

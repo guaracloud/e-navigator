@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ConfigError, ConfigResult, RuntimeConfig};
+use super::{ConfigError, ConfigResult, RuntimeConfig, bounds::validate_inclusive};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -173,15 +173,12 @@ impl CpuProfileSourceConfig {
                 "cpu_profile_source.enabled requires enabled source.aya_cpu_profile module",
             ));
         }
-        if !(1..=Self::MAX_SAMPLE_FREQUENCY_HZ).contains(&self.sample_frequency_hz) {
-            return Err(ConfigError::invalid_value(
-                "cpu_profile_source.sample_frequency_hz",
-                format!(
-                    "cpu_profile_source.sample_frequency_hz must be between 1 and {}",
-                    Self::MAX_SAMPLE_FREQUENCY_HZ
-                ),
-            ));
-        }
+        validate_inclusive(
+            "cpu_profile_source.sample_frequency_hz",
+            self.sample_frequency_hz,
+            1,
+            Self::MAX_SAMPLE_FREQUENCY_HZ,
+        )?;
         for (field, value) in [
             (
                 "cpu_profile_source.off_cpu_min_duration_micros",
@@ -192,15 +189,7 @@ impl CpuProfileSourceConfig {
                 self.lock_min_duration_micros,
             ),
         ] {
-            if !(1..=Self::MAX_EVENT_MIN_DURATION_MICROS).contains(&value) {
-                return Err(ConfigError::invalid_value(
-                    field,
-                    format!(
-                        "{field} must be between 1 and {}",
-                        Self::MAX_EVENT_MIN_DURATION_MICROS
-                    ),
-                ));
-            }
+            validate_inclusive(field, value, 1, Self::MAX_EVENT_MIN_DURATION_MICROS)?;
         }
         for (field, value) in [
             (
@@ -212,90 +201,56 @@ impl CpuProfileSourceConfig {
                 self.max_lock_events_per_second_per_cpu,
             ),
         ] {
-            if !(1..=Self::MAX_EVENT_RATE_PER_CPU).contains(&value) {
-                return Err(ConfigError::invalid_value(
-                    field,
-                    format!(
-                        "{field} must be between 1 and {}",
-                        Self::MAX_EVENT_RATE_PER_CPU
-                    ),
-                ));
-            }
+            validate_inclusive(field, value, 1, Self::MAX_EVENT_RATE_PER_CPU)?;
         }
-        if !(1..=Self::MAX_ACTIVE_TARGETS_LIMIT).contains(&self.max_active_targets) {
-            return Err(ConfigError::invalid_value(
-                "cpu_profile_source.max_active_targets",
-                format!(
-                    "cpu_profile_source.max_active_targets must be between 1 and {}",
-                    Self::MAX_ACTIVE_TARGETS_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_FRAMES_PER_SAMPLE_LIMIT).contains(&self.max_frames_per_sample) {
-            return Err(ConfigError::invalid_value(
-                "cpu_profile_source.max_frames_per_sample",
-                format!(
-                    "cpu_profile_source.max_frames_per_sample must be between 1 and {}",
-                    Self::MAX_FRAMES_PER_SAMPLE_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_KERNEL_FRAMES_PER_SAMPLE_LIMIT)
-            .contains(&self.max_kernel_frames_per_sample)
-        {
-            return Err(ConfigError::invalid_value(
-                "cpu_profile_source.max_kernel_frames_per_sample",
-                format!(
-                    "cpu_profile_source.max_kernel_frames_per_sample must be between 1 and {}",
-                    Self::MAX_KERNEL_FRAMES_PER_SAMPLE_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_SAMPLES_PER_BATCH_LIMIT).contains(&self.max_samples_per_batch) {
-            return Err(ConfigError::invalid_value(
-                "cpu_profile_source.max_samples_per_batch",
-                format!(
-                    "cpu_profile_source.max_samples_per_batch must be between 1 and {}",
-                    Self::MAX_SAMPLES_PER_BATCH_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_SYMBOL_BYTES_LIMIT).contains(&self.max_symbol_bytes) {
-            return Err(ConfigError::invalid_value(
-                "cpu_profile_source.max_symbol_bytes",
-                format!(
-                    "cpu_profile_source.max_symbol_bytes must be between 1 and {}",
-                    Self::MAX_SYMBOL_BYTES_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_MODULE_BYTES_LIMIT).contains(&self.max_module_bytes) {
-            return Err(ConfigError::invalid_value(
-                "cpu_profile_source.max_module_bytes",
-                format!(
-                    "cpu_profile_source.max_module_bytes must be between 1 and {}",
-                    Self::MAX_MODULE_BYTES_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_UNWIND_PROCESSES_LIMIT).contains(&self.max_unwind_processes) {
-            return Err(ConfigError::invalid_value(
-                "cpu_profile_source.max_unwind_processes",
-                format!(
-                    "cpu_profile_source.max_unwind_processes must be between 1 and {}",
-                    Self::MAX_UNWIND_PROCESSES_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_FILE_BYTES_LIMIT).contains(&self.max_file_bytes) {
-            return Err(ConfigError::invalid_value(
-                "cpu_profile_source.max_file_bytes",
-                format!(
-                    "cpu_profile_source.max_file_bytes must be between 1 and {}",
-                    Self::MAX_FILE_BYTES_LIMIT
-                ),
-            ));
-        }
+        validate_inclusive(
+            "cpu_profile_source.max_active_targets",
+            self.max_active_targets,
+            1,
+            Self::MAX_ACTIVE_TARGETS_LIMIT,
+        )?;
+        validate_inclusive(
+            "cpu_profile_source.max_frames_per_sample",
+            self.max_frames_per_sample,
+            1,
+            Self::MAX_FRAMES_PER_SAMPLE_LIMIT,
+        )?;
+        validate_inclusive(
+            "cpu_profile_source.max_kernel_frames_per_sample",
+            self.max_kernel_frames_per_sample,
+            1,
+            Self::MAX_KERNEL_FRAMES_PER_SAMPLE_LIMIT,
+        )?;
+        validate_inclusive(
+            "cpu_profile_source.max_samples_per_batch",
+            self.max_samples_per_batch,
+            1,
+            Self::MAX_SAMPLES_PER_BATCH_LIMIT,
+        )?;
+        validate_inclusive(
+            "cpu_profile_source.max_symbol_bytes",
+            self.max_symbol_bytes,
+            1,
+            Self::MAX_SYMBOL_BYTES_LIMIT,
+        )?;
+        validate_inclusive(
+            "cpu_profile_source.max_module_bytes",
+            self.max_module_bytes,
+            1,
+            Self::MAX_MODULE_BYTES_LIMIT,
+        )?;
+        validate_inclusive(
+            "cpu_profile_source.max_unwind_processes",
+            self.max_unwind_processes,
+            1,
+            Self::MAX_UNWIND_PROCESSES_LIMIT,
+        )?;
+        validate_inclusive(
+            "cpu_profile_source.max_file_bytes",
+            self.max_file_bytes,
+            1,
+            Self::MAX_FILE_BYTES_LIMIT,
+        )?;
         Ok(())
     }
 }

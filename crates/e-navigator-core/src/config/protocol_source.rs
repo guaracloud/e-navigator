@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ConfigError, ConfigResult, protocol_ports::validate_protocol_ports};
+use super::{ConfigResult, bounds::validate_inclusive, protocol_ports::validate_protocol_ports};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -101,45 +101,30 @@ impl ProtocolSourceConfig {
             port_field,
             Self::MAX_TOTAL_PORTS,
         )?;
-        if !(1..=Self::MAX_BUFFERED_BYTES_LIMIT).contains(&self.max_buffered_bytes_per_connection) {
-            return Err(ConfigError::invalid_value(
-                "protocol_source.max_buffered_bytes_per_connection",
-                format!(
-                    "protocol_source.max_buffered_bytes_per_connection must be between 1 and {}",
-                    Self::MAX_BUFFERED_BYTES_LIMIT
-                ),
-            ));
-        }
-        if !(Self::MIN_CAPTURE_BYTES_PER_SYSCALL..=Self::MAX_CAPTURE_BYTES_PER_SYSCALL)
-            .contains(&self.capture_bytes_per_syscall)
-        {
-            return Err(ConfigError::invalid_value(
-                "protocol_source.capture_bytes_per_syscall",
-                format!(
-                    "protocol_source.capture_bytes_per_syscall must be between {} and {}",
-                    Self::MIN_CAPTURE_BYTES_PER_SYSCALL,
-                    Self::MAX_CAPTURE_BYTES_PER_SYSCALL
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_TRACKED_CONNECTIONS_LIMIT).contains(&self.max_tracked_connections) {
-            return Err(ConfigError::invalid_value(
-                "protocol_source.max_tracked_connections",
-                format!(
-                    "protocol_source.max_tracked_connections must be between 1 and {}",
-                    Self::MAX_TRACKED_CONNECTIONS_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_ATTRIBUTES_LIMIT).contains(&self.max_attributes) {
-            return Err(ConfigError::invalid_value(
-                "protocol_source.max_attributes",
-                format!(
-                    "protocol_source.max_attributes must be between 1 and {}",
-                    Self::MAX_ATTRIBUTES_LIMIT
-                ),
-            ));
-        }
+        validate_inclusive(
+            "protocol_source.max_buffered_bytes_per_connection",
+            self.max_buffered_bytes_per_connection,
+            1,
+            Self::MAX_BUFFERED_BYTES_LIMIT,
+        )?;
+        validate_inclusive(
+            "protocol_source.capture_bytes_per_syscall",
+            self.capture_bytes_per_syscall,
+            Self::MIN_CAPTURE_BYTES_PER_SYSCALL,
+            Self::MAX_CAPTURE_BYTES_PER_SYSCALL,
+        )?;
+        validate_inclusive(
+            "protocol_source.max_tracked_connections",
+            self.max_tracked_connections,
+            1,
+            Self::MAX_TRACKED_CONNECTIONS_LIMIT,
+        )?;
+        validate_inclusive(
+            "protocol_source.max_attributes",
+            self.max_attributes,
+            1,
+            Self::MAX_ATTRIBUTES_LIMIT,
+        )?;
         Ok(())
     }
 }

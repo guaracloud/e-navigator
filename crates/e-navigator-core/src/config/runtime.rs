@@ -8,7 +8,7 @@ use super::{
     JsonStdoutConfig, ModuleConfig, NetworkMetricsConfig, OtlpHttpConfig, ProfilingConfig,
     PrometheusHttpConfig, ProtocolSourceConfig, RequestCorrelationConfig, ResourceMetricsConfig,
     ResourceSourceConfig, RuntimeSecurityConfig, SourceSupervisorConfig, TlsSourceConfig,
-    TraceCorrelationConfig,
+    TraceCorrelationConfig, bounds::validate_nonzero_bounded,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,21 +140,11 @@ impl RuntimeConfig {
             ));
         }
 
-        if self.queue_capacity == 0 {
-            return Err(ConfigError::invalid_value(
-                "queue_capacity",
-                "queue_capacity must be greater than zero",
-            ));
-        }
-        if self.queue_capacity > Self::MAX_QUEUE_CAPACITY_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "queue_capacity",
-                format!(
-                    "queue_capacity must be less than or equal to {}",
-                    Self::MAX_QUEUE_CAPACITY_LIMIT
-                ),
-            ));
-        }
+        validate_nonzero_bounded(
+            "queue_capacity",
+            self.queue_capacity,
+            Self::MAX_QUEUE_CAPACITY_LIMIT,
+        )?;
 
         if self.modules.iter().filter(|module| module.enabled).count() == 0 {
             return Err(ConfigError::invalid_value(
@@ -163,37 +153,16 @@ impl RuntimeConfig {
             ));
         }
 
-        if self.max_derived_signals_per_input == 0 {
-            return Err(ConfigError::invalid_value(
-                "max_derived_signals_per_input",
-                "max_derived_signals_per_input must be greater than zero",
-            ));
-        }
-        if self.max_derived_signals_per_input > Self::MAX_DERIVED_SIGNALS_PER_INPUT_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "max_derived_signals_per_input",
-                format!(
-                    "max_derived_signals_per_input must be less than or equal to {}",
-                    Self::MAX_DERIVED_SIGNALS_PER_INPUT_LIMIT
-                ),
-            ));
-        }
-
-        if self.max_derived_signal_depth == 0 {
-            return Err(ConfigError::invalid_value(
-                "max_derived_signal_depth",
-                "max_derived_signal_depth must be greater than zero",
-            ));
-        }
-        if self.max_derived_signal_depth > Self::MAX_DERIVED_SIGNAL_DEPTH_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "max_derived_signal_depth",
-                format!(
-                    "max_derived_signal_depth must be less than or equal to {}",
-                    Self::MAX_DERIVED_SIGNAL_DEPTH_LIMIT
-                ),
-            ));
-        }
+        validate_nonzero_bounded(
+            "max_derived_signals_per_input",
+            self.max_derived_signals_per_input,
+            Self::MAX_DERIVED_SIGNALS_PER_INPUT_LIMIT,
+        )?;
+        validate_nonzero_bounded(
+            "max_derived_signal_depth",
+            self.max_derived_signal_depth,
+            Self::MAX_DERIVED_SIGNAL_DEPTH_LIMIT,
+        )?;
 
         self.validate_modules()?;
 

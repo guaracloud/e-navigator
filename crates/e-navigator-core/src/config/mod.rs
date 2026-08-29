@@ -1,5 +1,6 @@
 mod argv;
 mod attribution;
+mod bounds;
 mod capture_filter;
 mod cpu_profile;
 mod dns_metrics;

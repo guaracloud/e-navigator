@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ConfigError, ConfigResult};
+use super::{ConfigResult, bounds::validate_inclusive};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,42 +33,30 @@ impl ProfilingConfig {
     pub const MAX_WINDOW_NANOS_LIMIT: u64 = 86_400_000_000_000;
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
-        if !(1..=Self::MAX_WINDOWS_LIMIT).contains(&self.max_windows) {
-            return Err(ConfigError::invalid_value(
-                "profiling.max_windows",
-                format!(
-                    "profiling.max_windows must be between 1 and {}",
-                    Self::MAX_WINDOWS_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_SEEN_SAMPLES_LIMIT).contains(&self.max_seen_samples) {
-            return Err(ConfigError::invalid_value(
-                "profiling.max_seen_samples",
-                format!(
-                    "profiling.max_seen_samples must be between 1 and {}",
-                    Self::MAX_SEEN_SAMPLES_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_WARNINGS_LIMIT).contains(&self.max_warnings) {
-            return Err(ConfigError::invalid_value(
-                "profiling.max_warnings",
-                format!(
-                    "profiling.max_warnings must be between 1 and {}",
-                    Self::MAX_WARNINGS_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_WINDOW_NANOS_LIMIT).contains(&self.window_nanos) {
-            return Err(ConfigError::invalid_value(
-                "profiling.window_nanos",
-                format!(
-                    "profiling.window_nanos must be between 1 and {}",
-                    Self::MAX_WINDOW_NANOS_LIMIT
-                ),
-            ));
-        }
+        validate_inclusive(
+            "profiling.max_windows",
+            self.max_windows,
+            1,
+            Self::MAX_WINDOWS_LIMIT,
+        )?;
+        validate_inclusive(
+            "profiling.max_seen_samples",
+            self.max_seen_samples,
+            1,
+            Self::MAX_SEEN_SAMPLES_LIMIT,
+        )?;
+        validate_inclusive(
+            "profiling.max_warnings",
+            self.max_warnings,
+            1,
+            Self::MAX_WARNINGS_LIMIT,
+        )?;
+        validate_inclusive(
+            "profiling.window_nanos",
+            self.window_nanos,
+            1,
+            Self::MAX_WINDOW_NANOS_LIMIT,
+        )?;
         Ok(())
     }
 }

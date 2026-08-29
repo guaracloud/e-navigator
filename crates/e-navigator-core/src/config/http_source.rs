@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-use super::{ConfigError, ConfigResult};
+use super::{ConfigError, ConfigResult, bounds::validate_inclusive};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,42 +71,30 @@ impl HttpSourceConfig {
     pub const MAX_TRACESTATE_BYTES_LIMIT: usize = 4096;
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
-        if !(1..=Self::MAX_HEADER_BYTES_LIMIT).contains(&self.max_header_bytes) {
-            return Err(ConfigError::invalid_value(
-                "http_source.max_header_bytes",
-                format!(
-                    "http_source.max_header_bytes must be between 1 and {}",
-                    Self::MAX_HEADER_BYTES_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_REQUEST_LINE_BYTES_LIMIT).contains(&self.max_request_line_bytes) {
-            return Err(ConfigError::invalid_value(
-                "http_source.max_request_line_bytes",
-                format!(
-                    "http_source.max_request_line_bytes must be between 1 and {}",
-                    Self::MAX_REQUEST_LINE_BYTES_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_ATTRIBUTES_LIMIT).contains(&self.max_attributes) {
-            return Err(ConfigError::invalid_value(
-                "http_source.max_attributes",
-                format!(
-                    "http_source.max_attributes must be between 1 and {}",
-                    Self::MAX_ATTRIBUTES_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_TRACESTATE_BYTES_LIMIT).contains(&self.max_tracestate_bytes) {
-            return Err(ConfigError::invalid_value(
-                "http_source.max_tracestate_bytes",
-                format!(
-                    "http_source.max_tracestate_bytes must be between 1 and {}",
-                    Self::MAX_TRACESTATE_BYTES_LIMIT
-                ),
-            ));
-        }
+        validate_inclusive(
+            "http_source.max_header_bytes",
+            self.max_header_bytes,
+            1,
+            Self::MAX_HEADER_BYTES_LIMIT,
+        )?;
+        validate_inclusive(
+            "http_source.max_request_line_bytes",
+            self.max_request_line_bytes,
+            1,
+            Self::MAX_REQUEST_LINE_BYTES_LIMIT,
+        )?;
+        validate_inclusive(
+            "http_source.max_attributes",
+            self.max_attributes,
+            1,
+            Self::MAX_ATTRIBUTES_LIMIT,
+        )?;
+        validate_inclusive(
+            "http_source.max_tracestate_bytes",
+            self.max_tracestate_bytes,
+            1,
+            Self::MAX_TRACESTATE_BYTES_LIMIT,
+        )?;
         if self.max_request_line_bytes > self.max_header_bytes {
             return Err(ConfigError::invalid_value(
                 "http_source.max_request_line_bytes",
@@ -161,38 +149,24 @@ impl HttpContextPropagationConfig {
                 "http_source.context_propagation.plaintext_ports must not contain duplicates",
             ));
         }
-        if !(1..=Self::MAX_TRACKED_SOCKETS_LIMIT).contains(&self.max_tracked_sockets) {
-            return Err(ConfigError::invalid_value(
-                "http_source.context_propagation.max_tracked_sockets",
-                format!(
-                    "http_source.context_propagation.max_tracked_sockets must be between 1 and {}",
-                    Self::MAX_TRACKED_SOCKETS_LIMIT
-                ),
-            ));
-        }
-        if !(Self::MIN_CONTEXT_POOL_CAPACITY..=Self::MAX_CONTEXT_POOL_CAPACITY)
-            .contains(&self.context_pool_capacity)
-        {
-            return Err(ConfigError::invalid_value(
-                "http_source.context_propagation.context_pool_capacity",
-                format!(
-                    "http_source.context_propagation.context_pool_capacity must be between {} and {}",
-                    Self::MIN_CONTEXT_POOL_CAPACITY,
-                    Self::MAX_CONTEXT_POOL_CAPACITY
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_SAME_THREAD_CONTEXT_TTL_MILLIS)
-            .contains(&self.same_thread_context_ttl_millis)
-        {
-            return Err(ConfigError::invalid_value(
-                "http_source.context_propagation.same_thread_context_ttl_millis",
-                format!(
-                    "http_source.context_propagation.same_thread_context_ttl_millis must be between 1 and {}",
-                    Self::MAX_SAME_THREAD_CONTEXT_TTL_MILLIS
-                ),
-            ));
-        }
+        validate_inclusive(
+            "http_source.context_propagation.max_tracked_sockets",
+            self.max_tracked_sockets,
+            1,
+            Self::MAX_TRACKED_SOCKETS_LIMIT,
+        )?;
+        validate_inclusive(
+            "http_source.context_propagation.context_pool_capacity",
+            self.context_pool_capacity,
+            Self::MIN_CONTEXT_POOL_CAPACITY,
+            Self::MAX_CONTEXT_POOL_CAPACITY,
+        )?;
+        validate_inclusive(
+            "http_source.context_propagation.same_thread_context_ttl_millis",
+            self.same_thread_context_ttl_millis,
+            1,
+            Self::MAX_SAME_THREAD_CONTEXT_TTL_MILLIS,
+        )?;
         Ok(())
     }
 }

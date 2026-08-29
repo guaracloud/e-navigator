@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ConfigError, ConfigResult, protocol_ports::validate_protocol_ports};
+use super::{ConfigResult, bounds::validate_inclusive, protocol_ports::validate_protocol_ports};
 
 /// Configuration for the uprobe-based TLS plaintext capture source
 /// (`source.aya_tls`).
@@ -110,45 +110,30 @@ impl TlsSourceConfig {
             port_field,
             Self::MAX_TOTAL_PORTS,
         )?;
-        if !(Self::MIN_CAPTURE_BYTES_PER_CALL..=Self::MAX_CAPTURE_BYTES_PER_CALL)
-            .contains(&self.capture_bytes_per_call)
-        {
-            return Err(ConfigError::invalid_value(
-                "tls_source.capture_bytes_per_call",
-                format!(
-                    "tls_source.capture_bytes_per_call must be between {} and {}",
-                    Self::MIN_CAPTURE_BYTES_PER_CALL,
-                    Self::MAX_CAPTURE_BYTES_PER_CALL
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_BUFFERED_BYTES_LIMIT).contains(&self.max_buffered_bytes_per_connection) {
-            return Err(ConfigError::invalid_value(
-                "tls_source.max_buffered_bytes_per_connection",
-                format!(
-                    "tls_source.max_buffered_bytes_per_connection must be between 1 and {}",
-                    Self::MAX_BUFFERED_BYTES_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_TRACKED_CONNECTIONS_LIMIT).contains(&self.max_tracked_connections) {
-            return Err(ConfigError::invalid_value(
-                "tls_source.max_tracked_connections",
-                format!(
-                    "tls_source.max_tracked_connections must be between 1 and {}",
-                    Self::MAX_TRACKED_CONNECTIONS_LIMIT
-                ),
-            ));
-        }
-        if !(1..=Self::MAX_ATTRIBUTES_LIMIT).contains(&self.max_attributes) {
-            return Err(ConfigError::invalid_value(
-                "tls_source.max_attributes",
-                format!(
-                    "tls_source.max_attributes must be between 1 and {}",
-                    Self::MAX_ATTRIBUTES_LIMIT
-                ),
-            ));
-        }
+        validate_inclusive(
+            "tls_source.capture_bytes_per_call",
+            self.capture_bytes_per_call,
+            Self::MIN_CAPTURE_BYTES_PER_CALL,
+            Self::MAX_CAPTURE_BYTES_PER_CALL,
+        )?;
+        validate_inclusive(
+            "tls_source.max_buffered_bytes_per_connection",
+            self.max_buffered_bytes_per_connection,
+            1,
+            Self::MAX_BUFFERED_BYTES_LIMIT,
+        )?;
+        validate_inclusive(
+            "tls_source.max_tracked_connections",
+            self.max_tracked_connections,
+            1,
+            Self::MAX_TRACKED_CONNECTIONS_LIMIT,
+        )?;
+        validate_inclusive(
+            "tls_source.max_attributes",
+            self.max_attributes,
+            1,
+            Self::MAX_ATTRIBUTES_LIMIT,
+        )?;
         Ok(())
     }
 }

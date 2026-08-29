@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ConfigError, ConfigResult};
+use super::{ConfigResult, bounds::validate_nonzero_bounded};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,70 +33,26 @@ impl DnsMetricsConfig {
     pub const MAX_EDGES_LIMIT: usize = 262_144;
 
     pub(super) fn validate(&self) -> ConfigResult<()> {
-        if self.max_domains == 0 {
-            return Err(ConfigError::invalid_value(
-                "dns_metrics.max_domains",
-                "dns_metrics.max_domains must be greater than zero",
-            ));
-        }
-        if self.max_domains > Self::MAX_DOMAINS_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "dns_metrics.max_domains",
-                format!(
-                    "dns_metrics.max_domains must be less than or equal to {}",
-                    Self::MAX_DOMAINS_LIMIT
-                ),
-            ));
-        }
-
-        if self.max_counters == 0 {
-            return Err(ConfigError::invalid_value(
-                "dns_metrics.max_counters",
-                "dns_metrics.max_counters must be greater than zero",
-            ));
-        }
-        if self.max_counters > Self::MAX_COUNTERS_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "dns_metrics.max_counters",
-                format!(
-                    "dns_metrics.max_counters must be less than or equal to {}",
-                    Self::MAX_COUNTERS_LIMIT
-                ),
-            ));
-        }
-
-        if self.max_latencies == 0 {
-            return Err(ConfigError::invalid_value(
-                "dns_metrics.max_latencies",
-                "dns_metrics.max_latencies must be greater than zero",
-            ));
-        }
-        if self.max_latencies > Self::MAX_LATENCIES_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "dns_metrics.max_latencies",
-                format!(
-                    "dns_metrics.max_latencies must be less than or equal to {}",
-                    Self::MAX_LATENCIES_LIMIT
-                ),
-            ));
-        }
-
-        if self.max_edges == 0 {
-            return Err(ConfigError::invalid_value(
-                "dns_metrics.max_edges",
-                "dns_metrics.max_edges must be greater than zero",
-            ));
-        }
-        if self.max_edges > Self::MAX_EDGES_LIMIT {
-            return Err(ConfigError::invalid_value(
-                "dns_metrics.max_edges",
-                format!(
-                    "dns_metrics.max_edges must be less than or equal to {}",
-                    Self::MAX_EDGES_LIMIT
-                ),
-            ));
-        }
-
+        validate_nonzero_bounded(
+            "dns_metrics.max_domains",
+            self.max_domains,
+            Self::MAX_DOMAINS_LIMIT,
+        )?;
+        validate_nonzero_bounded(
+            "dns_metrics.max_counters",
+            self.max_counters,
+            Self::MAX_COUNTERS_LIMIT,
+        )?;
+        validate_nonzero_bounded(
+            "dns_metrics.max_latencies",
+            self.max_latencies,
+            Self::MAX_LATENCIES_LIMIT,
+        )?;
+        validate_nonzero_bounded(
+            "dns_metrics.max_edges",
+            self.max_edges,
+            Self::MAX_EDGES_LIMIT,
+        )?;
         Ok(())
     }
 }
