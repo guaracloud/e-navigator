@@ -29,8 +29,7 @@ pub struct ProfilingGenerator {
     window_nanos: u64,
     max_stack_ids_per_window: usize,
     max_samples_per_window: u64,
-    windows: Mutex<BTreeMap<WindowKey, WindowState>>,
-    window_order: Mutex<BTreeSet<WindowOrderKey>>,
+    window_store: Mutex<WindowStore>,
     seen_samples: Mutex<BoundedFingerprints<SampleFingerprint>>,
     seen_warnings: Mutex<BoundedFingerprints<WarningFingerprint>>,
 }
@@ -60,8 +59,7 @@ impl ProfilingGenerator {
             window_nanos: window_nanos.max(1),
             max_stack_ids_per_window: DEFAULT_MAX_STACK_IDS_PER_WINDOW,
             max_samples_per_window: DEFAULT_MAX_SAMPLES_PER_WINDOW,
-            windows: Mutex::new(BTreeMap::new()),
-            window_order: Mutex::new(BTreeSet::new()),
+            window_store: Mutex::new(WindowStore::default()),
             seen_samples: Mutex::new(BoundedFingerprints::default()),
             seen_warnings: Mutex::new(BoundedFingerprints::default()),
         }
@@ -133,8 +131,7 @@ impl ProfilingGenerator {
     ) -> CoreResult<Option<WindowUpdate>> {
         let window = window_for(sample.timestamp_unix_nanos, self.window_nanos);
         let key = WindowKey::from_sample(signal, sample, &window);
-        let mut windows = self.windows()?;
-        let mut window_order = self.window_order()?;
+        let mut windows = self.window_store()?;
         if let Some(state) = windows.get_mut(&key) {
             let dropped_sample_count = state.update_from_sample(
                 sample,
@@ -148,13 +145,6 @@ impl ProfilingGenerator {
             }));
         }
 
-        if windows.len() >= self.max_windows.max(1)
-            && let Some(oldest) = window_order.iter().next().cloned()
-        {
-            window_order.remove(&oldest);
-            windows.remove(&oldest.key);
-        }
-
         let state = WindowState::from_sample(
             key.profile_id.clone(),
             window,
@@ -165,8 +155,7 @@ impl ProfilingGenerator {
         );
         let dropped_sample_count = state.dropped_sample_count;
         let output = state.to_signal(signal.host.clone());
-        window_order.insert(WindowOrderKey::new(&key));
-        windows.insert(key, state);
+        windows.insert_bounded(key, state, self.max_windows);
         Ok(Some(WindowUpdate {
             signal: output,
             dropped_sample_count,
@@ -266,12 +255,8 @@ impl ProfilingGenerator {
         Ok(seen.insert_if_new(fingerprint, self.max_seen_samples))
     }
 
-    fn windows(&self) -> CoreResult<MutexGuard<'_, BTreeMap<WindowKey, WindowState>>> {
-        self.windows.lock().map_err(module_error)
-    }
-
-    fn window_order(&self) -> CoreResult<MutexGuard<'_, BTreeSet<WindowOrderKey>>> {
-        self.window_order.lock().map_err(module_error)
+    fn window_store(&self) -> CoreResult<MutexGuard<'_, WindowStore>> {
+        self.window_store.lock().map_err(module_error)
     }
 
     fn seen_samples(&self) -> CoreResult<MutexGuard<'_, BoundedFingerprints<SampleFingerprint>>> {
@@ -405,6 +390,29 @@ impl WindowOrderKey {
             start_unix_nanos: key.start_unix_nanos,
             key: key.clone(),
         }
+    }
+}
+
+#[derive(Debug, Default)]
+struct WindowStore {
+    states: BTreeMap<WindowKey, WindowState>,
+    order: BTreeSet<WindowOrderKey>,
+}
+
+impl WindowStore {
+    fn get_mut(&mut self, key: &WindowKey) -> Option<&mut WindowState> {
+        self.states.get_mut(key)
+    }
+
+    fn insert_bounded(&mut self, key: WindowKey, state: WindowState, max_windows: usize) {
+        if self.states.len() >= max_windows.max(1)
+            && let Some(oldest) = self.order.pop_first()
+        {
+            self.states.remove(&oldest.key);
+        }
+
+        self.order.insert(WindowOrderKey::new(&key));
+        self.states.insert(key, state);
     }
 }
 
