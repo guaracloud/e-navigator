@@ -109,109 +109,100 @@ pub enum SignalKind {
     ProfilingWarningObservation,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-#[non_exhaustive]
-pub enum SignalPayload {
-    Exec(ExecEvent),
-    ProcessExit(ProcessExitEvent),
-    ProcessLifecycleDuration(ProcessLifecycleDurationEvent),
-    NetworkFlowWarning(NetworkFlowWarning),
-    NetworkConnectionOpen(NetworkConnectionOpenEvent),
-    NetworkConnectionClose(NetworkConnectionCloseEvent),
-    NetworkConnectionSnapshot(NetworkConnectionSnapshotEvent),
-    NetworkConnectionFailure(NetworkConnectionFailureEvent),
-    NetworkFlowSummary(NetworkFlowSummaryEvent),
-    NetworkCounterMetric(NetworkCounterMetric),
-    NetworkPeerFlowMetric(NetworkPeerFlowMetric),
-    NetworkDurationMetric(NetworkDurationMetric),
-    NetworkGaugeMetric(NetworkGaugeMetric),
-    NetworkTcpStatObservation(NetworkTcpStatObservation),
-    DnsQuery(DnsQueryEvent),
-    DnsResponse(DnsResponseEvent),
-    DnsCounterMetric(DnsCounterMetric),
-    DnsLatencyMetric(DnsLatencyMetric),
-    RequestSpanObservation(RequestSpanObservation),
-    ProtocolRequestObservation(ProtocolRequestObservation),
-    ExtractedTraceContextObservation(ExtractedTraceContextObservation),
-    RequestCorrelationWarning(RequestCorrelationWarning),
-    ProfileSampleObservation(ProfileSampleObservation),
-    ProfilingStackTraceObservation(ProfilingStackTraceObservation),
-    ProfilingSessionObservation(ProfilingSessionObservation),
-    ProfilingWarningObservation(ProfilingWarningObservation),
-    TraceSpanObservation(TraceSpanObservation),
-    ServiceInteractionSpanObservation(ServiceInteractionSpanObservation),
-    TraceServicePathObservation(TraceServicePathObservation),
-    TraceCorrelationWarning(TraceCorrelationWarning),
-    DependencyEdge(DependencyEdgeEvent),
-    RuntimeSecurityFinding(RuntimeSecurityFinding),
-    NodeCpuObservation(NodeCpuObservation),
-    NodeLoadObservation(NodeLoadObservation),
-    NodeMemoryObservation(NodeMemoryObservation),
-    NodeFilesystemObservation(NodeFilesystemObservation),
-    NodeDiskIoObservation(NodeDiskIoObservation),
-    ProcessResourceObservation(ProcessResourceObservation),
-    CgroupCpuObservation(CgroupCpuObservation),
-    CgroupMemoryObservation(CgroupMemoryObservation),
-    CgroupPidsObservation(CgroupPidsObservation),
-    CgroupFileDescriptorObservation(CgroupFileDescriptorObservation),
-    ResourceGaugeMetric(ResourceGaugeMetric),
-    ResourceCounterMetric(ResourceCounterMetric),
+macro_rules! define_signal_payload_inventory {
+    ($($variant:ident($payload:ty) => $kind:literal),+ $(,)?) => {
+        impl SignalKind {
+            const fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $kind),+
+                }
+            }
+
+            fn deserialize_payload<E>(
+                self,
+                payload: serde_json::Value,
+            ) -> Result<SignalPayload, E>
+            where
+                E: DeError,
+            {
+                match self {
+                    $(
+                        Self::$variant => serde_json::from_value::<$payload>(payload)
+                            .map(SignalPayload::$variant)
+                            .map_err(|error| {
+                                E::custom(format!("invalid {} payload: {error}", $kind))
+                            }),
+                    )+
+                }
+            }
+        }
+
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+        #[serde(untagged)]
+        #[non_exhaustive]
+        pub enum SignalPayload {
+            $($variant($payload)),+
+        }
+
+        impl SignalPayload {
+            fn signal_kind(&self) -> SignalKind {
+                match self {
+                    $(Self::$variant(_) => SignalKind::$variant),+
+                }
+            }
+        }
+    };
 }
 
-impl SignalPayload {
-    fn signal_kind(&self) -> SignalKind {
-        match self {
-            Self::Exec(_) => SignalKind::Exec,
-            Self::ProcessExit(_) => SignalKind::ProcessExit,
-            Self::ProcessLifecycleDuration(_) => SignalKind::ProcessLifecycleDuration,
-            Self::NetworkConnectionOpen(_) => SignalKind::NetworkConnectionOpen,
-            Self::NetworkConnectionClose(_) => SignalKind::NetworkConnectionClose,
-            Self::NetworkConnectionSnapshot(_) => SignalKind::NetworkConnectionSnapshot,
-            Self::NetworkConnectionFailure(_) => SignalKind::NetworkConnectionFailure,
-            Self::NetworkFlowSummary(_) => SignalKind::NetworkFlowSummary,
-            Self::NetworkFlowWarning(_) => SignalKind::NetworkFlowWarning,
-            Self::NetworkCounterMetric(_) => SignalKind::NetworkCounterMetric,
-            Self::NetworkPeerFlowMetric(_) => SignalKind::NetworkPeerFlowMetric,
-            Self::NetworkDurationMetric(_) => SignalKind::NetworkDurationMetric,
-            Self::NetworkGaugeMetric(_) => SignalKind::NetworkGaugeMetric,
-            Self::NetworkTcpStatObservation(_) => SignalKind::NetworkTcpStatObservation,
-            Self::DnsQuery(_) => SignalKind::DnsQuery,
-            Self::DnsResponse(_) => SignalKind::DnsResponse,
-            Self::DnsCounterMetric(_) => SignalKind::DnsCounterMetric,
-            Self::DnsLatencyMetric(_) => SignalKind::DnsLatencyMetric,
-            Self::RequestSpanObservation(_) => SignalKind::RequestSpanObservation,
-            Self::ProtocolRequestObservation(_) => SignalKind::ProtocolRequestObservation,
-            Self::ExtractedTraceContextObservation(_) => {
-                SignalKind::ExtractedTraceContextObservation
-            }
-            Self::RequestCorrelationWarning(_) => SignalKind::RequestCorrelationWarning,
-            Self::ProfileSampleObservation(_) => SignalKind::ProfileSampleObservation,
-            Self::ProfilingStackTraceObservation(_) => SignalKind::ProfilingStackTraceObservation,
-            Self::ProfilingSessionObservation(_) => SignalKind::ProfilingSessionObservation,
-            Self::ProfilingWarningObservation(_) => SignalKind::ProfilingWarningObservation,
-            Self::TraceSpanObservation(_) => SignalKind::TraceSpanObservation,
-            Self::ServiceInteractionSpanObservation(_) => {
-                SignalKind::ServiceInteractionSpanObservation
-            }
-            Self::TraceServicePathObservation(_) => SignalKind::TraceServicePathObservation,
-            Self::TraceCorrelationWarning(_) => SignalKind::TraceCorrelationWarning,
-            Self::DependencyEdge(_) => SignalKind::DependencyEdge,
-            Self::RuntimeSecurityFinding(_) => SignalKind::RuntimeSecurityFinding,
-            Self::NodeCpuObservation(_) => SignalKind::NodeCpuObservation,
-            Self::NodeLoadObservation(_) => SignalKind::NodeLoadObservation,
-            Self::NodeMemoryObservation(_) => SignalKind::NodeMemoryObservation,
-            Self::NodeFilesystemObservation(_) => SignalKind::NodeFilesystemObservation,
-            Self::NodeDiskIoObservation(_) => SignalKind::NodeDiskIoObservation,
-            Self::ProcessResourceObservation(_) => SignalKind::ProcessResourceObservation,
-            Self::CgroupCpuObservation(_) => SignalKind::CgroupCpuObservation,
-            Self::CgroupMemoryObservation(_) => SignalKind::CgroupMemoryObservation,
-            Self::CgroupPidsObservation(_) => SignalKind::CgroupPidsObservation,
-            Self::CgroupFileDescriptorObservation(_) => SignalKind::CgroupFileDescriptorObservation,
-            Self::ResourceGaugeMetric(_) => SignalKind::ResourceGaugeMetric,
-            Self::ResourceCounterMetric(_) => SignalKind::ResourceCounterMetric,
-        }
-    }
+define_signal_payload_inventory! {
+    Exec(ExecEvent) => "exec",
+    ProcessExit(ProcessExitEvent) => "process_exit",
+    ProcessLifecycleDuration(ProcessLifecycleDurationEvent) => "process_lifecycle_duration",
+    NetworkFlowWarning(NetworkFlowWarning) => "network_flow_warning",
+    NetworkConnectionOpen(NetworkConnectionOpenEvent) => "network_connection_open",
+    NetworkConnectionClose(NetworkConnectionCloseEvent) => "network_connection_close",
+    NetworkConnectionSnapshot(NetworkConnectionSnapshotEvent) => "network_connection_snapshot",
+    NetworkConnectionFailure(NetworkConnectionFailureEvent) => "network_connection_failure",
+    NetworkFlowSummary(NetworkFlowSummaryEvent) => "network_flow_summary",
+    NetworkCounterMetric(NetworkCounterMetric) => "network_counter_metric",
+    NetworkPeerFlowMetric(NetworkPeerFlowMetric) => "network_peer_flow_metric",
+    NetworkDurationMetric(NetworkDurationMetric) => "network_duration_metric",
+    NetworkGaugeMetric(NetworkGaugeMetric) => "network_gauge_metric",
+    NetworkTcpStatObservation(NetworkTcpStatObservation) => "network_tcp_stat_observation",
+    DnsQuery(DnsQueryEvent) => "dns_query",
+    DnsResponse(DnsResponseEvent) => "dns_response",
+    DnsCounterMetric(DnsCounterMetric) => "dns_counter_metric",
+    DnsLatencyMetric(DnsLatencyMetric) => "dns_latency_metric",
+    RequestSpanObservation(RequestSpanObservation) => "request_span_observation",
+    ProtocolRequestObservation(ProtocolRequestObservation) => "protocol_request_observation",
+    ExtractedTraceContextObservation(ExtractedTraceContextObservation) =>
+        "extracted_trace_context_observation",
+    RequestCorrelationWarning(RequestCorrelationWarning) => "request_correlation_warning",
+    ProfileSampleObservation(ProfileSampleObservation) => "profile_sample_observation",
+    ProfilingStackTraceObservation(ProfilingStackTraceObservation) =>
+        "profiling_stack_trace_observation",
+    ProfilingSessionObservation(ProfilingSessionObservation) => "profiling_session_observation",
+    ProfilingWarningObservation(ProfilingWarningObservation) => "profiling_warning_observation",
+    TraceSpanObservation(TraceSpanObservation) => "trace_span_observation",
+    ServiceInteractionSpanObservation(ServiceInteractionSpanObservation) =>
+        "service_interaction_span_observation",
+    TraceServicePathObservation(TraceServicePathObservation) => "trace_service_path_observation",
+    TraceCorrelationWarning(TraceCorrelationWarning) => "trace_correlation_warning",
+    DependencyEdge(DependencyEdgeEvent) => "dependency_edge",
+    RuntimeSecurityFinding(RuntimeSecurityFinding) => "runtime_security_finding",
+    NodeCpuObservation(NodeCpuObservation) => "node_cpu_observation",
+    NodeLoadObservation(NodeLoadObservation) => "node_load_observation",
+    NodeMemoryObservation(NodeMemoryObservation) => "node_memory_observation",
+    NodeFilesystemObservation(NodeFilesystemObservation) => "node_filesystem_observation",
+    NodeDiskIoObservation(NodeDiskIoObservation) => "node_disk_io_observation",
+    ProcessResourceObservation(ProcessResourceObservation) => "process_resource_observation",
+    CgroupCpuObservation(CgroupCpuObservation) => "cgroup_cpu_observation",
+    CgroupMemoryObservation(CgroupMemoryObservation) => "cgroup_memory_observation",
+    CgroupPidsObservation(CgroupPidsObservation) => "cgroup_pids_observation",
+    CgroupFileDescriptorObservation(CgroupFileDescriptorObservation) =>
+        "cgroup_file_descriptor_observation",
+    ResourceGaugeMetric(ResourceGaugeMetric) => "resource_gauge_metric",
+    ResourceCounterMetric(ResourceCounterMetric) => "resource_counter_metric",
 }
 
 #[derive(Clone, PartialEq)]
@@ -267,326 +258,7 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
         }
 
         let raw = RawSignalEnvelope::deserialize(deserializer)?;
-        let payload = match raw.kind {
-            SignalKind::Exec => serde_json::from_value::<ExecEvent>(raw.payload)
-                .map(SignalPayload::Exec)
-                .map_err(|err| D::Error::custom(format!("invalid exec payload: {err}")))?,
-            SignalKind::ProcessExit => serde_json::from_value::<ProcessExitEvent>(raw.payload)
-                .map(SignalPayload::ProcessExit)
-                .map_err(|err| D::Error::custom(format!("invalid process_exit payload: {err}")))?,
-            SignalKind::ProcessLifecycleDuration => serde_json::from_value::<
-                ProcessLifecycleDurationEvent,
-            >(raw.payload)
-            .map(SignalPayload::ProcessLifecycleDuration)
-            .map_err(|err| {
-                D::Error::custom(format!("invalid process_lifecycle_duration payload: {err}"))
-            })?,
-            SignalKind::NetworkConnectionOpen => {
-                serde_json::from_value::<NetworkConnectionOpenEvent>(raw.payload)
-                    .map(SignalPayload::NetworkConnectionOpen)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid network_connection_open payload: {err}"))
-                    })?
-            }
-            SignalKind::NetworkConnectionClose => {
-                serde_json::from_value::<NetworkConnectionCloseEvent>(raw.payload)
-                    .map(SignalPayload::NetworkConnectionClose)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid network_connection_close payload: {err}"))
-                    })?
-            }
-            SignalKind::NetworkConnectionSnapshot => {
-                serde_json::from_value::<NetworkConnectionSnapshotEvent>(raw.payload)
-                    .map(SignalPayload::NetworkConnectionSnapshot)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid network_connection_snapshot payload: {err}"
-                        ))
-                    })?
-            }
-            SignalKind::NetworkConnectionFailure => serde_json::from_value::<
-                NetworkConnectionFailureEvent,
-            >(raw.payload)
-            .map(SignalPayload::NetworkConnectionFailure)
-            .map_err(|err| {
-                D::Error::custom(format!("invalid network_connection_failure payload: {err}"))
-            })?,
-            SignalKind::NetworkFlowSummary => {
-                serde_json::from_value::<NetworkFlowSummaryEvent>(raw.payload)
-                    .map(SignalPayload::NetworkFlowSummary)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid network_flow_summary payload: {err}"))
-                    })?
-            }
-            SignalKind::NetworkFlowWarning => {
-                serde_json::from_value::<NetworkFlowWarning>(raw.payload)
-                    .map(SignalPayload::NetworkFlowWarning)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid network_flow_warning payload: {err}"))
-                    })?
-            }
-            SignalKind::NetworkCounterMetric => {
-                serde_json::from_value::<NetworkCounterMetric>(raw.payload)
-                    .map(SignalPayload::NetworkCounterMetric)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid network_counter_metric payload: {err}"))
-                    })?
-            }
-            SignalKind::NetworkPeerFlowMetric => {
-                serde_json::from_value::<NetworkPeerFlowMetric>(raw.payload)
-                    .map(SignalPayload::NetworkPeerFlowMetric)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid network_peer_flow_metric payload: {err}"))
-                    })?
-            }
-            SignalKind::NetworkDurationMetric => {
-                serde_json::from_value::<NetworkDurationMetric>(raw.payload)
-                    .map(SignalPayload::NetworkDurationMetric)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid network_duration_metric payload: {err}"))
-                    })?
-            }
-            SignalKind::NetworkGaugeMetric => {
-                serde_json::from_value::<NetworkGaugeMetric>(raw.payload)
-                    .map(SignalPayload::NetworkGaugeMetric)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid network_gauge_metric payload: {err}"))
-                    })?
-            }
-            SignalKind::NetworkTcpStatObservation => {
-                serde_json::from_value::<NetworkTcpStatObservation>(raw.payload)
-                    .map(SignalPayload::NetworkTcpStatObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid network_tcp_stat_observation payload: {err}"
-                        ))
-                    })?
-            }
-            SignalKind::DnsQuery => serde_json::from_value::<DnsQueryEvent>(raw.payload)
-                .map(SignalPayload::DnsQuery)
-                .map_err(|err| D::Error::custom(format!("invalid dns_query payload: {err}")))?,
-            SignalKind::DnsResponse => serde_json::from_value::<DnsResponseEvent>(raw.payload)
-                .map(SignalPayload::DnsResponse)
-                .map_err(|err| D::Error::custom(format!("invalid dns_response payload: {err}")))?,
-            SignalKind::DnsCounterMetric => serde_json::from_value::<DnsCounterMetric>(raw.payload)
-                .map(SignalPayload::DnsCounterMetric)
-                .map_err(|err| {
-                    D::Error::custom(format!("invalid dns_counter_metric payload: {err}"))
-                })?,
-            SignalKind::DnsLatencyMetric => serde_json::from_value::<DnsLatencyMetric>(raw.payload)
-                .map(SignalPayload::DnsLatencyMetric)
-                .map_err(|err| {
-                    D::Error::custom(format!("invalid dns_latency_metric payload: {err}"))
-                })?,
-            SignalKind::DependencyEdge => {
-                serde_json::from_value::<DependencyEdgeEvent>(raw.payload)
-                    .map(SignalPayload::DependencyEdge)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid dependency_edge payload: {err}"))
-                    })?
-            }
-            SignalKind::RuntimeSecurityFinding => {
-                serde_json::from_value::<RuntimeSecurityFinding>(raw.payload)
-                    .map(SignalPayload::RuntimeSecurityFinding)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid runtime_security_finding payload: {err}"))
-                    })?
-            }
-            SignalKind::NodeCpuObservation => {
-                serde_json::from_value::<NodeCpuObservation>(raw.payload)
-                    .map(SignalPayload::NodeCpuObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid node_cpu_observation payload: {err}"))
-                    })?
-            }
-            SignalKind::NodeLoadObservation => {
-                serde_json::from_value::<NodeLoadObservation>(raw.payload)
-                    .map(SignalPayload::NodeLoadObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid node_load_observation payload: {err}"))
-                    })?
-            }
-            SignalKind::NodeMemoryObservation => {
-                serde_json::from_value::<NodeMemoryObservation>(raw.payload)
-                    .map(SignalPayload::NodeMemoryObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid node_memory_observation payload: {err}"))
-                    })?
-            }
-            SignalKind::NodeFilesystemObservation => {
-                serde_json::from_value::<NodeFilesystemObservation>(raw.payload)
-                    .map(SignalPayload::NodeFilesystemObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid node_filesystem_observation payload: {err}"
-                        ))
-                    })?
-            }
-            SignalKind::NodeDiskIoObservation => {
-                serde_json::from_value::<NodeDiskIoObservation>(raw.payload)
-                    .map(SignalPayload::NodeDiskIoObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid node_disk_io_observation payload: {err}"))
-                    })?
-            }
-            SignalKind::ProcessResourceObservation => {
-                serde_json::from_value::<ProcessResourceObservation>(raw.payload)
-                    .map(SignalPayload::ProcessResourceObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid process_resource_observation payload: {err}"
-                        ))
-                    })?
-            }
-            SignalKind::CgroupCpuObservation => {
-                serde_json::from_value::<CgroupCpuObservation>(raw.payload)
-                    .map(SignalPayload::CgroupCpuObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid cgroup_cpu_observation payload: {err}"))
-                    })?
-            }
-            SignalKind::CgroupMemoryObservation => {
-                serde_json::from_value::<CgroupMemoryObservation>(raw.payload)
-                    .map(SignalPayload::CgroupMemoryObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid cgroup_memory_observation payload: {err}"
-                        ))
-                    })?
-            }
-            SignalKind::CgroupPidsObservation => {
-                serde_json::from_value::<CgroupPidsObservation>(raw.payload)
-                    .map(SignalPayload::CgroupPidsObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid cgroup_pids_observation payload: {err}"))
-                    })?
-            }
-            SignalKind::CgroupFileDescriptorObservation => {
-                serde_json::from_value::<CgroupFileDescriptorObservation>(raw.payload)
-                    .map(SignalPayload::CgroupFileDescriptorObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid cgroup_file_descriptor_observation payload: {err}"
-                        ))
-                    })?
-            }
-            SignalKind::ResourceGaugeMetric => {
-                serde_json::from_value::<ResourceGaugeMetric>(raw.payload)
-                    .map(SignalPayload::ResourceGaugeMetric)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid resource_gauge_metric payload: {err}"))
-                    })?
-            }
-            SignalKind::ResourceCounterMetric => {
-                serde_json::from_value::<ResourceCounterMetric>(raw.payload)
-                    .map(SignalPayload::ResourceCounterMetric)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid resource_counter_metric payload: {err}"))
-                    })?
-            }
-            SignalKind::TraceSpanObservation => {
-                serde_json::from_value::<TraceSpanObservation>(raw.payload)
-                    .map(SignalPayload::TraceSpanObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid trace_span_observation payload: {err}"))
-                    })?
-            }
-            SignalKind::ServiceInteractionSpanObservation => {
-                serde_json::from_value::<ServiceInteractionSpanObservation>(raw.payload)
-                    .map(SignalPayload::ServiceInteractionSpanObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid service_interaction_span_observation payload: {err}"
-                        ))
-                    })?
-            }
-            SignalKind::TraceServicePathObservation => {
-                serde_json::from_value::<TraceServicePathObservation>(raw.payload)
-                    .map(SignalPayload::TraceServicePathObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid trace_service_path_observation payload: {err}"
-                        ))
-                    })?
-            }
-            SignalKind::TraceCorrelationWarning => {
-                serde_json::from_value::<TraceCorrelationWarning>(raw.payload)
-                    .map(SignalPayload::TraceCorrelationWarning)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid trace_correlation_warning payload: {err}"
-                        ))
-                    })?
-            }
-            SignalKind::ProtocolRequestObservation => {
-                serde_json::from_value::<ProtocolRequestObservation>(raw.payload)
-                    .map(SignalPayload::ProtocolRequestObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid protocol_request_observation payload: {err}"
-                        ))
-                    })?
-            }
-            SignalKind::ExtractedTraceContextObservation => {
-                serde_json::from_value::<ExtractedTraceContextObservation>(raw.payload)
-                    .map(SignalPayload::ExtractedTraceContextObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid extracted_trace_context_observation payload: {err}"
-                        ))
-                    })?
-            }
-            SignalKind::RequestSpanObservation => {
-                serde_json::from_value::<RequestSpanObservation>(raw.payload)
-                    .map(SignalPayload::RequestSpanObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!("invalid request_span_observation payload: {err}"))
-                    })?
-            }
-            SignalKind::RequestCorrelationWarning => {
-                serde_json::from_value::<RequestCorrelationWarning>(raw.payload)
-                    .map(SignalPayload::RequestCorrelationWarning)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid request_correlation_warning payload: {err}"
-                        ))
-                    })?
-            }
-            SignalKind::ProfileSampleObservation => serde_json::from_value::<
-                ProfileSampleObservation,
-            >(raw.payload)
-            .map(SignalPayload::ProfileSampleObservation)
-            .map_err(|err| {
-                D::Error::custom(format!("invalid profile_sample_observation payload: {err}"))
-            })?,
-            SignalKind::ProfilingStackTraceObservation => {
-                serde_json::from_value::<ProfilingStackTraceObservation>(raw.payload)
-                    .map(SignalPayload::ProfilingStackTraceObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid profiling_stack_trace_observation payload: {err}"
-                        ))
-                    })?
-            }
-            SignalKind::ProfilingSessionObservation => {
-                serde_json::from_value::<ProfilingSessionObservation>(raw.payload)
-                    .map(SignalPayload::ProfilingSessionObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid profiling_session_observation payload: {err}"
-                        ))
-                    })?
-            }
-            SignalKind::ProfilingWarningObservation => {
-                serde_json::from_value::<ProfilingWarningObservation>(raw.payload)
-                    .map(SignalPayload::ProfilingWarningObservation)
-                    .map_err(|err| {
-                        D::Error::custom(format!(
-                            "invalid profiling_warning_observation payload: {err}"
-                        ))
-                    })?
-            }
-        };
+        let payload = raw.kind.deserialize_payload::<D::Error>(raw.payload)?;
 
         Ok(Self {
             schema_version: raw.schema_version,
@@ -1199,52 +871,7 @@ fn sanitize_optional_envelope_string(value: &mut Option<String>) {
 
 impl Signal for SignalEnvelope {
     fn kind(&self) -> &'static str {
-        match self.signal_kind() {
-            SignalKind::Exec => "exec",
-            SignalKind::ProcessExit => "process_exit",
-            SignalKind::ProcessLifecycleDuration => "process_lifecycle_duration",
-            SignalKind::NetworkConnectionOpen => "network_connection_open",
-            SignalKind::NetworkConnectionClose => "network_connection_close",
-            SignalKind::NetworkConnectionSnapshot => "network_connection_snapshot",
-            SignalKind::NetworkConnectionFailure => "network_connection_failure",
-            SignalKind::NetworkTcpStatObservation => "network_tcp_stat_observation",
-            SignalKind::NetworkFlowSummary => "network_flow_summary",
-            SignalKind::NetworkFlowWarning => "network_flow_warning",
-            SignalKind::NetworkCounterMetric => "network_counter_metric",
-            SignalKind::NetworkPeerFlowMetric => "network_peer_flow_metric",
-            SignalKind::NetworkDurationMetric => "network_duration_metric",
-            SignalKind::NetworkGaugeMetric => "network_gauge_metric",
-            SignalKind::DnsQuery => "dns_query",
-            SignalKind::DnsResponse => "dns_response",
-            SignalKind::DnsCounterMetric => "dns_counter_metric",
-            SignalKind::DnsLatencyMetric => "dns_latency_metric",
-            SignalKind::DependencyEdge => "dependency_edge",
-            SignalKind::RuntimeSecurityFinding => "runtime_security_finding",
-            SignalKind::NodeCpuObservation => "node_cpu_observation",
-            SignalKind::NodeLoadObservation => "node_load_observation",
-            SignalKind::NodeMemoryObservation => "node_memory_observation",
-            SignalKind::NodeFilesystemObservation => "node_filesystem_observation",
-            SignalKind::NodeDiskIoObservation => "node_disk_io_observation",
-            SignalKind::ProcessResourceObservation => "process_resource_observation",
-            SignalKind::CgroupCpuObservation => "cgroup_cpu_observation",
-            SignalKind::CgroupMemoryObservation => "cgroup_memory_observation",
-            SignalKind::CgroupPidsObservation => "cgroup_pids_observation",
-            SignalKind::CgroupFileDescriptorObservation => "cgroup_file_descriptor_observation",
-            SignalKind::ResourceGaugeMetric => "resource_gauge_metric",
-            SignalKind::ResourceCounterMetric => "resource_counter_metric",
-            SignalKind::TraceSpanObservation => "trace_span_observation",
-            SignalKind::ServiceInteractionSpanObservation => "service_interaction_span_observation",
-            SignalKind::TraceServicePathObservation => "trace_service_path_observation",
-            SignalKind::TraceCorrelationWarning => "trace_correlation_warning",
-            SignalKind::ProtocolRequestObservation => "protocol_request_observation",
-            SignalKind::ExtractedTraceContextObservation => "extracted_trace_context_observation",
-            SignalKind::RequestSpanObservation => "request_span_observation",
-            SignalKind::RequestCorrelationWarning => "request_correlation_warning",
-            SignalKind::ProfileSampleObservation => "profile_sample_observation",
-            SignalKind::ProfilingStackTraceObservation => "profiling_stack_trace_observation",
-            SignalKind::ProfilingSessionObservation => "profiling_session_observation",
-            SignalKind::ProfilingWarningObservation => "profiling_warning_observation",
-        }
+        self.signal_kind().as_str()
     }
 }
 
