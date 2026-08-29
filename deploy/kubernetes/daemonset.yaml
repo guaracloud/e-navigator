@@ -33,7 +33,7 @@ spec:
       affinity: {}
       containers:
         - name: e-navigator
-          image: ghcr.io/guaracloud/e-navigator:0.5.0-rc.6
+          image: ghcr.io/guaracloud/e-navigator:0.5.0-rc.7
           imagePullPolicy: IfNotPresent
           args:
             - "--source"
