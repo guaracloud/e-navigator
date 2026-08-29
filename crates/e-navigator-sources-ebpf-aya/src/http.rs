@@ -988,7 +988,7 @@ mod platform {
         sync::{Arc, Mutex},
     };
     use tokio::{sync::mpsc, task::JoinHandle};
-    use tracing::{debug, info, warn};
+    use tracing::{info, warn};
 
     #[repr(C)]
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1046,7 +1046,7 @@ mod platform {
         }
 
         async fn run(self: Box<Self>, tx: mpsc::Sender<SignalEnvelope>) -> CoreResult<()> {
-            bump_memlock_rlimit();
+            crate::memlock::bump_memlock_rlimit();
             let shutdown = ReaderShutdown::new();
             let mut reader_handles = Vec::new();
             let diagnostics = SourceDiagnostics::from_env();
@@ -1836,17 +1836,6 @@ mod platform {
         }
 
         Ok(())
-    }
-
-    fn bump_memlock_rlimit() {
-        let rlimit = libc::rlimit {
-            rlim_cur: libc::RLIM_INFINITY,
-            rlim_max: libc::RLIM_INFINITY,
-        };
-        let ret = unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlimit) };
-        if ret != 0 {
-            debug!("failed to raise RLIMIT_MEMLOCK");
-        }
     }
 
     fn module_error(err: impl ToString) -> CoreError {
