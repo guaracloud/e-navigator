@@ -1,4 +1,4 @@
-use crate::otel_coexistence::OtelSdkDetector;
+use crate::{bounded_fingerprints::BoundedFingerprints, otel_coexistence::OtelSdkDetector};
 use e_navigator_core::{
     CoreError, CoreResult, Generator, ModuleKind, ModuleMetadata, RequestCorrelationConfig, Signal,
 };
@@ -9,10 +9,9 @@ use e_navigator_signals::{
     TraceCorrelationKind,
 };
 use std::{
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::BTreeMap,
     fmt,
-    hash::Hash,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Mutex, MutexGuard},
 };
 
 const DEFAULT_MAX_SEEN_REQUESTS: usize = 8192;
@@ -378,45 +377,7 @@ impl RequestCorrelationGenerator {
     }
 }
 
-#[derive(Debug)]
-struct BoundedFingerprints<T> {
-    entries: HashSet<Arc<T>>,
-    insertion_order: VecDeque<Arc<T>>,
-}
-
-impl<T> Default for BoundedFingerprints<T> {
-    fn default() -> Self {
-        Self {
-            entries: HashSet::new(),
-            insertion_order: VecDeque::new(),
-        }
-    }
-}
-
-impl<T> BoundedFingerprints<T>
-where
-    T: Eq + Hash,
-{
-    fn insert_if_new(&mut self, fingerprint: T, max_entries: usize) -> bool {
-        let fingerprint = Arc::new(fingerprint);
-        if !self.entries.insert(fingerprint.clone()) {
-            return false;
-        }
-
-        let max_entries = max_entries.max(1);
-        while self.entries.len() > max_entries {
-            let Some(oldest) = self.insertion_order.pop_front() else {
-                break;
-            };
-            self.entries.remove(oldest.as_ref());
-        }
-
-        self.insertion_order.push_back(fingerprint);
-        true
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct RequestFingerprint {
     protocol: ProtocolKind,
     start_unix_nanos: u64,
@@ -457,7 +418,7 @@ impl RequestFingerprint {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum PeerFingerprint {
     Unknown,
     Domain { hash: u64, port: Option<u16> },
@@ -512,7 +473,7 @@ fn write_peer_fingerprint(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum WarningFingerprint {
     Request {
         warning_kind: RequestWarningKind,
@@ -550,7 +511,7 @@ impl SpanSuppressionReason {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum RequestWarningKind {
     MissingTraceContext,
     MalformedTraceContext,
