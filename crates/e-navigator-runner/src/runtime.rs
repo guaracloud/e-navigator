@@ -187,25 +187,24 @@ impl Runner {
     }
 
     async fn process_signal(&self, signal: SignalEnvelope) -> CoreResult<Option<SignalEnvelope>> {
-        let mut current = Some(signal);
+        let mut current = signal;
 
         for processor in self.registry.processors() {
             let metadata = processor.metadata();
-            let signal = current.take().ok_or(CoreError::PipelineClosed)?;
-            match processor
-                .process(signal)
+            current = match processor
+                .process(current)
                 .await
                 .map_err(|err| with_module_context(metadata, err))?
             {
-                Some(processed) => current = Some(processed),
+                Some(processed) => processed,
                 None => {
                     debug!("signal dropped by processor");
                     return Ok(None);
                 }
-            }
+            };
         }
 
-        current.ok_or(CoreError::PipelineClosed).map(Some)
+        Ok(Some(current))
     }
 
     async fn handle_generator(
