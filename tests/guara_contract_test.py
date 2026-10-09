@@ -24,11 +24,7 @@ class GuaraContractTests(unittest.TestCase):
         inputs = rows(contract, "IN-")
         ids = [row[0] for row in inputs]
         self.assertEqual(len(ids), len(set(ids)), "input IDs must be unique")
-        self.assertTrue(inputs)
-        for row in inputs:
-            self.assertEqual(len(row), 3)
-            self.assertTrue(row[1], f"{row[0]} needs an exact missing input")
-            self.assertTrue(row[2], f"{row[0]} needs an owner")
+        self.assertEqual(set(ids), {f"IN-{number:02}" for number in range(1, 8)})
         inventory = rows(contract, "GW-")
         cell_ids = [row[0] for row in inventory]
         self.assertEqual(len(cell_ids), len(set(cell_ids)))
@@ -45,15 +41,17 @@ class GuaraContractTests(unittest.TestCase):
 
     def test_all_quality_dimensions_have_owners(self):
         thresholds = rows(CONTRACT.read_text(), "TH-")
+        ids = [row[0] for row in thresholds]
+        self.assertEqual(len(ids), len(set(ids)), "threshold IDs must be unique")
         self.assertEqual(
-            {row[0] for row in thresholds},
+            set(ids),
             {"TH-COVERAGE", "TH-STACK", "TH-OVERHEAD", "TH-LATENCY",
              "TH-OUTAGE", "TH-RETENTION", "TH-LOSS"},
         )
-        for row in thresholds:
+        for row in thresholds + rows(CONTRACT.read_text(), "IN-"):
             self.assertEqual(len(row), 3)
-            self.assertTrue(row[1])
-            self.assertTrue(row[2], f"{row[0]} needs an approving owner role")
+            self.assertTrue(row[1], f"{row[0]} needs a specification")
+            self.assertTrue(row[2], f"{row[0]} needs an owner")
 
 
 if __name__ == "__main__":

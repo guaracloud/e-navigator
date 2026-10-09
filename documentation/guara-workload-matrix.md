@@ -3,11 +3,10 @@
 This document records the blockers for replacing Guara's Beyla and Alloy
 profiles and application log collection with the standalone E-Navigator
 application. The [replacement acceptance contract](guara-replacement-acceptance.md)
-defines
-stable inventory IDs, exact cell records, consumer mappings, threshold records,
+defines stable inventory IDs, exact cell records, consumer mappings, threshold records,
 and responsible roles for missing inputs. It is not yet a finite exact support
-matrix because Guara has not declared deployment cells. It deliberately separates a parser recognizing a wire form from a
-client/server/runtime cell being qualified in production-like execution.
+matrix because Guara has not declared deployment cells. It separates parser
+recognition from client/server/runtime qualification in production-like execution.
 
 ## Gate Status
 
