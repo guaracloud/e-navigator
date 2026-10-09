@@ -44,7 +44,7 @@ use e_navigator_signals::{
     TraceAttribute, TraceConfidence, TraceCorrelationKind, TracePeerContext,
 };
 use e_navigator_sinks::{
-    HttpExporterConfig, HttpJsonExporter, OtlpHttpSink, PrometheusHttpSink,
+    HttpExporterConfig, HttpProtobufExporter, OtlpHttpSink, PrometheusHttpSink,
     bench_encode_trace_export_request, format_otel_metric_record, format_otel_trace_record,
     format_pprof_profile, format_profile_record, serialize_signal_line,
 };
@@ -70,7 +70,7 @@ use std::{
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::{runtime::Runtime, sync::mpsc};
+use tokio::runtime::Runtime;
 
 fn bench_reader_sample_handoff(c: &mut Criterion) {
     // A contiguous 384-byte RawProtocolDataEvent perf sample (tail empty),
@@ -722,11 +722,10 @@ fn bench_generators(c: &mut Criterion) {
 }
 
 fn bench_trace_correlation_unique_at_capacity(c: &mut Criterion) {
-    let runtime = Runtime::new().unwrap();
     let generator = TraceCorrelationGenerator::with_limits(8192, 8192, 4096);
     for index in 0..8192 {
         let signal = network_close_signal(index);
-        black_box(observe_generator_like_runner(&runtime, &generator, &signal));
+        black_box(observe_generator_like_runner(&generator, &signal));
     }
     let index = Cell::new(8192_u64);
 
@@ -739,7 +738,6 @@ fn bench_trace_correlation_unique_at_capacity(c: &mut Criterion) {
             },
             |signal| {
                 black_box(observe_generator_like_runner(
-                    &runtime,
                     &generator,
                     black_box(&signal),
                 ));
@@ -750,11 +748,10 @@ fn bench_trace_correlation_unique_at_capacity(c: &mut Criterion) {
 }
 
 fn bench_request_correlation_unique_at_capacity(c: &mut Criterion) {
-    let runtime = Runtime::new().unwrap();
     let generator = RequestCorrelationGenerator::with_limits(8192, 4096);
     for index in 0..8192 {
         let signal = request_signal(index);
-        black_box(observe_generator_like_runner(&runtime, &generator, &signal));
+        black_box(observe_generator_like_runner(&generator, &signal));
     }
     let index = Cell::new(8192_u64);
 
@@ -767,7 +764,6 @@ fn bench_request_correlation_unique_at_capacity(c: &mut Criterion) {
             },
             |signal| {
                 black_box(observe_generator_like_runner(
-                    &runtime,
                     &generator,
                     black_box(&signal),
                 ));
@@ -778,7 +774,6 @@ fn bench_request_correlation_unique_at_capacity(c: &mut Criterion) {
 }
 
 fn bench_request_correlation_generated_identity(c: &mut Criterion) {
-    let runtime = Runtime::new().unwrap();
     let generator = RequestCorrelationGenerator::with_limits(8192, 4096);
     let index = Cell::new(0_u64);
 
@@ -797,7 +792,6 @@ fn bench_request_correlation_generated_identity(c: &mut Criterion) {
             },
             |signal| {
                 black_box(observe_generator_like_runner(
-                    &runtime,
                     &generator,
                     black_box(&signal),
                 ));
@@ -808,7 +802,6 @@ fn bench_request_correlation_generated_identity(c: &mut Criterion) {
 }
 
 fn bench_network_open_aggregation(c: &mut Criterion) {
-    let runtime = Runtime::new().unwrap();
     let generator = NetworkMetricsGenerator::with_limits(8192, 8192);
     let timestamp = Cell::new(0_u64);
 
@@ -821,7 +814,6 @@ fn bench_network_open_aggregation(c: &mut Criterion) {
             },
             |signal| {
                 black_box(observe_generator_like_runner(
-                    &runtime,
                     &generator,
                     black_box(&signal),
                 ));
@@ -832,7 +824,6 @@ fn bench_network_open_aggregation(c: &mut Criterion) {
 }
 
 fn bench_dns_query_aggregation(c: &mut Criterion) {
-    let runtime = Runtime::new().unwrap();
     let generator = DnsMetricsGenerator::with_limits(4096, 4096, 4096, 4096);
     let timestamp = Cell::new(0_u64);
 
@@ -845,7 +836,6 @@ fn bench_dns_query_aggregation(c: &mut Criterion) {
             },
             |signal| {
                 black_box(observe_generator_like_runner(
-                    &runtime,
                     &generator,
                     black_box(&signal),
                 ));
@@ -863,46 +853,25 @@ fn bench_generator<G>(
 ) where
     G: Generator<SignalEnvelope> + 'static,
 {
-    let runtime = Runtime::new().unwrap();
     let index = Cell::new(0_usize);
     c.bench_function(name, |b| {
         b.iter(|| {
             let next = index.get().wrapping_add(1);
             index.set(next);
             let signal = &signals[next % signals.len()];
-            black_box(observe_generator_like_runner(
-                &runtime,
-                &generator,
-                black_box(signal),
-            ));
+            black_box(observe_generator_like_runner(&generator, black_box(signal)));
         })
     });
 }
 
-fn observe_generator_like_runner<G>(
-    runtime: &Runtime,
-    generator: &G,
-    signal: &SignalEnvelope,
-) -> Vec<SignalEnvelope>
+fn observe_generator_like_runner<G>(generator: &G, signal: &SignalEnvelope) -> Vec<SignalEnvelope>
 where
     G: Generator<SignalEnvelope>,
 {
-    if let Some(outputs) = generator.observe_immediate(signal) {
-        return outputs.unwrap();
-    }
-
-    let (tx, mut rx) = mpsc::channel(64);
-    runtime.block_on(generator.observe(signal, &tx)).unwrap();
-    drop(tx);
-    let mut outputs = Vec::new();
-    while let Ok(output) = rx.try_recv() {
-        outputs.push(output);
-    }
-    outputs
+    generator.observe(signal).unwrap()
 }
 
 fn bench_network_flow_byte_aggregation(c: &mut Criterion) {
-    let runtime = Runtime::new().unwrap();
     let generator = NetworkMetricsGenerator::with_limits(8192, 8192);
     let index = Cell::new(0_u64);
 
@@ -920,7 +889,6 @@ fn bench_network_flow_byte_aggregation(c: &mut Criterion) {
             },
             |signal| {
                 black_box(observe_generator_like_runner(
-                    &runtime,
                     &generator,
                     black_box(&signal),
                 ));
@@ -1065,18 +1033,21 @@ fn bench_serialization_and_exporter(c: &mut Criterion) {
     c.bench_function("exporter/bounded_queue_enqueue", |b| {
         b.iter_batched(
             || {
-                HttpJsonExporter::new(HttpExporterConfig {
-                    endpoint: "http://127.0.0.1:9".to_string(),
-                    headers: Vec::new(),
-                    batch_size: 16,
-                    queue_capacity: 128,
-                    timeout_millis: 1,
-                    max_retries: 0,
-                    tls_insecure_skip_verify: false,
-                })
+                HttpProtobufExporter::new(
+                    HttpExporterConfig {
+                        endpoint: "http://127.0.0.1:9".to_string(),
+                        headers: Vec::new(),
+                        batch_size: 16,
+                        queue_capacity: 128,
+                        timeout_millis: 1,
+                        max_retries: 0,
+                        tls_insecure_skip_verify: false,
+                    },
+                    encode_export_records,
+                )
                 .unwrap()
             },
-            |mut exporter: HttpJsonExporter<ExportRecord>| {
+            |mut exporter: HttpProtobufExporter<ExportRecord>| {
                 for value in 0..64 {
                     exporter.enqueue(ExportRecord { value });
                 }
@@ -1898,3 +1869,10 @@ criterion_group!(
     bench_gzip_export_payload
 );
 criterion_main!(benches);
+
+fn encode_export_records(
+    records: &[ExportRecord],
+) -> Result<Vec<u8>, e_navigator_sinks::ExporterError> {
+    serde_json::to_vec(records)
+        .map_err(|err| e_navigator_sinks::ExporterError::Encode(err.to_string()))
+}

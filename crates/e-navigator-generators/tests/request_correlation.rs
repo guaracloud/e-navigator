@@ -14,14 +14,13 @@ use e_navigator_signals::{
     TraceCorrelationKind, TracePeerContext,
 };
 use std::collections::BTreeMap;
-use tokio::sync::mpsc;
 
-#[tokio::test]
-async fn observed_trace_context_protocol_request_generates_request_span() {
+#[test]
+fn observed_trace_context_protocol_request_generates_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let signal = protocol_request_signal(Some(valid_traceparent()), true);
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert_eq!(outputs.len(), 1);
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
@@ -47,8 +46,8 @@ async fn observed_trace_context_protocol_request_generates_request_span() {
     assert_eq!(span.peer, Some(peer()));
 }
 
-#[tokio::test]
-async fn server_capture_creates_child_span_of_wire_remote_parent() {
+#[test]
+fn server_capture_creates_child_span_of_wire_remote_parent() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -56,7 +55,7 @@ async fn server_capture_creates_child_span_of_wire_remote_parent() {
     };
     request.role = Some(ProtocolCaptureRole::Server);
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -83,8 +82,8 @@ async fn server_capture_creates_child_span_of_wire_remote_parent() {
     ));
 }
 
-#[tokio::test]
-async fn client_capture_does_not_duplicate_propagating_span_identity() {
+#[test]
+fn client_capture_does_not_duplicate_propagating_span_identity() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -92,13 +91,13 @@ async fn client_capture_does_not_duplicate_propagating_span_identity() {
     };
     request.role = Some(ProtocolCaptureRole::Client);
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert!(outputs.is_empty());
 }
 
-#[tokio::test]
-async fn supported_otel_zero_code_agent_suppresses_only_generated_request_spans() {
+#[test]
+fn supported_otel_zero_code_agent_suppresses_only_generated_request_spans() {
     let procfs_root =
         std::env::temp_dir().join(format!("e-navigator-otel-sdk-test-{}", std::process::id()));
     let process_root = procfs_root.join("42");
@@ -129,7 +128,7 @@ async fn supported_otel_zero_code_agent_suppresses_only_generated_request_spans(
         ..process()
     });
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert!(
         !outputs
@@ -137,7 +136,7 @@ async fn supported_otel_zero_code_agent_suppresses_only_generated_request_spans(
             .any(|output| matches!(output.payload, SignalPayload::RequestSpanObservation(_)))
     );
     assert_request_warning(&outputs, "otel_sdk_span_suppressed");
-    assert!(observe(&generator, &signal).await.is_empty());
+    assert!(observe(&generator, &signal).is_empty());
 
     let disabled = RequestCorrelationGenerator::from_config(
         &RequestCorrelationConfig::default(),
@@ -145,7 +144,6 @@ async fn supported_otel_zero_code_agent_suppresses_only_generated_request_spans(
     );
     assert!(
         observe(&disabled, &signal)
-            .await
             .iter()
             .any(|output| matches!(output.payload, SignalPayload::RequestSpanObservation(_)))
     );
@@ -153,8 +151,8 @@ async fn supported_otel_zero_code_agent_suppresses_only_generated_request_spans(
     std::fs::remove_dir_all(procfs_root).ok();
 }
 
-#[tokio::test]
-async fn explicit_application_span_ownership_suppresses_manual_sdk_workloads() {
+#[test]
+fn explicit_application_span_ownership_suppresses_manual_sdk_workloads() {
     let ownership_labels = BTreeMap::from([(
         "observability.guara.io/request-spans".to_string(),
         "application".to_string(),
@@ -182,7 +180,7 @@ async fn explicit_application_span_ownership_suppresses_manual_sdk_workloads() {
         .expect("attributed request")
         .labels = ownership_labels;
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert!(
         !outputs
@@ -190,7 +188,7 @@ async fn explicit_application_span_ownership_suppresses_manual_sdk_workloads() {
             .any(|output| matches!(output.payload, SignalPayload::RequestSpanObservation(_)))
     );
     assert_request_warning(&outputs, "application_span_owner_suppressed");
-    assert!(observe(&generator, &signal).await.is_empty());
+    assert!(observe(&generator, &signal).is_empty());
 
     let nonmatching_config = RequestCorrelationConfig {
         application_span_ownership_labels: BTreeMap::from([
@@ -208,7 +206,6 @@ async fn explicit_application_span_ownership_suppresses_manual_sdk_workloads() {
     );
     assert!(
         observe(&nonmatching, &signal)
-            .await
             .iter()
             .any(|output| matches!(output.payload, SignalPayload::RequestSpanObservation(_)))
     );
@@ -225,7 +222,6 @@ async fn explicit_application_span_ownership_suppresses_manual_sdk_workloads() {
     );
     assert!(
         observe(&unattributed, &unattributed_signal)
-            .await
             .iter()
             .any(|output| matches!(output.payload, SignalPayload::RequestSpanObservation(_)))
     );
@@ -242,14 +238,13 @@ async fn explicit_application_span_ownership_suppresses_manual_sdk_workloads() {
     );
     assert!(
         observe(&different_owner, &signal)
-            .await
             .iter()
             .any(|output| matches!(output.payload, SignalPayload::RequestSpanObservation(_)))
     );
 }
 
-#[tokio::test]
-async fn e_navigator_injected_client_context_exports_the_owned_span() {
+#[test]
+fn e_navigator_injected_client_context_exports_the_owned_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -259,7 +254,7 @@ async fn e_navigator_injected_client_context_exports_the_owned_span() {
     request.parent_span_id = Some("7a8b9c0d1e2f3041".to_string());
     request.correlation_kind = TraceCorrelationKind::GeneratedTraceContext;
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected owned client span");
@@ -276,8 +271,8 @@ async fn e_navigator_injected_client_context_exports_the_owned_span() {
     );
 }
 
-#[tokio::test]
-async fn redis_protocol_request_generates_named_request_span() {
+#[test]
+fn redis_protocol_request_generates_named_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -297,7 +292,7 @@ async fn redis_protocol_request_generates_named_request_span() {
         },
     ];
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -308,8 +303,8 @@ async fn redis_protocol_request_generates_named_request_span() {
     assert!(has_attribute(&span.attributes, "db.operation.name", "GET"));
 }
 
-#[tokio::test]
-async fn grpc_protocol_request_generates_named_request_span() {
+#[test]
+fn grpc_protocol_request_generates_named_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -333,7 +328,7 @@ async fn grpc_protocol_request_generates_named_request_span() {
         },
     ];
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -349,8 +344,8 @@ async fn grpc_protocol_request_generates_named_request_span() {
     ));
 }
 
-#[tokio::test]
-async fn grpc_protocol_request_preserves_response_status_for_span_export() {
+#[test]
+fn grpc_protocol_request_preserves_response_status_for_span_export() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -370,7 +365,7 @@ async fn grpc_protocol_request_preserves_response_status_for_span_export() {
         },
     ];
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -385,8 +380,8 @@ async fn grpc_protocol_request_preserves_response_status_for_span_export() {
     ));
 }
 
-#[tokio::test]
-async fn websocket_protocol_request_generates_named_metadata_span() {
+#[test]
+fn websocket_protocol_request_generates_named_metadata_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -406,7 +401,7 @@ async fn websocket_protocol_request_generates_named_metadata_span() {
         },
     ];
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -421,8 +416,8 @@ async fn websocket_protocol_request_generates_named_metadata_span() {
     ));
 }
 
-#[tokio::test]
-async fn postgresql_protocol_request_generates_named_request_span() {
+#[test]
+fn postgresql_protocol_request_generates_named_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -442,7 +437,7 @@ async fn postgresql_protocol_request_generates_named_request_span() {
         },
     ];
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -457,8 +452,8 @@ async fn postgresql_protocol_request_generates_named_request_span() {
     ));
 }
 
-#[tokio::test]
-async fn mysql_protocol_request_generates_named_request_span() {
+#[test]
+fn mysql_protocol_request_generates_named_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -478,7 +473,7 @@ async fn mysql_protocol_request_generates_named_request_span() {
         },
     ];
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -493,8 +488,8 @@ async fn mysql_protocol_request_generates_named_request_span() {
     ));
 }
 
-#[tokio::test]
-async fn mongodb_protocol_request_generates_named_request_span() {
+#[test]
+fn mongodb_protocol_request_generates_named_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -514,7 +509,7 @@ async fn mongodb_protocol_request_generates_named_request_span() {
         },
     ];
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -525,8 +520,8 @@ async fn mongodb_protocol_request_generates_named_request_span() {
     assert!(has_attribute(&span.attributes, "db.operation.name", "find"));
 }
 
-#[tokio::test]
-async fn kafka_protocol_request_generates_named_request_span() {
+#[test]
+fn kafka_protocol_request_generates_named_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -546,7 +541,7 @@ async fn kafka_protocol_request_generates_named_request_span() {
         },
     ];
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -561,8 +556,8 @@ async fn kafka_protocol_request_generates_named_request_span() {
     ));
 }
 
-#[tokio::test]
-async fn protocol_request_preserves_error_attributes_for_trace_export() {
+#[test]
+fn protocol_request_preserves_error_attributes_for_trace_export() {
     let generator = RequestCorrelationGenerator::default();
 
     for (protocol, method, status_key, status_value, error_type) in [
@@ -627,7 +622,7 @@ async fn protocol_request_preserves_error_attributes_for_trace_export() {
             },
         ];
 
-        let outputs = observe(&generator, &signal).await;
+        let outputs = observe(&generator, &signal);
 
         let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
             panic!("expected request span");
@@ -639,8 +634,8 @@ async fn protocol_request_preserves_error_attributes_for_trace_export() {
     }
 }
 
-#[tokio::test]
-async fn nats_protocol_request_generates_named_request_span() {
+#[test]
+fn nats_protocol_request_generates_named_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -660,7 +655,7 @@ async fn nats_protocol_request_generates_named_request_span() {
         },
     ];
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -675,8 +670,8 @@ async fn nats_protocol_request_generates_named_request_span() {
     ));
 }
 
-#[tokio::test]
-async fn valid_traceparent_fallback_generates_request_span_ids() {
+#[test]
+fn valid_traceparent_fallback_generates_request_span_ids() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -686,7 +681,7 @@ async fn valid_traceparent_fallback_generates_request_span_ids() {
     request.span_id = None;
     request.traceparent = Some(valid_traceparent());
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert_eq!(outputs.len(), 1);
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
@@ -703,8 +698,8 @@ async fn valid_traceparent_fallback_generates_request_span_ids() {
     );
 }
 
-#[tokio::test]
-async fn synthetic_protocol_requests_preserve_synthetic_provenance() {
+#[test]
+fn synthetic_protocol_requests_preserve_synthetic_provenance() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -713,7 +708,7 @@ async fn synthetic_protocol_requests_preserve_synthetic_provenance() {
     request.correlation_kind = TraceCorrelationKind::Synthetic;
     request.confidence = TraceConfidence::High;
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert_eq!(outputs.len(), 1);
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
@@ -723,8 +718,8 @@ async fn synthetic_protocol_requests_preserve_synthetic_provenance() {
     assert_eq!(span.confidence, TraceConfidence::High);
 }
 
-#[tokio::test]
-async fn synthetic_requests_without_trace_context_remain_synthetic() {
+#[test]
+fn synthetic_requests_without_trace_context_remain_synthetic() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -732,7 +727,7 @@ async fn synthetic_requests_without_trace_context_remain_synthetic() {
     };
     request.correlation_kind = TraceCorrelationKind::Synthetic;
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert_eq!(outputs.len(), 2);
     assert!(outputs.iter().any(|signal| {
@@ -752,8 +747,8 @@ async fn synthetic_requests_without_trace_context_remain_synthetic() {
     }));
 }
 
-#[tokio::test]
-async fn method_and_status_are_only_copied_when_observed() {
+#[test]
+fn method_and_status_are_only_copied_when_observed() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(None, true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -762,7 +757,7 @@ async fn method_and_status_are_only_copied_when_observed() {
     request.method = None;
     request.status_code = None;
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -771,8 +766,8 @@ async fn method_and_status_are_only_copied_when_observed() {
     assert_eq!(span.status_code, None);
 }
 
-#[tokio::test]
-async fn request_attributes_are_count_and_byte_bounded() {
+#[test]
+fn request_attributes_are_count_and_byte_bounded() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -793,7 +788,7 @@ async fn request_attributes_are_count_and_byte_bounded() {
         },
     ];
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -802,8 +797,8 @@ async fn request_attributes_are_count_and_byte_bounded() {
     assert_eq!(span.attributes[0].key, "custom.kept");
 }
 
-#[tokio::test]
-async fn request_span_output_drops_sensitive_trace_attributes() {
+#[test]
+fn request_span_output_drops_sensitive_trace_attributes() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -818,7 +813,7 @@ async fn request_span_output_drops_sensitive_trace_attributes() {
         value: "/checkout".to_string(),
     });
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -831,8 +826,8 @@ async fn request_span_output_drops_sensitive_trace_attributes() {
     assert!(has_attribute(&span.attributes, "http.route", "/checkout"));
 }
 
-#[tokio::test]
-async fn request_attribute_bounding_preserves_error_status_attributes() {
+#[test]
+fn request_attribute_bounding_preserves_error_status_attributes() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -857,7 +852,7 @@ async fn request_attribute_bounding_preserves_error_status_attributes() {
         ])
         .collect();
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -875,8 +870,8 @@ async fn request_attribute_bounding_preserves_error_status_attributes() {
     ));
 }
 
-#[tokio::test]
-async fn request_span_scalar_fields_are_byte_bounded() {
+#[test]
+fn request_span_scalar_fields_are_byte_bounded() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -885,7 +880,7 @@ async fn request_span_scalar_fields_are_byte_bounded() {
     request.service_name = Some("s".repeat(254));
     request.method = Some("m".repeat(129));
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::RequestSpanObservation(span) = &outputs[0].payload else {
         panic!("expected request span");
@@ -895,12 +890,12 @@ async fn request_span_scalar_fields_are_byte_bounded() {
     assert_eq!(span.status_code, Some(200));
 }
 
-#[tokio::test]
-async fn missing_trace_context_emits_warning_and_generated_exportable_ids() {
+#[test]
+fn missing_trace_context_emits_warning_and_generated_exportable_ids() {
     let generator = RequestCorrelationGenerator::default();
     let signal = protocol_request_signal(None, true);
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert_eq!(outputs.len(), 2);
     assert!(outputs.iter().any(|signal| {
@@ -920,13 +915,13 @@ async fn missing_trace_context_emits_warning_and_generated_exportable_ids() {
     }));
 }
 
-#[tokio::test]
-async fn malformed_trace_context_emits_warning_and_generated_ids() {
+#[test]
+fn malformed_trace_context_emits_warning_and_generated_ids() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some("00-bad".to_string()), true);
     set_raw_traceparent(&mut signal, "00-bad".to_string());
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert_eq!(outputs.len(), 2);
     assert!(outputs.iter().any(|signal| {
@@ -939,13 +934,13 @@ async fn malformed_trace_context_emits_warning_and_generated_ids() {
     assert_request_warning(&outputs, "malformed_trace_context");
 }
 
-#[tokio::test]
-async fn whitespace_wrapped_traceparent_is_malformed_with_generated_ids() {
+#[test]
+fn whitespace_wrapped_traceparent_is_malformed_with_generated_ids() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(format!(" {} ", valid_traceparent())), true);
     set_raw_traceparent(&mut signal, format!(" {} ", valid_traceparent()));
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert_eq!(outputs.len(), 2);
     assert!(outputs.iter().any(|signal| {
@@ -958,13 +953,13 @@ async fn whitespace_wrapped_traceparent_is_malformed_with_generated_ids() {
     assert_request_warning(&outputs, "malformed_trace_context");
 }
 
-#[tokio::test]
-async fn generated_trace_identity_is_deterministic_and_can_be_disabled() {
+#[test]
+fn generated_trace_identity_is_deterministic_and_can_be_disabled() {
     let signal = protocol_request_signal(None, true);
     let first_generator = RequestCorrelationGenerator::default();
     let second_generator = RequestCorrelationGenerator::default();
-    let first = observe(&first_generator, &signal).await;
-    let second = observe(&second_generator, &signal).await;
+    let first = observe(&first_generator, &signal);
+    let second = observe(&second_generator, &signal);
     let first_span = first.iter().find_map(|output| match &output.payload {
         SignalPayload::RequestSpanObservation(span) => Some(span),
         _ => None,
@@ -992,7 +987,7 @@ async fn generated_trace_identity_is_deterministic_and_can_be_disabled() {
     );
 
     let disabled = RequestCorrelationGenerator::with_options(8, 8, false);
-    let outputs = observe(&disabled, &signal).await;
+    let outputs = observe(&disabled, &signal);
     assert!(outputs.iter().any(|output| {
         matches!(
             &output.payload,
@@ -1002,38 +997,38 @@ async fn generated_trace_identity_is_deterministic_and_can_be_disabled() {
     }));
 }
 
-#[tokio::test]
-async fn raw_tcp_only_signal_does_not_generate_request_span() {
+#[test]
+fn raw_tcp_only_signal_does_not_generate_request_span() {
     let generator = RequestCorrelationGenerator::default();
     let signal = network_close_signal();
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert!(outputs.is_empty());
 }
 
-#[tokio::test]
-async fn duplicate_protocol_request_is_suppressed_deterministically() {
+#[test]
+fn duplicate_protocol_request_is_suppressed_deterministically() {
     let generator = RequestCorrelationGenerator::default();
     let signal = protocol_request_signal(Some(valid_traceparent()), true);
 
-    let first = observe(&generator, &signal).await;
-    let second = observe(&generator, &signal).await;
+    let first = observe(&generator, &signal);
+    let second = observe(&generator, &signal);
 
     assert_eq!(first.len(), 1);
     assert!(second.is_empty());
 }
 
-#[tokio::test]
-async fn duplicate_suppression_distinguishes_spanless_request_paths() {
+#[test]
+fn duplicate_suppression_distinguishes_spanless_request_paths() {
     let generator = RequestCorrelationGenerator::default();
     let mut checkout = protocol_request_signal_at(1_000, None, true);
     let mut orders = protocol_request_signal_at(1_000, None, true);
     set_request_path(&mut checkout, "/checkout/123");
     set_request_path(&mut orders, "/orders/456");
 
-    let first = observe(&generator, &checkout).await;
-    let second = observe(&generator, &orders).await;
+    let first = observe(&generator, &checkout);
+    let second = observe(&generator, &orders);
 
     assert!(first.iter().any(|signal| {
         matches!(
@@ -1051,8 +1046,8 @@ async fn duplicate_suppression_distinguishes_spanless_request_paths() {
     }));
 }
 
-#[tokio::test]
-async fn request_span_preserves_bounded_request_id_attribute() {
+#[test]
+fn request_span_preserves_bounded_request_id_attribute() {
     let generator = RequestCorrelationGenerator::default();
     let mut signal = protocol_request_signal(Some(valid_traceparent()), true);
     let SignalPayload::ProtocolRequestObservation(request) = &mut signal.payload else {
@@ -1063,7 +1058,7 @@ async fn request_span_preserves_bounded_request_id_attribute() {
         value: "req-12345".to_string(),
     });
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert!(outputs.iter().any(|signal| {
         matches!(
@@ -1074,55 +1069,52 @@ async fn request_span_preserves_bounded_request_id_attribute() {
     }));
 }
 
-#[tokio::test]
-async fn bounded_seen_state_evicts_oldest_fingerprint() {
+#[test]
+fn bounded_seen_state_evicts_oldest_fingerprint() {
     let generator = RequestCorrelationGenerator::with_limits(2, 8);
     let first = protocol_request_signal_at(3_000, Some(valid_traceparent()), true);
     let second = protocol_request_signal_at(1_000, Some(valid_traceparent()), true);
     let third = protocol_request_signal_at(2_000, Some(valid_traceparent()), true);
 
-    assert_eq!(observe(&generator, &first).await.len(), 1);
-    assert_eq!(observe(&generator, &second).await.len(), 1);
-    assert_eq!(observe(&generator, &third).await.len(), 1);
+    assert_eq!(observe(&generator, &first).len(), 1);
+    assert_eq!(observe(&generator, &second).len(), 1);
+    assert_eq!(observe(&generator, &third).len(), 1);
 
-    assert!(observe(&generator, &second).await.is_empty());
-    assert_eq!(observe(&generator, &first).await.len(), 1);
+    assert!(observe(&generator, &second).is_empty());
+    assert_eq!(observe(&generator, &first).len(), 1);
 }
 
-#[tokio::test]
-async fn bounded_warning_state_evicts_oldest_fingerprint() {
+#[test]
+fn bounded_warning_state_evicts_oldest_fingerprint() {
     let generator = RequestCorrelationGenerator::with_limits(8, 2);
     let first = protocol_request_signal_at(3_000, Some(valid_traceparent()), false);
     let second = protocol_request_signal_at(1_000, Some(valid_traceparent()), false);
     let third = protocol_request_signal_at(2_000, Some(valid_traceparent()), false);
 
-    assert_eq!(request_warning_count(&observe(&generator, &first).await), 1);
-    assert_eq!(
-        request_warning_count(&observe(&generator, &second).await),
-        1
-    );
-    assert_eq!(request_warning_count(&observe(&generator, &third).await), 1);
+    assert_eq!(request_warning_count(&observe(&generator, &first)), 1);
+    assert_eq!(request_warning_count(&observe(&generator, &second)), 1);
+    assert_eq!(request_warning_count(&observe(&generator, &third)), 1);
 
     let mut repeated_second = protocol_request_signal_at(1_000, Some(valid_traceparent()), false);
     set_request_path(&mut repeated_second, "/second-retry");
     let mut repeated_first = protocol_request_signal_at(3_000, Some(valid_traceparent()), false);
     set_request_path(&mut repeated_first, "/first-retry");
     assert_eq!(
-        request_warning_count(&observe(&generator, &repeated_second).await),
+        request_warning_count(&observe(&generator, &repeated_second)),
         0
     );
     assert_eq!(
-        request_warning_count(&observe(&generator, &repeated_first).await),
+        request_warning_count(&observe(&generator, &repeated_first)),
         1
     );
 }
 
-#[tokio::test]
-async fn attribution_failure_warning_is_non_fatal_and_visible() {
+#[test]
+fn attribution_failure_warning_is_non_fatal_and_visible() {
     let generator = RequestCorrelationGenerator::default();
     let signal = protocol_request_signal(Some(valid_traceparent()), false);
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert_eq!(outputs.len(), 2);
     assert!(outputs.iter().any(|signal| {
@@ -1135,22 +1127,11 @@ async fn attribution_failure_warning_is_non_fatal_and_visible() {
     assert_request_warning(&outputs, "missing_attribution");
 }
 
-async fn observe(
+fn observe(
     generator: &RequestCorrelationGenerator,
     signal: &SignalEnvelope,
 ) -> Vec<SignalEnvelope> {
-    let (tx, mut rx) = mpsc::channel(8);
-    generator
-        .observe(signal, &tx)
-        .await
-        .expect("generator succeeds");
-    drop(tx);
-
-    let mut outputs = Vec::new();
-    while let Some(output) = rx.recv().await {
-        outputs.push(output);
-    }
-    outputs
+    generator.observe(signal).expect("generator succeeds")
 }
 
 fn assert_request_warning(outputs: &[SignalEnvelope], warning_type: &str) {

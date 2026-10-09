@@ -43,11 +43,8 @@ impl Generator<SignalEnvelope> for DependencyGraphGenerator {
         )
     }
 
-    fn observe_immediate(
-        &self,
-        signal: &SignalEnvelope,
-    ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
-        Some(self.outputs_for_signal(signal))
+    fn observe(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
+        self.outputs_for_signal(signal)
     }
 }
 
@@ -252,16 +249,15 @@ mod tests {
         SignalPayload,
     };
     use std::collections::BTreeMap;
-    use tokio::sync::mpsc;
 
     use super::*;
 
-    #[tokio::test]
-    async fn emits_deterministic_dependency_edge_from_network_connection() {
+    #[test]
+    fn emits_deterministic_dependency_edge_from_network_connection() {
         let generator = DependencyGraphGenerator::default();
         let signal = network_open_signal("203.0.113.10", 443, 1_000);
 
-        let edges = observe(&generator, &signal).await;
+        let edges = observe(&generator, &signal);
 
         assert_eq!(edges.len(), 1);
         let SignalPayload::DependencyEdge(edge) = &edges[0].payload else {
@@ -297,26 +293,26 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn suppresses_duplicate_edges_for_identical_observations() {
+    #[test]
+    fn suppresses_duplicate_edges_for_identical_observations() {
         let generator = DependencyGraphGenerator::default();
         let signal = network_open_signal("203.0.113.10", 443, 1_000);
 
-        let first = observe(&generator, &signal).await;
-        let second = observe(&generator, &signal).await;
+        let first = observe(&generator, &signal);
+        let second = observe(&generator, &signal);
 
         assert_eq!(first.len(), 1);
         assert!(second.is_empty());
     }
 
-    #[tokio::test]
-    async fn emits_updated_edge_for_open_and_close_observations() {
+    #[test]
+    fn emits_updated_edge_for_open_and_close_observations() {
         let generator = DependencyGraphGenerator::default();
         let open = network_open_signal("203.0.113.10", 443, 1_000);
         let close = network_close_signal("203.0.113.10", 443, 1_000, 2_000);
 
-        let first = observe(&generator, &open).await;
-        let second = observe(&generator, &close).await;
+        let first = observe(&generator, &open);
+        let second = observe(&generator, &close);
 
         assert_eq!(first.len(), 1);
         assert_eq!(second.len(), 1);
@@ -328,12 +324,12 @@ mod tests {
         assert_eq!(edge.last_seen_unix_nanos, 2_000);
     }
 
-    #[tokio::test]
-    async fn close_first_observation_preserves_opened_and_closed_bounds() {
+    #[test]
+    fn close_first_observation_preserves_opened_and_closed_bounds() {
         let generator = DependencyGraphGenerator::default();
         let close = network_close_signal("203.0.113.10", 443, 1_000, 2_000);
 
-        let edges = observe(&generator, &close).await;
+        let edges = observe(&generator, &close);
 
         assert_eq!(edges.len(), 1);
         let SignalPayload::DependencyEdge(edge) = &edges[0].payload else {
@@ -343,22 +339,11 @@ mod tests {
         assert_eq!(edge.last_seen_unix_nanos, 2_000);
     }
 
-    async fn observe(
+    fn observe(
         generator: &DependencyGraphGenerator,
         signal: &SignalEnvelope,
     ) -> Vec<SignalEnvelope> {
-        let (tx, mut rx) = mpsc::channel(4);
-        generator
-            .observe(signal, &tx)
-            .await
-            .expect("generator succeeds");
-        drop(tx);
-
-        let mut edges = Vec::new();
-        while let Some(edge) = rx.recv().await {
-            edges.push(edge);
-        }
-        edges
+        generator.observe(signal).expect("generator succeeds")
     }
 
     fn network_open_signal(

@@ -5,7 +5,6 @@ use e_navigator_signals::{
     NetworkFlowSummaryEvent, NetworkProtocol, SignalEnvelope, SignalPayload,
 };
 use std::time::Duration;
-use tokio::sync::mpsc;
 
 #[test]
 fn enriched_flow_emits_bounded_peer_byte_metric() {
@@ -27,8 +26,7 @@ fn enriched_flow_emits_bounded_peer_byte_metric() {
     );
 
     let outputs = generator
-        .observe_immediate(&signal)
-        .expect("peer-flow generator is synchronous")
+        .observe(&signal)
         .expect("peer-flow generation succeeds");
 
     let metric = outputs
@@ -60,35 +58,6 @@ fn enriched_flow_emits_bounded_peer_byte_metric() {
     assert_eq!(metric.destination.owner_type, "service");
 }
 
-#[tokio::test]
-async fn async_observe_matches_immediate_output() {
-    let signal = peer_flow_signal(
-        "shop",
-        "shop/checkout",
-        "payments",
-        "payments/api",
-        512,
-        100,
-        200,
-    );
-    let immediate = PeerFlowMetricsGenerator::with_limit(8)
-        .observe_immediate(&signal)
-        .expect("peer-flow generator is synchronous")
-        .expect("peer-flow generation succeeds");
-
-    let generator = PeerFlowMetricsGenerator::with_limit(8);
-    let (tx, mut rx) = mpsc::channel(1);
-    generator
-        .observe(&signal, &tx)
-        .await
-        .expect("async peer-flow generation succeeds");
-    drop(tx);
-
-    let async_outputs: Vec<_> = rx.recv().await.into_iter().collect();
-    assert_eq!(async_outputs, immediate);
-    assert!(rx.recv().await.is_none());
-}
-
 #[test]
 fn udp_ipv6_flow_retains_transport_and_address_family_identity() {
     let generator = PeerFlowMetricsGenerator::with_limit(8);
@@ -108,8 +77,7 @@ fn udp_ipv6_flow_retains_transport_and_address_family_identity() {
     flow.address_family = NetworkAddressFamily::Ipv6;
 
     let outputs = generator
-        .observe_immediate(&signal)
-        .expect("peer-flow generator is synchronous")
+        .observe(&signal)
         .expect("peer-flow generation succeeds");
     let metric = peer_metric(&outputs);
     assert!(metric.is_some(), "peer-aware flow metric exists");
@@ -144,12 +112,10 @@ fn repeated_flow_updates_the_same_cumulative_series() {
     );
 
     generator
-        .observe_immediate(&first)
-        .expect("peer-flow generator is synchronous")
+        .observe(&first)
         .expect("first peer-flow generation succeeds");
     let outputs = generator
-        .observe_immediate(&second)
-        .expect("peer-flow generator is synchronous")
+        .observe(&second)
         .expect("second peer-flow generation succeeds");
 
     let metric = peer_metric(&outputs);
@@ -179,12 +145,10 @@ fn identical_peers_on_different_hosts_remain_distinct_series() {
     node_b.host = Some("node-b".to_string());
 
     generator
-        .observe_immediate(&node_a)
-        .expect("peer-flow generator is synchronous")
+        .observe(&node_a)
         .expect("node-a generation succeeds");
     let outputs = generator
-        .observe_immediate(&node_b)
-        .expect("peer-flow generator is synchronous")
+        .observe(&node_b)
         .expect("node-b generation succeeds");
 
     let metric = peer_metric(&outputs);
@@ -229,13 +193,11 @@ fn cardinality_overflow_preserves_bytes_in_a_bounded_fallback_series() {
 
     for signal in [&exact, &first_overflow] {
         generator
-            .observe_immediate(signal)
-            .expect("peer-flow generator is synchronous")
+            .observe(signal)
             .expect("peer-flow generation succeeds");
     }
     let outputs = generator
-        .observe_immediate(&second_overflow)
-        .expect("peer-flow generator is synchronous")
+        .observe(&second_overflow)
         .expect("overflow generation succeeds");
 
     let metric = peer_metric(&outputs);
@@ -285,16 +247,13 @@ fn idle_exact_series_are_reclaimed_for_new_peer_identities() {
     );
 
     generator
-        .observe_immediate(&exact)
-        .expect("peer-flow generator is synchronous")
+        .observe(&exact)
         .expect("exact peer-flow generation succeeds");
     let overflow = generator
-        .observe_immediate(&before_expiry)
-        .expect("peer-flow generator is synchronous")
+        .observe(&before_expiry)
         .expect("pre-expiry generation succeeds");
     let reclaimed = generator
-        .observe_immediate(&after_expiry)
-        .expect("peer-flow generator is synchronous")
+        .observe(&after_expiry)
         .expect("post-expiry generation succeeds");
 
     let overflow = peer_metric(&overflow).expect("overflow metric exists before expiry");
@@ -340,16 +299,13 @@ fn zero_byte_active_flow_heartbeat_refreshes_an_existing_exact_series() {
     );
 
     generator
-        .observe_immediate(&exact)
-        .expect("peer-flow generator is synchronous")
+        .observe(&exact)
         .expect("exact peer-flow generation succeeds");
     let heartbeat_output = generator
-        .observe_immediate(&heartbeat)
-        .expect("peer-flow generator is synchronous")
+        .observe(&heartbeat)
         .expect("heartbeat generation succeeds");
     let contender_output = generator
-        .observe_immediate(&contender)
-        .expect("peer-flow generator is synchronous")
+        .observe(&contender)
         .expect("contender generation succeeds");
 
     let heartbeat_metric = peer_metric(&heartbeat_output).expect("heartbeat metric exists");
@@ -379,8 +335,7 @@ fn incomplete_peer_identity_does_not_create_a_misleading_series() {
     flow.destination.owner_type = None;
 
     let outputs = generator
-        .observe_immediate(&signal)
-        .expect("peer-flow generator is synchronous")
+        .observe(&signal)
         .expect("peer-flow generation succeeds");
 
     assert!(outputs.is_empty());

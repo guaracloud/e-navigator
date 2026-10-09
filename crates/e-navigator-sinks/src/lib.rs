@@ -17,9 +17,7 @@ pub mod pprof_profile;
 pub mod profile_format;
 pub mod prometheus;
 
-pub use exporter::{
-    ExporterCounters, ExporterError, HttpExporterConfig, HttpJsonExporter, HttpProtobufExporter,
-};
+pub use exporter::{ExporterCounters, ExporterError, HttpExporterConfig, HttpProtobufExporter};
 pub use json_stdout::{JsonStdoutSink, serialize_signal_line};
 pub use native_telemetry::{NativeTelemetryRegistry, NativeTelemetrySource};
 pub use otel_metric::{

@@ -88,11 +88,8 @@ impl Generator<SignalEnvelope> for RequestCorrelationGenerator {
         )
     }
 
-    fn observe_immediate(
-        &self,
-        signal: &SignalEnvelope,
-    ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
-        Some(self.outputs_for_signal(signal))
+    fn observe(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
+        self.outputs_for_signal(signal)
     }
 }
 

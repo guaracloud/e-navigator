@@ -62,9 +62,8 @@ Every observation enters the runner as a versioned `SignalEnvelope`.
 1. The runner accepts a source signal through a bounded channel.
 2. Processors may enrich or drop it. Attribution is attached only when the
    evidence supports it.
-3. Each accepting generator derives zero or more native signals. Synchronous
-   generators use the immediate path to avoid an unnecessary Tokio channel.
-   The async trait path remains available for generators that need it.
+3. Each accepting generator synchronously derives zero or more native signals
+   through `observe`, returning a bounded vector.
 4. Per-generator output, total derivation breadth, and derivation depth are
    bounded. A generator cannot create an unbounded cascade.
 5. Sinks receive the original and accepted derived signals. One sink failure

@@ -305,10 +305,7 @@ fn truncate_utf8_owned(mut value: String, max_bytes: usize) -> String {
         return value;
     }
 
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = value.floor_char_boundary(max_bytes);
     value.truncate(end);
     value
 }

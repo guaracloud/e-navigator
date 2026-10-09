@@ -25,7 +25,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::{sync::mpsc, time::timeout};
+use tokio::time::timeout;
 
 #[derive(Debug)]
 struct StaticKubernetesMetadataProvider {
@@ -2358,18 +2358,7 @@ async fn observe_generator<G>(generator: &G, signal: &SignalEnvelope) -> Vec<Sig
 where
     G: Generator<SignalEnvelope>,
 {
-    let (tx, mut rx) = mpsc::channel(8);
-    generator
-        .observe(signal, &tx)
-        .await
-        .expect("generator succeeds");
-    drop(tx);
-
-    let mut outputs = Vec::new();
-    while let Some(output) = rx.recv().await {
-        outputs.push(output);
-    }
-    outputs
+    generator.observe(signal).expect("generator succeeds")
 }
 
 fn exec_with_container(container_id: &str) -> SignalEnvelope {

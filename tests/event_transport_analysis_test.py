@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import patch
 
 
 def load_analyzer() -> ModuleType:
@@ -17,7 +19,8 @@ def load_analyzer() -> ModuleType:
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load analyzer from {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    with patch.object(sys, "path", [str(path.parent), *sys.path]):
+        spec.loader.exec_module(module)
     return module
 
 

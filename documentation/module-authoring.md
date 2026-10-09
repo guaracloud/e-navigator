@@ -27,9 +27,8 @@ security findings. A generator must:
 
 - bound memory and cardinality;
 - implement `accepts` when its input signal set is closed, so unrelated signals
-  do not allocate a future or output channel;
-- implement `observe_immediate` when derivation is synchronous; the trait's
-  default `observe` implementation keeps direct callers equivalent;
+  skip unrelated derivation;
+- implement synchronous `observe`, returning `CoreResult<Vec<SignalEnvelope>>`;
 - include tests for eviction and duplicate handling when relevant;
 - emit native metric and signal names.
 

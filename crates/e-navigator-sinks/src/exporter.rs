@@ -5,7 +5,6 @@ use reqwest::{
     Client,
     header::{CONTENT_ENCODING, CONTENT_TYPE, HeaderMap},
 };
-use serde::Serialize;
 use std::{collections::VecDeque, io::Write, time::Duration};
 use thiserror::Error;
 use tokio::time::{sleep, timeout};
@@ -177,14 +176,6 @@ pub(crate) struct ExportResponseAck {
 type DecodeResponse = fn(&[u8]) -> Result<ExportResponseAck, ExporterError>;
 
 #[derive(Debug)]
-pub struct HttpJsonExporter<T> {
-    config: HttpExporterConfig,
-    queue: VecDeque<T>,
-    counters: ExporterCounters,
-    client: Client,
-}
-
-#[derive(Debug)]
 pub struct HttpProtobufExporter<T> {
     config: HttpExporterConfig,
     queue: VecDeque<T>,
@@ -200,98 +191,6 @@ pub struct HttpProtobufExporter<T> {
 struct RetryBackoff {
     initial_millis: u64,
     max_millis: u64,
-}
-
-impl<T> HttpJsonExporter<T>
-where
-    T: Clone + Serialize,
-{
-    pub fn new(config: HttpExporterConfig) -> Result<Self, ExporterError> {
-        config.validate()?;
-        let client = Client::builder()
-            .use_rustls_tls()
-            .danger_accept_invalid_certs(config.tls_insecure_skip_verify)
-            .build()
-            .map_err(ExporterError::BuildClient)?;
-        Ok(Self {
-            config,
-            queue: VecDeque::new(),
-            counters: ExporterCounters::default(),
-            client,
-        })
-    }
-
-    pub fn enqueue(&mut self, item: T) {
-        if self.queue.len() >= self.config.queue_capacity {
-            self.counters.dropped_queue_full = self.counters.dropped_queue_full.saturating_add(1);
-            return;
-        }
-        self.queue.push_back(item);
-        self.counters.enqueued = self.counters.enqueued.saturating_add(1);
-    }
-
-    pub fn counters(&self) -> ExporterCounters {
-        self.counters
-    }
-
-    pub fn queued_len(&self) -> usize {
-        self.queue.len()
-    }
-
-    pub async fn flush_once(&mut self) -> Result<(), ExporterError> {
-        if self.queue.is_empty() {
-            return Ok(());
-        }
-
-        let batch_len = self.queue.len().min(self.config.batch_size);
-        let batch = self
-            .queue
-            .iter()
-            .take(batch_len)
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let mut last_error = None;
-        for attempt in 0..=self.config.max_retries {
-            if attempt > 0 {
-                self.counters.retry_attempts = self.counters.retry_attempts.saturating_add(1);
-            }
-            match self.send_batch(&batch).await {
-                Ok(()) => {
-                    for _ in 0..batch_len {
-                        let _ = self.queue.pop_front();
-                    }
-                    self.counters.exported =
-                        self.counters.exported.saturating_add(batch_len as u64);
-                    return Ok(());
-                }
-                Err(err) => last_error = Some(err),
-            }
-        }
-
-        self.counters.failed_batches = self.counters.failed_batches.saturating_add(1);
-        Err(last_error.unwrap_or(ExporterError::RetriesExhausted))
-    }
-
-    async fn send_batch(&self, batch: &[T]) -> Result<(), ExporterError> {
-        let headers = header_map(&self.config.headers)?;
-        let request = self
-            .client
-            .post(&self.config.endpoint)
-            .headers(headers)
-            .json(batch);
-        let response = timeout(
-            Duration::from_millis(self.config.timeout_millis),
-            request.send(),
-        )
-        .await
-        .map_err(|_| ExporterError::Timeout)??;
-
-        if !response.status().is_success() {
-            return Err(ExporterError::Status(response.status().as_u16()));
-        }
-        Ok(())
-    }
 }
 
 impl<T> HttpProtobufExporter<T> {
@@ -642,7 +541,7 @@ fn header_map(headers: &[(String, String)]) -> Result<HeaderMap, ExporterError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::Deserialize;
+    use serde::{Deserialize, Serialize};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -872,15 +771,18 @@ mod tests {
     #[tokio::test]
     async fn exporter_batches_to_local_collector_with_headers() {
         let server = FakeCollector::spawn(vec![200]).await;
-        let mut exporter = HttpJsonExporter::new(HttpExporterConfig {
-            endpoint: server.url(),
-            headers: vec![("authorization".to_string(), "Bearer test".to_string())],
-            batch_size: 2,
-            queue_capacity: 4,
-            timeout_millis: 1_000,
-            max_retries: 0,
-            tls_insecure_skip_verify: false,
-        })
+        let mut exporter = HttpProtobufExporter::new(
+            HttpExporterConfig {
+                endpoint: server.url(),
+                headers: vec![("authorization".to_string(), "Bearer test".to_string())],
+                batch_size: 2,
+                queue_capacity: 4,
+                timeout_millis: 1_000,
+                max_retries: 0,
+                tls_insecure_skip_verify: false,
+            },
+            encode_test_records,
+        )
         .expect("config valid");
 
         exporter.enqueue(TestRecord { value: 1 });
@@ -898,16 +800,19 @@ mod tests {
 
     #[tokio::test]
     async fn exporter_retries_failed_batches_without_dropping_them() {
-        let server = FakeCollector::spawn(vec![500, 200]).await;
-        let mut exporter = HttpJsonExporter::new(HttpExporterConfig {
-            endpoint: server.url(),
-            headers: Vec::new(),
-            batch_size: 1,
-            queue_capacity: 2,
-            timeout_millis: 1_000,
-            max_retries: 1,
-            tls_insecure_skip_verify: false,
-        })
+        let server = FakeCollector::spawn(vec![503, 200]).await;
+        let mut exporter = HttpProtobufExporter::new(
+            HttpExporterConfig {
+                endpoint: server.url(),
+                headers: Vec::new(),
+                batch_size: 1,
+                queue_capacity: 2,
+                timeout_millis: 1_000,
+                max_retries: 1,
+                tls_insecure_skip_verify: false,
+            },
+            encode_test_records,
+        )
         .expect("config valid");
 
         exporter.enqueue(TestRecord { value: 7 });
@@ -921,26 +826,6 @@ mod tests {
 
     #[test]
     fn bounded_queue_drops_new_items_with_counter() {
-        let mut exporter = HttpJsonExporter::new(HttpExporterConfig {
-            endpoint: "http://127.0.0.1:9".to_string(),
-            headers: Vec::new(),
-            batch_size: 1,
-            queue_capacity: 1,
-            timeout_millis: 1,
-            max_retries: 0,
-            tls_insecure_skip_verify: false,
-        })
-        .expect("config valid");
-
-        exporter.enqueue(TestRecord { value: 1 });
-        exporter.enqueue(TestRecord { value: 2 });
-
-        assert_eq!(exporter.queued_len(), 1);
-        assert_eq!(exporter.counters().dropped_queue_full, 1);
-    }
-
-    #[test]
-    fn protobuf_bounded_queue_drops_new_items_with_counter() {
         let mut exporter = HttpProtobufExporter::new(
             HttpExporterConfig {
                 endpoint: "http://127.0.0.1:9".to_string(),
@@ -953,7 +838,7 @@ mod tests {
             },
             encode_test_records,
         )
-        .expect("exporter builds");
+        .expect("config valid");
 
         exporter.enqueue(TestRecord { value: 1 });
         exporter.enqueue(TestRecord { value: 2 });

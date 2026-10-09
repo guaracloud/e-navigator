@@ -46,11 +46,8 @@ impl Generator<SignalEnvelope> for RuntimeSecurityGenerator {
         )
     }
 
-    fn observe_immediate(
-        &self,
-        signal: &SignalEnvelope,
-    ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
-        Some(Ok(self.outputs_for_signal(signal)))
+    fn observe(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
+        Ok(self.outputs_for_signal(signal))
     }
 }
 
@@ -256,12 +253,11 @@ mod tests {
         RuntimeSecuritySeverity, SignalEnvelope, SignalPayload,
     };
     use std::collections::BTreeMap;
-    use tokio::sync::mpsc;
 
     use super::*;
 
-    #[tokio::test]
-    async fn emits_shell_in_container_finding() {
+    #[test]
+    fn emits_shell_in_container_finding() {
         let findings = observe(exec_signal(
             "sh",
             Some("/bin/sh"),
@@ -270,8 +266,7 @@ mod tests {
                 container_id: "container-a".to_string(),
                 runtime: Some("containerd".to_string()),
             }),
-        ))
-        .await;
+        ));
 
         assert_eq!(findings.len(), 1);
         let SignalPayload::RuntimeSecurityFinding(finding) = &findings[0].payload else {
@@ -282,22 +277,20 @@ mod tests {
         assert_eq!(finding.matched_process.command, "sh");
     }
 
-    #[tokio::test]
-    async fn emits_network_tool_finding_for_exact_basename() {
+    #[test]
+    fn emits_network_tool_finding_for_exact_basename() {
         let first = observe(exec_signal(
             "curl",
             Some("/usr/bin/curl"),
             vec!["curl"],
             None,
-        ))
-        .await;
+        ));
         let second = observe(exec_signal(
             "mycurl",
             Some("/usr/bin/mycurl"),
             vec!["mycurl"],
             None,
-        ))
-        .await;
+        ));
 
         assert_eq!(first.len(), 1);
         assert!(second.is_empty());
@@ -308,8 +301,8 @@ mod tests {
         assert_eq!(finding.matched_process.command, "curl");
     }
 
-    #[tokio::test]
-    async fn benign_processes_and_host_shells_do_not_emit() {
+    #[test]
+    fn benign_processes_and_host_shells_do_not_emit() {
         assert!(
             observe(exec_signal(
                 "true",
@@ -317,34 +310,28 @@ mod tests {
                 vec!["true"],
                 None
             ))
-            .await
             .is_empty()
         );
-        assert!(
-            observe(exec_signal("bash", Some("/bin/bash"), vec!["bash"], None))
-                .await
-                .is_empty()
-        );
+        assert!(observe(exec_signal("bash", Some("/bin/bash"), vec!["bash"], None)).is_empty());
     }
 
-    #[tokio::test]
-    async fn generator_output_is_deterministic() {
+    #[test]
+    fn generator_output_is_deterministic() {
         let signal = exec_signal("nc", Some("/usr/bin/nc"), vec!["nc", "-z"], None);
 
-        let first = observe(signal.clone()).await;
-        let second = observe(signal).await;
+        let first = observe(signal.clone());
+        let second = observe(signal);
 
         assert_eq!(first, second);
     }
 
-    #[tokio::test]
-    async fn emits_external_outbound_connection_finding_for_container() {
+    #[test]
+    fn emits_external_outbound_connection_finding_for_container() {
         let findings = observe(network_open_signal(
             "203.0.113.10",
             443,
             kubernetes_context(),
-        ))
-        .await;
+        ));
 
         assert_eq!(findings.len(), 1);
         let SignalPayload::RuntimeSecurityFinding(finding) = &findings[0].payload else {
@@ -362,15 +349,15 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn emits_kubernetes_api_connection_finding_for_non_control_plane_workload() {
+    #[test]
+    fn emits_kubernetes_api_connection_finding_for_non_control_plane_workload() {
         let generator = RuntimeSecurityGenerator::with_kubernetes_api_endpoints([(
             "10.96.0.1".to_string(),
             443,
         )]);
         let signal = network_open_signal("10.96.0.1", 443, kubernetes_context());
 
-        let findings = observe_with(&generator, signal).await;
+        let findings = observe_with(&generator, signal);
 
         assert_eq!(findings.len(), 1);
         let SignalPayload::RuntimeSecurityFinding(finding) = &findings[0].payload else {
@@ -380,8 +367,8 @@ mod tests {
         assert_eq!(finding.severity, RuntimeSecuritySeverity::High);
     }
 
-    #[tokio::test]
-    async fn suppresses_kubernetes_api_finding_for_unconfigured_port() {
+    #[test]
+    fn suppresses_kubernetes_api_finding_for_unconfigured_port() {
         let generator = RuntimeSecurityGenerator::with_kubernetes_api_endpoints([(
             "10.96.0.1".to_string(),
             443,
@@ -392,20 +379,18 @@ mod tests {
                 &generator,
                 network_open_signal("10.96.0.1", 6443, kubernetes_context())
             )
-            .await
             .is_empty()
         );
     }
 
-    #[tokio::test]
-    async fn handles_ipv4_mapped_ipv6_external_classification() {
+    #[test]
+    fn handles_ipv4_mapped_ipv6_external_classification() {
         assert!(
             observe(network_open_signal(
                 "::ffff:10.0.0.20",
                 5432,
                 kubernetes_context()
             ))
-            .await
             .is_empty()
         );
 
@@ -413,8 +398,7 @@ mod tests {
             "::ffff:203.0.113.10",
             443,
             kubernetes_context(),
-        ))
-        .await;
+        ));
 
         assert_eq!(findings.len(), 1);
         let SignalPayload::RuntimeSecurityFinding(finding) = &findings[0].payload else {
@@ -423,13 +407,9 @@ mod tests {
         assert_eq!(finding.rule_id, "network.unexpected_external_connection");
     }
 
-    #[tokio::test]
-    async fn suppresses_network_findings_for_internal_or_control_plane_connections() {
-        assert!(
-            observe(network_open_signal("10.0.0.20", 5432, kubernetes_context()))
-                .await
-                .is_empty()
-        );
+    #[test]
+    fn suppresses_network_findings_for_internal_or_control_plane_connections() {
+        assert!(observe(network_open_signal("10.0.0.20", 5432, kubernetes_context())).is_empty());
 
         let mut context = kubernetes_context();
         context
@@ -441,33 +421,20 @@ mod tests {
         )]);
 
         assert!(
-            observe_with(&generator, network_open_signal("10.96.0.1", 443, context))
-                .await
-                .is_empty()
+            observe_with(&generator, network_open_signal("10.96.0.1", 443, context)).is_empty()
         );
     }
 
-    async fn observe(signal: SignalEnvelope) -> Vec<SignalEnvelope> {
+    fn observe(signal: SignalEnvelope) -> Vec<SignalEnvelope> {
         let generator = RuntimeSecurityGenerator::default();
-        observe_with(&generator, signal).await
+        observe_with(&generator, signal)
     }
 
-    async fn observe_with(
+    fn observe_with(
         generator: &RuntimeSecurityGenerator,
         signal: SignalEnvelope,
     ) -> Vec<SignalEnvelope> {
-        let (tx, mut rx) = mpsc::channel(4);
-        generator
-            .observe(&signal, &tx)
-            .await
-            .expect("generator succeeds");
-        drop(tx);
-
-        let mut findings = Vec::new();
-        while let Some(finding) = rx.recv().await {
-            findings.push(finding);
-        }
-        findings
+        generator.observe(&signal).expect("generator succeeds")
     }
 
     fn exec_signal(
