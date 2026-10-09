@@ -20,6 +20,8 @@ operational documentation. Start with the path that matches your goal.
 - [Boundaries](boundaries.md), see explicit non-claims and unsupported cases.
 - [Guara workload qualification ledger](guara-workload-matrix.md), see the
   undeclared workload cells and live evidence that block replacement.
+- [Guara replacement acceptance contract](guara-replacement-acceptance.md),
+  record exact cells, consumer queries, numerical thresholds and input owners.
 - [Signal and module authoring](module-authoring.md), extend the static module
   pipeline safely.
 - [Engineering invariants](engineering-invariants.md), preserve the contracts

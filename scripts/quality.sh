@@ -19,6 +19,7 @@ require_tool() {
 
 run cargo fmt --all -- --check
 run python3 scripts/check_docs.py
+run env PYTHONDONTWRITEBYTECODE=1 python3 tests/guara_contract_test.py
 run python3 scripts/release.py check
 run cargo clippy --locked --workspace --all-targets --exclude e-navigator-ebpf-programs -- -D warnings
 run env "RUSTDOCFLAGS=-D warnings" cargo doc --locked --workspace --no-deps --exclude e-navigator-ebpf-programs
