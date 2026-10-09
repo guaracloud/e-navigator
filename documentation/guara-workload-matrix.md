@@ -1,10 +1,12 @@
 # Guara Workload Qualification Ledger
 
 This document records the blockers for replacing Guara's Beyla and Alloy
-profiles with the standalone E-Navigator application. It is not yet a finite
-support matrix because Guara has not declared exact workload cells. It
-deliberately separates a parser recognizing a wire form from a
-client/server/runtime cell being qualified in production-like execution.
+profiles and application log collection with the standalone E-Navigator
+application. The [replacement acceptance contract](guara-replacement-acceptance.md)
+defines stable inventory IDs, exact cell records, consumer mappings, threshold records,
+and responsible roles for missing inputs. It is not yet a finite exact support
+matrix because Guara has not declared deployment cells. It separates parser
+recognition from client/server/runtime qualification in production-like execution.
 
 ## Gate Status
 
@@ -74,3 +76,14 @@ coverage/failure/loss counters, OTLP assertions, Tempo trace identifiers, and
 Pyroscope query evidence. A replacement decision is valid only when every
 declared cell is promoted and every explicit exclusion is reflected in
 Guara's public workload contract.
+
+## Contract inventory status
+
+The required inventory buckets GW-HTTP, GW-GRPC, GW-POSTGRESQL, GW-MYSQL,
+GW-REDIS, GW-MONGODB, GW-KAFKA, GW-TCP, GW-CPU and GW-LOG are defined in
+the acceptance contract. No exact cells are declared or qualified. IN-01
+through IN-07 name missing inputs and responsible owner roles. Numerical
+thresholds, current consumer queries, trace-to-profile requirements and log
+durability requirements remain blocked. No live qualification environment is
+designated for issue #47. Collector replacement includes application logs;
+Loki storage/query replacement remains the separate RFC #58.
