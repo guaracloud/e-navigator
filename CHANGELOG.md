@@ -6,6 +6,31 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-08
+
+### Changed
+
+- Publish the stable 0.5.0 release line after seven release candidates, with
+  signed multi-platform images, the OCI Helm chart, verification artifacts,
+  and promotion of the verified image digest to `latest`.
+- Replace the two generator entry points with synchronous
+  `observe(&S) -> CoreResult<Vec<S>>`, migrating all repository callers while
+  preserving input filtering, output limits, derivation budgets, and ordering.
+  This is an intentional Rust source API change.
+- Remove the unused JSON HTTP exporter and migrate its useful tests and queue
+  benchmark to the production protobuf exporter.
+- Share resource conversions and nearest-rank summaries across five benchmark
+  analyzers without changing campaign validation or output schemas.
+- Replace manual UTF-8 boundary loops with Rust's `floor_char_boundary` and
+  remove unused dependency declarations and the generator Tokio test dependency.
+
+### Fixed
+
+- Upgrade Rustls to 0.23.45 and rustls-webpki to 0.103.15 in both lockfiles,
+  resolving RUSTSEC-2026-0285 and restoring the supply-chain release gate.
+- Correct the website's stale release label and synchronize versioned install
+  and verification examples with 0.5.0.
+
 ## [0.5.0-rc.7] - 2026-08-29
 
 ### Changed
@@ -864,7 +889,8 @@ All notable changes to E-Navigator are documented here. The format follows
   reduced-privilege operation, and universal protocol/profile coverage remain
   explicit non-claims documented in `documentation/boundaries.md`.
 
-[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.7...HEAD
+[Unreleased]: https://github.com/guaracloud/e-navigator/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.7...v0.5.0
 [0.5.0-rc.7]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.6...v0.5.0-rc.7
 [0.5.0-rc.6]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.5...v0.5.0-rc.6
 [0.5.0-rc.5]: https://github.com/guaracloud/e-navigator/compare/v0.5.0-rc.4...v0.5.0-rc.5
