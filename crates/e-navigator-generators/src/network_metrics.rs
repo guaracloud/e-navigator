@@ -94,11 +94,8 @@ impl Generator<SignalEnvelope> for NetworkMetricsGenerator {
         )
     }
 
-    fn observe_immediate(
-        &self,
-        signal: &SignalEnvelope,
-    ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
-        Some(self.outputs_for_signal(signal))
+    fn observe(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
+        self.outputs_for_signal(signal)
     }
 }
 
@@ -1487,16 +1484,15 @@ mod tests {
         NetworkProtocol, SignalEnvelope, SignalPayload,
     };
     use std::{cell::Cell, collections::BTreeMap};
-    use tokio::sync::mpsc;
 
     use super::*;
 
-    #[tokio::test]
-    async fn emits_open_connection_counter_metrics() {
+    #[test]
+    fn emits_open_connection_counter_metrics() {
         let generator = NetworkMetricsGenerator::default();
         let signal = network_open_signal("203.0.113.10", 443, 100, Some(7));
 
-        let metrics = observe(&generator, &signal).await;
+        let metrics = observe(&generator, &signal);
 
         let open = counter_metric(&metrics, "network.connection.open.count");
         assert_eq!(open.value, 1);
@@ -1546,15 +1542,14 @@ mod tests {
         )
     }
 
-    #[tokio::test]
-    async fn tcp_retransmits_aggregate_into_counter() {
+    #[test]
+    fn tcp_retransmits_aggregate_into_counter() {
         let generator = NetworkMetricsGenerator::default();
 
         let first = observe(
             &generator,
             &tcp_stat_signal(NetworkTcpStatKind::Retransmit, None, None, 443, 100),
-        )
-        .await;
+        );
         assert_eq!(counter_metric(&first, "network.tcp.retransmits").value, 1);
         assert_eq!(
             counter_metric(&first, "network.tcp.retransmits").unit,
@@ -1564,8 +1559,7 @@ mod tests {
         let second = observe(
             &generator,
             &tcp_stat_signal(NetworkTcpStatKind::Retransmit, None, None, 443, 200),
-        )
-        .await;
+        );
         let counter = counter_metric(&second, "network.tcp.retransmits");
         assert_eq!(counter.value, 2);
         assert_eq!(counter.remote_port, None);
@@ -1573,8 +1567,8 @@ mod tests {
         assert_eq!(counter.window.end_unix_nanos, 200);
     }
 
-    #[tokio::test]
-    async fn tcp_stats_aggregate_across_ephemeral_peer_endpoints() {
+    #[test]
+    fn tcp_stats_aggregate_across_ephemeral_peer_endpoints() {
         let generator = NetworkMetricsGenerator::default();
 
         let first = tcp_stat_signal(
@@ -1592,8 +1586,8 @@ mod tests {
             200,
         );
 
-        observe(&generator, &first).await;
-        let outputs = observe(&generator, &second).await;
+        observe(&generator, &first);
+        let outputs = observe(&generator, &second);
         let counter = counter_metric(&outputs, "network.tcp.transitions.established");
 
         assert_eq!(counter.value, 2);
@@ -1604,8 +1598,8 @@ mod tests {
         assert!(counter.remote_port.is_none());
     }
 
-    #[tokio::test]
-    async fn tcp_reset_direction_selects_metric_name() {
+    #[test]
+    fn tcp_reset_direction_selects_metric_name() {
         let generator = NetworkMetricsGenerator::default();
         let received = observe(
             &generator,
@@ -1616,8 +1610,7 @@ mod tests {
                 8080,
                 100,
             ),
-        )
-        .await;
+        );
         assert!(counter_metric_exists(
             &received,
             "network.tcp.resets.received"
@@ -1625,8 +1618,8 @@ mod tests {
         assert!(!counter_metric_exists(&received, "network.tcp.resets.sent"));
     }
 
-    #[tokio::test]
-    async fn tcp_state_transitions_count_established_and_closed_only() {
+    #[test]
+    fn tcp_state_transitions_count_established_and_closed_only() {
         let generator = NetworkMetricsGenerator::default();
         let established = observe(
             &generator,
@@ -1637,8 +1630,7 @@ mod tests {
                 5432,
                 100,
             ),
-        )
-        .await;
+        );
         assert!(counter_metric_exists(
             &established,
             "network.tcp.transitions.established"
@@ -1654,17 +1646,16 @@ mod tests {
                 5432,
                 200,
             ),
-        )
-        .await;
+        );
         assert!(time_wait.is_empty());
     }
 
-    #[tokio::test]
-    async fn emits_close_duration_metric() {
+    #[test]
+    fn emits_close_duration_metric() {
         let generator = NetworkMetricsGenerator::default();
         let close = network_close_signal("203.0.113.10", 443, 100, 700, Some(7));
 
-        let metrics = observe(&generator, &close).await;
+        let metrics = observe(&generator, &close);
 
         let duration = duration_metric(&metrics, "network.connection.duration");
         assert_eq!(duration.unit, "ns");
@@ -1678,13 +1669,13 @@ mod tests {
         assert_eq!(duration.kubernetes, Some(kubernetes_context()));
     }
 
-    #[tokio::test]
-    async fn emits_network_flow_summary_from_close_byte_counters() {
+    #[test]
+    fn emits_network_flow_summary_from_close_byte_counters() {
         let generator = NetworkMetricsGenerator::default();
         let close =
             network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
 
-        let outputs = observe(&generator, &close).await;
+        let outputs = observe(&generator, &close);
         let flows = network_flow_summaries(&outputs);
 
         assert_eq!(flows.len(), 2);
@@ -1718,30 +1709,26 @@ mod tests {
         assert_eq!(ingress.destination.kubernetes, Some(kubernetes_context()));
     }
 
-    #[tokio::test]
-    async fn active_snapshots_emit_interval_deltas_and_close_emits_only_the_remainder() {
+    #[test]
+    fn active_snapshots_emit_interval_deltas_and_close_emits_only_the_remainder() {
         let generator = NetworkMetricsGenerator::default();
 
         let first = observe(
             &generator,
             &network_snapshot_signal("10.0.0.20", 5432, 100, 400, Some(7), 100, 200),
-        )
-        .await;
+        );
         let second = observe(
             &generator,
             &network_snapshot_signal("10.0.0.20", 5432, 100, 700, Some(7), 160, 260),
-        )
-        .await;
+        );
         let closed = observe(
             &generator,
             &network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 200, 300),
-        )
-        .await;
+        );
         let stale = observe(
             &generator,
             &network_snapshot_signal("10.0.0.20", 5432, 100, 800, Some(7), 180, 280),
-        )
-        .await;
+        );
 
         assert_flow_bytes(&first, NetworkFlowDirection::Egress, 100, 100, 400);
         assert_flow_bytes(&first, NetworkFlowDirection::Ingress, 200, 100, 400);
@@ -1758,13 +1745,13 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn emits_native_flow_byte_counter_from_close_byte_counters() {
+    #[test]
+    fn emits_native_flow_byte_counter_from_close_byte_counters() {
         let generator = NetworkMetricsGenerator::default();
         let close =
             network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
 
-        let outputs = observe(&generator, &close).await;
+        let outputs = observe(&generator, &close);
         let metric = counter_metric(&outputs, "network.flow.bytes");
 
         assert_eq!(metric.unit, "By");
@@ -1778,8 +1765,8 @@ mod tests {
         assert_eq!(metric.remote_port, None);
     }
 
-    #[tokio::test]
-    async fn emits_network_flow_warning_when_byte_counters_lack_attribution() {
+    #[test]
+    fn emits_network_flow_warning_when_byte_counters_lack_attribution() {
         let generator = NetworkMetricsGenerator::default();
         let mut close =
             network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
@@ -1789,7 +1776,7 @@ mod tests {
         event.container = None;
         event.kubernetes = None;
 
-        let outputs = observe(&generator, &close).await;
+        let outputs = observe(&generator, &close);
         let warning = network_flow_warning(&outputs);
 
         assert_eq!(warning.warning_type, "missing_attribution");
@@ -1811,8 +1798,8 @@ mod tests {
         assert!(!counter_metric_exists(&outputs, "network.flow.bytes"));
     }
 
-    #[tokio::test]
-    async fn emits_network_flow_warning_for_partial_source_attribution() {
+    #[test]
+    fn emits_network_flow_warning_for_partial_source_attribution() {
         let generator = NetworkMetricsGenerator::default();
         let mut close =
             network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
@@ -1821,7 +1808,7 @@ mod tests {
         };
         event.container = None;
 
-        let outputs = observe(&generator, &close).await;
+        let outputs = observe(&generator, &close);
 
         assert_eq!(
             network_flow_warning(&outputs).kubernetes,
@@ -1835,8 +1822,8 @@ mod tests {
         assert!(counter_metric_exists(&outputs, "network.flow.bytes"));
     }
 
-    #[tokio::test]
-    async fn suppresses_flow_outputs_when_kubernetes_attribution_is_missing() {
+    #[test]
+    fn suppresses_flow_outputs_when_kubernetes_attribution_is_missing() {
         let generator = NetworkMetricsGenerator::default();
         let mut close =
             network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
@@ -1845,7 +1832,7 @@ mod tests {
         };
         event.kubernetes = None;
 
-        let outputs = observe(&generator, &close).await;
+        let outputs = observe(&generator, &close);
         let warning = network_flow_warning(&outputs);
 
         assert_eq!(warning.container, Some(container_context()));
@@ -1858,8 +1845,8 @@ mod tests {
         assert!(!counter_metric_exists(&outputs, "network.flow.bytes"));
     }
 
-    #[tokio::test]
-    async fn does_not_emit_network_flow_warning_without_byte_counters() {
+    #[test]
+    fn does_not_emit_network_flow_warning_without_byte_counters() {
         let generator = NetworkMetricsGenerator::default();
         let mut close = network_close_signal("10.0.0.20", 5432, 100, 900, Some(7));
         let SignalPayload::NetworkConnectionClose(event) = &mut close.payload else {
@@ -1868,7 +1855,7 @@ mod tests {
         event.container = None;
         event.kubernetes = None;
 
-        let outputs = observe(&generator, &close).await;
+        let outputs = observe(&generator, &close);
 
         assert!(
             !outputs
@@ -1877,12 +1864,12 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn emits_failure_counter_metric() {
+    #[test]
+    fn emits_failure_counter_metric() {
         let generator = NetworkMetricsGenerator::default();
         let failure = network_failure_signal("203.0.113.10", 443, 111, 150);
 
-        let metrics = observe(&generator, &failure).await;
+        let metrics = observe(&generator, &failure);
 
         let failure = counter_metric(&metrics, "network.connection.failure.count");
         assert_eq!(failure.value, 1);
@@ -1891,28 +1878,28 @@ mod tests {
         assert_eq!(failure.remote_port, Some(443));
     }
 
-    #[tokio::test]
-    async fn accounts_for_active_connections() {
+    #[test]
+    fn accounts_for_active_connections() {
         let generator = NetworkMetricsGenerator::default();
         let open = network_open_signal("203.0.113.10", 443, 100, Some(7));
         let close = network_close_signal("203.0.113.10", 443, 100, 700, Some(7));
 
-        let opened = observe(&generator, &open).await;
-        let closed = observe(&generator, &close).await;
+        let opened = observe(&generator, &open);
+        let closed = observe(&generator, &close);
 
         assert_eq!(gauge_metric(&opened, "network.connection.active").value, 1);
         assert_eq!(gauge_metric(&closed, "network.connection.active").value, 0);
     }
 
-    #[tokio::test]
-    async fn deterministic_aggregation_updates_counter_values() {
+    #[test]
+    fn deterministic_aggregation_updates_counter_values() {
         let first_generator = NetworkMetricsGenerator::default();
         let second_generator = NetworkMetricsGenerator::default();
         let first = network_open_signal("203.0.113.10", 443, 100, Some(7));
         let second = network_open_signal("203.0.113.10", 443, 101, Some(8));
 
-        let first_outputs = observe_many(&first_generator, [&first, &second]).await;
-        let second_outputs = observe_many(&second_generator, [&first, &second]).await;
+        let first_outputs = observe_many(&first_generator, [&first, &second]);
+        let second_outputs = observe_many(&second_generator, [&first, &second]);
 
         assert_eq!(first_outputs, second_outputs);
         let last_open = counter_metric(
@@ -1952,20 +1939,18 @@ mod tests {
         assert_eq!(template_builds.get(), 1);
     }
 
-    #[tokio::test]
-    async fn bounded_metric_state_drops_new_keys_after_limit() {
+    #[test]
+    fn bounded_metric_state_drops_new_keys_after_limit() {
         let generator = NetworkMetricsGenerator::with_limits(1, 8);
 
         let first = observe(
             &generator,
             &network_open_signal("203.0.113.10", 443, 100, Some(7)),
-        )
-        .await;
+        );
         let second = observe(
             &generator,
             &network_open_signal("203.0.113.11", 443, 101, Some(8)),
-        )
-        .await;
+        );
 
         assert!(counter_metric_exists(
             &first,
@@ -1978,43 +1963,40 @@ mod tests {
         assert!(generator.suppression_counts().counters > 0);
     }
 
-    #[tokio::test]
-    async fn bounded_duration_state_counts_suppression_after_limit() {
+    #[test]
+    fn bounded_duration_state_counts_suppression_after_limit() {
         let generator = NetworkMetricsGenerator::with_limits(0, 8);
 
         let outputs = observe(
             &generator,
             &network_close_signal("203.0.113.10", 443, 100, 700, Some(7)),
-        )
-        .await;
+        );
 
         assert!(outputs.is_empty());
         assert_eq!(generator.suppression_counts().durations, 1);
     }
 
-    #[tokio::test]
-    async fn bounded_active_connection_state_counts_suppression_after_limit() {
+    #[test]
+    fn bounded_active_connection_state_counts_suppression_after_limit() {
         let generator = NetworkMetricsGenerator::with_limits(8, 0);
 
         let outputs = observe(
             &generator,
             &network_open_signal("203.0.113.10", 443, 100, Some(7)),
-        )
-        .await;
+        );
 
         assert!(!gauge_metric_exists(&outputs, "network.connection.active"));
         assert_eq!(generator.suppression_counts().active_connections, 1);
     }
 
-    #[tokio::test]
-    async fn bounded_active_gauge_state_counts_suppression_after_limit() {
+    #[test]
+    fn bounded_active_gauge_state_counts_suppression_after_limit() {
         let generator = NetworkMetricsGenerator::with_limits(0, 8);
 
         let outputs = observe(
             &generator,
             &network_open_signal("203.0.113.10", 443, 100, Some(7)),
-        )
-        .await;
+        );
 
         assert!(outputs.is_empty());
         assert_eq!(generator.suppression_counts().active_gauges, 1);
@@ -2030,18 +2012,18 @@ mod tests {
         assert!(should_warn_network_suppression(8));
     }
 
-    #[tokio::test]
-    async fn bounded_seen_event_state_reaccepts_oldest_signal_after_fifo_eviction() {
+    #[test]
+    fn bounded_seen_event_state_reaccepts_oldest_signal_after_fifo_eviction() {
         let generator = NetworkMetricsGenerator::with_limits(1, 8);
         let first = network_open_signal("203.0.113.10", 443, 100, Some(7));
 
-        assert!(!observe(&generator, &first).await.is_empty());
-        assert!(observe(&generator, &first).await.is_empty());
+        assert!(!observe(&generator, &first).is_empty());
+        assert!(observe(&generator, &first).is_empty());
         for timestamp in 101..=104 {
             let signal = network_open_signal("203.0.113.10", 443, timestamp, Some(7));
-            assert!(!observe(&generator, &signal).await.is_empty());
+            assert!(!observe(&generator, &signal).is_empty());
         }
-        assert!(!observe(&generator, &first).await.is_empty());
+        assert!(!observe(&generator, &first).is_empty());
     }
 
     #[test]
@@ -2083,33 +2065,33 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn suppresses_duplicate_identical_observations() {
+    #[test]
+    fn suppresses_duplicate_identical_observations() {
         let generator = NetworkMetricsGenerator::default();
         let signal = network_open_signal("203.0.113.10", 443, 100, Some(7));
 
-        let first = observe(&generator, &signal).await;
-        let second = observe(&generator, &signal).await;
+        let first = observe(&generator, &signal);
+        let second = observe(&generator, &signal);
 
         assert!(!first.is_empty());
         assert!(second.is_empty());
     }
 
-    #[tokio::test]
-    async fn suppresses_duplicate_identical_close_observations() {
+    #[test]
+    fn suppresses_duplicate_identical_close_observations() {
         let generator = NetworkMetricsGenerator::default();
         let signal =
             network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
 
-        let first = observe(&generator, &signal).await;
-        let second = observe(&generator, &signal).await;
+        let first = observe(&generator, &signal);
+        let second = observe(&generator, &signal);
 
         assert!(counter_metric_exists(&first, "network.flow.bytes"));
         assert!(second.is_empty());
     }
 
-    #[tokio::test]
-    async fn duplicate_suppression_distinguishes_distinct_local_flow_endpoints() {
+    #[test]
+    fn duplicate_suppression_distinguishes_distinct_local_flow_endpoints() {
         let generator = NetworkMetricsGenerator::default();
         let first =
             network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
@@ -2120,8 +2102,8 @@ mod tests {
         };
         event.local_port = Some(43513);
 
-        let first_outputs = observe(&generator, &first).await;
-        let second_outputs = observe(&generator, &second).await;
+        let first_outputs = observe(&generator, &first);
+        let second_outputs = observe(&generator, &second);
 
         assert!(counter_metric_exists(&first_outputs, "network.flow.bytes"));
         assert_eq!(
@@ -2130,15 +2112,15 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn duplicate_suppression_distinguishes_reused_fd_close_windows() {
+    #[test]
+    fn duplicate_suppression_distinguishes_reused_fd_close_windows() {
         let generator = NetworkMetricsGenerator::default();
         let first =
             network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
         let second = network_close_signal_with_bytes("10.0.0.20", 5432, 200, 900, Some(7), 32, 64);
 
-        let first_outputs = observe(&generator, &first).await;
-        let second_outputs = observe(&generator, &second).await;
+        let first_outputs = observe(&generator, &first);
+        let second_outputs = observe(&generator, &second);
 
         assert!(counter_metric_exists(&first_outputs, "network.flow.bytes"));
         assert_eq!(
@@ -2147,16 +2129,16 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn native_flow_byte_counter_aggregates_across_remote_destinations() {
+    #[test]
+    fn native_flow_byte_counter_aggregates_across_remote_destinations() {
         let generator = NetworkMetricsGenerator::default();
         let first =
             network_close_signal_with_bytes("10.0.0.20", 5432, 100, 900, Some(7), 512, 1024);
         let second =
             network_close_signal_with_bytes("10.0.0.30", 6379, 100, 950, Some(8), 256, 768);
 
-        let first_outputs = observe(&generator, &first).await;
-        let second_outputs = observe(&generator, &second).await;
+        let first_outputs = observe(&generator, &first);
+        let second_outputs = observe(&generator, &second);
 
         assert_eq!(
             counter_metric(&first_outputs, "network.flow.bytes").value,
@@ -2168,31 +2150,20 @@ mod tests {
         assert_eq!(metric.remote_port, None);
     }
 
-    async fn observe(
+    fn observe(
         generator: &NetworkMetricsGenerator,
         signal: &SignalEnvelope,
     ) -> Vec<SignalEnvelope> {
-        let (tx, mut rx) = mpsc::channel(8);
-        generator
-            .observe(signal, &tx)
-            .await
-            .expect("generator succeeds");
-        drop(tx);
-
-        let mut metrics = Vec::new();
-        while let Some(metric) = rx.recv().await {
-            metrics.push(metric);
-        }
-        metrics
+        generator.observe(signal).expect("generator succeeds")
     }
 
-    async fn observe_many<'a>(
+    fn observe_many<'a>(
         generator: &NetworkMetricsGenerator,
         signals: impl IntoIterator<Item = &'a SignalEnvelope>,
     ) -> Vec<Vec<SignalEnvelope>> {
         let mut outputs = Vec::new();
         for signal in signals {
-            outputs.push(observe(generator, signal).await);
+            outputs.push(observe(generator, signal));
         }
         outputs
     }

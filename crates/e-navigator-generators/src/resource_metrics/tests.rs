@@ -7,20 +7,19 @@ use e_navigator_signals::{
     ResourceCounterMetric, ResourceGaugeMetric, SignalEnvelope, SignalPayload,
 };
 use std::collections::BTreeMap;
-use tokio::sync::mpsc;
 
 use crate::ResourceMetricsGenerator;
 
-#[tokio::test]
-async fn handles_cpu_counter_deltas_and_saturation_gauges() {
+#[test]
+fn handles_cpu_counter_deltas_and_saturation_gauges() {
     let generator = ResourceMetricsGenerator::with_limits(64);
     let first = node_cpu(1_000, 10, 5, 100);
     let second = node_cpu(2_000, 13, 7, 102);
 
-    let first_metrics = collect(&generator, &first).await;
+    let first_metrics = collect(&generator, &first);
     assert_metric_gauge(&first_metrics, "system.cpu.saturation.runnable", 3);
     assert_metric_gauge(&first_metrics, "system.cpu.saturation.blocked", 1);
-    let metrics = collect(&generator, &second).await;
+    let metrics = collect(&generator, &second);
 
     assert_metric_counter(&metrics, "system.cpu.time", "user", 30_000_000);
     assert_metric_counter(&metrics, "system.cpu.time", "system", 20_000_000);
@@ -33,8 +32,8 @@ async fn handles_cpu_counter_deltas_and_saturation_gauges() {
     assert_eq!(counter.window.end_unix_nanos, 2_000);
 }
 
-#[tokio::test]
-async fn emits_milli_load_gauges_with_explicit_scale() {
+#[test]
+fn emits_milli_load_gauges_with_explicit_scale() {
     let generator = ResourceMetricsGenerator::with_limits(64);
     let signal = SignalEnvelope::node_load_observation(
         "source.host_resource",
@@ -52,7 +51,7 @@ async fn emits_milli_load_gauges_with_explicit_scale() {
         },
     );
 
-    let metrics = collect(&generator, &signal).await;
+    let metrics = collect(&generator, &signal);
 
     assert_metric_gauge(&metrics, "system.cpu.load_average.milli", 250);
     assert_metric_gauge(&metrics, "system.cpu.load_average.milli", 1_500);
@@ -63,8 +62,8 @@ async fn emits_milli_load_gauges_with_explicit_scale() {
     }));
 }
 
-#[tokio::test]
-async fn emits_memory_and_filesystem_gauges() {
+#[test]
+fn emits_memory_and_filesystem_gauges() {
     let generator = ResourceMetricsGenerator::with_limits(64);
     let memory = SignalEnvelope::node_memory_observation(
         "source.host_resource",
@@ -96,8 +95,8 @@ async fn emits_memory_and_filesystem_gauges() {
         },
     );
 
-    let mut metrics = collect(&generator, &memory).await;
-    metrics.extend(collect(&generator, &filesystem).await);
+    let mut metrics = collect(&generator, &memory);
+    metrics.extend(collect(&generator, &filesystem));
 
     assert_metric_gauge(&metrics, "system.memory.limit", 8_192);
     assert_metric_gauge(&metrics, "system.memory.available", 4_096);
@@ -105,14 +104,14 @@ async fn emits_memory_and_filesystem_gauges() {
     assert_metric_gauge(&metrics, "system.filesystem.available", 250);
 }
 
-#[tokio::test]
-async fn emits_disk_io_counter_deltas() {
+#[test]
+fn emits_disk_io_counter_deltas() {
     let generator = ResourceMetricsGenerator::with_limits(64);
     let first = disk_io(1_000, 10, 20, 4_096, 8_192);
     let second = disk_io(2_000, 14, 25, 8_192, 16_384);
 
-    assert!(collect(&generator, &first).await.is_empty());
-    let metrics = collect(&generator, &second).await;
+    assert!(collect(&generator, &first).is_empty());
+    let metrics = collect(&generator, &second);
 
     assert_metric_counter(&metrics, "system.disk.io", "read", 4_096);
     assert_metric_counter(&metrics, "system.disk.io", "write", 8_192);
@@ -120,8 +119,8 @@ async fn emits_disk_io_counter_deltas() {
     assert_metric_counter(&metrics, "system.disk.operations", "write", 5);
 }
 
-#[tokio::test]
-async fn emits_cgroup_cpu_delta_and_memory_metrics_with_context() {
+#[test]
+fn emits_cgroup_cpu_delta_and_memory_metrics_with_context() {
     let generator = ResourceMetricsGenerator::with_limits(64);
     let cgroup = CgroupResourceContext {
         cgroup_path: "/kubepods.slice/pod123/container.scope".to_string(),
@@ -145,9 +144,9 @@ async fn emits_cgroup_cpu_delta_and_memory_metrics_with_context() {
         },
     );
 
-    assert!(collect(&generator, &first).await.is_empty());
-    let mut metrics = collect(&generator, &second).await;
-    metrics.extend(collect(&generator, &memory).await);
+    assert!(collect(&generator, &first).is_empty());
+    let mut metrics = collect(&generator, &second);
+    metrics.extend(collect(&generator, &memory));
 
     assert_metric_counter(&metrics, "container.cpu.time", "total", 60_000);
     assert_metric_counter(&metrics, "container.cpu.throttling.periods", "throttled", 6);
@@ -155,8 +154,8 @@ async fn emits_cgroup_cpu_delta_and_memory_metrics_with_context() {
     assert_metric_gauge(&metrics, "container.memory.limit", 64_000);
 }
 
-#[tokio::test]
-async fn emits_cgroup_pids_and_fd_gauges() {
+#[test]
+fn emits_cgroup_pids_and_fd_gauges() {
     let generator = ResourceMetricsGenerator::with_limits(64);
     let cgroup = CgroupResourceContext {
         cgroup_path: "/kubepods.slice/pod123/container.scope".to_string(),
@@ -191,8 +190,8 @@ async fn emits_cgroup_pids_and_fd_gauges() {
         },
     );
 
-    let mut metrics = collect(&generator, &pids).await;
-    metrics.extend(collect(&generator, &fds).await);
+    let mut metrics = collect(&generator, &pids);
+    metrics.extend(collect(&generator, &fds));
 
     assert_metric_gauge(&metrics, "container.process.count", 3);
     assert_metric_gauge(&metrics, "container.thread.count", 9);
@@ -201,16 +200,16 @@ async fn emits_cgroup_pids_and_fd_gauges() {
     assert_metric_gauge(&metrics, "container.socket.count", 12);
 }
 
-#[tokio::test]
-async fn preserves_process_attribution_and_emits_process_cpu_deltas() {
+#[test]
+fn preserves_process_attribution_and_emits_process_cpu_deltas() {
     let generator = ResourceMetricsGenerator::with_limits(64);
     let first = process_signal(2_000, 500);
     let second = process_signal(3_000, 900);
 
-    let first_metrics = collect(&generator, &first).await;
+    let first_metrics = collect(&generator, &first);
     assert_metric_gauge(&first_metrics, "process.memory.usage", 4_096);
     assert_metric_gauge(&first_metrics, "process.open_file_descriptor.count", 12);
-    let metrics = collect(&generator, &second).await;
+    let metrics = collect(&generator, &second);
 
     assert_metric_counter(&metrics, "process.cpu.time", "total", 400);
     let Some(resource_metric) = first_metrics.iter().find_map(resource_gauge) else {
@@ -264,15 +263,15 @@ fn process_signal(timestamp: u64, cpu_time_nanos: u64) -> SignalEnvelope {
     )
 }
 
-#[tokio::test]
-async fn deterministic_duplicate_and_bounded_state_behavior() {
+#[test]
+fn deterministic_duplicate_and_bounded_state_behavior() {
     let generator = ResourceMetricsGenerator::with_limits(2);
     let memory_a = memory_signal("node-a", 2_000, 8_192, 4_096);
     let memory_b = memory_signal("node-b", 2_000, 16_384, 8_192);
 
-    let first = collect(&generator, &memory_a).await;
-    let duplicate = collect(&generator, &memory_a).await;
-    let after_evicting_stale_key = collect(&generator, &memory_b).await;
+    let first = collect(&generator, &memory_a);
+    let duplicate = collect(&generator, &memory_a);
+    let after_evicting_stale_key = collect(&generator, &memory_b);
 
     assert!(!first.is_empty());
     assert!(duplicate.is_empty());
@@ -287,33 +286,33 @@ async fn deterministic_duplicate_and_bounded_state_behavior() {
     );
 }
 
-#[tokio::test]
-async fn duplicate_suppression_distinguishes_value_changes_at_the_same_timestamp() {
+#[test]
+fn duplicate_suppression_distinguishes_value_changes_at_the_same_timestamp() {
     let generator = ResourceMetricsGenerator::with_limits(8);
     let first = memory_signal("node-a", 2_000, 8_192, 4_096);
     let changed = memory_signal("node-a", 2_000, 8_192, 2_048);
 
-    assert!(!collect(&generator, &first).await.is_empty());
-    assert!(!collect(&generator, &changed).await.is_empty());
-    assert!(collect(&generator, &changed).await.is_empty());
+    assert!(!collect(&generator, &first).is_empty());
+    assert!(!collect(&generator, &changed).is_empty());
+    assert!(collect(&generator, &changed).is_empty());
 }
 
-#[tokio::test]
-async fn bounded_seen_observation_state_reaccepts_oldest_signal_after_fifo_eviction() {
+#[test]
+fn bounded_seen_observation_state_reaccepts_oldest_signal_after_fifo_eviction() {
     let generator = ResourceMetricsGenerator::with_limits(1);
     let first = memory_signal("node-a", 100, 8_192, 4_096);
 
-    assert!(!collect(&generator, &first).await.is_empty());
-    assert!(collect(&generator, &first).await.is_empty());
+    assert!(!collect(&generator, &first).is_empty());
+    assert!(collect(&generator, &first).is_empty());
     for timestamp in 101..=104 {
         let signal = memory_signal("node-a", timestamp, 8_192, 4_096);
-        assert!(!collect(&generator, &signal).await.is_empty());
+        assert!(!collect(&generator, &signal).is_empty());
     }
-    assert!(!collect(&generator, &first).await.is_empty());
+    assert!(!collect(&generator, &first).is_empty());
 }
 
-#[tokio::test]
-async fn unsupported_payloads_emit_no_resource_metrics() {
+#[test]
+fn unsupported_payloads_emit_no_resource_metrics() {
     let generator = ResourceMetricsGenerator::with_limits(64);
     let signal = SignalEnvelope::exec(
         "source.synthetic",
@@ -332,24 +331,16 @@ async fn unsupported_payloads_emit_no_resource_metrics() {
         },
     );
 
-    assert!(collect(&generator, &signal).await.is_empty());
+    assert!(collect(&generator, &signal).is_empty());
 }
 
-#[tokio::test]
-async fn counter_decreases_update_state_without_emitting_delta() {
+#[test]
+fn counter_decreases_update_state_without_emitting_delta() {
     let generator = ResourceMetricsGenerator::with_limits(64);
 
-    assert!(
-        collect(&generator, &disk_io(1_000, 10, 20, 100, 200))
-            .await
-            .is_empty()
-    );
-    assert!(
-        collect(&generator, &disk_io(2_000, 9, 18, 90, 180))
-            .await
-            .is_empty()
-    );
-    let metrics = collect(&generator, &disk_io(3_000, 11, 21, 120, 220)).await;
+    assert!(collect(&generator, &disk_io(1_000, 10, 20, 100, 200)).is_empty());
+    assert!(collect(&generator, &disk_io(2_000, 9, 18, 90, 180)).is_empty());
+    let metrics = collect(&generator, &disk_io(3_000, 11, 21, 120, 220));
 
     assert_metric_counter(&metrics, "system.disk.io", "read", 30);
     assert_metric_counter(&metrics, "system.disk.io", "write", 40);
@@ -363,10 +354,10 @@ async fn counter_decreases_update_state_without_emitting_delta() {
     assert_eq!(counter.window.end_unix_nanos, 3_000);
 }
 
-#[tokio::test]
-async fn process_metrics_keep_bounded_metric_attributes() {
+#[test]
+fn process_metrics_keep_bounded_metric_attributes() {
     let generator = ResourceMetricsGenerator::with_limits(64);
-    let metrics = collect(&generator, &process_signal(2_000, 500)).await;
+    let metrics = collect(&generator, &process_signal(2_000, 500));
 
     let memory = metrics
         .iter()
@@ -383,8 +374,8 @@ async fn process_metrics_keep_bounded_metric_attributes() {
     );
 }
 
-#[tokio::test]
-async fn cgroup_metrics_preserve_container_and_kubernetes_context() {
+#[test]
+fn cgroup_metrics_preserve_container_and_kubernetes_context() {
     let generator = ResourceMetricsGenerator::with_limits(64);
     let signal = SignalEnvelope::cgroup_memory_observation(
         "source.host_resource",
@@ -401,7 +392,7 @@ async fn cgroup_metrics_preserve_container_and_kubernetes_context() {
         },
     );
 
-    let metrics = collect(&generator, &signal).await;
+    let metrics = collect(&generator, &signal);
     let memory = metrics
         .iter()
         .find_map(resource_gauge)
@@ -434,30 +425,26 @@ async fn cgroup_metrics_preserve_container_and_kubernetes_context() {
     );
 }
 
-#[tokio::test]
-async fn bounded_state_eviction_order_is_deterministic() {
+#[test]
+fn bounded_state_eviction_order_is_deterministic() {
     let generator = ResourceMetricsGenerator::with_limits(2);
 
     assert_eq!(
-        collect(&generator, &memory_signal("node-a", 2_000, 100, 50))
-            .await
-            .len(),
+        collect(&generator, &memory_signal("node-a", 2_000, 100, 50)).len(),
         2
     );
     assert_eq!(
-        collect(&generator, &memory_signal("node-b", 3_000, 200, 100))
-            .await
-            .len(),
+        collect(&generator, &memory_signal("node-b", 3_000, 200, 100)).len(),
         2
     );
-    let node_a_again = collect(&generator, &memory_signal("node-a", 4_000, 100, 51)).await;
+    let node_a_again = collect(&generator, &memory_signal("node-a", 4_000, 100, 51));
 
     assert_metric_gauge(&node_a_again, "system.memory.limit", 100);
     assert_metric_gauge(&node_a_again, "system.memory.available", 51);
 }
 
-#[tokio::test]
-async fn poisoned_state_lock_maps_to_module_failed_error() {
+#[test]
+fn poisoned_state_lock_maps_to_module_failed_error() {
     let generator = ResourceMetricsGenerator::with_limits(64);
     let poison_target = std::panic::AssertUnwindSafe(|| {
         let _guard = generator.gauges.lock().expect("lock before poison");
@@ -466,7 +453,6 @@ async fn poisoned_state_lock_maps_to_module_failed_error() {
     assert!(std::panic::catch_unwind(poison_target).is_err());
 
     let error = collect_result(&generator, &memory_signal("node-a", 2_000, 100, 50))
-        .await
         .expect_err("poisoned lock should fail");
 
     assert!(matches!(
@@ -476,27 +462,15 @@ async fn poisoned_state_lock_maps_to_module_failed_error() {
     ));
 }
 
-async fn collect(
-    generator: &ResourceMetricsGenerator,
-    signal: &SignalEnvelope,
-) -> Vec<SignalEnvelope> {
-    collect_result(generator, signal)
-        .await
-        .expect("generator observes")
+fn collect(generator: &ResourceMetricsGenerator, signal: &SignalEnvelope) -> Vec<SignalEnvelope> {
+    collect_result(generator, signal).expect("generator observes")
 }
 
-async fn collect_result(
+fn collect_result(
     generator: &ResourceMetricsGenerator,
     signal: &SignalEnvelope,
 ) -> Result<Vec<SignalEnvelope>, CoreError> {
-    let (tx, mut rx) = mpsc::channel(16);
-    generator.observe(signal, &tx).await?;
-    drop(tx);
-    let mut signals = Vec::new();
-    while let Some(signal) = rx.recv().await {
-        signals.push(signal);
-    }
-    Ok(signals)
+    generator.observe(signal)
 }
 
 fn node_cpu(timestamp: u64, user: u64, system: u64, idle: u64) -> SignalEnvelope {

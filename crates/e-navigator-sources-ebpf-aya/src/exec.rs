@@ -77,10 +77,7 @@ fn captured_arguments_from_raw(
 
         let remaining = max_bytes - bytes;
         if value.len() > remaining {
-            let mut end = remaining;
-            while !value.is_char_boundary(end) {
-                end -= 1;
-            }
+            let end = value.floor_char_boundary(remaining);
             arguments.push(value[..end].to_string());
             bytes += end;
             truncated = true;

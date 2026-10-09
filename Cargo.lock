@@ -511,7 +511,6 @@ dependencies = [
  "e-navigator-core",
  "e-navigator-protocol",
  "e-navigator-signals",
- "tokio",
  "tracing",
 ]
 

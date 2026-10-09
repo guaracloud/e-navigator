@@ -121,7 +121,7 @@ impl Runner {
             if !generator.accepts(&signal) {
                 continue;
             }
-            let generated = self.handle_generator(generator.as_ref(), &signal).await?;
+            let generated = self.handle_generator(generator.as_ref(), &signal)?;
             for derived in generated {
                 if !budget.try_accept(generator.metadata(), 1) {
                     continue;
@@ -145,9 +145,7 @@ impl Runner {
                     continue;
                 }
                 let next_depth = depth.saturating_add(1);
-                let downstream = self
-                    .handle_generator(generator.as_ref(), &generated_signal)
-                    .await?;
+                let downstream = self.handle_generator(generator.as_ref(), &generated_signal)?;
                 for derived in downstream {
                     if !budget.try_accept(generator.metadata(), next_depth) {
                         continue;
@@ -186,43 +184,17 @@ impl Runner {
         Ok(Some(current))
     }
 
-    async fn handle_generator(
+    fn handle_generator(
         &self,
         generator: &dyn e_navigator_core::Generator<SignalEnvelope>,
         signal: &SignalEnvelope,
     ) -> CoreResult<Vec<SignalEnvelope>> {
-        if let Some(outputs) = generator.observe_immediate(signal) {
-            let generated = outputs?;
-            if generated.len() > MAX_DERIVED_SIGNALS_PER_GENERATOR {
-                return Err(generator_output_limit_error(generator.metadata()));
-            }
-            return Ok(generated);
+        let generated = generator
+            .observe(signal)
+            .map_err(|err| with_module_context(generator.metadata(), err))?;
+        if generated.len() > MAX_DERIVED_SIGNALS_PER_GENERATOR {
+            return Err(generator_output_limit_error(generator.metadata()));
         }
-
-        let (derived_tx, mut derived_rx) = mpsc::channel(16);
-        let observe = generator.observe(signal, &derived_tx);
-        tokio::pin!(observe);
-        let mut observe_done = false;
-        let mut generated = Vec::new();
-
-        while !observe_done {
-            tokio::select! {
-                result = &mut observe => {
-                    result.map_err(|err| with_module_context(generator.metadata(), err))?;
-                    observe_done = true;
-                }
-                derived = derived_rx.recv() => {
-                    if let Some(derived) = derived {
-                        push_generated(&mut generated, derived, generator.metadata())?;
-                    }
-                }
-            }
-        }
-
-        while let Ok(derived) = derived_rx.try_recv() {
-            push_generated(&mut generated, derived, generator.metadata())?;
-        }
-
         Ok(generated)
     }
 
@@ -328,19 +300,6 @@ impl DerivedSignalBudget {
         self.remaining -= 1;
         true
     }
-}
-
-fn push_generated(
-    generated: &mut Vec<SignalEnvelope>,
-    signal: SignalEnvelope,
-    metadata: ModuleMetadata,
-) -> CoreResult<()> {
-    if generated.len() >= MAX_DERIVED_SIGNALS_PER_GENERATOR {
-        return Err(generator_output_limit_error(metadata));
-    }
-
-    generated.push(signal);
-    Ok(())
 }
 
 fn generator_output_limit_error(metadata: ModuleMetadata) -> CoreError {
@@ -916,21 +875,13 @@ mod tests {
         observed: Arc<AtomicBool>,
     }
 
-    struct ImmediateCloneGenerator {
-        async_observed: Arc<AtomicBool>,
-    }
-
-    struct ManyImmediateSignalsGenerator {
-        count: usize,
-        async_observed: Arc<AtomicBool>,
-    }
+    struct CloneGenerator;
 
     struct ImmediateCountingSink {
         writes: Arc<AtomicUsize>,
         async_written: Arc<AtomicBool>,
     }
 
-    #[async_trait]
     impl Generator<SignalEnvelope> for RejectingGenerator {
         fn metadata(&self) -> ModuleMetadata {
             ModuleMetadata::new("generator.rejecting", ModuleKind::Generator)
@@ -940,59 +891,19 @@ mod tests {
             false
         }
 
-        async fn observe(
-            &self,
-            _signal: &SignalEnvelope,
-            _tx: &mpsc::Sender<SignalEnvelope>,
-        ) -> CoreResult<()> {
+        fn observe(&self, _signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
             self.observed.store(true, Ordering::SeqCst);
-            Ok(())
+            Ok(Vec::new())
         }
     }
 
-    #[async_trait]
-    impl Generator<SignalEnvelope> for ImmediateCloneGenerator {
+    impl Generator<SignalEnvelope> for CloneGenerator {
         fn metadata(&self) -> ModuleMetadata {
             ModuleMetadata::new("generator.immediate_clone", ModuleKind::Generator)
         }
 
-        fn observe_immediate(
-            &self,
-            signal: &SignalEnvelope,
-        ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
-            Some(Ok(vec![signal.clone()]))
-        }
-
-        async fn observe(
-            &self,
-            _signal: &SignalEnvelope,
-            _tx: &mpsc::Sender<SignalEnvelope>,
-        ) -> CoreResult<()> {
-            self.async_observed.store(true, Ordering::SeqCst);
-            Ok(())
-        }
-    }
-
-    #[async_trait]
-    impl Generator<SignalEnvelope> for ManyImmediateSignalsGenerator {
-        fn metadata(&self) -> ModuleMetadata {
-            ModuleMetadata::new("generator.many_immediate", ModuleKind::Generator)
-        }
-
-        fn observe_immediate(
-            &self,
-            signal: &SignalEnvelope,
-        ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
-            Some(Ok(vec![signal.clone(); self.count]))
-        }
-
-        async fn observe(
-            &self,
-            _signal: &SignalEnvelope,
-            _tx: &mpsc::Sender<SignalEnvelope>,
-        ) -> CoreResult<()> {
-            self.async_observed.store(true, Ordering::SeqCst);
-            Ok(())
+        fn observe(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
+            Ok(vec![signal.clone()])
         }
     }
 
@@ -1013,42 +924,26 @@ mod tests {
         }
     }
 
-    #[async_trait]
     impl Generator<SignalEnvelope> for ManySignalsGenerator {
         fn metadata(&self) -> ModuleMetadata {
             ModuleMetadata::new("generator.many", ModuleKind::Generator)
         }
 
-        async fn observe(
-            &self,
-            signal: &SignalEnvelope,
-            tx: &mpsc::Sender<SignalEnvelope>,
-        ) -> CoreResult<()> {
-            for _ in 0..self.count {
-                tx.send(signal.clone())
-                    .await
-                    .map_err(|_| CoreError::PipelineClosed)?;
-            }
-
-            Ok(())
+        fn observe(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
+            Ok(vec![signal.clone(); self.count])
         }
     }
 
     struct ProcessExitGenerator;
 
-    #[async_trait]
     impl Generator<SignalEnvelope> for ProcessExitGenerator {
         fn metadata(&self) -> ModuleMetadata {
             ModuleMetadata::new("generator.process_exit", ModuleKind::Generator)
         }
 
-        async fn observe(
-            &self,
-            signal: &SignalEnvelope,
-            tx: &mpsc::Sender<SignalEnvelope>,
-        ) -> CoreResult<()> {
+        fn observe(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
             if matches!(&signal.payload, SignalPayload::Exec(_)) {
-                tx.send(SignalEnvelope::process_exit(
+                return Ok(vec![SignalEnvelope::process_exit(
                     "generator.process_exit",
                     None,
                     ProcessExitEvent {
@@ -1063,30 +958,23 @@ mod tests {
                         container: None,
                         kubernetes: None,
                     },
-                ))
-                .await
-                .map_err(|_| CoreError::PipelineClosed)?;
+                )]);
             }
 
-            Ok(())
+            Ok(Vec::new())
         }
     }
 
     struct DownstreamExecGenerator;
 
-    #[async_trait]
     impl Generator<SignalEnvelope> for DownstreamExecGenerator {
         fn metadata(&self) -> ModuleMetadata {
             ModuleMetadata::new("generator.downstream_exec", ModuleKind::Generator)
         }
 
-        async fn observe(
-            &self,
-            signal: &SignalEnvelope,
-            tx: &mpsc::Sender<SignalEnvelope>,
-        ) -> CoreResult<()> {
+        fn observe(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
             if matches!(&signal.payload, SignalPayload::ProcessExit(_)) {
-                tx.send(SignalEnvelope::exec(
+                return Ok(vec![SignalEnvelope::exec(
                     "generator.downstream_exec",
                     None,
                     ExecEvent {
@@ -1101,33 +989,26 @@ mod tests {
                         container: None,
                         kubernetes: None,
                     },
-                ))
-                .await
-                .map_err(|_| CoreError::PipelineClosed)?;
+                )]);
             }
 
-            Ok(())
+            Ok(Vec::new())
         }
     }
 
     struct ProcessedExitOnlyGenerator;
 
-    #[async_trait]
     impl Generator<SignalEnvelope> for ProcessedExitOnlyGenerator {
         fn metadata(&self) -> ModuleMetadata {
             ModuleMetadata::new("generator.processed_exit_only", ModuleKind::Generator)
         }
 
-        async fn observe(
-            &self,
-            signal: &SignalEnvelope,
-            tx: &mpsc::Sender<SignalEnvelope>,
-        ) -> CoreResult<()> {
+        fn observe(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
             if matches!(
                 &signal.payload,
                 SignalPayload::ProcessExit(event) if event.command == "processed-generated-exit"
             ) {
-                tx.send(SignalEnvelope::exec(
+                return Ok(vec![SignalEnvelope::exec(
                     "generator.processed_exit_only",
                     None,
                     ExecEvent {
@@ -1142,12 +1023,10 @@ mod tests {
                         container: None,
                         kubernetes: None,
                     },
-                ))
-                .await
-                .map_err(|_| CoreError::PipelineClosed)?;
+                )]);
             }
 
-            Ok(())
+            Ok(Vec::new())
         }
     }
 
@@ -1302,15 +1181,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runner_uses_immediate_generator_and_sink_paths() {
-        let async_observed = Arc::new(AtomicBool::new(false));
+    async fn runner_routes_generated_signals_through_immediate_sink() {
         let async_written = Arc::new(AtomicBool::new(false));
         let writes = Arc::new(AtomicUsize::new(0));
         let registry = ModuleRegistry::new()
             .with_source(Box::new(OneSignalSource))
-            .with_generator(Box::new(ImmediateCloneGenerator {
-                async_observed: async_observed.clone(),
-            }))
+            .with_generator(Box::new(CloneGenerator))
             .with_sink(Box::new(ImmediateCountingSink {
                 writes: writes.clone(),
                 async_written: async_written.clone(),
@@ -1319,7 +1195,6 @@ mod tests {
 
         runner.run().await.expect("runner exits cleanly");
 
-        assert!(!async_observed.load(Ordering::SeqCst));
         assert!(!async_written.load(Ordering::SeqCst));
         assert_eq!(writes.load(Ordering::SeqCst), 2);
     }
@@ -1340,33 +1215,6 @@ mod tests {
             .expect_err("derived signal limit is enforced");
 
         assert!(err.to_string().contains("generator.many"));
-        assert!(
-            err.to_string()
-                .contains("more than 64 derived signals for one input")
-        );
-    }
-
-    #[tokio::test]
-    async fn runner_rejects_immediate_generator_output_above_limit() {
-        let async_observed = Arc::new(AtomicBool::new(false));
-        let registry = ModuleRegistry::new()
-            .with_source(Box::new(OneSignalSource))
-            .with_generator(Box::new(ManyImmediateSignalsGenerator {
-                count: 65,
-                async_observed: async_observed.clone(),
-            }))
-            .with_sink(Box::new(MemorySink {
-                seen: Arc::new(Mutex::new(Vec::new())),
-            }));
-        let runner = Runner::new(RuntimeConfig::default(), registry).expect("runner builds");
-
-        let err = runner
-            .run()
-            .await
-            .expect_err("immediate generator limit is enforced");
-
-        assert!(!async_observed.load(Ordering::SeqCst));
-        assert!(err.to_string().contains("generator.many_immediate"));
         assert!(
             err.to_string()
                 .contains("more than 64 derived signals for one input")

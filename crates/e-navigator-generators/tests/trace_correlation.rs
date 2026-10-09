@@ -14,14 +14,13 @@ use e_navigator_signals::{
     NetworkProtocol, SignalEnvelope, SignalPayload, TraceConfidence, TraceCorrelationKind,
 };
 use std::collections::BTreeMap;
-use tokio::sync::mpsc;
 
-#[tokio::test]
-async fn network_close_generates_network_inferred_service_interaction_span() {
+#[test]
+fn network_close_generates_network_inferred_service_interaction_span() {
     let generator = TraceCorrelationGenerator::default();
     let signal = network_close_signal("203.0.113.10", 443, 1_000, 3_500, true);
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert_eq!(outputs.len(), 1);
     let SignalPayload::ServiceInteractionSpanObservation(span) = &outputs[0].payload else {
@@ -44,12 +43,12 @@ async fn network_close_generates_network_inferred_service_interaction_span() {
     assert_eq!(span.process.as_ref().map(|process| process.pid), Some(42));
 }
 
-#[tokio::test]
-async fn failed_connection_generates_error_interaction_span() {
+#[test]
+fn failed_connection_generates_error_interaction_span() {
     let generator = TraceCorrelationGenerator::default();
     let signal = network_failure_signal("203.0.113.10", 443, 4_000, 111, true);
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert_eq!(outputs.len(), 1);
     let SignalPayload::ServiceInteractionSpanObservation(span) = &outputs[0].payload else {
@@ -62,12 +61,12 @@ async fn failed_connection_generates_error_interaction_span() {
     assert_eq!(span.correlation_kind, TraceCorrelationKind::NetworkInferred);
 }
 
-#[tokio::test]
-async fn failed_connection_without_attribution_emits_warning() {
+#[test]
+fn failed_connection_without_attribution_emits_warning() {
     let generator = TraceCorrelationGenerator::default();
     let signal = network_failure_signal("203.0.113.10", 443, 4_000, 111, false);
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert_eq!(outputs.len(), 2);
     assert!(outputs.iter().any(|signal| {
@@ -86,12 +85,12 @@ async fn failed_connection_without_attribution_emits_warning() {
     }));
 }
 
-#[tokio::test]
-async fn dependency_edge_generates_service_path_observation() {
+#[test]
+fn dependency_edge_generates_service_path_observation() {
     let generator = TraceCorrelationGenerator::default();
     let signal = dependency_edge_signal("203.0.113.10", Some(443), None, 2);
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert_eq!(outputs.len(), 1);
     let SignalPayload::TraceServicePathObservation(path) = &outputs[0].payload else {
@@ -108,12 +107,12 @@ async fn dependency_edge_generates_service_path_observation() {
     assert_eq!(path.confidence, TraceConfidence::Low);
 }
 
-#[tokio::test]
-async fn dns_response_generates_domain_service_path_when_successful() {
+#[test]
+fn dns_response_generates_domain_service_path_when_successful() {
     let generator = TraceCorrelationGenerator::default();
     let signal = dns_response_signal("API.Example.COM.", DnsResponseCode::NoError);
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert_eq!(outputs.len(), 1);
     let SignalPayload::TraceServicePathObservation(path) = &outputs[0].payload else {
@@ -129,8 +128,8 @@ async fn dns_response_generates_domain_service_path_when_successful() {
     );
 }
 
-#[tokio::test]
-async fn malformed_or_oversized_dns_domains_do_not_generate_service_paths() {
+#[test]
+fn malformed_or_oversized_dns_domains_do_not_generate_service_paths() {
     let generator = TraceCorrelationGenerator::default();
 
     for query_name in [
@@ -144,18 +143,18 @@ async fn malformed_or_oversized_dns_domains_do_not_generate_service_paths() {
     ] {
         let signal = dns_response_signal(query_name, DnsResponseCode::NoError);
 
-        let outputs = observe(&generator, &signal).await;
+        let outputs = observe(&generator, &signal);
 
         assert!(outputs.is_empty(), "{query_name:?}");
     }
 }
 
-#[tokio::test]
-async fn missing_attribution_emits_warning_without_failing() {
+#[test]
+fn missing_attribution_emits_warning_without_failing() {
     let generator = TraceCorrelationGenerator::default();
     let signal = network_close_signal("203.0.113.10", 443, 1_000, 3_500, false);
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert_eq!(outputs.len(), 2);
     assert!(outputs.iter().any(|signal| {
@@ -174,14 +173,14 @@ async fn missing_attribution_emits_warning_without_failing() {
     }));
 }
 
-#[tokio::test]
-async fn deterministic_aggregation_uses_stable_path_key() {
+#[test]
+fn deterministic_aggregation_uses_stable_path_key() {
     let generator = TraceCorrelationGenerator::default();
     let first = dependency_edge_signal("203.0.113.10", Some(443), None, 1);
     let second = dependency_edge_signal("203.0.113.10", Some(443), None, 3);
 
-    let first_outputs = observe(&generator, &first).await;
-    let second_outputs = observe(&generator, &second).await;
+    let first_outputs = observe(&generator, &first);
+    let second_outputs = observe(&generator, &second);
 
     let first_key = service_path_key(&first_outputs);
     let second_key = service_path_key(&second_outputs);
@@ -191,14 +190,14 @@ async fn deterministic_aggregation_uses_stable_path_key() {
     assert_eq!(second_key, first_key);
 }
 
-#[tokio::test]
-async fn dns_service_path_counts_each_distinct_response() {
+#[test]
+fn dns_service_path_counts_each_distinct_response() {
     let generator = TraceCorrelationGenerator::default();
     let first = dns_response_signal_at("api.example.com.", DnsResponseCode::NoError, 1_500);
     let second = dns_response_signal_at("api.example.com.", DnsResponseCode::NoError, 1_600);
 
-    let first_outputs = observe(&generator, &first).await;
-    let second_outputs = observe(&generator, &second).await;
+    let first_outputs = observe(&generator, &first);
+    let second_outputs = observe(&generator, &second);
 
     let SignalPayload::TraceServicePathObservation(first_path) = &first_outputs[0].payload else {
         panic!("expected first trace service path");
@@ -212,8 +211,8 @@ async fn dns_service_path_counts_each_distinct_response() {
     assert_eq!(second_path.last_seen_unix_nanos, 1_600);
 }
 
-#[tokio::test]
-async fn service_path_key_distinguishes_recreated_pods_by_uid() {
+#[test]
+fn service_path_key_distinguishes_recreated_pods_by_uid() {
     let generator = TraceCorrelationGenerator::default();
     let first = dependency_edge_signal_with_workload(
         "203.0.113.10",
@@ -230,8 +229,8 @@ async fn service_path_key_distinguishes_recreated_pods_by_uid() {
         kubernetes_context_with_uid("api-123", Some("pod-uid-b")),
     );
 
-    let first_outputs = observe(&generator, &first).await;
-    let second_outputs = observe(&generator, &second).await;
+    let first_outputs = observe(&generator, &first);
+    let second_outputs = observe(&generator, &second);
 
     let first_key = service_path_key(&first_outputs);
     let second_key = service_path_key(&second_outputs);
@@ -240,97 +239,77 @@ async fn service_path_key_distinguishes_recreated_pods_by_uid() {
     assert_ne!(first_key, second_key);
 }
 
-#[tokio::test]
-async fn bounded_state_suppresses_new_paths_after_limit() {
+#[test]
+fn bounded_state_suppresses_new_paths_after_limit() {
     let generator = TraceCorrelationGenerator::with_limits(1, 32, 32);
     let first = dependency_edge_signal("203.0.113.10", Some(443), None, 1);
     let second = dependency_edge_signal("198.51.100.20", Some(5432), None, 1);
 
-    let first_outputs = observe(&generator, &first).await;
-    let second_outputs = observe(&generator, &second).await;
+    let first_outputs = observe(&generator, &first);
+    let second_outputs = observe(&generator, &second);
 
     assert_eq!(first_outputs.len(), 1);
     assert!(second_outputs.is_empty());
 }
 
-#[tokio::test]
-async fn duplicate_network_close_is_suppressed() {
+#[test]
+fn duplicate_network_close_is_suppressed() {
     let generator = TraceCorrelationGenerator::default();
     let signal = network_close_signal("203.0.113.10", 443, 1_000, 3_500, true);
 
-    let first = observe(&generator, &signal).await;
-    let second = observe(&generator, &signal).await;
+    let first = observe(&generator, &signal);
+    let second = observe(&generator, &signal);
 
     assert_eq!(first.len(), 1);
     assert!(second.is_empty());
 }
 
-#[tokio::test]
-async fn bounded_interaction_dedupe_evicts_oldest_inserted_fingerprint() {
+#[test]
+fn bounded_interaction_dedupe_evicts_oldest_inserted_fingerprint() {
     let generator = TraceCorrelationGenerator::with_limits(8, 2, 8);
     let first = network_close_signal("203.0.113.10", 443, 1_000, 3_500, true);
     let second = network_close_signal("198.51.100.20", 443, 2_000, 4_500, true);
     let third = network_close_signal("192.0.2.30", 443, 3_000, 5_500, true);
 
-    assert_eq!(observe(&generator, &first).await.len(), 1);
-    assert_eq!(observe(&generator, &second).await.len(), 1);
-    assert_eq!(observe(&generator, &third).await.len(), 1);
+    assert_eq!(observe(&generator, &first).len(), 1);
+    assert_eq!(observe(&generator, &second).len(), 1);
+    assert_eq!(observe(&generator, &third).len(), 1);
 
-    assert!(observe(&generator, &second).await.is_empty());
-    assert_eq!(observe(&generator, &first).await.len(), 1);
+    assert!(observe(&generator, &second).is_empty());
+    assert_eq!(observe(&generator, &first).len(), 1);
 }
 
-#[tokio::test]
-async fn bounded_warning_dedupe_evicts_oldest_inserted_fingerprint() {
+#[test]
+fn bounded_warning_dedupe_evicts_oldest_inserted_fingerprint() {
     let generator = TraceCorrelationGenerator::with_limits(8, 8, 2);
     let first = network_close_signal_with_fd("203.0.113.10", 443, 1_000, 3_500, false, Some(7));
     let second = network_close_signal_with_fd("198.51.100.20", 443, 2_000, 4_500, false, Some(7));
     let third = network_close_signal_with_fd("192.0.2.30", 443, 3_000, 5_500, false, Some(7));
 
-    assert_eq!(warning_count(&observe(&generator, &first).await), 1);
-    assert_eq!(warning_count(&observe(&generator, &second).await), 1);
-    assert_eq!(warning_count(&observe(&generator, &third).await), 1);
+    assert_eq!(warning_count(&observe(&generator, &first)), 1);
+    assert_eq!(warning_count(&observe(&generator, &second)), 1);
+    assert_eq!(warning_count(&observe(&generator, &third)), 1);
 
     let repeated_second =
         network_close_signal_with_fd("198.51.100.20", 443, 2_000, 4_500, false, Some(8));
     let repeated_first =
         network_close_signal_with_fd("203.0.113.10", 443, 1_000, 3_500, false, Some(8));
-    assert_eq!(
-        warning_count(&observe(&generator, &repeated_second).await),
-        0
-    );
-    assert_eq!(
-        warning_count(&observe(&generator, &repeated_first).await),
-        1
-    );
+    assert_eq!(warning_count(&observe(&generator, &repeated_second)), 0);
+    assert_eq!(warning_count(&observe(&generator, &repeated_first)), 1);
 }
 
-#[tokio::test]
-async fn open_only_network_event_does_not_infer_span() {
+#[test]
+fn open_only_network_event_does_not_infer_span() {
     let generator = TraceCorrelationGenerator::default();
     let signal = network_open_signal("203.0.113.10", 443, true);
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert!(outputs.is_empty());
 }
 
-async fn observe(
-    generator: &TraceCorrelationGenerator,
-    signal: &SignalEnvelope,
-) -> Vec<SignalEnvelope> {
-    let (tx, mut rx) = mpsc::channel(8);
-    generator
-        .observe(signal, &tx)
-        .await
-        .expect("generator succeeds");
-    drop(tx);
-
-    let mut outputs = Vec::new();
-    while let Some(output) = rx.recv().await {
-        outputs.push(output);
-    }
-    outputs
+fn observe(generator: &TraceCorrelationGenerator, signal: &SignalEnvelope) -> Vec<SignalEnvelope> {
+    generator.observe(signal).expect("generator succeeds")
 }
 
 fn service_path_key(outputs: &[SignalEnvelope]) -> String {

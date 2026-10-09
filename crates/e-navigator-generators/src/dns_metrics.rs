@@ -95,11 +95,8 @@ impl Generator<SignalEnvelope> for DnsMetricsGenerator {
         )
     }
 
-    fn observe_immediate(
-        &self,
-        signal: &SignalEnvelope,
-    ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
-        Some(self.outputs_for_signal(signal))
+    fn observe(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
+        self.outputs_for_signal(signal)
     }
 }
 
@@ -691,16 +688,15 @@ mod tests {
         NetworkProtocol, SignalEnvelope, SignalPayload,
     };
     use std::{cell::Cell, collections::BTreeMap};
-    use tokio::sync::mpsc;
 
     use super::*;
 
-    #[tokio::test]
-    async fn emits_dns_query_count_metric() {
+    #[test]
+    fn emits_dns_query_count_metric() {
         let generator = DnsMetricsGenerator::default();
         let query = dns_query_signal("API.Example.COM.", DnsQueryType::A, 100);
 
-        let outputs = observe(&generator, &query).await;
+        let outputs = observe(&generator, &query);
 
         let metric = dns_counter(&outputs, "dns.query.count");
         assert_eq!(metric.value, 1);
@@ -738,14 +734,14 @@ mod tests {
         assert_eq!(template_builds.get(), 1);
     }
 
-    #[tokio::test]
-    async fn emits_dns_response_code_counts_for_nxdomain_and_servfail() {
+    #[test]
+    fn emits_dns_response_code_counts_for_nxdomain_and_servfail() {
         let generator = DnsMetricsGenerator::default();
         let nxdomain = dns_response_signal("missing.example.com", DnsResponseCode::NxDomain, 100);
         let servfail = dns_response_signal("broken.example.com", DnsResponseCode::ServFail, 101);
 
-        let nxdomain_outputs = observe(&generator, &nxdomain).await;
-        let servfail_outputs = observe(&generator, &servfail).await;
+        let nxdomain_outputs = observe(&generator, &nxdomain);
+        let servfail_outputs = observe(&generator, &servfail);
 
         let nxdomain_metric = dns_counter(&nxdomain_outputs, "dns.response.code.count");
         let servfail_metric = dns_counter(&servfail_outputs, "dns.response.code.count");
@@ -761,12 +757,12 @@ mod tests {
         assert_eq!(servfail_metric.value, 1);
     }
 
-    #[tokio::test]
-    async fn emits_dns_lookup_latency_observation() {
+    #[test]
+    fn emits_dns_lookup_latency_observation() {
         let generator = DnsMetricsGenerator::default();
         let response = dns_response_signal("api.example.com", DnsResponseCode::NoError, 115);
 
-        let outputs = observe(&generator, &response).await;
+        let outputs = observe(&generator, &response);
 
         let latency = dns_latency(&outputs, "dns.lookup.duration");
         assert_eq!(latency.unit, "ns");
@@ -777,12 +773,12 @@ mod tests {
         assert_eq!(latency.query_name.as_deref(), Some("api.example.com"));
     }
 
-    #[tokio::test]
-    async fn emits_domain_dependency_edge_for_successful_response() {
+    #[test]
+    fn emits_domain_dependency_edge_for_successful_response() {
         let generator = DnsMetricsGenerator::default();
         let response = dns_response_signal("API.Example.COM.", DnsResponseCode::NoError, 115);
 
-        let outputs = observe(&generator, &response).await;
+        let outputs = observe(&generator, &response);
 
         let edge = dependency_edge(&outputs);
         assert_eq!(edge.destination.domain.as_deref(), Some("api.example.com"));
@@ -794,14 +790,14 @@ mod tests {
         assert_eq!(edge.source.container, Some(container_context()));
     }
 
-    #[tokio::test]
-    async fn bounds_domain_cardinality() {
+    #[test]
+    fn bounds_domain_cardinality() {
         let generator = DnsMetricsGenerator::with_domain_limit(1);
         let first = dns_query_signal("api.example.com", DnsQueryType::A, 100);
         let second = dns_query_signal("stripe.example.com", DnsQueryType::A, 101);
 
-        let first_outputs = observe(&generator, &first).await;
-        let second_outputs = observe(&generator, &second).await;
+        let first_outputs = observe(&generator, &first);
+        let second_outputs = observe(&generator, &second);
 
         assert_eq!(
             dns_counter(&first_outputs, "dns.query.count")
@@ -815,8 +811,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn malformed_dns_domains_do_not_create_domain_labels_or_edges() {
+    #[test]
+    fn malformed_dns_domains_do_not_create_domain_labels_or_edges() {
         let generator = DnsMetricsGenerator::default();
 
         for query_name in [
@@ -829,8 +825,7 @@ mod tests {
             let query_outputs = observe(
                 &generator,
                 &dns_query_signal(query_name, DnsQueryType::A, 100),
-            )
-            .await;
+            );
             assert_eq!(
                 dns_counter(&query_outputs, "dns.query.count").query_name,
                 None,
@@ -840,8 +835,7 @@ mod tests {
             let response_outputs = observe(
                 &generator,
                 &dns_response_signal(query_name, DnsResponseCode::NoError, 101),
-            )
-            .await;
+            );
             assert_eq!(
                 dns_counter(&response_outputs, "dns.response.code.count").query_name,
                 None,
@@ -856,13 +850,13 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn suppresses_duplicate_dependency_edges_for_identical_dns_responses() {
+    #[test]
+    fn suppresses_duplicate_dependency_edges_for_identical_dns_responses() {
         let generator = DnsMetricsGenerator::default();
         let response = dns_response_signal("api.example.com", DnsResponseCode::NoError, 115);
 
-        let first = observe(&generator, &response).await;
-        let second = observe(&generator, &response).await;
+        let first = observe(&generator, &response);
+        let second = observe(&generator, &response);
 
         assert!(
             first
@@ -876,8 +870,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn transaction_id_distinguishes_dns_events_with_the_same_timestamp() {
+    #[test]
+    fn transaction_id_distinguishes_dns_events_with_the_same_timestamp() {
         let generator = DnsMetricsGenerator::default();
         let mut first = dns_query_signal("cached.example.com", DnsQueryType::A, 115);
         let mut second = first.clone();
@@ -890,15 +884,15 @@ mod tests {
         };
         second_event.transaction_id = Some(2);
 
-        let first_outputs = observe(&generator, &first).await;
-        let second_outputs = observe(&generator, &second).await;
+        let first_outputs = observe(&generator, &first);
+        let second_outputs = observe(&generator, &second);
 
         assert_eq!(dns_counter(&first_outputs, "dns.query.count").value, 1);
         assert_eq!(dns_counter(&second_outputs, "dns.query.count").value, 2);
     }
 
-    #[tokio::test]
-    async fn bounds_counter_state_across_workload_container_and_server_dimensions() {
+    #[test]
+    fn bounds_counter_state_across_workload_container_and_server_dimensions() {
         let generator = DnsMetricsGenerator::with_limits(16, 1, 16, 16);
         let first = dns_query_with_dimensions(
             "api.example.com",
@@ -925,9 +919,9 @@ mod tests {
             102,
         );
 
-        let first_outputs = observe(&generator, &first).await;
-        let second_outputs = observe(&generator, &second).await;
-        let repeat_outputs = observe(&generator, &repeat).await;
+        let first_outputs = observe(&generator, &first);
+        let second_outputs = observe(&generator, &second);
+        let repeat_outputs = observe(&generator, &repeat);
 
         assert_eq!(dns_counter(&first_outputs, "dns.query.count").value, 1);
         assert!(
@@ -939,8 +933,8 @@ mod tests {
         assert_eq!(generator.suppression_counts().counters, 1);
     }
 
-    #[tokio::test]
-    async fn bounds_latency_and_edge_state_for_high_cardinality_dns_responses() {
+    #[test]
+    fn bounds_latency_and_edge_state_for_high_cardinality_dns_responses() {
         let generator = DnsMetricsGenerator::with_limits(16, 16, 1, 1);
         let first = dns_response_with_dimensions(
             "api.example.com",
@@ -967,9 +961,9 @@ mod tests {
             102,
         );
 
-        let first_outputs = observe(&generator, &first).await;
-        let second_outputs = observe(&generator, &second).await;
-        let repeat_outputs = observe(&generator, &repeat).await;
+        let first_outputs = observe(&generator, &first);
+        let second_outputs = observe(&generator, &second);
+        let repeat_outputs = observe(&generator, &repeat);
 
         assert_eq!(dns_latency(&first_outputs, "dns.lookup.duration").count, 1);
         assert!(dependency_edge(&first_outputs).observations == 1);
@@ -998,36 +992,22 @@ mod tests {
         assert_eq!(warned, vec![1, 2, 3, 4, 8, 16]);
     }
 
-    #[tokio::test]
-    async fn bounded_seen_dns_event_state_reaccepts_oldest_signal_after_fifo_eviction() {
+    #[test]
+    fn bounded_seen_dns_event_state_reaccepts_oldest_signal_after_fifo_eviction() {
         let generator = DnsMetricsGenerator::with_limits(1, 8, 8, 8);
         let first = dns_query_signal("api.example.com", DnsQueryType::A, 100);
 
-        assert!(!observe(&generator, &first).await.is_empty());
-        assert!(observe(&generator, &first).await.is_empty());
+        assert!(!observe(&generator, &first).is_empty());
+        assert!(observe(&generator, &first).is_empty());
         for timestamp in 101..=104 {
             let signal = dns_query_signal("api.example.com", DnsQueryType::A, timestamp);
-            assert!(!observe(&generator, &signal).await.is_empty());
+            assert!(!observe(&generator, &signal).is_empty());
         }
-        assert!(!observe(&generator, &first).await.is_empty());
+        assert!(!observe(&generator, &first).is_empty());
     }
 
-    async fn observe(
-        generator: &DnsMetricsGenerator,
-        signal: &SignalEnvelope,
-    ) -> Vec<SignalEnvelope> {
-        let (tx, mut rx) = mpsc::channel(8);
-        generator
-            .observe(signal, &tx)
-            .await
-            .expect("generator succeeds");
-        drop(tx);
-
-        let mut outputs = Vec::new();
-        while let Some(output) = rx.recv().await {
-            outputs.push(output);
-        }
-        outputs
+    fn observe(generator: &DnsMetricsGenerator, signal: &SignalEnvelope) -> Vec<SignalEnvelope> {
+        generator.observe(signal).expect("generator succeeds")
     }
 
     fn dns_counter<'a>(outputs: &'a [SignalEnvelope], name: &str) -> &'a DnsCounterMetric {

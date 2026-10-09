@@ -72,10 +72,7 @@ pub(crate) fn truncate_utf8_in_place(value: &mut String, max_bytes: usize) {
         return;
     }
 
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = value.floor_char_boundary(max_bytes);
     value.truncate(end);
 }
 

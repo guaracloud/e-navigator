@@ -205,14 +205,16 @@ remaining bottleneck boundary are in
 
 The built-in generators perform bounded synchronous derivation. The runner
 formerly sent those results through a fresh Tokio channel and an async-trait
-future for each accepted signal. They now use the existing immediate generator
+future for each accepted signal. At that point they used the immediate generator
 contract, while retaining equivalent async behavior for direct trait callers.
+The current generator contract has one synchronous `observe` method; both the
+runner and benchmark helper consume its returned vector directly.
 The runner also moves the returned vector after validating its 64-output limit
 instead of copying each item into a second vector.
 
-The benchmark helper was first changed to mirror the runner: use
-`observe_immediate` when present, otherwise create and drain the bounded async
-channel. A pre-change baseline was then saved and compared with 100 samples,
+For the historical measurement below, the benchmark helper mirrored the
+runner: use `observe_immediate` when present, otherwise create and drain the
+bounded async channel. A pre-change baseline was then saved and compared with 100 samples,
 five seconds of measurement, and two seconds of warmup:
 
 ```bash

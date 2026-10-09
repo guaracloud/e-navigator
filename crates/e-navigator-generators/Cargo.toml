@@ -15,6 +15,3 @@ e-navigator-core = { path = "../e-navigator-core" }
 e-navigator-protocol = { path = "../e-navigator-protocol" }
 e-navigator-signals = { path = "../e-navigator-signals" }
 tracing = { workspace = true }
-
-[dev-dependencies]
-tokio = { workspace = true }

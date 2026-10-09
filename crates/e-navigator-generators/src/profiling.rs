@@ -75,11 +75,8 @@ impl Generator<SignalEnvelope> for ProfilingGenerator {
         matches!(&signal.payload, SignalPayload::ProfileSampleObservation(_))
     }
 
-    fn observe_immediate(
-        &self,
-        signal: &SignalEnvelope,
-    ) -> Option<CoreResult<Vec<SignalEnvelope>>> {
-        Some(self.outputs_for_signal(signal))
+    fn observe(&self, signal: &SignalEnvelope) -> CoreResult<Vec<SignalEnvelope>> {
+        self.outputs_for_signal(signal)
     }
 }
 

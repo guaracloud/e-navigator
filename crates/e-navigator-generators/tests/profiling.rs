@@ -13,12 +13,11 @@ use e_navigator_signals::{
     ProfilingCorrelationKind, ProfilingFrame, ProfilingKind, SignalEnvelope, SignalPayload,
 };
 use std::collections::BTreeMap;
-use tokio::sync::mpsc;
 
-#[tokio::test]
-async fn synthetic_cpu_sample_generates_profiling_window() {
+#[test]
+fn synthetic_cpu_sample_generates_profiling_window() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
-    let outputs = observe(&generator, &sample_signal(1_500_000_000, Some(context()))).await;
+    let outputs = observe(&generator, &sample_signal(1_500_000_000, Some(context())));
 
     assert_eq!(outputs.len(), 1);
     assert_eq!(outputs[0].kind(), "profiling_session_observation");
@@ -46,8 +45,8 @@ async fn synthetic_cpu_sample_generates_profiling_window() {
     );
 }
 
-#[tokio::test]
-async fn event_driven_weights_are_summed_without_becoming_sample_counts() {
+#[test]
+fn event_driven_weights_are_summed_without_becoming_sample_counts() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let mut first = sample_signal(1_500_000_000, Some(context()));
     let mut second = sample_signal(1_500_000_001, Some(context()));
@@ -63,8 +62,8 @@ async fn event_driven_weights_are_summed_without_becoming_sample_counts() {
         }
     }
 
-    assert_eq!(observe(&generator, &first).await.len(), 1);
-    let outputs = observe(&generator, &second).await;
+    assert_eq!(observe(&generator, &first).len(), 1);
+    let outputs = observe(&generator, &second);
     let SignalPayload::ProfilingSessionObservation(window) = &outputs[0].payload else {
         panic!("expected profiling session");
     };
@@ -81,10 +80,10 @@ async fn event_driven_weights_are_summed_without_becoming_sample_counts() {
     );
 }
 
-#[tokio::test]
-async fn missing_attribution_emits_structured_warning() {
+#[test]
+fn missing_attribution_emits_structured_warning() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
-    let outputs = observe(&generator, &sample_signal(1_500_000_000, None)).await;
+    let outputs = observe(&generator, &sample_signal(1_500_000_000, None));
 
     assert!(outputs.iter().any(|signal| {
         matches!(
@@ -95,8 +94,8 @@ async fn missing_attribution_emits_structured_warning() {
     }));
 }
 
-#[tokio::test]
-async fn raw_resource_cpu_metric_does_not_create_profiling_output() {
+#[test]
+fn raw_resource_cpu_metric_does_not_create_profiling_output() {
     let generator = ProfilingGenerator::default();
     let signal = SignalEnvelope::node_cpu_observation(
         "source.host_resource",
@@ -119,46 +118,44 @@ async fn raw_resource_cpu_metric_does_not_create_profiling_output() {
         },
     );
 
-    assert!(observe(&generator, &signal).await.is_empty());
+    assert!(observe(&generator, &signal).is_empty());
 }
 
-#[tokio::test]
-async fn duplicate_samples_are_suppressed() {
+#[test]
+fn duplicate_samples_are_suppressed() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let signal = sample_signal(1_500_000_000, Some(context()));
 
-    assert_eq!(observe(&generator, &signal).await.len(), 1);
-    assert!(observe(&generator, &signal).await.is_empty());
+    assert_eq!(observe(&generator, &signal).len(), 1);
+    assert!(observe(&generator, &signal).is_empty());
 }
 
-#[tokio::test]
-async fn bounded_sample_dedupe_evicts_oldest_inserted_fingerprint() {
+#[test]
+fn bounded_sample_dedupe_evicts_oldest_inserted_fingerprint() {
     let generator = ProfilingGenerator::with_limits(8, 2, 8, 1_000_000_000);
     let first = sample_signal_with_stack(3_500_000_000, "stack:a", Some(context()));
     let second = sample_signal_with_stack(1_500_000_000, "stack:b", Some(context()));
     let third = sample_signal_with_stack(2_500_000_000, "stack:c", Some(context()));
 
-    assert_eq!(observe(&generator, &first).await.len(), 1);
-    assert_eq!(observe(&generator, &second).await.len(), 1);
-    assert_eq!(observe(&generator, &third).await.len(), 1);
+    assert_eq!(observe(&generator, &first).len(), 1);
+    assert_eq!(observe(&generator, &second).len(), 1);
+    assert_eq!(observe(&generator, &third).len(), 1);
 
-    assert!(observe(&generator, &second).await.is_empty());
-    assert_eq!(observe(&generator, &first).await.len(), 1);
+    assert!(observe(&generator, &second).is_empty());
+    assert_eq!(observe(&generator, &first).len(), 1);
 }
 
-#[tokio::test]
-async fn aggregation_is_deterministic() {
+#[test]
+fn aggregation_is_deterministic() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let first = observe(
         &generator,
         &sample_signal_with_stack(1_500_000_000, "stack:a", Some(context())),
-    )
-    .await;
+    );
     let second = observe(
         &generator,
         &sample_signal_with_stack(1_600_000_000, "stack:b", Some(context())),
-    )
-    .await;
+    );
 
     let SignalPayload::ProfilingSessionObservation(first_window) = &first[0].payload else {
         panic!("expected first profiling session");
@@ -172,8 +169,8 @@ async fn aggregation_is_deterministic() {
     assert_eq!(second_window.distinct_stack_count, 2);
 }
 
-#[tokio::test]
-async fn sampling_period_separates_profile_windows() {
+#[test]
+fn sampling_period_separates_profile_windows() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let first = sample_signal_with_stack(1_500_000_000, "stack:a", Some(context()));
     let mut second = sample_signal_with_stack(1_600_000_000, "stack:b", Some(context()));
@@ -181,8 +178,8 @@ async fn sampling_period_separates_profile_windows() {
         sample.sampling_period_nanos = Some(20_000_000);
     }
 
-    let first_outputs = observe(&generator, &first).await;
-    let second_outputs = observe(&generator, &second).await;
+    let first_outputs = observe(&generator, &first);
+    let second_outputs = observe(&generator, &second);
 
     let SignalPayload::ProfilingSessionObservation(first_window) = &first_outputs[0].payload else {
         panic!("expected first profiling session");
@@ -198,8 +195,8 @@ async fn sampling_period_separates_profile_windows() {
     assert_eq!(second_window.sampling_period_nanos, Some(20_000_000));
 }
 
-#[tokio::test]
-async fn bounded_state_evicts_old_windows_after_limit() {
+#[test]
+fn bounded_state_evicts_old_windows_after_limit() {
     let generator = ProfilingGenerator::with_limits(1, 16, 8, 1_000_000_000);
 
     assert_eq!(
@@ -207,7 +204,6 @@ async fn bounded_state_evicts_old_windows_after_limit() {
             &generator,
             &sample_signal_with_stack(1_500_000_000, "stack:a", Some(context())),
         )
-        .await
         .len(),
         1
     );
@@ -216,15 +212,13 @@ async fn bounded_state_evicts_old_windows_after_limit() {
             &generator,
             &sample_signal_with_stack(2_500_000_000, "stack:b", Some(context())),
         )
-        .await
         .len(),
         1
     );
     let recreated = observe(
         &generator,
         &sample_signal_with_stack(1_600_000_000, "stack:c", Some(context())),
-    )
-    .await;
+    );
     let SignalPayload::ProfilingSessionObservation(window) = &recreated[0].payload else {
         panic!("expected recreated profiling session");
     };
@@ -232,10 +226,10 @@ async fn bounded_state_evicts_old_windows_after_limit() {
     assert_eq!(window.distinct_stack_count, 1);
 }
 
-#[tokio::test]
-async fn preserves_attribution_from_original_sample() {
+#[test]
+fn preserves_attribution_from_original_sample() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
-    let outputs = observe(&generator, &sample_signal(1_500_000_000, Some(context()))).await;
+    let outputs = observe(&generator, &sample_signal(1_500_000_000, Some(context())));
     let SignalPayload::ProfilingSessionObservation(window) = &outputs[0].payload else {
         panic!("expected profiling session");
     };
@@ -256,8 +250,8 @@ async fn preserves_attribution_from_original_sample() {
     );
 }
 
-#[tokio::test]
-async fn generated_sessions_filter_sensitive_profile_attributes() {
+#[test]
+fn generated_sessions_filter_sensitive_profile_attributes() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let mut signal = sample_signal(1_500_000_000, Some(context()));
     if let SignalPayload::ProfileSampleObservation(sample) = &mut signal.payload {
@@ -297,7 +291,7 @@ async fn generated_sessions_filter_sensitive_profile_attributes() {
         ]);
     }
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::ProfilingSessionObservation(window) = &outputs[0].payload else {
         panic!("expected profiling session");
@@ -320,8 +314,8 @@ async fn generated_sessions_filter_sensitive_profile_attributes() {
     );
 }
 
-#[tokio::test]
-async fn generated_sessions_merge_safe_attributes_from_later_samples() {
+#[test]
+fn generated_sessions_merge_safe_attributes_from_later_samples() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let mut first = sample_signal_with_stack(1_500_000_000, "stack:a", Some(context()));
     let mut second = sample_signal_with_stack(1_600_000_000, "stack:b", Some(context()));
@@ -352,8 +346,8 @@ async fn generated_sessions_merge_safe_attributes_from_later_samples() {
         ];
     }
 
-    assert_eq!(observe(&generator, &first).await.len(), 1);
-    let outputs = observe(&generator, &second).await;
+    assert_eq!(observe(&generator, &first).len(), 1);
+    let outputs = observe(&generator, &second);
 
     let SignalPayload::ProfilingSessionObservation(window) = &outputs[0].payload else {
         panic!("expected profiling session");
@@ -382,20 +376,18 @@ async fn generated_sessions_merge_safe_attributes_from_later_samples() {
     );
 }
 
-#[tokio::test]
-async fn later_attributed_samples_do_not_merge_with_unattributed_windows() {
+#[test]
+fn later_attributed_samples_do_not_merge_with_unattributed_windows() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
 
     let first = observe(
         &generator,
         &sample_signal_with_stack(1_500_000_000, "stack:a", None),
-    )
-    .await;
+    );
     let second = observe(
         &generator,
         &sample_signal_with_stack(1_600_000_000, "stack:b", Some(context())),
-    )
-    .await;
+    );
 
     let SignalPayload::ProfilingSessionObservation(first_window) = &first[0].payload else {
         panic!("expected first profiling session");
@@ -417,8 +409,8 @@ async fn later_attributed_samples_do_not_merge_with_unattributed_windows() {
     assert_eq!(second_window.distinct_stack_count, 1);
 }
 
-#[tokio::test]
-async fn workload_identity_separates_processless_profile_windows() {
+#[test]
+fn workload_identity_separates_processless_profile_windows() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let first_context = context();
     let mut second_context = context();
@@ -433,8 +425,8 @@ async fn workload_identity_separates_processless_profile_windows() {
     clear_process(&mut first_signal);
     clear_process(&mut second_signal);
 
-    let first = observe(&generator, &first_signal).await;
-    let second = observe(&generator, &second_signal).await;
+    let first = observe(&generator, &first_signal);
+    let second = observe(&generator, &second_signal);
 
     let SignalPayload::ProfilingSessionObservation(first_window) = &first[0].payload else {
         panic!("expected first profiling session");
@@ -447,16 +439,16 @@ async fn workload_identity_separates_processless_profile_windows() {
     assert_eq!(second_window.observed_sample_count, 2);
 }
 
-#[tokio::test]
-async fn profile_id_distinguishes_missing_pid_from_pid_zero() {
+#[test]
+fn profile_id_distinguishes_missing_pid_from_pid_zero() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let mut processless = sample_signal_with_stack(1_500_000_000, "stack:a", None);
     let mut pid_zero = sample_signal_with_stack(1_600_000_000, "stack:b", None);
     clear_process(&mut processless);
     set_pid(&mut pid_zero, 0);
 
-    let first = observe(&generator, &processless).await;
-    let second = observe(&generator, &pid_zero).await;
+    let first = observe(&generator, &processless);
+    let second = observe(&generator, &pid_zero);
 
     let SignalPayload::ProfilingSessionObservation(first_window) = &first[0].payload else {
         panic!("expected first profiling session");
@@ -467,8 +459,8 @@ async fn profile_id_distinguishes_missing_pid_from_pid_zero() {
     assert_ne!(first_window.profile_id, second_window.profile_id);
 }
 
-#[tokio::test]
-async fn per_window_stack_and_sample_counts_are_bounded() {
+#[test]
+fn per_window_stack_and_sample_counts_are_bounded() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
 
     let mut last = Vec::new();
@@ -480,8 +472,7 @@ async fn per_window_stack_and_sample_counts_are_bounded() {
                 &format!("stack:{index:016x}"),
                 Some(context()),
             ),
-        )
-        .await;
+        );
     }
 
     let SignalPayload::ProfilingSessionObservation(window) = &last[0].payload else {
@@ -492,13 +483,13 @@ async fn per_window_stack_and_sample_counts_are_bounded() {
     assert_eq!(window.dropped_sample_count, 76);
 }
 
-#[tokio::test]
-async fn dropped_profile_samples_emit_structured_warning() {
+#[test]
+fn dropped_profile_samples_emit_structured_warning() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let mut signal = sample_signal_with_stack(1_500_000_000, "stack:a", Some(context()));
     set_sample_count(&mut signal, 70);
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     let SignalPayload::ProfilingSessionObservation(window) = &outputs[0].payload else {
         panic!("expected profiling session");
@@ -532,13 +523,13 @@ async fn dropped_profile_samples_emit_structured_warning() {
     }));
 }
 
-#[tokio::test]
-async fn dropped_unattributed_profile_samples_emit_distinct_warnings() {
+#[test]
+fn dropped_unattributed_profile_samples_emit_distinct_warnings() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let mut signal = sample_signal_with_stack(1_500_000_000, "stack:a", None);
     set_sample_count(&mut signal, 70);
 
-    let outputs = observe(&generator, &signal).await;
+    let outputs = observe(&generator, &signal);
 
     assert!(outputs.iter().any(|signal| {
         matches!(
@@ -556,8 +547,8 @@ async fn dropped_unattributed_profile_samples_emit_distinct_warnings() {
     }));
 }
 
-#[tokio::test]
-async fn duplicate_suppression_distinguishes_thread_and_sample_count() {
+#[test]
+fn duplicate_suppression_distinguishes_thread_and_sample_count() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let first = sample_signal_with_stack(1_500_000_000, "stack:a", Some(context()));
     let mut second = sample_signal_with_stack(1_500_000_000, "stack:a", Some(context()));
@@ -566,16 +557,16 @@ async fn duplicate_suppression_distinguishes_thread_and_sample_count() {
         sample.sample_count = 3;
     }
 
-    assert_eq!(observe(&generator, &first).await.len(), 1);
-    let outputs = observe(&generator, &second).await;
+    assert_eq!(observe(&generator, &first).len(), 1);
+    let outputs = observe(&generator, &second);
     let SignalPayload::ProfilingSessionObservation(window) = &outputs[0].payload else {
         panic!("expected profiling session");
     };
     assert_eq!(window.observed_sample_count, 5);
 }
 
-#[tokio::test]
-async fn warning_dedupe_uses_warning_fingerprint_not_sample_fingerprint() {
+#[test]
+fn warning_dedupe_uses_warning_fingerprint_not_sample_fingerprint() {
     let generator = ProfilingGenerator::with_limits(8, 16, 8, 1_000_000_000);
     let first = sample_signal_with_stack(1_500_000_000, "stack:a", None);
     let mut second = sample_signal_with_stack(1_500_000_000, "stack:a", None);
@@ -584,11 +575,8 @@ async fn warning_dedupe_uses_warning_fingerprint_not_sample_fingerprint() {
         sample.sample_count = 3;
     }
 
-    assert_eq!(
-        profiling_warning_count(&observe(&generator, &first).await),
-        1
-    );
-    let second_outputs = observe(&generator, &second).await;
+    assert_eq!(profiling_warning_count(&observe(&generator, &first)), 1);
+    let second_outputs = observe(&generator, &second);
 
     let SignalPayload::ProfilingSessionObservation(window) = &second_outputs[0].payload else {
         panic!("expected profiling session");
@@ -597,52 +585,33 @@ async fn warning_dedupe_uses_warning_fingerprint_not_sample_fingerprint() {
     assert_eq!(profiling_warning_count(&second_outputs), 0);
 }
 
-#[tokio::test]
-async fn bounded_warning_dedupe_evicts_oldest_inserted_fingerprint() {
+#[test]
+fn bounded_warning_dedupe_evicts_oldest_inserted_fingerprint() {
     let generator = ProfilingGenerator::with_limits(8, 16, 2, 1_000_000_000);
     let first = sample_signal_with_stack(3_500_000_000, "stack:a", None);
     let second = sample_signal_with_stack(1_500_000_000, "stack:b", None);
     let third = sample_signal_with_stack(2_500_000_000, "stack:c", None);
 
-    assert_eq!(
-        profiling_warning_count(&observe(&generator, &first).await),
-        1
-    );
-    assert_eq!(
-        profiling_warning_count(&observe(&generator, &second).await),
-        1
-    );
-    assert_eq!(
-        profiling_warning_count(&observe(&generator, &third).await),
-        1
-    );
+    assert_eq!(profiling_warning_count(&observe(&generator, &first)), 1);
+    assert_eq!(profiling_warning_count(&observe(&generator, &second)), 1);
+    assert_eq!(profiling_warning_count(&observe(&generator, &third)), 1);
 
     let mut repeated_second = sample_signal_with_stack(1_500_000_000, "stack:b", None);
     set_thread_id(&mut repeated_second, 99);
     let mut repeated_first = sample_signal_with_stack(3_500_000_000, "stack:a", None);
     set_thread_id(&mut repeated_first, 99);
     assert_eq!(
-        profiling_warning_count(&observe(&generator, &repeated_second).await),
+        profiling_warning_count(&observe(&generator, &repeated_second)),
         0
     );
     assert_eq!(
-        profiling_warning_count(&observe(&generator, &repeated_first).await),
+        profiling_warning_count(&observe(&generator, &repeated_first)),
         1
     );
 }
 
-async fn observe(generator: &ProfilingGenerator, signal: &SignalEnvelope) -> Vec<SignalEnvelope> {
-    let (tx, mut rx) = mpsc::channel(8);
-    generator
-        .observe(signal, &tx)
-        .await
-        .expect("generator observes");
-    drop(tx);
-    let mut outputs = Vec::new();
-    while let Some(output) = rx.recv().await {
-        outputs.push(output);
-    }
-    outputs
+fn observe(generator: &ProfilingGenerator, signal: &SignalEnvelope) -> Vec<SignalEnvelope> {
+    generator.observe(signal).expect("generator succeeds")
 }
 
 fn profiling_warning_count(outputs: &[SignalEnvelope]) -> usize {
