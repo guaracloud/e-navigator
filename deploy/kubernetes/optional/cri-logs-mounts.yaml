@@ -1,0 +1,26 @@
+# Strategic merge patch for the static DaemonSet. Also opt in through configmap.yaml.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: e-navigator
+  namespace: e-navigator-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: e-navigator
+          volumeMounts:
+            - name: cri-pod-logs
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: cri-checkpoints
+              mountPath: /var/lib/e-navigator/cri-logs
+      volumes:
+        - name: cri-pod-logs
+          hostPath:
+            path: /var/log/pods
+            type: Directory
+        - name: cri-checkpoints
+          hostPath:
+            path: /var/lib/e-navigator/cri-logs
+            type: DirectoryOrCreate

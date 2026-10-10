@@ -869,5 +869,36 @@
       "kubernetes": null,
       "attributes": []
     }
+  },
+  {
+    "schema_version": 1,
+    "kind": "application_log_observation",
+    "source": "source.cri_logs",
+    "host": "node-a",
+    "payload": {
+      "namespace": "default",
+      "pod_name": "app",
+      "pod_uid": "uid",
+      "container_name": "web",
+      "restart_count": 0,
+      "stream": "stdout",
+      "timestamp": "2026-10-10T12:00:00.000000001Z",
+      "observed_at_unix_nanos": 1,
+      "body": "private-test-body",
+      "body_bytes": 17,
+      "truncated": false,
+      "incomplete": false,
+      "invalid_utf8": false
+    }
+  },
+  {
+    "schema_version": 1,
+    "kind": "log_collection_warning",
+    "source": "source.cri_logs",
+    "host": "node-a",
+    "payload": {
+      "outcome": "unsupported_format",
+      "count": 1
+    }
   }
 ]

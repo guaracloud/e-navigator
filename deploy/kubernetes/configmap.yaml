@@ -62,6 +62,13 @@ data:
     max_fds_per_process = 1024
     max_file_bytes = 131072
 
+    [cri_logs]
+    enabled = false
+    include_body = false
+    root = "/var/log/pods"
+    checkpoint_dir = "/var/lib/e-navigator/cri-logs"
+    initial_read = "beginning"
+
     [dns_source]
     max_packet_bytes = 512
     max_preview_bytes = 160
@@ -188,6 +195,10 @@ data:
 
     [[modules]]
     name = "source.aya_cpu_profile"
+    enabled = false
+
+    [[modules]]
+    name = "source.cri_logs"
     enabled = false
 
     [[modules]]

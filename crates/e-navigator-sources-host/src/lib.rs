@@ -2,6 +2,10 @@
 //! Bounded host resource collection from procfs, sysfs, and cgroups.
 
 mod cgroup;
+#[cfg(unix)]
+mod cri_logs;
+#[cfg(unix)]
+pub use cri_logs::CriLogSource;
 mod config;
 mod filesystem;
 mod model;

@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 known_modules=(
+  "source.cri_logs"
   "source.aya_exec"
   "source.aya_network"
   "source.aya_dns"

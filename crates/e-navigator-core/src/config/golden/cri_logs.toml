@@ -1,0 +1,12 @@
+enabled = true
+include_body = true
+root = "/var/log/pods"
+checkpoint_dir = "/var/lib/e-navigator/cri-logs"
+initial_read = "end"
+poll_interval_millis = 1000
+assembly_timeout_millis = 5000
+retained_file_millis = 300000
+max_files = 128
+max_discovery_entries = 4096
+max_record_bytes = 16384
+max_read_bytes_per_file = 65536

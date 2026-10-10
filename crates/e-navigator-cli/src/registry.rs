@@ -127,6 +127,26 @@ pub(crate) fn build_registry(
         )));
     }
 
+    if matches!(source, SourceMode::Unified | SourceMode::AyaExec)
+        && config.cri_logs.enabled
+        && config.module_enabled("source.cri_logs")
+    {
+        #[cfg(unix)]
+        {
+            registry = registry.with_source(Box::new(e_navigator_sources_host::CriLogSource::new(
+                config.cri_logs.clone(),
+                host.clone(),
+            )));
+        }
+        #[cfg(not(unix))]
+        {
+            return Err(e_navigator_core::CoreError::ModuleFailed {
+                module: "source.cri_logs".into(),
+                message: "CRI logs require Unix".into(),
+            });
+        }
+    }
+
     if matches!(source, SourceMode::Unified | SourceMode::AyaCpuProfile)
         && config.cpu_profile_source.enabled
         && config.module_enabled("source.aya_cpu_profile")
@@ -783,6 +803,31 @@ mod tests {
             line.name == "e_navigator_ebpf_source_protocol_redis_ambiguous_state_transitions_total"
                 && line.value == "9"
         }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cri_logs_requires_explicit_module_and_config_and_preserves_synthetic_mode() {
+        let mut config = RuntimeConfig::default();
+        config.cri_logs.enabled = true;
+        assert!(
+            !source_names(&build_test_registry(&config, SourceMode::Unified))
+                .contains(&"source.cri_logs")
+        );
+        set_module_enabled(&mut config, "source.cri_logs", true);
+        assert!(
+            source_names(&build_test_registry(&config, SourceMode::Unified))
+                .contains(&"source.cri_logs")
+        );
+        assert_eq!(
+            source_names(&build_test_registry(&config, SourceMode::Synthetic)),
+            ["source.synthetic_exec"]
+        );
+        config.cri_logs.enabled = false;
+        assert!(
+            !source_names(&build_test_registry(&config, SourceMode::Unified))
+                .contains(&"source.cri_logs")
+        );
     }
 
     #[test]

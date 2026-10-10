@@ -63,6 +63,8 @@ const MAX_ENVELOPE_STRING_BYTES: usize = 256;
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SignalKind {
+    ApplicationLogObservation,
+    LogCollectionWarning,
     Exec,
     ProcessExit,
     ProcessLifecycleDuration,
@@ -155,6 +157,8 @@ macro_rules! define_signal_payload_inventory {
 }
 
 define_signal_payload_inventory! {
+    ApplicationLogObservation(crate::ApplicationLogObservation) => "application_log_observation",
+    LogCollectionWarning(crate::LogCollectionWarning) => "log_collection_warning",
     Exec(ExecEvent) => "exec",
     ProcessExit(ProcessExitEvent) => "process_exit",
     ProcessLifecycleDuration(ProcessLifecycleDurationEvent) => "process_lifecycle_duration",
@@ -271,6 +275,27 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
 }
 
 impl SignalEnvelope {
+    pub fn application_log(
+        source: impl Into<String>,
+        host: Option<String>,
+        mut event: crate::ApplicationLogObservation,
+    ) -> Self {
+        crate::logs::sanitize_log(&mut event);
+        Self::new(
+            source,
+            host,
+            SignalPayload::ApplicationLogObservation(event),
+        )
+    }
+
+    pub fn log_collection_warning(
+        source: impl Into<String>,
+        host: Option<String>,
+        warning: crate::LogCollectionWarning,
+    ) -> Self {
+        Self::new(source, host, SignalPayload::LogCollectionWarning(warning))
+    }
+
     pub fn exec(source: impl Into<String>, host: Option<String>, mut event: ExecEvent) -> Self {
         sanitize_exec_event(&mut event);
         Self::new(source, host, SignalPayload::Exec(event))

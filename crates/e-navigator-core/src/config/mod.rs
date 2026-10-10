@@ -3,6 +3,7 @@ mod attribution;
 mod bounds;
 mod capture_filter;
 mod cpu_profile;
+mod cri_logs;
 mod dns_metrics;
 mod dns_source;
 mod ebpf;
@@ -32,6 +33,7 @@ pub use capture_filter::{
     CaptureFilterConfig, CapturePosture, CgroupDiscoveryMode, WorkloadSelectorConfig,
 };
 pub use cpu_profile::{CpuProfileBackpressure, CpuProfileCppDemangle, CpuProfileSourceConfig};
+pub use cri_logs::{CriLogsConfig, LogInitialRead};
 pub use dns_metrics::DnsMetricsConfig;
 pub use dns_source::DnsSourceConfig;
 pub use ebpf::{EbpfConfig, EbpfEventTransport, EbpfNetworkIoHook};

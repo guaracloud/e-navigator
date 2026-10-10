@@ -48,6 +48,7 @@ fn default_config_is_valid_and_preserves_expected_modules() {
     assert_eq!(
         config.modules,
         vec![
+            ModuleConfig::disabled("source.cri_logs"),
             ModuleConfig::enabled("source.aya_exec"),
             ModuleConfig::enabled("source.aya_network"),
             ModuleConfig::disabled("source.aya_dns"),
@@ -1053,7 +1054,7 @@ fn unknown_module_names_are_invalid_and_list_known_modules() {
             ],
             ..RuntimeConfig::default()
         },
-        "unknown module 'generator.dns_typo'; known modules: source.aya_exec, source.aya_network, source.aya_dns, source.aya_http, source.aya_protocol, source.aya_tls, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.peer_flow_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, sink.json_stdout, sink.prometheus_http, sink.otlp_http",
+        "unknown module 'generator.dns_typo'; known modules: source.cri_logs, source.aya_exec, source.aya_network, source.aya_dns, source.aya_http, source.aya_protocol, source.aya_tls, source.aya_cpu_profile, source.host_resource, source.synthetic_exec, processor.container_attribution, generator.resource_metrics, generator.network_metrics, generator.peer_flow_metrics, generator.dns_metrics, generator.trace_correlation, generator.request_correlation, generator.profiling, generator.dependency_graph, generator.runtime_security, sink.json_stdout, sink.prometheus_http, sink.otlp_http",
     );
 }
 
@@ -3705,4 +3706,46 @@ fn capture_filter_rejects_conflicting_exists_rules() {
         },
         "capture_filter label 'tier' cannot both exist and not exist",
     );
+}
+
+#[test]
+fn cri_log_config_defaults_and_golden_serialization() {
+    let config = toml::from_str::<RuntimeConfig>(
+        "[cri_logs]\nenabled = true\ninclude_body = true\ninitial_read = 'end'\n",
+    )
+    .expect("config");
+    assert!(config.validate().is_ok());
+    assert_eq!(
+        toml::to_string(&config.cri_logs).expect("encode"),
+        include_str!("golden/cri_logs.toml")
+    );
+    assert!(!RuntimeConfig::default().cri_logs.enabled);
+    assert!(!RuntimeConfig::default().cri_logs.include_body);
+}
+
+#[test]
+fn cri_log_bounds_paths_and_unknown_options_are_rejected() {
+    for setting in [
+        "root = 'relative'",
+        "root = '/'",
+        "root = '/logs/../pods'",
+        "checkpoint_dir = '/var/log/pods/state'",
+        "poll_interval_millis = 0",
+        "assembly_timeout_millis = 1",
+        "retained_file_millis = 1",
+        "max_files = 0",
+        "max_files = 1025",
+        "max_discovery_entries = 1",
+        "max_record_bytes = 65537",
+        "max_read_bytes_per_file = 1",
+        "max_files = 1024\nmax_record_bytes = 65536",
+        "future_option = true",
+        "initial_read = 'guess'",
+    ] {
+        assert!(
+            toml::from_str::<RuntimeConfig>(&format!("[cri_logs]\n{setting}\n"))
+                .map_or(true, |c| c.validate().is_err()),
+            "accepted {setting}"
+        );
+    }
 }

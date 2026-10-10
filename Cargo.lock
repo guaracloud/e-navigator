@@ -652,6 +652,9 @@ dependencies = [
  "e-navigator-core",
  "e-navigator-signals",
  "libc",
+ "rustix",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]

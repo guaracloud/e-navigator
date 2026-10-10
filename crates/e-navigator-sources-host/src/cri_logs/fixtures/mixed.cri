@@ -1,0 +1,5 @@
+2026-10-10T12:00:00Z stdout P hel
+2026-10-10T12:00:01Z stderr F err
+2026-10-10T12:00:02Z stdout F lo
+2026-10-10T12:00:03Z stdout F ÿ
+invalid record

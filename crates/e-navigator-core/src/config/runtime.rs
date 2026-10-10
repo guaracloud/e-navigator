@@ -4,11 +4,11 @@ use std::collections::BTreeSet;
 use super::modules::{default_modules, is_known_module_name, known_module_names};
 use super::{
     ArgvCaptureConfig, AttributionConfig, CaptureFilterConfig, ConfigError, ConfigResult,
-    CpuProfileSourceConfig, DnsMetricsConfig, DnsSourceConfig, EbpfConfig, HttpSourceConfig,
-    JsonStdoutConfig, ModuleConfig, NetworkMetricsConfig, OtlpHttpConfig, ProfilingConfig,
-    PrometheusHttpConfig, ProtocolSourceConfig, RequestCorrelationConfig, ResourceMetricsConfig,
-    ResourceSourceConfig, RuntimeSecurityConfig, SourceSupervisorConfig, TlsSourceConfig,
-    TraceCorrelationConfig, bounds::validate_nonzero_bounded,
+    CpuProfileSourceConfig, CriLogsConfig, DnsMetricsConfig, DnsSourceConfig, EbpfConfig,
+    HttpSourceConfig, JsonStdoutConfig, ModuleConfig, NetworkMetricsConfig, OtlpHttpConfig,
+    ProfilingConfig, PrometheusHttpConfig, ProtocolSourceConfig, RequestCorrelationConfig,
+    ResourceMetricsConfig, ResourceSourceConfig, RuntimeSecurityConfig, SourceSupervisorConfig,
+    TlsSourceConfig, TraceCorrelationConfig, bounds::validate_nonzero_bounded,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +40,8 @@ pub struct RuntimeConfig {
     pub resource_source: ResourceSourceConfig,
     #[serde(default)]
     pub dns_source: DnsSourceConfig,
+    #[serde(default)]
+    pub cri_logs: CriLogsConfig,
     #[serde(default)]
     pub http_source: HttpSourceConfig,
     #[serde(default)]
@@ -84,6 +86,7 @@ impl Default for RuntimeConfig {
             runtime_security: RuntimeSecurityConfig::default(),
             resource_source: ResourceSourceConfig::default(),
             dns_source: DnsSourceConfig::default(),
+            cri_logs: CriLogsConfig::default(),
             http_source: HttpSourceConfig::default(),
             protocol_source: ProtocolSourceConfig::default(),
             tls_source: TlsSourceConfig::default(),
@@ -174,6 +177,7 @@ impl RuntimeConfig {
         self.runtime_security.validate()?;
         self.resource_source.validate()?;
         self.dns_source.validate()?;
+        self.cri_logs.validate()?;
         self.http_source.validate()?;
         if self.http_source.context_propagation.enabled && !self.module_enabled("source.aya_http") {
             return Err(ConfigError::invalid_value(
