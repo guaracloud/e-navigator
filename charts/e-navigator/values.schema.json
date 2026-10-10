@@ -139,7 +139,13 @@
     },
     "service": { "type": "object" },
     "serviceMonitor": { "type": "object" },
-    "hostPaths": { "type": "object" }
+    "hostPaths": { "type": "object" },
+    "criLogs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "mountsEnabled": { "type": "boolean" } },
+      "required": ["mountsEnabled"]
+    }
   },
   "definitions": {
     "image": {

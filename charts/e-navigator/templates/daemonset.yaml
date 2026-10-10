@@ -114,6 +114,13 @@ spec:
             - name: host-cgroup
               mountPath: /host/cgroup
               readOnly: true
+            {{- if .Values.criLogs.mountsEnabled }}
+            - name: cri-pod-logs
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: cri-checkpoints
+              mountPath: /var/lib/e-navigator/cri-logs
+            {{- end }}
       volumes:
         - name: config
           configMap:
@@ -134,3 +141,13 @@ spec:
           hostPath:
             path: {{ .Values.hostPaths.cgroup.path }}
             type: {{ .Values.hostPaths.cgroup.type }}
+        {{- if .Values.criLogs.mountsEnabled }}
+        - name: cri-pod-logs
+          hostPath:
+            path: /var/log/pods
+            type: Directory
+        - name: cri-checkpoints
+          hostPath:
+            path: /var/lib/e-navigator/cri-logs
+            type: DirectoryOrCreate
+        {{- end }}

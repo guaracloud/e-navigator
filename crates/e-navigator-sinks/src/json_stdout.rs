@@ -67,13 +67,16 @@ pub fn serialize_signal_line(signal: &SignalEnvelope) -> CoreResult<Vec<u8>> {
 fn sanitize_signal_for_stdout(signal: &SignalEnvelope) -> Cow<'_, SignalEnvelope> {
     if !matches!(
         signal.payload,
-        SignalPayload::Exec(_) | SignalPayload::RuntimeSecurityFinding(_)
+        SignalPayload::Exec(_)
+            | SignalPayload::RuntimeSecurityFinding(_)
+            | SignalPayload::ApplicationLogObservation(_)
     ) {
         return Cow::Borrowed(signal);
     }
 
     let mut sanitized = signal.clone();
     match &mut sanitized.payload {
+        SignalPayload::ApplicationLogObservation(event) => event.body = None,
         SignalPayload::Exec(event) => redact_argv(&mut event.arguments),
         SignalPayload::RuntimeSecurityFinding(finding) => {
             redact_argv(&mut finding.matched_process.arguments);
@@ -171,6 +174,23 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+
+    #[test]
+    fn application_log_bodies_never_enter_stdout() {
+        let signal: SignalEnvelope = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"kind":"application_log_observation","source":"source.cri_logs","host":null,
+            "payload":{"namespace":"ns","pod_name":"app","pod_uid":"uid","container_name":"web","restart_count":0,
+            "stream":"stdout","timestamp":"2026-10-10T00:00:00Z","observed_at_unix_nanos":1,"body":"private-test-body",
+            "body_bytes":17,"truncated":false,"incomplete":false,"invalid_utf8":false}
+        })).expect("fixture");
+        let bytes = serialize_signal_line(&signal).expect("serialize");
+        let value: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert!(value["payload"]["body"].is_null());
+        assert!(!String::from_utf8_lossy(&bytes).contains("private-test-body"));
+        assert!(
+            matches!(signal.payload, SignalPayload::ApplicationLogObservation(ref log) if log.body.is_some())
+        );
+    }
 
     #[test]
     fn topology_mode_emits_only_topology_contracts() {

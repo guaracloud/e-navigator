@@ -59,6 +59,31 @@ for expected in 'updateStrategy:' 'maxUnavailable: 10%' 'requests:' 'cpu: 150m' 
   fi
 done
 
+render_chart cri_mounts --set criLogs.mountsEnabled=true
+python3 - "$tmp_dir/default.yaml" "$tmp_dir/cri_mounts.yaml" <<'PYTEST'
+import pathlib, re, sys
+
+def daemonset(path):
+    for doc in pathlib.Path(path).read_text().split("---"):
+        if re.search(r"^kind: DaemonSet$", doc, re.M):
+            return doc
+    raise AssertionError("DaemonSet missing")
+
+default, enabled = map(daemonset, sys.argv[1:])
+for name in ("cri-pod-logs", "cri-checkpoints"):
+    assert f"name: {name}" not in default, "disabled chart must omit log mounts"
+    assert enabled.count(f"name: {name}") == 2, "exactly one mount and volume"
+assert re.search(r"name: cri-pod-logs\n\s+mountPath: /var/log/pods\n\s+readOnly: true", enabled)
+assert re.search(r"name: cri-pod-logs\n\s+hostPath:\n\s+path: /var/log/pods\n\s+type: Directory\n", enabled)
+assert re.search(r"name: cri-checkpoints\n\s+mountPath: /var/lib/e-navigator/cri-logs", enabled)
+assert re.search(r"name: cri-checkpoints\n\s+hostPath:\n\s+path: /var/lib/e-navigator/cri-logs\n\s+type: DirectoryOrCreate", enabled)
+assert default.split("securityContext:")[1].split("volumeMounts:")[0] == enabled.split("securityContext:")[1].split("volumeMounts:")[0], "log mounts must not change security privileges"
+static = pathlib.Path("deploy/kubernetes/optional/cri-logs-mounts.yaml").read_text()
+for path in ("/var/log/pods", "/var/lib/e-navigator/cri-logs"):
+    assert static.count(path) == 2
+assert re.search(r"name: cri-pod-logs\n\s+mountPath: /var/log/pods\n\s+readOnly: true", static)
+PYTEST
+
 render_chart service_only --set service.enabled=true
 expect_no_kind "$tmp_dir/service_only.yaml" Service
 expect_no_kind "$tmp_dir/service_only.yaml" ServiceMonitor

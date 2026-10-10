@@ -54,6 +54,8 @@ operational documentation. Start with the path that matches your goal.
 - [Release verification](release-verification.md), independently verify a
   release before rollout.
 
+- [CRI application log collection](cri-logs.md), configure bounded collection and read-position recovery.
+
 ## Architecture Decisions
 
 - [ADR 0001, standalone native contracts](adr/0001-standalone-native-contracts.md)
@@ -72,6 +74,7 @@ operational documentation. Start with the path that matches your goal.
 - [ADR 0014, controlled cumulative head-to-head benchmark](adr/0014-controlled-head-to-head-benchmark.md)
 - [ADR 0015, peer flow metrics and opt-in HTTP/1 propagation](adr/0015-peer-flow-metrics-and-opt-in-http1-propagation.md)
 - [ADR 0016, non-intrusive profiling parity](adr/0016-non-intrusive-profiling-parity.md)
+- [ADR 0018, bounded CRI logs and read checkpoints](adr/0018-cri-log-collection.md)
 - [ADR 0017, OpenTelemetry zero-code coexistence](adr/0017-otel-zero-code-coexistence.md)
 
 ## Source-Of-Truth Rules

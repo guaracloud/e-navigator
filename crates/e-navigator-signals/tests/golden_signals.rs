@@ -27,6 +27,8 @@ fn golden_signal_families_round_trip_without_schema_drift() {
     assert_eq!(
         seen,
         BTreeSet::from([
+            "application_log_observation".to_string(),
+            "log_collection_warning".to_string(),
             "cgroup_cpu_observation".to_string(),
             "cgroup_file_descriptor_observation".to_string(),
             "cgroup_memory_observation".to_string(),

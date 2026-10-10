@@ -46,6 +46,11 @@ pub struct KnownModule {
 
 pub const KNOWN_MODULES: &[KnownModule] = &[
     KnownModule {
+        name: "source.cri_logs",
+        kind: ModuleKind::Source,
+        default_enabled: false,
+    },
+    KnownModule {
         name: "source.aya_exec",
         kind: ModuleKind::Source,
         default_enabled: true,

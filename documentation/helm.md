@@ -706,3 +706,11 @@ Helm rendering, schema validation, and successful installs do not prove live
 eBPF behavior, Prometheus scrape success, OTLP ingestion, the reduced profile
 on an untested kernel, or production readiness. Runtime proof requires a
 capable Linux node or cluster and observed Aya/eBPF output.
+
+## CRI application log mounts
+
+`criLogs.mountsEnabled` defaults to false. Enable it together with `[cri_logs]`
+`enabled = true` and the `source.cri_logs` module in `config.toml`. It mounts
+`/var/log/pods` read-only and node-local `/var/lib/e-navigator/cri-logs` writable.
+Source defaults, limits, privacy and admission-checkpoint recovery are described
+in [CRI collection operations](cri-logs.md). This adds no privileges or RBAC.

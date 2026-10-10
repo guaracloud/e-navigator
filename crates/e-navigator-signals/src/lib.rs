@@ -5,7 +5,9 @@
 pub mod dns;
 pub mod envelope;
 pub mod exec;
+pub mod logs;
 pub mod metrics;
+pub use logs::{ApplicationLogObservation, LogCollectionOutcome, LogCollectionWarning, LogStream};
 pub mod network;
 pub mod profiling;
 pub mod request;
