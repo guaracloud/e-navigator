@@ -12,6 +12,7 @@ mod capture_policy;
 mod dns_peer;
 mod http_propagation;
 mod network_mmsg;
+mod tls_identity;
 
 #[cfg(feature = "ring-buffer")]
 use aya_ebpf::maps::RingBuf;
@@ -55,6 +56,9 @@ use network_mmsg::{completed_messages, message_length_offset};
 /// several counter-map writes for every captured syscall in production.
 #[unsafe(no_mangle)]
 static SOURCE_DIAGNOSTICS_ENABLED: Global<u8> = Global::new(0);
+
+#[unsafe(no_mangle)]
+static TLS_LIFECYCLE_ENABLED: Global<u8> = Global::new(0);
 
 /// Cleartext HTTP/1 propagation is opt-in because attaching SK_MSG changes
 /// application traffic and has a deliberately narrower support contract than
@@ -653,6 +657,7 @@ pub struct TlsHandleKey {
     pub tgid: u32,
     pub reserved: u32,
     pub handle: u64,
+    pub process_generation: u64,
 }
 
 #[repr(C)]
@@ -660,12 +665,15 @@ pub struct TlsHandleKey {
 pub struct TlsHandleFds {
     pub read_fd: i32,
     pub write_fd: i32,
+    pub read_generation: u64,
+    pub write_generation: u64,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PendingTlsSetFd {
     pub handle: u64,
+    pub process_generation: u64,
     pub fd: i32,
     /// Zero updates both directions; otherwise one of `NETWORK_IO_READ` or
     /// `NETWORK_IO_WRITE`.
@@ -676,6 +684,8 @@ pub struct PendingTlsSetFd {
 #[derive(Clone, Copy)]
 pub struct PendingTlsIo {
     pub handle: u64,
+    pub process_generation: u64,
+    pub connection_generation: u64,
     pub buffer_ptr: u64,
     /// For the OpenSSL `_ex` variants, the userspace `size_t*` out-parameter
     /// receiving the processed byte count; zero for the classic variants and
@@ -699,6 +709,7 @@ pub struct GoTlsProcessLayout {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct GoTlsIoKey {
+    pub process_generation: u64,
     pub tgid: u32,
     pub direction: u32,
     pub goroutine: u64,
@@ -707,6 +718,7 @@ pub struct GoTlsIoKey {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PendingGoTlsIo {
+    pub connection_generation: u64,
     pub buffer_ptr: u64,
     pub requested_len: u64,
     pub fd: i32,
@@ -1141,8 +1153,8 @@ static TLS_CAPTURE_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
 static TLS_CAPTURE_PORTS: HashMap<u16, u32> = HashMap::with_max_entries(64, HASH_MAP_NO_PREALLOC);
 
 #[map]
-static TLS_HANDLE_FDS: HashMap<TlsHandleKey, TlsHandleFds> =
-    HashMap::with_max_entries(16384, HASH_MAP_NO_PREALLOC);
+static TLS_HANDLE_FDS: LruHashMap<TlsHandleKey, TlsHandleFds> =
+    LruHashMap::with_max_entries(16384, 0);
 
 #[map]
 static PENDING_TLS_SET_FD: HashMap<u64, PendingTlsSetFd> =
@@ -1151,6 +1163,9 @@ static PENDING_TLS_SET_FD: HashMap<u64, PendingTlsSetFd> =
 #[map]
 static PENDING_TLS_IO: HashMap<u64, PendingTlsIo> =
     HashMap::with_max_entries(8192, HASH_MAP_NO_PREALLOC);
+
+#[map]
+static TLS_PROCESS_GENERATIONS: LruHashMap<u32, u64> = LruHashMap::with_max_entries(4096, 0);
 
 #[map]
 static GO_TLS_PROCESS_LAYOUTS: LruHashMap<u32, GoTlsProcessLayout> =
@@ -3331,9 +3346,53 @@ fn go_abi_registers(ctx: &ProbeContext) -> Option<(u64, u64, u64, u64)> {
     None
 }
 
+// A fresh monotonic token makes stale handles/pending IO unreachable.
+// ponytail: bounded LRU eviction rejects existing sockets until reconnect. A
+// larger map or independently validated task identity can extend this ceiling.
+#[inline(always)]
+fn tls_process_generation() -> u64 {
+    let tgid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    if let Some(value) = unsafe { TLS_PROCESS_GENERATIONS.get(&tgid) } {
+        return *value;
+    }
+    let generation = unsafe { bpf_ktime_get_ns() };
+    if TLS_PROCESS_GENERATIONS
+        .insert(&tgid, &generation, BPF_NOEXIST as u64)
+        .is_err()
+    {
+        return unsafe { TLS_PROCESS_GENERATIONS.get(&tgid) }
+            .copied()
+            .unwrap_or(0);
+    }
+    generation
+}
+
+#[tracepoint]
+pub fn tracepoint_tls_process_exec(_ctx: TracePointContext) -> u32 {
+    let tgid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    TLS_PROCESS_GENERATIONS.remove(&tgid).ok();
+    GO_TLS_PROCESS_LAYOUTS.remove(&tgid).ok();
+    tls_process_generation();
+    0
+}
+
+#[tracepoint]
+pub fn tracepoint_tls_process_exit(_ctx: TracePointContext) -> u32 {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    PENDING_TLS_IO.remove(&pid_tgid).ok();
+    PENDING_TLS_SET_FD.remove(&pid_tgid).ok();
+    if pid_tgid as u32 == (pid_tgid >> 32) as u32 {
+        let tgid = (pid_tgid >> 32) as u32;
+        TLS_PROCESS_GENERATIONS.remove(&tgid).ok();
+        GO_TLS_PROCESS_LAYOUTS.remove(&tgid).ok();
+    }
+    0
+}
+
 #[inline(always)]
 fn go_tls_key(tgid: u32, direction: u32, goroutine: u64) -> GoTlsIoKey {
     GoTlsIoKey {
+        process_generation: tls_process_generation(),
         tgid,
         direction,
         goroutine,
@@ -3356,10 +3415,15 @@ fn go_tls_io_enter(ctx: &ProbeContext, direction: u32) -> u32 {
     }
     record_go_tls_counter(GO_TLS_COUNTER_ENTRY);
     let key = go_tls_key(tgid, direction, goroutine);
+    if key.process_generation == 0 {
+        record_go_tls_counter(GO_TLS_COUNTER_STATE_UPDATE_FAILURE);
+        return 0;
+    }
     if unsafe { PENDING_GO_TLS_IO.get(&key) }.is_some() {
         record_go_tls_counter(GO_TLS_COUNTER_STATE_REPLACED);
     }
     let pending = PendingGoTlsIo {
+        connection_generation: 0,
         buffer_ptr: buffer,
         requested_len,
         fd: -1,
@@ -3403,10 +3467,11 @@ fn go_tls_netfd_enter(ctx: &ProbeContext, direction: u32) -> u32 {
             return 0;
         }
     };
-    if tls_connection_for_fd(fd).is_none() {
+    let Some(connection) = tls_connection_for_fd(fd) else {
         record_go_tls_counter(GO_TLS_COUNTER_FD_UNRESOLVED);
         return 0;
-    }
+    };
+    pending.connection_generation = connection.started_at_nanos;
     pending.fd = fd;
     if PENDING_GO_TLS_IO.insert(&key, &pending, 0).is_err() {
         record_go_tls_counter(GO_TLS_COUNTER_STATE_UPDATE_FAILURE);
@@ -3442,10 +3507,23 @@ fn go_tls_io_exit(ctx: &ProbeContext, direction: u32) -> u32 {
         }
         return 0;
     }
+    let Some(connection) = tls_connection_for_fd(pending.fd) else {
+        record_go_tls_counter(GO_TLS_COUNTER_FD_UNRESOLVED);
+        return 0;
+    };
+    if !tls_identity::capture_identity_matches(
+        key.process_generation,
+        tls_process_generation(),
+        pending.connection_generation,
+        connection.started_at_nanos,
+    ) {
+        record_go_tls_counter(GO_TLS_COUNTER_FD_UNRESOLVED);
+        return 0;
+    }
     let length = returned_len.min(pending.requested_len);
-    match emit_tls_data_for_fd(
+    match emit_tls_data_for_connection(
         ctx,
-        pending.fd,
+        connection,
         direction,
         pending.buffer_ptr as *const u8,
         length,
@@ -3472,6 +3550,7 @@ fn tls_handle_key(handle: u64) -> TlsHandleKey {
         tgid: (pid_tgid >> 32) as u32,
         reserved: 0,
         handle,
+        process_generation: tls_process_generation(),
     }
 }
 
@@ -3492,6 +3571,7 @@ fn tls_stash_handle_fd(ctx: &ProbeContext, direction: u32) -> u32 {
     }
     let pid_tgid = bpf_get_current_pid_tgid();
     let pending = PendingTlsSetFd {
+        process_generation: tls_process_generation(),
         handle,
         fd: fd_value as i32,
         direction,
@@ -3508,7 +3588,10 @@ fn tls_commit_handle_fd(ctx: &RetProbeContext) -> u32 {
     };
     PENDING_TLS_SET_FD.remove(&pid_tgid).ok();
     let retval: i64 = ctx.ret();
-    if retval != 1 {
+    if retval != 1
+        || pending.process_generation == 0
+        || pending.process_generation != tls_process_generation()
+    {
         return 0;
     }
     tls_update_handle_fds(pending.handle, pending.fd, pending.fd, pending.direction);
@@ -3547,12 +3630,20 @@ fn tls_update_handle_fds(handle: u64, read_fd: i32, write_fd: i32, direction: u3
         .unwrap_or(TlsHandleFds {
             read_fd: -1,
             write_fd: -1,
+            read_generation: 0,
+            write_generation: 0,
         });
     if direction == 0 || direction == NETWORK_IO_READ {
         fds.read_fd = read_fd;
+        fds.read_generation = tls_connection_for_fd(read_fd)
+            .map(|connection| connection.started_at_nanos)
+            .unwrap_or(0);
     }
     if direction == 0 || direction == NETWORK_IO_WRITE {
         fds.write_fd = write_fd;
+        fds.write_generation = tls_connection_for_fd(write_fd)
+            .map(|connection| connection.started_at_nanos)
+            .unwrap_or(0);
     }
     if TLS_HANDLE_FDS.insert(&key, &fds, 0).is_ok() {
         record_tls_diagnostic(TLS_DIAG_SET_FD);
@@ -3613,7 +3704,14 @@ fn tls_io_enter_ex(ctx: &ProbeContext, direction: u32) -> u32 {
 #[inline(always)]
 fn stash_tls_io(handle: u64, buffer: u64, count_ptr: u64, direction: u32, return_is_i32: bool) {
     let pid_tgid = bpf_get_current_pid_tgid();
+    let Some(connection) = tls_connection_for_handle(handle, direction) else {
+        // Never let a failed nested entry leave an earlier buffer available.
+        PENDING_TLS_IO.remove(&pid_tgid).ok();
+        return;
+    };
     let pending = PendingTlsIo {
+        process_generation: tls_process_generation(),
+        connection_generation: connection.started_at_nanos,
         handle,
         buffer_ptr: buffer,
         count_ptr,
@@ -3634,6 +3732,19 @@ fn tls_io_exit(ctx: &RetProbeContext, direction: u32) -> u32 {
         return 0;
     }
     record_tls_diagnostic(TLS_DIAG_IO_EXIT);
+
+    let Some(connection) = tls_connection_for_handle(pending.handle, direction) else {
+        return 0;
+    };
+    if !tls_identity::capture_identity_matches(
+        pending.process_generation,
+        tls_process_generation(),
+        pending.connection_generation,
+        connection.started_at_nanos,
+    ) {
+        record_tls_diagnostic(TLS_DIAG_CONNECTION_MISS);
+        return 0;
+    }
 
     let retval: i64 = ctx.ret();
     // Classic variants return the byte count; `_ex` variants return 1 on
@@ -3666,12 +3777,13 @@ fn tls_io_exit(ctx: &RetProbeContext, direction: u32) -> u32 {
     if length == 0 {
         return 0;
     }
-    match emit_tls_data(
+    match emit_tls_data_for_connection(
         ctx,
-        pending.handle,
+        connection,
         direction,
         pending.buffer_ptr as *const u8,
         length,
+        false,
     ) {
         Ok(ret) => ret,
         Err(ret) => ret as u32,
@@ -3679,13 +3791,7 @@ fn tls_io_exit(ctx: &RetProbeContext, direction: u32) -> u32 {
 }
 
 fn tls_connection_for_handle(handle: u64, direction: u32) -> Option<PendingConnect> {
-    let pid_tgid = bpf_get_current_pid_tgid();
-    let tgid = (pid_tgid >> 32) as u32;
-    let handle_key = TlsHandleKey {
-        tgid,
-        reserved: 0,
-        handle,
-    };
+    let handle_key = tls_handle_key(handle);
     let fds = match unsafe { TLS_HANDLE_FDS.get(&handle_key) } {
         Some(value) => *value,
         None => {
@@ -3702,7 +3808,22 @@ fn tls_connection_for_handle(handle: u64, direction: u32) -> Option<PendingConne
         record_tls_diagnostic(TLS_DIAG_FD_UNRESOLVED);
         return None;
     }
-    tls_connection_for_fd(fd)
+    let connection = tls_connection_for_fd(fd)?;
+    let captured = if direction == NETWORK_IO_READ {
+        fds.read_generation
+    } else {
+        fds.write_generation
+    };
+    if !tls_identity::capture_identity_matches(
+        handle_key.process_generation,
+        tls_process_generation(),
+        captured,
+        connection.started_at_nanos,
+    ) {
+        record_tls_diagnostic(TLS_DIAG_CONNECTION_MISS);
+        return None;
+    }
+    Some(connection)
 }
 
 fn tls_connection_for_fd(fd: i32) -> Option<PendingConnect> {
@@ -3716,6 +3837,10 @@ fn tls_connection_for_fd(fd: i32) -> Option<PendingConnect> {
             return None;
         }
     };
+    if !tls_identity::connection_is_current(tls_process_generation(), connection.started_at_nanos) {
+        record_tls_diagnostic(TLS_DIAG_CONNECTION_MISS);
+        return None;
+    }
     if connection.protocol != IPPROTO_TCP {
         record_tls_diagnostic(TLS_DIAG_NON_TCP_CONNECTION);
         return None;
@@ -3730,37 +3855,6 @@ fn tls_connection_for_fd(fd: i32) -> Option<PendingConnect> {
         return None;
     }
     Some(connection)
-}
-
-#[inline(always)]
-fn emit_tls_data<C: EbpfContext>(
-    ctx: &C,
-    handle: u64,
-    direction: u32,
-    buffer: *const u8,
-    len: u64,
-) -> Result<u32, i64> {
-    let connection = match tls_connection_for_handle(handle, direction) {
-        Some(value) => value,
-        None => return Ok(0),
-    };
-    emit_tls_data_for_connection(ctx, connection, direction, buffer, len, false)
-}
-
-#[inline(always)]
-fn emit_tls_data_for_fd<C: EbpfContext>(
-    ctx: &C,
-    fd: i32,
-    direction: u32,
-    buffer: *const u8,
-    len: u64,
-    go_tls: bool,
-) -> Result<u32, i64> {
-    let connection = match tls_connection_for_fd(fd) {
-        Some(value) => value,
-        None => return Ok(0),
-    };
-    emit_tls_data_for_connection(ctx, connection, direction, buffer, len, go_tls)
 }
 
 #[inline(always)]
@@ -3874,6 +3968,9 @@ fn try_tracepoint_connect_enter(ctx: TracePointContext) -> Result<u32, i64> {
 }
 
 fn track_connect_enter(ctx: &TracePointContext) -> Result<u32, i64> {
+    if TLS_LIFECYCLE_ENABLED.load() != 0 {
+        tls_process_generation();
+    }
     // Filter at connection establishment: a denied workload's connection is
     // never tracked, so every downstream protocol/tls/http/dns read and write
     // for it early-exits on the ACTIVE_CONNECTIONS miss. This is the overhead
@@ -6026,6 +6123,9 @@ fn try_tracepoint_socket_bind_exit(ctx: &TracePointContext) -> Result<u32, i64> 
 }
 
 fn try_tracepoint_http_accept_enter(ctx: &TracePointContext) -> Result<u32, i64> {
+    if TLS_LIFECYCLE_ENABLED.load() != 0 {
+        tls_process_generation();
+    }
     let pid_tgid = bpf_get_current_pid_tgid();
     let listen_fd = unsafe { ctx.read_at::<i32>(16) }.map_err(|err| err as i64)?;
     let sockaddr = unsafe { ctx.read_at::<*const u8>(24) }.map_err(|err| err as i64)?;

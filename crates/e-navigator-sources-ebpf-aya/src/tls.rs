@@ -311,6 +311,7 @@ mod platform {
                 "source.aya_tls",
                 |loader| {
                     loader.override_global("SOURCE_DIAGNOSTICS_ENABLED", diagnostics_enabled, true);
+                    loader.override_global("TLS_LIFECYCLE_ENABLED", &1_u8, true);
                 },
             )?;
             let telemetry = Arc::new(SourceTelemetry::new_with_transport(
@@ -332,6 +333,8 @@ mod platform {
             // the cleartext protocol source uses; the uprobes resolve their
             // TLS handle to an fd and reuse those tuples.
             for (program, category, name) in [
+                ("tracepoint_tls_process_exec", "sched", "sched_process_exec"),
+                ("tracepoint_tls_process_exit", "sched", "sched_process_exit"),
                 (
                     "tracepoint_protocol_connect_enter",
                     "syscalls",
