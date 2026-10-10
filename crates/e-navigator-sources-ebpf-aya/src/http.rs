@@ -101,7 +101,7 @@ const HTTP_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_DIAGNOSTIC_COUNTERS_LEN] = [
     "non_http_connection_skip",
 ];
 #[cfg(any(target_os = "linux", test))]
-const HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN: usize = 16;
+const HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN: usize = 19;
 #[cfg(any(target_os = "linux", test))]
 const HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN] = [
     "socket_tracked",
@@ -120,6 +120,9 @@ const HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES: [&str; HTTP_PROPAGATION_DIAGNOS
     "inbound_activated",
     "inbound_rejected",
     "unsupported_iovec",
+    "rolled_back",
+    "rollback_failed",
+    "context_expired",
 ];
 #[cfg(target_os = "linux")]
 const HTTP_CONTEXT_REFILL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
@@ -1154,6 +1157,18 @@ mod platform {
             if self.context_propagation.enabled {
                 attach_tracepoint(
                     &mut ebpf,
+                    "tracepoint_http_context_exit",
+                    "sched",
+                    "sched_process_exit",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
+                    "tracepoint_http_context_exec",
+                    "sched",
+                    "sched_process_exec",
+                )?;
+                attach_tracepoint(
+                    &mut ebpf,
                     "tracepoint_http_write_exit",
                     "syscalls",
                     "sys_exit_write",
@@ -1591,6 +1606,9 @@ mod platform {
                             inbound_activated = delta.get(13),
                             inbound_rejected = delta.get(14),
                             unsupported_iovec = delta.get(15),
+                            rolled_back = delta.get(16),
+                            rollback_failed = delta.get(17),
+                            context_expired = delta.get(18),
                             stage_names = ?super::HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES,
                             "HTTP context propagation counters"
                         );
@@ -2597,15 +2615,15 @@ mod tests {
     #[test]
     fn http_propagation_diagnostic_snapshot_covers_every_kernel_stage() {
         let previous = HttpPropagationDiagnosticSnapshot::from_counters([
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
         ]);
         let current = HttpPropagationDiagnosticSnapshot::from_counters([
-            2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32,
+            2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38,
         ]);
 
         let delta = current.delta_since(&previous);
 
-        assert_eq!(HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES.len(), 16);
+        assert_eq!(HTTP_PROPAGATION_DIAGNOSTIC_COUNTER_NAMES.len(), 19);
         for index in 0..HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN {
             assert_eq!(delta.get(index), (index + 1) as u64);
         }

@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-11
-- Amended: 2026-08-27
+- Amended: 2026-10-10
 
 ## Context
 
@@ -113,9 +113,13 @@ the current socket-message bytes must exactly match the syscall capture that
 was planned. After a successful push, `bpf_msg_pull_data` establishes a linear
 direct-access window for exactly the inserted range; pointers are reloaded and
 every write is bounds-checked. If linearization or the post-push proof fails,
-the message is dropped: passing could transmit kernel-created uninitialized
-bytes. This exceptional counter must remain zero in qualification and
-production.
+the inserted range is removed with `bpf_msg_pop_data`. Successful rollback
+passes the original message; failed rollback drops it to avoid transmitting
+kernel-created uninitialized or partially written bytes. This exceptional
+counter must remain zero in qualification and production.
+[ADR 0019](0019-http-propagation-lifetime-and-rollback.md) defines rollback
+diagnostics and thread lifetime fencing; the new paths still require matching
+privileged live evidence.
 
 Userspace fills and continuously replenishes a bounded BPF queue with
 cryptographically secure random trace and span ids. The kernel never derives

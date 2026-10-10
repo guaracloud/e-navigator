@@ -77,6 +77,8 @@ operational documentation. Start with the path that matches your goal.
 - [ADR 0015, peer flow metrics and opt-in HTTP/1 propagation](adr/0015-peer-flow-metrics-and-opt-in-http1-propagation.md)
 - [ADR 0016, non-intrusive profiling parity](adr/0016-non-intrusive-profiling-parity.md)
 - [ADR 0018, bounded CRI logs and read checkpoints](adr/0018-cri-log-collection.md)
+- [ADR 0019, HTTP propagation lifetime and rollback](adr/0019-http-propagation-lifetime-and-rollback.md)
+- [Issue 51 propagation qualification](issue-51-propagation-qualification.md)
 - [ADR 0017, OpenTelemetry zero-code coexistence](adr/0017-otel-zero-code-coexistence.md)
 
 ## Source-Of-Truth Rules

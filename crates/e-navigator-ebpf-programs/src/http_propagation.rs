@@ -18,6 +18,7 @@ struct BpfHttpHeaderState {
     ending_headers: bool,
     saw_content_length: bool,
     saw_transfer_encoding: bool,
+    inbound: bool,
     value_started: bool,
     value_trailing_ows: bool,
 }
@@ -39,7 +40,7 @@ struct BpfHttpChunkedState {
 }
 
 #[inline(never)]
-fn bpf_http1_headers(event: &RawHttpRequestEvent, insert_at: u16) -> Option<u32> {
+fn bpf_http1_headers(event: &RawHttpRequestEvent, insert_at: u16, inbound: bool) -> Option<u32> {
     let start = u32::from(insert_at);
     if start >= event.request_len {
         return None;
@@ -61,6 +62,7 @@ fn bpf_http1_headers(event: &RawHttpRequestEvent, insert_at: u16) -> Option<u32>
         ending_headers: false,
         saw_content_length: false,
         saw_transfer_encoding: false,
+        inbound,
         value_started: false,
         value_trailing_ows: false,
     };
@@ -100,7 +102,12 @@ unsafe extern "C" fn bpf_http_header_step(relative: u64, context: *mut c_void) -
             state.phase = HTTP_PARSE_HEADER_LF;
         } else if byte == b':' {
             if state.component_len == 0
-                || bpf_http_header_requires_bypass(state.component_len, state.header_hash)
+                || (bpf_http_header_requires_bypass(state.component_len, state.header_hash)
+                    && !(state.inbound
+                        && ((state.component_len == 11
+                            && state.header_hash == HTTP_TRACEPARENT_HASH)
+                            || (state.component_len == 10
+                                && state.header_hash == HTTP_TRACESTATE_HASH))))
             {
                 state.result = HTTP_PLAN_INVALID;
                 return 1;
@@ -109,6 +116,8 @@ unsafe extern "C" fn bpf_http_header_step(relative: u64, context: *mut c_void) -
                 HTTP_FIELD_CONTENT_LENGTH
             } else if state.component_len == 17 && state.transfer_encoding_name {
                 HTTP_FIELD_TRANSFER_ENCODING
+            } else if state.component_len == 10 && state.header_hash == HTTP_CONNECTION_HASH {
+                HTTP_FIELD_CONNECTION
             } else {
                 HTTP_FIELD_OTHER
             };
@@ -120,6 +129,7 @@ unsafe extern "C" fn bpf_http_header_step(relative: u64, context: *mut c_void) -
             }
             state.phase = HTTP_PARSE_HEADER_VALUE;
             state.component_len = 0;
+            state.header_hash = HTTP_FNV_OFFSET;
             state.value_started = false;
             state.value_trailing_ows = false;
         } else {
@@ -138,6 +148,13 @@ unsafe extern "C" fn bpf_http_header_step(relative: u64, context: *mut c_void) -
         }
     } else if phase == HTTP_PARSE_HEADER_VALUE {
         if byte == b'\r' {
+            if state.field_kind == HTTP_FIELD_CONNECTION
+                && state.component_len == 7
+                && state.header_hash == HTTP_UPGRADE_HASH
+            {
+                state.result = HTTP_PLAN_INVALID;
+                return 1;
+            }
             if state.field_kind == HTTP_FIELD_CONTENT_LENGTH {
                 if !state.value_started {
                     state.result = HTTP_PLAN_INVALID;
@@ -198,6 +215,19 @@ unsafe extern "C" fn bpf_http_header_step(relative: u64, context: *mut c_void) -
                     state.value_started = true;
                     state.component_len += 1;
                 }
+            } else if state.field_kind == HTTP_FIELD_CONNECTION {
+                if byte == b',' || byte == b' ' || byte == b'\t' {
+                    if state.component_len == 7 && state.header_hash == HTTP_UPGRADE_HASH {
+                        state.result = HTTP_PLAN_INVALID;
+                        return 1;
+                    }
+                    state.component_len = 0;
+                    state.header_hash = HTTP_FNV_OFFSET;
+                } else {
+                    state.component_len += 1;
+                    state.header_hash = (state.header_hash ^ u64::from(byte.to_ascii_lowercase()))
+                        .wrapping_mul(HTTP_FNV_PRIME);
+                }
             }
         }
     } else if phase == HTTP_PARSE_HEADER_LF {
@@ -225,6 +255,9 @@ unsafe extern "C" fn bpf_http_header_step(relative: u64, context: *mut c_void) -
             let body_bytes = u64::from(state.total_len) - header_end;
             if (!state.saw_content_length && body_bytes != 0)
                 || (state.saw_content_length && body_bytes > u64::from(state.content_length))
+                || (state.inbound
+                    && state.saw_content_length
+                    && body_bytes != u64::from(state.content_length))
             {
                 state.result = HTTP_PLAN_INVALID;
                 return 1;
@@ -245,12 +278,12 @@ unsafe extern "C" fn bpf_http_header_step(relative: u64, context: *mut c_void) -
 }
 
 #[inline(never)]
-fn bpf_http1_chunked_body(event: &RawHttpRequestEvent, header_end: u32) -> bool {
+fn bpf_http1_chunked_body(event: &RawHttpRequestEvent, header_end: u32, inbound: bool) -> bool {
     if header_end > event.request_len {
         return false;
     }
     if header_end == event.request_len {
-        return true;
+        return !inbound;
     }
     let mut state = BpfHttpChunkedState {
         request: event.request.as_ptr(),
@@ -270,7 +303,7 @@ fn bpf_http1_chunked_body(event: &RawHttpRequestEvent, header_end: u32) -> bool 
     let context = (&mut state as *mut BpfHttpChunkedState).cast::<c_void>();
     let remaining = event.request_len - header_end;
     let loops = unsafe { bpf_loop(remaining, callback, context, 0) };
-    loops >= 0 && state.result != HTTP_PLAN_INVALID
+    loops >= 0 && state.result != HTTP_PLAN_INVALID && (!inbound || state.result == HTTP_PLAN_VALID)
 }
 
 unsafe extern "C" fn bpf_http_chunked_body_step(relative: u64, context: *mut c_void) -> i64 {
@@ -424,15 +457,24 @@ unsafe extern "C" fn bpf_http_chunked_body_step(relative: u64, context: *mut c_v
 /// body once rather than multiplying its state space by the 1,024-byte bound.
 #[inline(never)]
 pub(super) fn plan_bpf_http1_propagation_loop(event: &RawHttpRequestEvent) -> Option<u16> {
+    plan_bpf_http1_message(event, false)
+}
+
+pub(super) fn valid_bpf_inbound_http1_request(event: &RawHttpRequestEvent) -> bool {
+    event.request_len == event.request_total_len && plan_bpf_http1_message(event, true).is_some()
+}
+
+#[inline(never)]
+fn plan_bpf_http1_message(event: &RawHttpRequestEvent, inbound: bool) -> Option<u16> {
     if event.request_len == 0 || event.request_len as usize > HTTP_REQUEST_BYTES {
         return None;
     }
     let insert_at = bpf_http1_request_line(event)?;
-    let header_plan = bpf_http1_headers(event, insert_at)?;
+    let header_plan = bpf_http1_headers(event, insert_at, inbound)?;
     if header_plan & HTTP_HEADER_PLAN_CHUNKED != 0 {
         let header_end = header_plan & !HTTP_HEADER_PLAN_CHUNKED;
         if event.request_total_len != event.request_len
-            || !bpf_http1_chunked_body(event, header_end)
+            || !bpf_http1_chunked_body(event, header_end, inbound)
         {
             return None;
         }

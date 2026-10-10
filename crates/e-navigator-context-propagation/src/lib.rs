@@ -6,6 +6,13 @@ pub const MAX_PROPAGATION_HEADER_BYTES: usize = 1024;
 pub const TRACEPARENT_HEADER_BYTES: usize = 70;
 pub const MAX_TRACESTATE_BYTES: usize = 512;
 
+/// A continuation expires at the TTL boundary. Missing or future timestamps
+/// cannot establish ownership, even when the configured TTL is large.
+#[inline(always)]
+pub const fn context_is_fresh(started_at: u64, now: u64, ttl: u64) -> bool {
+    started_at != 0 && now >= started_at && now - started_at < ttl
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct TraceContext {
@@ -80,6 +87,23 @@ pub fn plan_http1_prefix_propagation(
     message_prefix: &[u8],
     message_total_len: usize,
 ) -> PropagationDecision {
+    plan_http1_message(message_prefix, message_total_len, false)
+}
+
+/// Framing eligibility for synchronous inbound ownership. Context extraction
+/// separately validates the existing W3C headers; this never mutates them.
+pub fn valid_inbound_http1_request(message: &[u8]) -> bool {
+    matches!(
+        plan_http1_message(message, message.len(), true),
+        PropagationDecision::Inject { .. }
+    )
+}
+
+fn plan_http1_message(
+    message_prefix: &[u8],
+    message_total_len: usize,
+    inbound: bool,
+) -> PropagationDecision {
     if message_total_len < message_prefix.len() {
         return PropagationDecision::Bypass(PropagationBypass::InconsistentLength);
     }
@@ -125,7 +149,7 @@ pub fn plan_http1_prefix_propagation(
         if !valid_field_name(name) || !valid_field_value(value) {
             return PropagationDecision::Bypass(PropagationBypass::NotHttp1);
         }
-        if ascii_eq_ignore_case(name, b"traceparent") {
+        if !inbound && ascii_eq_ignore_case(name, b"traceparent") {
             return PropagationDecision::Bypass(PropagationBypass::ExistingTraceparent);
         }
         if ascii_eq_ignore_case(name, b"tracestate") {
@@ -168,6 +192,9 @@ pub fn plan_http1_prefix_propagation(
             return PropagationDecision::Bypass(PropagationBypass::UncapturedChunkedBody);
         } else {
             match chunked_body_status(captured_body) {
+                ChunkedBodyStatus::Incomplete if inbound => {
+                    return PropagationDecision::Bypass(PropagationBypass::IncompleteHeaders);
+                }
                 ChunkedBodyStatus::Incomplete | ChunkedBodyStatus::Complete => {}
                 ChunkedBodyStatus::TrailingData => {
                     return PropagationDecision::Bypass(PropagationBypass::TrailingData);
@@ -178,11 +205,11 @@ pub fn plan_http1_prefix_propagation(
             }
         }
     } else if content_length.map_or(body_bytes_in_message != 0, |declared| {
-        body_bytes_in_message > declared
+        body_bytes_in_message > declared || (inbound && body_bytes_in_message != declared)
     }) {
         return PropagationDecision::Bypass(PropagationBypass::TrailingData);
     }
-    if saw_tracestate {
+    if !inbound && saw_tracestate {
         return PropagationDecision::Bypass(PropagationBypass::OrphanTracestate);
     }
 
