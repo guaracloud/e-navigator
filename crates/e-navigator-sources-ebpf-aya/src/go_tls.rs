@@ -478,9 +478,8 @@ mod platform {
             }
 
             for (pid, layout) in desired {
-                if self.active_pids.contains(&pid) {
-                    continue;
-                }
+                // exec/exit probes invalidate the kernel layout between scans.
+                // Republish validated layouts even when the numeric PID remains.
                 match self.process_layouts.insert(pid, layout, 0) {
                     Ok(()) => {
                         self.active_pids.insert(pid);

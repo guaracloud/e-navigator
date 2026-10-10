@@ -58,6 +58,12 @@ not broaden that Guara requirement.
 | JVM JSSE | Unsupported | Required only if Guara declares a JVM/JSSE cell; it needs the same build-specific attachment and proof contract |
 | BoringSSL, rustls, custom transports, stripped Go, non-amd64 Go | Unsupported | Required only for cells explicitly declared by Guara |
 
+The [issue 50 lifecycle contract](issue-50-tls-qualification.md) requires
+OpenSSL/GnuTLS fd assignment after an observed connection and fences all
+adapters against process and socket replacement. Pre-attachment/inherited
+sockets and bounded identity eviction fail closed. Historical live evidence
+above does not qualify these new lifecycle checks on current workload builds.
+
 ## TCP Execution-Path Gate
 
 The native TCP contract covers the documented syscall/fexit paths, periodic

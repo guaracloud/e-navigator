@@ -21,7 +21,7 @@ pub(crate) enum SourceMapProfile {
     CpuProfile,
 }
 
-const CAPACITY_MAPS: [&str; 27] = [
+const CAPACITY_MAPS: [&str; 28] = [
     "UNWIND_ROWS",
     "UNWIND_MODULES",
     "UNWIND_PROC_MAPPINGS",
@@ -42,6 +42,7 @@ const CAPACITY_MAPS: [&str; 27] = [
     "HTTP_PROPAGATION_CONTEXTS",
     "PENDING_PROTOCOL_READS",
     "PENDING_PROTOCOL_IOVEC_READS",
+    "TLS_PROCESS_GENERATIONS",
     "TLS_HANDLE_FDS",
     "PENDING_TLS_SET_FD",
     "PENDING_TLS_IO",
@@ -166,6 +167,7 @@ fn retains_map(profile: SourceMapProfile, name: &str) -> bool {
                 | "PROCESS_LISTENER_ENDPOINTS"
                 | "LISTENER_ENDPOINTS"
                 | "PENDING_ACCEPTS"
+                | "TLS_PROCESS_GENERATIONS"
                 | "TLS_HANDLE_FDS"
                 | "PENDING_TLS_SET_FD"
                 | "PENDING_TLS_IO"

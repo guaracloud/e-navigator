@@ -16,6 +16,9 @@ mod ebpf_maps;
 #[cfg(test)]
 #[path = "../../e-navigator-ebpf-programs/src/network_mmsg.rs"]
 mod ebpf_network_mmsg;
+#[cfg(test)]
+#[path = "../../e-navigator-ebpf-programs/src/tls_identity.rs"]
+mod ebpf_tls_identity;
 mod event_transport;
 pub mod exec;
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]

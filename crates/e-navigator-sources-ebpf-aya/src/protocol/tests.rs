@@ -2094,6 +2094,57 @@ fn registry_preserves_tls_source_provenance() {
 }
 
 #[test]
+fn tls_plaintext_matches_cleartext_without_exporting_credentials() {
+    let config = ProtocolSourceConfig {
+        http1_ports: vec![8443],
+        ..ProtocolSourceConfig::default()
+    };
+    let request = b"POST /login HTTP/1.1\r\nHost: api.test\r\nAuthorization: Bearer header-secret\r\nCookie: session=cookie-secret\r\nContent-Length: 11\r\n\r\nbody-secret";
+    let response = response_event(8443, b"HTTP/1.1 401 Unauthorized\r\nSet-Cookie: session=response-secret\r\nContent-Length: 0\r\n\r\n");
+    let mut observations = Vec::new();
+    for source in ["source.aya_protocol", "source.aya_tls"] {
+        let mut registry = ProtocolStreamRegistry::new_with_source(
+            None,
+            std::path::PathBuf::from("__e_navigator_test_no_procfs__"),
+            &config,
+            source,
+        );
+        assert!(
+            handle_at(
+                &mut registry,
+                &raw_event(8443, request, request.len() as u32),
+                5_000
+            )
+            .is_empty()
+        );
+        let signals = handle_at(&mut registry, &response, 6_000);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0].source, source);
+        let serialized = serde_json::to_string(&signals[0]).expect("signal serializes");
+        for secret in [
+            "header-secret",
+            "cookie-secret",
+            "body-secret",
+            "response-secret",
+        ] {
+            assert!(!serialized.contains(secret), "exported {secret}");
+        }
+        let observation = observation(&signals[0]);
+        assert_eq!(observation.method.as_deref(), Some("POST"));
+        assert_eq!(observation.duration_nanos, Some(1_000));
+        assert!(
+            observation
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key == "http.response.status_code"
+                    && attribute.value == "401")
+        );
+        observations.push(serde_json::to_value(observation).expect("observation serializes"));
+    }
+    assert_eq!(observations[0], observations[1]);
+}
+
+#[test]
 fn server_role_uses_local_port_and_read_as_request_direction() {
     let config = ProtocolSourceConfig {
         http1_ports: vec![8443],
