@@ -31,8 +31,9 @@ use aya_ebpf::{
         bpf_probe_read_user_str_bytes,
         generated::{
             bpf_get_current_cgroup_id, bpf_get_current_task_btf, bpf_get_ns_current_pid_tgid,
-            bpf_get_socket_cookie, bpf_loop, bpf_msg_pull_data, bpf_probe_read_kernel,
-            bpf_probe_read_user as bpf_probe_read_user_raw, bpf_task_pt_regs,
+            bpf_get_socket_cookie, bpf_loop, bpf_msg_pop_data, bpf_msg_pull_data,
+            bpf_probe_read_kernel, bpf_probe_read_user as bpf_probe_read_user_raw,
+            bpf_task_pt_regs,
         },
     },
     macros::{fexit, map, perf_event, sk_msg, sock_ops, tracepoint, uprobe, uretprobe},
@@ -45,9 +46,9 @@ use aya_ebpf::{
 use capture_policy::{CAPTURE_FILTER_DISABLED, capture_allowed, listener_metadata_allowed};
 use dns_peer::is_dns_ipv4_peer;
 use e_navigator_context_propagation::{
-    MAX_TRACESTATE_BYTES, TraceContext, format_traceparent_header,
+    MAX_TRACESTATE_BYTES, TraceContext, context_is_fresh, format_traceparent_header,
 };
-use http_propagation::plan_bpf_http1_propagation_loop;
+use http_propagation::{plan_bpf_http1_propagation_loop, valid_bpf_inbound_http1_request};
 use network_mmsg::{completed_messages, message_length_offset};
 
 /// Source-stage diagnostics are intentionally opt-in. The userspace loader
@@ -105,7 +106,7 @@ const HTTP_DIAG_INBOUND_OUTPUT_ATTEMPT: u32 = 17;
 const HTTP_DIAG_SERVER_WRITE_SUPPRESSED: u32 = 18;
 const HTTP_DIAG_NON_HTTP_CONNECTION_SKIP: u32 = 19;
 const HTTP_DIAGNOSTIC_COUNTERS_LEN: u32 = 20;
-const HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN: u32 = 16;
+const HTTP_PROPAGATION_DIAGNOSTIC_COUNTERS_LEN: u32 = 19;
 const HTTP_PROPAGATION_DIAG_SOCKET_TRACKED: u32 = 0;
 const HTTP_PROPAGATION_DIAG_SOCKET_TRACK_FAILED: u32 = 1;
 const HTTP_PROPAGATION_DIAG_PLANNED: u32 = 2;
@@ -122,6 +123,9 @@ const HTTP_PROPAGATION_DIAG_MUTATION_MISMATCH: u32 = 12;
 const HTTP_PROPAGATION_DIAG_INBOUND_ACTIVATED: u32 = 13;
 const HTTP_PROPAGATION_DIAG_INBOUND_REJECTED: u32 = 14;
 const HTTP_PROPAGATION_DIAG_UNSUPPORTED_IOVEC: u32 = 15;
+const HTTP_PROPAGATION_DIAG_ROLLED_BACK: u32 = 16;
+const HTTP_PROPAGATION_DIAG_ROLLBACK_FAILED: u32 = 17;
+const HTTP_PROPAGATION_DIAG_CONTEXT_EXPIRED: u32 = 18;
 const HTTP_PROPAGATION_CAPTURE_UNSUPPORTED_IOVEC: u8 = 1;
 const HTTP_PROPAGATION_GENERATED: u32 = 1;
 const HTTP_PARSE_METHOD: u8 = 0;
@@ -134,6 +138,7 @@ const HTTP_PARSE_HEADER_LF: u8 = 6;
 const HTTP_FIELD_OTHER: u8 = 0;
 const HTTP_FIELD_CONTENT_LENGTH: u8 = 1;
 const HTTP_FIELD_TRANSFER_ENCODING: u8 = 2;
+const HTTP_FIELD_CONNECTION: u8 = 3;
 const HTTP_HEADER_PLAN_CHUNKED: u32 = 1 << 31;
 const HTTP_CHUNK_SIZE: u8 = 0;
 const HTTP_CHUNK_EXTENSION: u8 = 1;
@@ -149,6 +154,7 @@ const HTTP_FNV_PRIME: u64 = 0x100000001b3;
 const HTTP_TRACEPARENT_HASH: u64 = 0xa22e83ed935e6e5e;
 const HTTP_TRACESTATE_HASH: u64 = 0x958c9556effaa193;
 const HTTP_UPGRADE_HASH: u64 = 0x7f7d77d7c2a03db7;
+const HTTP_CONNECTION_HASH: u64 = 0xc7f597ea639b1b59;
 const HTTP_PLAN_PENDING: u8 = 0;
 const HTTP_PLAN_VALID: u8 = 1;
 const HTTP_PLAN_INVALID: u8 = 2;
@@ -4494,6 +4500,16 @@ fn try_sk_msg_http_context_propagation(ctx: &SkMsgContext) -> u32 {
         Some(pending) => unsafe { &mut *pending },
         None => return SK_PASS as u32,
     };
+    if !context_is_fresh(
+        pending.propagation.started_at_nanos,
+        unsafe { bpf_ktime_get_ns() },
+        HTTP_CONTEXT_PROPAGATION_TTL_NANOS.load(),
+    ) {
+        finish_pending_http_propagation(ctx, pid_tgid, false);
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_BYPASSED);
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_CONTEXT_EXPIRED);
+        return SK_PASS as u32;
+    }
     let size = ctx.size() as usize;
     let data = ctx.data();
     let data_end = ctx.data_end();
@@ -4557,9 +4573,7 @@ fn try_sk_msg_http_context_propagation(ctx: &SkMsgContext) -> u32 {
     let inserted_end_offset = match message_insert_at.checked_add(inserted_len) {
         Some(end) => end,
         None => {
-            finish_pending_http_propagation(ctx, pid_tgid, false);
-            record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_POST_PUSH_BOUNDS_FAILED);
-            return SK_DROP as u32;
+            return rollback_http_propagation(ctx, pid_tgid, message_insert_at, inserted_len);
         }
     };
     if unsafe {
@@ -4571,15 +4585,13 @@ fn try_sk_msg_http_context_propagation(ctx: &SkMsgContext) -> u32 {
         )
     } != 0
     {
-        finish_pending_http_propagation(ctx, pid_tgid, false);
-        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_POST_PUSH_BOUNDS_FAILED);
-        return SK_DROP as u32;
+        return rollback_http_propagation(ctx, pid_tgid, message_insert_at, inserted_len);
     }
 
     // `bpf_msg_push_data` invalidates direct packet pointers. Pull only the
     // inserted range into a linear span, then reload and prove every bound
     // before the first write. If the kernel cannot expose the pushed bytes,
-    // dropping is the only safe way to avoid transmitting uninitialized data.
+    // rollback restores the original message; a failed rollback drops it.
     // `bpf_msg_pull_data(start, end)` narrows the direct-access window so
     // `data` is the byte at `start`, not the beginning of the whole message.
     let data = ctx.data();
@@ -4588,23 +4600,17 @@ fn try_sk_msg_http_context_propagation(ctx: &SkMsgContext) -> u32 {
     let inserted_end = match header_start.checked_add(inserted_len) {
         Some(end) => end,
         None => {
-            finish_pending_http_propagation(ctx, pid_tgid, false);
-            record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_POST_PUSH_BOUNDS_FAILED);
-            return SK_DROP as u32;
+            return rollback_http_propagation(ctx, pid_tgid, message_insert_at, inserted_len);
         }
     };
     let traceparent_end = match header_start.checked_add(header.len()) {
         Some(end) => end,
         None => {
-            finish_pending_http_propagation(ctx, pid_tgid, false);
-            record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_POST_PUSH_BOUNDS_FAILED);
-            return SK_DROP as u32;
+            return rollback_http_propagation(ctx, pid_tgid, message_insert_at, inserted_len);
         }
     };
     if inserted_end > data_end || traceparent_end > data_end {
-        finish_pending_http_propagation(ctx, pid_tgid, false);
-        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_POST_PUSH_BOUNDS_FAILED);
-        return SK_DROP as u32;
+        return rollback_http_propagation(ctx, pid_tgid, message_insert_at, inserted_len);
     }
     let target = header_start as *mut [u8; 70];
     unsafe {
@@ -4613,9 +4619,7 @@ fn try_sk_msg_http_context_propagation(ctx: &SkMsgContext) -> u32 {
     if tracestate_len > 0 {
         let tracestate_header = traceparent_end as *mut u8;
         if unsafe { tracestate_header.add(TRACESTATE_HEADER_PREFIX.len()) } > data_end as *mut u8 {
-            finish_pending_http_propagation(ctx, pid_tgid, false);
-            record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_POST_PUSH_BOUNDS_FAILED);
-            return SK_DROP as u32;
+            return rollback_http_propagation(ctx, pid_tgid, message_insert_at, inserted_len);
         }
         unsafe {
             *tracestate_header.cast::<[u8; 12]>() = TRACESTATE_HEADER_PREFIX;
@@ -4627,11 +4631,12 @@ fn try_sk_msg_http_context_propagation(ctx: &SkMsgContext) -> u32 {
                 if tracestate_len >= $offset + 16 {
                     let chunk_target = unsafe { tracestate_target.add($offset) };
                     if unsafe { chunk_target.add(16) } > data_end as *mut u8 {
-                        finish_pending_http_propagation(ctx, pid_tgid, false);
-                        record_http_propagation_diagnostic(
-                            HTTP_PROPAGATION_DIAG_POST_PUSH_BOUNDS_FAILED,
+                        return rollback_http_propagation(
+                            ctx,
+                            pid_tgid,
+                            message_insert_at,
+                            inserted_len,
                         );
-                        return SK_DROP as u32;
                     }
                     unsafe {
                         *chunk_target.cast::<[u8; 16]>() =
@@ -4680,11 +4685,12 @@ fn try_sk_msg_http_context_propagation(ctx: &SkMsgContext) -> u32 {
                 if tail_len > $offset {
                     let tail_target = unsafe { tracestate_target.add(tail_start + $offset) };
                     if unsafe { tail_target.add(1) } > data_end as *mut u8 {
-                        finish_pending_http_propagation(ctx, pid_tgid, false);
-                        record_http_propagation_diagnostic(
-                            HTTP_PROPAGATION_DIAG_POST_PUSH_BOUNDS_FAILED,
+                        return rollback_http_propagation(
+                            ctx,
+                            pid_tgid,
+                            message_insert_at,
+                            inserted_len,
                         );
-                        return SK_DROP as u32;
                     }
                     unsafe {
                         *tail_target = *tracestate_source.add(tail_start + $offset);
@@ -4709,9 +4715,7 @@ fn try_sk_msg_http_context_propagation(ctx: &SkMsgContext) -> u32 {
         copy_tracestate_tail_byte!(14);
         let line_end = unsafe { tracestate_target.add(tracestate_len) };
         if unsafe { line_end.add(HEADER_LINE_END.len()) } > data_end as *mut u8 {
-            finish_pending_http_propagation(ctx, pid_tgid, false);
-            record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_POST_PUSH_BOUNDS_FAILED);
-            return SK_DROP as u32;
+            return rollback_http_propagation(ctx, pid_tgid, message_insert_at, inserted_len);
         }
         unsafe {
             *line_end.cast::<[u8; 2]>() = HEADER_LINE_END;
@@ -4787,13 +4791,14 @@ fn prepare_http_context_propagation(event: &mut RawHttpRequestEvent) -> bool {
     let mut parent_span_id = [0_u8; 8];
     if let Some(current) = unsafe { HTTP_THREAD_TRACE_CONTEXTS.get(&pid_tgid) } {
         let ttl = HTTP_CONTEXT_PROPAGATION_TTL_NANOS.load();
-        if now.saturating_sub(current.started_at_nanos) <= ttl {
+        if context_is_fresh(current.started_at_nanos, now, ttl) {
             context.trace_id = current.trace_id;
             context.trace_flags = current.trace_flags;
             parent_span_id = current.span_id;
             copy_raw_tracestate(current, &mut event.propagation);
         } else {
             let _ = HTTP_THREAD_TRACE_CONTEXTS.remove(&pid_tgid);
+            record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_CONTEXT_EXPIRED);
         }
     }
     event.propagation.state = HTTP_PROPAGATION_GENERATED;
@@ -4802,6 +4807,7 @@ fn prepare_http_context_propagation(event: &mut RawHttpRequestEvent) -> bool {
     event.propagation.parent_span_id = parent_span_id;
     event.propagation.trace_flags = context.trace_flags;
     event.propagation.insert_at = insert_at;
+    event.propagation.started_at_nanos = now;
     if PENDING_HTTP_PROPAGATIONS
         .insert(&pid_tgid, &*event, BPF_NOEXIST as u64)
         .is_err()
@@ -5165,6 +5171,9 @@ fn bpf_http_field_value_byte(byte: u8) -> bool {
 
 #[inline(never)]
 fn extract_bpf_inbound_http_context(event: &mut RawHttpRequestEvent) -> Option<TraceContext> {
+    if !valid_bpf_inbound_http1_request(event) {
+        return None;
+    }
     let insert_at = bpf_http1_request_line(event)?;
     let start = u32::from(insert_at);
     if start >= event.request_len {
@@ -5788,6 +5797,61 @@ fn clear_current_http_thread_context() {
     }
 }
 
+/// These probes run for every thread, without relying on lossy event delivery.
+/// Exit prevents TID reuse; exec destroys the calling thread's old ownership.
+#[tracepoint]
+pub fn tracepoint_http_context_exit(_ctx: TracePointContext) -> u32 {
+    destroy_http_context();
+    0
+}
+
+#[tracepoint]
+pub fn tracepoint_http_context_exec(ctx: TracePointContext) -> u32 {
+    // sched_process_exec reports the pre-exec TID in old_pid. A nonleader
+    // adopts the leader's PID during exec, so its old key must also be fenced.
+    match unsafe { ctx.read_at::<u32>(16) } {
+        Ok(old_tid) => {
+            let pid_tgid = bpf_get_current_pid_tgid();
+            destroy_http_context_for((pid_tgid & 0xffff_ffff_0000_0000) | u64::from(old_tid));
+        }
+        Err(_) => record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_THREAD_CONTEXT_FAILED),
+    }
+    destroy_http_context();
+    0
+}
+
+fn destroy_http_context() {
+    destroy_http_context_for(bpf_get_current_pid_tgid());
+}
+
+fn destroy_http_context_for(pid_tgid: u64) {
+    HTTP_THREAD_TRACE_CONTEXTS.remove(&pid_tgid).ok();
+    PENDING_HTTP_PROPAGATIONS.remove(&pid_tgid).ok();
+    PENDING_HTTP_READS.remove(&pid_tgid).ok();
+}
+
+#[inline(always)]
+fn rollback_http_propagation(
+    ctx: &SkMsgContext,
+    pid_tgid: u64,
+    insert_at: usize,
+    inserted_len: usize,
+) -> u32 {
+    // Remove precisely the range pushed by this invocation, including any
+    // partially written header. Never pass kernel-created bytes on failure.
+    let restored =
+        unsafe { bpf_msg_pop_data(ctx.msg, insert_at as u32, inserted_len as u32, 0) } == 0;
+    finish_pending_http_propagation(ctx, pid_tgid, false);
+    record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_POST_PUSH_BOUNDS_FAILED);
+    if restored {
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_ROLLED_BACK);
+        SK_PASS as u32
+    } else {
+        record_http_propagation_diagnostic(HTTP_PROPAGATION_DIAG_ROLLBACK_FAILED);
+        SK_DROP as u32
+    }
+}
+
 fn finish_pending_http_propagation<C: EbpfContext>(ctx: &C, pid_tgid: u64, injected: bool) {
     if let Some(pending) = PENDING_HTTP_PROPAGATIONS.get_ptr_mut(&pid_tgid) {
         let pending = unsafe { &mut *pending };
@@ -6264,6 +6328,10 @@ fn try_tracepoint_http_read_exit(ctx: &TracePointContext) -> Result<u32, i64> {
         None => return Ok(0),
     };
     PENDING_HTTP_READS.remove(&pid_tgid).ok();
+
+    // Even rejected, segmented, empty, or failed inbound reads supersede the
+    // previous synchronous owner. Retaining it would parent unrelated work.
+    clear_current_http_thread_context();
 
     let retval = unsafe { ctx.read_at::<i64>(16) }.map_err(|err| err as i64)?;
     if retval <= 0 {
