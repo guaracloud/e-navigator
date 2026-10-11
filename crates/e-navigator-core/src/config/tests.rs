@@ -3749,3 +3749,27 @@ fn cri_log_bounds_paths_and_unknown_options_are_rejected() {
         );
     }
 }
+#[test]
+fn cpu_python_builds_require_exact_supported_identity() {
+    let mut config = RuntimeConfig::default();
+    config.cpu_profile_source.python_builds = vec![CpuProfilePythonBuild {
+        build_id: "ab".repeat(20),
+        version: "3.11.13".to_string(),
+        architecture: "x86_64".to_string(),
+    }];
+    assert!(config.validate().is_ok());
+    for (version, architecture, build_id) in [
+        ("3.11", "x86_64", "abab"),
+        ("3.13.0", "x86_64", "abab"),
+        ("3.11.13", "riscv64", "abab"),
+        ("3.11.13", "x86_64", ""),
+        ("3.11.13", "x86_64", "xyz1"),
+    ] {
+        config.cpu_profile_source.python_builds[0] = CpuProfilePythonBuild {
+            version: version.to_string(),
+            architecture: architecture.to_string(),
+            build_id: build_id.to_string(),
+        };
+        assert!(config.validate().is_err());
+    }
+}

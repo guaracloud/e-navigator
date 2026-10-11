@@ -9,20 +9,32 @@ struct MemorySink {
     removed: Vec<u32>,
     python: std::collections::BTreeMap<u32, PyProcInfoAbi>,
     python_removed: Vec<u32>,
+    reject_modules: bool,
+    generation: u64,
+    change_generation_on_write: bool,
 }
 
 impl UnwindMapSink for MemorySink {
+    fn process_generation(&mut self, _pid: u32) -> Option<u64> {
+        Some(self.generation)
+    }
     fn write_rows(&mut self, row_start: u32, rows: &[UnwindRowAbi]) -> bool {
         self.rows.insert(row_start, rows.to_vec());
         true
     }
 
     fn write_module(&mut self, module_id: u32, span: UnwindModuleSpan) -> bool {
+        if self.reject_modules {
+            return false;
+        }
         self.modules.insert(module_id, span);
         true
     }
 
     fn write_process(&mut self, pid: u32, mappings: &UnwindProcMappings) -> bool {
+        if self.change_generation_on_write {
+            self.generation += 1;
+        }
         let entries = mappings.entries[..mappings.count as usize].to_vec();
         self.processes.insert(pid, (mappings.count, entries));
         true
@@ -30,6 +42,7 @@ impl UnwindMapSink for MemorySink {
 
     fn remove_process(&mut self, pid: u32) {
         self.removed.push(pid);
+        self.processes.remove(&pid);
     }
 
     fn write_python_process(&mut self, pid: u32, info: &PyProcInfoAbi) -> bool {
@@ -39,6 +52,47 @@ impl UnwindMapSink for MemorySink {
 
     fn remove_python_process(&mut self, pid: u32) {
         self.python_removed.push(pid);
+        self.python.remove(&pid);
+    }
+}
+
+#[test]
+fn refresh_discards_registrations_if_process_changes_during_publish() {
+    let root = fake_procfs("generation", 710, 0x1000_0000);
+    let mut manager = UnwindTableManager::new(root.clone(), 16).with_python_builds(Vec::new());
+    let mut sink = MemorySink {
+        change_generation_on_write: true,
+        ..MemorySink::default()
+    };
+    let stats = manager.refresh(&mut sink, &tracked_pids(&[710]));
+    assert_eq!(stats.processes_registered, 0);
+    assert!(sink.processes.is_empty());
+    assert_eq!(stats.process_identity_changes, 1);
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn in_flight_mapping_changes_and_missing_generations_fail_closed() {
+    assert_eq!(
+        ProfileGenerationAbi {
+            generation: 77,
+            pending_mappings: 0
+        }
+        .usable(),
+        Some(77)
+    );
+    for state in [
+        ProfileGenerationAbi::default(),
+        ProfileGenerationAbi {
+            generation: 77,
+            pending_mappings: 1,
+        },
+        ProfileGenerationAbi {
+            generation: 77,
+            pending_mappings: u64::MAX,
+        },
+    ] {
+        assert_eq!(state.usable(), None);
     }
 }
 
@@ -335,6 +389,32 @@ fn cached_rows_never_exceed_the_kernel_row_pool() {
 }
 
 #[test]
+fn refresh_keeps_published_rows_immutable_when_hot_order_changes() {
+    let root = fake_procfs("immutable", 600, 0x1000_0000);
+    let mut manager = UnwindTableManager::new(root.clone(), 16);
+    let mut sink = MemorySink::default();
+    let tracker = tracked_pids(&[600]);
+    manager.refresh(&mut sink, &tracker);
+    let first_module = sink.processes[&600].1[0].module_id;
+    let first_span = sink.modules[&first_module];
+    let pid_dir = root.join("601");
+    std::fs::create_dir_all(pid_dir.join("root/usr/bin")).expect("second process");
+    std::fs::write(pid_dir.join("root/usr/bin/app"), synthetic_module()).expect("new module");
+    std::fs::write(
+        pid_dir.join("maps"),
+        "20000000-20100000 r-xp 00000000 fd:00 101 /usr/bin/app\n",
+    )
+    .expect("maps");
+    tracker.record(601);
+    manager.refresh(&mut sink, &tracker);
+    assert_eq!(
+        sink.modules[&first_module], first_span,
+        "a kernel walker may still be reading the published rows"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn load_bias_uses_the_segment_containing_the_file_offset() {
     let segments = [
         LoadSegment {
@@ -447,4 +527,181 @@ fn unsupported_python_versions_are_counted_not_registered() {
     assert!(sink.python.is_empty());
 
     std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn python_descriptor_requires_attested_build_version_architecture_and_release_layout() {
+    let build = e_navigator_core::CpuProfilePythonBuild {
+        build_id: "0123456789abcdef".to_string(),
+        version: "3.11.13".to_string(),
+        architecture: "x86_64".to_string(),
+    };
+    let image = python_image(0x030b0df0, 62, false);
+    let descriptor =
+        validated_python_image(&image, std::slice::from_ref(&build)).expect("attested release");
+    assert_eq!(descriptor.minor, 11);
+    assert_eq!(descriptor.runtime_vaddr, 0x8000);
+    assert!(validated_python_image(&image, &[]).is_none());
+    for bad_image in [
+        python_image(0x030b0cf0, 62, false),
+        python_image(0x030b0df0, 183, false),
+        python_image(0x030b0df0, 62, true),
+        vec![0; 64],
+    ] {
+        assert!(validated_python_image(&bad_image, std::slice::from_ref(&build)).is_none());
+    }
+    let mut wrong_build = build.clone();
+    wrong_build.build_id = "ffffffffffffffff".to_string();
+    assert!(validated_python_image(&image, &[wrong_build]).is_none());
+    let arm = e_navigator_core::CpuProfilePythonBuild {
+        version: "3.12.13".to_string(),
+        architecture: "aarch64".to_string(),
+        ..build
+    };
+    assert_eq!(
+        validated_python_image(&python_image(0x030c0df0, 183, false), &[arm])
+            .expect("arm release")
+            .minor,
+        12
+    );
+}
+
+pub(super) fn python_image(version: u32, machine: u16, debug: bool) -> Vec<u8> {
+    // Real ELF64 section/symbol/note encoding, including a build ID and data
+    // symbol. The release/debug and version controls are independent of paths.
+    let names = b"\0.data\0.strtab\0.symtab\0.note.gnu.build-id\0.shstrtab\0";
+    let strings = b"\0_PyRuntime\0Py_Version\0_Py_RefTotal\0";
+    let mut image = vec![0u8; 120];
+    image[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+    image[16..18].copy_from_slice(&3u16.to_le_bytes());
+    image[18..20].copy_from_slice(&machine.to_le_bytes());
+    image[20..24].copy_from_slice(&1u32.to_le_bytes());
+    image[32..40].copy_from_slice(&64u64.to_le_bytes());
+    image[54..56].copy_from_slice(&56u16.to_le_bytes());
+    image[56..58].copy_from_slice(&1u16.to_le_bytes());
+    image[64..68].copy_from_slice(&1u32.to_le_bytes());
+    image[68..72].copy_from_slice(&5u32.to_le_bytes());
+    image[96..104].copy_from_slice(&65536u64.to_le_bytes());
+    image[104..112].copy_from_slice(&65536u64.to_le_bytes());
+    let mut sections = vec![0u8; 64];
+    let mut section = |name: u32, kind: u32, addr: u64, data: &[u8], link: u32, entry: u64| {
+        let offset = image.len() as u64;
+        image.extend_from_slice(data);
+        let mut header = [0u8; 64];
+        header[..4].copy_from_slice(&name.to_le_bytes());
+        header[4..8].copy_from_slice(&kind.to_le_bytes());
+        header[16..24].copy_from_slice(&addr.to_le_bytes());
+        header[24..32].copy_from_slice(&offset.to_le_bytes());
+        header[32..40].copy_from_slice(&(data.len() as u64).to_le_bytes());
+        header[40..44].copy_from_slice(&link.to_le_bytes());
+        header[56..64].copy_from_slice(&entry.to_le_bytes());
+        sections.extend_from_slice(&header);
+    };
+    let mut data = vec![0u8; 16];
+    data[..4].copy_from_slice(&version.to_le_bytes());
+    section(1, 1, 0x8000, &data, 0, 0);
+    section(7, 3, 0, strings, 0, 0);
+    let mut symbols = vec![0u8; 24];
+    for (name, address) in [(1u32, 0x8000u64), (12, 0x8000), (23, 0x8008)]
+        .into_iter()
+        .take(if debug { 3 } else { 2 })
+    {
+        let mut symbol = [0u8; 24];
+        symbol[..4].copy_from_slice(&name.to_le_bytes());
+        symbol[4] = 0x11;
+        symbol[6..8].copy_from_slice(&1u16.to_le_bytes());
+        symbol[8..16].copy_from_slice(&address.to_le_bytes());
+        symbol[16..24].copy_from_slice(&8u64.to_le_bytes());
+        symbols.extend_from_slice(&symbol);
+    }
+    section(15, 2, 0, &symbols, 2, 24);
+    let mut note = [0u8; 24];
+    note[..4].copy_from_slice(&4u32.to_le_bytes());
+    note[4..8].copy_from_slice(&8u32.to_le_bytes());
+    note[8..12].copy_from_slice(&3u32.to_le_bytes());
+    note[12..16].copy_from_slice(b"GNU\0");
+    note[16..].copy_from_slice(&[1, 35, 69, 103, 137, 171, 205, 239]);
+    section(23, 7, 0, &note, 0, 0);
+    section(42, 3, 0, names, 0, 0);
+    let shoff = image.len() as u64;
+    image.extend_from_slice(&sections);
+    image[40..48].copy_from_slice(&shoff.to_le_bytes());
+    image[52..54].copy_from_slice(&64u16.to_le_bytes());
+    image[58..60].copy_from_slice(&64u16.to_le_bytes());
+    image[60..62].copy_from_slice(&6u16.to_le_bytes());
+    image[62..64].copy_from_slice(&5u16.to_le_bytes());
+    image
+}
+
+#[test]
+fn validated_python_registration_skips_unreadable_earlier_modules() {
+    let root = fake_procfs("python-discovery", 711, 0x1000_0000);
+    let process = root.join("711");
+    std::fs::create_dir_all(process.join("root/usr/lib")).expect("module directory");
+    std::fs::create_dir_all(process.join("ns")).expect("namespace directory");
+    std::fs::write(process.join("ns/pid"), b"fixture").expect("namespace identity");
+    std::fs::write(
+        process.join("root/usr/lib/interpreter"),
+        python_image(0x030b0df0, 62, false),
+    )
+    .expect("ELF");
+    std::fs::write(process.join("maps"), "10000000-10010000 r-xp 00000000 00:00 1 /missing/deleted\n20000000-20010000 r-xp 00000000 00:00 2 /usr/lib/interpreter\n").expect("maps");
+    let build = e_navigator_core::CpuProfilePythonBuild {
+        build_id: "0123456789abcdef".into(),
+        version: "3.11.13".into(),
+        architecture: "x86_64".into(),
+    };
+    let mut manager = UnwindTableManager::new(root.clone(), 16).with_python_builds(vec![build]);
+    let mut stats = UnwindRefreshStats::default();
+    let info = manager
+        .python_proc_info(711, &mut stats)
+        .expect("validated interpreter after missing module");
+    assert_eq!(info.runtime_addr, 0x2000_8000);
+    std::fs::write(process.join("maps"), vec![b' '; 256 * 1024 + 1]).expect("oversize maps");
+    assert!(manager.python_proc_info(711, &mut stats).is_none());
+    assert!(
+        manager
+            .build_process_mappings(711, &mut MemorySink::default(), &mut stats)
+            .is_none()
+    );
+    assert_eq!(stats.maps_rejected, 2);
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn failed_publication_rewrites_slots_overwritten_by_another_failed_module() {
+    let root = fake_procfs("publication-retry", 712, 0x1000_0000);
+    let second = root.join("712/root/usr/bin/second");
+    let mut image = synthetic_module();
+    let offset = image
+        .windows(5)
+        .position(|bytes| bytes == [0x0c, 0x07, 0x08, 0x90, 0x01])
+        .expect("CFA rule");
+    image[offset + 2] = 24;
+    std::fs::write(&second, image).expect("second module");
+    let mut manager = UnwindTableManager::new(root.clone(), 16);
+    let mut sink = MemorySink {
+        reject_modules: true,
+        ..MemorySink::default()
+    };
+    let mut stats = UnwindRefreshStats::default();
+    assert!(
+        manager
+            .module_record(712, "/usr/bin/app", &mut sink, &mut stats)
+            .is_none()
+    );
+    assert!(
+        manager
+            .module_record(712, "/usr/bin/second", &mut sink, &mut stats)
+            .is_none()
+    );
+    assert_eq!(sink.rows[&0][0].cfa_off, 24);
+    sink.reject_modules = false;
+    let record = manager
+        .module_record(712, "/usr/bin/app", &mut sink, &mut stats)
+        .expect("retry published");
+    let span = sink.modules[&record.module_id];
+    assert_eq!(span.row_start, 0);
+    assert_eq!(sink.rows[&span.row_start][0].cfa_off, 8);
+    std::fs::remove_dir_all(root).expect("cleanup");
 }

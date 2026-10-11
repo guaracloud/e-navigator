@@ -109,7 +109,8 @@ E-Navigator does not currently claim:
   loss, and overhead remain unproven. The reduced capability profile omits
   `SYSLOG`, so kernel names may remain `[kernel:unresolved]` even when capture
   succeeds);
-- interpreter unwinding beyond exact CPython 3.11 and 3.12 layouts (other
+- interpreter unwinding beyond operator-attested release CPython 3.11.13 and
+  3.12.13 layouts (empty `python_builds` disables interpreter reads; other
   versions are counted as unsupported; Node/V8 and JVM generated-code names resolve only
   when the target runtime or its tooling publishes a bounded
   `/tmp/perf-<pid>.map` in the target mount namespace, and that symbol map does
@@ -320,3 +321,6 @@ The 2026-07-22 head-to-head campaign provides that evidence only for its pinned
 two-node homelab, workload, versions, rates, cumulative stages, and short
 windows. Its PASS verdict means the evidence matrix passed integrity gates. It
 does not mean E-Navigator outperformed the comparison stack.
+
+See [issue 52 CPU qualification](issue-52-cpu-qualification.md) for build
+attestation migration, identity fences, fixed lifetime budgets, and per-cell gates.

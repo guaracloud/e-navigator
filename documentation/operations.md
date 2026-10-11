@@ -139,3 +139,11 @@ not prove that a privileged probe attached to the intended kernel target or
 that a backend retained and queried the data. Record the expected source
 signal, sink acceptance, and backend query for every production capability
 claim. See [proof report](proof-report.md) and [boundaries](boundaries.md).
+
+## CPU build attestation and qualification
+
+Python runtime reads require exact `cpu_profile_source.python_builds` entries.
+An empty list leaves native capture active and disables interpreter reads.
+See [issue 52 CPU qualification](issue-52-cpu-qualification.md) for migration,
+lifetime metadata limits, identity rejection diagnostics, and the per-cell
+native/Pyroscope assertion command.

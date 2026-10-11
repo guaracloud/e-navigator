@@ -1,0 +1,102 @@
+{
+  "GW-CPU-0001": {
+    "identity": {
+      "runtime": "native",
+      "version": "fixture",
+      "build_id": "0123456789abcdef",
+      "architecture": "x86_64",
+      "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "samples": [
+      {
+        "schema_version": 1,
+        "host": null,
+        "source": "source.aya_cpu_profile",
+        "kind": "profile_sample_observation",
+        "payload": {
+          "timestamp_unix_nanos": 1500000000,
+          "profiling_kind": "cpu",
+          "sample_count": 10,
+          "sampling_period_nanos": 10,
+          "correlation_kind": "observed_profile_sample",
+          "confidence": "high",
+          "stack_id": "fixture-stack",
+          "container": null,
+          "kubernetes": null,
+          "thread_id": 1,
+          "thread_name": "fixture",
+          "process": {
+            "pid": 1,
+            "command": "fixture"
+          },
+          "stack_frames": [
+            {
+              "symbol": "busy",
+              "domain": "user"
+            },
+            {
+              "symbol": "outer",
+              "domain": "user"
+            }
+          ],
+          "attributes": [
+            {
+              "key": "profiling.sample.mode",
+              "value": "on_cpu"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "GW-CPU-0002": {
+    "identity": {
+      "runtime": "cpython",
+      "version": "fixture",
+      "build_id": "0123456789abcdef",
+      "architecture": "x86_64",
+      "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "samples": [
+      {
+        "schema_version": 1,
+        "host": null,
+        "source": "source.aya_cpu_profile",
+        "kind": "profile_sample_observation",
+        "payload": {
+          "timestamp_unix_nanos": 1500000000,
+          "profiling_kind": "cpu",
+          "sample_count": 10,
+          "sampling_period_nanos": 10,
+          "correlation_kind": "observed_profile_sample",
+          "confidence": "high",
+          "stack_id": "fixture-stack",
+          "container": null,
+          "kubernetes": null,
+          "thread_id": 2,
+          "thread_name": "fixture",
+          "process": {
+            "pid": 2,
+            "command": "fixture"
+          },
+          "stack_frames": [
+            {
+              "symbol": "busy",
+              "domain": "managed_runtime"
+            },
+            {
+              "symbol": "outer",
+              "domain": "managed_runtime"
+            }
+          ],
+          "attributes": [
+            {
+              "key": "profiling.sample.mode",
+              "value": "on_cpu"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

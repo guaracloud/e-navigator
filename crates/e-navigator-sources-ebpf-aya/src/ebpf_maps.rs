@@ -21,11 +21,14 @@ pub(crate) enum SourceMapProfile {
     CpuProfile,
 }
 
-const CAPACITY_MAPS: [&str; 28] = [
+const CAPACITY_MAPS: [&str; 31] = [
     "UNWIND_ROWS",
     "UNWIND_MODULES",
     "UNWIND_PROC_MAPPINGS",
     "PY_PROC_INFO",
+    "PROFILE_PROCESS_GENERATIONS",
+    "PENDING_PROFILE_MAPPINGS",
+    "PROFILE_GENERATION_POISON",
     "PENDING_CONNECTS",
     "ACTIVE_CONNECTIONS",
     "PENDING_NETWORK_IO",
@@ -180,6 +183,9 @@ fn retains_map(profile: SourceMapProfile, name: &str) -> bool {
                 | "UNWIND_MODULES"
                 | "UNWIND_PROC_MAPPINGS"
                 | "PY_PROC_INFO"
+                | "PROFILE_PROCESS_GENERATIONS"
+                | "PENDING_PROFILE_MAPPINGS"
+                | "PROFILE_GENERATION_POISON"
                 | "PENDING_OFF_CPU_PROFILES"
                 | "PENDING_LOCK_PROFILES"
         ),
@@ -215,6 +221,9 @@ mod tests {
                 "UNWIND_MODULES",
                 "UNWIND_PROC_MAPPINGS",
                 "PY_PROC_INFO",
+                "PROFILE_PROCESS_GENERATIONS",
+                "PENDING_PROFILE_MAPPINGS",
+                "PROFILE_GENERATION_POISON",
                 "PENDING_OFF_CPU_PROFILES",
                 "PENDING_LOCK_PROFILES"
             ]

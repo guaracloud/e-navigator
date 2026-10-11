@@ -81,3 +81,7 @@ periodic capture passed on the local aarch64 OrbStack kernel
 `7.0.11-orbstack-00360-gc9bc4d96ac70`, including combined domains and
 address-safe kernel frames. Off-CPU/futex kernel semantics, additional target
 kernels, loss, and overhead remain required for broader runtime claims.
+
+Issue 52 registration hardening and its per-cell assertion tool are documented in
+[CPU runtime qualification](../issue-52-cpu-qualification.md). Historical
+capture records above do not qualify the new generation-fenced attachment path.

@@ -75,9 +75,25 @@ pub(crate) struct UnwindMapping {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct UnwindProcMappings {
+    pub generation: u64,
     pub count: u32,
     pub _pad: u32,
     pub entries: [UnwindMapping; UNWIND_MAX_MAPPINGS],
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ProfileGenerationAbi {
+    pub generation: u64,
+    pub pending_mappings: u64,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl ProfileGenerationAbi {
+    pub(crate) fn usable(self) -> Option<u64> {
+        (self.pending_mappings == 0 && self.generation != 0).then_some(self.generation)
+    }
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -90,6 +106,7 @@ pub(crate) struct UnwindModuleSpan {
 
 #[cfg(target_os = "linux")]
 mod pod {
+    unsafe impl aya::Pod for super::ProfileGenerationAbi {}
     unsafe impl aya::Pod for super::UnwindRowAbi {}
     unsafe impl aya::Pod for super::UnwindProcMappings {}
     unsafe impl aya::Pod for super::UnwindModuleSpan {}
@@ -103,6 +120,7 @@ mod pod {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PyProcInfoAbi {
+    pub generation: u64,
     pub runtime_addr: u64,
     pub pid_ns_dev: u64,
     pub pid_ns_ino: u64,
@@ -129,6 +147,7 @@ pub(crate) fn py311_proc_info(
     pid_ns_ino: u64,
 ) -> PyProcInfoAbi {
     PyProcInfoAbi {
+        generation: 0,
         runtime_addr,
         pid_ns_dev,
         pid_ns_ino,
@@ -156,6 +175,7 @@ pub(crate) fn py312_proc_info(
     pid_ns_ino: u64,
 ) -> PyProcInfoAbi {
     PyProcInfoAbi {
+        generation: 0,
         runtime_addr,
         pid_ns_dev,
         pid_ns_ino,
@@ -317,6 +337,7 @@ impl HotPidTracker {
 /// wraps the eBPF maps, tests collect writes in memory.
 #[cfg(any(target_os = "linux", test))]
 pub(crate) trait UnwindMapSink {
+    fn process_generation(&mut self, pid: u32) -> Option<u64>;
     fn write_rows(&mut self, row_start: u32, rows: &[UnwindRowAbi]) -> bool;
     fn write_module(&mut self, module_id: u32, span: UnwindModuleSpan) -> bool;
     fn write_process(&mut self, pid: u32, mappings: &UnwindProcMappings) -> bool;
@@ -339,6 +360,9 @@ pub(crate) struct UnwindRefreshStats {
     pub mappings_skipped_per_process_limit: usize,
     pub python_registered: usize,
     pub python_unsupported_version: usize,
+    pub python_unvalidated_builds: usize,
+    pub process_identity_changes: usize,
+    pub maps_rejected: usize,
     pub modules_skipped_size: usize,
     pub tracked_processes: usize,
     pub cached_modules: usize,
@@ -355,8 +379,8 @@ struct ModuleRecord {
 }
 
 /// A module's parsed unwind rows, kept in userspace so files are read
-/// and parsed at most once ever while row-pool positions are
-/// reassigned every refresh.
+/// and parsed once per immutable file identity. Published row positions
+/// remain fixed for the source lifetime.
 #[cfg(any(target_os = "linux", test))]
 #[derive(Debug)]
 struct ParsedModule {
@@ -379,17 +403,14 @@ pub(crate) struct UnwindTableManager {
     cached_rows: usize,
     /// (st_dev, st_ino) -> parsed module rows; `None` records a file
     /// that has no usable table so it is not re-parsed every pass.
-    parsed: std::collections::BTreeMap<(u64, u64), Option<ParsedModule>>,
-    /// (st_dev, st_ino) -> row-pool position assigned in the current
-    /// refresh, cleared at the start of each pass so hot processes win
-    /// the pool afresh every time.
-    assigned: std::collections::BTreeMap<(u64, u64), u32>,
-    /// (st_dev, st_ino) -> row-pool position last written to the eBPF
-    /// map, so unchanged module placements skip the row rewrite.
-    last_written: std::collections::BTreeMap<(u64, u64), u32>,
+    parsed: std::collections::BTreeMap<ModuleIdentity, Option<ParsedModule>>,
+    /// Immutable row-pool placements. Published slots are never reused while
+    /// a kernel walker can still hold a reference to them.
+    assigned: std::collections::BTreeMap<ModuleIdentity, u32>,
     /// (st_dev, st_ino) -> `_PyRuntime` link-time address and load
     /// segments of a supported CPython module; `None` records absence.
-    python_runtimes: std::collections::BTreeMap<(u64, u64), Option<PyRuntimeRecord>>,
+    python_runtimes: std::collections::BTreeMap<ModuleIdentity, Option<PyRuntimeRecord>>,
+    python_builds: Vec<e_navigator_core::CpuProfilePythonBuild>,
     registered_pids: std::collections::BTreeSet<u32>,
     registered_py_pids: std::collections::BTreeSet<u32>,
 }
@@ -397,9 +418,87 @@ pub(crate) struct UnwindTableManager {
 #[cfg(any(target_os = "linux", test))]
 #[derive(Debug, Clone, Copy)]
 struct PyRuntimeRecord {
+    minor: u32,
     runtime_vaddr: u64,
     segments: [LoadSegment; 4],
     segment_count: usize,
+}
+
+/// A build descriptor attests the compiled layouts; paths and perf-map
+/// names never establish interpreter support.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ValidatedPythonImage {
+    pub minor: u32,
+    pub runtime_vaddr: u64,
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn validated_python_image(
+    image: &[u8],
+    builds: &[e_navigator_core::CpuProfilePythonBuild],
+) -> Option<ValidatedPythonImage> {
+    use object::{Object, ObjectSection, ObjectSymbol};
+    let file = object::File::parse(image).ok()?;
+    if file.format() != object::BinaryFormat::Elf || !file.is_64() || !file.is_little_endian() {
+        return None;
+    }
+    let architecture = match file.architecture() {
+        object::Architecture::X86_64 => "x86_64",
+        object::Architecture::Aarch64 => "aarch64",
+        _ => return None,
+    };
+    let build_id = file.build_id().ok()??;
+    let build = builds.iter().find(|build| {
+        build.architecture == architecture
+            && build.build_id.len() == build_id.len() * 2
+            && build
+                .build_id
+                .as_bytes()
+                .chunks_exact(2)
+                .zip(build_id)
+                .all(|(hex, byte)| {
+                    let digit = |value: u8| match value {
+                        b'0'..=b'9' => Some(value - b'0'),
+                        b'a'..=b'f' => Some(value - b'a' + 10),
+                        _ => None,
+                    };
+                    digit(hex[0])
+                        .zip(digit(hex[1]))
+                        .is_some_and(|(high, low)| high * 16 + low == *byte)
+                })
+    })?;
+    let (minor, version) = match build.version.as_str() {
+        "3.11.13" => (11, 0x030b0df0u32),
+        "3.12.13" => (12, 0x030c0df0u32),
+        _ => return None,
+    };
+    let mut runtime_vaddr = None;
+    let mut actual_version = None;
+    for symbol in file.symbols().chain(file.dynamic_symbols()) {
+        if symbol.is_undefined() {
+            continue;
+        }
+        match symbol.name().ok()? {
+            "_Py_RefTotal" | "Py_GetObjects" => return None,
+            "_PyRuntime" => runtime_vaddr = Some(symbol.address()),
+            "Py_Version" => {
+                let section = file.section_by_index(symbol.section_index()?).ok()?;
+                let bytes: [u8; 4] = section
+                    .data_range(symbol.address(), 4)
+                    .ok()??
+                    .try_into()
+                    .ok()?;
+                actual_version = Some(u32::from_le_bytes(bytes));
+            }
+            _ => {}
+        }
+    }
+    let runtime_vaddr = runtime_vaddr.filter(|address| *address != 0)?;
+    (actual_version == Some(version)).then_some(ValidatedPythonImage {
+        minor,
+        runtime_vaddr,
+    })
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -421,11 +520,19 @@ impl UnwindTableManager {
             cached_rows: 0,
             parsed: std::collections::BTreeMap::new(),
             assigned: std::collections::BTreeMap::new(),
-            last_written: std::collections::BTreeMap::new(),
             python_runtimes: std::collections::BTreeMap::new(),
+            python_builds: Vec::new(),
             registered_pids: std::collections::BTreeSet::new(),
             registered_py_pids: std::collections::BTreeSet::new(),
         }
+    }
+
+    pub(crate) fn with_python_builds(
+        mut self,
+        builds: Vec<e_navigator_core::CpuProfilePythonBuild>,
+    ) -> Self {
+        self.python_builds = builds;
+        self
     }
 
     #[cfg(test)]
@@ -451,12 +558,9 @@ impl UnwindTableManager {
         let mut seen_pids = std::collections::BTreeSet::new();
         let mut seen_py_pids = std::collections::BTreeSet::new();
 
-        // Re-allocate the finite row pool from scratch each pass so the
-        // processes prioritized this refresh (hot pids first) claim it
-        // before idle system processes, rather than being locked out by
-        // whoever filled it on an earlier pass.
-        self.row_cursor = 0;
-        self.assigned.clear();
+        // Preserve published row slots across refreshes and tail calls.
+        // ponytail: fixed lifetime pool; add generation-switched pools only
+        // if measured module churn exhausts these bounded immutable slots.
 
         let Ok(entries) = std::fs::read_dir(&self.procfs_root) else {
             return stats;
@@ -474,20 +578,34 @@ impl UnwindTableManager {
         }
 
         for pid in pids {
-            if let Some(mappings) = self.build_process_mappings(pid, sink, &mut stats)
+            let Some(generation) = sink.process_generation(pid) else {
+                stats.process_identity_changes += 1;
+                continue;
+            };
+            if let Some(mut mappings) = self.build_process_mappings(pid, sink, &mut stats)
                 && mappings.count > 0
-                && sink.write_process(pid, &mappings)
             {
-                seen_pids.insert(pid);
-                stats.processes_registered += 1;
+                mappings.generation = generation;
+                if sink.write_process(pid, &mappings) {
+                    seen_pids.insert(pid);
+                }
             }
-            if let Some(info) = self.python_proc_info(pid, &mut stats)
-                && sink.write_python_process(pid, &info)
-            {
-                seen_py_pids.insert(pid);
-                stats.python_registered += 1;
+            if let Some(mut info) = self.python_proc_info(pid, &mut stats) {
+                info.generation = generation;
+                if sink.write_python_process(pid, &info) {
+                    seen_py_pids.insert(pid);
+                }
+            }
+            if sink.process_generation(pid) != Some(generation) {
+                sink.remove_process(pid);
+                sink.remove_python_process(pid);
+                seen_pids.remove(&pid);
+                seen_py_pids.remove(&pid);
+                stats.process_identity_changes += 1;
             }
         }
+        stats.processes_registered = seen_pids.len();
+        stats.python_registered = seen_py_pids.len();
 
         for stale in self.registered_pids.difference(&seen_pids) {
             sink.remove_process(*stale);
@@ -515,7 +633,12 @@ impl UnwindTableManager {
         stats: &mut UnwindRefreshStats,
     ) -> Option<PyProcInfoAbi> {
         let maps_path = self.procfs_root.join(pid.to_string()).join("maps");
-        let contents = std::fs::read_to_string(&maps_path).ok()?;
+        let Some(contents) = read_bounded_image(&maps_path, 256 * 1024)
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+        else {
+            stats.maps_rejected += 1;
+            return None;
+        };
         let module_map = ProcessModuleMap::parse_maps(&contents);
         // The process's pid namespace, so the in-kernel walker can match
         // CPython's namespace-local thread ids.
@@ -531,29 +654,38 @@ impl UnwindTableManager {
             .unwrap_or((0, 0))
         };
         for mapping in module_map.mappings() {
-            let Some(minor) = python_minor_version(&mapping.path) else {
+            let minor_hint = python_minor_version(&mapping.path);
+            if minor_hint.is_some_and(|minor| !matches!(minor, 11 | 12)) {
+                stats.python_unsupported_version += 1;
+            }
+            if self.python_builds.is_empty() {
+                if minor_hint.is_some_and(|minor| matches!(minor, 11 | 12)) {
+                    stats.python_unvalidated_builds += 1;
+                }
+                continue;
+            }
+            let Some(file_path) = target_module_path(&self.procfs_root, pid, &mapping.path) else {
                 continue;
             };
-            if !matches!(minor, 11 | 12) {
-                stats.python_unsupported_version += 1;
-                return None;
-            }
-            let file_path = self
-                .procfs_root
-                .join(pid.to_string())
-                .join("root")
-                .join(mapping.path.trim_start_matches('/'));
-            let metadata = std::fs::metadata(&file_path).ok()?;
+            let Ok(metadata) = std::fs::metadata(&file_path) else {
+                continue;
+            };
             if metadata.len() > self.max_module_bytes {
-                return None;
+                stats.modules_skipped_size += 1;
+                continue;
             }
             let key = module_key(&metadata);
+            if !self.python_runtimes.contains_key(&key)
+                && self.python_runtimes.len() >= UNWIND_MAX_MODULES
+            {
+                stats.modules_skipped_module_budget += 1;
+                return None;
+            }
+            let builds = &self.python_builds;
             let record = self.python_runtimes.entry(key).or_insert_with(|| {
-                std::fs::read(&file_path).ok().and_then(|image| {
-                    let runtime_vaddr = e_navigator_profiling::symbolize::find_elf_symbol_address(
-                        &image,
-                        "_PyRuntime",
-                    )?;
+                read_bounded_image(&file_path, self.max_module_bytes).and_then(|image| {
+                    let descriptor = validated_python_image(&image, builds)?;
+                    let runtime_vaddr = descriptor.runtime_vaddr;
                     let segments = parse_load_segments(&image);
                     if segments.is_empty() {
                         return None;
@@ -566,6 +698,7 @@ impl UnwindTableManager {
                     let count = segments.len().min(Self::MAX_SEGMENTS_PER_MODULE);
                     fixed[..count].copy_from_slice(&segments[..count]);
                     Some(PyRuntimeRecord {
+                        minor: descriptor.minor,
                         runtime_vaddr,
                         segments: fixed,
                         segment_count: count,
@@ -575,6 +708,9 @@ impl UnwindTableManager {
             // The interpreter binary may not carry _PyRuntime (shared
             // libpython builds); keep scanning the remaining mappings.
             let Some(record) = *record else {
+                if minor_hint.is_some() {
+                    stats.python_unvalidated_builds += 1;
+                }
                 continue;
             };
             let Some(bias) = compute_load_bias(
@@ -584,8 +720,12 @@ impl UnwindTableManager {
             ) else {
                 continue;
             };
-            let runtime_addr = record.runtime_vaddr.wrapping_add(bias);
-            return Some(match minor {
+            if pid_ns_ino == 0 {
+                stats.python_unvalidated_builds += 1;
+                return None;
+            }
+            let runtime_addr = record.runtime_vaddr.checked_add(bias)?;
+            return Some(match record.minor {
                 11 => py311_proc_info(runtime_addr, pid_ns_dev, pid_ns_ino),
                 12 => py312_proc_info(runtime_addr, pid_ns_dev, pid_ns_ino),
                 _ => return None,
@@ -601,10 +741,16 @@ impl UnwindTableManager {
         stats: &mut UnwindRefreshStats,
     ) -> Option<UnwindProcMappings> {
         let maps_path = self.procfs_root.join(pid.to_string()).join("maps");
-        let contents = std::fs::read_to_string(&maps_path).ok()?;
+        let Some(contents) = read_bounded_image(&maps_path, 256 * 1024)
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+        else {
+            stats.maps_rejected += 1;
+            return None;
+        };
         let module_map = ProcessModuleMap::parse_maps(&contents);
 
         let mut result = UnwindProcMappings {
+            generation: 0,
             count: 0,
             _pad: 0,
             entries: [UnwindMapping {
@@ -656,11 +802,7 @@ impl UnwindTableManager {
         sink: &mut impl UnwindMapSink,
         stats: &mut UnwindRefreshStats,
     ) -> Option<ModuleRecord> {
-        let file_path = self
-            .procfs_root
-            .join(pid.to_string())
-            .join("root")
-            .join(path.trim_start_matches('/'));
+        let file_path = target_module_path(&self.procfs_root, pid, path)?;
         let metadata = std::fs::metadata(&file_path).ok()?;
         if metadata.len() > self.max_module_bytes {
             stats.modules_skipped_size += 1;
@@ -712,17 +854,11 @@ impl UnwindTableManager {
             return None;
         }
         let row_start = self.row_cursor;
-        // Rows only need rewriting when this module moved since the last
-        // pass; content is stable per inode.
-        if self.last_written.get(&key) != Some(&row_start) {
-            let ok = {
-                let rows = &self.parsed.get(&key).and_then(Option::as_ref)?.rows;
-                sink.write_rows(row_start, rows)
-            };
-            if !ok {
-                return None;
-            }
-            self.last_written.insert(key, row_start);
+        // Unpublished slots may have been overwritten after an earlier failed
+        // module write. Rewrite them on every retry; published slots never move.
+        let rows = &self.parsed.get(&key).and_then(Option::as_ref)?.rows;
+        if !sink.write_rows(row_start, rows) {
+            return None;
         }
         if !sink.write_module(module_id, UnwindModuleSpan { row_start, row_len }) {
             return None;
@@ -746,7 +882,7 @@ impl UnwindTableManager {
         max_rows: usize,
         stats: &mut UnwindRefreshStats,
     ) -> Option<ParsedModule> {
-        let image = std::fs::read(file_path).ok()?;
+        let image = read_bounded_image(file_path, self.max_module_bytes)?;
         let table = ElfUnwindTable::parse_bounded(&image, max_rows);
         if table.is_empty() {
             stats.modules_without_tables += 1;
@@ -781,16 +917,66 @@ impl UnwindTableManager {
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn module_key(metadata: &std::fs::Metadata) -> (u64, u64) {
+pub(crate) fn target_module_path(
+    procfs_root: &std::path::Path,
+    pid: u32,
+    module: &str,
+) -> Option<std::path::PathBuf> {
+    use std::path::{Component, Path};
+    let relative = Path::new(module).strip_prefix(Path::new("/")).ok()?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return None;
+    }
+    Some(
+        procfs_root
+            .join(pid.to_string())
+            .join("root")
+            .join(relative),
+    )
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn read_bounded_image(path: &std::path::Path, limit: u64) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).ok()?;
+    if file.metadata().ok()?.len() > limit {
+        return None;
+    }
+    let mut image = Vec::new();
+    file.take(limit.checked_add(1)?)
+        .read_to_end(&mut image)
+        .ok()?;
+    (image.len() as u64 <= limit).then_some(image)
+}
+
+#[cfg(any(target_os = "linux", test))]
+type ModuleIdentity = (u64, u64, u64, Option<std::time::SystemTime>);
+
+#[cfg(any(target_os = "linux", test))]
+fn module_key(metadata: &std::fs::Metadata) -> ModuleIdentity {
     #[cfg(target_os = "linux")]
     {
         use std::os::linux::fs::MetadataExt;
-        (metadata.st_dev(), metadata.st_ino())
+        (
+            metadata.st_dev(),
+            metadata.st_ino(),
+            metadata.len(),
+            metadata.modified().ok(),
+        )
     }
     #[cfg(not(target_os = "linux"))]
     {
         use std::os::unix::fs::MetadataExt;
-        (metadata.dev(), metadata.ino())
+        (
+            metadata.dev(),
+            metadata.ino(),
+            metadata.len(),
+            metadata.modified().ok(),
+        )
     }
 }
 

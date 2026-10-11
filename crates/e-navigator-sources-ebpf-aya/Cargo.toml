@@ -38,6 +38,7 @@ e-navigator-protocol = { path = "../e-navigator-protocol" }
 e-navigator-profiling = { path = "../e-navigator-profiling" }
 e-navigator-signals = { path = "../e-navigator-signals" }
 iced-x86 = { workspace = true }
+object = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -50,7 +51,6 @@ aya-obj = { workspace = true }
 getrandom = { workspace = true }
 inotify = { workspace = true }
 libc = { workspace = true }
-object = { workspace = true }
 rustix = { workspace = true }
 
 [build-dependencies]

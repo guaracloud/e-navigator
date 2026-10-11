@@ -1,0 +1,74 @@
+{
+  "GW-CPU-0001": {
+    "flamegraph": {
+      "names": [
+        "total",
+        "outer",
+        "busy"
+      ],
+      "total": "100",
+      "levels": [
+        {
+          "values": [
+            0,
+            100,
+            0,
+            0
+          ]
+        },
+        {
+          "values": [
+            0,
+            100,
+            0,
+            1
+          ]
+        },
+        {
+          "values": [
+            0,
+            100,
+            100,
+            2
+          ]
+        }
+      ]
+    }
+  },
+  "GW-CPU-0002": {
+    "flamegraph": {
+      "names": [
+        "total",
+        "outer",
+        "busy"
+      ],
+      "total": "100",
+      "levels": [
+        {
+          "values": [
+            0,
+            100,
+            0,
+            0
+          ]
+        },
+        {
+          "values": [
+            0,
+            100,
+            0,
+            1
+          ]
+        },
+        {
+          "values": [
+            0,
+            100,
+            100,
+            2
+          ]
+        }
+      ]
+    }
+  }
+}
