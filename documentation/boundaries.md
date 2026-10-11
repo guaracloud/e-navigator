@@ -29,6 +29,9 @@ E-Navigator is designed to provide:
 E-Navigator does not currently claim:
 
 - production observability backend behavior;
+- deployed application-log backend query acceptance or restart-safe export
+  durability; [processed OTLP Logs](log-export.md) have local fixture and
+  independent worker evidence, while durable acceptance remains #56;
 - trace storage, profile storage, flamegraph UI, dashboards, or query UI;
 - production profile-delivery behavior or homelab stored-profile query proof
   (the generic OTLP Profiles HTTP sink is locally ingest/query proven against

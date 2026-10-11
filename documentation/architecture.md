@@ -34,7 +34,7 @@ disable registered modules, but it cannot load arbitrary code.
 | `e-navigator-profiling` | Profile models, normalization, symbolization, JIT support, and unwind tables |
 | `e-navigator-sources-host` | Host resource observations from procfs, sysfs, and cgroups |
 | `e-navigator-sources-ebpf-aya` | Aya loaders, dual RingBuf/perf event readers, raw-event decoding, protocol capture, TLS uprobes, and CPU profiling |
-| `e-navigator-processors` | Container and Kubernetes attribution plus workload filtering |
+| `e-navigator-processors` | Container and Kubernetes attribution, workload filtering, and configured log privacy processing |
 | `e-navigator-generators` | Metrics, dependency edges, request spans, profile sessions, trace paths, and security findings |
 | `e-navigator-sinks` | JSON, Prometheus, OTLP HTTP, and local pprof formatting and delivery |
 | `e-navigator-runner` | Source supervision, bounded dispatch, derivation budgets, and sink lifecycle |
@@ -119,7 +119,8 @@ are separate policies and should not be treated as interchangeable.
 
 ## Export Isolation
 
-Metrics, traces, and profiles have independent OTLP queues and workers. Each
+Metrics, traces, profiles, and opt-in processed application logs have independent
+OTLP queues and workers. Each
 worker owns bounded batching, timeout, retry, circuit-breaker, and shutdown
 state. Destination I/O never runs on the shared signal path, so a failed
 profile destination cannot block metric or trace capture.

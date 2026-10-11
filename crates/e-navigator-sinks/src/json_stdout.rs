@@ -76,7 +76,10 @@ fn sanitize_signal_for_stdout(signal: &SignalEnvelope) -> Cow<'_, SignalEnvelope
 
     let mut sanitized = signal.clone();
     match &mut sanitized.payload {
-        SignalPayload::ApplicationLogObservation(event) => event.body = None,
+        SignalPayload::ApplicationLogObservation(event) => {
+            event.body = None;
+            event.processing = None;
+        }
         SignalPayload::Exec(event) => redact_argv(&mut event.arguments),
         SignalPayload::RuntimeSecurityFinding(finding) => {
             redact_argv(&mut finding.matched_process.arguments);
@@ -174,6 +177,33 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+
+    #[tokio::test]
+    async fn processed_payload_fields_never_enter_stdout() {
+        use e_navigator_core::{LogProcessingConfig, Processor};
+        let signal: SignalEnvelope = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"kind":"application_log_observation","source":"source.cri_logs","host":null,
+            "payload":{"namespace":"ns","pod_name":"app","pod_uid":"uid","container_name":"web","restart_count":0,
+            "stream":"stdout","timestamp":"2026-10-10T00:00:00Z","observed_at_unix_nanos":1,"body":"{\"message\":\"private-body\",\"request_id\":\"private-field\",\"severity\":\"private-severity\"}",
+            "body_bytes":17,"truncated":false,"incomplete":false,"invalid_utf8":false}
+        })).expect("fixture");
+        let signal = e_navigator_processors::LogProcessingProcessor::new(LogProcessingConfig {
+            enabled: true,
+            attribute_keys: vec!["request_id".into()],
+            ..Default::default()
+        })
+        .process(signal)
+        .await
+        .expect("process")
+        .expect("signal");
+        let bytes = serialize_signal_line(&signal).expect("serialize");
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert!(json["payload"]["body"].is_null());
+        assert!(json["payload"].get("processing").is_none());
+        for secret in ["private-body", "private-field", "private-severity"] {
+            assert!(!String::from_utf8_lossy(&bytes).contains(secret));
+        }
+    }
 
     #[test]
     fn application_log_bodies_never_enter_stdout() {

@@ -7,7 +7,10 @@ pub mod envelope;
 pub mod exec;
 pub mod logs;
 pub mod metrics;
-pub use logs::{ApplicationLogObservation, LogCollectionOutcome, LogCollectionWarning, LogStream};
+pub use logs::{
+    ApplicationLogObservation, LogCollectionOutcome, LogCollectionWarning, LogProcessing,
+    LogProcessingOutcome, LogStream,
+};
 pub mod network;
 pub mod profiling;
 pub mod request;

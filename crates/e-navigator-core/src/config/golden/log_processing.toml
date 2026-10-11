@@ -1,0 +1,7 @@
+enabled = true
+max_body_bytes = 16384
+max_lines = 256
+omit_keys = ["customer_email"]
+redact_values = ["fixture-secret"]
+attribute_keys = ["request_id"]
+parse_failure = "omit_body"

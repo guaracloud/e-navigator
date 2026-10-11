@@ -602,6 +602,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "e-navigator-core",
+ "e-navigator-processors",
  "e-navigator-signals",
  "flate2",
  "opentelemetry-proto",

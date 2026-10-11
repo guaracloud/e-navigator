@@ -900,5 +900,37 @@
       "outcome": "unsupported_format",
       "count": 1
     }
+  },
+{
+  "schema_version": 1,
+  "kind": "application_log_observation",
+  "source": "source.cri_logs",
+  "host": "node-a",
+  "payload": {
+    "namespace": "default",
+    "pod_name": "app",
+    "pod_uid": "uid",
+    "container_name": "web",
+    "restart_count": 0,
+    "stream": "stdout",
+    "timestamp": "2026-10-10T12:00:00.000000001Z",
+    "observed_at_unix_nanos": 1,
+    "body": "redacted fixture",
+    "body_bytes": 17,
+    "truncated": false,
+    "incomplete": false,
+    "invalid_utf8": false,
+    "processing": {
+      "outcome": "json",
+      "severity_text": "INFO",
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": "00f067aa0ba902b7",
+      "attributes": {
+        "request_id": "fixture"
+      },
+      "workload_name": "default/checkout",
+      "workload_kind": "Deployment"
+    }
   }
+}
 ]

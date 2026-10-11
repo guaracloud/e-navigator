@@ -15,12 +15,16 @@ pub struct OtlpHttpConfig {
     pub traces_endpoint: String,
     #[serde(default)]
     pub profiles_endpoint: String,
+    #[serde(default)]
+    pub logs_endpoint: String,
     #[serde(default = "default_signal_family_enabled")]
     pub metrics_enabled: bool,
     #[serde(default = "default_signal_family_enabled")]
     pub traces_enabled: bool,
     #[serde(default = "default_signal_family_enabled")]
     pub profiles_enabled: bool,
+    #[serde(default)]
+    pub logs_enabled: bool,
     #[serde(default = "default_queue_capacity")]
     pub queue_capacity: usize,
     #[serde(default = "default_batch_size")]
@@ -55,9 +59,11 @@ impl Default for OtlpHttpConfig {
             metrics_endpoint: String::new(),
             traces_endpoint: String::new(),
             profiles_endpoint: String::new(),
+            logs_endpoint: String::new(),
             metrics_enabled: default_signal_family_enabled(),
             traces_enabled: default_signal_family_enabled(),
             profiles_enabled: default_signal_family_enabled(),
+            logs_enabled: false,
             queue_capacity: default_queue_capacity(),
             batch_size: default_batch_size(),
             flush_interval_millis: default_flush_interval_millis(),
@@ -104,6 +110,10 @@ impl OtlpHttpConfig {
 
     pub fn effective_profiles_endpoint(&self) -> Option<&str> {
         self.effective_endpoint(&self.profiles_endpoint)
+    }
+
+    pub fn effective_logs_endpoint(&self) -> Option<&str> {
+        self.effective_endpoint(&self.logs_endpoint)
     }
 
     pub(super) fn validate(&self, module_enabled: bool) -> ConfigResult<()> {
@@ -224,7 +234,11 @@ impl OtlpHttpConfig {
             self.shutdown_timeout_millis,
             Self::MAX_SHUTDOWN_TIMEOUT_MILLIS_LIMIT,
         )?;
-        if !(self.metrics_enabled || self.traces_enabled || self.profiles_enabled) {
+        if !(self.metrics_enabled
+            || self.traces_enabled
+            || self.profiles_enabled
+            || self.logs_enabled)
+        {
             return Err(ConfigError::invalid_value(
                 "otlp_http",
                 "otlp_http must enable at least one signal family when sink.otlp_http is enabled",
@@ -234,6 +248,25 @@ impl OtlpHttpConfig {
         validate_endpoint("otlp_http.metrics_endpoint", &self.metrics_endpoint)?;
         validate_endpoint("otlp_http.traces_endpoint", &self.traces_endpoint)?;
         validate_endpoint("otlp_http.profiles_endpoint", &self.profiles_endpoint)?;
+        validate_endpoint("otlp_http.logs_endpoint", &self.logs_endpoint)?;
+        if self.logs_enabled && self.effective_logs_endpoint().is_none() {
+            return Err(ConfigError::invalid_value(
+                "otlp_http.logs_endpoint",
+                "otlp_http.logs_endpoint or otlp_http.endpoint is required when OTLP logs are enabled",
+            ));
+        }
+        if self.logs_enabled
+            && self
+                .queue_capacity
+                .saturating_add(self.batch_size)
+                .saturating_mul(65536)
+                > 128 * 1024 * 1024
+        {
+            return Err(ConfigError::invalid_value(
+                "otlp_http.queue_capacity",
+                "OTLP logs queue and batch body budget must not exceed 128 MiB",
+            ));
+        }
         if self.metrics_enabled && self.effective_metrics_endpoint().is_none() {
             return Err(ConfigError::invalid_value(
                 "otlp_http.metrics_endpoint",

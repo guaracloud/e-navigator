@@ -93,6 +93,29 @@ impl Processor<SignalEnvelope> for ContainerAttributionProcessor {
 
     async fn process(&self, mut signal: SignalEnvelope) -> CoreResult<Option<SignalEnvelope>> {
         match &mut signal.payload {
+            SignalPayload::ApplicationLogObservation(event) => {
+                if let Some(processed) = &mut event.processing {
+                    processed.workload_name = None;
+                    processed.workload_kind = None;
+                    // Refresh the existing shared cache off the signal path. Never map
+                    // historical CRI restart counts onto current runtime container IDs.
+                    let _ = self.kubernetes.context_for_container("");
+                    if !event.pod_uid.is_empty() {
+                        let context = KubernetesContext {
+                            namespace: event.namespace.clone(),
+                            pod_name: event.pod_name.clone(),
+                            pod_uid: Some(event.pod_uid.clone()),
+                            container_name: Some(event.container_name.clone()),
+                            node_name: None,
+                            labels: Default::default(),
+                        };
+                        if let Some(owner) = self.kubernetes.owner_for_context(&context) {
+                            processed.workload_name = Some(owner.name);
+                            processed.workload_kind = Some(owner.owner_type);
+                        }
+                    }
+                }
+            }
             SignalPayload::Exec(event) => {
                 if event.container.is_none() {
                     event.container = self

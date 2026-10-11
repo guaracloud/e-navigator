@@ -12,7 +12,7 @@ In the chart's `config.toml` or static ConfigMap, set `[cri_logs] enabled = true
 and enable the existing `[[modules]] name = "source.cri_logs"` row. Keep
 `include_body = false` for metadata-only collection. Set it to true only when
 internal bounded payload capture is needed; JSON stdout still omits bodies.
-Redacted backend export is a separate implementation in #55.
+Redacted backend export is opt-in under [log processing operations](log-export.md).
 
 For Helm, also set `criLogs.mountsEnabled = true`. This adds exactly two mounts:
 read-only `/var/log/pods` and writable node-local `/var/lib/e-navigator/cri-logs`.
@@ -78,6 +78,6 @@ anchor bytes is inherently undetectable by this bounded identity check.
 
 Checkpoints prove source-channel admission, not backend storage. They offer
 source-position crash recovery, with replay duplicates around incomplete
-assemblies and commits. Durable redacted spool acceptance and backend delivery
-remain #55/#56. Do not use this source's read checkpoint to claim durable delivery
+assemblies and commits. Durable redacted spool acceptance remains #56; [log export](log-export.md)
+provides independent volatile delivery. Do not use this source's read checkpoint to claim durable delivery
 or completed Guara replacement qualification.
