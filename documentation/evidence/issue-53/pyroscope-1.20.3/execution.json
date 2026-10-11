@@ -14,8 +14,9 @@
     "e-navigator.log": "35dab21c56be13d9e43c1286c138273f236a83e1383f89df366c42bf809b5804",
     "executed-at.txt": "905530f8f6075ffd0f0f85835c0647f44a7c5ab7a889cc7006897b25d40edaba",
     "image-digests.json": "7f1ee5b4506dfaaf0d958eb8bc926a23d049ccda15a7eb40e17466df74552aa6",
-    "pyroscope.log": "30a355603a93566bd30a57bc646492f4b78a4d7819d7fec1dbc7ddd9f4273cd0",
+    "pyroscope.log": "2c979effe52bdbae1ab15dfd7ccf1d8c2245426fc214e59e73fe801a7c862317",
     "query.json": "fe0b18649dfe52ea028844313fc05b3b394bebb3a3f02bf688379cc644e1679c",
     "render.json": "e7f0fa81b756b5f8baa1fa33ef1367c7bc6c804438da8a20c427ee424ac28ad8"
-  }
+  },
+  "log_normalization": "trailing whitespace removed from backend log"
 }

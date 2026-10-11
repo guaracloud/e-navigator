@@ -7,7 +7,7 @@
  \__, |_|  \__,_|_| \__,_|_| |_|\__,_| | .__/ \__, |_|  \___/|___/\___\___/| .__/ \___|
   __/ |                                | |     __/ |                       | |
  |___/                                 |_|    |___/                        |_|
- 
+
 ts=2026-10-11T22:14:55.040441255Z caller=server.go:401 level=info msg="server listening on addresses" http=[::]:4040 grpc=[::]:9095
 ts=2026-10-11T22:14:55.043636303Z caller=modules.go:591 level=warn msg="no storage bucket configured, the admin component will not be loaded"
 ts=2026-10-11T22:14:55.044705277Z caller=memberlist_client.go:528 level=info msg="Using memberlist cluster label and node name" cluster_label= node=7d2cea4ec3d6-48380bd1
