@@ -77,6 +77,20 @@ pub struct CpuProfileSourceConfig {
     /// Most processes registered for DWARF unwinding per refresh pass.
     #[serde(default = "default_cpu_profile_max_unwind_processes")]
     pub max_unwind_processes: usize,
+    /// Audited, non-debug CPython builds whose layouts match the compiled
+    /// walkers. An empty list leaves native CPU capture enabled but does not
+    /// read Python runtime internals. Build IDs come from the mapped ELF.
+    #[serde(default)]
+    pub python_builds: Vec<CpuProfilePythonBuild>,
+}
+
+/// Exact build attestation for a statically registered Python walker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CpuProfilePythonBuild {
+    pub build_id: String,
+    pub version: String,
+    pub architecture: String,
 }
 
 fn default_cpu_profile_symbolize() -> bool {
@@ -139,6 +153,7 @@ impl Default for CpuProfileSourceConfig {
             cpp_demangle: CpuProfileCppDemangle::default(),
             dwarf_unwind: default_cpu_profile_dwarf_unwind(),
             max_unwind_processes: default_cpu_profile_max_unwind_processes(),
+            python_builds: Vec::new(),
         }
     }
 }
@@ -158,6 +173,30 @@ impl CpuProfileSourceConfig {
     pub const MAX_EVENT_RATE_PER_CPU: u32 = 4096;
 
     pub(super) fn validate(&self, runtime: &RuntimeConfig) -> ConfigResult<()> {
+        if self.python_builds.len() > 64 {
+            return Err(ConfigError::invalid_reference(
+                "cpu_profile_source.python_builds",
+                "at most 64 Python build descriptors are allowed",
+            ));
+        }
+        let mut identities = std::collections::BTreeSet::new();
+        for build in &self.python_builds {
+            if !matches!(build.version.as_str(), "3.11.13" | "3.12.13")
+                || !matches!(build.architecture.as_str(), "x86_64" | "aarch64")
+                || !(8..=128).contains(&build.build_id.len())
+                || !build.build_id.len().is_multiple_of(2)
+                || !build
+                    .build_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                || !identities.insert(&build.build_id)
+            {
+                return Err(ConfigError::invalid_reference(
+                    "cpu_profile_source.python_builds",
+                    "Python descriptors require a unique lowercase ELF build ID, audited version 3.11.13 or 3.12.13, and x86_64 or aarch64 architecture",
+                ));
+            }
+        }
         if self.module_name != Self::STATIC_MODULE_NAME {
             return Err(ConfigError::invalid_reference(
                 "cpu_profile_source.module_name",

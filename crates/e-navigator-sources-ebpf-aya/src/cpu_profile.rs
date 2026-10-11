@@ -122,6 +122,7 @@ pub(crate) struct RawCpuProfileEvent {
     pub kernel_instruction_pointers: [u64; RAW_KERNEL_PROFILE_MAX_FRAMES],
     pub py_frame_count: u32,
     pub py_stop: u32,
+    pub process_generation: u64,
     pub py_frames: [u64; RAW_PY_MAX_FRAMES],
 }
 
@@ -168,6 +169,10 @@ pub(crate) struct DecodedCpuProfileSample {
 /// Resolves a captured instruction pointer for a pid into a stack frame.
 #[cfg(any(target_os = "linux", test, feature = "fuzzing"))]
 pub(crate) trait FrameResolver {
+    fn begin_sample(&mut self, _pid: u32) {}
+    fn verify_generation(&mut self, _pid: u32, _generation: u64) -> bool {
+        true
+    }
     fn resolve(&mut self, pid: u32, ip: u64) -> RawProfileFrame;
 
     /// Confirms that `pid`/`tid` in the resolver's procfs view refer to
@@ -238,7 +243,6 @@ impl FrameResolver for RawAddressResolver {
 /// ELF symbol-table name resolution. Per-pid maps and per-module symbol
 /// tables are cached with bounded capacity.
 #[cfg(any(target_os = "linux", test))]
-#[derive(Debug)]
 pub(crate) struct ProcfsSymbolizer {
     procfs_root: std::path::PathBuf,
     resolve_symbols: bool,
@@ -266,6 +270,7 @@ pub(crate) struct ProcfsSymbolizer {
     /// Detected CPython minor version per pid. Unsupported and unreadable
     /// processes are negatively cached under the same pid bound.
     python_versions: std::collections::BTreeMap<u32, Option<u32>>,
+    python_builds: Vec<e_navigator_core::CpuProfilePythonBuild>,
     /// Identity-bound, periodically refreshed snapshot of non-zero symbols
     /// from the running kernel. An empty table records unavailable addresses.
     kernel_symbols: Option<CachedKernelSymbols>,
@@ -277,6 +282,7 @@ pub(crate) struct ProcfsSymbolizer {
 struct CachedJitSymbols {
     last_checked: std::time::Instant,
     symbols: Option<JitSymbolMap>,
+    identity: Option<ModuleFileIdentity>,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -307,10 +313,29 @@ struct ModuleFileIdentity {
 /// Bounded target-module identity -> symbol-table cache shared by reader
 /// threads.
 #[cfg(any(target_os = "linux", test))]
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct SharedSymbolTables {
     tables: std::collections::BTreeMap<ModuleFileIdentity, Option<std::sync::Arc<ElfSymbolTable>>>,
     kernel_symbols: Option<CachedKernelSymbols>,
+    python_images: std::collections::BTreeMap<
+        ModuleFileIdentity,
+        Option<crate::cpu_unwind::ValidatedPythonImage>,
+    >,
+    #[cfg(target_os = "linux")]
+    generation_poison:
+        Option<std::sync::Arc<std::sync::Mutex<aya::maps::Array<aya::maps::MapData, u64>>>>,
+    #[cfg(target_os = "linux")]
+    process_generations: Option<
+        std::sync::Arc<
+            std::sync::Mutex<
+                aya::maps::HashMap<
+                    aya::maps::MapData,
+                    u32,
+                    crate::cpu_unwind::ProfileGenerationAbi,
+                >,
+            >,
+        >,
+    >,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -372,6 +397,7 @@ impl ProcfsSymbolizer {
             CpuProfileSourceConfig::default().max_symbol_bytes,
             std::sync::Arc::new(std::sync::Mutex::new(SharedSymbolTables::default())),
         )
+        .with_python_builds(Vec::new())
     }
 
     pub(crate) fn with_shared_symbols(
@@ -394,9 +420,18 @@ impl ProcfsSymbolizer {
             thread_comms: std::collections::BTreeMap::new(),
             python_frames: std::collections::BTreeMap::new(),
             python_versions: std::collections::BTreeMap::new(),
+            python_builds: Vec::new(),
             kernel_symbols: None,
             kernel_symbol_refresh_interval: Self::KERNEL_SYMBOL_REFRESH_INTERVAL,
         }
+    }
+
+    pub(crate) fn with_python_builds(
+        mut self,
+        builds: Vec<e_navigator_core::CpuProfilePythonBuild>,
+    ) -> Self {
+        self.python_builds = builds;
+        self
     }
 
     fn refresh_kernel_symbols(&mut self) -> Option<()> {
@@ -477,7 +512,7 @@ impl ProcfsSymbolizer {
                 self.maps.remove(&oldest);
             }
             let path = self.procfs_root.join(pid.to_string()).join("maps");
-            let parsed = std::fs::read_to_string(&path)
+            let parsed = Self::read_bounded_utf8(&path, 256 * 1024)
                 .map(|contents| ProcessModuleMap::parse_maps(&contents))
                 .unwrap_or_default();
             self.maps.insert(pid, parsed);
@@ -523,22 +558,7 @@ impl ProcfsSymbolizer {
     }
 
     fn module_image_path(&self, pid: u32, module: &str) -> Option<std::path::PathBuf> {
-        use std::path::{Component, Path};
-
-        let relative = Path::new(module).strip_prefix(Path::new("/")).ok()?;
-        if relative.as_os_str().is_empty()
-            || relative
-                .components()
-                .any(|component| !matches!(component, Component::Normal(_)))
-        {
-            return None;
-        }
-        Some(
-            self.procfs_root
-                .join(pid.to_string())
-                .join("root")
-                .join(relative),
-        )
+        crate::cpu_unwind::target_module_path(&self.procfs_root, pid, module)
     }
 
     fn module_file_identity(
@@ -579,6 +599,7 @@ impl ProcfsSymbolizer {
                 pid,
                 CachedJitSymbols {
                     last_checked: std::time::Instant::now(),
+                    identity: self.jit_file_identity(pid),
                     symbols: self.load_jit_symbols(pid),
                 },
             );
@@ -651,11 +672,32 @@ impl ProcfsSymbolizer {
             {
                 self.python_versions.remove(&oldest);
             }
-            let minor = self
-                .process_map(pid)
-                .mappings()
-                .iter()
-                .find_map(|mapping| crate::cpu_unwind::python_minor_version(&mapping.path));
+            let mappings = self.process_map(pid).mappings().to_vec();
+            let minor = mappings.iter().find_map(|mapping| {
+                let path = self.module_image_path(pid, &mapping.path)?;
+                let metadata = std::fs::metadata(&path).ok()?;
+                if metadata.len() > Self::MAX_MODULE_IMAGE_BYTES {
+                    return None;
+                }
+                let identity = Self::module_file_identity(&path, &metadata);
+                let mut shared = self.symbols.lock().ok()?;
+                if !shared.python_images.contains_key(&identity) {
+                    if shared.python_images.len() >= self.max_cached_modules {
+                        return None;
+                    }
+                    let image =
+                        crate::cpu_unwind::read_bounded_image(&path, Self::MAX_MODULE_IMAGE_BYTES)?;
+                    shared.python_images.insert(
+                        identity.clone(),
+                        crate::cpu_unwind::validated_python_image(&image, &self.python_builds),
+                    );
+                }
+                shared
+                    .python_images
+                    .get(&identity)?
+                    .as_ref()
+                    .map(|descriptor| descriptor.minor)
+            });
             self.python_versions.insert(pid, minor);
         }
         self.python_versions.get(&pid).copied().flatten()
@@ -703,6 +745,21 @@ impl ProcfsSymbolizer {
         let image = std::fs::read(module).ok()?;
         let table = ElfSymbolTable::parse(&image);
         (!table.is_empty()).then_some(table)
+    }
+
+    fn jit_file_identity(&self, pid: u32) -> Option<ModuleFileIdentity> {
+        let namespace_pid = self.target_namespace_pid(pid).unwrap_or(pid);
+        for map_pid in [namespace_pid, pid] {
+            let path = self
+                .procfs_root
+                .join(pid.to_string())
+                .join("root/tmp")
+                .join(format!("perf-{map_pid}.map"));
+            if let Ok(metadata) = std::fs::metadata(&path) {
+                return Some(Self::module_file_identity(&path, &metadata));
+            }
+        }
+        None
     }
 
     fn load_jit_symbols(&self, pid: u32) -> Option<JitSymbolMap> {
@@ -763,6 +820,46 @@ impl ProcfsSymbolizer {
 
 #[cfg(any(target_os = "linux", test))]
 impl FrameResolver for ProcfsSymbolizer {
+    fn begin_sample(&mut self, pid: u32) {
+        // A code pointer, TID, mapping address or PID may be reused. Keep only
+        // immutable file tables across samples; each sample reads fresh maps.
+        if self
+            .jit_maps
+            .get(&pid)
+            .is_some_and(|cached| cached.identity != self.jit_file_identity(pid))
+        {
+            self.jit_maps.remove(&pid);
+        }
+        self.maps.remove(&pid);
+        self.python_versions.remove(&pid);
+        self.python_frames.retain(|(owner, _), _| *owner != pid);
+        self.thread_comms.retain(|(owner, _), _| *owner != pid);
+    }
+
+    fn verify_generation(&mut self, pid: u32, generation: u64) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            let Ok(shared) = self.symbols.lock() else {
+                return false;
+            };
+            if shared.generation_poison.as_ref().is_some_and(|poison| {
+                poison.lock().ok().and_then(|map| map.get(&0, 0).ok()) != Some(0)
+            }) {
+                return false;
+            }
+            if let Some(generations) = &shared.process_generations {
+                return generations
+                    .lock()
+                    .ok()
+                    .and_then(|map| map.get(&pid, 0).ok())
+                    .and_then(|state| state.usable())
+                    == Some(generation)
+                    && generation != 0;
+            }
+        }
+        let _ = (pid, generation);
+        true
+    }
     fn resolve(&mut self, pid: u32, ip: u64) -> RawProfileFrame {
         if let Some((symbol, offset)) = self.jit_symbol(pid, ip) {
             return RawProfileFrame {
@@ -877,11 +974,13 @@ fn raw_cpu_profile_to_signal_with_clock(
     let kernel_capture_truncated =
         config.kernel_stacks_enabled && raw.kernel_flags & RAW_KERNEL_PROFILE_FLAG_TRUNCATED != 0;
     let command = bytes_to_string(&raw.command);
+    resolver.begin_sample(raw.pid);
     // An untranslated pid may belong to an unrelated same-numbered process
     // in the symbolization procfs view; only symbolize it after the
     // resolver confirms the thread identity there.
-    let pid_unverified = raw.flags & RAW_CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED != 0
-        && !resolver.verify_thread(raw.pid, raw.tid, &command);
+    let mut pid_unverified = !resolver.verify_generation(raw.pid, raw.process_generation)
+        || (raw.flags & RAW_CPU_PROFILE_FLAG_PID_NS_UNTRANSLATED != 0
+            && !resolver.verify_thread(raw.pid, raw.tid, &command));
     let declared_user_frame_count = (raw.frame_count as usize).min(RAW_CPU_PROFILE_MAX_FRAMES);
     let user_frames_truncated_by_config = declared_user_frame_count > config.max_frames_per_sample;
     let frame_count = declared_user_frame_count.min(config.max_frames_per_sample);
@@ -949,6 +1048,18 @@ fn raw_cpu_profile_to_signal_with_clock(
     };
     let mut stack_frames = stack_frames;
     stack_frames.extend(kernel_frames);
+    if !resolver.verify_generation(raw.pid, raw.process_generation) {
+        pid_unverified = true;
+        for frame in &mut stack_frames {
+            if frame.domain != ProfilingFrameDomain::Kernel {
+                frame.symbol = Some("[process:unresolved]".to_string());
+                frame.module = None;
+                frame.file = None;
+                frame.line = None;
+                frame.module_offset = None;
+            }
+        }
+    }
     let timestamp_unix_nanos = if raw.timestamp_unix_nanos == 0 {
         observed_unix_nanos
     } else {
@@ -1686,8 +1797,40 @@ mod platform {
             populate_pid_namespace(&mut ebpf, &self.procfs_root);
             populate_profile_capture_config(&mut ebpf, &self.config)?;
             if self.config.dwarf_unwind {
+                validate_profile_fence_layouts()?;
                 setup_dwarf_unwinder(&mut ebpf)?;
+                // Install completion hooks before enters can create markers.
+                for (program, category, event) in [
+                    (
+                        "tracepoint_profile_mapping_exit",
+                        "raw_syscalls",
+                        "sys_exit",
+                    ),
+                    (
+                        "tracepoint_profile_process_exit",
+                        "sched",
+                        "sched_process_exit",
+                    ),
+                    (
+                        "tracepoint_profile_process_exec",
+                        "sched",
+                        "sched_process_exec",
+                    ),
+                    (
+                        "tracepoint_profile_mapping_enter",
+                        "raw_syscalls",
+                        "sys_enter",
+                    ),
+                ] {
+                    attach_tracepoint(&mut ebpf, program, category, event)?;
+                }
             }
+
+            let unwind_sink = if self.config.dwarf_unwind {
+                Some(EbpfUnwindSink::take_from(&mut ebpf)?)
+            } else {
+                None
+            };
 
             let program: &mut PerfEvent = ebpf
                 .program_mut("sample_cpu_profile")
@@ -1752,7 +1895,9 @@ mod platform {
                     "sys_exit",
                 )?;
             }
-            if self.config.off_cpu_enabled || self.config.lock_enabled {
+            if !self.config.dwarf_unwind
+                && (self.config.off_cpu_enabled || self.config.lock_enabled)
+            {
                 attach_tracepoint(
                     &mut ebpf,
                     "tracepoint_profile_process_exit",
@@ -1804,7 +1949,11 @@ mod platform {
                 core::mem::size_of::<super::RawCpuProfileEvent>(),
             );
             let shared_symbols =
-                std::sync::Arc::new(std::sync::Mutex::new(super::SharedSymbolTables::default()));
+                std::sync::Arc::new(std::sync::Mutex::new(super::SharedSymbolTables {
+                    process_generations: unwind_sink.as_ref().map(|sink| sink.generations.clone()),
+                    generation_poison: unwind_sink.as_ref().map(|sink| sink.poison.clone()),
+                    ..super::SharedSymbolTables::default()
+                }));
             // Track only as many recently sampled pids as the unwind manager
             // can cover. Recency eviction lets newly active workloads replace
             // old, still-alive processes without scanning unrelated host pids.
@@ -1830,7 +1979,8 @@ mod platform {
                             super::cpp_demangle_mode(config.cpp_demangle),
                             config.max_symbol_bytes,
                             shared_symbols.clone(),
-                        );
+                        )
+                        .with_python_builds(config.python_builds.clone());
                         let symbolize = config.symbolize;
                         let reader_hot_pids = hot_pids.clone();
 
@@ -1932,7 +2082,8 @@ mod platform {
                         super::cpp_demangle_mode(config.cpp_demangle),
                         config.max_symbol_bytes,
                         shared_symbols.clone(),
-                    );
+                    )
+                    .with_python_builds(config.python_builds.clone());
                     let symbolize = config.symbolize;
                     let reader_hot_pids = hot_pids.clone();
                     reader_handles.push(tokio::task::spawn_blocking(move || {
@@ -1992,13 +2143,13 @@ mod platform {
                 }
             }
 
-            if self.config.dwarf_unwind {
+            if let Some(mut sink) = unwind_sink {
                 let refresher_shutdown = shutdown.clone();
-                let mut sink = EbpfUnwindSink::take_from(&mut ebpf)?;
                 let mut manager = UnwindTableManager::new(
                     self.procfs_root.clone(),
                     self.config.max_unwind_processes,
-                );
+                )
+                .with_python_builds(self.config.python_builds.clone());
                 let refresher_hot_pids = hot_pids.clone();
                 reader_handles.push(tokio::task::spawn_blocking(move || {
                     // Populate immediately, then refresh on new sampled pids
@@ -2006,6 +2157,9 @@ mod platform {
                     loop {
                         let stats = manager.refresh(&mut sink, &refresher_hot_pids);
                         debug!(?stats, "dwarf unwind table refresh");
+                        if stats.python_unvalidated_builds > 0 || stats.python_unsupported_version > 0 || stats.process_identity_changes > 0 || stats.maps_rejected > 0 {
+                            warn!(unvalidated_python_builds = stats.python_unvalidated_builds, unsupported_python_versions = stats.python_unsupported_version, process_identity_changes = stats.process_identity_changes, maps_rejected = stats.maps_rejected, "CPU runtime registrations rejected; native fallback or unresolved samples retain degradation accounting");
+                        }
                         if stats.processes_skipped_limit > 0
                             || stats.modules_skipped_row_budget > 0
                             || stats.modules_skipped_module_budget > 0
@@ -2264,6 +2418,31 @@ mod platform {
         })
     }
 
+    fn validate_profile_fence_layouts() -> CoreResult<()> {
+        for (category, event, field, expected) in [
+            ("raw_syscalls", "sys_enter", "id", (8, 8)),
+            ("sched", "sched_process_exec", "old_pid", (16, 4)),
+        ] {
+            let mut observed = None;
+            for root in ["/sys/kernel/tracing", "/sys/kernel/debug/tracing"] {
+                let path = format!("{root}/events/{category}/{event}/format");
+                if let Ok(contents) = read_bounded_utf8(&path, 64 * 1024) {
+                    observed = tracepoint_field_layout(&contents, field);
+                    break;
+                }
+            }
+            if observed != Some(expected) {
+                return Err(CoreError::ModuleFailed {
+                    module: "source.aya_cpu_profile".to_string(),
+                    message: format!(
+                        "CPU identity fence requires {category}/{event} {field} layout {expected:?}, observed {observed:?}"
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn validate_sched_switch_layout() -> CoreResult<()> {
         const MAX_TRACEPOINT_FORMAT_BYTES: u64 = 64 * 1024;
         let candidates = [
@@ -2478,6 +2657,15 @@ mod platform {
         modules: AyaHashMap<aya::maps::MapData, u32, UnwindModuleSpan>,
         processes: AyaHashMap<aya::maps::MapData, u32, UnwindProcMappings>,
         python: AyaHashMap<aya::maps::MapData, u32, PyProcInfoAbi>,
+        generations: std::sync::Arc<
+            std::sync::Mutex<
+                AyaHashMap<aya::maps::MapData, u32, crate::cpu_unwind::ProfileGenerationAbi>,
+            >,
+        >,
+        next_generation: u64,
+        pending: AyaHashMap<aya::maps::MapData, u64, u64>,
+        poison: std::sync::Arc<std::sync::Mutex<AyaArray<aya::maps::MapData, u64>>>,
+        initialized: std::collections::BTreeSet<u32>,
     }
 
     impl EbpfUnwindSink {
@@ -2495,11 +2683,55 @@ mod platform {
                 processes: AyaHashMap::try_from(take(ebpf, "UNWIND_PROC_MAPPINGS")?)
                     .map_err(module_error)?,
                 python: AyaHashMap::try_from(take(ebpf, "PY_PROC_INFO")?).map_err(module_error)?,
+                generations: std::sync::Arc::new(std::sync::Mutex::new(
+                    AyaHashMap::try_from(take(ebpf, "PROFILE_PROCESS_GENERATIONS")?)
+                        .map_err(module_error)?,
+                )),
+                next_generation: 1u64 << 63,
+                pending: AyaHashMap::try_from(take(ebpf, "PENDING_PROFILE_MAPPINGS")?)
+                    .map_err(module_error)?,
+                poison: std::sync::Arc::new(std::sync::Mutex::new(
+                    AyaArray::try_from(take(ebpf, "PROFILE_GENERATION_POISON")?)
+                        .map_err(module_error)?,
+                )),
+                initialized: std::collections::BTreeSet::new(),
             })
         }
     }
 
     impl UnwindMapSink for EbpfUnwindSink {
+        fn process_generation(&mut self, pid: u32) -> Option<u64> {
+            if self.poison.lock().ok()?.get(&0, 0).ok()? != 0 {
+                return None;
+            }
+            let mut generations = self.generations.lock().ok()?;
+            if generations.get(&pid, 0).is_err() {
+                self.next_generation = self.next_generation.checked_add(1)?;
+                generations
+                    .insert(
+                        pid,
+                        crate::cpu_unwind::ProfileGenerationAbi {
+                            generation: self.next_generation,
+                            pending_mappings: 0,
+                        },
+                        1,
+                    )
+                    .ok()?;
+            }
+            if !self.initialized.contains(&pid) {
+                // Every pre-enrollment enter was published before its epoch
+                // lookup. Refuse registration until those operations finish.
+                for entry in self.pending.iter() {
+                    let (_, marker) = entry.ok()?;
+                    if marker as u32 == pid && marker & (1u64 << 32) == 0 {
+                        return None;
+                    }
+                }
+                self.initialized.insert(pid);
+            }
+            generations.get(&pid, 0).ok()?.usable()
+        }
+
         fn write_rows(&mut self, row_start: u32, rows: &[UnwindRowAbi]) -> bool {
             for (index, row) in rows.iter().enumerate() {
                 let position = row_start.saturating_add(index as u32);
@@ -2710,6 +2942,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
@@ -2778,6 +3011,7 @@ mod tests {
             kernel_instruction_pointers: padded_kernel_pointers(&[0xffff_ffff_8100_1234]),
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
@@ -3044,6 +3278,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
@@ -3088,6 +3323,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
         let config = CpuProfileSourceConfig {
@@ -3226,6 +3462,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
         let signal = raw_cpu_profile_to_signal_with_clock(
@@ -3292,6 +3529,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
         let signal = raw_cpu_profile_to_signal_with_clock(
@@ -3520,6 +3758,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
@@ -3558,6 +3797,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
@@ -3606,6 +3846,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
         let config = CpuProfileSourceConfig {
@@ -3645,6 +3886,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
         let signal = raw_cpu_profile_to_signal_with_clock(
@@ -3695,6 +3937,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
         let signal = raw_cpu_profile_to_signal_with_clock(
@@ -3745,6 +3988,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
@@ -3788,6 +4032,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
@@ -3888,6 +4133,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
@@ -3940,6 +4186,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
@@ -4028,6 +4275,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
         let mut resolver = RecordingResolver {
@@ -4070,6 +4318,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
 
@@ -4185,6 +4434,7 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         };
         raw.py_frame_count = 2;
@@ -4297,6 +4547,8 @@ mod tests {
         drop(mem);
 
         let mut symbolizer = ProcfsSymbolizer::new(dir.clone(), true);
+        // Object-decoding fixture; ELF descriptor validation has independent tests.
+        symbolizer.python_versions.insert(888, Some(minor));
         let frame = symbolizer
             .resolve_python_frame(888, code_ptr)
             .expect("python frame resolves");
@@ -4361,7 +4613,7 @@ mod tests {
 
     #[test]
     fn raw_cpu_profile_event_layout_size_matches_ebpf_abi() {
-        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 2152);
+        assert_eq!(core::mem::size_of::<RawCpuProfileEvent>(), 2160);
     }
 
     fn padded_pointers(values: &[u64]) -> [u64; RAW_CPU_PROFILE_MAX_FRAMES] {
@@ -4403,8 +4655,113 @@ mod tests {
             kernel_instruction_pointers: [0; RAW_KERNEL_PROFILE_MAX_FRAMES],
             py_frame_count: 0,
             py_stop: 0,
+            process_generation: 0,
             py_frames: [0; RAW_PY_MAX_FRAMES],
         }
+    }
+
+    #[test]
+    fn qualification_capture_fixture_obeys_native_signal_contract() {
+        let captures: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/cpu-qualification/capture.json"
+        ))
+        .expect("capture fixture");
+        for capture in captures.as_object().expect("cells").values() {
+            let signal: SignalEnvelope = serde_json::from_value(capture["samples"][0].clone())
+                .expect("valid native envelope");
+            assert_eq!(signal.source, "source.aya_cpu_profile");
+            let SignalPayload::ProfileSampleObservation(sample) = signal.payload else {
+                panic!("CPU sample required")
+            };
+            assert_eq!(sample.profiling_kind, ProfilingKind::Cpu);
+            assert_eq!(
+                sample.sample_count * sample.sampling_period_nanos.expect("CPU period"),
+                100
+            );
+            assert_eq!(sample.stack_frames.len(), 2);
+            assert_eq!(sample.stack_frames[0].symbol.as_deref(), Some("busy"));
+            assert_eq!(sample.stack_frames[1].symbol.as_deref(), Some("outer"));
+        }
+    }
+
+    #[test]
+    fn generation_change_during_resolution_discards_names_but_preserves_weight() {
+        struct ChangingResolver {
+            checks: usize,
+        }
+        impl FrameResolver for ChangingResolver {
+            fn verify_generation(&mut self, _pid: u32, _generation: u64) -> bool {
+                self.checks += 1;
+                self.checks == 1
+            }
+            fn resolve(&mut self, _pid: u32, _ip: u64) -> RawProfileFrame {
+                RawProfileFrame {
+                    domain: ProfilingFrameDomain::User,
+                    symbol: Some("old_process_name".to_string()),
+                    module: Some("old_process".to_string()),
+                    file: None,
+                    line: None,
+                    module_offset: Some(7),
+                }
+            }
+        }
+        let raw = event_driven_raw(RAW_PROFILE_KIND_CPU, RAW_PROFILE_MODE_ON_CPU, 0, 0);
+        let decoded = raw_cpu_profile_to_signal_with_clock(
+            raw_as_bytes(&raw),
+            None,
+            &source_config(),
+            10_000,
+            &mut ChangingResolver { checks: 0 },
+        )
+        .expect("sample remains observable");
+        assert!(decoded.pid_unverified);
+        let SignalPayload::ProfileSampleObservation(sample) = decoded.signal.payload else {
+            panic!("CPU sample expected");
+        };
+        assert_eq!(sample.sample_count, 1);
+        assert!(sample.sampling_period_nanos.is_some());
+        assert!(
+            sample
+                .stack_frames
+                .iter()
+                .all(
+                    |frame| frame.symbol.as_deref() == Some("[process:unresolved]")
+                        && frame.module.is_none()
+                        && frame.module_offset.is_none()
+                )
+        );
+    }
+
+    #[test]
+    fn sample_boundary_refreshes_reused_process_mappings_and_thread_names() {
+        let root = std::env::temp_dir().join(format!("e-nav-profile-reuse-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("900/task/901")).expect("procfs fixture");
+        std::fs::write(
+            root.join("900/maps"),
+            "1000-2000 r-xp 00000000 fd:00 100 /old\n",
+        )
+        .expect("old maps");
+        std::fs::write(root.join("900/task/901/comm"), "old\n").expect("old comm");
+        let mut symbolizer = ProcfsSymbolizer::new(root.clone(), false);
+        assert_eq!(
+            symbolizer.resolve(900, 0x1100).module.as_deref(),
+            Some("/old")
+        );
+        assert!(symbolizer.verify_thread(900, 901, "old"));
+        std::fs::write(
+            root.join("900/maps"),
+            "1000-2000 r-xp 00000000 fd:00 200 /new\n",
+        )
+        .expect("new maps");
+        std::fs::write(root.join("900/task/901/comm"), "new\n").expect("new comm");
+        symbolizer.begin_sample(900);
+        assert_eq!(
+            symbolizer.resolve(900, 0x1100).module.as_deref(),
+            Some("/new")
+        );
+        assert!(symbolizer.verify_thread(900, 901, "new"));
+        assert!(!symbolizer.verify_thread(900, 901, "old"));
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[derive(Default)]

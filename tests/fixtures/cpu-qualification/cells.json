@@ -1,0 +1,76 @@
+{
+  "GW-CPU-0001": {
+    "identity": {
+      "runtime": "native",
+      "version": "fixture",
+      "build_id": "0123456789abcdef",
+      "architecture": "x86_64",
+      "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "process": {
+      "pid": 1,
+      "command": "fixture"
+    },
+    "query": {
+      "start": 1000,
+      "end": 2000,
+      "labelSelector": "{service_name=\"fixture-1\"}",
+      "profileTypeID": "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+    },
+    "stack": [
+      {
+        "symbol": "outer",
+        "domain": "user"
+      },
+      {
+        "symbol": "busy",
+        "domain": "user"
+      }
+    ],
+    "thresholds": {
+      "min_weight_nanos": 100,
+      "min_useful_bps": 9000,
+      "max_unknown_bps": 1000,
+      "max_truncated_bps": 1000,
+      "max_failed_bps": 1000,
+      "max_weight_error_bps": 100
+    }
+  },
+  "GW-CPU-0002": {
+    "identity": {
+      "runtime": "cpython",
+      "version": "fixture",
+      "build_id": "0123456789abcdef",
+      "architecture": "x86_64",
+      "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "process": {
+      "pid": 2,
+      "command": "fixture"
+    },
+    "query": {
+      "start": 1000,
+      "end": 2000,
+      "labelSelector": "{service_name=\"fixture-2\"}",
+      "profileTypeID": "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+    },
+    "stack": [
+      {
+        "symbol": "outer",
+        "domain": "managed_runtime"
+      },
+      {
+        "symbol": "busy",
+        "domain": "managed_runtime"
+      }
+    ],
+    "thresholds": {
+      "min_weight_nanos": 100,
+      "min_useful_bps": 9000,
+      "max_unknown_bps": 1000,
+      "max_truncated_bps": 1000,
+      "max_failed_bps": 1000,
+      "max_weight_error_bps": 100
+    }
+  }
+}

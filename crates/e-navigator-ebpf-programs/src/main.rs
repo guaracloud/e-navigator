@@ -1,4 +1,6 @@
 #![no_std]
+#![feature(core_intrinsics)]
+#![allow(internal_features)]
 #![no_main]
 #![allow(clippy::needless_borrows_for_generic_args)]
 //! Kernel-side eBPF programs and fixed event layouts for E-Navigator sources.
@@ -326,6 +328,7 @@ pub struct UnwindMapping {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct UnwindProcMappings {
+    pub generation: u64,
     pub count: u32,
     pub _pad: u32,
     pub entries: [UnwindMapping; UNWIND_MAX_MAPPINGS],
@@ -341,6 +344,7 @@ pub struct UnwindModuleSpan {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct UnwindState {
+    pub generation: u64,
     pub pc: u64,
     pub sp: u64,
     pub fp: u64,
@@ -370,6 +374,7 @@ const PY_STOP_TRUNCATED: u32 = 4;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PyProcInfo {
+    pub generation: u64,
     pub runtime_addr: u64,
     /// Device and inode of the process's pid namespace. CPython stores
     /// each thread's `native_thread_id` as the tid in the process's own
@@ -516,6 +521,7 @@ pub struct RawCpuProfileEvent {
     pub kernel_instruction_pointers: [u64; KERNEL_PROFILE_MAX_FRAMES],
     pub py_frame_count: u32,
     pub py_stop: u32,
+    pub process_generation: u64,
     /// CPython code-object pointers, leaf first; userspace resolves
     /// them to function/file/line through the process's memory.
     pub py_frames: [u64; PY_MAX_FRAMES],
@@ -1039,6 +1045,26 @@ static UNWIND_MODULES: HashMap<u32, UnwindModuleSpan> =
 #[map]
 static UNWIND_PROC_MAPPINGS: HashMap<u32, UnwindProcMappings> =
     HashMap::with_max_entries(1024, HASH_MAP_NO_PREALLOC);
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ProfileGeneration {
+    pub generation: u64,
+    pub pending_mappings: u64,
+}
+
+/// Non-evicting identity storage: missing entries disable runtime memory reads.
+#[map]
+static PROFILE_PROCESS_GENERATIONS: HashMap<u32, ProfileGeneration> =
+    HashMap::with_max_entries(1024, 0);
+
+#[map]
+static PENDING_PROFILE_MAPPINGS: HashMap<u64, u64> =
+    HashMap::with_max_entries(4096, HASH_MAP_NO_PREALLOC);
+
+// A lost untracked enter cannot be reconstructed safely at first enrollment.
+#[map]
+static PROFILE_GENERATION_POISON: Array<u64> = Array::with_max_entries(1, 0);
 
 /// Tail-call targets: index 0 = cpu_profile_unwind (chunked DWARF),
 /// index 1 = cpu_profile_py_find (CPython thread-state search),
@@ -1958,7 +1984,157 @@ pub fn tracepoint_profile_process_exit(_ctx: TracePointContext) -> u32 {
     // next_pid, while futex state can retain the collision-safe pid/tid key.
     let _ = PENDING_OFF_CPU_PROFILES.remove(&u64::from(key as u32));
     let _ = PENDING_LOCK_PROFILES.remove(&key);
+    finish_profile_mapping();
+    invalidate_profile_process();
     0
+}
+
+/// Fence registered walkers synchronously, independent of event delivery.
+#[tracepoint]
+pub fn tracepoint_profile_process_exec(ctx: TracePointContext) -> u32 {
+    // A non-leader exec changes TID. The validated tracefs old_pid field
+    // identifies the original syscall marker, which sys_exit cannot find.
+    if let Ok(old_tid) = unsafe { ctx.read_at::<u32>(16) } {
+        let key = (bpf_get_current_pid_tgid() & 0xffff_ffff_0000_0000) | u64::from(old_tid);
+        finish_profile_mapping_key(key);
+    }
+    invalidate_profile_process();
+    0
+}
+
+#[tracepoint]
+pub fn tracepoint_profile_mapping_enter(ctx: TracePointContext) -> u32 {
+    let syscall = match unsafe { ctx.read_at::<i64>(8) } {
+        Ok(value) => value,
+        Err(_) => return 0,
+    };
+    #[cfg(bpf_target_arch = "x86_64")]
+    let changes_mapping = matches!(
+        syscall,
+        9 | 10 | 11 | 12 | 25 | 30 | 59 | 67 | 216 | 322 | 329
+    );
+    #[cfg(bpf_target_arch = "aarch64")]
+    let changes_mapping = matches!(
+        syscall,
+        196 | 197 | 214 | 215 | 216 | 221 | 222 | 226 | 234 | 281 | 288
+    );
+    #[cfg(not(any(bpf_target_arch = "x86_64", bpf_target_arch = "aarch64")))]
+    let changes_mapping = false;
+    if changes_mapping {
+        let key = bpf_get_current_pid_tgid();
+        let pid = profile_current_pid();
+        // Publish the untracked marker BEFORE checking enrollment. Userspace
+        // inserts the epoch before scanning these markers, closing both races.
+        if PENDING_PROFILE_MAPPINGS
+            .insert(&key, &u64::from(pid), 0)
+            .is_err()
+        {
+            if let Some(ptr) = PROFILE_GENERATION_POISON.get_ptr_mut(0) {
+                unsafe {
+                    core::intrinsics::atomic_xadd::<
+                        u64,
+                        u64,
+                        { core::intrinsics::AtomicOrdering::Relaxed },
+                    >(ptr, 1);
+                }
+            }
+        } else if let Some(ptr) = PROFILE_PROCESS_GENERATIONS.get_ptr_mut(&pid) {
+            unsafe {
+                core::intrinsics::atomic_xadd::<
+                    u64,
+                    u64,
+                    { core::intrinsics::AtomicOrdering::Relaxed },
+                >(core::ptr::addr_of_mut!((*ptr).pending_mappings), 1);
+            }
+            if let Some(marker) = PENDING_PROFILE_MAPPINGS.get_ptr_mut(&key) {
+                unsafe {
+                    *marker = u64::from(pid) | (1u64 << 32);
+                }
+            }
+        }
+        invalidate_profile_process();
+    }
+    0
+}
+
+#[tracepoint]
+pub fn tracepoint_profile_mapping_exit(_ctx: TracePointContext) -> u32 {
+    finish_profile_mapping();
+    0
+}
+
+#[inline(always)]
+fn finish_profile_mapping() {
+    finish_profile_mapping_key(bpf_get_current_pid_tgid());
+}
+
+#[inline(always)]
+fn finish_profile_mapping_key(key: u64) {
+    if let Some(marker) = unsafe { PENDING_PROFILE_MAPPINGS.get(&key) }.copied() {
+        let _ = PENDING_PROFILE_MAPPINGS.remove(&key);
+        invalidate_profile_process();
+        // An operation that began before enrollment did not increment a count.
+        if marker & (1u64 << 32) != 0 {
+            let pid = marker as u32;
+            if let Some(ptr) = PROFILE_PROCESS_GENERATIONS.get_ptr_mut(&pid) {
+                unsafe {
+                    core::intrinsics::atomic_xadd::<
+                        u64,
+                        u64,
+                        { core::intrinsics::AtomicOrdering::Relaxed },
+                    >(
+                        core::ptr::addr_of_mut!((*ptr).pending_mappings), u64::MAX
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn profile_current_pid() -> u32 {
+    let pidns_dev = CPU_PROFILE_PIDNS.get(0).copied().unwrap_or(0);
+    let pidns_ino = CPU_PROFILE_PIDNS.get(1).copied().unwrap_or(0);
+    let mut pidns = bpf_pidns_info { pid: 0, tgid: 0 };
+    if pidns_ino != 0
+        && unsafe {
+            bpf_get_ns_current_pid_tgid(
+                pidns_dev,
+                pidns_ino,
+                &mut pidns,
+                core::mem::size_of::<bpf_pidns_info>() as u32,
+            )
+        } == 0
+    {
+        pidns.tgid
+    } else {
+        (bpf_get_current_pid_tgid() >> 32) as u32
+    }
+}
+
+#[inline(always)]
+fn invalidate_profile_process() {
+    let pid = profile_current_pid();
+    // Lifecycle hooks never allocate slots for unrelated processes. Userspace
+    // enrolls sampled targets; entries never evict or lose a pending counter.
+    if let Some(ptr) = PROFILE_PROCESS_GENERATIONS.get_ptr_mut(&pid) {
+        unsafe {
+            core::intrinsics::atomic_xadd::<u64, u64, { core::intrinsics::AtomicOrdering::Relaxed }>(
+                core::ptr::addr_of_mut!((*ptr).generation),
+                1,
+            );
+        }
+    }
+    let _ = UNWIND_PROC_MAPPINGS.remove(&pid);
+    let _ = PY_PROC_INFO.remove(&pid);
+}
+
+#[inline(always)]
+fn profile_generation_matches(pid: u32, generation: u64) -> bool {
+    PROFILE_GENERATION_POISON.get(0).copied() == Some(0)
+        && unsafe { PROFILE_PROCESS_GENERATIONS.get(&pid) }.is_some_and(|current| {
+            current.generation == generation && current.pending_mappings == 0
+        })
 }
 
 // OpenSSL: int SSL_write(SSL *ssl, const void *buf, int num).
@@ -2532,6 +2708,9 @@ fn prepare_event_driven_profile(
     event.reserved = 0;
     event.weight_nanos = 0;
     translate_profile_pid(event);
+    event.process_generation = unsafe { PROFILE_PROCESS_GENERATIONS.get(&event.pid) }
+        .map(|current| current.generation)
+        .unwrap_or(0);
     event.instruction_pointers = [0; CPU_PROFILE_MAX_FRAMES];
     event.kernel_frame_count = 0;
     event.kernel_flags = 0;
@@ -2653,6 +2832,9 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
     // failure the root pid is retained and explicitly marked for identity
     // verification before symbolization.
     translate_profile_pid(event);
+    event.process_generation = unsafe { PROFILE_PROCESS_GENERATIONS.get(&event.pid) }
+        .map(|current| current.generation)
+        .unwrap_or(0);
     event.instruction_pointers = [0; CPU_PROFILE_MAX_FRAMES];
     event.kernel_frame_count = 0;
     event.kernel_flags = 0;
@@ -2703,7 +2885,14 @@ fn try_sample_cpu_profile(ctx: PerfEventContext) -> Result<u32, i64> {
 /// call means it failed; the event is emitted without python frames.
 #[inline(always)]
 fn emit_cpu_profile_event(ctx: &PerfEventContext, event: &mut RawCpuProfileEvent) {
-    if unsafe { PY_PROC_INFO.get(&event.pid) }.is_some() {
+    if let Some(info) = unsafe { PY_PROC_INFO.get(&event.pid) }
+        && profile_generation_matches(event.pid, info.generation)
+    {
+        if let Some(ptr) = CPU_PROFILE_UNWIND_STATE.get_ptr_mut(0) {
+            unsafe {
+                (*ptr).generation = info.generation;
+            }
+        }
         unsafe {
             CPU_PROFILE_PROGS.tail_call(ctx, 1);
         }
@@ -2742,6 +2931,19 @@ fn try_cpu_profile_py_find(ctx: PerfEventContext) -> Result<u32, i64> {
         );
         return Ok(0);
     };
+
+    if info.generation != state.generation
+        || !profile_generation_matches(event.pid, state.generation)
+    {
+        event.py_stop = PY_STOP_READ_FAULT;
+        output_event!(
+            CPU_PROFILE_EVENTS,
+            TRANSPORT_LOSS_CPU_PROFILE,
+            &ctx,
+            &*event
+        );
+        return Ok(0);
+    }
 
     // CPython records each thread's id in the process's own pid
     // namespace; translate the sampled thread into that namespace so
@@ -2844,6 +3046,18 @@ fn try_cpu_profile_py_find(ctx: PerfEventContext) -> Result<u32, i64> {
         );
         return Ok(0);
     };
+    if info.generation != state.generation
+        || !profile_generation_matches(event.pid, state.generation)
+    {
+        event.py_stop = PY_STOP_READ_FAULT;
+        output_event!(
+            CPU_PROFILE_EVENTS,
+            TRANSPORT_LOSS_CPU_PROFILE,
+            &ctx,
+            &*event
+        );
+        return Ok(0);
+    }
     let Some(cframe) = read_user_u64(found.wrapping_add(u64::from(info.tstate_cframe))) else {
         event.py_stop = PY_STOP_READ_FAULT;
         output_event!(
@@ -2930,6 +3144,18 @@ fn try_cpu_profile_py_walk(ctx: PerfEventContext) -> Result<u32, i64> {
     };
     let info = *info;
 
+    if info.generation != state.generation
+        || !profile_generation_matches(event.pid, state.generation)
+    {
+        event.py_stop = PY_STOP_READ_FAULT;
+        output_event!(
+            CPU_PROFILE_EVENTS,
+            TRANSPORT_LOSS_CPU_PROFILE,
+            &ctx,
+            &*event
+        );
+        return Ok(0);
+    }
     let mut frame = state.py_frame;
     let mut stop = 0u32;
     for _ in 0..PY_FRAMES_PER_ROUND {
@@ -3029,6 +3255,13 @@ fn start_dwarf_unwind(ctx: &PerfEventContext, event: &mut RawCpuProfileEvent, fr
     if pc == 0 || sp == 0 {
         return;
     }
+    let Some(mappings) = (unsafe { UNWIND_PROC_MAPPINGS.get(&event.pid) }) else {
+        return;
+    };
+    if !profile_generation_matches(event.pid, mappings.generation) {
+        return;
+    }
+    state.generation = mappings.generation;
     state.pc = pc;
     state.sp = sp;
     state.fp = fp;
@@ -3080,6 +3313,11 @@ fn try_cpu_profile_unwind(ctx: PerfEventContext) -> Result<u32, i64> {
         return finish_unwind(&ctx, event, state, UNWIND_STOP_NO_MAPPING);
     };
 
+    if mappings.generation != state.generation
+        || !profile_generation_matches(event.pid, state.generation)
+    {
+        return finish_unwind(&ctx, event, state, UNWIND_STOP_NO_MAPPING);
+    }
     let mut stop = 0u32;
     for _ in 0..UNWIND_FRAMES_PER_ROUND {
         if state.depth >= state.frame_limit {
