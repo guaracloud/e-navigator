@@ -22,6 +22,8 @@ operational documentation. Start with the path that matches your goal.
   undeclared workload cells and live evidence that block replacement.
 - [Guara replacement acceptance contract](guara-replacement-acceptance.md),
   record exact cells, consumer queries, numerical thresholds and input owners.
+- [Replacement qualification suite for issue 48](issue-48-replacement-qualification.md),
+  run deterministic fixtures and evaluate authorized per-cell backend evidence.
 - [TLS lifecycle qualification for issue 50](issue-50-tls-qualification.md),
   review process/socket fencing, local regressions and remaining live evidence.
 - [CPU runtime qualification for issue 52](issue-52-cpu-qualification.md),

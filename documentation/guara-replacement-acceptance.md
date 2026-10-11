@@ -166,6 +166,8 @@ rollout and rollback. Backend replacement remains a separate decision.
 For #47 review, verify the inventory covers every required workflow, each unknown
 has an IN reference and owner, all numerical categories have threshold records,
 and neither document claims a designated target or qualified cells without
-inputs. Request IN-01 through IN-07 from their owners before #48 or capability
-qualification fills exact cells. No implementation prerequisite is claimed for
-this documentation issue; missing inputs block live qualification.
+inputs. The [issue-48 suite](issue-48-replacement-qualification.md) can run
+synthetic fixtures before those inputs arrive. Request IN-01 through IN-07 from
+their owners before live qualification fills exact cells. No implementation
+prerequisite is claimed for this documentation issue; missing inputs block live
+qualification.
