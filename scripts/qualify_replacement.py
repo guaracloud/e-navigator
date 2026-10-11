@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import sys
 from urllib.parse import urlencode, urlsplit
+from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 import qualify_cpu_profiles as cpu
@@ -333,10 +334,13 @@ def query_backend(oracle, endpoints):
             require(tempo.identity(trace_id, 16) == trace_id)
             try:
                 traces[trace_id] = fetch("/api/traces/" + trace_id)
-            except OSError as error:
-                if oracle["empty"] and getattr(error, "code", None) == 404:
-                    continue
-                raise
+            except HTTPError as error:
+                try:
+                    if oracle["empty"] and error.code == 404:
+                        continue
+                    raise
+                finally:
+                    error.close()
         return traces
     if kind == "profiles":
         return fetch("/querier.v1.QuerierService/SelectMergeStacktraces", json.dumps(dict(oracle["cell"]["query"], maxNodes=cpu.MAX_NODES)).encode())

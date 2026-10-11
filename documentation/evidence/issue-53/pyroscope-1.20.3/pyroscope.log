@@ -1,0 +1,59 @@
+2026/10/11 22:14:54 maxprocs: Leaving GOMAXPROCS=3: CPU quota undefined
+
+                 / _|
+  __ _ _ __ __ _| |_ __ _ _ __   __ _   _ __  _   _ _ __ ___  ___  ___ ___  _ __   ___
+ / _' | '__/ _' |  _/ _' | '_ \ / _' | | '_ \| | | | '__/ _ \/ __|/ __/ _ \| '_ \ / _ \
+| (_| | | | (_| | || (_| | | | | (_| | | |_) | |_| | | | (_) \__ \ (_| (_) | |_) |  __/
+ \__, |_|  \__,_|_| \__,_|_| |_|\__,_| | .__/ \__, |_|  \___/|___/\___\___/| .__/ \___|
+  __/ |                                | |     __/ |                       | |
+ |___/                                 |_|    |___/                        |_|
+ 
+ts=2026-10-11T22:14:55.040441255Z caller=server.go:401 level=info msg="server listening on addresses" http=[::]:4040 grpc=[::]:9095
+ts=2026-10-11T22:14:55.043636303Z caller=modules.go:591 level=warn msg="no storage bucket configured, the admin component will not be loaded"
+ts=2026-10-11T22:14:55.044705277Z caller=memberlist_client.go:528 level=info msg="Using memberlist cluster label and node name" cluster_label= node=7d2cea4ec3d6-48380bd1
+ts=2026-10-11T22:14:55.045701836Z caller=settings.go:42 level=warn component=tenant-settings msg="using in-memory settings store, changes will be lost after shutdown"
+ts=2026-10-11T22:14:55.046276322Z caller=modules.go:160 level=warn msg="no storage bucket configured, ad hoc profiles will not be loaded"
+ts=2026-10-11T22:14:55.046579856Z caller=worker.go:113 level=info component=querier-worker msg="Starting querier worker connected to query-scheduler" scheduler=
+ts=2026-10-11T22:14:55.047469084Z caller=module_service.go:82 level=info msg=starting module=server
+ts=2026-10-11T22:14:55.047565207Z caller=module_service.go:82 level=info msg=starting module=memberlist-kv
+ts=2026-10-11T22:14:55.047574332Z caller=module_service.go:82 level=info msg=starting module=overrides-exporter
+ts=2026-10-11T22:14:55.047620706Z caller=ring.go:390 level=info component=overrides-exporter msg="ring doesn't exist in KV store yet"
+ts=2026-10-11T22:14:55.047636622Z caller=module_service.go:82 level=info msg=starting module=version
+ts=2026-10-11T22:14:55.047648997Z caller=module_service.go:82 level=info msg=starting module=ring
+ts=2026-10-11T22:14:55.047656538Z caller=ring.go:390 level=info component=ring msg="ring doesn't exist in KV store yet"
+ts=2026-10-11T22:14:55.04766583Z caller=module_service.go:82 level=info msg=starting module=usage-stats
+ts=2026-10-11T22:14:55.047825701Z caller=basic_lifecycler.go:324 level=info component=overrides-exporter msg="instance not found in the ring" instance=7d2cea4ec3d6 ring=overrides-exporter
+ts=2026-10-11T22:14:55.047954781Z caller=module_service.go:82 level=info msg=starting module=ingester
+ts=2026-10-11T22:14:55.048000113Z caller=module_service.go:82 level=info msg=starting module=query-scheduler
+ts=2026-10-11T22:14:55.048022529Z caller=basic_lifecycler.go:324 level=info component=scheduler msg="instance not found in the ring" instance=7d2cea4ec3d6 ring=query-scheduler
+ts=2026-10-11T22:14:55.048046612Z caller=module_service.go:82 level=info msg=starting module=distributor
+ts=2026-10-11T22:14:55.048090611Z caller=ring.go:204 level=info component=overrides-exporter msg="waiting until overrides-exporter is ACTIVE in the ring"
+ts=2026-10-11T22:14:55.048095153Z caller=ring.go:208 level=info component=overrides-exporter msg="overrides-exporter is ACTIVE in the ring"
+ts=2026-10-11T22:14:55.048099611Z caller=module_service.go:82 level=info msg=starting module=querier
+ts=2026-10-11T22:14:55.048167192Z caller=worker.go:215 level=info component=querier-worker msg="adding connection" addr=192.168.215.2:4040 in-use=true
+ts=2026-10-11T22:14:55.048221024Z caller=lifecycler.go:694 level=info msg="not loading tokens from file, tokens file path is empty"
+ts=2026-10-11T22:14:55.048227108Z caller=lifecycler.go:721 level=info msg="instance not found in ring, adding with no tokens" ring=ingester
+ts=2026-10-11T22:14:55.048250315Z caller=lifecycler.go:562 level=info msg="auto-joining cluster after timeout" ring=ingester
+ts=2026-10-11T22:14:55.04828744Z caller=basic_lifecycler.go:324 level=info component=distributor msg="instance not found in the ring" instance=7d2cea4ec3d6 ring=distributor
+ts=2026-10-11T22:14:55.048315189Z caller=module_service.go:82 level=info msg=starting module=query-frontend
+ts=2026-10-11T22:14:55.048345355Z caller=frontend_scheduler_worker.go:131 level=info component=frontend msg="adding connection to query-scheduler" addr=192.168.215.2:4040
+ts=2026-10-11T22:14:55.048644097Z caller=module_service.go:82 level=info msg=starting module=tenant-settings
+ts=2026-10-11T22:14:55.048981548Z caller=pyroscope.go:622 level=info msg="Pyroscope started" version="(version=1.20.3, branch=HEAD, revision=1e3df8ef2)"
+ts=2026-10-11T22:14:56.050865185Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=146.496µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:14:57.06915809Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=225.37µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:14:58.08055612Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=139.996µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:14:59.09529557Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=82.165µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:15:00.105827872Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=68.748µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:15:01.120085708Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=92.082µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:15:02.134758534Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=98.54µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:15:03.159661154Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=847.229µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:15:04.179493188Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=95.373µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:15:05.194852205Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=118.581µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:15:06.210076643Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=210.245µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:15:07.221529756Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=131.122µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:15:08.233595146Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=112.914µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:15:09.249156367Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=81.956µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:15:10.260483649Z caller=http.go:363 level=warn method=GET uri=/ready status=503 duration=63.332µs request_header_Accept=*/* request_header_User-Agent=curl/8.7.1 msg="http request failed" response_body="Ingester not ready: waiting for 15s after being ready\n"
+ts=2026-10-11T22:15:13.306430789Z caller=query_log.go:151 component=frontend user=anonymous level=info method=SelectSeries start="2026-10-11 21:15:13 +0000 UTC" end="2026-10-11 22:16:13 +0000 UTC" query_window=1h1m0s selector="{namespace=\"e-navigator-system\",service_name=\"e-navigator-smoke\",catalog_slug=\"\"}" profile_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds stacktrace_selector=<nil> step=15 by= aggregation=TIME_SERIES_AGGREGATION_TYPE_SUM limit=null exemplar_type=EXEMPLAR_TYPE_UNSPECIFIED
+ts=2026-10-11T22:15:13.306813614Z caller=query_log.go:95 component=frontend user=anonymous level=info method=SelectMergeStacktraces start="2026-10-11 21:15:13 +0000 UTC" end="2026-10-11 22:16:13 +0000 UTC" query_window=1h1m0s selector="{namespace=\"e-navigator-system\",service_name=\"e-navigator-smoke\",catalog_slug=\"\"}" profile_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds format=PROFILE_FORMAT_UNSPECIFIED max_nodes=0 profile_id_selector=
+ts=2026-10-11T22:15:13.307910587Z caller=querier.go:646 component=querier user=anonymous level=info start="2026-10-11 21:15:13 +0000 UTC" end="2026-10-11 22:16:13 +0000 UTC" selector="{namespace=\"e-navigator-system\",service_name=\"e-navigator-smoke\",catalog_slug=\"\"}" profile_id=process_cpu:cpu:nanoseconds:cpu:nanoseconds
