@@ -151,6 +151,10 @@ and [Prometheus instant query API](https://prometheus.io/docs/prometheus/latest/
 Translation remains outside native contracts per
 [ADR 0001](adr/0001-standalone-native-contracts.md).
 
+For pinned backend releases, retention/expiry checkpoints and recorded Grafana
+navigation, use the [issue-53 backend checker](issue-53-backend-qualification.md).
+It reuses these stored-data oracles and preserves the same qualification boundary.
+
 Inputs/responses are capped at 16 MiB, cells at 64, native/action/log records at
 4,096 per scenario and backend requests at 2,048 per run, with 30-second request
 timeouts. Existing Tempo/CPU budgets also apply. Duplicate JSON keys, non-finite

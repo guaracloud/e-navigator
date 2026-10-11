@@ -1,0 +1,5 @@
+    Blocking waiting for file lock on package cache
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.05s
+     Running `target/debug/e-navigator --source synthetic --config /var/folders/h8/79gkbybn2xd8fd9yl80td6dc0000gn/T/tmp.6CG2cZYKre/e-navigator.toml`
+2026-10-11T22:15:13.285640Z  WARN e_navigator_sources_ebpf_aya::capture_filter: cgroup v2 workload join is unavailable; cgroup capture filtering is not active cgroup_root=/sys/fs/cgroup cgroup_hierarchy_mode="unavailable"
+2026-10-11T22:15:13.285791Z  WARN e_navigator_sources_ebpf_aya::capture_filter: Kubernetes workload controller cannot reach the API; attribution is stale or unavailable and capture filtering applies the unknown-cgroup posture error=KUBERNETES_SERVICE_HOST is not set

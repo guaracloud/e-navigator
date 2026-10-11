@@ -1,0 +1,7 @@
+{
+  "image_ref": "grafana/pyroscope:1.20.3",
+  "image_id": "sha256:47fc578b2227e9c0c5c5efda34966c1566b0d0a0802cb2adc2e1e9f7ae16a7aa",
+  "from_ms": "1791753313000",
+  "until_ms": "1791756973000",
+  "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds{namespace=\"e-navigator-system\",service_name=\"e-navigator-smoke\",catalog_slug=\"\"}"
+}

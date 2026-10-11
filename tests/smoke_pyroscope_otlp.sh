@@ -16,8 +16,26 @@ container_name="e-navigator-pyroscope-otlp-${run_id}"
 image_ref="${E_NAVIGATOR_PYROSCOPE_IMAGE:-grafana/pyroscope:1.20.3}"
 tmp_dir="$(mktemp -d)"
 created_container=false
+evidence_dir="${E_NAVIGATOR_PYROSCOPE_EVIDENCE_DIR:-}"
+if [[ -n "$evidence_dir" ]]; then
+  # Refuse to replace previous execution evidence.
+  mkdir "$evidence_dir"
+fi
 
 cleanup() {
+  exit_status="$?"
+  if [[ -n "$evidence_dir" ]]; then
+    # Retain failed-run diagnostics too, before removing the isolated backend.
+    for artifact in render.json e-navigator.log; do
+      if [[ -f "$tmp_dir/$artifact" ]]; then
+        cp "$tmp_dir/$artifact" "$evidence_dir/$artifact"
+      fi
+    done
+    printf '%s\n' "$exit_status" >"$evidence_dir/exit-status.txt"
+    if [[ "$created_container" == true ]]; then
+      docker logs "$container_name" >"$evidence_dir/pyroscope.log" 2>&1 || true
+    fi
+  fi
   if [[ "$created_container" == true ]]; then
     docker rm --force "$container_name" >/dev/null 2>&1 || true
   fi
@@ -86,6 +104,18 @@ if docker logs "$container_name" 2>&1 | grep -Fq 'profile rejected'; then
 fi
 
 image_id="$(docker inspect "$container_name" --format '{{.Image}}')"
+if [[ -n "$evidence_dir" ]]; then
+  cp "$tmp_dir/render.json" "$evidence_dir/render.json"
+  cp "$tmp_dir/e-navigator.log" "$evidence_dir/e-navigator.log"
+  docker logs "$container_name" >"$evidence_dir/pyroscope.log" 2>&1
+  docker image inspect "$image_id" --format '{{json .RepoDigests}}' >"$evidence_dir/image-digests.json"
+  git rev-parse HEAD >"$evidence_dir/collector-commit.txt"
+  date -u '+%Y-%m-%dT%H:%M:%SZ' >"$evidence_dir/executed-at.txt"
+  jq --null-input --arg image_ref "$image_ref" --arg image_id "$image_id" \
+    --arg from_ms "$from_ms" --arg until_ms "$until_ms" \
+    '{image_ref:$image_ref,image_id:$image_id,from_ms:$from_ms,until_ms:$until_ms,query:"process_cpu:cpu:nanoseconds:cpu:nanoseconds{namespace=\"e-navigator-system\",service_name=\"e-navigator-smoke\",catalog_slug=\"\"}"}' \
+    >"$evidence_dir/query.json"
+fi
 jq --null-input \
   --arg image_ref "$image_ref" \
   --arg image_id "$image_id" \

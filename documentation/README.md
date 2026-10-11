@@ -26,6 +26,8 @@ operational documentation. Start with the path that matches your goal.
   run deterministic fixtures and evaluate authorized per-cell backend evidence.
 - [TLS lifecycle qualification for issue 50](issue-50-tls-qualification.md),
   review process/socket fencing, local regressions and remaining live evidence.
+- [Backend compatibility and Grafana workflow qualification](issue-53-backend-qualification.md),
+  pinned identities, retention checkpoints and preserved consumer evidence.
 - [CPU runtime qualification for issue 52](issue-52-cpu-qualification.md),
   review build attestation, bounded identity fences and per-cell CPU assertions.
 - [Signal and module authoring](module-authoring.md), extend the static module
