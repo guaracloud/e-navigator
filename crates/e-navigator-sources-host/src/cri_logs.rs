@@ -24,10 +24,19 @@ const SOURCE: &str = "source.cri_logs";
 pub struct CriLogSource {
     config: CriLogsConfig,
     host: Option<String>,
+    durable_ack: bool,
 }
 impl CriLogSource {
     pub fn new(config: CriLogsConfig, host: Option<String>) -> Self {
-        Self { config, host }
+        Self {
+            config,
+            host,
+            durable_ack: false,
+        }
+    }
+    pub fn with_durable_ack(mut self, enabled: bool) -> Self {
+        self.durable_ack = enabled;
+        self
     }
 }
 
@@ -58,8 +67,9 @@ impl Source<SignalEnvelope> for CriLogSource {
             .map_err(|_| module_error("collector task failed"))?;
             collector = next;
             let batch = batch.map_err(|_| module_error("log read failed"))?;
+            let mut receipts = Vec::new();
             for payload in batch {
-                let signal = match payload {
+                let mut signal = match payload {
                     Collected::Log(log) => {
                         SignalEnvelope::application_log(SOURCE, self.host.clone(), log)
                     }
@@ -69,11 +79,35 @@ impl Source<SignalEnvelope> for CriLogSource {
                         LogCollectionWarning { outcome, count },
                     ),
                 };
+                if self.durable_ack
+                    && matches!(
+                        signal.payload,
+                        e_navigator_signals::SignalPayload::ApplicationLogObservation(_)
+                    )
+                {
+                    let (receipt, accepted) = e_navigator_core::DurableReceipt::channel();
+                    signal.durable_receipt = Some(receipt);
+                    receipts.push(accepted);
+                }
                 tx.send(signal)
                     .await
                     .map_err(|_| CoreError::PipelineClosed)?;
             }
-            // Admission to this bounded channel is NOT downstream acknowledgement.
+            // Durable logs commit only after every processed record is synced to its spool.
+            // A rejected/dropped record fails this source and preserves the previous checkpoint.
+            for receipt in receipts {
+                if !tokio::time::timeout(Duration::from_secs(30), receipt)
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .unwrap_or(false)
+                {
+                    return Err(module_error(
+                        "durable log acceptance failed; checkpoint preserved",
+                    ));
+                }
+            }
+            // Without durable mode, channel admission remains volatile.
             collector = tokio::task::spawn_blocking(move || {
                 collector.commit()?;
                 Ok::<_, io::Error>(collector)

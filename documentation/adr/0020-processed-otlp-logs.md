@@ -98,6 +98,9 @@ may duplicate/reorder records around earlier commits. Issue #56 must change the
 checkpoint lifecycle to acknowledge redacted durable spool acceptance before any
 restart-safe delivery claim. Unredacted bodies must never enter that spool.
 
+The opt-in durable mode and CRI receipt lifecycle in [ADR 0021](0021-durable-otlp-spools.md)
+supersede the volatile checkpoint boundary above when log durability is selected.
+
 ## Validation and qualification
 
 Schema/config goldens, processing privacy and budget fixtures, exact UID cache

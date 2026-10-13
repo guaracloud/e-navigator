@@ -12,6 +12,7 @@ operational documentation. Start with the path that matches your goal.
 - [Release verification](release-verification.md), verify images, charts,
   checksums, signatures, and SBOMs before deployment.
 
+- [Durable OTLP export](durable-export.md), configure per-family storage, recovery and deletion.
 - [Application log processing and OTLP export](log-export.md), configure privacy rules and independent log delivery.
 
 ## Understand The System
@@ -86,6 +87,7 @@ operational documentation. Start with the path that matches your goal.
 - [ADR 0016, non-intrusive profiling parity](adr/0016-non-intrusive-profiling-parity.md)
 - [ADR 0018, bounded CRI logs and read checkpoints](adr/0018-cri-log-collection.md)
 - [ADR 0019, HTTP propagation lifetime and rollback](adr/0019-http-propagation-lifetime-and-rollback.md)
+- [ADR 0021, durable OTLP spools](adr/0021-durable-otlp-spools.md)
 - [ADR 0020, processed OTLP Logs](adr/0020-processed-otlp-logs.md)
 - [Issue 51 propagation qualification](issue-51-propagation-qualification.md)
 - [ADR 0017, OpenTelemetry zero-code coexistence](adr/0017-otel-zero-code-coexistence.md)

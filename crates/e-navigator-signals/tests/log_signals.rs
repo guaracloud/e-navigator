@@ -12,8 +12,13 @@ fn log_schema_round_trips_and_debug_does_not_disclose_body() {
             "body":"private-test-body", "body_bytes":17, "truncated":false,
             "incomplete":false, "invalid_utf8":false}
     });
-    let signal: SignalEnvelope = serde_json::from_value(value.clone()).expect("log schema");
+    let mut signal: SignalEnvelope = serde_json::from_value(value.clone()).expect("log schema");
+    let (receipt, _accepted) = e_navigator_core::DurableReceipt::channel();
+    signal.durable_receipt = Some(receipt);
     assert_eq!(serde_json::to_value(&signal).expect("encode"), value);
+    let restored: SignalEnvelope = serde_json::from_value(value).expect("restore");
+    assert!(restored.durable_receipt.is_none());
+    assert!(!format!("{signal:?}").contains("durable_receipt"));
     assert_eq!(signal.signal_kind(), SignalKind::ApplicationLogObservation);
     assert!(!format!("{signal:?}").contains("private-test-body"));
 }

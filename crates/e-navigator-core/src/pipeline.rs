@@ -60,3 +60,31 @@ pub trait Sink<S: Signal>: Send + Sync + 'static {
         Ok(())
     }
 }
+
+/// Process-local durable admission receipt. It is never part of a native schema.
+#[derive(Debug, Clone)]
+pub struct DurableReceipt(
+    std::sync::Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<bool>>>>,
+);
+impl PartialEq for DurableReceipt {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl DurableReceipt {
+    pub fn channel() -> (Self, tokio::sync::oneshot::Receiver<bool>) {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        (
+            Self(std::sync::Arc::new(std::sync::Mutex::new(Some(sender)))),
+            receiver,
+        )
+    }
+    /// Only the durable log exporter may accept this receipt after fsync.
+    pub fn complete(&self, accepted: bool) {
+        if let Ok(mut sender) = self.0.lock()
+            && let Some(sender) = sender.take()
+        {
+            let _ = sender.send(accepted);
+        }
+    }
+}

@@ -114,6 +114,10 @@ spec:
             - name: host-cgroup
               mountPath: /host/cgroup
               readOnly: true
+            {{- if .Values.durableSpool.mountsEnabled }}
+            - name: durable-spool
+              mountPath: /var/lib/e-navigator/spool
+            {{- end }}
             {{- if .Values.criLogs.mountsEnabled }}
             - name: cri-pod-logs
               mountPath: /var/log/pods
@@ -141,6 +145,12 @@ spec:
           hostPath:
             path: {{ .Values.hostPaths.cgroup.path }}
             type: {{ .Values.hostPaths.cgroup.type }}
+        {{- if .Values.durableSpool.mountsEnabled }}
+        - name: durable-spool
+          hostPath:
+            path: /var/lib/e-navigator/spool
+            type: DirectoryOrCreate
+        {{- end }}
         {{- if .Values.criLogs.mountsEnabled }}
         - name: cri-pod-logs
           hostPath:

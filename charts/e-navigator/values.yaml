@@ -210,6 +210,13 @@ config:
     shutdown_timeout_millis = 10000
     tls_insecure_skip_verify = false
 
+    [otlp_http.durable]
+    families = []
+    directory = "/var/lib/e-navigator/spool"
+    max_bytes = 67108864
+    max_entries = 4096
+    max_age_millis = 3600000
+
     [[modules]]
     name = "source.aya_exec"
     enabled = true
@@ -412,4 +419,8 @@ hostPaths:
 
 # Enable these mounts together with cri_logs.enabled and source.cri_logs in config.toml.
 criLogs:
+  mountsEnabled: false
+
+# Opt in together with otlp_http.durable.families in config.toml.
+durableSpool:
   mountsEnabled: false

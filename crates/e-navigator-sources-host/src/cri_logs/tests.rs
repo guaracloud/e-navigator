@@ -427,3 +427,57 @@ async fn source_checkpoints_admission_and_replays_after_a_closed_channel() {
         ["second"]
     );
 }
+
+#[tokio::test]
+async fn durable_checkpoint_waits_for_receipt_and_failed_acceptance_replays() {
+    for accepted in [false, true] {
+        let f = Fixture::new();
+        f.append(record("retained final record").as_bytes());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let source = CriLogSource::new(f.config.clone(), None).with_durable_ack(true);
+        let task = tokio::spawn(Box::new(source).run(tx));
+        let signal = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!f.config.checkpoint_dir.join("checkpoints.json").exists());
+        signal.durable_receipt.as_ref().unwrap().complete(accepted);
+        drop(signal);
+        if accepted {
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while !f.config.checkpoint_dir.join("checkpoints.json").exists() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            // Close the pipeline and force another poll to finish the source cleanly.
+            // This also waits for the non-cancellable checkpoint fsync task.
+            drop(rx);
+            f.append(record("after receipt").as_bytes());
+            assert!(
+                tokio::time::timeout(Duration::from_secs(2), task)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .is_err()
+            );
+            assert_eq!(
+                bodies(&f.collector().poll(now_millis()).unwrap()),
+                ["after receipt"]
+            );
+        } else {
+            assert!(
+                tokio::time::timeout(Duration::from_secs(2), task)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .is_err()
+            );
+            assert_eq!(
+                bodies(&f.collector().poll(now_millis()).unwrap()),
+                ["retained final record"]
+            );
+        }
+    }
+}

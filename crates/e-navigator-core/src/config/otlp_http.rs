@@ -6,6 +6,8 @@ use super::{ConfigError, ConfigResult};
 #[serde(deny_unknown_fields)]
 pub struct OtlpHttpConfig {
     #[serde(default)]
+    pub durable: DurableSpoolConfig,
+    #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
     pub endpoint: String,
@@ -55,6 +57,7 @@ impl Default for OtlpHttpConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            durable: DurableSpoolConfig::default(),
             endpoint: String::new(),
             metrics_endpoint: String::new(),
             traces_endpoint: String::new(),
@@ -117,6 +120,7 @@ impl OtlpHttpConfig {
     }
 
     pub(super) fn validate(&self, module_enabled: bool) -> ConfigResult<()> {
+        self.durable.validate(self)?;
         if !self.enabled {
             return Ok(());
         }
@@ -420,4 +424,69 @@ fn authority_has_host(authority: &str) -> bool {
         return after.is_empty() || after.starts_with(':');
     }
     true
+}
+
+/// Opt-in families share limits, but each owns a separate directory and worker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DurableSpoolConfig {
+    pub families: Vec<String>,
+    pub directory: std::path::PathBuf,
+    pub max_bytes: u64,
+    pub max_entries: usize,
+    pub max_age_millis: u64,
+}
+impl Default for DurableSpoolConfig {
+    fn default() -> Self {
+        Self {
+            families: Vec::new(),
+            directory: "/var/lib/e-navigator/spool".into(),
+            max_bytes: 64 * 1024 * 1024,
+            max_entries: 4096,
+            max_age_millis: 3_600_000,
+        }
+    }
+}
+impl DurableSpoolConfig {
+    pub fn enabled_for(&self, family: &str) -> bool {
+        self.families.iter().any(|v| v == family)
+    }
+    pub fn validate_for_sink(&self, config: &OtlpHttpConfig) -> Result<(), String> {
+        self.validate(config)
+            .map_err(|_| "invalid durable OTLP spool configuration".to_string())
+    }
+    pub(super) fn validate(&self, config: &OtlpHttpConfig) -> ConfigResult<()> {
+        super::filesystem_paths::validate_len("otlp_http.durable.directory", &self.directory)?;
+        let valid_path = self.directory.is_absolute()
+            && self.directory.components().all(|v| {
+                matches!(
+                    v,
+                    std::path::Component::RootDir | std::path::Component::Normal(_)
+                )
+            })
+            && self.directory != std::path::Path::new("/");
+        let valid_families = self.families.len() <= 4
+            && self.families.iter().enumerate().all(|(i, v)| {
+                !self.families[..i].contains(v)
+                    && match v.as_str() {
+                        "metrics" => config.metrics_enabled,
+                        "traces" => config.traces_enabled,
+                        "profiles" => config.profiles_enabled,
+                        "logs" => config.logs_enabled,
+                        _ => false,
+                    }
+            });
+        if !valid_path
+            || !valid_families
+            || !(1..=1024 * 1024 * 1024).contains(&self.max_bytes)
+            || !(1..=65536).contains(&self.max_entries)
+            || !(1..=604_800_000).contains(&self.max_age_millis)
+        {
+            return Err(ConfigError::invalid_value(
+                "otlp_http.durable",
+                "durable spool requires an absolute non-root directory, unique enabled OTLP families, 1..=1 GiB bytes, 1..=65536 entries and 1..=7 days age",
+            ));
+        }
+        Ok(())
+    }
 }
