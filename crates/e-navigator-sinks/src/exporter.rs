@@ -267,6 +267,25 @@ impl<T> HttpProtobufExporter<T> {
             }
         };
 
+        match self.send_encoded(body, batch_len as u64).await {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                restore_batch_front(&mut self.queue, batch);
+                Err(err)
+            }
+        }
+    }
+
+    pub(crate) fn encoder(&self) -> fn(&[T]) -> Result<Vec<u8>, ExporterError> {
+        self.encode_batch
+    }
+
+    /// Send a recovered request with the same retries and response accounting.
+    pub(crate) async fn send_encoded(
+        &mut self,
+        body: Bytes,
+        count: u64,
+    ) -> Result<(), ExporterError> {
         let mut last_error = None;
         let mut retry_after = None;
         for attempt in 0..=self.config.max_retries {
@@ -284,8 +303,7 @@ impl<T> HttpProtobufExporter<T> {
             self.observe_request_duration(started.elapsed());
             match result {
                 Ok(ack) => {
-                    self.counters.exported =
-                        self.counters.exported.saturating_add(batch_len as u64);
+                    self.counters.exported = self.counters.exported.saturating_add(count);
                     if ack.rejected_items > 0 {
                         self.counters.partial_successes =
                             self.counters.partial_successes.saturating_add(1);
@@ -317,7 +335,6 @@ impl<T> HttpProtobufExporter<T> {
                         _ => {}
                     }
                     if !err.is_retryable() {
-                        restore_batch_front(&mut self.queue, batch);
                         self.counters.failed_batches =
                             self.counters.failed_batches.saturating_add(1);
                         return Err(err);
@@ -329,7 +346,6 @@ impl<T> HttpProtobufExporter<T> {
         }
 
         self.counters.failed_batches = self.counters.failed_batches.saturating_add(1);
-        restore_batch_front(&mut self.queue, batch);
         Err(last_error.unwrap_or(ExporterError::RetriesExhausted))
     }
 
@@ -346,7 +362,10 @@ impl<T> HttpProtobufExporter<T> {
     }
 
     async fn encode_body(&self, batch: &[T]) -> Result<Bytes, ExporterError> {
-        let body = (self.encode_batch)(batch)?;
+        self.compress_body((self.encode_batch)(batch)?).await
+    }
+
+    pub(crate) async fn compress_body(&self, body: Vec<u8>) -> Result<Bytes, ExporterError> {
         match self.compression {
             OtlpHttpCompression::None => Ok(Bytes::from(body)),
             OtlpHttpCompression::Gzip => tokio::task::spawn_blocking(move || {

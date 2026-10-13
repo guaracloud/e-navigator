@@ -133,10 +133,12 @@ pub(crate) fn build_registry(
     {
         #[cfg(unix)]
         {
-            registry = registry.with_source(Box::new(e_navigator_sources_host::CriLogSource::new(
-                config.cri_logs.clone(),
-                host.clone(),
-            )));
+            registry = registry.with_source(Box::new(
+                e_navigator_sources_host::CriLogSource::new(config.cri_logs.clone(), host.clone())
+                    .with_durable_ack(
+                        config.otlp_http.enabled && config.otlp_http.durable.enabled_for("logs"),
+                    ),
+            ));
         }
         #[cfg(not(unix))]
         {

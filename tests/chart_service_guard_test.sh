@@ -84,6 +84,24 @@ for path in ("/var/log/pods", "/var/lib/e-navigator/cri-logs"):
 assert re.search(r"name: cri-pod-logs\n\s+mountPath: /var/log/pods\n\s+readOnly: true", static)
 PYTEST
 
+render_chart durable_spool --set durableSpool.mountsEnabled=true
+python3 - "$tmp_dir/default.yaml" "$tmp_dir/durable_spool.yaml" <<'PYTEST'
+import pathlib, re, sys
+
+def ds(path):
+    return next(doc for doc in pathlib.Path(path).read_text().split("---") if re.search(r"^kind: DaemonSet$", doc, re.M))
+default, enabled = map(ds, sys.argv[1:])
+assert "name: durable-spool" not in default
+assert enabled.count("name: durable-spool") == 2
+assert re.search(r"volumeMounts:[\s\S]*?            - name: durable-spool\n              mountPath:", enabled)
+assert re.search(r"      volumes:[\s\S]*?        - name: durable-spool\n          hostPath:", enabled)
+assert re.search(r"name: durable-spool\n\s+mountPath: /var/lib/e-navigator/spool", enabled)
+assert re.search(r"name: durable-spool\n\s+hostPath:\n\s+path: /var/lib/e-navigator/spool\n\s+type: DirectoryOrCreate", enabled)
+assert default.split("securityContext:")[1].split("volumeMounts:")[0] == enabled.split("securityContext:")[1].split("volumeMounts:")[0]
+static = pathlib.Path("deploy/kubernetes/optional/durable-spool-mount.yaml").read_text()
+assert static.count("/var/lib/e-navigator/spool") == 2
+PYTEST
+
 render_chart service_only --set service.enabled=true
 expect_no_kind "$tmp_dir/service_only.yaml" Service
 expect_no_kind "$tmp_dir/service_only.yaml" ServiceMonitor

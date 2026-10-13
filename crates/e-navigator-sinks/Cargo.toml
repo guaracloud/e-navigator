@@ -19,6 +19,7 @@ flate2 = { workspace = true }
 opentelemetry-proto = { version = "0.32.0", default-features = false, features = ["gen-tonic-messages", "metrics", "profiles", "trace", "logs"] }
 prost = "0.14.4"
 reqwest = { workspace = true }
+rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

@@ -21,10 +21,14 @@ async fn redacts_before_export_and_preserves_instance_and_context() {
         ..Default::default()
     };
     let processor = LogProcessingProcessor::new(config);
-    let input = observation(Some(
+    let mut input = observation(Some(
         r#"{"message":"hello literal-secret\nstack frame","password":"hidden-secret","nested":{"authorization":"Bearer hidden"},"severity":"ERROR","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","request_id":"123","service.name":"forged"}"#,
     ));
+    let (receipt, accepted) = e_navigator_core::DurableReceipt::channel();
+    input.durable_receipt = Some(receipt);
     let output = processor.process(input).await.unwrap().unwrap();
+    output.durable_receipt.as_ref().unwrap().complete(true);
+    assert!(accepted.await.unwrap());
     let SignalPayload::ApplicationLogObservation(log) = output.payload else {
         panic!("log")
     };

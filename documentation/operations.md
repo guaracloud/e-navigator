@@ -147,3 +147,9 @@ An empty list leaves native capture active and disables interpreter reads.
 See [issue 52 CPU qualification](issue-52-cpu-qualification.md) for migration,
 lifetime metadata limits, identity rejection diagnostics, and the per-cell
 native/Pyroscope assertion command.
+
+## Durable export storage
+
+Select per-family restart buffering and persistent host storage through
+[durable export operations](durable-export.md). Defaults remain volatile; storage
+selection does not establish production outage budgets or backend retention.

@@ -111,6 +111,9 @@ are volatile. A crash after source commit can lose admitted records downstream.
 durable delivery is required; this source's admission checkpoint cannot be reused
 as backend acknowledgement without changing its lifecycle and tests.
 
+The opt-in durable mode in [ADR 0021](0021-durable-otlp-spools.md) changes
+checkpoint advancement to processed log spool acceptance when selected.
+
 ## Deployment and validation
 
 See [CRI collection operations](../cri-logs.md). Fixture-backed tests exercise

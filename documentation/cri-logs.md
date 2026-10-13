@@ -78,6 +78,6 @@ anchor bytes is inherently undetectable by this bounded identity check.
 
 Checkpoints prove source-channel admission, not backend storage. They offer
 source-position crash recovery, with replay duplicates around incomplete
-assemblies and commits. Durable redacted spool acceptance remains #56; [log export](log-export.md)
+assemblies and commits. Opt-in [durable export](durable-export.md) waits for redacted spool acceptance; [log export](log-export.md)
 provides independent volatile delivery. Do not use this source's read checkpoint to claim durable delivery
 or completed Guara replacement qualification.

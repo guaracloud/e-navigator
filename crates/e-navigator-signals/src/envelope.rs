@@ -212,6 +212,8 @@ define_signal_payload_inventory! {
 #[derive(Clone, PartialEq)]
 #[non_exhaustive]
 pub struct SignalEnvelope {
+    /// Internal admission receipt, omitted from serialization and Debug.
+    pub durable_receipt: Option<e_navigator_core::DurableReceipt>,
     pub schema_version: u16,
     pub source: String,
     pub host: Option<String>,
@@ -266,6 +268,7 @@ impl<'de> Deserialize<'de> for SignalEnvelope {
         let payload = raw.kind.deserialize_payload::<D::Error>(raw.payload)?;
 
         Ok(Self {
+            durable_receipt: None,
             schema_version: raw.schema_version,
             source: raw.source,
             host: raw.host,
@@ -873,6 +876,7 @@ impl SignalEnvelope {
         sanitize_envelope_string(&mut source);
         sanitize_optional_envelope_string(&mut host);
         Self {
+            durable_receipt: None,
             schema_version: SIGNAL_SCHEMA_VERSION,
             source,
             host,

@@ -1,3 +1,5 @@
+mod durable;
+
 use async_trait::async_trait;
 use e_navigator_core::{CoreResult, ModuleKind, ModuleMetadata, OtlpHttpConfig, Sink};
 use e_navigator_signals::{SignalEnvelope, SignalPayload};
@@ -103,6 +105,13 @@ macro_rules! define_export_worker_telemetry {
 
 define_export_worker_telemetry! {
     before_latency {
+        spool_accepted => "e_navigator_export_spool_accepted_total",
+        spool_recovered => "e_navigator_export_spool_recovered_total",
+        spool_rejected => "e_navigator_export_spool_rejected_total",
+        spool_expired => "e_navigator_export_spool_expired_total",
+        spool_errors => "e_navigator_export_spool_errors_total",
+        spool_bytes => "e_navigator_export_spool_bytes",
+        spool_entries => "e_navigator_export_spool_entries",
         enqueued => "e_navigator_export_enqueued_total",
         exported => "e_navigator_export_sent_total",
         dropped_queue_full => "e_navigator_export_dropped_queue_full_total",
@@ -182,7 +191,7 @@ struct MetricTimestampGuard {
 
 #[derive(Debug)]
 enum ExportCommand<T> {
-    Record(T),
+    Record(T, Option<e_navigator_core::DurableReceipt>),
     Shutdown,
 }
 
@@ -212,6 +221,52 @@ impl OtlpHttpSink {
         telemetry_registry: NativeTelemetryRegistry,
     ) -> CoreResult<Self> {
         validate_worker_tuning(&config).map_err(exporter_module_error)?;
+        config
+            .durable
+            .validate_for_sink(&config)
+            .map_err(exporter_module_error)?;
+        // Validate every enabled destination and recover every selected spool before
+        // starting any worker. Failed construction must not partially deliver data.
+        for (enabled, endpoint) in [
+            (config.metrics_enabled, required_metrics_endpoint(&config)),
+            (config.traces_enabled, required_traces_endpoint(&config)),
+            (config.profiles_enabled, required_profiles_endpoint(&config)),
+            (config.logs_enabled, required_logs_endpoint(&config)),
+        ] {
+            if enabled {
+                exporter_config_for(&config, endpoint?)
+                    .validate()
+                    .map_err(|e| exporter_module_error(e.to_string()))?;
+            }
+        }
+        if config.logs_enabled
+            && config
+                .queue_capacity
+                .saturating_add(config.batch_size)
+                .saturating_mul(65536)
+                > 128 * 1024 * 1024
+        {
+            return Err(exporter_module_error(
+                "OTLP logs queue and batch body budget must not exceed 128 MiB",
+            ));
+        }
+        tokio::runtime::Handle::try_current()
+            .map_err(|_| exporter_module_error("OTLP export workers require a Tokio runtime"))?;
+        let mut spools = BTreeMap::new();
+        for family in &config.durable.families {
+            let spool = crate::durable_spool::Spool::open(
+                &config.durable.directory.join(family),
+                config.durable.max_bytes,
+                config.durable.max_entries,
+                config.durable.max_age_millis,
+            )
+            .map_err(|_| {
+                exporter_module_error(
+                    "cannot recover durable OTLP spool, check permissions, lock, bounds and format",
+                )
+            })?;
+            spools.insert(family.clone(), spool);
+        }
         let invalid_trace_records = Arc::new(AtomicU64::new(0));
         if config.traces_enabled {
             telemetry_registry.register_source(Arc::new(InvalidTraceTelemetrySource {
@@ -226,6 +281,7 @@ impl OtlpHttpSink {
                 &config,
                 "metrics",
                 &telemetry_registry,
+                spools.remove("metrics"),
             )?)
         } else {
             None
@@ -253,6 +309,7 @@ impl OtlpHttpSink {
                 &config,
                 "profiles",
                 &telemetry_registry,
+                spools.remove("profiles"),
             )?)
         } else {
             None
@@ -265,6 +322,7 @@ impl OtlpHttpSink {
                 &config,
                 "traces",
                 &telemetry_registry,
+                spools.remove("traces"),
             )?)
         } else {
             None
@@ -272,16 +330,6 @@ impl OtlpHttpSink {
 
         let log_processing_rejected = Arc::new(AtomicU64::new(0));
         let log_exporter = if config.logs_enabled {
-            if config
-                .queue_capacity
-                .saturating_add(config.batch_size)
-                .saturating_mul(65536)
-                > 128 * 1024 * 1024
-            {
-                return Err(exporter_module_error(
-                    "OTLP logs queue and batch body budget must not exceed 128 MiB".to_string(),
-                ));
-            }
             telemetry_registry.register_source(Arc::new(LogProcessingTelemetrySource {
                 rejected: log_processing_rejected.clone(),
             }));
@@ -292,6 +340,7 @@ impl OtlpHttpSink {
                 &config,
                 "logs",
                 &telemetry_registry,
+                spools.remove("logs"),
             )?)
         } else {
             None
@@ -371,7 +420,9 @@ impl OtlpHttpSink {
                 ) {
                     self.log_processing_rejected.fetch_add(1, Ordering::Relaxed);
                 }
-                exporter.enqueue(record);
+                exporter
+                    .handle()
+                    .enqueue_with_receipt(record, signal.durable_receipt.clone());
             } else {
                 self.log_processing_rejected.fetch_add(1, Ordering::Relaxed);
             }
@@ -608,6 +659,7 @@ fn build_exporter<T>(
     runtime_config: &OtlpHttpConfig,
     family: &'static str,
     telemetry_registry: &NativeTelemetryRegistry,
+    spool: Option<crate::durable_spool::Spool>,
 ) -> CoreResult<AsyncProtobufExporter<T>>
 where
     T: Send + Sync + 'static,
@@ -626,12 +678,11 @@ where
             module: "sink.otlp_http".to_string(),
             message: err.to_string(),
         })?;
-    AsyncProtobufExporter::spawn(exporter, runtime_config, family, telemetry_registry).map_err(
-        |err| e_navigator_core::CoreError::ModuleFailed {
+    AsyncProtobufExporter::spawn(exporter, runtime_config, family, telemetry_registry, spool)
+        .map_err(|err| e_navigator_core::CoreError::ModuleFailed {
             module: "sink.otlp_http".to_string(),
             message: err,
-        },
-    )
+        })
 }
 
 fn decode_metric_export_response(body: &[u8]) -> Result<ExportResponseAck, crate::ExporterError> {
@@ -675,6 +726,7 @@ where
         config: &OtlpHttpConfig,
         family: &'static str,
         telemetry_registry: &NativeTelemetryRegistry,
+        spool: Option<crate::durable_spool::Spool>,
     ) -> Result<Self, String> {
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|_| "OTLP export workers require a Tokio runtime".to_string())?;
@@ -692,13 +744,23 @@ where
             circuit_breaker_failure_threshold: config.circuit_breaker_failure_threshold,
             circuit_breaker_cooldown: Duration::from_millis(config.circuit_breaker_cooldown_millis),
         };
-        let worker = runtime.spawn(run_export_worker(
-            receiver,
-            exporter,
-            worker_telemetry,
-            tuning,
-            family,
-        ));
+        let worker = if let Some(spool) = spool {
+            runtime.spawn(durable::run(
+                receiver,
+                exporter,
+                worker_telemetry,
+                tuning,
+                spool,
+            ))
+        } else {
+            runtime.spawn(run_export_worker(
+                receiver,
+                exporter,
+                worker_telemetry,
+                tuning,
+                family,
+            ))
+        };
         Ok(Self {
             sender,
             worker: Mutex::new(Some(worker)),
@@ -761,13 +823,21 @@ where
 
 impl<T> AsyncProtobufExporterHandle<T> {
     fn enqueue(&self, record: T) -> bool {
+        self.enqueue_with_receipt(record, None)
+    }
+
+    fn enqueue_with_receipt(
+        &self,
+        record: T,
+        receipt: Option<e_navigator_core::DurableReceipt>,
+    ) -> bool {
         if !self.accepting.load(Ordering::Acquire) {
             self.telemetry
                 .dropped_worker_closed
                 .fetch_add(1, Ordering::Relaxed);
             return false;
         }
-        match self.sender.try_send(ExportCommand::Record(record)) {
+        match self.sender.try_send(ExportCommand::Record(record, receipt)) {
             Ok(()) => {
                 self.telemetry.enqueued.fetch_add(1, Ordering::Relaxed);
                 true
@@ -794,7 +864,7 @@ impl<T> AsyncProtobufExporterHandle<T> {
                 .fetch_add(1, Ordering::Relaxed);
             return false;
         }
-        match self.sender.send(ExportCommand::Record(record)).await {
+        match self.sender.send(ExportCommand::Record(record, None)).await {
             Ok(()) => {
                 self.telemetry.enqueued.fetch_add(1, Ordering::Relaxed);
                 true
@@ -1242,7 +1312,7 @@ async fn run_export_worker<T>(
         };
 
         match command {
-            Some(ExportCommand::Record(record)) => {
+            Some(ExportCommand::Record(record, _)) => {
                 if circuit_open_until.is_some_and(|until| until > Instant::now()) {
                     telemetry
                         .dropped_circuit_open
@@ -1272,7 +1342,7 @@ async fn run_export_worker<T>(
                 }
             }
             Some(ExportCommand::Shutdown) | None => {
-                while let Ok(ExportCommand::Record(record)) = receiver.try_recv() {
+                while let Ok(ExportCommand::Record(record, _)) = receiver.try_recv() {
                     exporter.enqueue(record);
                     queued = queued.saturating_add(1);
                     if queued >= tuning.batch_size {
@@ -1357,7 +1427,14 @@ async fn flush_worker_batch<T>(
             }
         }
     }
-    let counters_after = exporter.counters();
+    observe_export_counters(telemetry, counters_before, exporter.counters());
+}
+
+fn observe_export_counters(
+    telemetry: &AtomicExportWorkerTelemetry,
+    counters_before: crate::ExporterCounters,
+    counters_after: crate::ExporterCounters,
+) {
     telemetry.exported.fetch_add(
         counters_after
             .exported
@@ -1748,10 +1825,17 @@ mod tests {
             .map(|line| line.name.as_str())
             .collect::<Vec<_>>();
         assert_eq!(
-            &names[..17],
+            &names[..24],
             [
                 "e_navigator_export_queue_capacity",
                 "e_navigator_export_queue_depth",
+                "e_navigator_export_spool_accepted_total",
+                "e_navigator_export_spool_recovered_total",
+                "e_navigator_export_spool_rejected_total",
+                "e_navigator_export_spool_expired_total",
+                "e_navigator_export_spool_errors_total",
+                "e_navigator_export_spool_bytes",
+                "e_navigator_export_spool_entries",
                 "e_navigator_export_enqueued_total",
                 "e_navigator_export_sent_total",
                 "e_navigator_export_dropped_queue_full_total",
@@ -1770,11 +1854,11 @@ mod tests {
             ]
         );
         assert_eq!(
-            &names[17..29],
+            &names[24..36],
             ["e_navigator_export_request_duration_seconds_bucket"; 12]
         );
         assert_eq!(
-            &names[29..],
+            &names[36..],
             [
                 "e_navigator_export_request_duration_seconds_sum",
                 "e_navigator_export_request_duration_seconds_count",
@@ -3963,7 +4047,7 @@ mod tests {
         .expect("signal")
     }
 
-    fn log_config(endpoint: String) -> OtlpHttpConfig {
+    pub(super) fn log_config(endpoint: String) -> OtlpHttpConfig {
         OtlpHttpConfig {
             enabled: true,
             logs_enabled: true,
@@ -4130,7 +4214,16 @@ mod tests {
         let collector =
             FakeCollector::spawn_responses(vec![FakeResponse::protobuf(response)], Duration::ZERO)
                 .await;
-        let sink = OtlpHttpSink::new(log_config(collector.url())).expect("sink");
+        let fixture = crate::durable_spool::tests::Fixture::new();
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            durable: e_navigator_core::DurableSpoolConfig {
+                families: vec!["logs".into()],
+                directory: fixture.0.clone(),
+                ..Default::default()
+            },
+            ..log_config(collector.url())
+        })
+        .expect("sink");
         let mut record = processed_log(Some("redacted")).await;
         sink.write(&record).await.expect("enqueue");
         if let SignalPayload::ApplicationLogObservation(log) = &mut record.payload {
@@ -4142,6 +4235,7 @@ mod tests {
         assert!(!request.contains("never-exported-secret"));
         sink.shutdown().await.expect("drain");
         let worker = sink.telemetry().logs.expect("worker");
+        assert_eq!(worker.spool_bytes, 0);
         assert_eq!(worker.partial_successes, 1);
         assert_eq!(worker.rejected_items, 1);
         assert_eq!(worker.retry_attempts, 0);
@@ -4174,8 +4268,245 @@ mod tests {
         assert_eq!(worker.dropped_export_failure, 0);
     }
 
+    #[tokio::test]
+    async fn durable_logs_accept_redacted_data_during_outage_and_replay_after_restart() {
+        use e_navigator_core::{DurableReceipt, DurableSpoolConfig};
+        let fixture = crate::durable_spool::tests::Fixture::new();
+        let collector = FakeCollector::spawn(vec![503, 200]).await;
+        let config = OtlpHttpConfig {
+            durable: DurableSpoolConfig {
+                families: vec!["logs".into()],
+                directory: fixture.0.clone(),
+                ..Default::default()
+            },
+            max_retries: 0,
+            flush_interval_millis: 1000,
+            ..log_config(collector.url())
+        };
+        let sink = OtlpHttpSink::new(config.clone()).expect("durable sink");
+        let mut log = processed_log(Some("redacted record")).await;
+        let (receipt, accepted) = DurableReceipt::channel();
+        log.durable_receipt = Some(receipt);
+        sink.write(&log).await.expect("admit");
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), accepted)
+                .await
+                .expect("disk acceptance does not await backend")
+                .expect("receipt")
+        );
+        let first = collector.next_request().await;
+        assert!(first.contains("redacted record"));
+        // Stop before another retry, leaving the request on persistent storage.
+        sink.log_exporter
+            .as_ref()
+            .expect("worker")
+            .worker
+            .lock()
+            .await
+            .take()
+            .expect("task")
+            .abort();
+        drop(log);
+        drop(sink);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let recovered = OtlpHttpSink::new(config).expect("reopen");
+        let second = collector.next_request().await;
+        assert_eq!(first.body(), second.body());
+        recovered.shutdown().await.expect("drain");
+        assert_eq!(recovered.telemetry().logs.expect("logs").spool_recovered, 1);
+        assert_eq!(recovered.telemetry().logs.expect("logs").spool_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn durable_permanent_rejection_releases_storage() {
+        let fixture = crate::durable_spool::tests::Fixture::new();
+        let collector = FakeCollector::spawn(vec![400]).await;
+        let config = OtlpHttpConfig {
+            durable: e_navigator_core::DurableSpoolConfig {
+                families: vec!["logs".into()],
+                directory: fixture.0.clone(),
+                ..Default::default()
+            },
+            ..log_config(collector.url())
+        };
+        let sink = OtlpHttpSink::new(config).expect("sink");
+        sink.write(&processed_log(Some("redacted")).await)
+            .await
+            .expect("enqueue");
+        let _ = collector.next_request().await;
+        sink.shutdown().await.expect("drain");
+        let counters = sink.telemetry().logs.expect("logs");
+        assert_eq!(counters.permanent_responses, 1);
+        assert_eq!(counters.dropped_export_failure, 1);
+        assert_eq!(counters.spool_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn durable_families_are_isolated_and_spool_only_processed_logs() {
+        let fixture = crate::durable_spool::tests::Fixture::new();
+        let metrics = FakeCollector::spawn(vec![200]).await;
+        let traces = FakeCollector::spawn(vec![200]).await;
+        let profiles = FakeCollector::spawn(vec![200]).await;
+        let logs = FakeCollector::spawn_with_delay(vec![200; 2], Duration::from_millis(500)).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            durable: e_navigator_core::DurableSpoolConfig {
+                families: vec![
+                    "metrics".into(),
+                    "traces".into(),
+                    "profiles".into(),
+                    "logs".into(),
+                ],
+                directory: fixture.0.clone(),
+                ..Default::default()
+            },
+            metrics_enabled: true,
+            traces_enabled: true,
+            profiles_enabled: true,
+            metrics_endpoint: metrics.url(),
+            traces_endpoint: traces.url(),
+            profiles_endpoint: profiles.url(),
+            timeout_millis: 2000,
+            flush_interval_millis: 10,
+            ..log_config(logs.url())
+        })
+        .expect("sink");
+        let mut receipts = Vec::new();
+        for _ in 0..2 {
+            let mut log = processed_log(Some(
+                r#"{"message":"literal-secret","password":"omitted-sensitive"}"#,
+            ))
+            .await;
+            let (receipt, accepted) = e_navigator_core::DurableReceipt::channel();
+            log.durable_receipt = Some(receipt);
+            sink.write(&log).await.expect("enqueue");
+            receipts.push(accepted);
+        }
+        for receipt in receipts {
+            assert!(
+                tokio::time::timeout(Duration::from_millis(300), receipt)
+                    .await
+                    .expect("admission is independent of slow HTTP")
+                    .expect("receipt")
+            );
+        }
+        let mut raw = processed_log(Some("raw-sensitive")).await;
+        if let SignalPayload::ApplicationLogObservation(log) = &mut raw.payload {
+            log.processing = None;
+        }
+        sink.write(&raw).await.expect("raw rejected");
+        let segments: Vec<_> = std::fs::read_dir(fixture.0.join("logs"))
+            .expect("directory")
+            .map(|v| v.expect("entry").path())
+            .filter(|v| v.extension().is_some_and(|v| v == "spool"))
+            .collect();
+        assert_eq!(segments.len(), 2);
+        for path in segments {
+            let bytes = std::fs::read(path).expect("segment");
+            let text = String::from_utf8_lossy(&bytes);
+            for secret in ["literal-secret", "omitted-sensitive", "raw-sensitive"] {
+                assert!(!text.contains(secret));
+            }
+            assert!(text.contains("[REDACTED]"));
+        }
+        sink.write(&network_metric()).await.expect("metrics");
+        sink.write(&request_span()).await.expect("traces");
+        sink.write(&profile_sample()).await.expect("profiles");
+        for collector in [&metrics, &traces, &profiles] {
+            let _ = tokio::time::timeout(Duration::from_millis(300), collector.next_request())
+                .await
+                .expect("independent family");
+        }
+        sink.shutdown().await.expect("drain");
+        let stats = sink.telemetry();
+        assert_eq!(stats.log_processing_rejected, 1);
+        for family in [stats.metrics, stats.traces, stats.profiles, stats.logs] {
+            assert_eq!(family.expect("family").spool_bytes, 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn durable_storage_full_rejects_receipt_without_losing_accepted_record() {
+        let fixture = crate::durable_spool::tests::Fixture::new();
+        let logs = FakeCollector::spawn_with_delay(vec![200], Duration::from_millis(500)).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            durable: e_navigator_core::DurableSpoolConfig {
+                families: vec!["logs".into()],
+                directory: fixture.0.clone(),
+                max_entries: 1,
+                ..Default::default()
+            },
+            ..log_config(logs.url())
+        })
+        .expect("sink");
+        for accepted in [true, false] {
+            let mut log = processed_log(Some("redacted")).await;
+            let (receipt, result) = e_navigator_core::DurableReceipt::channel();
+            log.durable_receipt = Some(receipt);
+            sink.write(&log).await.expect("enqueue");
+            assert_eq!(
+                tokio::time::timeout(Duration::from_millis(300), result)
+                    .await
+                    .expect("disk receipt")
+                    .expect("receipt"),
+                accepted
+            );
+        }
+        let _ = logs.next_request().await;
+        sink.shutdown().await.expect("drain");
+        let counters = sink.telemetry().logs.expect("logs");
+        assert_eq!(counters.spool_accepted, 1);
+        assert_eq!(counters.spool_rejected, 1);
+        assert_eq!(counters.exported, 1);
+        assert_eq!(counters.spool_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn failed_later_spool_recovery_starts_no_workers_and_releases_all_locks() {
+        let fixture = crate::durable_spool::tests::Fixture::new();
+        let metrics = FakeCollector::spawn(vec![200]).await;
+        let logs = FakeCollector::spawn(vec![]).await;
+        let mut pending =
+            crate::durable_spool::Spool::open(&fixture.0.join("metrics"), 1024, 4, 1000)
+                .expect("metric spool");
+        pending
+            .append(b"pending", 1, durable::now_millis())
+            .expect("append");
+        drop(pending);
+        let damaged = crate::durable_spool::Spool::open(&fixture.0.join("logs"), 1024, 4, 1000)
+            .expect("log directory");
+        drop(damaged);
+        std::fs::write(fixture.0.join("logs/0000000000000000.spool"), b"corrupt").expect("damage");
+        let registry = NativeTelemetryRegistry::default();
+        let result = OtlpHttpSink::new_with_telemetry(
+            OtlpHttpConfig {
+                durable: e_navigator_core::DurableSpoolConfig {
+                    families: vec!["metrics".into(), "logs".into()],
+                    directory: fixture.0.clone(),
+                    ..Default::default()
+                },
+                metrics_enabled: true,
+                metrics_endpoint: metrics.url(),
+                ..log_config(logs.url())
+            },
+            registry.clone(),
+        );
+        assert!(result.is_err());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(metrics.try_next_request().is_none());
+        assert!(registry.prometheus_lines().is_empty());
+        let mut recovered =
+            crate::durable_spool::Spool::open(&fixture.0.join("metrics"), 1024, 4, 1000)
+                .expect("all locks released");
+        assert!(
+            recovered
+                .front(durable::now_millis())
+                .expect("front")
+                .is_some()
+        );
+    }
+
     #[derive(Debug, Clone)]
-    struct RecordedRequest {
+    pub(super) struct RecordedRequest {
         raw: Vec<u8>,
     }
 
@@ -4196,7 +4527,7 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct FakeCollector {
+    pub(super) struct FakeCollector {
         address: std::net::SocketAddr,
         requests: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<RecordedRequest>>,
     }
@@ -4230,7 +4561,7 @@ mod tests {
     }
 
     impl FakeCollector {
-        async fn spawn(statuses: Vec<u16>) -> Self {
+        pub(super) async fn spawn(statuses: Vec<u16>) -> Self {
             Self::spawn_with_delay(statuses, Duration::ZERO).await
         }
 
@@ -4285,7 +4616,7 @@ mod tests {
             }
         }
 
-        fn url(&self) -> String {
+        pub(super) fn url(&self) -> String {
             format!("http://{}", self.address)
         }
 
@@ -4293,7 +4624,7 @@ mod tests {
             format!("http://{}{}", self.address, path)
         }
 
-        async fn next_request(&self) -> RecordedRequest {
+        pub(super) async fn next_request(&self) -> RecordedRequest {
             self.requests
                 .lock()
                 .await
@@ -4302,7 +4633,7 @@ mod tests {
                 .expect("request received")
         }
 
-        fn try_next_request(&self) -> Option<RecordedRequest> {
+        pub(super) fn try_next_request(&self) -> Option<RecordedRequest> {
             self.requests.try_lock().ok()?.try_recv().ok()
         }
     }

@@ -1,0 +1,19 @@
+# Strategic merge patch. Also select otlp_http.durable.families in configmap.yaml.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: e-navigator
+  namespace: e-navigator-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: e-navigator
+          volumeMounts:
+            - name: durable-spool
+              mountPath: /var/lib/e-navigator/spool
+      volumes:
+        - name: durable-spool
+          hostPath:
+            path: /var/lib/e-navigator/spool
+            type: DirectoryOrCreate

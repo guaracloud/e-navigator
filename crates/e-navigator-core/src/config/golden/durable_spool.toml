@@ -1,0 +1,5 @@
+families = ["logs"]
+directory = "/var/lib/e-navigator/spool"
+max_bytes = 67108864
+max_entries = 4096
+max_age_millis = 3600000

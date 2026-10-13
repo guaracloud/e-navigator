@@ -140,6 +140,12 @@
     "service": { "type": "object" },
     "serviceMonitor": { "type": "object" },
     "hostPaths": { "type": "object" },
+    "durableSpool": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "mountsEnabled": { "type": "boolean" } },
+      "required": ["mountsEnabled"]
+    },
     "criLogs": {
       "type": "object",
       "additionalProperties": false,

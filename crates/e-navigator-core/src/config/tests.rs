@@ -3812,3 +3812,60 @@ fn log_export_is_opt_in_and_requires_privacy_processor_with_bounded_policy() {
     large_queue.otlp_http.queue_capacity = 2049;
     assert!(large_queue.validate().is_err());
 }
+
+#[test]
+fn durable_spool_is_opt_in_and_validates_storage_bounds() {
+    let mut config = RuntimeConfig::default();
+    assert!(
+        toml::from_str::<RuntimeConfig>(
+            "[otlp_http.durable]\nfamilies=['traces']\ndirectory='/var/lib/e-navigator/spool'\n"
+        )
+        .is_ok()
+    );
+    config.otlp_http.enabled = true;
+    config.otlp_http.endpoint = "http://localhost:4318".into();
+    for module in &mut config.modules {
+        if module.name == "sink.otlp_http" {
+            module.enabled = true;
+        }
+    }
+    for invalid in [
+        "max_bytes=0",
+        "max_entries=0",
+        "max_entries=65537",
+        "max_age_millis=0",
+        "max_bytes=1073741825",
+        "max_age_millis=604800001",
+        "families=['unknown']",
+        "families=['logs']",
+        "directory='relative'",
+    ] {
+        let parsed = toml::from_str::<super::otlp_http::DurableSpoolConfig>(invalid);
+        assert!(
+            parsed.is_err() || parsed.is_ok_and(|v| v.validate(&config.otlp_http).is_err()),
+            "{invalid}"
+        );
+    }
+}
+
+#[test]
+fn durable_spool_config_golden_roundtrip() {
+    let text = include_str!("golden/durable_spool.toml");
+    let config: DurableSpoolConfig = toml::from_str(text).expect("golden config");
+    let enabled = OtlpHttpConfig {
+        logs_enabled: true,
+        ..Default::default()
+    };
+    config.validate_for_sink(&enabled).expect("valid config");
+    assert_eq!(toml::to_string(&config).expect("serialize"), text);
+    assert!(!DurableSpoolConfig::default().enabled_for("logs"));
+    assert!(toml::from_str::<DurableSpoolConfig>("unknown=true").is_err());
+    assert!(
+        DurableSpoolConfig {
+            families: vec!["logs".into(), "logs".into()],
+            ..config
+        }
+        .validate_for_sink(&enabled)
+        .is_err()
+    );
+}

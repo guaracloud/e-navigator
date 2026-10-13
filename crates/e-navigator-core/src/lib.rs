@@ -13,7 +13,7 @@ pub use config::{
     ArgvCaptureConfig, AttributionConfig, CaptureFilterConfig, CapturePosture, CgroupDiscoveryMode,
     ConfigError, ConfigErrorKind, ConfigResult, CpuProfileBackpressure, CpuProfileCppDemangle,
     CpuProfilePythonBuild, CpuProfileSourceConfig, CriLogsConfig, DnsMetricsConfig,
-    DnsSourceConfig, EbpfConfig, EbpfEventTransport, EbpfNetworkIoHook,
+    DnsSourceConfig, DurableSpoolConfig, EbpfConfig, EbpfEventTransport, EbpfNetworkIoHook,
     HttpContextPropagationConfig, HttpSourceConfig, JsonStdoutConfig, JsonStdoutMode,
     KNOWN_MODULES, KnownModule, KubernetesAttributionConfig, LogInitialRead, LogParseFailure,
     LogProcessingConfig, ModuleConfig, NetworkEndpointConfig, NetworkMetricsConfig,
@@ -25,4 +25,4 @@ pub use config::{
 };
 pub use error::{CoreError, CoreResult};
 pub use module::{ModuleKind, ModuleMetadata};
-pub use pipeline::{Generator, Processor, Signal, Sink, Source};
+pub use pipeline::{DurableReceipt, Generator, Processor, Signal, Sink, Source};

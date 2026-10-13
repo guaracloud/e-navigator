@@ -91,9 +91,10 @@ records and are not counted as processing rejection. Configure source and
 processing body limits together to avoid retaining content that processing will
 reject. The source defaults to 16 KiB; processing permits 32 KiB at most.
 
-Worker delivery remains volatile. Source read checkpoints, worker admission and
+Worker delivery is volatile unless [durable export](durable-export.md) is selected.
+Source read checkpoints, worker admission and
 HTTP acknowledgement are different boundaries. HTTP acknowledgement alone does
-not establish retained/queryable data. See ADR 0020 and #56 before claiming
+not establish retained/queryable data. See ADR 0021 before claiming
 restart-safe export or deleting any retained source/checkpoint files.
 
 ## Acceptance status
