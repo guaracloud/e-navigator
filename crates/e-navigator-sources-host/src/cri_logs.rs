@@ -747,6 +747,7 @@ impl Tracked {
             truncated,
             incomplete,
             invalid_utf8,
+            processing: None,
         }
     }
     fn flush_partials(&mut self, now: u64, config: &CriLogsConfig, out: &mut Vec<Collected>) {

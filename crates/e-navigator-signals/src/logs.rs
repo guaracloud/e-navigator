@@ -18,6 +18,8 @@ pub struct ApplicationLogObservation {
     pub truncated: bool,
     pub incomplete: bool,
     pub invalid_utf8: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub processing: Option<Box<LogProcessing>>,
 }
 
 impl std::fmt::Debug for ApplicationLogObservation {
@@ -72,10 +74,59 @@ pub(crate) fn sanitize_log(event: &mut ApplicationLogObservation) {
         truncate_utf8_in_place(value, 256);
     }
     truncate_utf8_in_place(&mut event.timestamp, 64);
+    if let Some(processed) = &mut event.processing {
+        for value in [
+            &mut processed.severity_text,
+            &mut processed.workload_name,
+            &mut processed.workload_kind,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            truncate_utf8_in_place(value, 256);
+        }
+        while processed.attributes.len() > 32 {
+            processed.attributes.pop_last();
+        }
+        processed
+            .attributes
+            .retain(|k, v| !k.is_empty() && k.len() <= 64 && v.len() <= 256);
+    }
     if let Some(body) = &mut event.body {
         if body.len() > 65_536 {
             event.truncated = true;
         }
         truncate_utf8_in_place(body, 65_536);
     }
+}
+
+/// Only a payload processed under the configured privacy policy is exportable.
+/// Resource identity always comes from CRI, never from application fields.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogProcessing {
+    pub outcome: LogProcessingOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workload_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workload_kind: Option<String>,
+    pub severity_text: Option<String>,
+    pub trace_id: Option<String>,
+    pub span_id: Option<String>,
+    pub attributes: std::collections::BTreeMap<String, String>,
+}
+impl std::fmt::Debug for LogProcessing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LogProcessing")
+            .field("outcome", &self.outcome)
+            .finish_non_exhaustive()
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogProcessingOutcome {
+    Json,
+    PlainText,
+    MalformedJson,
+    BodyOmitted,
+    BudgetRejected,
 }

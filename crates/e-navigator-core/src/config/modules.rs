@@ -96,6 +96,11 @@ pub const KNOWN_MODULES: &[KnownModule] = &[
         default_enabled: true,
     },
     KnownModule {
+        name: "processor.log_processing",
+        kind: ModuleKind::Processor,
+        default_enabled: false,
+    },
+    KnownModule {
         name: "processor.container_attribution",
         kind: ModuleKind::Processor,
         default_enabled: true,

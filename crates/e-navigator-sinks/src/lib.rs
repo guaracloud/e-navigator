@@ -10,6 +10,7 @@ pub mod otel_profile;
 pub mod otel_trace;
 mod otlp_common;
 pub mod otlp_http;
+mod otlp_log_proto;
 mod otlp_metric_proto;
 mod otlp_profile_proto;
 mod otlp_trace_proto;

@@ -15,6 +15,7 @@ known_modules=(
   "source.aya_cpu_profile"
   "source.host_resource"
   "source.synthetic_exec"
+  "processor.log_processing"
   "processor.container_attribution"
   "generator.resource_metrics"
   "generator.network_metrics"
@@ -65,7 +66,7 @@ test -s "$tmp_dir/chart-e-navigator.toml"
 test -s "$tmp_dir/static-e-navigator.toml"
 
 for file in "$tmp_dir/chart-e-navigator.toml" "$tmp_dir/static-e-navigator.toml"; do
-  for key in "metrics_endpoint" "traces_endpoint" "profiles_endpoint"; do
+  for key in "metrics_endpoint" "traces_endpoint" "profiles_endpoint" "logs_endpoint"; do
     if ! grep -Fq "${key} = \"\"" "$file"; then
       printf '%s is missing packaged otlp_http.%s field\n' "$file" "$key" >&2
       exit 1

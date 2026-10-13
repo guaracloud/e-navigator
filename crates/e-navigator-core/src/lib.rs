@@ -15,12 +15,13 @@ pub use config::{
     CpuProfilePythonBuild, CpuProfileSourceConfig, CriLogsConfig, DnsMetricsConfig,
     DnsSourceConfig, EbpfConfig, EbpfEventTransport, EbpfNetworkIoHook,
     HttpContextPropagationConfig, HttpSourceConfig, JsonStdoutConfig, JsonStdoutMode,
-    KNOWN_MODULES, KnownModule, KubernetesAttributionConfig, LogInitialRead, ModuleConfig,
-    NetworkEndpointConfig, NetworkMetricsConfig, OtlpHttpCompression, OtlpHttpConfig,
-    ProfilingConfig, PrometheusHttpConfig, ProtocolSourceConfig, RequestCorrelationConfig,
-    ResourceMetricsConfig, ResourceSourceConfig, RuntimeConfig, RuntimeSecurityConfig,
-    SourceFailurePolicy, SourceSupervisorConfig, TlsSourceConfig, TraceCorrelationConfig,
-    WorkloadSelectorConfig, is_known_module_name, known_module_names,
+    KNOWN_MODULES, KnownModule, KubernetesAttributionConfig, LogInitialRead, LogParseFailure,
+    LogProcessingConfig, ModuleConfig, NetworkEndpointConfig, NetworkMetricsConfig,
+    OtlpHttpCompression, OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig,
+    ProtocolSourceConfig, RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig,
+    RuntimeConfig, RuntimeSecurityConfig, SourceFailurePolicy, SourceSupervisorConfig,
+    TlsSourceConfig, TraceCorrelationConfig, WorkloadSelectorConfig, is_known_module_name,
+    known_module_names,
 };
 pub use error::{CoreError, CoreResult};
 pub use module::{ModuleKind, ModuleMetadata};

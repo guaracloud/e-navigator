@@ -148,12 +148,23 @@ data:
     metrics_enabled = true
     profiles_enabled = true
 
+    [log_processing]
+    enabled = false
+    max_body_bytes = 16384
+    max_lines = 256
+    omit_keys = []
+    redact_values = []
+    attribute_keys = []
+    parse_failure = "omit_body"
+
     [otlp_http]
     enabled = false
     endpoint = ""
     metrics_endpoint = ""
     traces_endpoint = ""
     profiles_endpoint = ""
+    logs_endpoint = ""
+    logs_enabled = false
     metrics_enabled = true
     traces_enabled = true
     profiles_enabled = true
@@ -208,6 +219,10 @@ data:
     [[modules]]
     name = "source.synthetic_exec"
     enabled = true
+
+    [[modules]]
+    name = "processor.log_processing"
+    enabled = false
 
     [[modules]]
     name = "processor.container_attribution"

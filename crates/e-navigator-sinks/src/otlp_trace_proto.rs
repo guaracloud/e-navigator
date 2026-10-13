@@ -134,7 +134,7 @@ fn span_kind(record: &OtelTraceRecord) -> span::SpanKind {
     }
 }
 
-fn hex_to_bytes(value: &str, expected_len: usize) -> Option<Vec<u8>> {
+pub(crate) fn hex_to_bytes(value: &str, expected_len: usize) -> Option<Vec<u8>> {
     if value.len() != expected_len * 2 {
         return None;
     }

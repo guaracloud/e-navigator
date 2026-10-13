@@ -3,7 +3,9 @@
 //! Signal processors for workload filtering and evidence-backed attribution.
 
 pub mod container_attribution;
+mod log_processing;
 mod workload_resource_filter;
+pub use log_processing::LogProcessingProcessor;
 
 pub use container_attribution::{
     ContainerAttributionProcessor, KubernetesMetadataCache, KubernetesMetadataProvider,

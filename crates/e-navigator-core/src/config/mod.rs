@@ -12,6 +12,7 @@ mod filesystem_paths;
 mod http_source;
 mod json_stdout;
 mod kubernetes;
+mod log_processing;
 mod modules;
 mod network_metrics;
 mod otlp_http;
@@ -43,6 +44,7 @@ pub use error::{ConfigError, ConfigErrorKind, ConfigResult};
 pub use http_source::{HttpContextPropagationConfig, HttpSourceConfig};
 pub use json_stdout::{JsonStdoutConfig, JsonStdoutMode};
 pub use kubernetes::KubernetesAttributionConfig;
+pub use log_processing::{LogParseFailure, LogProcessingConfig};
 pub use modules::{
     KNOWN_MODULES, KnownModule, ModuleConfig, is_known_module_name, known_module_names,
 };

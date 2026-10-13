@@ -33,6 +33,8 @@ use crate::{
 #[derive(Debug)]
 pub struct OtlpHttpSink {
     config: OtlpHttpConfig,
+    log_exporter: Option<AsyncProtobufExporter<crate::otlp_log_proto::ExportLogRecord>>,
+    log_processing_rejected: Arc<AtomicU64>,
     metric_exporter: Option<AsyncProtobufExporter<crate::OtelMetricRecord>>,
     profile_exporter: Option<AsyncProtobufExporter<crate::OtelProfileRecord>>,
     trace_exporter: Option<AsyncProtobufExporter<crate::OtelTraceRecord>>,
@@ -126,6 +128,8 @@ pub struct OtlpHttpTelemetry {
     pub metrics: Option<ExportWorkerTelemetry>,
     pub traces: Option<ExportWorkerTelemetry>,
     pub profiles: Option<ExportWorkerTelemetry>,
+    pub logs: Option<ExportWorkerTelemetry>,
+    pub log_processing_rejected: u64,
     pub invalid_trace_records: u64,
     pub metric_timestamps: Option<MetricTimestampTelemetry>,
 }
@@ -266,8 +270,36 @@ impl OtlpHttpSink {
             None
         };
 
+        let log_processing_rejected = Arc::new(AtomicU64::new(0));
+        let log_exporter = if config.logs_enabled {
+            if config
+                .queue_capacity
+                .saturating_add(config.batch_size)
+                .saturating_mul(65536)
+                > 128 * 1024 * 1024
+            {
+                return Err(exporter_module_error(
+                    "OTLP logs queue and batch body budget must not exceed 128 MiB".to_string(),
+                ));
+            }
+            telemetry_registry.register_source(Arc::new(LogProcessingTelemetrySource {
+                rejected: log_processing_rejected.clone(),
+            }));
+            Some(build_exporter(
+                exporter_config_for(&config, required_logs_endpoint(&config)?),
+                crate::otlp_log_proto::encode_log_export_request,
+                crate::otlp_log_proto::decode_log_export_response,
+                &config,
+                "logs",
+                &telemetry_registry,
+            )?)
+        } else {
+            None
+        };
         Ok(Self {
             config,
+            log_exporter,
+            log_processing_rejected,
             metric_exporter,
             profile_exporter,
             trace_exporter,
@@ -278,6 +310,11 @@ impl OtlpHttpSink {
 
     pub fn telemetry(&self) -> OtlpHttpTelemetry {
         OtlpHttpTelemetry {
+            logs: self
+                .log_exporter
+                .as_ref()
+                .map(AsyncProtobufExporter::telemetry),
+            log_processing_rejected: self.log_processing_rejected.load(Ordering::Relaxed),
             metrics: self
                 .metric_exporter
                 .as_ref()
@@ -299,7 +336,9 @@ impl OtlpHttpSink {
     }
 
     fn accepts_signal(&self, signal: &SignalEnvelope) -> bool {
-        (self.config.traces_enabled && is_trace_signal(signal))
+        (self.config.logs_enabled
+            && matches!(&signal.payload, SignalPayload::ApplicationLogObservation(_)))
+            || (self.config.traces_enabled && is_trace_signal(signal))
             || (self.config.metrics_enabled
                 && matches!(
                     &signal.payload,
@@ -317,6 +356,27 @@ impl OtlpHttpSink {
     }
 
     fn write_signal(&self, signal: &SignalEnvelope) -> CoreResult<()> {
+        if let Some(exporter) = &self.log_exporter
+            && let SignalPayload::ApplicationLogObservation(log) = &signal.payload
+        {
+            if let Some(record) =
+                crate::otlp_log_proto::format_log_record(log, signal.host.as_deref())
+            {
+                if matches!(
+                    log.processing.as_ref().map(|p| p.outcome),
+                    Some(
+                        e_navigator_signals::LogProcessingOutcome::BudgetRejected
+                            | e_navigator_signals::LogProcessingOutcome::MalformedJson
+                    )
+                ) {
+                    self.log_processing_rejected.fetch_add(1, Ordering::Relaxed);
+                }
+                exporter.enqueue(record);
+            } else {
+                self.log_processing_rejected.fetch_add(1, Ordering::Relaxed);
+            }
+            return Ok(());
+        }
         if self.config.traces_enabled && is_trace_signal(signal) {
             // Warning and service-path observations carry no trace identity,
             // so OTLP cannot encode them as spans. Preserve the existing
@@ -458,12 +518,17 @@ impl Sink<SignalEnvelope> for OtlpHttpSink {
             Some(guard) => guard.shutdown().await,
             None => Ok(()),
         };
-        let (metrics, traces, profiles) = tokio::join!(
+        let (metrics, traces, profiles, logs) = tokio::join!(
             shutdown_exporter(self.metric_exporter.as_ref()),
             shutdown_exporter(self.trace_exporter.as_ref()),
             shutdown_exporter(self.profile_exporter.as_ref()),
+            shutdown_exporter(self.log_exporter.as_ref()),
         );
-        metric_timestamps.and(metrics).and(traces).and(profiles)
+        metric_timestamps
+            .and(metrics)
+            .and(traces)
+            .and(profiles)
+            .and(logs)
     }
 }
 
@@ -1274,7 +1339,11 @@ async fn flush_worker_batch<T>(
             warn!(
                 signal_family = family,
                 dropped,
-                error = %err,
+                error = if family == "logs" {
+                    "log export failure".to_string()
+                } else {
+                    err.to_string()
+                },
                 "OTLP export batch failed after retries; dropping bounded batch"
             );
             if *consecutive_failures >= tuning.circuit_breaker_failure_threshold {
@@ -3874,6 +3943,237 @@ mod tests {
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
+    async fn processed_log(body: Option<&str>) -> SignalEnvelope {
+        use e_navigator_core::{LogProcessingConfig, Processor};
+        let signal: SignalEnvelope = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"kind":"application_log_observation","source":"source.cri_logs","host":"node-a",
+            "payload":{"namespace":"default","pod_name":"app","pod_uid":"uid","container_name":"app","restart_count":2,
+            "stream":"stderr","timestamp":"2026-10-11T00:00:00.123456789Z","observed_at_unix_nanos":100,
+            "body":body,"body_bytes":100,"truncated":false,"incomplete":true,"invalid_utf8":false}
+        })).expect("log fixture");
+        e_navigator_processors::LogProcessingProcessor::new(LogProcessingConfig {
+            enabled: true,
+            redact_values: vec!["literal-secret".into()],
+            attribute_keys: vec!["request_id".into()],
+            ..Default::default()
+        })
+        .process(signal)
+        .await
+        .expect("process")
+        .expect("signal")
+    }
+
+    fn log_config(endpoint: String) -> OtlpHttpConfig {
+        OtlpHttpConfig {
+            enabled: true,
+            logs_enabled: true,
+            logs_endpoint: endpoint,
+            metrics_enabled: false,
+            traces_enabled: false,
+            profiles_enabled: false,
+            queue_capacity: 8,
+            batch_size: 1,
+            max_retries: 0,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn log_worker_exports_redacted_structured_multiline_malformed_and_final_records() {
+        use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
+        use opentelemetry_proto::tonic::common::v1::any_value;
+        let collector = FakeCollector::spawn(vec![200; 4]).await;
+        let sink =
+            OtlpHttpSink::new(log_config(collector.url_with_path("/v1/logs"))).expect("sink");
+        for body in [
+            Some(
+                r#"{"message":"literal-secret","password":"omitted-sensitive","severity":"ERROR","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","request_id":"abc","service.name":"forged"}"#,
+            ),
+            Some("panic literal-secret\n  stack frame"),
+            Some("{invalid literal-secret"),
+            Some("crash-final"),
+        ] {
+            sink.write(&processed_log(body).await)
+                .await
+                .expect("enqueue");
+        }
+        for index in 0..4 {
+            let request = collector.next_request().await;
+            assert!(request.contains("/v1/logs"));
+            for value in ["literal-secret", "omitted-sensitive"] {
+                assert!(!request.contains(value));
+            }
+            let decoded = ExportLogsServiceRequest::decode(request.body()).expect("decode");
+            let resource = &decoded.resource_logs[0];
+            let record = &resource.scope_logs[0].log_records[0];
+            let attribute = |key: &str| {
+                resource
+                    .resource
+                    .as_ref()
+                    .expect("resource")
+                    .attributes
+                    .iter()
+                    .find(|a| a.key == key)
+                    .expect("attribute")
+                    .value
+                    .as_ref()
+                    .expect("value")
+                    .value
+                    .as_ref()
+                    .expect("variant")
+            };
+            assert_eq!(
+                attribute("k8s.pod.uid"),
+                &any_value::Value::StringValue("uid".into())
+            );
+            assert_eq!(
+                attribute("k8s.container.restart_count"),
+                &any_value::Value::IntValue(2)
+            );
+            assert_eq!(
+                attribute("service.name"),
+                &any_value::Value::StringValue("app".into())
+            );
+            assert!(
+                !resource
+                    .resource
+                    .as_ref()
+                    .expect("resource")
+                    .attributes
+                    .iter()
+                    .any(|v| v.key.contains("request_id"))
+            );
+            assert_eq!(record.time_unix_nano, 1791676800123456789);
+            assert_eq!(record.observed_time_unix_nano, 100);
+            match index {
+                0 => {
+                    assert_eq!(record.severity_number, 17);
+                    assert_eq!(record.trace_id.len(), 16);
+                    assert_eq!(record.span_id.len(), 8);
+                }
+                1 => assert!(format!("{:?}", record.body).contains("stack frame")),
+                2 => assert!(record.body.is_none()),
+                3 => assert!(format!("{:?}", record.body).contains("crash-final")),
+                _ => unreachable!(),
+            }
+        }
+        sink.shutdown().await.expect("drain");
+        let telemetry = sink.telemetry();
+        assert_eq!(telemetry.logs.expect("worker").exported, 4);
+        assert_eq!(telemetry.log_processing_rejected, 1);
+    }
+
+    #[tokio::test]
+    async fn log_outage_is_nonblocking_and_isolated_with_visible_queue_loss() {
+        let logs = FakeCollector::spawn_with_delay(vec![503], Duration::from_millis(150)).await;
+        let metrics = FakeCollector::spawn(vec![200]).await;
+        let traces = FakeCollector::spawn(vec![200]).await;
+        let profiles = FakeCollector::spawn(vec![200]).await;
+        let config = OtlpHttpConfig {
+            metrics_enabled: true,
+            metrics_endpoint: metrics.url(),
+            traces_enabled: true,
+            traces_endpoint: traces.url(),
+            profiles_enabled: true,
+            profiles_endpoint: profiles.url(),
+            circuit_breaker_failure_threshold: 1,
+            ..log_config(logs.url())
+        };
+        let registry = NativeTelemetryRegistry::default();
+        let sink = OtlpHttpSink::new_with_telemetry(config, registry.clone()).expect("sink");
+        let record = processed_log(Some("record")).await;
+        tokio::time::timeout(Duration::from_millis(100), async {
+            for _ in 0..100 {
+                sink.write(&record).await.expect("enqueue");
+            }
+            sink.write(&network_metric()).await.expect("metric");
+            sink.write(&request_span()).await.expect("trace");
+            sink.write(&profile_sample()).await.expect("profile");
+        })
+        .await
+        .expect("capture does not wait for backend");
+        let _ = logs.next_request().await;
+        let _ = metrics.next_request().await;
+        let _ = traces.next_request().await;
+        let _ = profiles.next_request().await;
+        sink.shutdown().await.expect("bounded drain");
+        let telemetry = sink.telemetry();
+        let log = telemetry.logs.expect("log worker");
+        assert!(log.dropped_queue_full > 0);
+        assert_eq!(log.dropped_export_failure, 1);
+        assert!(log.dropped_circuit_open > 0);
+        assert_eq!(log.enqueued + log.dropped_queue_full, 100);
+        assert_eq!(telemetry.metrics.expect("metrics").exported, 1);
+        assert_eq!(telemetry.traces.expect("traces").exported, 1);
+        assert_eq!(telemetry.profiles.expect("profiles").exported, 1);
+        assert!(
+            registry.prometheus_lines().iter().any(|v| v
+                .labels
+                .get("signal_family")
+                .map(String::as_str)
+                == Some("logs"))
+        );
+    }
+
+    #[tokio::test]
+    async fn log_partial_success_is_not_retried_and_unprocessed_payload_is_rejected() {
+        use opentelemetry_proto::tonic::collector::logs::v1::{
+            ExportLogsPartialSuccess, ExportLogsServiceResponse,
+        };
+        let response = ExportLogsServiceResponse {
+            partial_success: Some(ExportLogsPartialSuccess {
+                rejected_log_records: 1,
+                error_message: "backend echoed sensitive value".into(),
+            }),
+        }
+        .encode_to_vec();
+        let collector =
+            FakeCollector::spawn_responses(vec![FakeResponse::protobuf(response)], Duration::ZERO)
+                .await;
+        let sink = OtlpHttpSink::new(log_config(collector.url())).expect("sink");
+        let mut record = processed_log(Some("redacted")).await;
+        sink.write(&record).await.expect("enqueue");
+        if let SignalPayload::ApplicationLogObservation(log) = &mut record.payload {
+            log.processing = None;
+            log.body = Some("never-exported-secret".into());
+        }
+        sink.write(&record).await.expect("reject");
+        let request = collector.next_request().await;
+        assert!(!request.contains("never-exported-secret"));
+        sink.shutdown().await.expect("drain");
+        let worker = sink.telemetry().logs.expect("worker");
+        assert_eq!(worker.partial_successes, 1);
+        assert_eq!(worker.rejected_items, 1);
+        assert_eq!(worker.retry_attempts, 0);
+        assert_eq!(sink.telemetry().log_processing_rejected, 1);
+        assert!(collector.try_next_request().is_none());
+    }
+
+    #[tokio::test]
+    async fn log_retry_and_interval_shutdown_reuse_worker_contract() {
+        let collector = FakeCollector::spawn(vec![503, 200]).await;
+        let sink = OtlpHttpSink::new(OtlpHttpConfig {
+            max_retries: 1,
+            batch_size: 8,
+            flush_interval_millis: 10,
+            retry_initial_backoff_millis: 1,
+            retry_max_backoff_millis: 1,
+            ..log_config(collector.url())
+        })
+        .expect("sink");
+        sink.write(&processed_log(Some("final record")).await)
+            .await
+            .expect("enqueue");
+        let _ = collector.next_request().await;
+        let _ = collector.next_request().await;
+        sink.shutdown().await.expect("drain");
+        let worker = sink.telemetry().logs.expect("worker");
+        assert_eq!(worker.exported, 1);
+        assert_eq!(worker.retry_attempts, 1);
+        assert_eq!(worker.retryable_responses, 1);
+        assert_eq!(worker.dropped_export_failure, 0);
+    }
+
     #[derive(Debug, Clone)]
     struct RecordedRequest {
         raw: Vec<u8>,
@@ -4005,5 +4305,27 @@ mod tests {
         fn try_next_request(&self) -> Option<RecordedRequest> {
             self.requests.try_lock().ok()?.try_recv().ok()
         }
+    }
+}
+
+fn required_logs_endpoint(config: &OtlpHttpConfig) -> CoreResult<&str> {
+    config.effective_logs_endpoint().ok_or_else(|| {
+        exporter_module_error(
+            "otlp_http.logs_endpoint or otlp_http.endpoint is required when OTLP logs are enabled"
+                .to_string(),
+        )
+    })
+}
+#[derive(Debug)]
+struct LogProcessingTelemetrySource {
+    rejected: Arc<AtomicU64>,
+}
+impl NativeTelemetrySource for LogProcessingTelemetrySource {
+    fn prometheus_lines(&self) -> Vec<crate::PrometheusMetricLine> {
+        vec![crate::PrometheusMetricLine {
+            name: "e_navigator_log_processing_rejected_total".into(),
+            labels: BTreeMap::new(),
+            value: self.rejected.load(Ordering::Relaxed).to_string(),
+        }]
     }
 }

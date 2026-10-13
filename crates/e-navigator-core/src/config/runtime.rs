@@ -5,10 +5,11 @@ use super::modules::{default_modules, is_known_module_name, known_module_names};
 use super::{
     ArgvCaptureConfig, AttributionConfig, CaptureFilterConfig, ConfigError, ConfigResult,
     CpuProfileSourceConfig, CriLogsConfig, DnsMetricsConfig, DnsSourceConfig, EbpfConfig,
-    HttpSourceConfig, JsonStdoutConfig, ModuleConfig, NetworkMetricsConfig, OtlpHttpConfig,
-    ProfilingConfig, PrometheusHttpConfig, ProtocolSourceConfig, RequestCorrelationConfig,
-    ResourceMetricsConfig, ResourceSourceConfig, RuntimeSecurityConfig, SourceSupervisorConfig,
-    TlsSourceConfig, TraceCorrelationConfig, bounds::validate_nonzero_bounded,
+    HttpSourceConfig, JsonStdoutConfig, LogProcessingConfig, ModuleConfig, NetworkMetricsConfig,
+    OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig, ProtocolSourceConfig,
+    RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig, RuntimeSecurityConfig,
+    SourceSupervisorConfig, TlsSourceConfig, TraceCorrelationConfig,
+    bounds::validate_nonzero_bounded,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +43,8 @@ pub struct RuntimeConfig {
     pub dns_source: DnsSourceConfig,
     #[serde(default)]
     pub cri_logs: CriLogsConfig,
+    #[serde(default)]
+    pub log_processing: LogProcessingConfig,
     #[serde(default)]
     pub http_source: HttpSourceConfig,
     #[serde(default)]
@@ -87,6 +90,7 @@ impl Default for RuntimeConfig {
             resource_source: ResourceSourceConfig::default(),
             dns_source: DnsSourceConfig::default(),
             cri_logs: CriLogsConfig::default(),
+            log_processing: LogProcessingConfig::default(),
             http_source: HttpSourceConfig::default(),
             protocol_source: ProtocolSourceConfig::default(),
             tls_source: TlsSourceConfig::default(),
@@ -178,6 +182,16 @@ impl RuntimeConfig {
         self.resource_source.validate()?;
         self.dns_source.validate()?;
         self.cri_logs.validate()?;
+        self.log_processing.validate()?;
+        if self.otlp_http.enabled
+            && self.otlp_http.logs_enabled
+            && !(self.log_processing.enabled && self.module_enabled("processor.log_processing"))
+        {
+            return Err(ConfigError::invalid_value(
+                "log_processing.enabled",
+                "OTLP logs require enabled processor.log_processing and log_processing.enabled",
+            ));
+        }
         self.http_source.validate()?;
         if self.http_source.context_propagation.enabled && !self.module_enabled("source.aya_http") {
             return Err(ConfigError::invalid_value(

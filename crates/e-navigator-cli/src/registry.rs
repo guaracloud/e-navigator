@@ -161,6 +161,12 @@ pub(crate) fn build_registry(
         ));
     }
 
+    if config.log_processing.enabled && config.module_enabled("processor.log_processing") {
+        registry = registry.with_processor(Box::new(
+            e_navigator_processors::LogProcessingProcessor::new(config.log_processing.clone()),
+        ));
+    }
+
     if config.module_enabled("processor.container_attribution") {
         registry = registry.with_processor(Box::new(
             ContainerAttributionProcessor::with_kubernetes_provider(

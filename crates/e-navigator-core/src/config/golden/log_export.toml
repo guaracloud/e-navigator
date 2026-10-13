@@ -1,0 +1,30 @@
+[[modules]]
+name = "source.cri_logs"
+enabled = true
+[[modules]]
+name = "processor.log_processing"
+enabled = true
+[[modules]]
+name = "processor.container_attribution"
+enabled = true
+[[modules]]
+name = "sink.otlp_http"
+enabled = true
+[cri_logs]
+enabled = true
+include_body = true
+[log_processing]
+enabled = true
+max_body_bytes = 16384
+max_lines = 256
+omit_keys = ["customer_email"]
+redact_values = ["fixture-secret"]
+attribute_keys = ["request_id"]
+parse_failure = "omit_body"
+[otlp_http]
+enabled = true
+logs_enabled = true
+logs_endpoint = "http://localhost:4318/v1/logs"
+metrics_enabled = false
+traces_enabled = false
+profiles_enabled = false
