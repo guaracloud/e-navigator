@@ -9,6 +9,8 @@ operational documentation. Start with the path that matches your goal.
   production configuration.
 - [Helm install](helm.md), configure the complete chart and runtime surface.
 - [Operations](operations.md), monitor health, loss, export, and shutdown.
+- [Collector qualification and migration](collector-migration.md), qualify exact
+  replacement cells, stage consumer cutover and preserve delivery during rollback.
 - [Release verification](release-verification.md), verify images, charts,
   checksums, signatures, and SBOMs before deployment.
 

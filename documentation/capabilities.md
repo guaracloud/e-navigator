@@ -4,6 +4,11 @@ This document is the current public capability map for E-Navigator. It is
 intentionally shorter than the internal proof trail and should be updated only
 when implementation and evidence change together.
 
+Collector replacement remains unqualified. The
+[migration runbook](collector-migration.md) defines production trials, consumer
+cutover and delivery-preserving rollback; it supplies no live evidence and does
+not broaden the supported cells in the [Guara ledger](guara-workload-matrix.md).
+
 ## Capability Inventory
 
 E-Navigator is a node-local Rust/eBPF signal plane with a statically registered

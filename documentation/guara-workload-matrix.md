@@ -10,6 +10,10 @@ recognition from client/server/runtime qualification in production-like executio
 
 ## Gate Status
 
+Use the [collector migration runbook](collector-migration.md) for production
+qualification, staged consumer cutover and rollback. Its procedure does not
+promote any cell; recorded execution and the approved contract remain required.
+
 **Not replacement-ready.** Guara's current Beyla configuration selects HTTP,
 gRPC, PostgreSQL, MySQL, Redis, MongoDB, and Kafka protocol families, but it
 does not declare the client libraries, server releases, TLS implementations,
