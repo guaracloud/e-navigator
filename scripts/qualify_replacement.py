@@ -17,6 +17,8 @@ import qualify_propagation_tempo as tempo
 
 FAMILIES = {"HTTP", "GRPC", "POSTGRESQL", "MYSQL", "REDIS", "MONGODB", "KAFKA", "TCP", "CPU", "LOG"}
 SCENARIOS = {"normal", "concurrent", "pooling", "retry-reconnect", "process-restart", "agent-restart", "late-attachment", "privacy", "unsupported-version"}
+PROTOCOL_FAMILIES = FAMILIES - {"TCP", "CPU", "LOG"}
+PROTOCOL_CONTROLS = {"pipelining", "out-of-order", "compression", "malformed", "truncated", "ambiguous"}
 MAX_BYTES = 16 * 1024 * 1024
 MAX_RECORDS = 4096
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -85,6 +87,8 @@ def validate(manifest):
     require(set(environment["backends"]) == {"traces", "profiles", "metrics", "logs"})
     require(all(DIGEST.fullmatch(value) is not None for value in environment["backends"].values()))
     require(isinstance(manifest["blocked_inputs"], list) and set(manifest["blocked_inputs"]) <= {f"IN-{i:02}" for i in range(1, 8)})
+    protocol_profile = manifest.get("protocol_qualification", False)
+    require(type(protocol_profile) is bool)
     cells = manifest["cells"]
     require(isinstance(cells, dict) and 0 < len(cells) <= 64)
     families = set()
@@ -101,19 +105,21 @@ def validate(manifest):
         identity = cell["identity"]
         validate_identity(identity)
         require(type(cell["seed"]) is int and 0 <= cell["seed"] < 2**32)
-        require(set(cell["scenarios"]) == SCENARIOS)
+        require(not protocol_profile or family in PROTOCOL_FAMILIES)
+        require(set(cell["scenarios"]) == (SCENARIOS | PROTOCOL_CONTROLS if protocol_profile else SCENARIOS))
         used_trace_ids = set()
         for name, scenario in cell["scenarios"].items():
             validate_identity(scenario["identity"])
             require(all(scenario["identity"][key] == identity[key] for key in ["collector_image", "config", "architecture"]))
-            assert_workload(name, scenario["workload"], scenario["history"])
+            negative = name == "unsupported-version" or (protocol_profile and scenario["backend"]["empty"])
+            assert_workload("unsupported-version" if negative else name, scenario["workload"], scenario["history"])
             native = scenario["native"]
             require(isinstance(native, list) and 0 < len(native) <= MAX_RECORDS)
             for signal in native:
                 require(signal["schema_version"] == 1 and bool(signal["kind"]) and bool(signal["source"]))
             require(scenario["backend"]["type"] == {"CPU": "profiles", "LOG": "logs", "TCP": "metrics"}.get(family, "traces"))
             backend = scenario["backend"]
-            require(type(backend["empty"]) is bool and backend["empty"] == (name == "unsupported-version"))
+            require(type(backend["empty"]) is bool and backend["empty"] == negative)
             if backend["type"] == "traces":
                 ids = backend["query_trace_ids"]
                 require(isinstance(ids, list) and 0 < len(ids) <= tempo.MAX_TRACES and len(set(ids)) == len(ids))
@@ -169,6 +175,8 @@ def validate(manifest):
             require(set(scenario["counter_minimums"]) == set(scenario["counter_limits"]))
             for key, minimum in scenario["counter_minimums"].items():
                 require(natural(minimum) <= scenario["counter_limits"][key])
+            if negative:
+                require(any(value > 0 for value in scenario["counter_minimums"].values()))
             if name == "unsupported-version":
                 require(scenario["counter_minimums"]["unsupported_versions"] > 0)
             forbidden = scenario["forbidden_values"]
@@ -181,7 +189,10 @@ def validate(manifest):
             require(history["retained_from_nanos"] <= history["attach_nanos"])
             if history["policy"] == "retained":
                 require(family == "LOG")
-            if name == "unsupported-version":
+            if protocol_profile:
+                validate_protocol_scenario(scenario)
+                query_count += 1
+            if negative:
                 require(all("warning" in signal["kind"] for signal in native))
                 require(scenario["backend"]["empty"] is True)
             else:
@@ -196,6 +207,54 @@ def validate(manifest):
     require(query_count <= 2048)
 
 
+def validate_protocol_scenario(scenario):
+    metrics = scenario["metrics"]
+    require(metrics["type"] == "metrics" and metrics["empty"] is scenario["backend"]["empty"])
+    require(set(metrics["query"]) == {"query", "time"})
+    require(all(isinstance(value, str) and 0 < len(value) <= 4096 for value in metrics["query"].values()))
+    require(isinstance(metrics["series"], list) and len(metrics["series"]) <= MAX_RECORDS)
+    require(bool(metrics["series"]) != metrics["empty"])
+    for row in metrics["series"]:
+        require(re.fullmatch(r"e_navigator_[a-z0-9_]+", row["labels"]["__name__"]) is not None)
+        require(type(row["value"]) in {int, float} and math.isfinite(row["value"]))
+    if metrics["empty"]:
+        diagnostic = scenario["diagnostic"]
+        require(diagnostic["layer"] in {"capture", "parser", "correlation"})
+        require(isinstance(diagnostic["reason"], str) and 0 < len(diagnostic["reason"]) <= 256)
+    else:
+        for signal in scenario["native"]:
+            payload = signal["payload"]
+            start, end = natural(payload["start_unix_nanos"]), natural(payload["end_unix_nanos"])
+            require(end >= start and natural(payload["duration_nanos"]) == end - start)
+            roles = [a["value"] for a in payload["attributes"] if a["key"] == "e.navigator.protocol.capture.role"]
+            require(len(roles) == 1 and roles[0] in {"client", "server"})
+
+
+def assert_protocol_spans(scenario, native, backend):
+    if scenario["backend"]["empty"]:
+        return
+    expected = {signal["payload"]["span_id"]: signal["payload"] for signal in scenario["native"]}
+    for signal in native:
+        payload = signal["payload"]
+        oracle = expected[payload["span_id"]]
+        # Attribute lists are exact, including absent route/collection metadata.
+        require(payload["attributes"] == oracle["attributes"])
+    for document in backend.values():
+        for batch in document.get("batches", document.get("resourceSpans", [])):
+            for scope in batch.get("scopeSpans", batch.get("instrumentationLibrarySpans", [])):
+                for span in scope.get("spans", []):
+                    payload = expected[tempo.identity(span["spanId"], 8)]
+                    require(int(span["startTimeUnixNano"]) == payload["start_unix_nanos"])
+                    require(int(span["endTimeUnixNano"]) == payload["end_unix_nanos"])
+                    role = next(a["value"] for a in payload["attributes"] if a["key"] == "e.navigator.protocol.capture.role")
+                    kind = {"SPAN_KIND_CLIENT": 3, "SPAN_KIND_SERVER": 2}.get(span["kind"], span["kind"])
+                    require(kind == {"client": 3, "server": 2}[role])
+                    observed_keys = {"http.route", "db.collection.name"}
+                    wanted = sorted((a["key"], a["value"]) for a in payload["attributes"] if a["key"] in observed_keys)
+                    actual = sorted((a["key"], a["value"]["stringValue"]) for a in span.get("attributes", []) if a["key"] in observed_keys)
+                    require(actual == wanted)
+
+
 def assert_workload(name, actions, history):
     require(isinstance(actions, list) and 2 <= len(actions) <= MAX_RECORDS)
     identities = set()
@@ -208,11 +267,13 @@ def assert_workload(name, actions, history):
         identity = (action["operation"], action["attempt"])
         require(identity not in identities)
         identities.add(identity)
-    if name == "concurrent":
-        ordered = sorted(actions, key=lambda a: a["start_nanos"])
+    if name in {"concurrent", "pipelining", "out-of-order"}:
+        ordered = sorted(actions, key=lambda a: (a["start_nanos"], a["end_nanos"]))
         require(any(a["end_nanos"] > b["start_nanos"] for a, b in zip(ordered, ordered[1:])))
-    if name == "pooling":
+    if name in {"pooling", "pipelining", "out-of-order"}:
         require(len({a["connection"] for a in actions}) < len({a["operation"] for a in actions}))
+    if name == "out-of-order":
+        require(any(a["start_nanos"] < b["start_nanos"] and a["end_nanos"] > b["end_nanos"] for a, b in zip(ordered, ordered[1:])))
     if name == "retry-reconnect":
         require(len({a["operation"] for a in actions}) < len(actions))
         require(len({a["connection"] for a in actions}) > 1)
@@ -353,6 +414,8 @@ def evaluate(manifest, capture, endpoints=None, authorization=None):
     result = {"schema_version": 1, "mode": "live-query" if endpoints is not None else "fixture",
               "verdict": "failed", "replacement_qualified": False, "cells": {},
               "sha256": {"manifest": digest(manifest), "capture": digest(capture)}}
+    if manifest.get("protocol_qualification", False):
+        result["protocol_qualified"] = False
     live = endpoints is not None
     require(live != manifest["fixture"])
     if live:
@@ -368,7 +431,7 @@ def evaluate(manifest, capture, endpoints=None, authorization=None):
     require(set(capture["cells"]) <= set(manifest["cells"]))
     for cell_id, scenarios in capture["cells"].items():
         if manifest["cells"][cell_id]["requiredness"] != "excluded":
-            require(set(scenarios) <= SCENARIOS)
+            require(set(scenarios) <= set(manifest["cells"][cell_id]["scenarios"]))
     for cell_id, cell in manifest["cells"].items():
         verdicts = {}
         result["cells"][cell_id] = {"requiredness": cell["requiredness"], "scenarios": verdicts}
@@ -410,7 +473,16 @@ def evaluate(manifest, capture, endpoints=None, authorization=None):
                 for counter, limit in scenario["counter_limits"].items():
                     require(scenario["counter_minimums"][counter] <= natural(counters[counter]) <= limit)
                 backend = query_backend(scenario["backend"], endpoints) if live else evidence["backend"]
-                raw = json.dumps([native, backend], sort_keys=True)
+                metrics = None
+                if manifest.get("protocol_qualification", False):
+                    metrics = query_backend(scenario["metrics"], endpoints) if live else evidence["metrics"]
+                    record["metric_assertions"] = assert_backend(scenario["metrics"], metrics, native)
+                    record["sha256"]["metrics_response"] = digest(metrics)
+                    assert_protocol_spans(scenario, native, backend)
+                    if scenario["backend"]["empty"]:
+                        record["diagnostic"] = {"layer": scenario["diagnostic"]["layer"], "reason_sha256": digest(scenario["diagnostic"]["reason"])}
+                        record["observation"] = "unsupported-or-rejected"
+                raw = json.dumps([native, backend, metrics], sort_keys=True)
                 require(not any(value in raw for value in scenario["forbidden_values"]))
                 assertions = assert_backend(scenario["backend"], backend, native)
                 record.update(verdict="passed", history=history, counters=counters, backend_assertions=assertions,

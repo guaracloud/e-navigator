@@ -29,6 +29,8 @@ operational documentation. Start with the path that matches your goal.
   record exact cells, consumer queries, numerical thresholds and input owners.
 - [Replacement qualification suite for issue 48](issue-48-replacement-qualification.md),
   run deterministic fixtures and evaluate authorized per-cell backend evidence.
+- [Protocol request qualification](issue-49-protocol-qualification.md),
+  assert per-cell stored traces and metrics, protocol controls and live-input blockers.
 - [TLS lifecycle qualification for issue 50](issue-50-tls-qualification.md),
   review process/socket fencing, local regressions and remaining live evidence.
 - [Backend compatibility and Grafana workflow qualification](issue-53-backend-qualification.md),
