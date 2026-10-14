@@ -26,11 +26,7 @@ pub(crate) fn encode_profile_export_request(
         resource_profiles,
         dictionary: Some(dictionary.finish()),
     };
-    let mut bytes = Vec::with_capacity(request.encoded_len());
-    request
-        .encode(&mut bytes)
-        .map_err(|err| ExporterError::Encode(err.to_string()))?;
-    Ok(bytes)
+    Ok(request.encode_to_vec())
 }
 
 pub(crate) fn decode_profile_export_response(

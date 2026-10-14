@@ -1,3 +1,4 @@
+use crate::otlp_common::truncate_utf8;
 use e_navigator_signals::{
     DnsCounterMetric, DnsLatencyMetric, MetricAggregationWindow, NetworkAddressFamily,
     NetworkCounterMetric, NetworkDurationMetric, NetworkGaugeMetric, NetworkPeerFlowMetric,
@@ -527,15 +528,6 @@ fn bounded_json_string(value: &str) -> serde_json::Value {
 
 fn bounded_metric_string(value: &str) -> String {
     truncate_utf8(value, MAX_METRIC_STRING_BYTES)
-}
-
-fn truncate_utf8(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-
-    let end = value.floor_char_boundary(max_bytes);
-    value[..end].to_string()
 }
 
 #[cfg(test)]

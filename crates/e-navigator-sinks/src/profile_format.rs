@@ -1,3 +1,4 @@
+use crate::otlp_common::truncate_utf8;
 use e_navigator_signals::{
     ProfileSampleObservation, ProfilingAttribute, ProfilingSessionObservation, SignalEnvelope,
     SignalPayload, is_sensitive_attribute_key,
@@ -315,13 +316,4 @@ fn hash_separator(hash: &mut u64) {
 fn hash_byte(hash: &mut u64, byte: u8) {
     *hash ^= u64::from(byte);
     *hash = hash.wrapping_mul(FNV_PRIME);
-}
-
-fn truncate_utf8(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-
-    let end = value.floor_char_boundary(max_bytes);
-    value[..end].to_string()
 }

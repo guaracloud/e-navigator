@@ -1,3 +1,4 @@
+use crate::otlp_common::truncate_utf8;
 use e_navigator_signals::{
     NetworkProcessIdentity, ProfileSampleObservation, ProfilingAttribute, ProfilingFrameDomain,
     ProfilingSessionObservation, SignalEnvelope, SignalPayload,
@@ -328,14 +329,6 @@ fn profiling_kind_name(kind: e_navigator_signals::ProfilingKind) -> &'static str
         e_navigator_signals::ProfilingKind::Unknown => "unknown",
         _ => "unknown",
     }
-}
-
-fn truncate_utf8(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-    let end = value.floor_char_boundary(max_bytes);
-    value[..end].to_string()
 }
 
 fn hash_str(hash: &mut u64, value: &str) {
