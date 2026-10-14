@@ -1,3 +1,4 @@
+use crate::otlp_common::truncate_utf8;
 use e_navigator_signals::{
     ContainerContext, DependencyEndpoint, KubernetesContext, NetworkAddressFamily,
     NetworkFlowWarning, NetworkProcessIdentity, NetworkProtocol, ProfilingAttribute,
@@ -632,15 +633,6 @@ fn insert_resource_string(
 
 fn bounded_json_string(value: &str) -> serde_json::Value {
     serde_json::json!(truncate_utf8(value, MAX_TRACE_ATTRIBUTE_VALUE_BYTES))
-}
-
-fn truncate_utf8(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-
-    let end = value.floor_char_boundary(max_bytes);
-    value[..end].to_string()
 }
 
 fn correlation_attributes(

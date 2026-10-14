@@ -16,11 +16,7 @@ pub(crate) fn encode_trace_export_request(
 ) -> Result<Vec<u8>, ExporterError> {
     let resource_spans = resource_spans_from_records(records);
     let request = ExportTraceServiceRequest { resource_spans };
-    let mut bytes = Vec::with_capacity(request.encoded_len());
-    request
-        .encode(&mut bytes)
-        .map_err(|err| ExporterError::Encode(err.to_string()))?;
-    Ok(bytes)
+    Ok(request.encode_to_vec())
 }
 
 /// Benchmark seam for the complete trace-record to OTLP protobuf path.

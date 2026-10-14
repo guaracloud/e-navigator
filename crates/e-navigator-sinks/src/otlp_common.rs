@@ -52,13 +52,8 @@ fn bounded_string(value: &str) -> String {
     truncate_utf8(value, MAX_OTLP_STRING_VALUE_BYTES)
 }
 
-fn truncate_utf8(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-
-    let end = value.floor_char_boundary(max_bytes);
-    value[..end].to_string()
+pub(crate) fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    value[..value.floor_char_boundary(max_bytes)].to_string()
 }
 
 #[cfg(test)]
@@ -66,6 +61,23 @@ mod tests {
     use opentelemetry_proto::tonic::common::v1::any_value;
 
     use super::*;
+
+    #[test]
+    fn truncates_utf8_at_byte_limits() {
+        for (value, limit, expected) in [
+            ("", 0, ""),
+            ("ascii", 0, ""),
+            ("ascii", 3, "asc"),
+            ("ascii", 5, "ascii"),
+            ("ascii", usize::MAX, "ascii"),
+            ("aé🦀z", 2, "a"),
+            ("aé🦀z", 3, "aé"),
+            ("aé🦀z", 6, "aé"),
+            ("aé🦀z", 7, "aé🦀"),
+        ] {
+            assert_eq!(truncate_utf8(value, limit), expected);
+        }
+    }
 
     #[test]
     fn bounds_attribute_keys() {

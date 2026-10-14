@@ -1,3 +1,4 @@
+use crate::otlp_common::truncate_utf8;
 use e_navigator_signals::{
     ProfileSampleObservation, ProfilingAttribute, ProfilingFrameDomain, SignalEnvelope,
     SignalPayload,
@@ -40,9 +41,7 @@ pub fn format_pprof_profile_batch(signals: &[&SignalEnvelope]) -> Option<Vec<u8>
     }
 
     let profile = builder.finish();
-    let mut bytes = Vec::with_capacity(profile.encoded_len());
-    profile.encode(&mut bytes).ok()?;
-    Some(bytes)
+    Some(profile.encode_to_vec())
 }
 
 #[derive(Default)]
@@ -370,15 +369,6 @@ fn frame_domain_name(domain: ProfilingFrameDomain) -> &'static str {
         ProfilingFrameDomain::ManagedRuntime => "managed_runtime",
         _ => "future",
     }
-}
-
-fn truncate_utf8(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-
-    let end = value.floor_char_boundary(max_bytes);
-    value[..end].to_string()
 }
 
 fn u64_to_i64_saturating(value: u64) -> i64 {

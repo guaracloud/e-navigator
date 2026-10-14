@@ -20,7 +20,7 @@ use e_navigator_sources_ebpf_aya::{
     AyaCpuProfileSource, AyaDnsSource, AyaExecSource, AyaHttpSource, AyaNetworkSource,
     AyaProtocolSource, AyaTlsSource,
 };
-use e_navigator_sources_host::{HostResourceConfig, HostResourceSource};
+use e_navigator_sources_host::HostResourceSource;
 use std::time::Duration;
 
 pub(crate) fn build_registry(
@@ -122,7 +122,7 @@ pub(crate) fn build_registry(
         && config.module_enabled("source.host_resource")
     {
         registry = registry.with_source(Box::new(HostResourceSource::with_host(
-            host_resource_config(config),
+            config.resource_source.clone(),
             host.clone(),
         )));
     }
@@ -396,19 +396,6 @@ impl KubernetesMetadataProvider for SharedKubernetesMetadataProvider {
             &endpoint_slices,
             config,
         ))
-    }
-}
-
-fn host_resource_config(config: &RuntimeConfig) -> HostResourceConfig {
-    HostResourceConfig {
-        procfs_root: config.resource_source.procfs_root.clone(),
-        sysfs_root: config.resource_source.sysfs_root.clone(),
-        cgroup_root: config.resource_source.cgroup_root.clone(),
-        sample_interval_millis: config.resource_source.sample_interval_millis,
-        max_processes: config.resource_source.max_processes,
-        max_cgroups: config.resource_source.max_cgroups,
-        max_fds_per_process: config.resource_source.max_fds_per_process,
-        max_file_bytes: config.resource_source.max_file_bytes,
     }
 }
 
@@ -1014,39 +1001,6 @@ mod tests {
         };
 
         assert!(kubernetes_api_endpoints(&config).contains(&("10.96.0.1".to_string(), 443)));
-    }
-
-    #[test]
-    fn host_resource_config_preserves_runtime_resource_source_settings() {
-        let mut config = RuntimeConfig::default();
-        config.resource_source.procfs_root = "/host/proc".into();
-        config.resource_source.sysfs_root = "/host/sys".into();
-        config.resource_source.cgroup_root = "/host/cgroup".into();
-        config.resource_source.sample_interval_millis = 7;
-        config.resource_source.max_processes = 11;
-        config.resource_source.max_cgroups = 13;
-        config.resource_source.max_fds_per_process = 17;
-        config.resource_source.max_file_bytes = 19;
-
-        let source_config = host_resource_config(&config);
-
-        assert_eq!(
-            source_config.procfs_root,
-            std::path::PathBuf::from("/host/proc")
-        );
-        assert_eq!(
-            source_config.sysfs_root,
-            std::path::PathBuf::from("/host/sys")
-        );
-        assert_eq!(
-            source_config.cgroup_root,
-            std::path::PathBuf::from("/host/cgroup")
-        );
-        assert_eq!(source_config.sample_interval_millis, 7);
-        assert_eq!(source_config.max_processes, 11);
-        assert_eq!(source_config.max_cgroups, 13);
-        assert_eq!(source_config.max_fds_per_process, 17);
-        assert_eq!(source_config.max_file_bytes, 19);
     }
 
     #[test]

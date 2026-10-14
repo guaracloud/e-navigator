@@ -19,11 +19,7 @@ pub(crate) fn encode_metric_export_request(
     let records = coalesce_metric_series(records)?;
     let resource_metrics = records.iter().map(resource_metrics_from_record).collect();
     let request = ExportMetricsServiceRequest { resource_metrics };
-    let mut bytes = Vec::with_capacity(request.encoded_len());
-    request
-        .encode(&mut bytes)
-        .map_err(|err| ExporterError::Encode(err.to_string()))?;
-    Ok(bytes)
+    Ok(request.encode_to_vec())
 }
 
 fn coalesce_metric_series(
