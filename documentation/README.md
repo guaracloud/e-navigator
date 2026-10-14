@@ -94,6 +94,8 @@ operational documentation. Start with the path that matches your goal.
 - [Issue 51 propagation qualification](issue-51-propagation-qualification.md)
 - [ADR 0017, OpenTelemetry zero-code coexistence](adr/0017-otel-zero-code-coexistence.md)
 
+- [ADR 0022, Loki backend ownership and replacement requirements](adr/0022-loki-backend-ownership.md)
+
 ## Source-Of-Truth Rules
 
 - `README.md` is the short project entry point.
