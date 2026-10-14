@@ -101,6 +101,13 @@ identity, workload oracles, raw measurements, counters, stored query responses,
 UI recordings and results in immutable storage with SHA-256 checksums. Keep
 protected spool contents and credentials out of the published bundle.
 
+Before reviewing the replacement decision, run the
+[issue-46 campaign gate](issue-46-replacement-campaign.md) against that archive.
+It replays the capability assertions from preserved responses, checks matched
+per-cell production measurements against approved thresholds, and requires
+consumer results and delivery-accounted rollback records. Campaign PASS still
+requires review of original execution recordings; it does not authorize cutover.
+
 ## Coexistence and staged cutover
 
 1. Restore-test the previous collector artifacts on the authorized target before

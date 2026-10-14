@@ -29,6 +29,8 @@ operational documentation. Start with the path that matches your goal.
   record exact cells, consumer queries, numerical thresholds and input owners.
 - [Replacement qualification suite for issue 48](issue-48-replacement-qualification.md),
   run deterministic fixtures and evaluate authorized per-cell backend evidence.
+- [Replacement campaign gate for issue 46](issue-46-replacement-campaign.md),
+  replay preserved capability assertions and check matched trials, consumer migration and rollback.
 - [Protocol request qualification](issue-49-protocol-qualification.md),
   assert per-cell stored traces and metrics, protocol controls and live-input blockers.
 - [TLS lifecycle qualification for issue 50](issue-50-tls-qualification.md),

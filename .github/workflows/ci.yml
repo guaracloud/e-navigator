@@ -39,6 +39,9 @@ jobs:
       - name: CPU qualification contracts
         run: env PYTHONDONTWRITEBYTECODE=1 python3 tests/cpu_qualification_test.py
 
+      - name: Replacement campaign contracts
+        run: env PYTHONDONTWRITEBYTECODE=1 python3 tests/campaign_qualification_test.py
+
       - name: Install eBPF build prerequisites
         run: |
           sudo apt-get update
