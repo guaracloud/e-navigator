@@ -310,7 +310,7 @@ def notes(version: str, output: Path) -> None:
     )
     end = heading.end() + next_boundary.start() if next_boundary else len(changelog)
     section = changelog[heading.end() : end].strip()
-    channel = "release candidate" if "-" in version else "public preview"
+    channel = "release candidate" if "-" in version else "stable release"
     rendered = (
         f"# E-Navigator v{version}\n\n"
         f"This is the E-Navigator {channel}. E-Navigator remains a pre-1.0 "
