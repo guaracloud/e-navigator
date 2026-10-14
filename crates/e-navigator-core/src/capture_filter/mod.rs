@@ -498,22 +498,22 @@ mod tests {
     }
 
     #[test]
-    fn paid_tier_without_catalog_slug_policy_is_expressible() {
+    fn environment_without_disable_label_policy_is_expressible() {
         let config = CaptureFilterConfig {
             enabled: true,
             default_posture: CapturePosture::Deny,
             unknown_cgroup: CapturePosture::Deny,
             namespace_include: vec!["proj-*".to_string()],
             label_in: BTreeMap::from([(
-                "guara.cloud/tier".to_string(),
+                "example.com/environment".to_string(),
                 vec![
-                    "starter".to_string(),
-                    "pro".to_string(),
-                    "business".to_string(),
-                    "enterprise".to_string(),
+                    "development".to_string(),
+                    "staging".to_string(),
+                    "production".to_string(),
+                    "canary".to_string(),
                 ],
             )]),
-            label_not_exists: vec!["guara.cloud/catalog-slug".to_string()],
+            label_not_exists: vec!["example.com/disabled".to_string()],
             ..Default::default()
         };
         let policy = policy(config);
@@ -521,20 +521,23 @@ mod tests {
         assert_eq!(
             policy.evaluate(
                 "proj-checkout",
-                &labels(&[("guara.cloud/tier", "business")])
+                &labels(&[("example.com/environment", "production")])
             ),
             CaptureDecision::Capture
         );
         assert_eq!(
-            policy.evaluate("proj-checkout", &labels(&[("guara.cloud/tier", "free")])),
+            policy.evaluate(
+                "proj-checkout",
+                &labels(&[("example.com/environment", "sandbox")])
+            ),
             CaptureDecision::Drop
         );
         assert_eq!(
             policy.evaluate(
                 "proj-checkout",
                 &labels(&[
-                    ("guara.cloud/tier", "pro"),
-                    ("guara.cloud/catalog-slug", "checkout")
+                    ("example.com/environment", "staging"),
+                    ("example.com/disabled", "checkout")
                 ])
             ),
             CaptureDecision::Drop
@@ -542,7 +545,7 @@ mod tests {
         assert_eq!(
             policy.evaluate(
                 "kube-system",
-                &labels(&[("guara.cloud/tier", "enterprise")])
+                &labels(&[("example.com/environment", "canary")])
             ),
             CaptureDecision::Drop
         );

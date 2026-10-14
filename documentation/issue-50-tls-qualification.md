@@ -79,7 +79,7 @@ performed for this change.
 
 ## Remaining acceptance evidence
 
-Issue #50 remains open. The [acceptance contract](guara-replacement-acceptance.md)
+Issue #50 remains open. The [acceptance contract](replacement-acceptance.md)
 contains no declared exact workload cells. IN-02 and IN-07 must identify required
 builds, TLS linkage, architecture/ABI and capture roles before selecting a new
 adapter child issue. The qualification suite dependency

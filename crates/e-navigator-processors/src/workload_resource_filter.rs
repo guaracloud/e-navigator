@@ -85,8 +85,11 @@ mod tests {
             default_posture: CapturePosture::Deny,
             unknown_cgroup: CapturePosture::Deny,
             namespace_include: vec!["proj-*".to_string()],
-            label_in: BTreeMap::from([("guara.cloud/tier".to_string(), vec!["pro".to_string()])]),
-            label_not_exists: vec!["guara.cloud/catalog-slug".to_string()],
+            label_in: BTreeMap::from([(
+                "example.com/environment".to_string(),
+                vec!["staging".to_string()],
+            )]),
+            label_not_exists: vec!["example.com/disabled".to_string()],
             process_exclude: vec!["*_exporter".to_string()],
             ..CaptureFilterConfig::default()
         }
@@ -135,7 +138,7 @@ mod tests {
     }
 
     fn allowed_labels() -> BTreeMap<String, String> {
-        BTreeMap::from([("guara.cloud/tier".to_string(), "pro".to_string())])
+        BTreeMap::from([("example.com/environment".to_string(), "staging".to_string())])
     }
 
     #[tokio::test]
@@ -161,24 +164,21 @@ mod tests {
                 .process(process_signal(
                     "api",
                     Some(kubernetes(BTreeMap::from([(
-                        "guara.cloud/tier".to_string(),
-                        "free".to_string(),
+                        "example.com/environment".to_string(),
+                        "sandbox".to_string(),
                     )])))
                 ))
                 .await
-                .expect("unpaid sample processes")
+                .expect("unselected sample processes")
                 .is_none()
         );
-        let mut catalog_labels = allowed_labels();
-        catalog_labels.insert(
-            "guara.cloud/catalog-slug".to_string(),
-            "managed".to_string(),
-        );
+        let mut disabled_labels = allowed_labels();
+        disabled_labels.insert("example.com/disabled".to_string(), "managed".to_string());
         assert!(
             processor
-                .process(process_signal("api", Some(kubernetes(catalog_labels))))
+                .process(process_signal("api", Some(kubernetes(disabled_labels))))
                 .await
-                .expect("catalog sample processes")
+                .expect("disabled sample processes")
                 .is_none()
         );
         assert!(

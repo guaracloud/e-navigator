@@ -6,6 +6,15 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Remove customer-specific label fixtures and qualification identifier prefixes;
+  accept operator-owned namespaces and pinned reference collector identities
+  while preserving existing evidence and qualification gates.
+- Derive release and benchmark identity from distribution metadata and verify
+  signatures against the exact executing repository, workflow, and tag.
+- Separate standalone qualification templates from historical customer profiles.
+
 ## [0.6.0] - 2026-10-14
 
 ### Added

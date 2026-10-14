@@ -8,7 +8,7 @@ checks, and native consumer-side PromQL/LogQL assertions. No vendor aliases,
 signal schema changes, dependencies or collector pipeline changes are needed.
 
 This delivers repository tooling, not completion of the live acceptance gate.
-The [replacement contract](guara-replacement-acceptance.md) still owns IN-01
+The [replacement contract](replacement-acceptance.md) still owns IN-01
 through IN-07. Backend identities, retention and query approvals come from
 IN-04/IN-05/IN-06; exact required workload cells come from IN-02/IN-07; live
 authorization comes from IN-03. Never derive production requirements from the

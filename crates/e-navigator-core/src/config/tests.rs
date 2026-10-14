@@ -2467,14 +2467,14 @@ fn request_correlation_limits_are_validated() {
         RuntimeConfig {
             request_correlation: RequestCorrelationConfig {
                 application_span_ownership_labels: BTreeMap::from([(
-                    "observability.guara.io/request-spans".to_string(),
+                    "example.com/request-spans".to_string(),
                     String::new(),
                 )]),
                 ..RequestCorrelationConfig::default()
             },
             ..RuntimeConfig::default()
         },
-        "request_correlation.application_span_ownership_labels value for 'observability.guara.io/request-spans' must not be empty",
+        "request_correlation.application_span_ownership_labels value for 'example.com/request-spans' must not be empty",
     );
 
     assert_invalid(
@@ -2499,7 +2499,7 @@ fn request_correlation_limits_are_validated() {
 fn request_correlation_parses_explicit_application_span_ownership_labels() {
     let config: RequestCorrelationConfig = toml::from_str(
         r#"
-        application_span_ownership_labels = { "observability.guara.io/request-spans" = "application" }
+        application_span_ownership_labels = { "example.com/request-spans" = "application" }
         "#,
     )
     .expect("application span ownership labels parse");
@@ -2507,7 +2507,7 @@ fn request_correlation_parses_explicit_application_span_ownership_labels() {
     assert_eq!(
         config.application_span_ownership_labels,
         BTreeMap::from([(
-            "observability.guara.io/request-spans".to_string(),
+            "example.com/request-spans".to_string(),
             "application".to_string(),
         )])
     );
@@ -3460,8 +3460,8 @@ fn capture_filter_parses_set_existence_or_and_identity_rules() {
         default_posture = "deny"
         unknown_cgroup = "deny"
         namespace_include = ["proj-*"]
-        label_not_exists = ["guara.cloud/catalog-slug"]
-        label_in = { "guara.cloud/tier" = ["starter", "pro", "business", "enterprise"] }
+        label_not_exists = ["example.com/disabled"]
+        label_in = { "example.com/environment" = ["development", "staging", "production", "canary"] }
         process_exclude = ["*exporter", "otelcol*"]
         container_exclude = ["istio-proxy"]
 
@@ -3479,12 +3479,15 @@ fn capture_filter_parses_set_existence_or_and_identity_rules() {
     let config: RuntimeConfig = toml::from_str(toml).expect("valid extended selector toml");
 
     assert_eq!(
-        config.capture_filter.label_in.get("guara.cloud/tier"),
+        config
+            .capture_filter
+            .label_in
+            .get("example.com/environment"),
         Some(&vec![
-            "starter".to_string(),
-            "pro".to_string(),
-            "business".to_string(),
-            "enterprise".to_string(),
+            "development".to_string(),
+            "staging".to_string(),
+            "production".to_string(),
+            "canary".to_string(),
         ])
     );
     assert_eq!(config.capture_filter.any_of.len(), 2);

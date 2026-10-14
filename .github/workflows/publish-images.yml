@@ -14,7 +14,7 @@ env:
   BUILDX_VERSION: v0.33.0
   BUILDKIT_IMAGE: docker.io/moby/buildkit@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
   # Publish under this repository's owner so the default GITHUB_TOKEN
-  # (packages: write) can push. Resolves to ghcr.io/guaracloud/e-navigator.
+  # (packages: write) can push.
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:

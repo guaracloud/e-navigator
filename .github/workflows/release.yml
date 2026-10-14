@@ -18,7 +18,7 @@ env:
   HELM_VERSION: v4.2.2
   QEMU_IMAGE: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
   SYFT_VERSION: v1.46.0
-  CERTIFICATE_IDENTITY_REGEXP: '^https://github\.com/guaracloud/e-navigator/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+  CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}
 
 jobs:
   preflight:
@@ -184,7 +184,7 @@ jobs:
               --bundle "$artifact.sigstore.json"
             cosign verify-blob \
               --bundle "$artifact.sigstore.json" \
-              --certificate-identity-regexp "$CERTIFICATE_IDENTITY_REGEXP" \
+              --certificate-identity "$CERTIFICATE_IDENTITY" \
               --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
               "$artifact"
           done
@@ -273,7 +273,7 @@ jobs:
             --bundle release-manifest.json.sigstore.json
           cosign verify-blob \
             --bundle release-manifest.json.sigstore.json \
-            --certificate-identity-regexp "$CERTIFICATE_IDENTITY_REGEXP" \
+            --certificate-identity "$CERTIFICATE_IDENTITY" \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             release-manifest.json
 
@@ -359,7 +359,7 @@ jobs:
             test -f "$artifact"
             cosign verify-blob \
               --bundle "$bundle" \
-              --certificate-identity-regexp "$CERTIFICATE_IDENTITY_REGEXP" \
+              --certificate-identity "$CERTIFICATE_IDENTITY" \
               --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
               "$artifact"
           done
@@ -376,7 +376,7 @@ jobs:
              .helm_chart.digest == $chart_digest' \
             release-manifest.json >/dev/null
           cosign verify \
-            --certificate-identity-regexp "$CERTIFICATE_IDENTITY_REGEXP" \
+            --certificate-identity "$CERTIFICATE_IDENTITY" \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             "${IMAGE}@${IMAGE_DIGEST}"
 

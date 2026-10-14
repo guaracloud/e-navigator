@@ -21,12 +21,18 @@ operational documentation. Start with the path that matches your goal.
 
 - [Architecture](architecture.md), follow a signal from capture to export and
   understand the workspace boundaries.
+- [Standalone independence audit](standalone-independence.md), review customer
+  coupling removal, compatibility evidence, and verification scope.
 - [Capabilities](capabilities.md), see the implemented and proven surface.
 - [Boundaries](boundaries.md), see explicit non-claims and unsupported cases.
-- [Guara workload qualification ledger](guara-workload-matrix.md), see the
+- [Workload qualification ledger](workload-qualification.md), see the
   undeclared workload cells and live evidence that block replacement.
-- [Guara replacement acceptance contract](guara-replacement-acceptance.md),
+- [Collector replacement acceptance contract](replacement-acceptance.md),
   record exact cells, consumer queries, numerical thresholds and input owners.
+- [Historical customer acceptance profile](guara-replacement-acceptance.md),
+  preserve the deployment-specific requirements and missing-input record.
+- [Historical customer workload ledger](guara-workload-matrix.md),
+  preserve that deployment's qualification status independently of product support.
 - [Replacement qualification suite for issue 48](issue-48-replacement-qualification.md),
   run deterministic fixtures and evaluate authorized per-cell backend evidence.
 - [Replacement campaign gate for issue 46](issue-46-replacement-campaign.md),

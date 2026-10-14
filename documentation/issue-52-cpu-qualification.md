@@ -3,7 +3,7 @@
 Issue [52](https://github.com/guaracloud/e-navigator/issues/52) adds registration
 safety and a reproducible per-cell CPU quality gate. It does not establish
 Guara replacement readiness. The deployment matrix and acceptance thresholds
-remain owner inputs under the [replacement contract](guara-replacement-acceptance.md).
+remain owner inputs under the [replacement contract](replacement-acceptance.md).
 Issue [48](https://github.com/guaracloud/e-navigator/issues/48) owns the complete
 qualification suite. [ADR 0016](adr/0016-non-intrusive-profiling-parity.md)
 continues to require recorded verifier, capture, and backend evidence.
@@ -71,7 +71,7 @@ python3 scripts/qualify_cpu_profiles.py \
   --output /tmp/cpu-qualification.json
 ```
 
-Each `GW-CPU-dddd` cell specifies exact runtime/version/build/architecture/image
+Each `WC-CPU-dddd` cell specifies exact runtime/version/build/architecture/image
 identity, process oracle, bounded millisecond query window, workload label
 selector, expected root-to-leaf application caller chain with frame domains,
 and six owner-approved thresholds. Fractions use basis points (10,000 = 100%).

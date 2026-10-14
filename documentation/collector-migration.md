@@ -1,15 +1,16 @@
 # Collector qualification and migration runbook
 
 Scope: [issue #57](https://github.com/guaracloud/e-navigator/issues/57), replacing
-the declared Beyla, Alloy CPU profiling and application log collection workflows.
+the operator-selected request, CPU profiling, and application log collectors.
 Loki storage and query replacement remains RFC #58. This runbook changes no
 deployment and grants no live-run authorization.
 
 ## Current decision
 
-**Do not cut over. No production cells are qualified.** IN-01 through IN-07 in
-the [acceptance contract](guara-replacement-acceptance.md) remain unresolved.
-The [workload ledger](guara-workload-matrix.md) owns exact supported cells and
+**Do not cut over until every required cell has approved evidence.** Resolve
+IN-01 through IN-07 in the [acceptance contract](replacement-acceptance.md) for
+the selected deployment. This runbook supplies no deployment qualification.
+The [workload ledger](workload-qualification.md) owns exact supported cells and
 exclusions. Closed implementation issues and fixture PASS do not promote cells.
 Issue #49 lacks required protocol qualification; issue #55 lacks deployed log
 query proof. The historical full-stack benchmark is invalidated by missing Redis
@@ -29,7 +30,7 @@ record containing all of the following. Missing entries stop the campaign.
 - Independent workload oracles, load seeds/windows and approved numerical
   thresholds for coverage, stacks, loss, attribution freshness, CPU/RSS,
   throughput, latency, retention, outage and recovery.
-- GQ consumer query records with original and native expressions, units, labels,
+- Consumer query records with original and native expressions, units, labels,
   windows, expected answers and owner approval. Keep translation in the backend
   or consumer, per [ADR 0001](adr/0001-standalone-native-contracts.md).
 - Exact restoration artifacts for the previous collectors: image digests,
@@ -51,7 +52,7 @@ render the chosen chart before deployment. Follow [Helm configuration](helm.md),
    reasons for constrained skips. Local checks do not qualify a live cell.
 2. Use the existing authorized [benchmark harnesses](benchmark.md) and the
    [replacement suite](issue-48-replacement-qualification.md). Run no-agent,
-   deployed Beyla plus Alloy plus the declared log collector, and E-Navigator
+   the deployed reference collector stack, and E-Navigator
    arms with identical workloads, placement, offered load, sample rates,
    required signal coverage and backend settings. Record intentional differences.
 3. Check each required family's independent counts, outcomes, parentage, log

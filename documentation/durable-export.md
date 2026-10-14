@@ -4,7 +4,7 @@
 metrics, traces, profiles and processed application logs. All defaults remain
 volatile. The production family selection, outage horizon, privacy policy,
 retention and recovery thresholds still require IN-05/IN-06 approval from the
-[replacement contract](guara-replacement-acceptance.md).
+[replacement contract](replacement-acceptance.md).
 
 ## Configure and mount
 

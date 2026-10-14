@@ -71,10 +71,10 @@ E-Navigator runs as one node-local agent with a statically registered
 Detailed implementation and proof status lives in
 [capabilities](documentation/capabilities.md). Unsupported libraries,
 unproven runtime combinations, and production non-claims live in
-[boundaries](documentation/boundaries.md). Guara's undeclared support cells and
-qualification blockers are tracked in the
-[Guara workload ledger](documentation/guara-workload-matrix.md); it becomes a
-finite promotion matrix only after Guara supplies exact workload cells.
+[boundaries](documentation/boundaries.md). Operators record exact deployment
+cells and qualification evidence using the
+[workload qualification ledger](documentation/workload-qualification.md).
+Customer deployment requirements do not define standalone application behavior.
 
 ## Five-Minute Local Start
 

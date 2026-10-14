@@ -87,7 +87,7 @@ or prove that supplied commands, identities and counters came from execution.
 | Privacy/cardinality and exact counts/outcomes | Canary scanning across native/traces/metrics, exact series and span lists, role/time/tree/outcome regression tests | Independent approved workload oracles and consumer query inventory |
 
 Dependencies #47 and #48 delivered the contract schema and runnable suite. The
-[acceptance contract](guara-replacement-acceptance.md) still has no exact cells:
+[acceptance contract](replacement-acceptance.md) still has no exact cells:
 IN-01 collector configuration, IN-02 client/server/runtime/build/I/O identities,
 IN-03 authorized target, IN-04 backend identities, IN-05 consumer metric/query
 requirements, IN-06 approved coverage/latency/loss thresholds and IN-07 required

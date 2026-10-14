@@ -9,6 +9,8 @@ import sys
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from qualification_cells import cell_family
+
 MAX_BYTES = 16 * 1024 * 1024
 MAX_CELLS = 64
 MAX_SAMPLES = 65536
@@ -30,7 +32,7 @@ def validate_cells(cells):
     if not isinstance(cells, dict) or not 0 < len(cells) <= MAX_CELLS:
         raise ValueError("empty cell matrix or cell budget exceeded")
     for cell_id, cell in cells.items():
-        if not re.fullmatch(r"GW-CPU-[0-9]{4}", cell_id):
+        if cell_family(cell_id) != "CPU":
             raise ValueError("invalid CPU cell ID")
         if set(cell) != {"identity", "process", "query", "stack", "thresholds"}:
             raise ValueError("incomplete or unknown cell fields")

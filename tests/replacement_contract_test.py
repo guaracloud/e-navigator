@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Check cross-document inventory and missing-input integrity for Guara."""
+"""Check cross-document inventory and missing-input integrity for deployment qualification."""
 from pathlib import Path
 import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRACT = ROOT / "documentation/guara-replacement-acceptance.md"
-LEDGER = ROOT / "documentation/guara-workload-matrix.md"
+CONTRACT = ROOT / "documentation/replacement-acceptance.md"
+LEDGER = ROOT / "documentation/workload-qualification.md"
 
 
 def rows(text, prefix):
@@ -17,7 +17,7 @@ def rows(text, prefix):
     ]
 
 
-class GuaraContractTests(unittest.TestCase):
+class ReplacementContractTests(unittest.TestCase):
     def test_inventory_references_owned_inputs_and_ledger(self):
         contract = CONTRACT.read_text()
         ledger = LEDGER.read_text()
@@ -25,12 +25,12 @@ class GuaraContractTests(unittest.TestCase):
         ids = [row[0] for row in inputs]
         self.assertEqual(len(ids), len(set(ids)), "input IDs must be unique")
         self.assertEqual(set(ids), {f"IN-{number:02}" for number in range(1, 8)})
-        inventory = rows(contract, "GW-")
+        inventory = rows(contract, "WC-")
         cell_ids = [row[0] for row in inventory]
         self.assertEqual(len(cell_ids), len(set(cell_ids)))
         self.assertEqual(set(cell_ids), {
-            "GW-HTTP", "GW-GRPC", "GW-POSTGRESQL", "GW-MYSQL", "GW-REDIS",
-            "GW-MONGODB", "GW-KAFKA", "GW-TCP", "GW-CPU", "GW-LOG",
+            "WC-HTTP", "WC-GRPC", "WC-POSTGRESQL", "WC-MYSQL", "WC-REDIS",
+            "WC-MONGODB", "WC-KAFKA", "WC-TCP", "WC-CPU", "WC-LOG",
         })
         for row in inventory:
             self.assertEqual(len(row), 3)

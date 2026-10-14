@@ -41,7 +41,7 @@ def validate(plan):
         text(target["approval"])
         cells = target["cells"]
         suite.require(isinstance(cells, list) and 0 < len(cells) <= 64 and len(set(cells)) == len(cells))
-        suite.require(all(isinstance(cell, str) and re.fullmatch(r"GW-[A-Z]+-[0-9]{4}", cell) for cell in cells))
+        suite.require(all(suite.cell_family(cell) in suite.FAMILIES for cell in cells))
         queries = target["queries"]
         suite.require(isinstance(queries, dict) and 2 <= len(queries) <= 64)
         suite.require({query["phase"] for query in queries.values()} == {"stored", "expired"})
@@ -54,7 +54,7 @@ def validate(plan):
             oracle = query["oracle"]
             if kind == "profiles":
                 request_count += 1
-                suite.cpu.validate_cells({"GW-CPU-0001": oracle["cell"]})
+                suite.cpu.validate_cells({"WC-CPU-0001": oracle["cell"]})
                 suite.require(query["data_end_ms"] == suite.cpu.integer(oracle["cell"]["query"]["end"]))
             elif kind == "traces":
                 ids = oracle["query_trace_ids"]

@@ -15,8 +15,8 @@ EXTRA = {"pipelining", "out-of-order", "compression", "malformed", "truncated", 
 FAMILIES = {"HTTP", "GRPC", "POSTGRESQL", "MYSQL", "REDIS", "MONGODB", "KAFKA"}
 
 
-def protocol_fixture():
-    manifest, capture = fixture()
+def protocol_fixture(namespace="WC"):
+    manifest, capture = fixture(namespace)
     manifest["protocol_qualification"] = True
     for cell_id, cell in manifest["cells"].items():
         family = cell_id.split("-")[1]
@@ -78,18 +78,18 @@ class ProtocolQualificationTests(unittest.TestCase):
         result = suite.evaluate(manifest, capture)
         self.assertEqual(result["verdict"], "passed")
         self.assertFalse(result["replacement_qualified"])
-        self.assertEqual(result["cells"]["GW-REDIS-9001"]["scenarios"]["normal"]["metric_assertions"], {"stored_series": 1})
+        self.assertEqual(result["cells"]["WC-REDIS-9001"]["scenarios"]["normal"]["metric_assertions"], {"stored_series": 1})
 
     def test_missing_metrics_fails_each_family(self):
         for family in FAMILIES:
             manifest, capture = protocol_fixture()
-            capture["cells"][f"GW-{family}-9001"]["normal"]["metrics"]["data"]["result"] = []
+            capture["cells"][f"WC-{family}-9001"]["normal"]["metrics"]["data"]["result"] = []
             self.assertEqual(suite.evaluate(manifest, capture)["verdict"], "failed")
 
     def test_latency_role_count_and_cardinality_mismatches_fail(self):
         for mutation in ["latency", "role", "count", "labels", "route"]:
             manifest, capture = protocol_fixture()
-            evidence = capture["cells"]["GW-HTTP-9001"]["normal"]
+            evidence = capture["cells"]["WC-HTTP-9001"]["normal"]
             if mutation in {"latency", "role", "route"}:
                 span = evidence["backend"][next(iter(evidence["backend"]))]["batches"][0]["scopeSpans"][0]["spans"][0]
                 if mutation == "latency":
@@ -107,8 +107,8 @@ class ProtocolQualificationTests(unittest.TestCase):
     def test_stored_route_values_must_match_without_duplicates(self):
         for mutation in ["changed", "missing", "duplicate"]:
             manifest, capture = protocol_fixture()
-            scenario = manifest["cells"]["GW-HTTP-9001"]["scenarios"]["normal"]
-            evidence = capture["cells"]["GW-HTTP-9001"]["normal"]
+            scenario = manifest["cells"]["WC-HTTP-9001"]["scenarios"]["normal"]
+            evidence = capture["cells"]["WC-HTTP-9001"]["normal"]
             for record in [scenario, evidence]:
                 record["native"][0]["payload"]["attributes"].append({"key": "http.route", "value": "/observed"})
             span = evidence["backend"][next(iter(evidence["backend"]))]["batches"][0]["scopeSpans"][0]["spans"][0]
@@ -150,7 +150,7 @@ class ProtocolQualificationTests(unittest.TestCase):
     def test_missing_control_or_diagnostic_rejected(self):
         for field in ["control", "diagnostic", "metrics"]:
             manifest, capture = protocol_fixture()
-            scenarios = manifest["cells"]["GW-REDIS-9001"]["scenarios"]
+            scenarios = manifest["cells"]["WC-REDIS-9001"]["scenarios"]
             if field == "control":
                 del scenarios["ambiguous"]
             else:
@@ -161,14 +161,14 @@ class ProtocolQualificationTests(unittest.TestCase):
     def test_negative_controls_require_positive_counters_and_no_spans(self):
         for mutation in ["counter", "span", "metric", "privacy"]:
             manifest, capture = protocol_fixture()
-            scenario = manifest["cells"]["GW-MYSQL-9001"]["scenarios"]["ambiguous"]
-            evidence = capture["cells"]["GW-MYSQL-9001"]["ambiguous"]
+            scenario = manifest["cells"]["WC-MYSQL-9001"]["scenarios"]["ambiguous"]
+            evidence = capture["cells"]["WC-MYSQL-9001"]["ambiguous"]
             if mutation == "counter":
                 evidence["counters"]["unsupported_versions"] = 0
             elif mutation == "span":
-                evidence["native"] = capture["cells"]["GW-MYSQL-9001"]["normal"]["native"]
+                evidence["native"] = capture["cells"]["WC-MYSQL-9001"]["normal"]["native"]
             elif mutation == "metric":
-                evidence["metrics"] = capture["cells"]["GW-MYSQL-9001"]["normal"]["metrics"]
+                evidence["metrics"] = capture["cells"]["WC-MYSQL-9001"]["normal"]["metrics"]
             else:
                 evidence["metrics"]["leak"] = scenario["forbidden_values"][0]
             self.assertEqual(suite.evaluate(manifest, capture)["verdict"], "failed")

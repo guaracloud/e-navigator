@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 SPEC = importlib.util.spec_from_file_location("cpu_qualification", Path(__file__).resolve().parents[1] / "scripts/qualify_cpu_profiles.py")
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
@@ -19,7 +20,7 @@ SPEC.loader.exec_module(MODULE)
 def fixture():
     cells, captures, profiles = {}, {}, {}
     for number, domain in [(1, "user"), (2, "managed_runtime")]:
-        cell_id = f"GW-CPU-{number:04}"
+        cell_id = f"WC-CPU-{number:04}"
         cells[cell_id] = {
             "identity": {"runtime": "native" if number == 1 else "cpython", "version": "fixture", "build_id": "0123456789abcdef", "architecture": "x86_64", "image_digest": "sha256:" + "a" * 64},
             "process": {"pid": number, "command": "fixture"},
@@ -94,13 +95,13 @@ class CpuQualificationTests(unittest.TestCase):
         cells, captures, profiles = fixture()
         result = MODULE.qualify(cells, captures, profiles)
         self.assertEqual(set(result), set(cells))
-        self.assertEqual(result["GW-CPU-0002"]["useful_weight_nanos"], 100)
+        self.assertEqual(result["WC-CPU-0002"]["useful_weight_nanos"], 100)
 
     def test_missing_cell_cannot_be_hidden_by_another(self):
         for target in ["capture", "profiles"]:
             cells, captures, profiles = fixture()
             missing = captures if target == "capture" else profiles
-            del missing["GW-CPU-0002"]
+            del missing["WC-CPU-0002"]
             with self.assertRaises(ValueError):
                 MODULE.qualify(cells, captures, profiles)
             cells, captures, profiles = fixture()
@@ -108,7 +109,7 @@ class CpuQualificationTests(unittest.TestCase):
     def test_failed_truncated_unknown_and_wrong_domain_fail(self):
         for mutation in ["unknown", "truncated", "failed", "domain", "identity", "weight", "time", "off_cpu"]:
             cells, captures, profiles = fixture()
-            capture = captures["GW-CPU-0002"]
+            capture = captures["WC-CPU-0002"]
             sample = capture["samples"][0]["payload"]
             if mutation == "unknown":
                 sample["stack_frames"][1] = {"symbol": "0xdead", "domain": "unknown"}
@@ -129,7 +130,7 @@ class CpuQualificationTests(unittest.TestCase):
 
     def test_backend_requires_caller_chain_not_just_names(self):
         cells, captures, profiles = fixture()
-        profiles["GW-CPU-0002"]["flamegraph"]["levels"] = [
+        profiles["WC-CPU-0002"]["flamegraph"]["levels"] = [
             {"values": [0, 100, 0, 0]}, {"values": [0, 50, 50, 1, 0, 50, 50, 2]},
         ]
         with self.assertRaises(ValueError):
@@ -137,18 +138,18 @@ class CpuQualificationTests(unittest.TestCase):
 
     def test_bad_weight_is_weighted_not_counted(self):
         cells, captures, profiles = fixture()
-        sample = copy.deepcopy(captures["GW-CPU-0001"]["samples"][0])
+        sample = copy.deepcopy(captures["WC-CPU-0001"]["samples"][0])
         sample["payload"]["sample_count"] = 1
         sample["payload"]["sampling_period_nanos"] = 1000
         sample["payload"]["stack_frames"] = [{"symbol": "unknown", "domain": "unknown"}]
-        captures["GW-CPU-0001"]["samples"].append(sample)
+        captures["WC-CPU-0001"]["samples"].append(sample)
         with self.assertRaises(ValueError):
             MODULE.qualify(cells, captures, profiles)
 
     def test_empty_malformed_and_pruned_flamegraphs_fail(self):
         cells, captures, profiles = fixture()
         for levels in [[], [{"values": [0, 100, 0]}], [{"values": [0, 100, 0, 99]}], [{"values": [0, 100, -1, 0]}]]:
-            profiles["GW-CPU-0001"]["flamegraph"]["levels"] = levels
+            profiles["WC-CPU-0001"]["flamegraph"]["levels"] = levels
             with self.assertRaises(ValueError):
                 MODULE.qualify(cells, captures, profiles)
         with self.assertRaises(ValueError):

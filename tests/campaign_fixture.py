@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A synthetic complete campaign. Values and commands are not Guara requirements."""
+"""A synthetic complete campaign. Values and commands are not deployment requirements."""
 import copy
 import hashlib
 import json
@@ -20,11 +20,11 @@ def write_artifact(root, name, value):
     return {"path": name, "sha256": hashlib.sha256(raw).hexdigest()}
 
 
-def fixture(root):
+def fixture(root, namespace="WC"):
     root.mkdir(parents=True, exist_ok=True)
-    manifest, capture = replacement_fixture()
-    protocol, protocol_capture = protocol_fixture()
-    backend_plan, backend_evidence = backend_fixture()
+    manifest, capture = replacement_fixture(namespace)
+    protocol, protocol_capture = protocol_fixture(namespace)
+    backend_plan, backend_evidence = backend_fixture(namespace)
     # Expand the existing backend fixture to every cell and all four families.
     for cell_id, cell in manifest["cells"].items():
         kind = cell["scenarios"]["normal"]["backend"]["type"]
@@ -124,7 +124,7 @@ def fixture(root):
             for key, value in [("manifest", definition), ("evidence", observed), ("result", result)]}
     for cell_id, cell in manifest["cells"].items():
         thresholds = copy.deepcopy(limits)
-        if cell_id.startswith("GW-CPU-"):
+        if suite.cell_family(cell_id) == "CPU":
             thresholds["unknown_stack_ratio"] = ["TH-STACK", "ratio", "max", 0.1]
         plan["cells"][cell_id] = {"requiredness": "required", "identity": copy.deepcopy(cell["identity"]),
             "approval": copy.deepcopy(approval), "settings": {"placement": "fixture-node", "offered_rate": 100,
@@ -157,7 +157,7 @@ def fixture(root):
                         delivery={"pending_before": 100, "delivered": 100, "pending_after": 0, "lost": 0})
                 trials[name].append(arms)
         evidence["trials"][cell_id] = write_artifact(root, cell_id + "-trials.json", trials)
-        query_id = f"GQ-{len(plan['consumers']) + 1:04}"
+        query_id = f"CQ-{len(plan['consumers']) + 1:04}"
         query = {"cells": [cell_id], "original": "fixture_vendor_query", "native": "fixture_native_query",
                  "expected": {"count": 100}, "approval": copy.deepcopy(approval)}
         plan["consumers"][query_id] = query

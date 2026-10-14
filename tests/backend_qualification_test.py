@@ -139,12 +139,12 @@ class BackendTests(unittest.TestCase):
 
     def test_metric_query_time_and_malformed_response_fail_closed(self):
         manifest, capture = replacement_fixture()
-        scenario = manifest["cells"]["GW-TCP-9001"]["scenarios"]["normal"]
-        observation = capture["cells"]["GW-TCP-9001"]["normal"]
+        scenario = manifest["cells"]["WC-TCP-9001"]["scenarios"]["normal"]
+        observation = capture["cells"]["WC-TCP-9001"]["normal"]
         target = copy.deepcopy(self.plan["backends"]["traces"])
-        target["cells"] = ["GW-TCP-9001"]
+        target["cells"] = ["WC-TCP-9001"]
         for phase, query in target["queries"].items():
-            query.update(cell="GW-TCP-9001", data_end_ms=2000, oracle=copy.deepcopy(scenario["backend"]))
+            query.update(cell="WC-TCP-9001", data_end_ms=2000, oracle=copy.deepcopy(scenario["backend"]))
             query["oracle"]["query"]["time"] = "2"
             if phase == "expired":
                 query["prior_oracle"] = copy.deepcopy(query["oracle"])

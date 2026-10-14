@@ -1,5 +1,5 @@
 {
-  "GW-CPU-0001": {
+  "WC-CPU-0001": {
     "identity": {
       "runtime": "native",
       "version": "fixture",
@@ -36,7 +36,7 @@
       "max_weight_error_bps": 100
     }
   },
-  "GW-CPU-0002": {
+  "WC-CPU-0002": {
     "identity": {
       "runtime": "cpython",
       "version": "fixture",

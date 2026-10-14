@@ -40,7 +40,7 @@ JSON, missing artifacts and failed assertions.
 ## Prepare a recorded campaign
 
 Resolve IN-01 through IN-07 in the
-[acceptance contract](guara-replacement-acceptance.md). Record exact cells and
+[acceptance contract](replacement-acceptance.md). Record exact cells and
 requirements before execution. Use the
 [migration runbook](collector-migration.md) to obtain authorization, generate
 independent oracles, run matched trials and preserve original evidence. The
