@@ -51,6 +51,10 @@ NATS L7 semantics are not a Guara replacement requirement while Guara's
 contract uses NATS only as TCP topology. E-Navigator's bounded NATS parser does
 not broaden that Guara requirement.
 
+The [issue-49 protocol profile](issue-49-protocol-qualification.md) adds per-cell
+trace and metric assertions plus explicit rejection controls to the existing
+suite. Synthetic checker results do not qualify any deployment cell.
+
 ## Current TLS Adapter Cells
 
 | Adapter cell | Static compatibility boundary | Current qualification boundary |
