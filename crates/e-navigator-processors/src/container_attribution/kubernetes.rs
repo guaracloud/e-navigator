@@ -914,7 +914,7 @@ mod tests {
             container_ids: vec![container_id.to_string()],
             container_names: BTreeMap::from([(container_id.to_string(), "api".to_string())]),
             labels: BTreeMap::from([
-                ("guara.cloud/tier".to_string(), "pro".to_string()),
+                ("example.com/environment".to_string(), "staging".to_string()),
                 ("unsafe label".to_string(), "drop-me".to_string()),
             ]),
         }];
@@ -930,9 +930,9 @@ mod tests {
         assert_eq!(
             by_container
                 .labels
-                .get("guara.cloud/tier")
+                .get("example.com/environment")
                 .map(String::as_str),
-            Some("pro")
+            Some("staging")
         );
         assert!(!by_container.labels.contains_key("unsafe label"));
     }

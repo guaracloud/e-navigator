@@ -11,12 +11,12 @@ FAMILIES = ["HTTP", "GRPC", "POSTGRESQL", "MYSQL", "REDIS", "MONGODB", "KAFKA", 
 SCENARIOS = ["normal", "concurrent", "pooling", "retry-reconnect", "process-restart", "agent-restart", "late-attachment", "privacy", "unsupported-version"]
 
 
-def fixture():
+def fixture(namespace="WC"):
     golden = {s["kind"]: s for s in json.loads((ROOT / "crates/e-navigator-signals/tests/golden/signal_families.json").read_text())}
     directory = ROOT / "tests/fixtures/cpu-qualification"
-    cpu_cell = json.loads((directory / "cells.json").read_text())["GW-CPU-0001"]
-    cpu_native = json.loads((directory / "capture.json").read_text())["GW-CPU-0001"]["samples"]
-    cpu_response = json.loads((directory / "profiles.json").read_text())["GW-CPU-0001"]
+    cpu_cell = json.loads((directory / "cells.json").read_text())["WC-CPU-0001"]
+    cpu_native = json.loads((directory / "capture.json").read_text())["WC-CPU-0001"]["samples"]
+    cpu_response = json.loads((directory / "profiles.json").read_text())["WC-CPU-0001"]
     environment = {"target": "synthetic-local", "kernel": "fixture-no-kernel", "architecture": "x86_64",
                    "cgroup": "fixture", "collector_commit": "0" * 40,
                    "backends": {name: "sha256:" + "b" * 64 for name in ["traces", "profiles", "metrics", "logs"]}}
@@ -25,7 +25,7 @@ def fixture():
     capture = {"environment": copy.deepcopy(environment), "cells": {}}
     rng = random.Random(48)
     for family_index, family in enumerate(FAMILIES):
-        cell_id = f"GW-{family}-9001"
+        cell_id = f"{namespace}-{family}-9001"
         identity = {"workload_image": "sha256:" + "a" * 64, "collector_image": "sha256:" + "c" * 64,
                     "config": "sha256:" + "d" * 64, "runtime": "synthetic-python-fixture",
                     "runtime_version": "fixture", "build": "fixture-revision-1", "client": "synthetic", "server": "synthetic",

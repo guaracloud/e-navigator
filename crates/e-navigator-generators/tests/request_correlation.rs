@@ -154,7 +154,7 @@ fn supported_otel_zero_code_agent_suppresses_only_generated_request_spans() {
 #[test]
 fn explicit_application_span_ownership_suppresses_manual_sdk_workloads() {
     let ownership_labels = BTreeMap::from([(
-        "observability.guara.io/request-spans".to_string(),
+        "example.com/request-spans".to_string(),
         "application".to_string(),
     )]);
     let generator = RequestCorrelationGenerator::from_config(
@@ -193,7 +193,7 @@ fn explicit_application_span_ownership_suppresses_manual_sdk_workloads() {
     let nonmatching_config = RequestCorrelationConfig {
         application_span_ownership_labels: BTreeMap::from([
             (
-                "observability.guara.io/request-spans".to_string(),
+                "example.com/request-spans".to_string(),
                 "application".to_string(),
             ),
             ("instrumentation".to_string(), "manual".to_string()),
@@ -229,7 +229,7 @@ fn explicit_application_span_ownership_suppresses_manual_sdk_workloads() {
     let different_owner = RequestCorrelationGenerator::from_config(
         &RequestCorrelationConfig {
             application_span_ownership_labels: BTreeMap::from([(
-                "observability.guara.io/request-spans".to_string(),
+                "example.com/request-spans".to_string(),
                 "different-owner".to_string(),
             )]),
             ..RequestCorrelationConfig::default()

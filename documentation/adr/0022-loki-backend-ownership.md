@@ -18,7 +18,7 @@ outcomes. Vendor translation belongs in consumers or backends under ADR 0001.
 
 This RFC completes a planning artifact, not a Loki replacement. Collector
 replacement under [#46](https://github.com/guaracloud/e-navigator/issues/46)
-and [its contract](../guara-replacement-acceptance.md) remains independent.
+and [its contract](../replacement-acceptance.md) remains independent.
 No backend implementation, deployment, infrastructure change or production
 acceptance is authorized or implied.
 

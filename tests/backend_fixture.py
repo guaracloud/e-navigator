@@ -8,11 +8,11 @@ import sys
 from replacement_fixture import fixture as replacement_fixture
 
 
-def fixture():
-    manifest, capture = replacement_fixture()
+def fixture(namespace="WC"):
+    manifest, capture = replacement_fixture(namespace)
     targets, observations, workflows = {}, {}, {}
     for family, kind in [("HTTP", "traces"), ("CPU", "profiles")]:
-        cell_id = f"GW-{family}-9001"
+        cell_id = f"{namespace}-{family}-9001"
         scenario = manifest["cells"][cell_id]["scenarios"]["normal"]
         record = capture["cells"][cell_id]["normal"]
         oracle = copy.deepcopy(scenario["backend"])

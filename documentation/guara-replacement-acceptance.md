@@ -1,5 +1,9 @@
 # Guara collector replacement acceptance contract
 
+This document records a customer-specific deployment profile. The standalone
+product contract is [collector replacement acceptance](replacement-acceptance.md).
+
+
 Contract revision: 1, 2026-10-09. Scope: [issue #47](https://github.com/guaracloud/e-navigator/issues/47)
 under [tracking issue #46](https://github.com/guaracloud/e-navigator/issues/46).
 Source baseline rechecked: stable 0.5.0, `8b93a5cf8b25c75cc604c16a78a94c4ef1dc05c5`.

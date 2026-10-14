@@ -48,6 +48,8 @@ RELEASE_WORKFLOW_EXPECTATIONS = (
     "draft: true",
     "release-manifest.json",
     'gh release edit "$TAG" --draft=false',
+    'CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}',
+    '--certificate-identity "$CERTIFICATE_IDENTITY"',
 )
 
 
@@ -58,6 +60,19 @@ def fail(message: str) -> None:
 def read_workspace_version() -> str:
     with (ROOT / "Cargo.toml").open("rb") as stream:
         return tomllib.load(stream)["workspace"]["package"]["version"]
+
+
+def read_repository_url() -> str:
+    with (ROOT / "Cargo.toml").open("rb") as stream:
+        return tomllib.load(stream)["workspace"]["package"]["repository"].rstrip("/")
+
+
+def read_image_repository() -> str:
+    content = (ROOT / "charts/e-navigator/values.yaml").read_text(encoding="utf-8")
+    field = re.search(r"^image:\n  repository: ([^\n]+)$", content, flags=re.MULTILINE)
+    if field is None:
+        fail("could not read the chart image repository")
+    return field.group(1).strip().strip("\"'")
 
 
 def validate_version(version: str) -> None:
@@ -220,10 +235,7 @@ def check(version: str | None) -> None:
         "documentation/release-verification.md": f"export VERSION=v{expected}",
         "website/index.html": expected,
         "deploy/kubernetes/daemonset.yaml": (
-            f"image: ghcr.io/guaracloud/e-navigator:{expected}"
-        ),
-        "charts/e-navigator/values.yaml": (
-            "repository: ghcr.io/guaracloud/e-navigator"
+            f"image: {read_image_repository()}:{expected}"
         ),
         "CHANGELOG.md": f"## [{expected}]",
     }
@@ -280,7 +292,7 @@ def check(version: str | None) -> None:
             text=True,
             stdout=subprocess.PIPE,
         ).stdout
-        expected_image = f"image: ghcr.io/guaracloud/e-navigator:{expected}"
+        expected_image = f"image: {read_image_repository()}:{expected}"
         if expected_image not in rendered:
             errors.append(f"rendered chart does not contain {expected_image!r}")
 
@@ -317,8 +329,8 @@ def notes(version: str, output: Path) -> None:
         "runtime signal plane, not a production observability backend replacement.\n\n"
         f"{section}\n\n"
         "## Verification\n\n"
-        f"Follow the [release verification guide](https://github.com/guaracloud/"
-        f"e-navigator/blob/v{version}/documentation/release-verification.md) and "
+        f"Follow the [release verification guide]({read_repository_url()}/"
+        f"blob/v{version}/documentation/release-verification.md) and "
         "deploy digest-pinned image references from `release-manifest.json`.\n"
     )
     output.write_text(rendered, encoding="utf-8")
@@ -340,6 +352,7 @@ def main() -> None:
     notes_parser.add_argument("--output", type=Path, required=True)
 
     subparsers.add_parser("version")
+    subparsers.add_parser("image-repository")
     args = parser.parse_args()
 
     if args.command == "prepare":
@@ -350,6 +363,8 @@ def main() -> None:
         notes(args.version, args.output)
     elif args.command == "version":
         print(read_workspace_version())
+    elif args.command == "image-repository":
+        print(read_image_repository())
 
 
 if __name__ == "__main__":

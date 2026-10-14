@@ -14,6 +14,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 import qualify_cpu_profiles as cpu
 import qualify_propagation_tempo as tempo
+from qualification_cells import cell_family
 
 FAMILIES = {"HTTP", "GRPC", "POSTGRESQL", "MYSQL", "REDIS", "MONGODB", "KAFKA", "TCP", "CPU", "LOG"}
 SCENARIOS = {"normal", "concurrent", "pooling", "retry-reconnect", "process-restart", "agent-restart", "late-attachment", "privacy", "unsupported-version"}
@@ -94,8 +95,7 @@ def validate(manifest):
     families = set()
     query_count = 0
     for cell_id, cell in cells.items():
-        require(re.fullmatch(r"GW-([A-Z]+)-[0-9]{4}", cell_id) is not None)
-        family = cell_id.split("-")[1]
+        family = cell_family(cell_id)
         require(family in FAMILIES and cell["requiredness"] in {"required", "optional", "excluded"})
         require(cell["support"] in {"implemented", "unsupported", "unknown"})
         families.add(family)
@@ -155,7 +155,7 @@ def validate(manifest):
                     require(backend["trees"] == {} and backend["outcomes"] == {})
             elif backend["type"] == "profiles":
                 query_count += 1
-                cpu.validate_cells({"GW-CPU-0001": backend["cell"]})
+                cpu.validate_cells({"WC-CPU-0001": backend["cell"]})
                 profile_identity = backend["cell"]["identity"]
                 require(all(profile_identity[key] == scenario["identity"][value] for key, value in {
                     "runtime": "runtime", "version": "runtime_version", "build_id": "build",
@@ -346,7 +346,7 @@ def assert_backend(oracle, response, native):
             require(cpu.integer(graph["total"]) == 0 and graph["levels"] == [] and graph["names"] == [])
             return {"total_weight_nanos": 0}
         cell = oracle["cell"]
-        return cpu.qualify({"GW-CPU-0001": cell}, {"GW-CPU-0001": {"identity": cell["identity"], "samples": native}}, {"GW-CPU-0001": response})["GW-CPU-0001"]
+        return cpu.qualify({"WC-CPU-0001": cell}, {"WC-CPU-0001": {"identity": cell["identity"], "samples": native}}, {"WC-CPU-0001": response})["WC-CPU-0001"]
     require(response["status"] == "success")
     data = response["data"]
     if kind == "logs":

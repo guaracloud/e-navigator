@@ -45,10 +45,54 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual(result["verdict"], "passed")
         self.assertEqual(result["mode"], "fixture")
         self.assertEqual(len(result["cells"]), 10)
-        self.assertEqual(result["cells"]["GW-REDIS-9001"]["scenarios"]["normal"]["repetitions"], 3)
-        self.assertEqual(result["cells"]["GW-REDIS-9001"]["scenarios"]["normal"]["measurements"]["coverage_ratio"]["min"], 1)
+        self.assertEqual(result["cells"]["WC-REDIS-9001"]["scenarios"]["normal"]["repetitions"], 3)
+        self.assertEqual(result["cells"]["WC-REDIS-9001"]["scenarios"]["normal"]["measurements"]["coverage_ratio"]["min"], 1)
         self.assertFalse(result["replacement_qualified"])
         self.assertTrue(result["review_required"])
+
+    def test_reference_collectors_are_operator_defined_and_immutable(self):
+        previous = self.plan["reference"]
+        replacement = {"collector": next(iter(previous.values())), "config": previous["config"]}
+        self.plan["reference"] = replacement
+
+        def replace(value):
+            if isinstance(value, dict):
+                if value == previous:
+                    return replacement
+                return {key: replace(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [replace(item) for item in value]
+            return value
+
+        for ref in self.evidence["trials"].values():
+            self.change_artifact(ref, lambda value: value.update(replace(value)))
+        code, result = self.run_campaign()
+        self.assertEqual(code, 0, result)
+        self.assertFalse(result["replacement_qualified"])
+        self.plan["reference"]["collector"] = "mutable-tag"
+        self.assert_failed()
+
+    def test_operator_namespace_preserves_cpu_quality_and_artifact_integrity(self):
+        self.plan, self.evidence = fixture(self.directory, namespace="OPS")
+        self.plan["consumers"] = {f"TEAMQ-{i:04}": value for i, value in enumerate(self.plan["consumers"].values(), 1)}
+        self.evidence["consumers"] = {f"TEAMQ-{i:04}": value for i, value in enumerate(self.evidence["consumers"].values(), 1)}
+        code, result = self.run_campaign()
+        self.assertEqual(code, 0, result)
+        cpu = result["cells"]["OPS-CPU-9001"]["scenarios"]["normal"]
+        self.assertIn("unknown_stack_ratio", cpu["measurements"])
+        self.plan["cells"]["OPS-CPU-9001"]["thresholds"].pop("unknown_stack_ratio")
+        self.assert_failed()
+
+    def test_consumer_namespace_keeps_syntax_and_length_bounds(self):
+        old_key = next(iter(self.plan["consumers"]))
+        for prefix in ["lowercase", "A" * 17, "WITH-SEP"]:
+            key = prefix + "-0001"
+            with self.subTest(prefix=prefix):
+                self.plan["consumers"][key] = self.plan["consumers"].pop(old_key)
+                self.evidence["consumers"][key] = self.evidence["consumers"].pop(old_key)
+                self.assert_failed()
+                self.plan["consumers"][old_key] = self.plan["consumers"].pop(key)
+                self.evidence["consumers"][old_key] = self.evidence["consumers"].pop(key)
 
     def test_every_missing_required_family_fails(self):
         for cell_id in list(self.plan["cells"]):
@@ -58,7 +102,7 @@ class CampaignTests(unittest.TestCase):
                 self.plan["cells"][cell_id] = saved
 
     def test_required_scenarios_cannot_be_skipped_or_shortened(self):
-        reference = self.evidence["trials"]["GW-REDIS-9001"]
+        reference = self.evidence["trials"]["WC-REDIS-9001"]
         original = reference.copy()
         raw = (self.directory / reference["path"]).read_bytes()
         for mutate in [lambda v: v.pop("sustained-load"), lambda v: v["normal"].pop(),
@@ -73,13 +117,13 @@ class CampaignTests(unittest.TestCase):
                 reference.update(original)
 
     def test_per_family_coverage_precedes_performance_acceptance(self):
-        self.change_artifact(self.evidence["trials"]["GW-REDIS-9001"],
+        self.change_artifact(self.evidence["trials"]["WC-REDIS-9001"],
             lambda v: v["normal"][0]["reference"]["metrics"].update(observed=0))
         result = self.assert_failed()
-        self.assertNotIn("measurements", result["cells"]["GW-REDIS-9001"]["scenarios"]["normal"])
+        self.assertNotIn("measurements", result["cells"]["WC-REDIS-9001"]["scenarios"]["normal"])
 
     def test_threshold_failures_and_nonfinite_counts_fail(self):
-        reference = self.evidence["trials"]["GW-CPU-9001"]
+        reference = self.evidence["trials"]["WC-CPU-9001"]
         original = reference.copy()
         raw = (self.directory / reference["path"]).read_bytes()
         for metric, value in [("p99_ms", 100), ("collector_cpu_cores", 2), ("node_cpu_cores", 3),
@@ -93,7 +137,7 @@ class CampaignTests(unittest.TestCase):
                 reference.update(original)
 
     def test_unapproved_or_missing_thresholds_fail(self):
-        cell = self.plan["cells"]["GW-REDIS-9001"]
+        cell = self.plan["cells"]["WC-REDIS-9001"]
         threshold = cell["thresholds"]["coverage_ratio"]
         for field, value in [("owner", ""), ("unit", "ms"), ("value", float("nan")),
                              ("comparator", "max"), ("rationale", "")]:
@@ -106,13 +150,13 @@ class CampaignTests(unittest.TestCase):
         self.assert_failed()
 
     def test_rollback_requires_exact_restoration_and_accounted_delivery(self):
-        reference = self.evidence["trials"]["GW-LOG-9001"]
+        reference = self.evidence["trials"]["WC-LOG-9001"]
         self.change_artifact(reference, lambda v: v["rollback"][0]["candidate"]["delivery"].update(delivered=0))
         self.assert_failed()
 
     def test_suite_pass_cannot_hide_failed_or_unbound_cell(self):
         reference = self.evidence["suites"]["replacement"]["result"]
-        self.change_artifact(reference, lambda v: v["cells"]["GW-REDIS-9001"]["scenarios"]["normal"].update(verdict="skipped"))
+        self.change_artifact(reference, lambda v: v["cells"]["WC-REDIS-9001"]["scenarios"]["normal"].update(verdict="skipped"))
         self.assert_failed()
 
     def test_backend_report_must_cover_all_required_cells(self):
@@ -121,10 +165,10 @@ class CampaignTests(unittest.TestCase):
         self.assert_failed()
 
     def test_missing_consumer_and_wrong_native_response_fail(self):
-        reference = self.evidence["consumers"]["GQ-0001"]
+        reference = self.evidence["consumers"]["CQ-0001"]
         self.change_artifact(reference, lambda v: v.update(response={"count": 99}))
         self.assert_failed()
-        del self.evidence["consumers"]["GQ-0001"]
+        del self.evidence["consumers"]["CQ-0001"]
         self.assert_failed()
 
     def test_fixture_reports_cannot_satisfy_recorded_execution_mode(self):
@@ -144,7 +188,7 @@ class CampaignTests(unittest.TestCase):
         self.assert_failed()
 
     def test_public_contract_cannot_omit_required_cells(self):
-        self.change_artifact(self.plan["publication"]["public_contract"], lambda v: v["cells"].pop("GW-REDIS-9001"))
+        self.change_artifact(self.plan["publication"]["public_contract"], lambda v: v["cells"].pop("WC-REDIS-9001"))
         self.assert_failed()
 
     def test_failed_quality_gate_or_unexplained_skip_fails(self):
@@ -155,17 +199,17 @@ class CampaignTests(unittest.TestCase):
         self.assert_failed()
 
     def test_trial_requires_exact_settings_and_equal_independent_oracles(self):
-        self.plan["cells"]["GW-REDIS-9001"]["settings"].pop("sample_period_nanos")
+        self.plan["cells"]["WC-REDIS-9001"]["settings"].pop("sample_period_nanos")
         self.assert_failed()
 
     def test_reference_cannot_use_another_oracle_count(self):
-        self.change_artifact(self.evidence["trials"]["GW-REDIS-9001"],
+        self.change_artifact(self.evidence["trials"]["WC-REDIS-9001"],
             lambda v: v["normal"][0]["reference"]["metrics"].update(expected=1, observed=1))
         self.assert_failed()
 
     def test_forged_suite_pass_cannot_override_invalid_raw_capture(self):
         refs = self.evidence["suites"]["replacement"]
-        self.change_artifact(refs["evidence"], lambda v: v["cells"]["GW-REDIS-9001"]["normal"]["counters"].update(capture_loss=1))
+        self.change_artifact(refs["evidence"], lambda v: v["cells"]["WC-REDIS-9001"]["normal"]["counters"].update(capture_loss=1))
         # Keep all declared digests consistent. Replaying the original assertions
         # must still detect the failed counter instead of trusting PASS metadata.
         sys.path.insert(0, str(ROOT / "scripts"))
@@ -173,17 +217,17 @@ class CampaignTests(unittest.TestCase):
         capture = json.loads((self.directory / refs["evidence"]["path"]).read_text())
         def update_report(report):
             report["sha256"]["capture"] = suite.digest(capture)
-            report["cells"]["GW-REDIS-9001"]["scenarios"]["normal"]["sha256"]["evidence"] = suite.digest(capture["cells"]["GW-REDIS-9001"]["normal"])
+            report["cells"]["WC-REDIS-9001"]["scenarios"]["normal"]["sha256"]["evidence"] = suite.digest(capture["cells"]["WC-REDIS-9001"]["normal"])
         self.change_artifact(refs["result"], update_report)
         self.assert_failed()
 
     def test_invalid_baseline_quantiles_cannot_hide_candidate_latency(self):
-        self.change_artifact(self.evidence["trials"]["GW-REDIS-9001"],
+        self.change_artifact(self.evidence["trials"]["WC-REDIS-9001"],
             lambda v: v["normal"][0]["no-agent"]["metrics"].update(p50_ms=100))
         self.assert_failed()
 
     def test_invalid_baseline_count_types_fail(self):
-        self.change_artifact(self.evidence["trials"]["GW-REDIS-9001"],
+        self.change_artifact(self.evidence["trials"]["WC-REDIS-9001"],
             lambda v: v["normal"][0]["no-agent"]["metrics"].update(expected=True))
         self.assert_failed()
 
@@ -218,11 +262,11 @@ class CampaignTests(unittest.TestCase):
         self.assert_failed()
 
     def test_every_additional_approved_threshold_is_enforced(self):
-        cell = self.plan["cells"]["GW-REDIS-9001"]
+        cell = self.plan["cells"]["WC-REDIS-9001"]
         cell["thresholds"]["allocation_bytes_per_second"] = {
             "category": "TH-OVERHEAD", "unit": "bytes/second", "comparator": "max", "value": 100,
             "owner": "fixture-owner", "reference": "fixture-approval", "rationale": "fixture allocation budget"}
-        reference = self.evidence["trials"]["GW-REDIS-9001"]
+        reference = self.evidence["trials"]["WC-REDIS-9001"]
         def allocations(trials):
             for repetitions in trials.values():
                 for arms in repetitions:
@@ -234,7 +278,7 @@ class CampaignTests(unittest.TestCase):
         self.assert_failed()
 
     def test_optional_cell_does_not_require_production_trials(self):
-        cell_id = "GW-REDIS-9001"
+        cell_id = "WC-REDIS-9001"
         self.plan["cells"][cell_id]["requiredness"] = "optional"
         for name in ["ledger", "public_contract"]:
             self.change_artifact(self.plan["publication"][name], lambda v: v["cells"].update({cell_id: "optional"}))
@@ -252,7 +296,7 @@ class CampaignTests(unittest.TestCase):
     def test_excluded_log_family_does_not_require_log_backend_or_trials(self):
         import qualify_backends as backend
         import qualify_replacement as suite
-        cell_id = "GW-LOG-9001"
+        cell_id = "WC-LOG-9001"
         self.plan["cells"][cell_id].update(requiredness="excluded", exclusion="fixture exclusion")
         for name in ["ledger", "public_contract"]:
             self.change_artifact(self.plan["publication"][name], lambda v: v["cells"].update({cell_id: "excluded"}))

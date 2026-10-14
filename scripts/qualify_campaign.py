@@ -177,7 +177,7 @@ def check_suites(plan, evidence, read):
 
 def check_trials(plan, cell_id, trials):
     cell = plan["cells"][cell_id]
-    cpu = cell_id.startswith("GW-CPU-")
+    cpu = suite.cell_family(cell_id) == "CPU"
     require(set(trials) == SCENARIOS, "missing production scenario")
     results = {}
     for name in sorted(SCENARIOS):
@@ -289,7 +289,10 @@ def evaluate(plan, evidence, root):
             backend.text(reason)
         read(quality["log"], False)
         result["quality_skips"] = quality["skips"]
-        require(set(plan["reference"]) == {"beyla", "alloy", "logs", "config"}, "missing reference collectors")
+        require(isinstance(plan["reference"], dict) and 2 <= len(plan["reference"]) <= 64 and
+                "config" in plan["reference"] and
+                all(isinstance(key, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", key) for key in plan["reference"]),
+                "missing or invalid reference collectors")
         require(all(suite.DIGEST.fullmatch(value) for value in plan["reference"].values()), "unpinned reference collector")
         if not plan["fixture"]:
             authorization = read(plan["authorization"])
@@ -298,8 +301,7 @@ def evaluate(plan, evidence, root):
             backend.text(authorization["reference"])
         cells = plan["cells"]
         require(isinstance(cells, dict) and 0 < len(cells) <= 64, "invalid cell budget")
-        require(all(re.fullmatch(r"GW-[A-Z]+-[0-9]{4}", key) for key in cells), "invalid cell ID")
-        require({key.split("-")[1] for key in cells} == suite.FAMILIES, "missing inventory family")
+        require({suite.cell_family(key) for key in cells} == suite.FAMILIES, "missing inventory family")
         for cell_id, cell in cells.items():
             approval(cell["approval"])
             require(cell["requiredness"] in {"required", "optional", "excluded"}, "invalid requiredness")
@@ -314,7 +316,7 @@ def evaluate(plan, evidence, root):
             backend.text(settings["placement"])
             require(number(settings["offered_rate"]) > 0 and suite.natural(settings["sample_period_nanos"]) > 0 and
                     suite.DIGEST.fullmatch(settings["load_digest"]) is not None, "invalid load or sampling setting")
-            metrics = set(METRICS) - ({"unknown_stack_ratio"} if not cell_id.startswith("GW-CPU-") else set())
+            metrics = set(METRICS) - ({"unknown_stack_ratio"} if suite.cell_family(cell_id) != "CPU" else set())
             require(metrics <= set(cell["thresholds"]) and len(cell["thresholds"]) <= 64, "missing threshold or threshold budget exceeded")
             for key, threshold in cell["thresholds"].items():
                 approval(threshold)
@@ -342,7 +344,8 @@ def evaluate(plan, evidence, root):
                 set(plan["consumers"]) == set(evidence["consumers"]), "missing consumer migration")
         covered = set()
         for key, query in plan["consumers"].items():
-            require(re.fullmatch(r"GQ-[0-9]{4}", key) is not None, "invalid consumer query ID")
+            require(isinstance(key, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,15}-[0-9]{4}", key) is not None,
+                    "invalid consumer query ID")
             approval(query["approval"])
             backend.text(query["original"])
             backend.text(query["native"])

@@ -26,7 +26,7 @@ python3 scripts/qualify_replacement.py \
 PYTHONDONTWRITEBYTECODE=1 python3 tests/replacement_qualification_test.py
 ```
 
-Seed 48 generates ten synthetic `GW-<family>-9001` cells covering HTTP, gRPC,
+Seed 48 generates ten synthetic `WC-<family>-9001` cells covering HTTP, gRPC,
 PostgreSQL, MySQL, Redis, MongoDB, Kafka, TCP, CPU and application logs. These IDs,
 digests, acceptance values and environment are checker examples, not allocated
 Guara cells or runnable image pins. The generator reuses native golden envelopes
@@ -48,7 +48,7 @@ transport, not backend qualification. Tests run in `scripts/quality.sh`.
 ## Manifest and capture schema
 
 Generated JSON files are executable schema examples. Real runs use exact cells
-from the [replacement contract](guara-replacement-acceptance.md). Oracles must
+from the [replacement contract](replacement-acceptance.md). Oracles must
 come from independent workload generation, never from observed telemetry.
 
 | Record | Contents |

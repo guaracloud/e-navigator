@@ -1,5 +1,9 @@
 # Guara Workload Qualification Ledger
 
+This document records a customer-specific deployment profile. The standalone
+product contract is [workload qualification](workload-qualification.md).
+
+
 This document records the blockers for replacing Guara's Beyla and Alloy
 profiles and application log collection with the standalone E-Navigator
 application. The [replacement acceptance contract](guara-replacement-acceptance.md)

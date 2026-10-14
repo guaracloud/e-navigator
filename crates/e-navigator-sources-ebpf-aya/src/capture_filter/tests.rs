@@ -286,7 +286,7 @@ fn watch_events_reconcile_add_bookmark_and_delete() {
               "name": "payments-api",
               "uid": "{UID}",
               "resourceVersion": "42",
-              "labels": {{"guara.cloud/tier": "pro"}}
+              "labels": {{"example.com/environment": "staging"}}
             }},
             "spec": {{"nodeName": "node-a"}},
             "status": {{

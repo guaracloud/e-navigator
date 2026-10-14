@@ -19,7 +19,9 @@ require_tool() {
 
 run cargo fmt --all -- --check
 run python3 scripts/check_docs.py
-run env PYTHONDONTWRITEBYTECODE=1 python3 tests/guara_contract_test.py
+run env PYTHONDONTWRITEBYTECODE=1 python3 tests/replacement_contract_test.py
+run env PYTHONDONTWRITEBYTECODE=1 python3 tests/standalone_qualification_test.py
+run env PYTHONDONTWRITEBYTECODE=1 python3 tests/release_identity_test.py
 run env PYTHONDONTWRITEBYTECODE=1 python3 tests/propagation_tempo_test.py
 run env PYTHONDONTWRITEBYTECODE=1 python3 tests/cpu_qualification_test.py
 run env PYTHONDONTWRITEBYTECODE=1 python3 tests/replacement_qualification_test.py
