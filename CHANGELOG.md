@@ -6,6 +6,44 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-14
+
+### Added
+
+- Collect bounded CRI application logs with persistent read checkpoints,
+  container-instance attribution, and explicit malformed-record handling.
+- Process application logs and export them independently through OTLP Logs,
+  retaining bounded structured attributes and sensitive-data filtering.
+- Add opt-in bounded, restart-safe OTLP buffering with explicit spool limits,
+  recovery behavior, and loss accounting.
+- Add per-cell collector replacement, protocol metric/span, CPU unwinding,
+  backend retention, and Grafana qualification tools, plus a campaign evidence
+  gate that rejects incomplete or synthetic-only acceptance evidence.
+- Document the Guara replacement acceptance contract, staged migration and
+  rollback procedure, and separate Loki backend ownership requirements.
+
+### Fixed
+
+- Fence TLS capture across process and socket replacement and fail closed when
+  plaintext capture ownership cannot be established.
+- Fence HTTP propagation ownership and validate correlated Tempo trace trees.
+- Harden CPU unwind qualification and preserve explicit unsupported-runtime
+  boundaries.
+
+### Changed
+
+- Reuse the core resource-source configuration in host collection, centralize
+  bounded UTF-8 truncation, and use standard protobuf encoding helpers.
+- Publish a stable minor release containing all recent product work through
+  the configuration and encoding refactor in PR #73.
+
+### Qualification limits
+
+- Stable release publication verifies the software distribution contract.
+  Live Guara collector replacement, privileged runtime coverage, backend
+  acceptance, and production cutover still require the evidence recorded in
+  the qualification ledgers and migration runbook.
+
 ## [0.5.0] - 2026-10-08
 
 ### Changed
