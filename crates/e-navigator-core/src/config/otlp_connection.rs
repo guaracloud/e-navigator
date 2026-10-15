@@ -108,7 +108,8 @@ fn valid_path(path: &std::path::Path) -> bool {
             .chars()
             .any(char::is_control)
 }
-pub(super) fn validate_connection(
+/// Validate one OTLP connection without resolving secrets or opening files.
+pub fn validate_connection(
     auth: &OtlpAuthConfig,
     headers: &BTreeMap<String, OtlpValueSource>,
     tls: &OtlpTlsConfig,

@@ -47,18 +47,7 @@ impl std::fmt::Debug for Connection {
 
 impl Connection {
     pub(crate) fn new(config: &HttpExporterConfig) -> Result<Self, ExporterError> {
-        let mut headers = config.header_sources.clone();
-        for (name, value) in &config.headers {
-            if headers.keys().any(|key| key.eq_ignore_ascii_case(name)) {
-                return Err(invalid("duplicate HTTP header"));
-            }
-            headers.insert(
-                name.clone(),
-                OtlpValueSource::Literal {
-                    literal: value.clone(),
-                },
-            );
-        }
+        let mut headers = merged_headers(config)?;
         for value in headers.values_mut() {
             snapshot_env(value)?;
         }
@@ -246,8 +235,9 @@ pub(crate) fn client(config: &HttpExporterConfig) -> Result<Client, ExporterErro
         .map_err(|_| invalid("cannot build HTTP connection"))
 }
 
-pub(crate) fn validate(config: &HttpExporterConfig) -> Result<(), ExporterError> {
-    // Reuse core boundary rules for callers of the public low-level exporter too.
+fn merged_headers(
+    config: &HttpExporterConfig,
+) -> Result<BTreeMap<String, OtlpValueSource>, ExporterError> {
     let mut headers = config.header_sources.clone();
     for (name, value) in &config.headers {
         if headers.keys().any(|key| key.eq_ignore_ascii_case(name)) {
@@ -260,17 +250,11 @@ pub(crate) fn validate(config: &HttpExporterConfig) -> Result<(), ExporterError>
             },
         );
     }
-    let core = e_navigator_core::OtlpHttpConfig {
-        logs_enabled: true,
-        metrics_enabled: false,
-        traces_enabled: false,
-        profiles_enabled: false,
-        logs_auth: config.auth.clone(),
-        logs_headers: headers,
-        logs_tls: config.tls.clone(),
-        ..Default::default()
-    };
-    core.validate_connections()
+    Ok(headers)
+}
+
+pub(crate) fn validate(config: &HttpExporterConfig) -> Result<(), ExporterError> {
+    e_navigator_core::validate_otlp_connection(&config.auth, &merged_headers(config)?, &config.tls)
         .map_err(|_| invalid("invalid HTTP connection configuration"))?;
     let url =
         reqwest::Url::parse(&config.endpoint).map_err(|_| invalid("invalid HTTP endpoint"))?;

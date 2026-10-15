@@ -131,34 +131,7 @@ fn validate_headers(headers: &[(String, String)]) -> Result<(), ExporterError> {
             "headers must contain at most 64 entries",
         ));
     }
-    let mut names = std::collections::BTreeSet::new();
-    let mut total = 0usize;
     for (name, value) in headers {
-        let lower = name.to_ascii_lowercase();
-        if !names.insert(lower.clone())
-            || matches!(
-                lower.as_str(),
-                "host"
-                    | "content-length"
-                    | "transfer-encoding"
-                    | "connection"
-                    | "content-type"
-                    | "content-encoding"
-                    | "proxy-authorization"
-                    | "upgrade"
-                    | "trailer"
-                    | "te"
-                    | "keep-alive"
-            )
-        {
-            return Err(ExporterError::InvalidConfig(
-                "reserved or duplicate HTTP header",
-            ));
-        }
-        total = total.saturating_add(name.len()).saturating_add(value.len());
-        if total > 32768 {
-            return Err(ExporterError::InvalidConfig("HTTP headers exceed budget"));
-        }
         if name.len() > HttpExporterConfig::MAX_HEADER_NAME_BYTES_LIMIT {
             return Err(ExporterError::InvalidConfig(
                 "header names must be at most 128 bytes",
@@ -236,22 +209,22 @@ impl<T> HttpProtobufExporter<T> {
         config: HttpExporterConfig,
         encode_batch: fn(&[T]) -> Result<Vec<u8>, ExporterError>,
     ) -> Result<Self, ExporterError> {
-        Self::from_prepared(
+        Ok(Self::from_prepared(
             crate::connection::PreparedConnection::new(config)?,
             encode_batch,
-        )
+        ))
     }
 
     pub(crate) fn from_prepared(
         prepared: crate::connection::PreparedConnection,
         encode_batch: fn(&[T]) -> Result<Vec<u8>, ExporterError>,
-    ) -> Result<Self, ExporterError> {
+    ) -> Self {
         let crate::connection::PreparedConnection {
             config,
             client,
             connection,
         } = prepared;
-        Ok(Self {
+        Self {
             config,
             queue: VecDeque::new(),
             counters: ExporterCounters::default(),
@@ -261,7 +234,7 @@ impl<T> HttpProtobufExporter<T> {
             retry_backoff: None,
             compression: OtlpHttpCompression::None,
             decode_response: |_| Ok(ExportResponseAck::default()),
-        })
+        }
     }
 
     pub fn with_retry_backoff(mut self, initial_millis: u64, max_millis: u64) -> Self {
@@ -548,8 +521,6 @@ fn retry_delay(backoff: RetryBackoff, attempt: usize, endpoint: &str) -> Duratio
 pub enum ExporterError {
     #[error("invalid exporter config: {0}")]
     InvalidConfig(&'static str),
-    #[error("failed to build HTTP client: {0}")]
-    BuildClient(reqwest::Error),
     #[error("invalid header")]
     InvalidHeader,
     #[error("failed to encode export payload: {0}")]

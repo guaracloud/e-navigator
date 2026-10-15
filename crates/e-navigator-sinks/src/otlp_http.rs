@@ -716,19 +716,12 @@ where
     T: Send + Sync + 'static,
 {
     let exporter = HttpProtobufExporter::from_prepared(connection, encode_batch)
-        .map(|exporter| {
-            exporter
-                .with_retry_backoff(
-                    runtime_config.retry_initial_backoff_millis,
-                    runtime_config.retry_max_backoff_millis,
-                )
-                .with_compression(runtime_config.compression)
-                .with_response_decoder(decode_response)
-        })
-        .map_err(|err| e_navigator_core::CoreError::ModuleFailed {
-            module: "sink.otlp_http".to_string(),
-            message: err.to_string(),
-        })?;
+        .with_retry_backoff(
+            runtime_config.retry_initial_backoff_millis,
+            runtime_config.retry_max_backoff_millis,
+        )
+        .with_compression(runtime_config.compression)
+        .with_response_decoder(decode_response);
     AsyncProtobufExporter::spawn(exporter, runtime_config, family, telemetry_registry, spool)
         .map_err(|err| e_navigator_core::CoreError::ModuleFailed {
             module: "sink.otlp_http".to_string(),

@@ -21,7 +21,7 @@ pub use config::{
     PrometheusHttpConfig, ProtocolSourceConfig, RequestCorrelationConfig, ResourceMetricsConfig,
     ResourceSourceConfig, RuntimeConfig, RuntimeSecurityConfig, SourceFailurePolicy,
     SourceSupervisorConfig, TlsSourceConfig, TraceCorrelationConfig, WorkloadSelectorConfig,
-    is_known_module_name, known_module_names,
+    is_known_module_name, known_module_names, validate_otlp_connection,
 };
 pub use error::{CoreError, CoreResult};
 pub use module::{ModuleKind, ModuleMetadata};
