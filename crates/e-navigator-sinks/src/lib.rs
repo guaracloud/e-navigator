@@ -2,6 +2,7 @@
 #![warn(missing_debug_implementations, rust_2018_idioms, unreachable_pub)]
 //! Bounded JSON, Prometheus, OTLP HTTP, and local pprof export surfaces.
 
+mod connection;
 mod durable_spool;
 pub mod exporter;
 pub mod json_stdout;

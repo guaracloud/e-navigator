@@ -220,6 +220,9 @@ impl OtlpHttpSink {
         config: OtlpHttpConfig,
         telemetry_registry: NativeTelemetryRegistry,
     ) -> CoreResult<Self> {
+        config
+            .validate_connections()
+            .map_err(exporter_module_error)?;
         validate_worker_tuning(&config).map_err(exporter_module_error)?;
         config
             .durable
@@ -227,16 +230,31 @@ impl OtlpHttpSink {
             .map_err(exporter_module_error)?;
         // Validate every enabled destination and recover every selected spool before
         // starting any worker. Failed construction must not partially deliver data.
-        for (enabled, endpoint) in [
-            (config.metrics_enabled, required_metrics_endpoint(&config)),
-            (config.traces_enabled, required_traces_endpoint(&config)),
-            (config.profiles_enabled, required_profiles_endpoint(&config)),
-            (config.logs_enabled, required_logs_endpoint(&config)),
+        let mut prepared = BTreeMap::new();
+        for (family, enabled, endpoint) in [
+            (
+                "metrics",
+                config.metrics_enabled,
+                required_metrics_endpoint(&config),
+            ),
+            (
+                "traces",
+                config.traces_enabled,
+                required_traces_endpoint(&config),
+            ),
+            (
+                "profiles",
+                config.profiles_enabled,
+                required_profiles_endpoint(&config),
+            ),
+            ("logs", config.logs_enabled, required_logs_endpoint(&config)),
         ] {
             if enabled {
-                exporter_config_for(&config, endpoint?)
-                    .validate()
-                    .map_err(|e| exporter_module_error(e.to_string()))?;
+                let connection = crate::connection::PreparedConnection::new(exporter_config_for(
+                    &config, endpoint?, family,
+                ))
+                .map_err(|e| exporter_module_error(e.to_string()))?;
+                prepared.insert(family, connection);
             }
         }
         if config.logs_enabled
@@ -275,7 +293,9 @@ impl OtlpHttpSink {
         }
         let metric_exporter = if config.metrics_enabled {
             Some(build_exporter(
-                exporter_config_for(&config, required_metrics_endpoint(&config)?),
+                prepared
+                    .remove("metrics")
+                    .ok_or_else(|| exporter_module_error("missing prepared OTLP connection"))?,
                 encode_metric_export_request,
                 decode_metric_export_response,
                 &config,
@@ -303,7 +323,9 @@ impl OtlpHttpSink {
         };
         let profile_exporter = if config.profiles_enabled {
             Some(build_exporter(
-                exporter_config_for(&config, required_profiles_endpoint(&config)?),
+                prepared
+                    .remove("profiles")
+                    .ok_or_else(|| exporter_module_error("missing prepared OTLP connection"))?,
                 encode_profile_export_request,
                 decode_profile_export_response,
                 &config,
@@ -316,7 +338,9 @@ impl OtlpHttpSink {
         };
         let trace_exporter = if config.traces_enabled {
             Some(build_exporter(
-                exporter_config_for(&config, required_traces_endpoint(&config)?),
+                prepared
+                    .remove("traces")
+                    .ok_or_else(|| exporter_module_error("missing prepared OTLP connection"))?,
                 encode_trace_export_request,
                 decode_trace_export_response,
                 &config,
@@ -334,7 +358,9 @@ impl OtlpHttpSink {
                 rejected: log_processing_rejected.clone(),
             }));
             Some(build_exporter(
-                exporter_config_for(&config, required_logs_endpoint(&config)?),
+                prepared
+                    .remove("logs")
+                    .ok_or_else(|| exporter_module_error("missing prepared OTLP connection"))?,
                 crate::otlp_log_proto::encode_log_export_request,
                 crate::otlp_log_proto::decode_log_export_response,
                 &config,
@@ -640,8 +666,33 @@ fn required_profiles_endpoint(config: &OtlpHttpConfig) -> CoreResult<&str> {
     })
 }
 
-fn exporter_config_for(config: &OtlpHttpConfig, endpoint: &str) -> HttpExporterConfig {
+fn exporter_config_for(
+    config: &OtlpHttpConfig,
+    endpoint: &str,
+    family: &str,
+) -> HttpExporterConfig {
+    let (auth, headers, tls) = match family {
+        "logs" => (&config.logs_auth, &config.logs_headers, &config.logs_tls),
+        "traces" => (
+            &config.traces_auth,
+            &config.traces_headers,
+            &config.traces_tls,
+        ),
+        "profiles" => (
+            &config.profiles_auth,
+            &config.profiles_headers,
+            &config.profiles_tls,
+        ),
+        _ => (
+            &config.metrics_auth,
+            &config.metrics_headers,
+            &config.metrics_tls,
+        ),
+    };
     HttpExporterConfig {
+        auth: auth.clone(),
+        header_sources: headers.clone(),
+        tls: tls.clone(),
         endpoint: endpoint.to_string(),
         headers: Vec::new(),
         batch_size: config.batch_size,
@@ -653,7 +704,7 @@ fn exporter_config_for(config: &OtlpHttpConfig, endpoint: &str) -> HttpExporterC
 }
 
 fn build_exporter<T>(
-    config: HttpExporterConfig,
+    connection: crate::connection::PreparedConnection,
     encode_batch: fn(&[T]) -> Result<Vec<u8>, crate::ExporterError>,
     decode_response: fn(&[u8]) -> Result<ExportResponseAck, crate::ExporterError>,
     runtime_config: &OtlpHttpConfig,
@@ -664,7 +715,7 @@ fn build_exporter<T>(
 where
     T: Send + Sync + 'static,
 {
-    let exporter = HttpProtobufExporter::new(config, encode_batch)
+    let exporter = HttpProtobufExporter::from_prepared(connection, encode_batch)
         .map(|exporter| {
             exporter
                 .with_retry_backoff(
@@ -4027,6 +4078,176 @@ mod tests {
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
+    #[tokio::test]
+    async fn authenticated_logs_and_traces_keep_destination_headers_isolated() {
+        use e_navigator_core::{OtlpAuthConfig, OtlpTlsConfig, OtlpValueSource};
+        let logs = FakeCollector::spawn(vec![200]).await;
+        let traces = FakeCollector::spawn(vec![200]).await;
+        let mut config = log_config(logs.url_with_path("/v1/logs"));
+        config.traces_enabled = true;
+        config.traces_endpoint = traces.url_with_path("/v1/traces");
+        config.logs_auth = OtlpAuthConfig::Bearer {
+            token: OtlpValueSource::Literal {
+                literal: "logs-only".into(),
+            },
+        };
+        config.traces_auth = OtlpAuthConfig::Basic {
+            username: OtlpValueSource::Literal {
+                literal: "trace-user".into(),
+            },
+            password: OtlpValueSource::Literal {
+                literal: "trace-pass".into(),
+            },
+        };
+        config.logs_headers.insert(
+            "X-Tenant".into(),
+            OtlpValueSource::Literal {
+                literal: "log-tenant".into(),
+            },
+        );
+        config.logs_tls = OtlpTlsConfig {
+            allow_plaintext_auth: true,
+            ..Default::default()
+        };
+        config.traces_tls = config.logs_tls.clone();
+        let sink = OtlpHttpSink::new(config).expect("authenticated sink");
+        sink.write(&processed_log(Some("integration-log")).await)
+            .await
+            .expect("log");
+        sink.write(&request_span()).await.expect("span");
+        let log_request = logs.next_request().await;
+        let trace_request = traces.next_request().await;
+        assert!(log_request.contains("authorization: Bearer logs-only"));
+        assert!(log_request.contains("x-tenant: log-tenant"));
+        assert!(!trace_request.contains("log-tenant"));
+        assert!(!trace_request.contains("logs-only"));
+        assert!(trace_request.contains("authorization: Basic dHJhY2UtdXNlcjp0cmFjZS1wYXNz"));
+        assert!(!log_request.contains("trace-user"));
+        let log =
+            opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest::decode(
+                log_request.body(),
+            )
+            .expect("log protobuf");
+        let trace =
+            ExportTraceServiceRequest::decode(trace_request.body()).expect("trace protobuf");
+        assert_eq!(log.resource_logs[0].scope_logs[0].log_records.len(), 1);
+        assert_eq!(trace.resource_spans[0].scope_spans[0].spans.len(), 1);
+        sink.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn authenticated_log_rotation_reloads_for_durable_delivery_without_spooling_secrets() {
+        use e_navigator_core::{OtlpAuthConfig, OtlpValueSource};
+        let fixture = crate::durable_spool::tests::Fixture::new();
+        let token = fixture.0.join("token");
+        std::fs::write(&token, "initial-canary").expect("token");
+        let collector = FakeCollector::spawn(vec![200, 200]).await;
+        let mut config = log_config(collector.url_with_path("/v1/logs"));
+        config.logs_auth = OtlpAuthConfig::Bearer {
+            token: OtlpValueSource::File {
+                file: token.clone(),
+            },
+        };
+        config.logs_tls.allow_plaintext_auth = true;
+        config.durable.families = vec!["logs".into()];
+        config.durable.directory = fixture.0.join("spool");
+        let sink = OtlpHttpSink::new(config).expect("durable authenticated sink");
+        sink.write(&processed_log(Some("first")).await)
+            .await
+            .expect("log");
+        assert!(
+            collector
+                .next_request()
+                .await
+                .contains("authorization: Bearer initial-canary")
+        );
+        let replacement = fixture.0.join("new-token");
+        std::fs::write(&replacement, "rotated-canary\n").expect("replacement");
+        std::fs::rename(replacement, token).expect("atomic rotation");
+        sink.write(&processed_log(Some("second")).await)
+            .await
+            .expect("log");
+        assert!(
+            collector
+                .next_request()
+                .await
+                .contains("authorization: Bearer rotated-canary")
+        );
+        sink.shutdown().await.expect("shutdown");
+        for file in std::fs::read_dir(fixture.0.join("spool/logs")).expect("spool") {
+            let path = file.expect("entry").path();
+            if path.is_file() {
+                let bytes = std::fs::read(path).expect("read");
+                assert!(!bytes.windows(6).any(|w| w == b"canary"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_secret_in_another_family_prevents_sink_construction() {
+        use e_navigator_core::{OtlpAuthConfig, OtlpValueSource};
+        let collector = FakeCollector::spawn(vec![200]).await;
+        let mut config = log_config(collector.url());
+        config.traces_enabled = true;
+        config.traces_endpoint = collector.url();
+        config.traces_tls.allow_plaintext_auth = true;
+        config.traces_auth = OtlpAuthConfig::Bearer {
+            token: OtlpValueSource::File {
+                file: "/nonexistent/e-navigator/auth-token".into(),
+            },
+        };
+        let error = OtlpHttpSink::new(config).expect_err("startup must fail");
+        assert!(!error.to_string().contains("/nonexistent"));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), collector.next_request())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticated_exports_do_not_follow_redirects_or_retry_unauthorized() {
+        use e_navigator_core::{OtlpAuthConfig, OtlpValueSource};
+        let target = FakeCollector::spawn(vec![200]).await;
+        for status in [302, 307, 401, 403] {
+            let collector = FakeCollector::spawn_responses(
+                vec![FakeResponse {
+                    status,
+                    headers: vec![("Location".into(), target.url())],
+                    body: vec![],
+                }],
+                Duration::ZERO,
+            )
+            .await;
+            let mut config = log_config(collector.url());
+            config.logs_tls.allow_plaintext_auth = true;
+            config.logs_auth = OtlpAuthConfig::Bearer {
+                token: OtlpValueSource::Literal {
+                    literal: "redirect-canary".into(),
+                },
+            };
+            config.max_retries = 3;
+            let sink = OtlpHttpSink::new(config).expect("sink");
+            sink.write(&processed_log(Some("test")).await)
+                .await
+                .expect("enqueue");
+            assert!(
+                collector
+                    .next_request()
+                    .await
+                    .contains("authorization: Bearer redirect-canary")
+            );
+            sink.shutdown().await.expect("shutdown");
+            let telemetry = sink.telemetry();
+            assert_eq!(telemetry.logs.expect("log telemetry").request_attempts, 1);
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), target.next_request())
+                .await
+                .is_err()
+        );
+    }
+
     async fn processed_log(body: Option<&str>) -> SignalEnvelope {
         use e_navigator_core::{LogProcessingConfig, Processor};
         let signal: SignalEnvelope = serde_json::from_value(serde_json::json!({
@@ -4273,16 +4494,24 @@ mod tests {
         use e_navigator_core::{DurableReceipt, DurableSpoolConfig};
         let fixture = crate::durable_spool::tests::Fixture::new();
         let collector = FakeCollector::spawn(vec![503, 200]).await;
-        let config = OtlpHttpConfig {
+        let token = fixture.0.join("token");
+        std::fs::write(&token, "before-restart-canary").expect("initial token");
+        let mut config = OtlpHttpConfig {
             durable: DurableSpoolConfig {
                 families: vec!["logs".into()],
-                directory: fixture.0.clone(),
+                directory: fixture.0.join("spool"),
                 ..Default::default()
             },
             max_retries: 0,
             flush_interval_millis: 1000,
             ..log_config(collector.url())
         };
+        config.logs_auth = e_navigator_core::OtlpAuthConfig::Bearer {
+            token: e_navigator_core::OtlpValueSource::File {
+                file: token.clone(),
+            },
+        };
+        config.logs_tls.allow_plaintext_auth = true;
         let sink = OtlpHttpSink::new(config.clone()).expect("durable sink");
         let mut log = processed_log(Some("redacted record")).await;
         let (receipt, accepted) = DurableReceipt::channel();
@@ -4296,6 +4525,26 @@ mod tests {
         );
         let first = collector.next_request().await;
         assert!(first.contains("redacted record"));
+        assert!(first.contains("authorization: Bearer before-restart-canary"));
+        let mut payload_found = false;
+        for entry in std::fs::read_dir(fixture.0.join("spool/logs")).expect("spool entries") {
+            let path = entry.expect("entry").path();
+            if path.is_file() {
+                let bytes = std::fs::read(path).expect("read spool");
+                assert!(
+                    !bytes
+                        .windows(b"before-restart-canary".len())
+                        .any(|w| w == b"before-restart-canary")
+                );
+                payload_found |= bytes
+                    .windows(b"redacted record".len())
+                    .any(|w| w == b"redacted record");
+            }
+        }
+        assert!(
+            payload_found,
+            "inspect a real persisted payload, not an empty spool"
+        );
         // Stop before another retry, leaving the request on persistent storage.
         sink.log_exporter
             .as_ref()
@@ -4309,9 +4558,11 @@ mod tests {
         drop(log);
         drop(sink);
         tokio::time::sleep(Duration::from_millis(20)).await;
+        std::fs::write(token, "after-restart-canary").expect("rotate while stopped");
         let recovered = OtlpHttpSink::new(config).expect("reopen");
         let second = collector.next_request().await;
         assert_eq!(first.body(), second.body());
+        assert!(second.contains("authorization: Bearer after-restart-canary"));
         recovered.shutdown().await.expect("drain");
         assert_eq!(recovered.telemetry().logs.expect("logs").spool_recovered, 1);
         assert_eq!(recovered.telemetry().logs.expect("logs").spool_bytes, 0);

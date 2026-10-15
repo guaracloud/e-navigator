@@ -146,6 +146,42 @@
       "properties": { "mountsEnabled": { "type": "boolean" } },
       "required": ["mountsEnabled"]
     },
+    "secretMounts": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "secretName",
+          "mountPath"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 56,
+            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+          },
+          "secretName": {
+            "type": "string",
+            "maxLength": 253,
+            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+          },
+          "mountPath": {
+            "type": "string",
+            "pattern": "^/var/run/secrets/e-navigator/[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$"
+          },
+          "defaultMode": {
+            "enum": [
+              256,
+              288,
+              292
+            ]
+          }
+        }
+      }
+    },
     "criLogs": {
       "type": "object",
       "additionalProperties": false,

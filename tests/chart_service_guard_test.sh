@@ -136,3 +136,43 @@ render_chart prometheus_monitor \
   --set serviceMonitor.enabled=true
 expect_kind "$tmp_dir/prometheus_monitor.yaml" Service
 expect_kind "$tmp_dir/prometheus_monitor.yaml" ServiceMonitor
+
+cat >"$tmp_dir/secret-values.yaml" <<'YAML'
+secretMounts:
+  - name: positron
+    secretName: positron-ingest
+    mountPath: /var/run/secrets/e-navigator/positron
+extraEnv:
+  - name: POSITRON_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: positron-ingest
+        key: token
+YAML
+render_chart secrets -f "$tmp_dir/secret-values.yaml"
+python3 - "$tmp_dir/default.yaml" "$tmp_dir/secrets.yaml" <<'PYTEST'
+import pathlib, re, sys
+def ds(path):
+    return next(doc for doc in pathlib.Path(path).read_text().split("---") if re.search(r"^kind: DaemonSet$", doc, re.M))
+default, enabled = map(ds, sys.argv[1:])
+assert 'name: secret-positron' not in default
+assert enabled.count('name: secret-positron') == 2
+assert re.search(r'name: secret-positron\n\s+mountPath: "/var/run/secrets/e-navigator/positron"\n\s+readOnly: true', enabled)
+assert re.search(r'name: secret-positron\n\s+secret:\n\s+secretName: "positron-ingest"\n\s+defaultMode: 256', enabled)
+assert 'subPath:' not in enabled
+assert 'secretKeyRef:' in enabled
+assert default.split('securityContext:')[1].split('volumeMounts:')[0] == enabled.split('securityContext:')[1].split('volumeMounts:')[0]
+PYTEST
+for invalid in \
+  'secretMounts[0].mountPath=/etc/e-navigator' \
+  'secretMounts[0].mountPath=/var/run/secrets/e-navigator/../escape' \
+  'secretMounts[0].defaultMode=511' \
+  'secretMounts[0].name=BAD' \
+  'secretMounts[0].secretName=bad/name' \
+  'secretMounts[1].name=positron,secretMounts[1].secretName=other,secretMounts[1].mountPath=/var/run/secrets/e-navigator/other' \
+  'secretMounts[1].name=other,secretMounts[1].secretName=other,secretMounts[1].mountPath=/var/run/secrets/e-navigator/positron/nested'; do
+  if helm template e-navigator charts/e-navigator -f "$tmp_dir/secret-values.yaml" --set "$invalid" >"$tmp_dir/invalid-secret.yaml" 2>/dev/null; then
+    printf 'expected invalid Secret mount to fail: %s\n' "$invalid" >&2
+    exit 1
+  fi
+done

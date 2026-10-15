@@ -1037,6 +1037,9 @@ fn bench_serialization_and_exporter(c: &mut Criterion) {
                     HttpExporterConfig {
                         endpoint: "http://127.0.0.1:9".to_string(),
                         headers: Vec::new(),
+                        header_sources: Default::default(),
+                        auth: Default::default(),
+                        tls: Default::default(),
                         batch_size: 16,
                         queue_capacity: 128,
                         timeout_millis: 1,

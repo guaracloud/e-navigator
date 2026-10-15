@@ -424,3 +424,7 @@ criLogs:
 # Opt in together with otlp_http.durable.families in config.toml.
 durableSpool:
   mountsEnabled: false
+
+# Existing Secrets only. Mount complete directories to allow Kubernetes rotation.
+# Paths must be below /var/run/secrets/e-navigator/.
+secretMounts: []

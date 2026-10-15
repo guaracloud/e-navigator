@@ -714,3 +714,10 @@ capable Linux node or cluster and observed Aya/eBPF output.
 `/var/log/pods` read-only and node-local `/var/lib/e-navigator/cri-logs` writable.
 Source defaults, limits, privacy and admission-checkpoint recovery are described
 in [CRI collection operations](cri-logs.md). This adds no privileges or RBAC.
+
+## Mount OTLP credentials
+
+Use `secretMounts` to mount existing Secrets as read-only directories beneath
+`/var/run/secrets/e-navigator/`. Configure the corresponding per-signal auth and
+TLS tables in `config.toml`. See [Configure OTLP authentication and TLS](otlp-authentication.md)
+for the Positron example, rotation behavior, and environment references.

@@ -5,7 +5,16 @@ pub(crate) fn load_config(path: Option<&Path>) -> anyhow::Result<RuntimeConfig> 
     match path {
         Some(path) => {
             let contents = std::fs::read_to_string(path)?;
-            let config = toml::from_str::<RuntimeConfig>(&contents)?;
+            let config = toml::from_str::<RuntimeConfig>(&contents).map_err(|error| {
+                // Parser diagnostics include source excerpts and invalid values. Preserve
+                // only the byte-span location, never the original error or its source.
+                let offset = error.span().map_or(0, |span| span.start).min(contents.len());
+                let prefix = &contents.as_bytes()[..offset];
+                let line = prefix.iter().filter(|&&byte| byte == b'\n').count() + 1;
+                let column = prefix.iter().rposition(|&byte| byte == b'\n')
+                    .map_or(offset + 1, |newline| offset - newline);
+                anyhow::anyhow!("TOML parse error at line {line}, column {column}: invalid configuration syntax or value")
+            })?;
             config.validate_typed().map_err(CoreError::InvalidConfig)?;
             Ok(config)
         }
@@ -17,6 +26,50 @@ pub(crate) fn load_config(path: Option<&Path>) -> anyhow::Result<RuntimeConfig> 
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn parse_errors_redact_auth_values_in_every_error_format() {
+        let canary = "AUTH_SECRET_CANARY_D6A4B8B7";
+        for (label, contents) in [
+            (
+                "malformed-secret",
+                format!(
+                    "[otlp_http.logs_auth]\ntype = 'bearer'\ntoken = {{ literal = \"{canary}\n"
+                ),
+            ),
+            (
+                "invalid-auth-type",
+                format!(
+                    "[otlp_http.logs_auth]\ntype = '{canary}'\ntoken = {{ literal = '{canary}' }}\n"
+                ),
+            ),
+        ] {
+            let path = temp_config_path(label);
+            fs::write(&path, contents).unwrap();
+            let err = load_config(Some(&path)).expect_err("invalid configuration rejected");
+            let _ = fs::remove_file(path);
+            for output in [format!("{err}"), format!("{err:?}"), format!("{err:#}")] {
+                assert!(!output.contains(canary));
+                assert!(!output.contains("literal ="));
+                assert!(!output.contains("[otlp_http.logs_auth]"));
+                assert!(output.contains("TOML parse error at line"));
+                assert!(output.contains("invalid configuration syntax or value"));
+            }
+        }
+    }
+
+    #[test]
+    fn parse_error_locations_handle_unicode_and_end_of_input() {
+        let path = temp_config_path("unicode-parse-location");
+        fs::write(&path, "# não é ASCII\nqueue_capacity = ").unwrap();
+        let err = load_config(Some(&path)).expect_err("missing value rejected");
+        let _ = fs::remove_file(path);
+        assert!(
+            err.to_string()
+                .contains("TOML parse error at line 2, column")
+        );
+        assert!(!format!("{err:#}").contains("não"));
+    }
 
     #[test]
     fn load_config_returns_default_without_path() {
@@ -108,7 +161,11 @@ mod tests {
         let err = load_config(Some(&path)).expect_err("unknown runtime config field is rejected");
         let _ = fs::remove_file(path);
 
-        assert!(err.to_string().contains("unknown field `queue_capcity`"));
+        assert!(
+            err.to_string()
+                .contains("invalid configuration syntax or value")
+        );
+        assert!(err.to_string().contains("TOML parse error at line"));
     }
 
     #[test]

@@ -1,3 +1,16 @@
+{{- $names := dict }}
+{{- $paths := list }}
+{{- range .Values.secretMounts }}
+{{- if hasKey $names .name }}{{ fail "secretMounts names must be distinct" }}{{ end }}
+{{- $_ := set $names .name true }}
+{{- $path := .mountPath }}
+{{- range $paths }}
+{{- if or (eq . $path) (hasPrefix (printf "%s/" .) $path) (hasPrefix (printf "%s/" $path) .) }}
+{{- fail "secretMounts mount paths must not overlap" }}
+{{- end }}
+{{- end }}
+{{- $paths = append $paths $path }}
+{{- end }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -125,6 +138,11 @@ spec:
             - name: cri-checkpoints
               mountPath: /var/lib/e-navigator/cri-logs
             {{- end }}
+            {{- range .Values.secretMounts }}
+            - name: secret-{{ .name }}
+              mountPath: {{ .mountPath | quote }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: config
           configMap:
@@ -160,4 +178,10 @@ spec:
           hostPath:
             path: /var/lib/e-navigator/cri-logs
             type: DirectoryOrCreate
+        {{- end }}
+        {{- range .Values.secretMounts }}
+        - name: secret-{{ .name }}
+          secret:
+            secretName: {{ .secretName | quote }}
+            defaultMode: {{ default 256 .defaultMode }}
         {{- end }}

@@ -15,6 +15,7 @@ mod kubernetes;
 mod log_processing;
 mod modules;
 mod network_metrics;
+mod otlp_connection;
 mod otlp_http;
 mod profiling;
 mod prometheus_http;
@@ -49,6 +50,7 @@ pub use modules::{
     KNOWN_MODULES, KnownModule, ModuleConfig, is_known_module_name, known_module_names,
 };
 pub use network_metrics::{NetworkEndpointConfig, NetworkMetricsConfig, RuntimeSecurityConfig};
+pub use otlp_connection::{OtlpAuthConfig, OtlpTlsConfig, OtlpValueSource};
 pub use otlp_http::{DurableSpoolConfig, OtlpHttpCompression, OtlpHttpConfig};
 pub use profiling::ProfilingConfig;
 pub use prometheus_http::PrometheusHttpConfig;
