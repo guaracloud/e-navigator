@@ -16,12 +16,12 @@ pub use config::{
     DnsSourceConfig, DurableSpoolConfig, EbpfConfig, EbpfEventTransport, EbpfNetworkIoHook,
     HttpContextPropagationConfig, HttpSourceConfig, JsonStdoutConfig, JsonStdoutMode,
     KNOWN_MODULES, KnownModule, KubernetesAttributionConfig, LogInitialRead, LogParseFailure,
-    LogProcessingConfig, ModuleConfig, NetworkEndpointConfig, NetworkMetricsConfig,
-    OtlpHttpCompression, OtlpHttpConfig, ProfilingConfig, PrometheusHttpConfig,
-    ProtocolSourceConfig, RequestCorrelationConfig, ResourceMetricsConfig, ResourceSourceConfig,
-    RuntimeConfig, RuntimeSecurityConfig, SourceFailurePolicy, SourceSupervisorConfig,
-    TlsSourceConfig, TraceCorrelationConfig, WorkloadSelectorConfig, is_known_module_name,
-    known_module_names,
+    LogProcessingConfig, ModuleConfig, NetworkEndpointConfig, NetworkMetricsConfig, OtlpAuthConfig,
+    OtlpHttpCompression, OtlpHttpConfig, OtlpTlsConfig, OtlpValueSource, ProfilingConfig,
+    PrometheusHttpConfig, ProtocolSourceConfig, RequestCorrelationConfig, ResourceMetricsConfig,
+    ResourceSourceConfig, RuntimeConfig, RuntimeSecurityConfig, SourceFailurePolicy,
+    SourceSupervisorConfig, TlsSourceConfig, TraceCorrelationConfig, WorkloadSelectorConfig,
+    is_known_module_name, known_module_names, validate_otlp_connection,
 };
 pub use error::{CoreError, CoreResult};
 pub use module::{ModuleKind, ModuleMetadata};

@@ -15,6 +15,7 @@ operational documentation. Start with the path that matches your goal.
   checksums, signatures, and SBOMs before deployment.
 
 - [Durable OTLP export](durable-export.md), configure per-family storage, recovery and deletion.
+- [OTLP authentication and TLS](otlp-authentication.md), configure per-signal credentials, headers, certificates, and Secret mounts.
 - [Application log processing and OTLP export](log-export.md), configure privacy rules and independent log delivery.
 
 ## Understand The System

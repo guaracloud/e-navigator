@@ -1,10 +1,36 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ConfigError, ConfigResult};
+use super::{ConfigError, ConfigResult, OtlpAuthConfig, OtlpTlsConfig, OtlpValueSource};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OtlpHttpConfig {
+    #[serde(default)]
+    pub metrics_auth: OtlpAuthConfig,
+    #[serde(default)]
+    pub metrics_headers: BTreeMap<String, OtlpValueSource>,
+    #[serde(default)]
+    pub metrics_tls: OtlpTlsConfig,
+    #[serde(default)]
+    pub traces_auth: OtlpAuthConfig,
+    #[serde(default)]
+    pub traces_headers: BTreeMap<String, OtlpValueSource>,
+    #[serde(default)]
+    pub traces_tls: OtlpTlsConfig,
+    #[serde(default)]
+    pub profiles_auth: OtlpAuthConfig,
+    #[serde(default)]
+    pub profiles_headers: BTreeMap<String, OtlpValueSource>,
+    #[serde(default)]
+    pub profiles_tls: OtlpTlsConfig,
+    #[serde(default)]
+    pub logs_auth: OtlpAuthConfig,
+    #[serde(default)]
+    pub logs_headers: BTreeMap<String, OtlpValueSource>,
+    #[serde(default)]
+    pub logs_tls: OtlpTlsConfig,
+
     #[serde(default)]
     pub durable: DurableSpoolConfig,
     #[serde(default)]
@@ -57,6 +83,19 @@ impl Default for OtlpHttpConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            metrics_auth: OtlpAuthConfig::default(),
+            metrics_headers: BTreeMap::new(),
+            metrics_tls: OtlpTlsConfig::default(),
+            traces_auth: OtlpAuthConfig::default(),
+            traces_headers: BTreeMap::new(),
+            traces_tls: OtlpTlsConfig::default(),
+            profiles_auth: OtlpAuthConfig::default(),
+            profiles_headers: BTreeMap::new(),
+            profiles_tls: OtlpTlsConfig::default(),
+            logs_auth: OtlpAuthConfig::default(),
+            logs_headers: BTreeMap::new(),
+            logs_tls: OtlpTlsConfig::default(),
+
             durable: DurableSpoolConfig::default(),
             endpoint: String::new(),
             metrics_endpoint: String::new(),
@@ -92,6 +131,43 @@ pub enum OtlpHttpCompression {
 }
 
 impl OtlpHttpConfig {
+    /// Validate connection structure without reading secrets or opening files.
+    pub fn validate_connections(&self) -> Result<(), String> {
+        if self.metrics_enabled {
+            super::otlp_connection::validate_connection(
+                &self.metrics_auth,
+                &self.metrics_headers,
+                &self.metrics_tls,
+            )
+            .map_err(|message| format!("OTLP metrics: {message}"))?;
+        }
+        if self.traces_enabled {
+            super::otlp_connection::validate_connection(
+                &self.traces_auth,
+                &self.traces_headers,
+                &self.traces_tls,
+            )
+            .map_err(|message| format!("OTLP traces: {message}"))?;
+        }
+        if self.profiles_enabled {
+            super::otlp_connection::validate_connection(
+                &self.profiles_auth,
+                &self.profiles_headers,
+                &self.profiles_tls,
+            )
+            .map_err(|message| format!("OTLP profiles: {message}"))?;
+        }
+        if self.logs_enabled {
+            super::otlp_connection::validate_connection(
+                &self.logs_auth,
+                &self.logs_headers,
+                &self.logs_tls,
+            )
+            .map_err(|message| format!("OTLP logs: {message}"))?;
+        }
+        Ok(())
+    }
+
     pub const MAX_QUEUE_CAPACITY_LIMIT: usize = 65_536;
     pub const MAX_BATCH_SIZE_LIMIT: usize = 4096;
     pub const MAX_TIMEOUT_MILLIS_LIMIT: u64 = 300_000;
@@ -124,6 +200,8 @@ impl OtlpHttpConfig {
         if !self.enabled {
             return Ok(());
         }
+        self.validate_connections()
+            .map_err(|message| ConfigError::invalid_value("otlp_http", message))?;
         if !module_enabled {
             return Err(ConfigError::invalid_value(
                 "otlp_http.enabled",

@@ -620,6 +620,7 @@ name = "e-navigator-sinks"
 version = "0.6.1"
 dependencies = [
  "async-trait",
+ "base64",
  "bytes",
  "e-navigator-core",
  "e-navigator-processors",

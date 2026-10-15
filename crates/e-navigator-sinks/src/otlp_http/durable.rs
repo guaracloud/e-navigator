@@ -162,7 +162,7 @@ mod tests {
         let mut spool = Spool::open(&fixture.0, 1024, 4, 1000).expect("spool");
         spool.fail_at = 5;
         let exporter = HttpProtobufExporter::new(
-            exporter_config_for(&config, &config.logs_endpoint),
+            exporter_config_for(&config, &config.logs_endpoint, "logs"),
             |records: &[Vec<u8>]| Ok(records.concat()),
         )
         .expect("exporter");

@@ -9,15 +9,24 @@ use std::{collections::VecDeque, io::Write, time::Duration};
 use thiserror::Error;
 use tokio::time::{sleep, timeout};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct HttpExporterConfig {
     pub endpoint: String,
     pub headers: Vec<(String, String)>,
+    pub header_sources: std::collections::BTreeMap<String, e_navigator_core::OtlpValueSource>,
+    pub auth: e_navigator_core::OtlpAuthConfig,
+    pub tls: e_navigator_core::OtlpTlsConfig,
     pub batch_size: usize,
     pub queue_capacity: usize,
     pub timeout_millis: u64,
     pub max_retries: usize,
     pub tls_insecure_skip_verify: bool,
+}
+
+impl std::fmt::Debug for HttpExporterConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HttpExporterConfig([REDACTED])")
+    }
 }
 
 impl HttpExporterConfig {
@@ -71,6 +80,7 @@ impl HttpExporterConfig {
             return Err(ExporterError::InvalidConfig("endpoint must include a host"));
         }
         validate_headers(&self.headers)?;
+        crate::connection::validate(self)?;
         if self.batch_size == 0 {
             return Err(ExporterError::InvalidConfig(
                 "batch_size must be greater than zero",
@@ -181,6 +191,7 @@ pub struct HttpProtobufExporter<T> {
     queue: VecDeque<T>,
     counters: ExporterCounters,
     client: Client,
+    connection: crate::connection::Connection,
     encode_batch: fn(&[T]) -> Result<Vec<u8>, ExporterError>,
     retry_backoff: Option<RetryBackoff>,
     compression: OtlpHttpCompression,
@@ -198,22 +209,32 @@ impl<T> HttpProtobufExporter<T> {
         config: HttpExporterConfig,
         encode_batch: fn(&[T]) -> Result<Vec<u8>, ExporterError>,
     ) -> Result<Self, ExporterError> {
-        config.validate()?;
-        let client = Client::builder()
-            .use_rustls_tls()
-            .danger_accept_invalid_certs(config.tls_insecure_skip_verify)
-            .build()
-            .map_err(ExporterError::BuildClient)?;
-        Ok(Self {
+        Ok(Self::from_prepared(
+            crate::connection::PreparedConnection::new(config)?,
+            encode_batch,
+        ))
+    }
+
+    pub(crate) fn from_prepared(
+        prepared: crate::connection::PreparedConnection,
+        encode_batch: fn(&[T]) -> Result<Vec<u8>, ExporterError>,
+    ) -> Self {
+        let crate::connection::PreparedConnection {
+            config,
+            client,
+            connection,
+        } = prepared;
+        Self {
             config,
             queue: VecDeque::new(),
             counters: ExporterCounters::default(),
             client,
+            connection,
             encode_batch,
             retry_backoff: None,
             compression: OtlpHttpCompression::None,
             decode_response: |_| Ok(ExportResponseAck::default()),
-        })
+        }
     }
 
     pub fn with_retry_backoff(mut self, initial_millis: u64, max_millis: u64) -> Self {
@@ -402,7 +423,10 @@ impl<T> HttpProtobufExporter<T> {
     }
 
     async fn send_body(&self, body: Bytes) -> Result<ExportResponseAck, ExporterError> {
-        let headers = header_map(&self.config.headers)?;
+        let connection = self.connection.clone();
+        let headers = tokio::task::spawn_blocking(move || connection.headers())
+            .await
+            .map_err(|_| ExporterError::InvalidConfig("HTTP credential resolution failed"))??;
         let mut request = self
             .client
             .post(&self.config.endpoint)
@@ -497,8 +521,6 @@ fn retry_delay(backoff: RetryBackoff, attempt: usize, endpoint: &str) -> Duratio
 pub enum ExporterError {
     #[error("invalid exporter config: {0}")]
     InvalidConfig(&'static str),
-    #[error("failed to build HTTP client: {0}")]
-    BuildClient(reqwest::Error),
     #[error("invalid header")]
     InvalidHeader,
     #[error("failed to encode export payload: {0}")]
@@ -520,10 +542,16 @@ pub enum ExporterError {
     PermanentStatus(u16),
     #[error("collector returned an invalid OTLP response: {0}")]
     InvalidResponse(String),
-    #[error("request failed: {0}")]
-    Request(#[from] reqwest::Error),
+    #[error("HTTP export request failed")]
+    Request(reqwest::Error),
     #[error("export retries exhausted")]
     RetriesExhausted,
+}
+
+impl From<reqwest::Error> for ExporterError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error.without_url())
+    }
 }
 
 impl ExporterError {
@@ -552,6 +580,8 @@ fn header_map(headers: &[(String, String)]) -> Result<HeaderMap, ExporterError> 
             .map_err(|_| ExporterError::InvalidHeader)?;
         let value = reqwest::header::HeaderValue::from_str(value)
             .map_err(|_| ExporterError::InvalidHeader)?;
+        let mut value = value;
+        value.set_sensitive(true);
         map.insert(name, value);
     }
     Ok(map)
@@ -588,6 +618,50 @@ mod tests {
         Ok(batch.iter().map(|record| record.value).collect())
     }
 
+    #[test]
+    fn credential_headers_are_redacted_in_debug() {
+        let mut config = valid_config();
+        config
+            .headers
+            .push(("authorization".into(), "Bearer private-canary".into()));
+        assert!(!format!("{config:?}").contains("private-canary"));
+    }
+
+    #[test]
+    fn rejects_reserved_and_duplicate_headers_and_url_credentials() {
+        for headers in [
+            vec![("Content-Type".into(), "text/plain".into())],
+            vec![("Host".into(), "other-host".into())],
+            vec![
+                ("X-Key".into(), "one".into()),
+                ("x-key".into(), "two".into()),
+            ],
+        ] {
+            let config = HttpExporterConfig {
+                headers,
+                ..valid_config()
+            };
+            assert!(config.validate().is_err());
+        }
+        let config = HttpExporterConfig {
+            endpoint: "https://user:password@receiver/v1/logs".into(),
+            ..valid_config()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[tokio::test]
+    async fn request_error_debug_and_source_do_not_retain_endpoint_secrets() {
+        let error: ExporterError = reqwest::Client::new()
+            .get("http://127.0.0.1:0/?api_key=private-canary")
+            .send()
+            .await
+            .expect_err("closed port")
+            .into();
+        assert!(!format!("{error:?}").contains("private-canary"));
+        assert!(!error.to_string().contains("private-canary"));
+    }
+
     fn valid_config() -> HttpExporterConfig {
         HttpExporterConfig {
             endpoint: "http://127.0.0.1:9".to_string(),
@@ -597,6 +671,12 @@ mod tests {
             timeout_millis: 1,
             max_retries: 0,
             tls_insecure_skip_verify: false,
+            header_sources: Default::default(),
+            auth: Default::default(),
+            tls: e_navigator_core::OtlpTlsConfig {
+                allow_plaintext_auth: true,
+                ..Default::default()
+            },
         }
     }
 
@@ -799,6 +879,12 @@ mod tests {
                 timeout_millis: 1_000,
                 max_retries: 0,
                 tls_insecure_skip_verify: false,
+                header_sources: Default::default(),
+                auth: Default::default(),
+                tls: e_navigator_core::OtlpTlsConfig {
+                    allow_plaintext_auth: true,
+                    ..Default::default()
+                },
             },
             encode_test_records,
         )
@@ -829,6 +915,12 @@ mod tests {
                 timeout_millis: 1_000,
                 max_retries: 1,
                 tls_insecure_skip_verify: false,
+                header_sources: Default::default(),
+                auth: Default::default(),
+                tls: e_navigator_core::OtlpTlsConfig {
+                    allow_plaintext_auth: true,
+                    ..Default::default()
+                },
             },
             encode_test_records,
         )
@@ -854,6 +946,12 @@ mod tests {
                 timeout_millis: 1,
                 max_retries: 0,
                 tls_insecure_skip_verify: false,
+                header_sources: Default::default(),
+                auth: Default::default(),
+                tls: e_navigator_core::OtlpTlsConfig {
+                    allow_plaintext_auth: true,
+                    ..Default::default()
+                },
             },
             encode_test_records,
         )
@@ -878,6 +976,12 @@ mod tests {
                 timeout_millis: 1_000,
                 max_retries: 0,
                 tls_insecure_skip_verify: false,
+                header_sources: Default::default(),
+                auth: Default::default(),
+                tls: e_navigator_core::OtlpTlsConfig {
+                    allow_plaintext_auth: true,
+                    ..Default::default()
+                },
             },
             encode_non_clone_records,
         )
@@ -904,6 +1008,12 @@ mod tests {
                 timeout_millis: 1_000,
                 max_retries: 0,
                 tls_insecure_skip_verify: false,
+                header_sources: Default::default(),
+                auth: Default::default(),
+                tls: e_navigator_core::OtlpTlsConfig {
+                    allow_plaintext_auth: true,
+                    ..Default::default()
+                },
             },
             encode_non_clone_records,
         )
@@ -943,6 +1053,12 @@ mod tests {
                 timeout_millis: 1,
                 max_retries: 1,
                 tls_insecure_skip_verify: false,
+                header_sources: Default::default(),
+                auth: Default::default(),
+                tls: e_navigator_core::OtlpTlsConfig {
+                    allow_plaintext_auth: true,
+                    ..Default::default()
+                },
             },
             fail_encode_test_records,
         )
