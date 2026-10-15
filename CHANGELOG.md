@@ -6,6 +6,8 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-14
+
 ### Changed
 
 - Remove customer-specific label fixtures and qualification identifier prefixes;
