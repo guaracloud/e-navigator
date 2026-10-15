@@ -6,6 +6,44 @@ All notable changes to E-Navigator are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-15
+
+### Added
+
+- Configure independent bearer or Basic authentication, custom headers, and TLS
+  settings for each OTLP signal while retaining the existing flat endpoint and
+  enable fields.
+- Resolve header and credential values from explicit literal, environment, or
+  file references. Refresh file values before each export attempt, including
+  retries and durable replay, without persisting credentials in spool payloads.
+- Support custom CA bundles and mutual TLS, plus read-only mounts of existing
+  Kubernetes Secrets through the Helm chart.
+- Exercise the compiled CLI against disposable HTTP and TLS receivers for
+  authentication, credential rotation, signal isolation, certificate verification,
+  mutual TLS, FIFO rejection, and redirect refusal in the local quality gate.
+
+### Fixed
+
+- Redact credential references and header values in diagnostics, discard TOML
+  parser excerpts that could expose literal secrets, and strip endpoint URLs
+  from HTTP request errors.
+- Reject conflicting or reserved headers and nonregular credential files,
+  disable export redirects, and require an explicit override for authenticated
+  plaintext HTTP connections.
+
+### Changed
+
+- Share connection validation and header normalization, construct prepared
+  exporters without an artificial error path, and remove an unused error variant.
+- Publish a stable minor release with the authenticated OTLP export support from
+  PR #76. TLS certificate changes require restart; token files support rotation.
+
+### Qualification limits
+
+- Local CLI smoke and fixture-backed tests verify exporter behavior. Live Positron
+  ingest-to-query acceptance, backend retention, Kubernetes runtime behavior,
+  and privileged capture still require their own qualification evidence.
+
 ## [0.6.1] - 2026-10-14
 
 ### Changed
